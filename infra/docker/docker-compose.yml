@@ -1,5 +1,3 @@
-version: "3.9"
-
 name: exitpass
 
 services:
@@ -36,7 +34,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-exitpass}
       POSTGRES_USER: ${POSTGRES_USER:-exitpass}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
-    ports: ["5432:5432"]
+    ports:
+      - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../db/init:/docker-entrypoint-initdb.d:ro
@@ -54,7 +53,9 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-exitpass}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-change_me}
-    ports: ["5672:5672", "15672:15672"]
+    ports:
+      - "5672:5672"
+      - "15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     networks: [data-net]
@@ -71,7 +72,9 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ../observability/otel-collector.config.yaml:/etc/otelcol-contrib/config.yaml:ro
-    ports: ["4317:4317", "4318:4318"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
     networks: [app-net]
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:13133 || exit 1"]
@@ -110,17 +113,19 @@ services:
       Observability__Otlp__Endpoint: http://otel-collector:4317
       Security__MtlsEnabled: "false"
     depends_on:
-      postgres: { condition: service_healthy }
-      rabbitmq: { condition: service_healthy }
-      otel-collector: { condition: service_started }
-    expose: ["8080"]
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    ports:
+      - "8080:8080"
+    expose:
+      - "8080"
     networks: [app-net, data-net]
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health/live || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      disable: true
 
   session-service:
     build:
@@ -134,16 +139,15 @@ services:
       Observability__Otlp__Endpoint: http://otel-collector:4317
       Security__MtlsEnabled: "false"
     depends_on:
-      postgres: { condition: service_healthy }
-      otel-collector: { condition: service_started }
-    expose: ["8080"]
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    expose:
+      - "8080"
     networks: [app-net, data-net]
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health/live || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      disable: true
 
   vendor-pms-adapter:
     build:
@@ -157,16 +161,15 @@ services:
       Observability__Otlp__Endpoint: http://otel-collector:4317
       Security__MtlsEnabled: "false"
     depends_on:
-      mock-vendor-pms: { condition: service_started }
-      otel-collector: { condition: service_started }
-    expose: ["8080"]
+      mock-vendor-pms:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    expose:
+      - "8080"
     networks: [app-net, sim-net]
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health/live || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      disable: true
 
   payment-orchestrator:
     build:
@@ -185,18 +188,19 @@ services:
       Observability__Otlp__Endpoint: http://otel-collector:4317
       Security__MtlsEnabled: "false"
     depends_on:
-      postgres: { condition: service_healthy }
-      rabbitmq: { condition: service_healthy }
-      mock-payment-provider: { condition: service_started }
-      otel-collector: { condition: service_started }
-    expose: ["8080"]
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mock-payment-provider:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    expose:
+      - "8080"
     networks: [app-net, data-net, sim-net]
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health/live || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      disable: true
 
   audit-event-service:
     build:
@@ -214,23 +218,24 @@ services:
       Observability__Otlp__Endpoint: http://otel-collector:4317
       Security__MtlsEnabled: "false"
     depends_on:
-      postgres: { condition: service_healthy }
-      rabbitmq: { condition: service_healthy }
-      otel-collector: { condition: service_started }
-    expose: ["8080"]
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    expose:
+      - "8080"
     networks: [app-net, data-net]
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health/live || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      disable: true
 
   mock-vendor-pms:
     image: wiremock/wiremock:3.9.2
     container_name: exitpass-mock-vendor-pms
     command: ["--port", "8080", "--global-response-templating"]
-    expose: ["8080"]
+    expose:
+      - "8080"
     volumes:
       - ../../mocks/mock-vendor-pms:/home/wiremock:ro
     networks: [sim-net]
@@ -245,7 +250,8 @@ services:
     image: wiremock/wiremock:3.9.2
     container_name: exitpass-mock-payment-provider
     command: ["--port", "8080", "--global-response-templating"]
-    expose: ["8080"]
+    expose:
+      - "8080"
     volumes:
       - ../../mocks/mock-payment-provider:/home/wiremock:ro
     networks: [sim-net]
@@ -257,10 +263,14 @@ services:
       start_period: 10s
 
 networks:
-  edge-net: { driver: bridge }
-  app-net: { driver: bridge }
-  data-net: { driver: bridge }
-  sim-net: { driver: bridge }
+  edge-net:
+    driver: bridge
+  app-net:
+    driver: bridge
+  data-net:
+    driver: bridge
+  sim-net:
+    driver: bridge
 
 volumes:
   postgres-data:

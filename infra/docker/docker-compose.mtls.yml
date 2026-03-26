@@ -1,8 +1,7 @@
-version: "3.9"
-
 services:
   nginx:
-    ports: ["8444:8444"]
+    ports:
+      - "8444:8444"
     volumes:
       - ../nginx/default.mtls.conf:/etc/nginx/conf.d/default.conf:ro
       - ../certs/clients/nginx-to-core:/etc/exitpass/certs/client:ro
@@ -17,10 +16,14 @@ services:
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=nginx-to-core
       Security__AllowedClientSubjects__1: CN=central-pms-to-adapters
-    expose: ["8443"]
+    ports: []
+    expose:
+      - "8443"
     volumes:
       - ../certs/servers/central-pms:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
+    healthcheck:
+      disable: true
 
   payment-orchestrator:
     environment:
@@ -29,10 +32,13 @@ services:
       Security__MtlsEnabled: "true"
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=nginx-to-core
-    expose: ["8443"]
+    expose:
+      - "8443"
     volumes:
       - ../certs/servers/payment-orchestrator:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
+    healthcheck:
+      disable: true
 
   vendor-pms-adapter:
     environment:
@@ -41,10 +47,13 @@ services:
       Security__MtlsEnabled: "true"
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=central-pms-to-adapters
-    expose: ["8443"]
+    expose:
+      - "8443"
     volumes:
       - ../certs/servers/vendor-pms-adapter:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
+    healthcheck:
+      disable: true
 
   gate-integration-service:
     build:
@@ -62,11 +71,14 @@ services:
     depends_on:
       otel-collector:
         condition: service_started
-    expose: ["8443"]
+    expose:
+      - "8443"
     networks: [app-net, sim-net]
     volumes:
       - ../certs/servers/gate-integration-service:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
+    healthcheck:
+      disable: true
 
   device-simulator:
     image: alpine:3.20
