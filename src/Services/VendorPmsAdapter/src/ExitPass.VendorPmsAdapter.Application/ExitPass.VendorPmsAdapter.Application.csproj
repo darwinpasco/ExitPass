@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.VendorPmsAdapter.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.VendorPmsAdapter.Domain/ExitPass.VendorPmsAdapter.Domain.csproj" />
+    <ProjectReference Include="../ExitPass.VendorPmsAdapter.Contracts/ExitPass.VendorPmsAdapter.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Application/ExitPass.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Domain/ExitPass.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.CouponService.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.CouponService.Application/ExitPass.CouponService.Application.csproj" />
+    <ProjectReference Include="../ExitPass.CouponService.Domain/ExitPass.CouponService.Domain.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

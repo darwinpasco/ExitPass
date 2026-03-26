@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.CentralPms.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.CentralPms.Domain/ExitPass.CentralPms.Domain.csproj" />
+    <ProjectReference Include="../ExitPass.CentralPms.Contracts/ExitPass.CentralPms.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Application/ExitPass.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Domain/ExitPass.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

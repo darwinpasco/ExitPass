@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.SessionService.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.SessionService.Application/ExitPass.SessionService.Application.csproj" />
+    <ProjectReference Include="../ExitPass.SessionService.Domain/ExitPass.SessionService.Domain.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>

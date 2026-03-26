@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.GateIntegrationService.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.GateIntegrationService.Domain/ExitPass.GateIntegrationService.Domain.csproj" />
+    <ProjectReference Include="../ExitPass.GateIntegrationService.Contracts/ExitPass.GateIntegrationService.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Application/ExitPass.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Domain/ExitPass.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

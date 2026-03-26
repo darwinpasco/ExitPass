@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.CouponService.Api</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+      <PackageReference Include="Microsoft.AspNetCore.OpenApi"/>
+      <PackageReference Include="Swashbuckle.AspNetCore"/>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.CouponService.Application/ExitPass.CouponService.Application.csproj" />
+    <ProjectReference Include="../ExitPass.CouponService.Infrastructure/ExitPass.CouponService.Infrastructure.csproj" />
+    <ProjectReference Include="../ExitPass.CouponService.Contracts/ExitPass.CouponService.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Observability/ExitPass.BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Security/ExitPass.BuildingBlocks.Security.csproj" />
+  </ItemGroup>
+</Project>

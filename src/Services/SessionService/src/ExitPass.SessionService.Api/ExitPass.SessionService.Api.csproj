@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.SessionService.Api</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+      <PackageReference Include="Microsoft.AspNetCore.OpenApi"/>
+      <PackageReference Include="Swashbuckle.AspNetCore"/>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.SessionService.Application/ExitPass.SessionService.Application.csproj" />
+    <ProjectReference Include="../ExitPass.SessionService.Infrastructure/ExitPass.SessionService.Infrastructure.csproj" />
+    <ProjectReference Include="../ExitPass.SessionService.Contracts/ExitPass.SessionService.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Observability/ExitPass.BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Security/ExitPass.BuildingBlocks.Security.csproj" />
+  </ItemGroup>
+</Project>

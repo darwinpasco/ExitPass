@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.BuildingBlocks.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

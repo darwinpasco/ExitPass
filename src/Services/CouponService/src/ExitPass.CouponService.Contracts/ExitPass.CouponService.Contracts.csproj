@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.CouponService.Contracts</RootNamespace>
+  </PropertyGroup>
+</Project>

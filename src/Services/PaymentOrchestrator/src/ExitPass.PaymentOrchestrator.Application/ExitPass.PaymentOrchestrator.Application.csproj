@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.PaymentOrchestrator.Application</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.PaymentOrchestrator.Domain/ExitPass.PaymentOrchestrator.Domain.csproj" />
+    <ProjectReference Include="../ExitPass.PaymentOrchestrator.Contracts/ExitPass.PaymentOrchestrator.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Application/ExitPass.BuildingBlocks.Application.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Domain/ExitPass.BuildingBlocks.Domain.csproj" />
+  </ItemGroup>
+</Project>

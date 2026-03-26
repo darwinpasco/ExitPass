@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.VendorPmsAdapter.Api</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+      <PackageReference Include="Microsoft.AspNetCore.OpenApi"/>
+      <PackageReference Include="Swashbuckle.AspNetCore"/>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.VendorPmsAdapter.Application/ExitPass.VendorPmsAdapter.Application.csproj" />
+    <ProjectReference Include="../ExitPass.VendorPmsAdapter.Infrastructure/ExitPass.VendorPmsAdapter.Infrastructure.csproj" />
+    <ProjectReference Include="../ExitPass.VendorPmsAdapter.Contracts/ExitPass.VendorPmsAdapter.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Observability/ExitPass.BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Security/ExitPass.BuildingBlocks.Security.csproj" />
+  </ItemGroup>
+</Project>

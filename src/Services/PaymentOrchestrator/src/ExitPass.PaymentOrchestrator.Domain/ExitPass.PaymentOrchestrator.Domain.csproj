@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.PaymentOrchestrator.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

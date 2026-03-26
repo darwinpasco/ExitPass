@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.PaymentOrchestrator.Api</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+      <PackageReference Include="Microsoft.AspNetCore.OpenApi"/>
+      <PackageReference Include="Swashbuckle.AspNetCore"/>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.PaymentOrchestrator.Application/ExitPass.PaymentOrchestrator.Application.csproj" />
+    <ProjectReference Include="../ExitPass.PaymentOrchestrator.Infrastructure/ExitPass.PaymentOrchestrator.Infrastructure.csproj" />
+    <ProjectReference Include="../ExitPass.PaymentOrchestrator.Contracts/ExitPass.PaymentOrchestrator.Contracts.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Observability/ExitPass.BuildingBlocks.Observability.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Security/ExitPass.BuildingBlocks.Security.csproj" />
+  </ItemGroup>
+</Project>

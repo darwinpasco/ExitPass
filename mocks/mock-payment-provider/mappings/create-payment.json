@@ -1,0 +1,12 @@
+{
+  "request": { "method": "POST", "urlPath": "/api/provider/payments" },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "providerPaymentId": "provider-pay-001",
+      "status": "PENDING",
+      "paymentUrl": "https://example.test/pay/provider-pay-001"
+    },
+    "headers": { "Content-Type": "application/json" }
+  }
+}

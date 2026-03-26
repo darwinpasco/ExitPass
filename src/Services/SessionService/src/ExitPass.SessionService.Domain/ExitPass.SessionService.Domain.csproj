@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.SessionService.Domain</RootNamespace>
+  </PropertyGroup>
+</Project>

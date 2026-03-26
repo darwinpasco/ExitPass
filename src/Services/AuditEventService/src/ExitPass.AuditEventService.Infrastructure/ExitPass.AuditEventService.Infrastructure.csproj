@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>ExitPass.AuditEventService.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ExitPass.AuditEventService.Application/ExitPass.AuditEventService.Application.csproj" />
+    <ProjectReference Include="../ExitPass.AuditEventService.Domain/ExitPass.AuditEventService.Domain.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Persistence/ExitPass.BuildingBlocks.Persistence.csproj" />
+  </ItemGroup>
+</Project>

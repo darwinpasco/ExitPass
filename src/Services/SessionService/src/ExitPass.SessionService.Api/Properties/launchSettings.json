@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "ExitPass.SessionService.Api": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:56066;http://localhost:56067"
+    }
+  }
+}

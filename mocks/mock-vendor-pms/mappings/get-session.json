@@ -1,0 +1,14 @@
+{
+  "request": { "method": "GET", "urlPathPattern": "/api/vendor/sessions/.*" },
+  "response": {
+    "status": 200,
+    "jsonBody": {
+      "sessionId": "11111111-1111-1111-1111-111111111111",
+      "plateNumber": "ABC1234",
+      "status": "PAYABLE",
+      "amountDue": 150.00,
+      "currency": "PHP"
+    },
+    "headers": { "Content-Type": "application/json" }
+  }
+}
