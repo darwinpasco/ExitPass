@@ -1,7 +1,7 @@
 services:
   nginx:
     ports:
-      - "8444:8444"
+      - "11443:8443"
     volumes:
       - ../nginx/default.mtls.conf:/etc/nginx/conf.d/default.conf:ro
       - ../certs/clients/nginx-to-core:/etc/exitpass/certs/client:ro
@@ -16,11 +16,28 @@ services:
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=nginx-to-core
       Security__AllowedClientSubjects__1: CN=central-pms-to-adapters
-    ports: []
+    ports:
+      - "9440:8443"
     expose:
       - "8443"
     volumes:
       - ../certs/servers/central-pms:/etc/exitpass/certs/server:ro
+      - ../certs/trust:/etc/exitpass/certs/trust:ro
+    healthcheck:
+      disable: true
+
+  session-service:
+    environment:
+      ASPNETCORE_ENVIRONMENT: SecureDevelopment
+      ASPNETCORE_URLS: https://+:8443
+      Security__MtlsEnabled: "true"
+      Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
+    ports:
+      - "9441:8443"
+    expose:
+      - "8443"
+    volumes:
+      - ../certs/servers/session-service:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
     healthcheck:
       disable: true
@@ -32,10 +49,28 @@ services:
       Security__MtlsEnabled: "true"
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=nginx-to-core
+    ports:
+      - "9442:8443"
     expose:
       - "8443"
     volumes:
       - ../certs/servers/payment-orchestrator:/etc/exitpass/certs/server:ro
+      - ../certs/trust:/etc/exitpass/certs/trust:ro
+    healthcheck:
+      disable: true
+
+  audit-event-service:
+    environment:
+      ASPNETCORE_ENVIRONMENT: SecureDevelopment
+      ASPNETCORE_URLS: https://+:8443
+      Security__MtlsEnabled: "true"
+      Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
+    ports:
+      - "9443:8443"
+    expose:
+      - "8443"
+    volumes:
+      - ../certs/servers/audit-event-service:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
     healthcheck:
       disable: true
@@ -47,6 +82,8 @@ services:
       Security__MtlsEnabled: "true"
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=central-pms-to-adapters
+    ports:
+      - "9444:8443"
     expose:
       - "8443"
     volumes:
@@ -71,20 +108,33 @@ services:
     depends_on:
       otel-collector:
         condition: service_started
+    ports:
+      - "9445:8443"
     expose:
       - "8443"
-    networks: [app-net, sim-net]
+    networks:
+      - app-net
+      - sim-net
     volumes:
       - ../certs/servers/gate-integration-service:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
     healthcheck:
       disable: true
 
+  mock-payment-provider:
+    ports:
+      - "9446:8080"
+
+  mock-vendor-pms:
+    ports:
+      - "9447:8080"
+
   device-simulator:
     image: alpine:3.20
     container_name: exitpass-device-simulator
     command: ["sh", "-c", "sleep infinity"]
-    networks: [sim-net]
+    networks:
+      - sim-net
     volumes:
       - ../certs/clients/device-simulator:/etc/exitpass/certs/client:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro

@@ -13,13 +13,17 @@ services:
         condition: service_started
       audit-event-service:
         condition: service_started
+      vendor-pms-adapter:
+        condition: service_started
     ports:
-      - "443:443"
+      - "10443:443"
     volumes:
       - ../nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ../certs/servers/nginx:/etc/exitpass/certs/server:ro
       - ../certs/trust:/etc/exitpass/certs/trust:ro
-    networks: [edge-net, app-net]
+    networks:
+      - edge-net
+      - app-net
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1/health/live || exit 1"]
       interval: 15s
@@ -39,7 +43,8 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../db/init:/docker-entrypoint-initdb.d:ro
-    networks: [data-net]
+    networks:
+      - data-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exitpass} -d ${POSTGRES_DB:-exitpass}"]
       interval: 10s
@@ -58,7 +63,8 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
-    networks: [data-net]
+    networks:
+      - data-net
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 15s
@@ -75,7 +81,8 @@ services:
     ports:
       - "4317:4317"
       - "4318:4318"
-    networks: [app-net]
+    networks:
+      - app-net
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:13133 || exit 1"]
       interval: 15s
@@ -94,7 +101,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [data-net]
+    networks:
+      - data-net
     restart: "no"
 
   central-pms:
@@ -109,7 +117,7 @@ services:
       Messaging__RabbitMq__Host: rabbitmq
       Messaging__RabbitMq__Port: 5672
       Messaging__RabbitMq__Username: ${RABBITMQ_DEFAULT_USER:-exitpass}
-      Messaging__RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-change_me}
+      Messaging__RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-exitpass}
       Observability__Otlp__Endpoint: http://otel-collector:4317
       Security__MtlsEnabled: "false"
     depends_on:
@@ -123,7 +131,9 @@ services:
       - "8080:8080"
     expose:
       - "8080"
-    networks: [app-net, data-net]
+    networks:
+      - app-net
+      - data-net
     healthcheck:
       disable: true
 
@@ -143,11 +153,121 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+    ports:
+      - "8081:8080"
     expose:
       - "8080"
-    networks: [app-net, data-net]
+    networks:
+      - app-net
+      - data-net
     healthcheck:
       disable: true
+
+  payment-orchestrator:
+    build:
+      context: ../../
+      dockerfile: src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/Dockerfile
+    container_name: exitpass-payment-orchestrator
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__MainDatabase: Host=postgres;Port=5432;Database=${POSTGRES_DB:-exitpass};Username=${POSTGRES_USER:-exitpass};Password=${POSTGRES_PASSWORD:-change_me}
+      Messaging__RabbitMq__Host: rabbitmq
+      Messaging__RabbitMq__Port: 5672
+      Messaging__RabbitMq__Username: ${RABBITMQ_DEFAULT_USER:-exitpass}
+      Messaging__RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-exitpass}
+      Payments__ProviderBaseUrl: http://mock-payment-provider:8080
+      Observability__Otlp__Endpoint: http://otel-collector:4317
+      Security__MtlsEnabled: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      mock-payment-provider:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    ports:
+      - "8082:8080"
+    expose:
+      - "8080"
+    networks:
+      - app-net
+      - data-net
+      - sim-net
+    healthcheck:
+      disable: true
+
+  audit-event-service:
+    build:
+      context: ../../
+      dockerfile: src/Services/AuditEventService/src/ExitPass.AuditEventService.Api/Dockerfile
+    container_name: exitpass-audit-event-service
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__MainDatabase: Host=postgres;Port=5432;Database=${POSTGRES_DB:-exitpass};Username=${POSTGRES_USER:-exitpass};Password=${POSTGRES_PASSWORD:-change_me}
+      Messaging__RabbitMq__Host: rabbitmq
+      Messaging__RabbitMq__Port: 5672
+      Messaging__RabbitMq__Username: ${RABBITMQ_DEFAULT_USER:-exitpass}
+      Messaging__RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-exitpass}
+      Observability__Otlp__Endpoint: http://otel-collector:4317
+      Security__MtlsEnabled: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    ports:
+      - "8083:8080"
+    expose:
+      - "8080"
+    networks:
+      - app-net
+      - data-net
+    healthcheck:
+      disable: true
+
+  mock-payment-provider:
+    image: wiremock/wiremock:3.9.2
+    container_name: exitpass-mock-payment-provider
+    command: ["--port", "8080", "--global-response-templating"]
+    ports:
+      - "8084:8080"
+    expose:
+      - "8080"
+    volumes:
+      - ../../mocks/mock-payment-provider:/home/wiremock:ro
+    networks:
+      - sim-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/__admin || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  mock-vendor-pms:
+    image: wiremock/wiremock:3.9.2
+    container_name: exitpass-mock-vendor-pms
+    command: ["--port", "8080", "--global-response-templating"]
+    ports:
+      - "8085:8080"
+    expose:
+      - "8080"
+    volumes:
+      - ../../mocks/mock-vendor-pms:/home/wiremock:ro
+    networks:
+      - sim-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/__admin || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   vendor-pms-adapter:
     build:
@@ -165,102 +285,15 @@ services:
         condition: service_started
       otel-collector:
         condition: service_started
+    ports:
+      - "8086:8080"
     expose:
       - "8080"
-    networks: [app-net, sim-net]
+    networks:
+      - app-net
+      - sim-net
     healthcheck:
       disable: true
-
-  payment-orchestrator:
-    build:
-      context: ../../
-      dockerfile: src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/Dockerfile
-    container_name: exitpass-payment-orchestrator
-    environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__MainDatabase: Host=postgres;Port=5432;Database=${POSTGRES_DB:-exitpass};Username=${POSTGRES_USER:-exitpass};Password=${POSTGRES_PASSWORD:-change_me}
-      Messaging__RabbitMq__Host: rabbitmq
-      Messaging__RabbitMq__Port: 5672
-      Messaging__RabbitMq__Username: ${RABBITMQ_DEFAULT_USER:-exitpass}
-      Messaging__RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-change_me}
-      Payments__ProviderBaseUrl: http://mock-payment-provider:8080
-      Observability__Otlp__Endpoint: http://otel-collector:4317
-      Security__MtlsEnabled: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      mock-payment-provider:
-        condition: service_started
-      otel-collector:
-        condition: service_started
-    expose:
-      - "8080"
-    networks: [app-net, data-net, sim-net]
-    healthcheck:
-      disable: true
-
-  audit-event-service:
-    build:
-      context: ../../
-      dockerfile: src/Services/AuditEventService/src/ExitPass.AuditEventService.Api/Dockerfile
-    container_name: exitpass-audit-event-service
-    environment:
-      ASPNETCORE_ENVIRONMENT: Development
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__MainDatabase: Host=postgres;Port=5432;Database=${POSTGRES_DB:-exitpass};Username=${POSTGRES_USER:-exitpass};Password=${POSTGRES_PASSWORD:-change_me}
-      Messaging__RabbitMq__Host: rabbitmq
-      Messaging__RabbitMq__Port: 5672
-      Messaging__RabbitMq__Username: ${RABBITMQ_DEFAULT_USER:-exitpass}
-      Messaging__RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-change_me}
-      Observability__Otlp__Endpoint: http://otel-collector:4317
-      Security__MtlsEnabled: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      otel-collector:
-        condition: service_started
-    expose:
-      - "8080"
-    networks: [app-net, data-net]
-    healthcheck:
-      disable: true
-
-  mock-vendor-pms:
-    image: wiremock/wiremock:3.9.2
-    container_name: exitpass-mock-vendor-pms
-    command: ["--port", "8080", "--global-response-templating"]
-    expose:
-      - "8080"
-    volumes:
-      - ../../mocks/mock-vendor-pms:/home/wiremock:ro
-    networks: [sim-net]
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/__admin || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
-  mock-payment-provider:
-    image: wiremock/wiremock:3.9.2
-    container_name: exitpass-mock-payment-provider
-    command: ["--port", "8080", "--global-response-templating"]
-    expose:
-      - "8080"
-    volumes:
-      - ../../mocks/mock-payment-provider:/home/wiremock:ro
-    networks: [sim-net]
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/__admin || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
 
 networks:
   edge-net:
