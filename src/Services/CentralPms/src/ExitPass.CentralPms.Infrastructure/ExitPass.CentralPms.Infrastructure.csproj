@@ -3,6 +3,9 @@
     <RootNamespace>ExitPass.CentralPms.Infrastructure</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../ExitPass.CentralPms.Application/ExitPass.CentralPms.Application.csproj" />
     <ProjectReference Include="../ExitPass.CentralPms.Domain/ExitPass.CentralPms.Domain.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
