@@ -7,3 +7,8 @@ obj/
 TestResults/
 .env
 artifacts/
+/logs/docker-log.txt
+/logs/dotnet-test.txt
+/logs/dotnet-all.txt
+/logs/dotnet-all.txt
+/logs/dotnet-test.txt
