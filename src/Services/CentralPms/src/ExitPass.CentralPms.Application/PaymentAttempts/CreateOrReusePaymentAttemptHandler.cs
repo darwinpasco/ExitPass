@@ -47,9 +47,9 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     ///
     /// Invariants Enforced:
     /// - only Central PMS may create or reuse a PaymentAttempt
-    /// - tariff snapshot must be eligible before attempt creation
-    /// - valid replay returns original result
-    /// - competing active payment attempt must be rejected deterministically
+    /// - existence of ParkingSession and TariffSnapshot must be confirmed before the create-or-reuse path is invoked
+    /// - valid idempotent replay must be decided by the authoritative DB-backed create-or-reuse path
+    /// - competing active payment attempt must be rejected deterministically by the authoritative DB-backed path
     /// </summary>
     public async Task<CreateOrReusePaymentAttemptResult> ExecuteAsync(
         CreateOrReusePaymentAttemptCommand command,
@@ -65,7 +65,8 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
         if (!parkingSession.IsEligibleForPaymentAttempt())
         {
-            throw new InvalidOperationException($"Parking session '{command.ParkingSessionId}' is not eligible for payment attempt creation.");
+            throw new InvalidOperationException(
+                $"Parking session '{command.ParkingSessionId}' is not eligible for payment attempt creation.");
         }
 
         var tariffSnapshot = await _tariffSnapshotReadRepository.GetByIdAsync(command.TariffSnapshotId, cancellationToken);
@@ -84,7 +85,17 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             IdempotencyKey = command.IdempotencyKey
         });
 
-        _paymentAttemptCreationPolicy.ValidateSnapshotEligibility(tariffSnapshot, _systemClock);
+        // Important:
+        // Do NOT pre-validate snapshot eligibility here.
+        // The authoritative create-or-reuse DB routine must decide whether the request is:
+        // - CREATED
+        // - REUSED
+        // - REJECTED_IDEMPOTENCY_CONFLICT
+        // - REJECTED_ACTIVE_ATTEMPT_EXISTS
+        // - snapshot/session invalid
+        //
+        // Pre-validating eligibility here breaks valid idempotent replay once the snapshot has
+        // already been consumed by the first successful create.
 
         var dbRequest = new CreateOrReusePaymentAttemptDbRequest
         {
@@ -97,7 +108,9 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             RequestedAt = _systemClock.UtcNow
         };
 
-        var dbResult = await _paymentAttemptDbRoutineGateway.CreateOrReusePaymentAttemptAsync(dbRequest, cancellationToken);
+        var dbResult = await _paymentAttemptDbRoutineGateway.CreateOrReusePaymentAttemptAsync(
+            dbRequest,
+            cancellationToken);
 
         ThrowForRejectedOutcome(dbResult, command.TariffSnapshotId);
 
@@ -120,18 +133,29 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             case "CREATED":
             case "REUSED":
                 return;
+
             case "REJECTED_ACTIVE_ATTEMPT_EXISTS":
                 throw new ActivePaymentAttemptAlreadyExistsException(dbResult.ParkingSessionId);
+
             case "REJECTED_IDEMPOTENCY_CONFLICT":
                 throw new IdempotencyConflictException(dbResult.IdempotencyKey ?? string.Empty);
+
             case "REJECTED_SNAPSHOT_NOT_FOUND":
                 throw new TariffSnapshotNotFoundException(tariffSnapshotId);
-            default:
+
+            case "REJECTED_SNAPSHOT_INVALID":
+            case "REJECTED_SNAPSHOT_EXPIRED":
+            case "REJECTED_SNAPSHOT_ALREADY_BOUND":
+            case "REJECTED_SNAPSHOT_SESSION_MISMATCH":
                 throw new TariffSnapshotNotEligibleException(
                     tariffSnapshotId,
                     TariffSnapshotStatus.Invalidated,
                     _systemClock.UtcNow,
                     null);
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported create-or-reuse payment attempt outcome '{dbResult.OutcomeCode}'.");
         }
     }
 }
