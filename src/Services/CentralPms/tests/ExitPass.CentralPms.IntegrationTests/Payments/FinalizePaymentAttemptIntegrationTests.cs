@@ -1,5 +1,3 @@
-using System;
-using System.Threading.Tasks;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using Npgsql;
 using Xunit;
