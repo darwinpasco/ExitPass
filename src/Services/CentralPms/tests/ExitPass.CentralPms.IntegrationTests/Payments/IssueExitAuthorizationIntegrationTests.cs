@@ -165,7 +165,7 @@ public sealed class IssueExitAuthorizationIntegrationTests
         }
     }
 
-    [Fact(Skip = "Enable after issue_exit_authorization() contract is locked for same-attempt replay behavior.")]
+    [Fact]
     public async Task IssueExitAuthorization_WhenReplayedForSameConfirmedAttempt_IsDeterministic()
     {
         var context = PaymentTestContext.Create(
