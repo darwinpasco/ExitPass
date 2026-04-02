@@ -25,18 +25,26 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// </summary>
 public sealed class PaymentToExitFlowApiIntegrationTests
 {
-    private const string DbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-    private const string ApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
+    private const string PrimaryDbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
+    private const string AlternateDbConnectionStringEnvVar = "EXITPASS_TEST_DB_CONNECTION_STRING";
+    private const string LegacyDbConnectionStringEnvVar = "ConnectionStrings__MainDatabase";
+
+    private const string PrimaryApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
+    private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
+    private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
 
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(DbConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Missing environment variable '{DbConnectionStringEnvVar}'.");
+        Environment.GetEnvironmentVariable(PrimaryDbConnectionStringEnvVar)
+        ?? Environment.GetEnvironmentVariable(AlternateDbConnectionStringEnvVar)
+        ?? Environment.GetEnvironmentVariable(LegacyDbConnectionStringEnvVar)
+        ?? "Host=localhost;Port=5432;Database=exitpass;Username=postgres;Password=postgres";
 
-    private static Uri ApiBaseUri =>
-        new(Environment.GetEnvironmentVariable(ApiBaseUrlEnvVar)
-            ?? throw new InvalidOperationException(
-                $"Missing environment variable '{ApiBaseUrlEnvVar}'."), UriKind.Absolute);
+    private static Uri ApiBaseUri => new(
+        Environment.GetEnvironmentVariable(PrimaryApiBaseUrlEnvVar)
+        ?? Environment.GetEnvironmentVariable(AlternateApiBaseUrlEnvVar)
+        ?? Environment.GetEnvironmentVariable(LegacyApiBaseUrlEnvVar)
+        ?? "http://localhost:8080",
+        UriKind.Absolute);
 
     [Fact]
     public async Task CreatePaymentAttempt_WhenSessionAndTariffAreValid_ReturnsOkOrCreated()
@@ -69,6 +77,7 @@ public sealed class PaymentToExitFlowApiIntegrationTests
                 $"Unexpected status code: {response.StatusCode}. Body: {raw}");
 
             var body = await response.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+
             Assert.NotNull(body);
             Assert.NotEqual(Guid.Empty, body!.PaymentAttemptId);
             Assert.False(string.IsNullOrWhiteSpace(body.AttemptStatus));
@@ -107,7 +116,9 @@ public sealed class PaymentToExitFlowApiIntegrationTests
             var raw = await response.Content.ReadAsStringAsync();
 
             Assert.True(
-                response.StatusCode is HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.Conflict,
+                response.StatusCode is HttpStatusCode.BadRequest
+                    or HttpStatusCode.NotFound
+                    or HttpStatusCode.Conflict,
                 $"Unexpected status code: {response.StatusCode}. Body: {raw}");
         }
         finally

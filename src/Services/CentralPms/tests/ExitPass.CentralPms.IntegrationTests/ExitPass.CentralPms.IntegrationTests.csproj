@@ -29,4 +29,8 @@
         <ProjectReference Include="..\..\..\..\BuildingBlocks\ExitPass.BuildingBlocks.Testing\ExitPass.BuildingBlocks.Testing.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Properties\" />
+    </ItemGroup>
+
 </Project>
