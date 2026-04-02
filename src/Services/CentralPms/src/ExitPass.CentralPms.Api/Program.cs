@@ -107,6 +107,22 @@ builder.Services.AddScoped<IIssueExitAuthorizationUseCase, IssueExitAuthorizatio
 builder.Services.AddScoped<IIssueExitAuthorizationGateway>(_ =>
     new IssueExitAuthorizationGateway(mainDatabaseConnectionString));
 
+// BRD:
+// - 9.12 Exit Authorization
+// - 9.13 Timeout, Retry, and Duplicate Handling
+//
+// SDD:
+// - 6.6 Consume Exit Authorization
+// - 10.4 Gate / Site Integration APIs
+//
+// Invariants Enforced:
+// - Only Central PMS may consume ExitAuthorization through the canonical DB path
+// - ExitAuthorization consume remains deterministic and fail-closed
+builder.Services.AddScoped<IConsumeExitAuthorizationUseCase, ConsumeExitAuthorizationHandler>();
+
+builder.Services.AddScoped<IConsumeExitAuthorizationGateway>(_ =>
+    new ConsumeExitAuthorizationGateway(mainDatabaseConnectionString));
+
 builder.Services.AddSingleton<ISystemClock, SystemClock>();
 
 builder.Services
@@ -187,6 +203,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 app.MapInternalPaymentConfirmationEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
+app.MapGateExitAuthorizationConsumeEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
