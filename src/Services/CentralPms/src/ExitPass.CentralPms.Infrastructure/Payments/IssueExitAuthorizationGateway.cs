@@ -4,6 +4,8 @@ using Npgsql;
 namespace ExitPass.CentralPms.Infrastructure.Payments;
 
 /// <summary>
+/// Infrastructure gateway that issues exit authorizations through the canonical database routine.
+///
 /// BRD:
 /// - 9.12 Exit Authorization
 /// - 10.7.2 Payment Finality Invariant
@@ -21,11 +23,21 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
 {
     private readonly string _connectionString;
 
+    /// <summary>
+    /// Creates a gateway for issuing exit authorizations against the primary database.
+    /// </summary>
+    /// <param name="connectionString">Database connection string for Central PMS persistence.</param>
     public IssueExitAuthorizationGateway(string connectionString)
     {
         _connectionString = connectionString;
     }
 
+    /// <summary>
+    /// Issues an exit authorization by calling the canonical database routine.
+    /// </summary>
+    /// <param name="request">Issuance request metadata and identifiers.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The DB-authoritative issuance result.</returns>
     public async Task<IssueExitAuthorizationDbResult> IssueAsync(
         IssueExitAuthorizationDbRequest request,
         CancellationToken cancellationToken)

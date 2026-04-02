@@ -6,6 +6,8 @@ using Npgsql;
 namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
+/// Internal endpoints for recording verified payment confirmation evidence from providers.
+///
 /// BRD:
 /// - 9.10 Payment Processing and Confirmation
 /// - 9.13 Timeout, Retry, and Duplicate Handling
@@ -21,6 +23,11 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class InternalPaymentConfirmationEndpoints
 {
+    /// <summary>
+    /// Maps the internal endpoint for recording verified payment confirmation.
+    /// </summary>
+    /// <param name="app">Route builder used to register the endpoint.</param>
+    /// <returns>The same route builder for fluent configuration.</returns>
     public static IEndpointRouteBuilder MapInternalPaymentConfirmationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payments")

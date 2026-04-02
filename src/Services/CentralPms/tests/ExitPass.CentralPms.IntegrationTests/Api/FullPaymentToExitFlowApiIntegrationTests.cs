@@ -34,6 +34,9 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
 
     private readonly HttpClient _client;
 
+    /// <summary>
+    /// Creates the full payment-to-exit API flow integration test fixture.
+    /// </summary>
     public FullPaymentToExitFlowApiIntegrationTests(CustomWebApplicationFactory factory)
     {
         _client = factory.CreateClient();
@@ -45,6 +48,9 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
             $"Missing environment variable '{ConnectionStringEnvVar}'. " +
             "Point it at the ExitPass integration database.");
 
+    /// <summary>
+    /// Verifies the canonical happy path from payment-attempt creation through exit-authorization consumption.
+    /// </summary>
     [Fact]
     public async Task FullPaymentToExitFlow_HappyPath_CompletesSuccessfully()
     {
@@ -134,29 +140,29 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
     }
 
     private static async Task<RecordPaymentConfirmationResult> RecordPaymentConfirmationDirectAsync(
-    Guid paymentAttemptId,
-    string providerReference,
-    string providerStatus,
-    string requestedBy,
-    Guid correlationId)
+        Guid paymentAttemptId,
+        string providerReference,
+        string providerStatus,
+        string requestedBy,
+        Guid correlationId)
     {
         const string sql = """
-        SELECT
-            payment_confirmation_id,
-            payment_attempt_id,
-            provider_reference,
-            provider_status,
-            'RECORDED'::character varying AS confirmation_status,
-            verified_timestamp
-        FROM core.record_payment_confirmation(
-            @p_payment_attempt_id,
-            @p_provider_reference,
-            @p_provider_status,
-            @p_requested_by,
-            @p_correlation_id,
-            @p_now
-        );
-        """;
+            SELECT
+                payment_confirmation_id,
+                payment_attempt_id,
+                provider_reference,
+                provider_status,
+                'RECORDED'::character varying AS confirmation_status,
+                verified_timestamp
+            FROM core.record_payment_confirmation(
+                @p_payment_attempt_id,
+                @p_provider_reference,
+                @p_provider_status,
+                @p_requested_by,
+                @p_correlation_id,
+                @p_now
+            );
+            """;
 
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();

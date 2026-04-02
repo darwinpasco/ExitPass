@@ -17,6 +17,9 @@ namespace ExitPass.CentralPms.IntegrationTests.Shared;
 /// </summary>
 public static class PaymentTestDataHelper
 {
+    /// <summary>
+    /// Resets and seeds the canonical test data required for a payment integration scenario.
+    /// </summary>
     public static async Task ResetAndSeedAsync(
         string connectionString,
         PaymentTestContext context,
@@ -267,6 +270,9 @@ public static class PaymentTestDataHelper
         await transaction.CommitAsync();
     }
 
+    /// <summary>
+    /// Removes seeded data for the supplied payment integration test context.
+    /// </summary>
     public static async Task CleanupAsync(string connectionString, PaymentTestContext context)
     {
         const string sql = """

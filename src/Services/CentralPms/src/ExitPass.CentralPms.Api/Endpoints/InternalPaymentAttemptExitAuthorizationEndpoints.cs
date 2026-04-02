@@ -5,6 +5,8 @@ using Npgsql;
 namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
+/// Internal endpoints for issuing exit authorizations from confirmed payment attempts.
+///
 /// BRD:
 /// - 9.12 Exit Authorization
 /// - 9.13 Timeout, Retry, and Duplicate Handling
@@ -20,6 +22,11 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class InternalPaymentAttemptExitAuthorizationEndpoints
 {
+    /// <summary>
+    /// Maps the internal endpoint for issuing exit authorizations from payment attempts.
+    /// </summary>
+    /// <param name="app">Route builder used to register the endpoint.</param>
+    /// <returns>The same route builder for fluent configuration.</returns>
     public static IEndpointRouteBuilder MapInternalPaymentAttemptExitAuthorizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payment-attempts")
@@ -158,10 +165,25 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
         };
     }
 
+    /// <summary>
+    /// HTTP request body for issuing an exit authorization from a payment attempt.
+    /// </summary>
+    /// <param name="ParkingSessionId">Canonical parking session identifier bound to the authorization.</param>
+    /// <param name="RequestedByUserId">User or actor identifier requesting issuance.</param>
     public sealed record IssueExitAuthorizationRequest(
         Guid ParkingSessionId,
         Guid RequestedByUserId);
 
+    /// <summary>
+    /// HTTP response returned after an exit authorization is successfully issued.
+    /// </summary>
+    /// <param name="ExitAuthorizationId">Canonical identifier of the issued authorization.</param>
+    /// <param name="ParkingSessionId">Canonical parking session identifier bound to the authorization.</param>
+    /// <param name="PaymentAttemptId">Confirmed payment attempt backing the authorization.</param>
+    /// <param name="AuthorizationToken">Single-use authorization token minted for exit control.</param>
+    /// <param name="AuthorizationStatus">Authorization lifecycle status after issuance.</param>
+    /// <param name="IssuedAt">Timestamp at which the authorization was issued.</param>
+    /// <param name="ExpirationTimestamp">Timestamp at which the authorization expires.</param>
     public sealed record IssueExitAuthorizationResponse(
         Guid ExitAuthorizationId,
         Guid ParkingSessionId,

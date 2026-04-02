@@ -23,6 +23,9 @@ namespace ExitPass.CentralPms.IntegrationTests.Shared;
 /// </summary>
 public static class PaymentRoutineTestHelper
 {
+    /// <summary>
+    /// Calls the canonical DB routine to create or reuse a payment attempt for the supplied test context.
+    /// </summary>
     public static async Task<CreateAttemptResult> CreateAttemptAsync(
         string connectionString,
         PaymentTestContext context,
@@ -74,6 +77,9 @@ public static class PaymentRoutineTestHelper
             PaymentProviderCode: reader.GetString(reader.GetOrdinal("payment_provider_code")));
     }
 
+    /// <summary>
+    /// Calls the canonical DB routine to finalize a payment attempt.
+    /// </summary>
     public static async Task<FinalizeAttemptResult?> FinalizeAttemptAsync(
         string connectionString,
         Guid paymentAttemptId,
@@ -120,6 +126,9 @@ public static class PaymentRoutineTestHelper
             AttemptStatus: reader.GetString(reader.GetOrdinal("attempt_status")));
     }
 
+    /// <summary>
+    /// Calls the canonical DB routine to issue an exit authorization.
+    /// </summary>
     public static async Task<IssueExitAuthorizationResult?> IssueExitAuthorizationAsync(
         string connectionString,
         Guid parkingSessionId,
@@ -176,6 +185,9 @@ public static class PaymentRoutineTestHelper
             ExpirationTimestamp: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("expiration_timestamp")));
     }
 
+    /// <summary>
+    /// Calls the canonical DB routine to consume an exit authorization.
+    /// </summary>
     public static async Task<ConsumeExitAuthorizationResult?> ConsumeExitAuthorizationAsync(
         string connectionString,
         Guid exitAuthorizationId,
@@ -221,6 +233,9 @@ public static class PaymentRoutineTestHelper
             ConsumedAt: ReadDateTimeOffsetNullable(reader, "consumed_at"));
     }
 
+    /// <summary>
+    /// Reads the current persisted payment-attempt row by identifier.
+    /// </summary>
     public static async Task<PaymentAttemptRow?> GetPaymentAttemptAsync(
         string connectionString,
         Guid paymentAttemptId)
@@ -267,6 +282,9 @@ public static class PaymentRoutineTestHelper
             FinalizedAt: ReadDateTimeOffsetNullable(reader, "finalized_at"));
     }
 
+    /// <summary>
+    /// Reads the current persisted exit-authorization row by identifier.
+    /// </summary>
     public static async Task<ExitAuthorizationRow?> GetExitAuthorizationByIdAsync(
         string connectionString,
         Guid exitAuthorizationId)
@@ -317,6 +335,9 @@ public static class PaymentRoutineTestHelper
             ConsumedAt: ReadDateTimeOffsetNullable(reader, "consumed_at"));
     }
 
+    /// <summary>
+    /// Forces an issued exit authorization into an expired state for negative-path testing.
+    /// </summary>
     public static async Task ExpireAuthorizationAsync(
         string connectionString,
         Guid exitAuthorizationId,
@@ -347,6 +368,9 @@ public static class PaymentRoutineTestHelper
         await command.ExecuteNonQueryAsync();
     }
 
+    /// <summary>
+    /// Reads a nullable timestamp column as a nullable <see cref="DateTimeOffset"/>.
+    /// </summary>
     public static DateTimeOffset? ReadDateTimeOffsetNullable(NpgsqlDataReader reader, string columnName)
     {
         var ordinal = reader.GetOrdinal(columnName);
@@ -358,6 +382,14 @@ public static class PaymentRoutineTestHelper
         return reader.GetFieldValue<DateTimeOffset>(ordinal);
     }
 
+    /// <summary>
+    /// Result returned from the create-or-reuse payment-attempt DB routine.
+    /// </summary>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="ParkingSessionId">Canonical parking-session identifier.</param>
+    /// <param name="TariffSnapshotId">Canonical tariff-snapshot identifier.</param>
+    /// <param name="AttemptStatus">Current payment-attempt status.</param>
+    /// <param name="PaymentProviderCode">Bound payment provider code.</param>
     public sealed record CreateAttemptResult(
         Guid PaymentAttemptId,
         Guid ParkingSessionId,
@@ -365,10 +397,25 @@ public static class PaymentRoutineTestHelper
         string AttemptStatus,
         string PaymentProviderCode);
 
+    /// <summary>
+    /// Result returned from the finalize-payment-attempt DB routine.
+    /// </summary>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="AttemptStatus">Current payment-attempt status after finalization.</param>
     public sealed record FinalizeAttemptResult(
         Guid PaymentAttemptId,
         string AttemptStatus);
 
+    /// <summary>
+    /// Result returned from the issue-exit-authorization DB routine.
+    /// </summary>
+    /// <param name="ExitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <param name="ParkingSessionId">Canonical parking-session identifier.</param>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="AuthorizationToken">Single-use authorization token.</param>
+    /// <param name="AuthorizationStatus">Authorization status after issuance.</param>
+    /// <param name="IssuedAt">Authorization issue timestamp.</param>
+    /// <param name="ExpirationTimestamp">Authorization expiration timestamp.</param>
     public sealed record IssueExitAuthorizationResult(
         Guid ExitAuthorizationId,
         Guid ParkingSessionId,
@@ -378,11 +425,29 @@ public static class PaymentRoutineTestHelper
         DateTimeOffset IssuedAt,
         DateTimeOffset ExpirationTimestamp);
 
+    /// <summary>
+    /// Result returned from the consume-exit-authorization DB routine.
+    /// </summary>
+    /// <param name="ExitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <param name="AuthorizationStatus">Authorization status after consumption.</param>
+    /// <param name="ConsumedAt">Authorization consumed timestamp, when present.</param>
     public sealed record ConsumeExitAuthorizationResult(
         Guid ExitAuthorizationId,
         string AuthorizationStatus,
         DateTimeOffset? ConsumedAt);
 
+    /// <summary>
+    /// Projection of a persisted payment-attempt row used by integration tests.
+    /// </summary>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="ParkingSessionId">Canonical parking-session identifier.</param>
+    /// <param name="TariffSnapshotId">Canonical tariff-snapshot identifier.</param>
+    /// <param name="PaymentProviderCode">Bound payment provider code.</param>
+    /// <param name="IdempotencyKey">Persisted idempotency key.</param>
+    /// <param name="AttemptStatus">Current payment-attempt status.</param>
+    /// <param name="CreatedAt">Row creation timestamp.</param>
+    /// <param name="UpdatedAt">Last row update timestamp.</param>
+    /// <param name="FinalizedAt">Terminal-finalization timestamp, when present.</param>
     public sealed record PaymentAttemptRow(
         Guid PaymentAttemptId,
         Guid ParkingSessionId,
@@ -394,6 +459,20 @@ public static class PaymentRoutineTestHelper
         DateTimeOffset UpdatedAt,
         DateTimeOffset? FinalizedAt);
 
+    /// <summary>
+    /// Projection of a persisted exit-authorization row used by integration tests.
+    /// </summary>
+    /// <param name="ExitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <param name="ParkingSessionId">Canonical parking-session identifier.</param>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="AuthorizationToken">Single-use authorization token.</param>
+    /// <param name="AuthorizationStatus">Current authorization status.</param>
+    /// <param name="IssuedAt">Authorization issue timestamp.</param>
+    /// <param name="ExpirationTimestamp">Authorization expiration timestamp.</param>
+    /// <param name="InvalidatedAt">Authorization invalidation timestamp, when present.</param>
+    /// <param name="UpdatedAt">Last row update timestamp.</param>
+    /// <param name="UpdatedBy">Actor who last updated the row.</param>
+    /// <param name="ConsumedAt">Authorization consumed timestamp, when present.</param>
     public sealed record ExitAuthorizationRow(
         Guid ExitAuthorizationId,
         Guid ParkingSessionId,

@@ -24,6 +24,10 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
     private const string IntegrationDbEnvVar = "EXITPASS_INTEGRATION_DB";
     private const string MainDatabaseConfigEnvVar = "ConnectionStrings__MainDatabase";
 
+    /// <summary>
+    /// Configures the in-memory API host for integration testing.
+    /// </summary>
+    /// <param name="builder">Web host builder used to compose the test host.</param>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         var integrationDbConnectionString =
@@ -32,7 +36,6 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 $"Missing environment variable '{IntegrationDbEnvVar}'. " +
                 "Point it at the ExitPass integration database.");
 
-        // This is the important part.
         // Program.cs reads configuration during startup, and default config already includes env vars.
         Environment.SetEnvironmentVariable(MainDatabaseConfigEnvVar, integrationDbConnectionString);
 

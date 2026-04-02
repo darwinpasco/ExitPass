@@ -22,6 +22,9 @@ public sealed record PaymentTestContext(
     string SiteId,
     string VendorSystemCode)
 {
+    /// <summary>
+    /// Creates a unique per-test data context for the supplied scenario.
+    /// </summary>
     public static PaymentTestContext Create(string scenarioName)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();

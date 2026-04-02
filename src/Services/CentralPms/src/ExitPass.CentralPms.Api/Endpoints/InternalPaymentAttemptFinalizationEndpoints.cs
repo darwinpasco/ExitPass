@@ -6,6 +6,8 @@ using Npgsql;
 namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
+/// Internal endpoints for finalizing payment attempts after verified provider outcome.
+///
 /// BRD:
 /// - 9.10 Payment Processing and Confirmation
 /// - 9.12 Exit Authorization
@@ -22,6 +24,11 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class InternalPaymentAttemptFinalizationEndpoints
 {
+    /// <summary>
+    /// Maps the internal endpoint for finalizing payment attempts.
+    /// </summary>
+    /// <param name="app">Route builder used to register the endpoint.</param>
+    /// <returns>The same route builder for fluent configuration.</returns>
     public static IEndpointRouteBuilder MapInternalPaymentAttemptFinalizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payment-attempts")

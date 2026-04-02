@@ -4,6 +4,8 @@ using Npgsql;
 namespace ExitPass.CentralPms.Infrastructure.Payments;
 
 /// <summary>
+/// Infrastructure gateway that consumes exit authorizations through the canonical database routine.
+///
 /// BRD:
 /// - 9.12 Exit Authorization
 /// - 10.7.7 Exit Token Integrity Invariant
@@ -20,11 +22,21 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
 {
     private readonly string _connectionString;
 
+    /// <summary>
+    /// Creates a gateway for consuming exit authorizations against the primary database.
+    /// </summary>
+    /// <param name="connectionString">Database connection string for Central PMS persistence.</param>
     public ConsumeExitAuthorizationGateway(string connectionString)
     {
         _connectionString = connectionString;
     }
 
+    /// <summary>
+    /// Consumes an exit authorization by calling the canonical database routine.
+    /// </summary>
+    /// <param name="request">Consume request metadata and identifiers.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The DB-authoritative consume result.</returns>
     public async Task<ConsumeExitAuthorizationDbResult> ConsumeAsync(
         ConsumeExitAuthorizationDbRequest request,
         CancellationToken cancellationToken)

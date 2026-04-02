@@ -24,6 +24,11 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
     private readonly IConsumeExitAuthorizationGateway _gateway;
     private readonly ISystemClock _systemClock;
 
+    /// <summary>
+    /// Creates a handler for consuming exit authorizations through the canonical DB routine.
+    /// </summary>
+    /// <param name="gateway">DB-backed consume gateway.</param>
+    /// <param name="systemClock">System clock used for canonical request timestamps.</param>
     public ConsumeExitAuthorizationHandler(
         IConsumeExitAuthorizationGateway gateway,
         ISystemClock systemClock)
@@ -32,6 +37,12 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         _systemClock = systemClock;
     }
 
+    /// <summary>
+    /// Consumes an exit authorization after validating command completeness.
+    /// </summary>
+    /// <param name="command">Consumption command containing identifiers and trace metadata.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The DB-authoritative consume result mapped into the application model.</returns>
     public async Task<ConsumeExitAuthorizationResult> ExecuteAsync(
         ConsumeExitAuthorizationCommand command,
         CancellationToken cancellationToken)
