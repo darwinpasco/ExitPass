@@ -1,6 +1,15 @@
-// BRD requirement implemented: Platform operability baseline for service availability and health visibility.
-// SDD section correspondence: Runtime services, deployment topology, and observability baseline.
-// System invariant enforced: A service must expose machine-readable liveness and readiness endpoints.
+// BRD requirement implemented: Platform operability baseline for service availability, health visibility,
+// and observability export to the centralized telemetry pipeline.
+//
+// SDD section correspondence:
+// - Runtime services
+// - Deployment topology
+// - Observability baseline
+//
+// System invariant enforced:
+// - A service must expose machine-readable liveness and readiness endpoints.
+// - Telemetry emission must not change business behavior.
+// - Service HTTP activity must be exportable to the platform observability pipeline.
 
 using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Validation;
@@ -15,6 +24,9 @@ using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +41,8 @@ var mainDatabaseConnectionString =
     builder.Configuration.GetConnectionString("MainDatabase")
     ?? throw new InvalidOperationException("Connection string 'MainDatabase' is missing.");
 
+var otlpEndpoint = builder.Configuration["Observability:Otlp:Endpoint"];
+
 // BRD:
 // - 9.9 Payment Initiation
 // - 18.3 Payment Initiation
@@ -41,7 +55,6 @@ var mainDatabaseConnectionString =
 // - Central PMS owns PaymentAttempt creation and reuse
 // - PaymentAttempt creation must go through the DB-backed control path
 // - TariffSnapshot eligibility must be validated before PaymentAttempt creation
-
 builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
 builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
 builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
@@ -67,17 +80,65 @@ builder.Services.AddScoped<IPaymentAttemptDbRoutineGateway>(_ =>
 // - Only Central PMS may persist canonical PaymentConfirmation records
 // - Only Central PMS may finalize PaymentAttempt state
 // - Payment confirmation persistence must use the canonical Central PMS database path
-
 builder.Services.AddScoped<IRecordPaymentConfirmationGateway>(_ =>
     new RecordPaymentConfirmationGateway(mainDatabaseConnectionString));
 
 builder.Services.AddScoped<RecordPaymentConfirmationService>();
+
+builder.Services.AddScoped<IFinalizePaymentAttemptUseCase, FinalizePaymentAttemptHandler>();
+
+builder.Services.AddScoped<IFinalizePaymentAttemptGateway>(_ =>
+    new FinalizePaymentAttemptGateway(mainDatabaseConnectionString));
 
 builder.Services.AddSingleton<ISystemClock, SystemClock>();
 
 builder.Services
     .AddHealthChecks()
     .AddCheck("self", () => HealthCheckResult.Healthy("Central PMS Service is alive."));
+
+// BRD:
+// - 9.16 Monitoring and Administration
+//
+// SDD:
+// - 14 Observability
+//
+// Invariants Enforced:
+// - Telemetry export is passive and must not alter domain behavior
+// - Service ingress activity must remain observable at the platform level
+builder.Services
+    .AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: "ExitPass.CentralPms.Api",
+        serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0"))
+    .WithTracing(tracing =>
+    {
+        tracing
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation();
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            tracing.AddOtlpExporter(options =>
+            {
+                options.Endpoint = new Uri(otlpEndpoint);
+            });
+        }
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddRuntimeInstrumentation();
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            metrics.AddOtlpExporter(options =>
+            {
+                options.Endpoint = new Uri(otlpEndpoint);
+            });
+        }
+    });
 
 var app = builder.Build();
 
@@ -92,7 +153,6 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Secur
 }
 
 app.UseRouting();
-
 app.UseAuthorization();
 
 app.MapControllers();
@@ -108,6 +168,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 });
 
 app.MapInternalPaymentConfirmationEndpoints();
+app.MapInternalPaymentAttemptFinalizationEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {

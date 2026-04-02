@@ -72,23 +72,33 @@ services:
       retries: 8
       start_period: 20s
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: exitpass-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4319:4317"
+    networks:
+      - app-net
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
     container_name: exitpass-otel-collector
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    depends_on:
+      jaeger:
+        condition: service_started
     volumes:
       - ../observability/otel-collector.config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "4317:4317"
       - "4318:4318"
+      - "13133:13133"
+      - "8888:8888"
     networks:
       - app-net
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:13133 || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
 
   db-migrator:
     build:
