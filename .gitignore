@@ -12,3 +12,4 @@ artifacts/
 /logs/dotnet-all.txt
 /logs/dotnet-all.txt
 /logs/dotnet-test.txt
+/infra/docker/clean
