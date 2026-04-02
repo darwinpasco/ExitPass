@@ -23,7 +23,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// - API shape matches the currently published public contract
 /// - Required request headers are present at the HTTP boundary
 /// </summary>
-public sealed class PaymentToExitFlowApiIntegrationTests
+public sealed class CreatePaymentAttemptPublicApiIntegrationTests
 {
     private const string PrimaryDbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
     private const string AlternateDbConnectionStringEnvVar = "EXITPASS_TEST_DB_CONNECTION_STRING";
