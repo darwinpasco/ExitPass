@@ -5,6 +5,8 @@ using Npgsql;
 namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
+/// Gate-facing endpoints for consuming issued exit authorizations.
+///
 /// BRD:
 /// - 9.12 Exit Authorization
 /// - 9.13 Timeout, Retry, and Duplicate Handling
@@ -20,6 +22,11 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class GateExitAuthorizationConsumeEndpoints
 {
+    /// <summary>
+    /// Maps the gate-facing consume endpoint for exit authorizations.
+    /// </summary>
+    /// <param name="app">Route builder used to register the endpoint.</param>
+    /// <returns>The same route builder for fluent configuration.</returns>
     public static IEndpointRouteBuilder MapGateExitAuthorizationConsumeEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/gate/authorizations")
@@ -133,9 +140,19 @@ public static class GateExitAuthorizationConsumeEndpoints
         };
     }
 
+    /// <summary>
+    /// HTTP request body for consuming an exit authorization.
+    /// </summary>
+    /// <param name="RequestedByUserId">User or actor identifier requesting consume.</param>
     public sealed record ConsumeExitAuthorizationRequest(
         Guid RequestedByUserId);
 
+    /// <summary>
+    /// HTTP response returned after an exit authorization is successfully consumed.
+    /// </summary>
+    /// <param name="ExitAuthorizationId">Canonical identifier of the consumed authorization.</param>
+    /// <param name="AuthorizationStatus">Authorization status after consumption.</param>
+    /// <param name="ConsumedAt">Timestamp at which the authorization was consumed.</param>
     public sealed record ConsumeExitAuthorizationResponse(
         Guid ExitAuthorizationId,
         string AuthorizationStatus,

@@ -213,6 +213,20 @@ app.MapGet("/", () => Results.Ok(new
 
 app.Run();
 
+/// <summary>
+/// Program entry point marker used for integration testing and web application factory discovery.
+///
+/// BRD:
+/// - 9.16 Monitoring and Administration
+///
+/// SDD:
+/// - Runtime services
+/// - Deployment topology
+///
+/// Invariants Enforced:
+/// - API host remains discoverable by integration test infrastructure
+/// - Host composition is centralized in a single application entry point
+/// </summary>
 public partial class Program
 {
 }

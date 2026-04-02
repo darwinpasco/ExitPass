@@ -30,6 +30,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
 
     private readonly HttpClient _client;
 
+    /// <summary>
+    /// Creates the issue-authorization API integration test fixture.
+    /// </summary>
     public IssueExitAuthorizationApiIntegrationTests(CustomWebApplicationFactory factory)
     {
         _client = factory.CreateClient();
@@ -41,6 +44,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
             $"Missing environment variable '{ConnectionStringEnvVar}'. " +
             "Point it at the ExitPass integration database.");
 
+    /// <summary>
+    /// Verifies that issuance succeeds for a confirmed payment attempt.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenPaymentAttemptIsConfirmed_ReturnsOk()
     {
@@ -96,6 +102,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that the endpoint rejects requests without a correlation header.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenCorrelationHeaderIsMissing_ReturnsBadRequest()
     {
@@ -121,6 +130,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
         Assert.Contains("X-Correlation-Id", body.Message);
     }
 
+    /// <summary>
+    /// Verifies that the endpoint rejects requests without an idempotency key.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenIdempotencyKeyIsMissing_ReturnsBadRequest()
     {
@@ -146,6 +158,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
         Assert.Contains("Idempotency-Key", body.Message);
     }
 
+    /// <summary>
+    /// Verifies that issuance returns not found for a non-existent payment attempt.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenPaymentAttemptDoesNotExist_ReturnsNotFound()
     {
@@ -173,6 +188,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
         Assert.Equal(correlationId, body.CorrelationId);
     }
 
+    /// <summary>
+    /// Verifies that issuance returns conflict when the payment attempt is not yet confirmed.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenPaymentAttemptIsNotConfirmed_ReturnsConflict()
     {
@@ -218,6 +236,9 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that the endpoint rejects requests with an empty parking-session identifier in the body.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenBodyContainsEmptyParkingSessionId_ReturnsBadRequest()
     {

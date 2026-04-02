@@ -15,6 +15,12 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// </summary>
 public interface IConsumeExitAuthorizationUseCase
 {
+    /// <summary>
+    /// Consumes an exit authorization through the Central PMS application boundary.
+    /// </summary>
+    /// <param name="command">Consumption command containing identifiers and trace metadata.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The application-level consume result.</returns>
     Task<ConsumeExitAuthorizationResult> ExecuteAsync(
         ConsumeExitAuthorizationCommand command,
         CancellationToken cancellationToken);

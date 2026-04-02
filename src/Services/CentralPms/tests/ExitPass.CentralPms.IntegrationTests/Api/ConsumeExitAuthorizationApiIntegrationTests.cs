@@ -31,6 +31,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
 
     private readonly HttpClient _client;
 
+    /// <summary>
+    /// Creates the consume-authorization API integration test fixture.
+    /// </summary>
     public ConsumeExitAuthorizationApiIntegrationTests(CustomWebApplicationFactory factory)
     {
         _client = factory.CreateClient();
@@ -42,6 +45,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             $"Missing environment variable '{ConnectionStringEnvVar}'. " +
             "Point it at the ExitPass integration database.");
 
+    /// <summary>
+    /// Verifies that a valid issued authorization can be consumed successfully.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationIsValid_ReturnsOk()
     {
@@ -84,6 +90,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that the endpoint rejects requests without a correlation header.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenCorrelationHeaderIsMissing_ReturnsBadRequest()
     {
@@ -106,6 +115,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         Assert.Contains("X-Correlation-Id", body.Message);
     }
 
+    /// <summary>
+    /// Verifies that the endpoint rejects requests with an empty requesting-user identifier.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenRequestedByUserIdIsEmpty_ReturnsBadRequest()
     {
@@ -131,6 +143,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         Assert.Contains("RequestedByUserId", body.Message);
     }
 
+    /// <summary>
+    /// Verifies that consume returns not found for a non-existent authorization identifier.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationDoesNotExist_ReturnsNotFound()
     {
@@ -156,6 +171,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         Assert.Equal(correlationId, body.CorrelationId);
     }
 
+    /// <summary>
+    /// Verifies that replaying consume for an already consumed authorization returns conflict.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationIsAlreadyConsumed_ReturnsConflict()
     {
@@ -201,6 +219,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that consume returns conflict for an expired authorization.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationIsExpired_ReturnsConflict()
     {

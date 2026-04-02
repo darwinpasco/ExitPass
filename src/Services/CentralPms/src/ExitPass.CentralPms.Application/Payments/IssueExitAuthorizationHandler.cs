@@ -25,6 +25,11 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     private readonly IIssueExitAuthorizationGateway _gateway;
     private readonly ISystemClock _systemClock;
 
+    /// <summary>
+    /// Creates a handler for issuing exit authorizations through the canonical DB routine.
+    /// </summary>
+    /// <param name="gateway">DB-backed issuance gateway.</param>
+    /// <param name="systemClock">System clock used for canonical request timestamps.</param>
     public IssueExitAuthorizationHandler(
         IIssueExitAuthorizationGateway gateway,
         ISystemClock systemClock)
@@ -33,6 +38,12 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         _systemClock = systemClock;
     }
 
+    /// <summary>
+    /// Issues an exit authorization after validating command completeness.
+    /// </summary>
+    /// <param name="command">Issuance command containing identifiers and trace metadata.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The DB-authoritative issuance result mapped into the application model.</returns>
     public async Task<IssueExitAuthorizationResult> ExecuteAsync(
         IssueExitAuthorizationCommand command,
         CancellationToken cancellationToken)
