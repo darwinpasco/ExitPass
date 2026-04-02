@@ -4,8 +4,15 @@
   </PropertyGroup>
   <ItemGroup>
       <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+      <PackageReference Include="Npgsql" />
+      <PackageReference Include="OpenTelemetry" />
       <PackageReference Include="Swashbuckle.AspNetCore" />
-  </ItemGroup>
+      <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+      <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+      <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+      <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+      <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../ExitPass.CentralPms.Application/ExitPass.CentralPms.Application.csproj" />
     <ProjectReference Include="../ExitPass.CentralPms.Infrastructure/ExitPass.CentralPms.Infrastructure.csproj" />

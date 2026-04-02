@@ -23,5 +23,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/ExitPass.PaymentOrchestrator.Api/ExitPass.PaymentOrchestrator.Api.csproj" />
     <ProjectReference Include="../../src/ExitPass.PaymentOrchestrator.Contracts/ExitPass.PaymentOrchestrator.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\ExitPass.PaymentOrchestrator.Domain\ExitPass.PaymentOrchestrator.Domain.csproj" />
   </ItemGroup>
 </Project>

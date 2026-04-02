@@ -3,9 +3,13 @@
     <RootNamespace>ExitPass.SessionService.Api</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-      <PackageReference Include="Microsoft.AspNetCore.OpenApi"/>
-      <PackageReference Include="Swashbuckle.AspNetCore"/>
-  </ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../ExitPass.SessionService.Application/ExitPass.SessionService.Application.csproj" />
     <ProjectReference Include="../ExitPass.SessionService.Infrastructure/ExitPass.SessionService.Infrastructure.csproj" />
