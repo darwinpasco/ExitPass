@@ -90,6 +90,23 @@ builder.Services.AddScoped<IFinalizePaymentAttemptUseCase, FinalizePaymentAttemp
 builder.Services.AddScoped<IFinalizePaymentAttemptGateway>(_ =>
     new FinalizePaymentAttemptGateway(mainDatabaseConnectionString));
 
+// BRD:
+// - 9.12 Exit Authorization
+// - 9.13 Timeout, Retry, and Duplicate Handling
+//
+// SDD:
+// - 6.5 Issue Exit Authorization
+// - 10.6 Internal Service APIs
+//
+// Invariants Enforced:
+// - Only Central PMS may issue ExitAuthorization
+// - ExitAuthorization issuance must use the canonical DB-backed control path
+// - ExitAuthorization may only be issued from confirmed payment finality
+builder.Services.AddScoped<IIssueExitAuthorizationUseCase, IssueExitAuthorizationHandler>();
+
+builder.Services.AddScoped<IIssueExitAuthorizationGateway>(_ =>
+    new IssueExitAuthorizationGateway(mainDatabaseConnectionString));
+
 builder.Services.AddSingleton<ISystemClock, SystemClock>();
 
 builder.Services
@@ -169,6 +186,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 
 app.MapInternalPaymentConfirmationEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
+app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
