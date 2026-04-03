@@ -1,5 +1,8 @@
+using System.Diagnostics;
 using ExitPass.CentralPms.Application.Payments;
+using Microsoft.Extensions.Logging;
 using Npgsql;
+using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Infrastructure.Payments;
 
@@ -13,6 +16,8 @@ namespace ExitPass.CentralPms.Infrastructure.Payments;
 /// SDD:
 /// - 6.6 Consume Exit Authorization
 /// - 9.7 Recommended Database Functions
+/// - 14.3 Distributed Tracing
+/// - 14.4 Structured Logging
 ///
 /// Invariants Enforced:
 /// - ExitAuthorization is consumed only through the canonical DB routine
@@ -20,15 +25,26 @@ namespace ExitPass.CentralPms.Infrastructure.Payments;
 /// </summary>
 public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationGateway
 {
+    /// <summary>
+    /// Activity source for payment infrastructure spans.
+    /// </summary>
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.CentralPms.Infrastructure.Payments");
+
     private readonly string _connectionString;
+    private readonly ILogger<ConsumeExitAuthorizationGateway> _logger;
 
     /// <summary>
     /// Creates a gateway for consuming exit authorizations against the primary database.
     /// </summary>
     /// <param name="connectionString">Database connection string for Central PMS persistence.</param>
-    public ConsumeExitAuthorizationGateway(string connectionString)
+    /// <param name="logger">Application logger.</param>
+    public ConsumeExitAuthorizationGateway(
+        string connectionString,
+        ILogger<ConsumeExitAuthorizationGateway> logger)
     {
         _connectionString = connectionString;
+        _logger = logger;
     }
 
     /// <summary>
@@ -54,29 +70,81 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
             );
             """;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
+        using var activity = ActivitySource.StartActivity("DB ConsumeExitAuthorization", ActivityKind.Client);
 
-        await using var dbCommand = new NpgsqlCommand(sql, connection)
+        activity?.SetTag("db.system", "postgresql");
+        activity?.SetTag("db.operation", "consume_exit_authorization");
+        activity?.SetTag("db.statement.name", "core.consume_exit_authorization");
+        activity?.SetTag("exit_authorization_id", request.ExitAuthorizationId);
+        activity?.SetTag("requested_by_user_id", request.RequestedByUserId);
+        activity?.SetTag("correlation_id", request.CorrelationId);
+
+        using var scope = _logger.BeginScope(new Dictionary<string, object?>
         {
-            CommandTimeout = 30
-        };
+            ["exit_authorization_id"] = request.ExitAuthorizationId,
+            ["requested_by_user_id"] = request.RequestedByUserId,
+            ["correlation_id"] = request.CorrelationId
+        });
 
-        dbCommand.Parameters.AddWithValue("p_exit_authorization_id", request.ExitAuthorizationId);
-        dbCommand.Parameters.AddWithValue("p_requested_by", request.RequestedByUserId);
-        dbCommand.Parameters.AddWithValue("p_correlation_id", request.CorrelationId);
-        dbCommand.Parameters.AddWithValue("p_now", request.RequestedAt);
+        _logger.LogInformation("DB ConsumeExitAuthorization started.");
 
-        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        var startedAt = DateTimeOffset.UtcNow;
 
-        if (!await reader.ReadAsync(cancellationToken))
+        try
         {
-            throw new InvalidOperationException("consume_exit_authorization() returned no rows.");
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+
+            await using var dbCommand = new NpgsqlCommand(sql, connection)
+            {
+                CommandTimeout = 30
+            };
+
+            dbCommand.Parameters.AddWithValue("p_exit_authorization_id", request.ExitAuthorizationId);
+            dbCommand.Parameters.AddWithValue("p_requested_by", request.RequestedByUserId);
+            dbCommand.Parameters.AddWithValue("p_correlation_id", request.CorrelationId);
+            dbCommand.Parameters.AddWithValue("p_now", request.RequestedAt);
+
+            await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new InvalidOperationException("consume_exit_authorization() returned no rows.");
+            }
+
+            var result = new ConsumeExitAuthorizationDbResult(
+                ExitAuthorizationId: reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
+                AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
+                ConsumedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at")));
+
+            var duration = DateTimeOffset.UtcNow - startedAt;
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
+            activity?.SetTag("authorization_status", result.AuthorizationStatus);
+            activity?.SetTag("consumed_at", result.ConsumedAt);
+
+            _logger.LogInformation(
+                "DB ConsumeExitAuthorization succeeded. exit_authorization_id={ExitAuthorizationId} authorization_status={AuthorizationStatus}",
+                result.ExitAuthorizationId,
+                result.AuthorizationStatus);
+
+            return result;
         }
+        catch (Exception ex)
+        {
+            var duration = DateTimeOffset.UtcNow - startedAt;
 
-        return new ConsumeExitAuthorizationDbResult(
-            ExitAuthorizationId: reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
-            AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
-            ConsumedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at")));
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
+
+            _logger.LogError(
+                ex,
+                "DB ConsumeExitAuthorization failed. exit_authorization_id={ExitAuthorizationId}",
+                request.ExitAuthorizationId);
+
+            throw;
+        }
     }
 }

@@ -181,6 +181,10 @@ public sealed class CreatePaymentAttemptPublicApiIntegrationTests
             Assert.NotEqual(Guid.Empty, second!.PaymentAttemptId);
             Assert.False(string.IsNullOrWhiteSpace(first.AttemptStatus));
             Assert.False(string.IsNullOrWhiteSpace(second.AttemptStatus));
+
+            Assert.Equal(first.PaymentAttemptId, second.PaymentAttemptId);
+            Assert.False(first.WasReused);
+            Assert.True(second.WasReused);
         }
         finally
         {

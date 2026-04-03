@@ -3,6 +3,10 @@
     <RootNamespace>ExitPass.PaymentOrchestrator.Application</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="NSubstitute" />
+    <PackageReference Include="xunit" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../ExitPass.PaymentOrchestrator.Domain/ExitPass.PaymentOrchestrator.Domain.csproj" />
     <ProjectReference Include="../ExitPass.PaymentOrchestrator.Contracts/ExitPass.PaymentOrchestrator.Contracts.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Application/ExitPass.BuildingBlocks.Application.csproj" />

@@ -88,6 +88,10 @@ public sealed class RecordPaymentConfirmationApiIntegrationTests : IAsyncLifetim
         Assert.NotNull(body);
         Assert.Equal(seed.PaymentAttemptId, body!.PaymentAttemptId);
         Assert.NotEqual(Guid.Empty, body.PaymentConfirmationId);
+        Assert.Equal(request.ProviderReference, body.ProviderReference);
+        Assert.Equal("SUCCESS", body.ProviderStatus);
+        Assert.False(string.IsNullOrWhiteSpace(body.ConfirmationStatus));
+        Assert.True(body.VerifiedTimestamp > DateTimeOffset.MinValue);
     }
 
     [Fact]
@@ -429,8 +433,11 @@ public sealed class RecordPaymentConfirmationApiIntegrationTests : IAsyncLifetim
 
     private sealed class RecordPaymentOutcomeResponse
     {
-        public Guid PaymentAttemptId { get; set; }
         public Guid PaymentConfirmationId { get; set; }
-        public string AttemptStatus { get; set; } = string.Empty;
+        public Guid PaymentAttemptId { get; set; }
+        public string ProviderReference { get; set; } = string.Empty;
+        public string ProviderStatus { get; set; } = string.Empty;
+        public string ConfirmationStatus { get; set; } = string.Empty;
+        public DateTimeOffset VerifiedTimestamp { get; set; }
     }
 }

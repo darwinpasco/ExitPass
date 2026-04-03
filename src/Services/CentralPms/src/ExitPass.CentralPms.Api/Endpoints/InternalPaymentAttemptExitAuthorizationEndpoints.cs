@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
@@ -14,6 +16,8 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// SDD:
 /// - 6.5 Issue Exit Authorization
 /// - 10.6 Internal Service APIs
+/// - 14.3 Distributed Tracing
+/// - 14.4 Structured Logging
 ///
 /// Invariants Enforced:
 /// - Only Central PMS may issue ExitAuthorization
@@ -22,11 +26,12 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class InternalPaymentAttemptExitAuthorizationEndpoints
 {
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.CentralPms.Api");
+
     /// <summary>
     /// Maps the internal endpoint for issuing exit authorizations from payment attempts.
     /// </summary>
-    /// <param name="app">Route builder used to register the endpoint.</param>
-    /// <returns>The same route builder for fluent configuration.</returns>
     public static IEndpointRouteBuilder MapInternalPaymentAttemptExitAuthorizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payment-attempts")
@@ -42,112 +47,112 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
         return app;
     }
 
+    /// <summary>
+    /// Handles issuance of exit authorization from a confirmed payment attempt.
+    /// </summary>
     private static async Task<IResult> HandleAsync(
         Guid paymentAttemptId,
         HttpRequest request,
         IssueExitAuthorizationRequest body,
         IIssueExitAuthorizationUseCase useCase,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
+        var logger = loggerFactory.CreateLogger("ExitAuthorizationEndpoint");
+
+        using var activity = ActivitySource.StartActivity("HTTP IssueExitAuthorization", ActivityKind.Server);
+
+        activity?.SetTag("http.route", "/v1/internal/payment-attempts/{paymentAttemptId}/issue-exit-authorization");
+        activity?.SetTag("payment_attempt_id", paymentAttemptId);
+
+        var start = DateTimeOffset.UtcNow;
+
         if (!request.Headers.TryGetValue("X-Correlation-Id", out var correlationHeader) ||
             !Guid.TryParse(correlationHeader.ToString(), out var correlationId))
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: "X-Correlation-Id header is required.",
-                correlationId: Guid.Empty));
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "X-Correlation-Id header is required.", Guid.Empty));
         }
 
-        if (!request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) ||
-            string.IsNullOrWhiteSpace(idempotencyHeader.ToString()))
+        using var scope = logger.BeginScope(new Dictionary<string, object?>
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: "Idempotency-Key header is required.",
-                correlationId: correlationId));
+            ["correlation_id"] = correlationId,
+            ["payment_attempt_id"] = paymentAttemptId
+        });
+
+        activity?.SetTag("correlation_id", correlationId);
+
+        logger.LogInformation("HTTP IssueExitAuthorization request received.");
+
+        if (!request.Headers.TryGetValue("Idempotency-Key", out var idempotencyHeader) ||
+            string.IsNullOrWhiteSpace(idempotencyHeader))
+        {
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "Idempotency-Key header is required.", correlationId));
         }
 
         if (paymentAttemptId == Guid.Empty)
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: "paymentAttemptId is required.",
-                correlationId: correlationId));
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "paymentAttemptId is required.", correlationId));
         }
 
         try
         {
             var result = await useCase.ExecuteAsync(
                 new IssueExitAuthorizationCommand(
-                    ParkingSessionId: body.ParkingSessionId,
-                    PaymentAttemptId: paymentAttemptId,
-                    RequestedByUserId: body.RequestedByUserId,
-                    CorrelationId: correlationId),
+                    body.ParkingSessionId,
+                    paymentAttemptId,
+                    body.RequestedByUserId,
+                    correlationId),
                 cancellationToken);
 
-            return Results.Ok(
-                new IssueExitAuthorizationResponse(
-                    ExitAuthorizationId: result.ExitAuthorizationId,
-                    ParkingSessionId: result.ParkingSessionId,
-                    PaymentAttemptId: result.PaymentAttemptId,
-                    AuthorizationToken: result.AuthorizationToken,
-                    AuthorizationStatus: result.AuthorizationStatus,
-                    IssuedAt: result.IssuedAt,
-                    ExpirationTimestamp: result.ExpirationTimestamp));
+            var duration = DateTimeOffset.UtcNow - start;
+
+            activity?.SetTag("exit_authorization_id", result.ExitAuthorizationId);
+            activity?.SetTag("duration_ms", duration.TotalMilliseconds);
+
+            logger.LogInformation(
+                "HTTP IssueExitAuthorization succeeded. exit_authorization_id={ExitAuthorizationId}",
+                result.ExitAuthorizationId);
+
+            return Results.Ok(new IssueExitAuthorizationResponse(
+                result.ExitAuthorizationId,
+                result.ParkingSessionId,
+                result.PaymentAttemptId,
+                result.AuthorizationToken,
+                result.AuthorizationStatus,
+                result.IssuedAt,
+                result.ExpirationTimestamp));
         }
         catch (ArgumentException ex)
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: ex.Message,
-                correlationId: correlationId));
+            logger.LogWarning(ex, "Invalid request.");
+            return Results.BadRequest(BuildError("INVALID_REQUEST", ex.Message, correlationId));
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
-            return Results.NotFound(BuildError(
-                errorCode: "PAYMENT_ATTEMPT_NOT_FOUND",
-                message: "Payment attempt was not found.",
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["payment_attempt_id"] = paymentAttemptId
-                }));
+            logger.LogWarning("Payment attempt not found.");
+            return Results.NotFound(BuildError("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt was not found.", correlationId));
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001")
         {
-            return Results.Conflict(BuildError(
-                errorCode: "EXIT_AUTHORIZATION_ISSUANCE_CONFLICT",
-                message: ex.MessageText,
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["payment_attempt_id"] = paymentAttemptId
-                }));
+            logger.LogWarning("Issuance conflict.");
+            return Results.Conflict(BuildError("EXIT_AUTHORIZATION_ISSUANCE_CONFLICT", ex.MessageText, correlationId));
         }
-        catch (Npgsql.PostgresException ex) when (ex.SqlState == "22023")
+        catch (Exception ex)
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: ex.MessageText,
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["payment_attempt_id"] = paymentAttemptId
-                }));
-        }
-        catch (InvalidOperationException ex)
-        {
+            logger.LogError(ex, "Unexpected failure.");
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+
             return Results.Conflict(BuildError(
-                errorCode: "EXIT_AUTHORIZATION_ISSUANCE_FAILED",
-                message: ex.Message,
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["payment_attempt_id"] = paymentAttemptId
-                }));
+                "EXIT_AUTHORIZATION_ISSUANCE_FAILED",
+                "Unexpected error during issuance.",
+                correlationId,
+                retryable: true));
         }
     }
 
+    /// <summary>
+    /// Builds a standardized error response.
+    /// </summary>
     private static ErrorResponse BuildError(
         string errorCode,
         string message,
@@ -166,24 +171,13 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
     }
 
     /// <summary>
-    /// HTTP request body for issuing an exit authorization from a payment attempt.
+    /// HTTP request body for issuing exit authorization.
     /// </summary>
-    /// <param name="ParkingSessionId">Canonical parking session identifier bound to the authorization.</param>
-    /// <param name="RequestedByUserId">User or actor identifier requesting issuance.</param>
-    public sealed record IssueExitAuthorizationRequest(
-        Guid ParkingSessionId,
-        Guid RequestedByUserId);
+    public sealed record IssueExitAuthorizationRequest(Guid ParkingSessionId, Guid RequestedByUserId);
 
     /// <summary>
-    /// HTTP response returned after an exit authorization is successfully issued.
+    /// HTTP response for issued exit authorization.
     /// </summary>
-    /// <param name="ExitAuthorizationId">Canonical identifier of the issued authorization.</param>
-    /// <param name="ParkingSessionId">Canonical parking session identifier bound to the authorization.</param>
-    /// <param name="PaymentAttemptId">Confirmed payment attempt backing the authorization.</param>
-    /// <param name="AuthorizationToken">Single-use authorization token minted for exit control.</param>
-    /// <param name="AuthorizationStatus">Authorization lifecycle status after issuance.</param>
-    /// <param name="IssuedAt">Timestamp at which the authorization was issued.</param>
-    /// <param name="ExpirationTimestamp">Timestamp at which the authorization expires.</param>
     public sealed record IssueExitAuthorizationResponse(
         Guid ExitAuthorizationId,
         Guid ParkingSessionId,

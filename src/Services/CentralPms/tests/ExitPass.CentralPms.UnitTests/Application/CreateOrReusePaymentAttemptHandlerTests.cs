@@ -11,6 +11,7 @@ using ExitPass.CentralPms.Domain.Sessions.Exceptions;
 using ExitPass.CentralPms.Domain.Tariffs;
 using ExitPass.CentralPms.Domain.Tariffs.Exceptions;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -382,7 +383,8 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
                 PaymentAttemptDbRoutineGateway,
                 PaymentAttemptCreationPolicy,
                 ProviderHandoffFactory,
-                SystemClock);
+                SystemClock,
+                NullLogger<CreateOrReusePaymentAttemptHandler>.Instance);
         }
     }
 }

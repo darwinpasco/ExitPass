@@ -188,7 +188,7 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
     }
 
     private static HttpRequestMessage BuildRequestMessage(
-    Guid paymentAttemptId,
+        Guid paymentAttemptId,
         string correlationId,
         string idempotencyKey,
         FinalizePaymentAttemptRequest request)

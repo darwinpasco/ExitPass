@@ -1,5 +1,7 @@
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
+using FluentAssertions.Equivalency;
+using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
 
@@ -45,7 +47,8 @@ public sealed class ConsumeExitAuthorizationHandlerTests
                 AuthorizationStatus: "CONSUMED",
                 ConsumedAt: now));
 
-        var sut = new ConsumeExitAuthorizationHandler(_gateway, _systemClock);
+        var sut = new ConsumeExitAuthorizationHandler(
+                        _gateway,_systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
 
         var result = await sut.ExecuteAsync(
             new ConsumeExitAuthorizationCommand(
@@ -62,7 +65,8 @@ public sealed class ConsumeExitAuthorizationHandlerTests
     [Fact]
     public async Task ExecuteAsync_WhenExitAuthorizationIdIsEmpty_Throws()
     {
-        var sut = new ConsumeExitAuthorizationHandler(_gateway, _systemClock);
+        var sut = new ConsumeExitAuthorizationHandler(
+                        _gateway, _systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             sut.ExecuteAsync(
@@ -78,7 +82,8 @@ public sealed class ConsumeExitAuthorizationHandlerTests
     [Fact]
     public async Task ExecuteAsync_WhenRequestedByUserIdIsEmpty_Throws()
     {
-        var sut = new ConsumeExitAuthorizationHandler(_gateway, _systemClock);
+        var sut = new ConsumeExitAuthorizationHandler(
+                        _gateway, _systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             sut.ExecuteAsync(
@@ -94,7 +99,8 @@ public sealed class ConsumeExitAuthorizationHandlerTests
     [Fact]
     public async Task ExecuteAsync_WhenCorrelationIdIsEmpty_Throws()
     {
-        var sut = new ConsumeExitAuthorizationHandler(_gateway, _systemClock);
+        var sut = new ConsumeExitAuthorizationHandler(
+                        _gateway, _systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             sut.ExecuteAsync(
