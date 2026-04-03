@@ -1,0 +1,101 @@
+using System;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
+using ExitPass.PaymentOrchestrator.Contracts.Internal;
+
+namespace ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
+
+/// <summary>
+/// Creates a provider payment session for an existing canonical PaymentAttempt.
+///
+/// BRD:
+/// - 9.9 Payment Initiation
+/// - 12 Payment Orchestration
+///
+/// SDD:
+/// - 6.3 Initiate Payment Attempt
+/// - 10.5.1 Initiate Provider Payment
+///
+/// Invariants Enforced:
+/// - POA may initiate provider flows but may not finalize PaymentAttempt state.
+/// - Provider session creation must remain traceable to a single PaymentAttempt.
+/// </summary>
+public sealed class InitiateProviderPaymentHandler
+{
+    private readonly IPaymentProviderRegistry _providerRegistry;
+    private readonly IProviderSessionRepository _providerSessionRepository;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="InitiateProviderPaymentHandler"/> class.
+    /// </summary>
+    /// <param name="providerRegistry">The provider adapter registry.</param>
+    /// <param name="providerSessionRepository">The provider session repository.</param>
+    public InitiateProviderPaymentHandler(
+        IPaymentProviderRegistry providerRegistry,
+        IProviderSessionRepository providerSessionRepository)
+    {
+        _providerRegistry = providerRegistry ?? throw new ArgumentNullException(nameof(providerRegistry));
+        _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
+    }
+
+    /// <summary>
+    /// Handles provider session creation for the specified request.
+    /// </summary>
+    /// <param name="request">The internal provider payment initiation request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The internal response describing the created provider session and handoff.</returns>
+    public async Task<InitiateProviderPaymentResponse> HandleAsync(
+        InitiateProviderPaymentRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var adapter = _providerRegistry.GetRequired(request.ProviderCode, request.ProviderProduct);
+
+        var command = new CreateProviderPaymentSessionCommand(
+            request.PaymentAttemptId,
+            request.AmountMinor,
+            request.Currency,
+            request.Description,
+            request.IdempotencyKey,
+            request.SuccessUrl,
+            request.FailureUrl,
+            request.CancelUrl,
+            request.WebhookUrl,
+            request.Metadata);
+
+        var result = await adapter.CreatePaymentSessionAsync(command, cancellationToken);
+
+        var requestJson = JsonSerializer.Serialize(request);
+
+        var record = new ProviderSessionRecord(
+            Guid.NewGuid(),
+            request.PaymentAttemptId,
+            request.ProviderCode,
+            request.ProviderProduct,
+            result.ProviderSessionId,
+            result.ProviderReference,
+            result.SessionStatus,
+            result.Handoff.RedirectUrl,
+            result.ExpiresAtUtc,
+            request.IdempotencyKey,
+            requestJson,
+            result.RawResponseJson,
+            DateTimeOffset.UtcNow);
+
+        await _providerSessionRepository.AddAsync(record, cancellationToken);
+
+        return new InitiateProviderPaymentResponse(
+            request.PaymentAttemptId,
+            request.ProviderCode,
+            request.ProviderProduct,
+            result.ProviderSessionId,
+            result.ProviderReference,
+            result.SessionStatus,
+            result.Handoff,
+            result.ExpiresAtUtc);
+    }
+}

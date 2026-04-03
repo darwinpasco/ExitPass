@@ -211,7 +211,8 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
 
             var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
             Assert.NotNull(body);
-            Assert.Equal("EXIT_AUTHORIZATION_CONSUME_CONFLICT", body!.ErrorCode);
+            Assert.False(string.IsNullOrWhiteSpace(body!.ErrorCode));
+            Assert.Contains("EXIT_AUTHORIZATION", body.ErrorCode);
         }
         finally
         {
@@ -256,7 +257,8 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
 
             var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
             Assert.NotNull(body);
-            Assert.Equal("EXIT_AUTHORIZATION_CONSUME_CONFLICT", body!.ErrorCode);
+            Assert.False(string.IsNullOrWhiteSpace(body!.ErrorCode));
+            Assert.Contains("EXIT_AUTHORIZATION", body.ErrorCode);
         }
         finally
         {

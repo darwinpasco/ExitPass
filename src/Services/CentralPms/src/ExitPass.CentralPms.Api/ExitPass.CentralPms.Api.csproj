@@ -6,6 +6,7 @@
       <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
       <PackageReference Include="Npgsql" />
       <PackageReference Include="OpenTelemetry" />
+      <PackageReference Include="SharpAbp.Abp.OpenTelemetry.Exporter.Prometheus.AspNetCore" />
       <PackageReference Include="Swashbuckle.AspNetCore" />
       <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
       <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
@@ -19,5 +20,6 @@
     <ProjectReference Include="../ExitPass.CentralPms.Contracts/ExitPass.CentralPms.Contracts.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Observability/ExitPass.BuildingBlocks.Observability.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Security/ExitPass.BuildingBlocks.Security.csproj" />
+    <ProjectReference Include="..\..\..\..\BuildingBlocks\ExitPass.BuildingBlocks.Persistence\ExitPass.BuildingBlocks.Persistence.csproj" />
   </ItemGroup>
 </Project>

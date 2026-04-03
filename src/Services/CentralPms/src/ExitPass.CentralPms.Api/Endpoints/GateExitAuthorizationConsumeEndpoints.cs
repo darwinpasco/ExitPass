@@ -1,32 +1,22 @@
+using System.Diagnostics;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
-/// Gate-facing endpoints for consuming issued exit authorizations.
-///
-/// BRD:
-/// - 9.12 Exit Authorization
-/// - 9.13 Timeout, Retry, and Duplicate Handling
-///
-/// SDD:
-/// - 6.6 Consume Exit Authorization
-/// - 10.4 Gate / Site Integration APIs
-///
-/// Invariants Enforced:
-/// - ExitAuthorization consume is the hard control point before physical exit
-/// - Only an existing issued authorization may be consumed
-/// - Consumption must remain a deterministic DB-backed control transition
+/// Gate-facing endpoints for consuming exit authorizations.
 /// </summary>
 public static class GateExitAuthorizationConsumeEndpoints
 {
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.CentralPms.Api");
+
     /// <summary>
-    /// Maps the gate-facing consume endpoint for exit authorizations.
+    /// Maps the gate-facing consume endpoint.
     /// </summary>
-    /// <param name="app">Route builder used to register the endpoint.</param>
-    /// <returns>The same route builder for fluent configuration.</returns>
     public static IEndpointRouteBuilder MapGateExitAuthorizationConsumeEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/gate/authorizations")
@@ -42,84 +32,83 @@ public static class GateExitAuthorizationConsumeEndpoints
         return app;
     }
 
+    /// <summary>
+    /// Handles consumption of exit authorization.
+    /// </summary>
     private static async Task<IResult> HandleAsync(
         Guid exitAuthorizationId,
         HttpRequest request,
         ConsumeExitAuthorizationRequest body,
         IConsumeExitAuthorizationUseCase useCase,
+        ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
+        var logger = loggerFactory.CreateLogger("GateConsumeEndpoint");
+
+        using var activity = ActivitySource.StartActivity("HTTP ConsumeExitAuthorization", ActivityKind.Server);
+
+        var start = DateTimeOffset.UtcNow;
+
         if (!request.Headers.TryGetValue("X-Correlation-Id", out var correlationHeader) ||
             !Guid.TryParse(correlationHeader.ToString(), out var correlationId))
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: "X-Correlation-Id header is required.",
-                correlationId: Guid.Empty));
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "X-Correlation-Id header is required.", Guid.Empty));
         }
+
+        using var scope = logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["correlation_id"] = correlationId,
+            ["exit_authorization_id"] = exitAuthorizationId
+        });
+
+        logger.LogInformation("HTTP ConsumeExitAuthorization request received.");
 
         if (exitAuthorizationId == Guid.Empty)
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: "exitAuthorizationId is required.",
-                correlationId: correlationId));
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "exitAuthorizationId is required.", correlationId));
         }
 
         try
         {
             var result = await useCase.ExecuteAsync(
                 new ConsumeExitAuthorizationCommand(
-                    ExitAuthorizationId: exitAuthorizationId,
-                    RequestedByUserId: body.RequestedByUserId,
-                    CorrelationId: correlationId),
+                    exitAuthorizationId,
+                    body.RequestedByUserId,
+                    correlationId),
                 cancellationToken);
 
-            return Results.Ok(
-                new ConsumeExitAuthorizationResponse(
-                    ExitAuthorizationId: result.ExitAuthorizationId,
-                    AuthorizationStatus: result.AuthorizationStatus,
-                    ConsumedAt: result.ConsumedAt));
+            var duration = DateTimeOffset.UtcNow - start;
+
+            activity?.SetTag("duration_ms", duration.TotalMilliseconds);
+
+            logger.LogInformation(
+                "Exit authorization consumed. exit_authorization_id={ExitAuthorizationId}",
+                result.ExitAuthorizationId);
+
+            return Results.Ok(new ConsumeExitAuthorizationResponse(
+                result.ExitAuthorizationId,
+                result.AuthorizationStatus,
+                result.ConsumedAt));
         }
         catch (ArgumentException ex)
         {
-            return Results.BadRequest(BuildError(
-                errorCode: "INVALID_REQUEST",
-                message: ex.Message,
-                correlationId: correlationId));
+            logger.LogWarning(ex, "Invalid request.");
+            return Results.BadRequest(BuildError("INVALID_REQUEST", ex.Message, correlationId));
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
-            return Results.NotFound(BuildError(
-                errorCode: "EXIT_AUTHORIZATION_NOT_FOUND",
-                message: "Exit authorization was not found.",
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["exit_authorization_id"] = exitAuthorizationId
-                }));
+            return Results.NotFound(BuildError("EXIT_AUTHORIZATION_NOT_FOUND", "Not found.", correlationId));
         }
-        catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001")
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Unexpected failure.");
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+
             return Results.Conflict(BuildError(
-                errorCode: "EXIT_AUTHORIZATION_CONSUME_CONFLICT",
-                message: ex.MessageText,
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["exit_authorization_id"] = exitAuthorizationId
-                }));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Results.Conflict(BuildError(
-                errorCode: "EXIT_AUTHORIZATION_CONSUME_FAILED",
-                message: ex.Message,
-                correlationId: correlationId,
-                details: new Dictionary<string, object?>
-                {
-                    ["exit_authorization_id"] = exitAuthorizationId
-                }));
+                "EXIT_AUTHORIZATION_CONSUME_FAILED",
+                "Unexpected error during consume.",
+                correlationId,
+                retryable: true));
         }
     }
 
@@ -140,19 +129,8 @@ public static class GateExitAuthorizationConsumeEndpoints
         };
     }
 
-    /// <summary>
-    /// HTTP request body for consuming an exit authorization.
-    /// </summary>
-    /// <param name="RequestedByUserId">User or actor identifier requesting consume.</param>
-    public sealed record ConsumeExitAuthorizationRequest(
-        Guid RequestedByUserId);
+    public sealed record ConsumeExitAuthorizationRequest(Guid RequestedByUserId);
 
-    /// <summary>
-    /// HTTP response returned after an exit authorization is successfully consumed.
-    /// </summary>
-    /// <param name="ExitAuthorizationId">Canonical identifier of the consumed authorization.</param>
-    /// <param name="AuthorizationStatus">Authorization status after consumption.</param>
-    /// <param name="ConsumedAt">Timestamp at which the authorization was consumed.</param>
     public sealed record ConsumeExitAuthorizationResponse(
         Guid ExitAuthorizationId,
         string AuthorizationStatus,

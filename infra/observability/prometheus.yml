@@ -1,0 +1,33 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  - job_name: central-pms
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["central-pms:8080"]
+
+  - job_name: payment-orchestrator
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["payment-orchestrator:8080"]
+
+  - job_name: session-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["session-service:8080"]
+
+  - job_name: audit-event-service
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["audit-event-service:8080"]
+
+  - job_name: vendor-pms-adapter
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["vendor-pms-adapter:8080"]
