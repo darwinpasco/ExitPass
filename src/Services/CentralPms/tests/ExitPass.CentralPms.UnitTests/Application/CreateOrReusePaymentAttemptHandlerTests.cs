@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
@@ -17,6 +18,24 @@ using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.Application;
 
+/// <summary>
+/// Unit tests for <see cref="CreateOrReusePaymentAttemptHandler"/>.
+///
+/// BRD:
+/// - 9.9 Payment Initiation
+/// - 9.21 Audit and Traceability
+/// - 10.7.4 One Active Payment Attempt Per Session
+///
+/// SDD:
+/// - 6.3 Initiate Payment Attempt
+/// - 8.3 PaymentAttempt State Machine
+///
+/// Invariants Enforced:
+/// - Only eligible parking sessions may enter the payment-attempt creation path
+/// - Tariff snapshot existence is required before DB-backed create-or-reuse execution
+/// - DB outcome codes must be translated into deterministic domain behavior
+/// - Observability dependencies must not alter business outcomes under test
+/// </summary>
 public sealed class CreateOrReusePaymentAttemptHandlerTests
 {
     private static readonly Guid ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111");
@@ -25,6 +44,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     private static readonly Guid CorrelationId = Guid.Parse("44444444-4444-4444-4444-444444444444");
     private static readonly DateTimeOffset Now = new(2026, 3, 31, 5, 0, 0, TimeSpan.Zero);
 
+    /// <summary>
+    /// Verifies that a CREATED DB outcome maps into a created result with provider handoff details.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_returns_created_result_when_db_routine_creates_attempt()
     {
@@ -90,6 +112,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         result.ProviderHandoff.Url.Should().Be("/payments/gcash/33333333-3333-3333-3333-333333333333");
     }
 
+    /// <summary>
+    /// Verifies that a REUSED DB outcome maps into a reused result.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_returns_reused_result_when_db_routine_reuses_attempt()
     {
@@ -140,6 +165,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         result.WasReused.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Verifies that an active-attempt DB rejection becomes a deterministic conflict exception.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_throws_active_payment_attempt_already_exists_when_db_routine_rejects_conflict()
     {
@@ -181,6 +209,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         await act.Should().ThrowAsync<ActivePaymentAttemptAlreadyExistsException>();
     }
 
+    /// <summary>
+    /// Verifies that a missing parking session is rejected before DB-backed create-or-reuse execution.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_throws_parking_session_not_found_when_session_does_not_exist()
     {
@@ -197,6 +228,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         await act.Should().ThrowAsync<ParkingSessionNotFoundException>();
     }
 
+    /// <summary>
+    /// Verifies that a missing tariff snapshot is rejected before DB-backed create-or-reuse execution.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_throws_tariff_snapshot_not_found_when_snapshot_does_not_exist()
     {
@@ -217,6 +251,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         await act.Should().ThrowAsync<TariffSnapshotNotFoundException>();
     }
 
+    /// <summary>
+    /// Verifies that a non-eligible parking session is rejected before DB-backed create-or-reuse execution.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_throws_when_session_is_not_eligible_for_payment_attempt_creation()
     {
@@ -234,6 +271,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             .WithMessage("*not eligible for payment attempt creation*");
     }
 
+    /// <summary>
+    /// Verifies that an idempotency-conflict DB rejection becomes a deterministic exception.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_throws_idempotency_conflict_when_db_routine_rejects_semantic_conflict()
     {
@@ -269,6 +309,10 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         await act.Should().ThrowAsync<IdempotencyConflictException>();
     }
 
+    /// <summary>
+    /// Verifies that DB snapshot-rejection outcomes become deterministic tariff snapshot eligibility exceptions.
+    /// </summary>
+    /// <param name="outcomeCode">The DB outcome code to translate.</param>
     [Theory]
     [InlineData("REJECTED_SNAPSHOT_INVALID")]
     [InlineData("REJECTED_SNAPSHOT_EXPIRED")]
@@ -304,6 +348,11 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         await act.Should().ThrowAsync<TariffSnapshotNotEligibleException>();
     }
 
+    /// <summary>
+    /// Creates a canonical command for create-or-reuse payment attempt tests.
+    /// </summary>
+    /// <param name="idempotencyKey">The idempotency key to use in the test command.</param>
+    /// <returns>A populated <see cref="CreateOrReusePaymentAttemptCommand"/>.</returns>
     private static CreateOrReusePaymentAttemptCommand CreateCommand(string idempotencyKey)
     {
         return new CreateOrReusePaymentAttemptCommand
@@ -317,6 +366,11 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         };
     }
 
+    /// <summary>
+    /// Creates a canonical rehydrated parking session for tests.
+    /// </summary>
+    /// <param name="status">The parking session status to assign.</param>
+    /// <returns>A rehydrated <see cref="ParkingSession"/> instance.</returns>
     private static ParkingSession CreateParkingSession(ParkingSessionStatus status)
     {
         return ParkingSession.Rehydrate(
@@ -332,6 +386,10 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             sessionStatus: status);
     }
 
+    /// <summary>
+    /// Creates a canonical rehydrated tariff snapshot for tests.
+    /// </summary>
+    /// <returns>A rehydrated <see cref="TariffSnapshot"/> instance.</returns>
     private static TariffSnapshot CreateTariffSnapshot()
     {
         return TariffSnapshot.Rehydrate(
@@ -353,6 +411,10 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             consumedByPaymentAttemptId: null);
     }
 
+    /// <summary>
+    /// Creates a fully substituted fixture for create-or-reuse payment attempt handler tests.
+    /// </summary>
+    /// <returns>A populated <see cref="Fixture"/> record.</returns>
     private static Fixture CreateFixture()
     {
         var clock = Substitute.For<ISystemClock>();
@@ -364,17 +426,33 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             Substitute.For<IPaymentAttemptDbRoutineGateway>(),
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             Substitute.For<IProviderHandoffFactory>(),
-            clock);
+            clock,
+            new CentralPmsMetrics());
     }
 
+    /// <summary>
+    /// Encapsulates substituted dependencies and the system-under-test factory for these tests.
+    /// </summary>
+    /// <param name="ParkingSessionReadRepository">Parking session repository substitute.</param>
+    /// <param name="TariffSnapshotReadRepository">Tariff snapshot repository substitute.</param>
+    /// <param name="PaymentAttemptDbRoutineGateway">Payment attempt DB routine gateway substitute.</param>
+    /// <param name="PaymentAttemptCreationPolicy">Payment attempt creation policy substitute.</param>
+    /// <param name="ProviderHandoffFactory">Provider handoff factory substitute.</param>
+    /// <param name="SystemClock">System clock substitute.</param>
+    /// <param name="Metrics">Central PMS business metrics instance.</param>
     private sealed record Fixture(
         IParkingSessionReadRepository ParkingSessionReadRepository,
         ITariffSnapshotReadRepository TariffSnapshotReadRepository,
         IPaymentAttemptDbRoutineGateway PaymentAttemptDbRoutineGateway,
         IPaymentAttemptCreationPolicy PaymentAttemptCreationPolicy,
         IProviderHandoffFactory ProviderHandoffFactory,
-        ISystemClock SystemClock)
+        ISystemClock SystemClock,
+        CentralPmsMetrics Metrics)
     {
+        /// <summary>
+        /// Creates the system under test using substituted dependencies, shared metrics, and no-op logging.
+        /// </summary>
+        /// <returns>A configured <see cref="CreateOrReusePaymentAttemptHandler"/> instance.</returns>
         public CreateOrReusePaymentAttemptHandler CreateSut()
         {
             return new CreateOrReusePaymentAttemptHandler(
@@ -384,6 +462,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
                 PaymentAttemptCreationPolicy,
                 ProviderHandoffFactory,
                 SystemClock,
+                Metrics,
                 NullLogger<CreateOrReusePaymentAttemptHandler>.Instance);
         }
     }

@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -33,41 +33,9 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Application.Payments");
 
-    /// <summary>
-    /// Metrics meter for exit authorization consumption.
-    /// </summary>
-    private static readonly Meter Meter =
-        new("ExitPass.CentralPms.Application.Payments", "1.0.0");
-
-    /// <summary>
-    /// Counts successful exit authorization consumptions.
-    /// </summary>
-    private static readonly Counter<long> SuccessCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.exit_authorization.consume.succeeded",
-            unit: "{authorization}",
-            description: "Counts successful exit authorization consumptions.");
-
-    /// <summary>
-    /// Counts rejected exit authorization consumptions caused by deterministic validation or business failures.
-    /// </summary>
-    private static readonly Counter<long> RejectedCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.exit_authorization.consume.rejected",
-            unit: "{authorization}",
-            description: "Counts rejected exit authorization consumptions.");
-
-    /// <summary>
-    /// Counts unexpected exit authorization consumption failures.
-    /// </summary>
-    private static readonly Counter<long> FailureCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.exit_authorization.consume.failed",
-            unit: "{authorization}",
-            description: "Counts unexpected exit authorization consumption failures.");
-
     private readonly IConsumeExitAuthorizationGateway _gateway;
     private readonly ISystemClock _systemClock;
+    private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<ConsumeExitAuthorizationHandler> _logger;
 
     /// <summary>
@@ -75,14 +43,17 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
     /// </summary>
     /// <param name="gateway">DB-backed consume gateway.</param>
     /// <param name="systemClock">System clock used for canonical request timestamps.</param>
+    /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
     public ConsumeExitAuthorizationHandler(
         IConsumeExitAuthorizationGateway gateway,
         ISystemClock systemClock,
+        CentralPmsMetrics metrics,
         ILogger<ConsumeExitAuthorizationHandler> logger)
     {
         _gateway = gateway;
         _systemClock = systemClock;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -137,9 +108,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.SetTag("consumed_at", dbResult.ConsumedAt);
             activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
 
-            SuccessCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("authorization_status", dbResult.AuthorizationStatus));
+            _metrics.ExitAuthorizationConsumed("CONSUMED");
 
             _logger.LogInformation(
                 "Exit authorization consumed successfully. exit_authorization_id={ExitAuthorizationId} authorization_status={AuthorizationStatus}",
@@ -157,9 +126,8 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
-            RejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", "INVALID_REQUEST"));
+            _metrics.ExitAuthorizationConsumed("REJECTED");
+            _metrics.ExceptionObserved(ex.GetType().Name, "CONSUME_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
                 ex,
@@ -173,9 +141,8 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
-            RejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", ex.GetType().Name));
+            _metrics.ExitAuthorizationConsumed("REJECTED");
+            _metrics.ExceptionObserved(ex.GetType().Name, "CONSUME_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
                 ex,
@@ -188,9 +155,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
 
-            FailureCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("exception_type", ex.GetType().Name));
+            _metrics.ExceptionObserved(ex.GetType().Name, "CONSUME_EXIT_AUTHORIZATION");
 
             _logger.LogError(
                 ex,

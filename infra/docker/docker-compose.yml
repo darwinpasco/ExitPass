@@ -136,6 +136,7 @@ services:
       - app-net
 
   db-migrator:
+    image: darwinpasco25/exitpass-db-migrator:latest
     build:
       context: ../../
       dockerfile: src/Tools/ExitPass.DbMigrator/Dockerfile
@@ -151,6 +152,7 @@ services:
     restart: "no"
 
   central-pms:
+    image: darwinpasco25/exitpass-central-pms:latest
     build:
       context: ../../
       dockerfile: src/Services/CentralPms/src/ExitPass.CentralPms.Api/Dockerfile
@@ -183,6 +185,7 @@ services:
       disable: true
 
   session-service:
+    image: darwinpasco25/exitpass-session-service:latest
     build:
       context: ../../
       dockerfile: src/Services/SessionService/src/ExitPass.SessionService.Api/Dockerfile
@@ -209,6 +212,7 @@ services:
       disable: true
 
   payment-orchestrator:
+    image: darwinpasco25/exitpass-payment-orchestrator:latest
     build:
       context: ../../
       dockerfile: src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/Dockerfile
@@ -245,6 +249,7 @@ services:
       disable: true
 
   audit-event-service:
+    image: darwinpasco25/exitpass-audit-event-service:latest
     build:
       context: ../../
       dockerfile: src/Services/AuditEventService/src/ExitPass.AuditEventService.Api/Dockerfile
@@ -315,6 +320,7 @@ services:
       start_period: 10s
 
   vendor-pms-adapter:
+    image: darwinpasco25/exitpass-vendor-pms-adapter:latest
     build:
       context: ../../
       dockerfile: src/Services/VendorPmsAdapter/src/ExitPass.VendorPmsAdapter.Api/Dockerfile
