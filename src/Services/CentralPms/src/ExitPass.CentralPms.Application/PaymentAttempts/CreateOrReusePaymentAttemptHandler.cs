@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
 using ExitPass.CentralPms.Domain.Common;
@@ -44,50 +44,26 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Application.PaymentAttempts");
 
-    /// <summary>
-    /// Metrics meter for payment attempt application metrics.
-    /// </summary>
-    private static readonly Meter Meter =
-        new("ExitPass.CentralPms.Application.PaymentAttempts", "1.0.0");
-
-    /// <summary>
-    /// Counts successful create-or-reuse payment attempt executions.
-    /// </summary>
-    private static readonly Counter<long> AttemptSucceededCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.payment_attempt.create_or_reuse.succeeded",
-            unit: "{attempt}",
-            description: "Counts successful create-or-reuse payment attempt executions.");
-
-    /// <summary>
-    /// Counts rejected create-or-reuse payment attempt executions.
-    /// </summary>
-    private static readonly Counter<long> AttemptRejectedCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.payment_attempt.create_or_reuse.rejected",
-            unit: "{attempt}",
-            description: "Counts rejected create-or-reuse payment attempt executions.");
-
-    /// <summary>
-    /// Counts unexpected failures during create-or-reuse payment attempt execution.
-    /// </summary>
-    private static readonly Counter<long> AttemptFailedCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.payment_attempt.create_or_reuse.failed",
-            unit: "{attempt}",
-            description: "Counts unexpected failures during create-or-reuse payment attempt execution.");
-
     private readonly IParkingSessionReadRepository _parkingSessionReadRepository;
     private readonly ITariffSnapshotReadRepository _tariffSnapshotReadRepository;
     private readonly IPaymentAttemptDbRoutineGateway _paymentAttemptDbRoutineGateway;
     private readonly IPaymentAttemptCreationPolicy _paymentAttemptCreationPolicy;
     private readonly IProviderHandoffFactory _providerHandoffFactory;
     private readonly ISystemClock _systemClock;
+    private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<CreateOrReusePaymentAttemptHandler> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CreateOrReusePaymentAttemptHandler"/> class.
     /// </summary>
+    /// <param name="parkingSessionReadRepository">Repository used to retrieve parking sessions.</param>
+    /// <param name="tariffSnapshotReadRepository">Repository used to retrieve tariff snapshots.</param>
+    /// <param name="paymentAttemptDbRoutineGateway">Gateway used to invoke the authoritative DB-backed create-or-reuse routine.</param>
+    /// <param name="paymentAttemptCreationPolicy">Policy used to validate the create-or-reuse request.</param>
+    /// <param name="providerHandoffFactory">Factory used to create provider handoff payloads.</param>
+    /// <param name="systemClock">System clock used for canonical timestamps.</param>
+    /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
+    /// <param name="logger">Application logger.</param>
     public CreateOrReusePaymentAttemptHandler(
         IParkingSessionReadRepository parkingSessionReadRepository,
         ITariffSnapshotReadRepository tariffSnapshotReadRepository,
@@ -95,6 +71,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         IPaymentAttemptCreationPolicy paymentAttemptCreationPolicy,
         IProviderHandoffFactory providerHandoffFactory,
         ISystemClock systemClock,
+        CentralPmsMetrics metrics,
         ILogger<CreateOrReusePaymentAttemptHandler> logger)
     {
         _parkingSessionReadRepository = parkingSessionReadRepository;
@@ -103,6 +80,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         _paymentAttemptCreationPolicy = paymentAttemptCreationPolicy;
         _providerHandoffFactory = providerHandoffFactory;
         _systemClock = systemClock;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -151,11 +129,6 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                 activity?.SetStatus(ActivityStatusCode.Error, "Parking session not found");
                 activity?.SetTag("rejection_reason", "PARKING_SESSION_NOT_FOUND");
 
-                AttemptRejectedCounter.Add(
-                    1,
-                    new KeyValuePair<string, object?>("reason", "PARKING_SESSION_NOT_FOUND"),
-                    new KeyValuePair<string, object?>("payment_provider_code", command.PaymentProviderCode));
-
                 _logger.LogWarning(
                     "Payment attempt creation rejected because parking session was not found.");
 
@@ -166,11 +139,6 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             {
                 activity?.SetStatus(ActivityStatusCode.Error, "Parking session not eligible");
                 activity?.SetTag("rejection_reason", "PARKING_SESSION_NOT_ELIGIBLE");
-
-                AttemptRejectedCounter.Add(
-                    1,
-                    new KeyValuePair<string, object?>("reason", "PARKING_SESSION_NOT_ELIGIBLE"),
-                    new KeyValuePair<string, object?>("payment_provider_code", command.PaymentProviderCode));
 
                 _logger.LogWarning(
                     "Payment attempt creation rejected because parking session is not eligible for payment attempt creation.");
@@ -187,11 +155,6 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             {
                 activity?.SetStatus(ActivityStatusCode.Error, "Tariff snapshot not found");
                 activity?.SetTag("rejection_reason", "TARIFF_SNAPSHOT_NOT_FOUND");
-
-                AttemptRejectedCounter.Add(
-                    1,
-                    new KeyValuePair<string, object?>("reason", "TARIFF_SNAPSHOT_NOT_FOUND"),
-                    new KeyValuePair<string, object?>("payment_provider_code", command.PaymentProviderCode));
 
                 _logger.LogWarning(
                     "Payment attempt creation rejected because tariff snapshot was not found.");
@@ -258,10 +221,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             activity?.SetTag("attempt_status", result.AttemptStatus);
             activity?.SetTag("provider_handoff_type", result.ProviderHandoff.Type);
 
-            AttemptSucceededCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("payment_provider_code", result.PaymentProviderCode),
-                new KeyValuePair<string, object?>("was_reused", result.WasReused));
+            _metrics.PaymentAttemptCreated(result.PaymentProviderCode);
 
             if (result.WasReused)
             {
@@ -286,10 +246,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             activity?.RecordException(ex);
             activity?.SetTag("rejection_exception_type", ex.GetType().Name);
 
-            AttemptRejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", ex.GetType().Name),
-                new KeyValuePair<string, object?>("payment_provider_code", command.PaymentProviderCode));
+            _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");
 
             _logger.LogWarning(
                 ex,
@@ -302,10 +259,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
 
-            AttemptFailedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("exception_type", ex.GetType().Name),
-                new KeyValuePair<string, object?>("payment_provider_code", command.PaymentProviderCode));
+            _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");
 
             _logger.LogError(
                 ex,

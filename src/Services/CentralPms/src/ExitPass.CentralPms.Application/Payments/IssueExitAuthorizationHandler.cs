@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -34,41 +34,9 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Application.Payments");
 
-    /// <summary>
-    /// Metrics meter for exit authorization issuance.
-    /// </summary>
-    private static readonly Meter Meter =
-        new("ExitPass.CentralPms.Application.Payments", "1.0.0");
-
-    /// <summary>
-    /// Counts successful exit authorization issuances.
-    /// </summary>
-    private static readonly Counter<long> SuccessCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.exit_authorization.issue.succeeded",
-            unit: "{authorization}",
-            description: "Counts successful exit authorization issuances.");
-
-    /// <summary>
-    /// Counts rejected exit authorization issuance attempts caused by deterministic validation or business failures.
-    /// </summary>
-    private static readonly Counter<long> RejectedCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.exit_authorization.issue.rejected",
-            unit: "{authorization}",
-            description: "Counts rejected exit authorization issuance attempts.");
-
-    /// <summary>
-    /// Counts unexpected exit authorization issuance failures.
-    /// </summary>
-    private static readonly Counter<long> FailureCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.exit_authorization.issue.failed",
-            unit: "{authorization}",
-            description: "Counts unexpected exit authorization issuance failures.");
-
     private readonly IIssueExitAuthorizationGateway _gateway;
     private readonly ISystemClock _systemClock;
+    private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<IssueExitAuthorizationHandler> _logger;
 
     /// <summary>
@@ -76,14 +44,17 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     /// </summary>
     /// <param name="gateway">DB-backed issuance gateway.</param>
     /// <param name="systemClock">System clock used for canonical request timestamps.</param>
+    /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
     public IssueExitAuthorizationHandler(
         IIssueExitAuthorizationGateway gateway,
         ISystemClock systemClock,
+        CentralPmsMetrics metrics,
         ILogger<IssueExitAuthorizationHandler> logger)
     {
         _gateway = gateway;
         _systemClock = systemClock;
+        _metrics = metrics;
         _logger = logger;
     }
 
@@ -143,9 +114,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.SetTag("expiration_timestamp", dbResult.ExpirationTimestamp);
             activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
 
-            SuccessCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("authorization_status", dbResult.AuthorizationStatus));
+            _metrics.ExitAuthorizationIssued();
 
             _logger.LogInformation(
                 "Exit authorization issued successfully. exit_authorization_id={ExitAuthorizationId} authorization_status={AuthorizationStatus}",
@@ -167,9 +136,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
-            RejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", "INVALID_REQUEST"));
+            _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
                 ex,
@@ -183,9 +150,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
-            RejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", ex.GetType().Name));
+            _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
                 ex,
@@ -198,9 +163,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
 
-            FailureCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("exception_type", ex.GetType().Name));
+            _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 
             _logger.LogError(
                 ex,

@@ -1,6 +1,6 @@
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -35,41 +35,9 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Application.Payments");
 
-    /// <summary>
-    /// Metrics meter for payment attempt finalization.
-    /// </summary>
-    private static readonly Meter Meter =
-        new("ExitPass.CentralPms.Application.Payments", "1.0.0");
-
-    /// <summary>
-    /// Counts successful payment attempt finalizations.
-    /// </summary>
-    private static readonly Counter<long> SuccessCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.payment_attempt.finalize.succeeded",
-            unit: "{attempt}",
-            description: "Counts successful payment attempt finalizations.");
-
-    /// <summary>
-    /// Counts rejected payment attempt finalizations caused by deterministic business or validation failures.
-    /// </summary>
-    private static readonly Counter<long> RejectedCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.payment_attempt.finalize.rejected",
-            unit: "{attempt}",
-            description: "Counts rejected payment attempt finalizations.");
-
-    /// <summary>
-    /// Counts unexpected payment attempt finalization failures.
-    /// </summary>
-    private static readonly Counter<long> FailureCounter =
-        Meter.CreateCounter<long>(
-            name: "exitpass.payment_attempt.finalize.failed",
-            unit: "{attempt}",
-            description: "Counts unexpected payment attempt finalization failures.");
-
     private readonly IFinalizePaymentAttemptGateway _gateway;
     private readonly ISystemClock _systemClock;
+    private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<FinalizePaymentAttemptHandler> _logger;
 
     /// <summary>
@@ -77,18 +45,26 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
     /// </summary>
     /// <param name="gateway">Gateway used to finalize the payment attempt through the authoritative DB path.</param>
     /// <param name="systemClock">System clock used to timestamp the request.</param>
+    /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
     public FinalizePaymentAttemptHandler(
         IFinalizePaymentAttemptGateway gateway,
         ISystemClock systemClock,
+        CentralPmsMetrics metrics,
         ILogger<FinalizePaymentAttemptHandler> logger)
     {
         _gateway = gateway;
         _systemClock = systemClock;
+        _metrics = metrics;
         _logger = logger;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Finalizes a payment attempt through the authoritative DB-backed gateway.
+    /// </summary>
+    /// <param name="command">Command containing the payment attempt finalization request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A finalized payment attempt result mapped from the authoritative gateway response.</returns>
     public async Task<FinalizePaymentAttemptResult> ExecuteAsync(
         FinalizePaymentAttemptCommand command,
         CancellationToken cancellationToken)
@@ -136,10 +112,9 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
             activity?.SetTag("attempt_status", dbResult.AttemptStatus);
             activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
 
-            SuccessCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("attempt_status", dbResult.AttemptStatus),
-                new KeyValuePair<string, object?>("final_attempt_status", command.FinalAttemptStatus));
+            _metrics.PaymentAttemptFinalized(
+                finalStatus: dbResult.AttemptStatus,
+                provider: "UNKNOWN");
 
             _logger.LogInformation(
                 "PaymentAttempt finalized successfully. payment_attempt_id={PaymentAttemptId} attempt_status={AttemptStatus}",
@@ -156,10 +131,11 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
-            RejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", "INVALID_REQUEST"),
-                new KeyValuePair<string, object?>("final_attempt_status", command.FinalAttemptStatus));
+            _metrics.PaymentAttemptFinalizeFailed(
+                failureReason: "INVALID_REQUEST",
+                provider: "UNKNOWN");
+
+            _metrics.ExceptionObserved(ex.GetType().Name, "FINALIZE_PAYMENT_ATTEMPT");
 
             _logger.LogWarning(
                 ex,
@@ -173,10 +149,11 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
-            RejectedCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("reason", ex.GetType().Name),
-                new KeyValuePair<string, object?>("final_attempt_status", command.FinalAttemptStatus));
+            _metrics.PaymentAttemptFinalizeFailed(
+                failureReason: ex.GetType().Name,
+                provider: "UNKNOWN");
+
+            _metrics.ExceptionObserved(ex.GetType().Name, "FINALIZE_PAYMENT_ATTEMPT");
 
             _logger.LogWarning(
                 ex,
@@ -189,10 +166,11 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
 
-            FailureCounter.Add(
-                1,
-                new KeyValuePair<string, object?>("exception_type", ex.GetType().Name),
-                new KeyValuePair<string, object?>("final_attempt_status", command.FinalAttemptStatus));
+            _metrics.PaymentAttemptFinalizeFailed(
+                failureReason: "UNEXPECTED_FAILURE",
+                provider: "UNKNOWN");
+
+            _metrics.ExceptionObserved(ex.GetType().Name, "FINALIZE_PAYMENT_ATTEMPT");
 
             _logger.LogError(
                 ex,

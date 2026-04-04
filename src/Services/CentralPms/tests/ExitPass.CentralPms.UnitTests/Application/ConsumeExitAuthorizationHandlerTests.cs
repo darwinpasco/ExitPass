@@ -1,6 +1,6 @@
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
-using FluentAssertions.Equivalency;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
@@ -8,6 +8,8 @@ using Xunit;
 namespace ExitPass.CentralPms.UnitTests.Application;
 
 /// <summary>
+/// Unit tests for <see cref="ConsumeExitAuthorizationHandler"/>.
+///
 /// BRD:
 /// - 9.12 Exit Authorization
 /// - 10.7.7 Exit Token Integrity Invariant
@@ -19,12 +21,17 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 /// Invariants Enforced:
 /// - ExitAuthorization consumption validates required identifiers before DB execution
 /// - The handler maps the DB-authoritative consume result without mutation
+/// - Observability dependencies must not affect business behavior under test
 /// </summary>
 public sealed class ConsumeExitAuthorizationHandlerTests
 {
     private readonly IConsumeExitAuthorizationGateway _gateway = Substitute.For<IConsumeExitAuthorizationGateway>();
     private readonly ISystemClock _systemClock = Substitute.For<ISystemClock>();
+    private readonly CentralPmsMetrics _metrics = new();
 
+    /// <summary>
+    /// Verifies that a valid consume command returns the DB-authoritative mapped result.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_WhenCommandIsValid_ReturnsMappedResult()
     {
@@ -47,8 +54,7 @@ public sealed class ConsumeExitAuthorizationHandlerTests
                 AuthorizationStatus: "CONSUMED",
                 ConsumedAt: now));
 
-        var sut = new ConsumeExitAuthorizationHandler(
-                        _gateway,_systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
+        var sut = CreateSut();
 
         var result = await sut.ExecuteAsync(
             new ConsumeExitAuthorizationCommand(
@@ -62,11 +68,13 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         Assert.Equal(now, result.ConsumedAt);
     }
 
+    /// <summary>
+    /// Verifies that an empty exit authorization identifier is rejected before DB execution.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_WhenExitAuthorizationIdIsEmpty_Throws()
     {
-        var sut = new ConsumeExitAuthorizationHandler(
-                        _gateway, _systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
+        var sut = CreateSut();
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             sut.ExecuteAsync(
@@ -79,11 +87,13 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         Assert.Contains("ExitAuthorizationId", ex.Message);
     }
 
+    /// <summary>
+    /// Verifies that an empty requesting user identifier is rejected before DB execution.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_WhenRequestedByUserIdIsEmpty_Throws()
     {
-        var sut = new ConsumeExitAuthorizationHandler(
-                        _gateway, _systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
+        var sut = CreateSut();
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             sut.ExecuteAsync(
@@ -96,11 +106,13 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         Assert.Contains("RequestedByUserId", ex.Message);
     }
 
+    /// <summary>
+    /// Verifies that an empty correlation identifier is rejected before DB execution.
+    /// </summary>
     [Fact]
     public async Task ExecuteAsync_WhenCorrelationIdIsEmpty_Throws()
     {
-        var sut = new ConsumeExitAuthorizationHandler(
-                        _gateway, _systemClock, NullLogger<ConsumeExitAuthorizationHandler>.Instance);
+        var sut = CreateSut();
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
             sut.ExecuteAsync(
@@ -111,5 +123,18 @@ public sealed class ConsumeExitAuthorizationHandlerTests
                 CancellationToken.None));
 
         Assert.Contains("CorrelationId", ex.Message);
+    }
+
+    /// <summary>
+    /// Creates the system under test with no-op logging and shared metrics dependencies.
+    /// </summary>
+    /// <returns>A configured <see cref="ConsumeExitAuthorizationHandler"/> instance.</returns>
+    private ConsumeExitAuthorizationHandler CreateSut()
+    {
+        return new ConsumeExitAuthorizationHandler(
+            _gateway,
+            _systemClock,
+            _metrics,
+            NullLogger<ConsumeExitAuthorizationHandler>.Instance);
     }
 }
