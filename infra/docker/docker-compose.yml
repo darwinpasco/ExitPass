@@ -96,10 +96,15 @@ services:
       - "4317:4317"
       - "4318:4318"
       - "13133:13133"
-      - "8888:8888"
       - "8889:8889"
     networks:
       - app-net
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -112,7 +117,7 @@ services:
       - "9090:9090"
     depends_on:
       otel-collector:
-        condition: service_started
+        condition: service_healthy
     networks:
       - app-net
 
@@ -166,7 +171,7 @@ services:
       rabbitmq:
         condition: service_healthy
       otel-collector:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8080:8080"
     expose:
@@ -192,7 +197,7 @@ services:
       postgres:
         condition: service_healthy
       otel-collector:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8081:8080"
     expose:
@@ -227,7 +232,7 @@ services:
       mock-payment-provider:
         condition: service_started
       otel-collector:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8082:8080"
     expose:
@@ -260,7 +265,7 @@ services:
       rabbitmq:
         condition: service_healthy
       otel-collector:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8083:8080"
     expose:
@@ -324,7 +329,7 @@ services:
       mock-vendor-pms:
         condition: service_started
       otel-collector:
-        condition: service_started
+        condition: service_healthy
     ports:
       - "8086:8080"
     expose:

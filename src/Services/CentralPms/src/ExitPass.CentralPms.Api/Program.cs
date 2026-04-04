@@ -37,6 +37,7 @@ using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -268,6 +269,8 @@ app.Use(async (context, next) =>
 
 app.UseRouting();
 app.UseAuthorization();
+app.UseHttpMetrics();
+app.MapMetrics("/metrics");
 
 app.MapControllers();
 
