@@ -18,14 +18,22 @@ namespace ExitPass.CentralPms.IntegrationTests.Shared;
 /// - 6.6 Consume Exit Authorization
 ///
 /// Invariants Enforced:
-/// - Shared test helpers must call the same DB routines consistently
-/// - Test suites must not drift in SQL shape or return mapping
+/// - Shared test helpers must call the same DB routines consistently.
+/// - Test suites must not drift in SQL shape or return mapping.
+/// - Exit authorization must not be issued without recorded payment confirmation evidence.
 /// </summary>
 public static class PaymentRoutineTestHelper
 {
     /// <summary>
     /// Calls the canonical DB routine to create or reuse a payment attempt for the supplied test context.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="context">Per-test canonical data context.</param>
+    /// <param name="idempotencyKey">Idempotency key used for the attempt creation call.</param>
+    /// <param name="requestedBy">Audit actor string for the DB routine call.</param>
+    /// <returns>
+    /// The authoritative result returned by <c>core.create_or_reuse_payment_attempt(...)</c>.
+    /// </returns>
     public static async Task<CreateAttemptResult> CreateAttemptAsync(
         string connectionString,
         PaymentTestContext context,
@@ -80,6 +88,15 @@ public static class PaymentRoutineTestHelper
     /// <summary>
     /// Calls the canonical DB routine to finalize a payment attempt.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="finalStatus">Target terminal attempt status.</param>
+    /// <param name="requestedBy">Audit actor string for the DB routine call.</param>
+    /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
+    /// <returns>
+    /// The authoritative result returned by <c>core.finalize_payment_attempt(...)</c>, or <see langword="null"/>
+    /// if no row was returned.
+    /// </returns>
     public static async Task<FinalizeAttemptResult?> FinalizeAttemptAsync(
         string connectionString,
         Guid paymentAttemptId,
@@ -127,8 +144,83 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
+    /// Calls the canonical DB routine to record payment confirmation evidence for a payment attempt.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="providerReference">Externally visible provider reference that must be unique for the scenario.</param>
+    /// <param name="requestedBy">Audit actor string for the DB routine call.</param>
+    /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
+    /// <returns>
+    /// The authoritative result returned by <c>core.record_payment_confirmation(...)</c>, or
+    /// <see langword="null"/> if no row was returned.
+    /// </returns>
+    public static async Task<RecordPaymentConfirmationResult?> RecordPaymentConfirmationAsync(
+        string connectionString,
+        Guid paymentAttemptId,
+        string providerReference,
+        string requestedBy,
+        Guid correlationId)
+    {
+        const string sql = """
+            SELECT
+                payment_confirmation_id,
+                payment_attempt_id,
+                provider_reference,
+                provider_status,
+                verified_timestamp
+            FROM core.record_payment_confirmation(
+                @p_payment_attempt_id,
+                @p_provider_reference,
+                @p_provider_status,
+                @p_requested_by,
+                @p_correlation_id,
+                @p_now
+            );
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("p_payment_attempt_id", paymentAttemptId);
+        command.Parameters.AddWithValue("p_provider_reference", providerReference);
+        command.Parameters.AddWithValue("p_provider_status", "SUCCESS");
+        command.Parameters.AddWithValue("p_requested_by", requestedBy);
+        command.Parameters.AddWithValue("p_correlation_id", correlationId);
+        command.Parameters.AddWithValue("p_now", DateTimeOffset.UtcNow);
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new RecordPaymentConfirmationResult(
+            PaymentConfirmationId: reader.GetGuid(reader.GetOrdinal("payment_confirmation_id")),
+            PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            ProviderReference: reader.GetString(reader.GetOrdinal("provider_reference")),
+            ProviderStatus: reader.GetString(reader.GetOrdinal("provider_status")),
+            VerifiedTimestamp: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("verified_timestamp")));
+    }
+
+    /// <summary>
     /// Calls the canonical DB routine to issue an exit authorization.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="parkingSessionId">Canonical parking-session identifier.</param>
+    /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="requestedBy">Valid seeded service identity identifier used for actor attribution.</param>
+    /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
+    /// <returns>
+    /// The authoritative result returned by <c>core.issue_exit_authorization(...)</c>, or
+    /// <see langword="null"/> if no row was returned.
+    /// </returns>
     public static async Task<IssueExitAuthorizationResult?> IssueExitAuthorizationAsync(
         string connectionString,
         Guid parkingSessionId,
@@ -188,6 +280,14 @@ public static class PaymentRoutineTestHelper
     /// <summary>
     /// Calls the canonical DB routine to consume an exit authorization.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="exitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <param name="requestedBy">Valid seeded service identity identifier used for actor attribution.</param>
+    /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
+    /// <returns>
+    /// The authoritative result returned by <c>core.consume_exit_authorization(...)</c>, or
+    /// <see langword="null"/> if no row was returned.
+    /// </returns>
     public static async Task<ConsumeExitAuthorizationResult?> ConsumeExitAuthorizationAsync(
         string connectionString,
         Guid exitAuthorizationId,
@@ -236,6 +336,11 @@ public static class PaymentRoutineTestHelper
     /// <summary>
     /// Reads the current persisted payment-attempt row by identifier.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <returns>
+    /// The current persisted payment-attempt row, or <see langword="null"/> when no row exists.
+    /// </returns>
     public static async Task<PaymentAttemptRow?> GetPaymentAttemptAsync(
         string connectionString,
         Guid paymentAttemptId)
@@ -262,6 +367,7 @@ public static class PaymentRoutineTestHelper
         {
             CommandTimeout = 30
         };
+
         command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
 
         await using var reader = await command.ExecuteReaderAsync();
@@ -283,8 +389,76 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
+    /// Reads the current persisted payment-confirmation row by identifier.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="paymentConfirmationId">Canonical payment-confirmation identifier.</param>
+    /// <returns>
+    /// The current persisted payment-confirmation row, or <see langword="null"/> when no row exists.
+    /// </returns>
+    public static async Task<PaymentConfirmationRow?> GetPaymentConfirmationByIdAsync(
+        string connectionString,
+        Guid paymentConfirmationId)
+    {
+        const string sql = """
+            SELECT
+                payment_confirmation_id,
+                payment_attempt_id,
+                provider_reference,
+                provider_status,
+                confirmation_status,
+                verified_timestamp,
+                raw_callback_reference,
+                provider_signature_valid,
+                provider_payload_hash,
+                amount_confirmed,
+                currency_code,
+                created_at,
+                created_by
+            FROM core.payment_confirmations
+            WHERE payment_confirmation_id = @payment_confirmation_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("payment_confirmation_id", paymentConfirmationId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new PaymentConfirmationRow(
+            PaymentConfirmationId: reader.GetGuid(reader.GetOrdinal("payment_confirmation_id")),
+            PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            ProviderReference: reader.GetString(reader.GetOrdinal("provider_reference")),
+            ProviderStatus: reader.GetString(reader.GetOrdinal("provider_status")),
+            ConfirmationStatus: reader.GetString(reader.GetOrdinal("confirmation_status")),
+            VerifiedTimestamp: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("verified_timestamp")),
+            RawCallbackReference: ReadStringNullable(reader, "raw_callback_reference"),
+            ProviderSignatureValid: ReadBooleanNullable(reader, "provider_signature_valid"),
+            ProviderPayloadHash: ReadStringNullable(reader, "provider_payload_hash"),
+            AmountConfirmed: reader.GetDecimal(reader.GetOrdinal("amount_confirmed")),
+            CurrencyCode: reader.GetString(reader.GetOrdinal("currency_code")),
+            CreatedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
+            CreatedBy: reader.GetString(reader.GetOrdinal("created_by")));
+    }
+
+    /// <summary>
     /// Reads the current persisted exit-authorization row by identifier.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="exitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <returns>
+    /// The current persisted exit-authorization row, or <see langword="null"/> when no row exists.
+    /// </returns>
     public static async Task<ExitAuthorizationRow?> GetExitAuthorizationByIdAsync(
         string connectionString,
         Guid exitAuthorizationId)
@@ -313,6 +487,7 @@ public static class PaymentRoutineTestHelper
         {
             CommandTimeout = 30
         };
+
         command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
 
         await using var reader = await command.ExecuteReaderAsync();
@@ -338,6 +513,10 @@ public static class PaymentRoutineTestHelper
     /// <summary>
     /// Forces an issued exit authorization into an expired state for negative-path testing.
     /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="exitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <param name="requestedBy">Valid seeded service identity identifier recorded as the updater.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     public static async Task ExpireAuthorizationAsync(
         string connectionString,
         Guid exitAuthorizationId,
@@ -371,6 +550,11 @@ public static class PaymentRoutineTestHelper
     /// <summary>
     /// Reads a nullable timestamp column as a nullable <see cref="DateTimeOffset"/>.
     /// </summary>
+    /// <param name="reader">Data reader positioned on the current row.</param>
+    /// <param name="columnName">Column name to inspect.</param>
+    /// <returns>
+    /// The timestamp value when present, otherwise <see langword="null"/>.
+    /// </returns>
     public static DateTimeOffset? ReadDateTimeOffsetNullable(NpgsqlDataReader reader, string columnName)
     {
         var ordinal = reader.GetOrdinal(columnName);
@@ -380,6 +564,44 @@ public static class PaymentRoutineTestHelper
         }
 
         return reader.GetFieldValue<DateTimeOffset>(ordinal);
+    }
+
+    /// <summary>
+    /// Reads a nullable boolean column as a nullable <see cref="bool"/>.
+    /// </summary>
+    /// <param name="reader">Data reader positioned on the current row.</param>
+    /// <param name="columnName">Column name to inspect.</param>
+    /// <returns>
+    /// The boolean value when present, otherwise <see langword="null"/>.
+    /// </returns>
+    public static bool? ReadBooleanNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetBoolean(ordinal);
+    }
+
+    /// <summary>
+    /// Reads a nullable text column as a nullable <see cref="string"/>.
+    /// </summary>
+    /// <param name="reader">Data reader positioned on the current row.</param>
+    /// <param name="columnName">Column name to inspect.</param>
+    /// <returns>
+    /// The string value when present, otherwise <see langword="null"/>.
+    /// </returns>
+    public static string? ReadStringNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetString(ordinal);
     }
 
     /// <summary>
@@ -405,6 +627,21 @@ public static class PaymentRoutineTestHelper
     public sealed record FinalizeAttemptResult(
         Guid PaymentAttemptId,
         string AttemptStatus);
+
+    /// <summary>
+    /// Result returned from the record-payment-confirmation DB routine.
+    /// </summary>
+    /// <param name="PaymentConfirmationId">Canonical payment-confirmation identifier.</param>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="ProviderReference">Provider-native payment reference.</param>
+    /// <param name="ProviderStatus">Provider-native payment status recorded by the routine.</param>
+    /// <param name="VerifiedTimestamp">Timestamp when confirmation evidence was verified and recorded.</param>
+    public sealed record RecordPaymentConfirmationResult(
+        Guid PaymentConfirmationId,
+        Guid PaymentAttemptId,
+        string ProviderReference,
+        string ProviderStatus,
+        DateTimeOffset VerifiedTimestamp);
 
     /// <summary>
     /// Result returned from the issue-exit-authorization DB routine.
@@ -458,6 +695,37 @@ public static class PaymentRoutineTestHelper
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         DateTimeOffset? FinalizedAt);
+
+    /// <summary>
+    /// Projection of a persisted payment-confirmation row used by integration tests.
+    /// </summary>
+    /// <param name="PaymentConfirmationId">Canonical payment-confirmation identifier.</param>
+    /// <param name="PaymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <param name="ProviderReference">Provider-native payment reference.</param>
+    /// <param name="ProviderStatus">Provider-native payment status.</param>
+    /// <param name="ConfirmationStatus">Internal confirmation lifecycle status.</param>
+    /// <param name="VerifiedTimestamp">Timestamp when confirmation evidence was verified and recorded.</param>
+    /// <param name="RawCallbackReference">Raw callback reference, when present.</param>
+    /// <param name="ProviderSignatureValid">Whether provider signature validation succeeded, when present.</param>
+    /// <param name="ProviderPayloadHash">Provider payload hash, when present.</param>
+    /// <param name="AmountConfirmed">Amount confirmed by the provider.</param>
+    /// <param name="CurrencyCode">Currency code of the confirmed amount.</param>
+    /// <param name="CreatedAt">Row creation timestamp.</param>
+    /// <param name="CreatedBy">Actor recorded as the creator of the row.</param>
+    public sealed record PaymentConfirmationRow(
+        Guid PaymentConfirmationId,
+        Guid PaymentAttemptId,
+        string ProviderReference,
+        string ProviderStatus,
+        string ConfirmationStatus,
+        DateTimeOffset VerifiedTimestamp,
+        string? RawCallbackReference,
+        bool? ProviderSignatureValid,
+        string? ProviderPayloadHash,
+        decimal AmountConfirmed,
+        string CurrencyCode,
+        DateTimeOffset CreatedAt,
+        string CreatedBy);
 
     /// <summary>
     /// Projection of a persisted exit-authorization row used by integration tests.
