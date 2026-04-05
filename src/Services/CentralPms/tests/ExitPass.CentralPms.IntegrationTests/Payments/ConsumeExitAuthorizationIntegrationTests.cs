@@ -6,33 +6,42 @@ using static ExitPass.CentralPms.IntegrationTests.Shared.PaymentRoutineTestHelpe
 namespace ExitPass.CentralPms.IntegrationTests.Payments;
 
 /// <summary>
-/// Verifies DB-backed consume rules for consume_exit_authorization().
+/// Verifies DB-backed consume rules for <c>core.consume_exit_authorization(...)</c>.
 ///
 /// BRD:
+/// - 9.10 Payment Processing and Confirmation
 /// - 9.12 Exit Authorization
 /// - 10.7.7 Exit Token Integrity Invariant
 /// - 10.7.8 Single-Use Consume Invariant
 ///
 /// SDD:
+/// - 6.4 Finalize Payment
+/// - 6.5 Issue Exit Authorization
 /// - 6.6 Consume Exit Authorization
 /// - 8.5 ExitAuthorization State Machine
 /// - 9.6 Integrity Constraints and Concurrency Rules
 ///
 /// Invariants Enforced:
-/// - ExitAuthorization may be consumed only once
-/// - Replay of a consumed authorization must fail closed
-/// - Expired authorization must not be consumed
+/// - ExitAuthorization may be consumed only once.
+/// - Replay of a consumed authorization must fail closed.
+/// - Expired authorization must not be consumed.
+/// - ExitAuthorization issuance requires recorded payment confirmation evidence.
 /// </summary>
 public sealed class ConsumeExitAuthorizationIntegrationTests
 {
     private const string ConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
 
+    /// <summary>
+    /// Gets the integration database connection string from the environment.
+    /// </summary>
     private static string ConnectionString =>
         Environment.GetEnvironmentVariable(ConnectionStringEnvVar)
         ?? throw new InvalidOperationException(
-            $"Missing environment variable '{ConnectionStringEnvVar}'. " +
-            "Point it at the ExitPass integration database.");
+            $"Missing environment variable '{ConnectionStringEnvVar}'. Point it at the ExitPass integration database.");
 
+    /// <summary>
+    /// Verifies that an issued authorization can be consumed successfully.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationIsIssued_ConsumesSuccessfully()
     {
@@ -46,31 +55,13 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
 
         try
         {
-            var attempt = await CreateAttemptAsync(
-                ConnectionString,
+            var authorization = await CreateConfirmedIssuedAuthorizationAsync(
                 context,
-                "idem-consume-success",
-                "consume-auth-test");
-
-            await FinalizeAttemptAsync(
-                ConnectionString,
-                attempt.PaymentAttemptId,
-                "CONFIRMED",
-                "central-pms-finalizer",
-                context.CorrelationId);
-
-            var authorization = await IssueExitAuthorizationAsync(
-                ConnectionString,
-                attempt.ParkingSessionId,
-                attempt.PaymentAttemptId,
-                context.RequestedByUserId,
-                context.CorrelationId);
-
-            Assert.NotNull(authorization);
+                "idem-consume-success");
 
             var consumed = await ConsumeExitAuthorizationAsync(
                 ConnectionString,
-                authorization!.ExitAuthorizationId,
+                authorization.ExitAuthorizationId,
                 context.RequestedByUserId,
                 context.CorrelationId);
 
@@ -90,6 +81,9 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that replaying consume for an already consumed authorization fails closed.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationAlreadyConsumed_RejectsReplay()
     {
@@ -103,31 +97,13 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
 
         try
         {
-            var attempt = await CreateAttemptAsync(
-                ConnectionString,
+            var authorization = await CreateConfirmedIssuedAuthorizationAsync(
                 context,
-                "idem-consume-replay",
-                "consume-auth-test");
-
-            await FinalizeAttemptAsync(
-                ConnectionString,
-                attempt.PaymentAttemptId,
-                "CONFIRMED",
-                "central-pms-finalizer",
-                context.CorrelationId);
-
-            var authorization = await IssueExitAuthorizationAsync(
-                ConnectionString,
-                attempt.ParkingSessionId,
-                attempt.PaymentAttemptId,
-                context.RequestedByUserId,
-                context.CorrelationId);
-
-            Assert.NotNull(authorization);
+                "idem-consume-replay");
 
             var firstConsume = await ConsumeExitAuthorizationAsync(
                 ConnectionString,
-                authorization!.ExitAuthorizationId,
+                authorization.ExitAuthorizationId,
                 context.RequestedByUserId,
                 context.CorrelationId);
 
@@ -155,6 +131,9 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that an expired authorization cannot be consumed.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationExpired_RejectsConsume()
     {
@@ -168,31 +147,13 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
 
         try
         {
-            var attempt = await CreateAttemptAsync(
-                ConnectionString,
+            var authorization = await CreateConfirmedIssuedAuthorizationAsync(
                 context,
-                "idem-consume-expired",
-                "consume-auth-test");
-
-            await FinalizeAttemptAsync(
-                ConnectionString,
-                attempt.PaymentAttemptId,
-                "CONFIRMED",
-                "central-pms-finalizer",
-                context.CorrelationId);
-
-            var authorization = await IssueExitAuthorizationAsync(
-                ConnectionString,
-                attempt.ParkingSessionId,
-                attempt.PaymentAttemptId,
-                context.RequestedByUserId,
-                context.CorrelationId);
-
-            Assert.NotNull(authorization);
+                "idem-consume-expired");
 
             await ExpireAuthorizationAsync(
                 ConnectionString,
-                authorization!.ExitAuthorizationId,
+                authorization.ExitAuthorizationId,
                 context.RequestedByUserId);
 
             var ex = await Assert.ThrowsAnyAsync<PostgresException>(async () =>
@@ -218,6 +179,9 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that a random invalid authorization identifier is rejected.
+    /// </summary>
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationIsInvalid_RejectsConsume()
     {
@@ -246,5 +210,68 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
         {
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
+    }
+
+    /// <summary>
+    /// Creates a confirmed payment attempt with recorded payment confirmation and a successfully issued exit authorization.
+    /// </summary>
+    /// <param name="context">Per-test canonical data context.</param>
+    /// <param name="idempotencyKey">Idempotency key to use for payment-attempt creation.</param>
+    /// <returns>
+    /// The authoritative exit authorization issued for the test scenario.
+    /// </returns>
+    private static async Task<IssueExitAuthorizationResult> CreateConfirmedIssuedAuthorizationAsync(
+        PaymentTestContext context,
+        string idempotencyKey)
+    {
+        var attempt = await CreateAttemptAsync(
+            ConnectionString,
+            context,
+            idempotencyKey,
+            "consume-auth-test");
+
+        var finalized = await FinalizeAttemptAsync(
+            ConnectionString,
+            attempt.PaymentAttemptId,
+            "CONFIRMED",
+            "central-pms-finalizer",
+            context.CorrelationId);
+
+        Assert.NotNull(finalized);
+        Assert.Equal("CONFIRMED", finalized!.AttemptStatus);
+
+        var confirmation = await RecordPaymentConfirmationAsync(
+            ConnectionString,
+            attempt.PaymentAttemptId,
+            providerReference: $"prov-{Guid.NewGuid():N}",
+            requestedBy: "integration-test",
+            correlationId: context.CorrelationId);
+
+        Assert.NotNull(confirmation);
+        Assert.Equal(attempt.PaymentAttemptId, confirmation!.PaymentAttemptId);
+        Assert.Equal("SUCCESS", confirmation.ProviderStatus);
+        Assert.True(confirmation.VerifiedTimestamp <= DateTimeOffset.UtcNow);
+
+        var persistedConfirmation = await GetPaymentConfirmationByIdAsync(
+            ConnectionString,
+            confirmation.PaymentConfirmationId);
+
+        Assert.NotNull(persistedConfirmation);
+        Assert.Equal(confirmation.PaymentConfirmationId, persistedConfirmation!.PaymentConfirmationId);
+        Assert.Equal("SUCCESS", persistedConfirmation.ProviderStatus);
+        Assert.Equal(confirmation.ProviderReference, persistedConfirmation.ProviderReference);
+        Assert.Equal(confirmation.VerifiedTimestamp, persistedConfirmation.VerifiedTimestamp);
+
+        var authorization = await IssueExitAuthorizationAsync(
+            ConnectionString,
+            attempt.ParkingSessionId,
+            attempt.PaymentAttemptId,
+            context.RequestedByUserId,
+            context.CorrelationId);
+
+        Assert.NotNull(authorization);
+        Assert.Equal("ISSUED", authorization!.AuthorizationStatus);
+
+        return authorization;
     }
 }
