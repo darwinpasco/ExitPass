@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
@@ -56,7 +57,10 @@ public sealed class InitiateProviderPaymentHandlerTests
                 DateTimeOffset.UtcNow.AddMinutes(30),
                 "{\"data\":{}}"));
 
-        var handler = new InitiateProviderPaymentHandler(registry, repository);
+        var handler = new InitiateProviderPaymentHandler(
+            NullLogger<InitiateProviderPaymentHandler>.Instance,
+            registry,
+            repository);
 
         var request = new InitiateProviderPaymentRequest(
             paymentAttemptId,
@@ -114,7 +118,10 @@ public sealed class InitiateProviderPaymentHandlerTests
                 DateTimeOffset.UtcNow.AddMinutes(30),
                 "{\"data\":{\"id\":\"cs_test_456\"}}"));
 
-        var handler = new InitiateProviderPaymentHandler(registry, repository);
+        var handler = new InitiateProviderPaymentHandler(
+            NullLogger<InitiateProviderPaymentHandler>.Instance,
+            registry,
+            repository);
 
         var request = new InitiateProviderPaymentRequest(
             paymentAttemptId,

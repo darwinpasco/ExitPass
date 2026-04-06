@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 
 /// <summary>
-/// Persists immutable provider webhook event evidence for deduplication, audit, and traceability.
+/// Persists immutable provider callback evidence for deduplication, audit, and traceability.
 ///
 /// BRD:
 /// - 9.10 Payment Processing and Confirmation
@@ -15,28 +15,28 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 ///
 /// Invariants Enforced:
 /// - Duplicate provider callbacks must be detected deterministically.
-/// - Raw provider webhook evidence must be persisted outside core payment truth.
+/// - Raw provider callback evidence must be persisted outside core payment truth.
 /// </summary>
 public interface IProviderWebhookEventRepository
 {
     /// <summary>
-    /// Determines whether a provider event has already been recorded.
+    /// Checks whether a callback with the given provider event identifier already exists.
     /// </summary>
     /// <param name="providerCode">The provider code.</param>
-    /// <param name="providerEventId">The provider event identifier.</param>
+    /// <param name="providerEventId">The provider callback/event identifier.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>
-    /// <c>true</c> if the provider event has already been recorded; otherwise, <c>false</c>.
-    /// </returns>
+    /// <returns><c>true</c> if the callback already exists; otherwise <c>false</c>.</returns>
     Task<bool> ExistsByProviderEventIdAsync(
         string providerCode,
         string providerEventId,
         CancellationToken cancellationToken);
 
     /// <summary>
-    /// Adds a provider webhook event record.
+    /// Persists a provider callback evidence record.
     /// </summary>
-    /// <param name="record">The provider webhook event record to persist.</param>
+    /// <param name="record">The callback evidence record.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
-    Task AddAsync(ProviderWebhookEventRecord record, CancellationToken cancellationToken);
+    Task AddAsync(
+        ProviderWebhookEventRecord record,
+        CancellationToken cancellationToken);
 }

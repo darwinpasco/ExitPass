@@ -1,25 +1,36 @@
 // BRD requirement implemented: Platform operability baseline for service availability, health visibility,
-// and observability export to the centralized telemetry pipeline.
+// provider payment initiation ingress, provider webhook ingress, and observability export to the centralized
+// telemetry pipeline.
 //
 // SDD section correspondence:
 // - Runtime services
 // - Deployment topology
 // - Observability baseline
 // - 10.5.1 Initiate Provider Payment
+// - 10.5.2 Payment Provider Webhook
+// - 10.5.3 Report Verified Payment Outcome
 //
 // System invariant enforced:
 // - A service must expose machine-readable liveness and readiness endpoints.
 // - Telemetry emission must not change business behavior.
 // - Service HTTP activity must be exportable to the platform observability pipeline.
 // - Provider session initiation is owned by POA and must not finalize PaymentAttempt state.
+// - Provider webhooks must enter the platform only through POA-owned ingress.
+// - Verified provider outcomes must be reported to Central PMS through an internal boundary.
 
 using ExitPass.PaymentOrchestrator.Api.Endpoints;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
+using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
+using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
+using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -30,7 +41,26 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Information);
+builder.Logging.AddFilter("Microsoft.Hosting", LogLevel.Information);
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+
 var otlpEndpoint = builder.Configuration["Observability:Otlp:Endpoint"];
+
+builder.Logging.AddOpenTelemetry(options =>
+{
+    options.IncludeFormattedMessage = true;
+    options.IncludeScopes = true;
+    options.ParseStateValues = true;
+
+    if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+    {
+        options.AddOtlpExporter(exporterOptions =>
+        {
+            exporterOptions.Endpoint = new Uri(otlpEndpoint);
+        });
+    }
+});
 
 builder.Services
     .AddHealthChecks()
@@ -43,8 +73,8 @@ builder.Services
 // - 14 Observability
 //
 // Invariants Enforced:
-// - Telemetry export is passive and must not alter domain behavior
-// - Service ingress activity must remain observable at the platform level
+// - Telemetry export is passive and must not alter domain behavior.
+// - Service ingress activity must remain observable at the platform level.
 builder.Services
     .AddOpenTelemetry()
     .ConfigureResource(resource => resource.AddService(
@@ -86,29 +116,29 @@ builder.Services
 // SDD:
 // - 4.2.7 Payment Orchestrator
 // - 10.5.1 Initiate Provider Payment
+// - 10.5.2 Payment Provider Webhook
+// - 10.5.3 Report Verified Payment Outcome
 //
 // Invariants Enforced:
 // - Provider credentials and transport configuration must be externalized.
 // - Provider adapter resolution must be explicit and deterministic.
+// - Webhook event evidence and verified outcome reporting must use concrete infrastructure.
 builder.Services.Configure<PayMongoOptions>(
     builder.Configuration.GetSection(PayMongoOptions.SectionName));
 
 builder.Services.AddHttpClient<PayMongoClient>();
+builder.Services.AddHttpClient<ICentralPmsPaymentOutcomeReporter, CentralPmsPaymentOutcomeReporter>();
 
 builder.Services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
 builder.Services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
 
-// Application handlers for the current MVP slice.
-builder.Services.AddScoped<InitiateProviderPaymentHandler>();
+// Enable this when the implementation exists and matches IProviderSessionRepository exactly.
+builder.Services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
 
-// IMPORTANT:
-// The initiate handler depends on IProviderSessionRepository.
-// Register your real infrastructure implementation here once the repository class exists.
-//
-// Example:
-// builder.Services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
-//
-// Do not register a fake repository in production code just to satisfy DI.
+builder.Services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
+
+builder.Services.AddScoped<InitiateProviderPaymentHandler>();
+builder.Services.AddScoped<VerifyProviderWebhookHandler>();
 
 var app = builder.Build();
 
@@ -126,8 +156,8 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-// Minimal API endpoints for the current slice.
 app.MapInternalPaymentEndpoints();
+app.MapProviderWebhookEndpoints();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

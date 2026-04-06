@@ -1,10 +1,9 @@
-using System;
+using System.Diagnostics;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Internal;
+using Microsoft.Extensions.Logging;
 
 namespace ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
 
@@ -25,18 +24,25 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPaym
 /// </summary>
 public sealed class InitiateProviderPaymentHandler
 {
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.PaymentOrchestrator.Application");
+
+    private readonly ILogger<InitiateProviderPaymentHandler> _logger;
     private readonly IPaymentProviderRegistry _providerRegistry;
     private readonly IProviderSessionRepository _providerSessionRepository;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="InitiateProviderPaymentHandler"/> class.
     /// </summary>
+    /// <param name="logger">The structured logger.</param>
     /// <param name="providerRegistry">The provider adapter registry.</param>
     /// <param name="providerSessionRepository">The provider session repository.</param>
     public InitiateProviderPaymentHandler(
+        ILogger<InitiateProviderPaymentHandler> logger,
         IPaymentProviderRegistry providerRegistry,
         IProviderSessionRepository providerSessionRepository)
     {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _providerRegistry = providerRegistry ?? throw new ArgumentNullException(nameof(providerRegistry));
         _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
     }
@@ -53,6 +59,19 @@ public sealed class InitiateProviderPaymentHandler
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        using var activity = ActivitySource.StartActivity("InitiateProviderPayment");
+        activity?.SetTag("payment_attempt.id", request.PaymentAttemptId);
+        activity?.SetTag("provider.code", request.ProviderCode);
+        activity?.SetTag("provider.product", request.ProviderProduct);
+        activity?.SetTag("payment.amount_minor", request.AmountMinor);
+        activity?.SetTag("payment.currency", request.Currency);
+
+        _logger.LogInformation(
+            "Initiating provider payment session for PaymentAttemptId {PaymentAttemptId}, ProviderCode {ProviderCode}, ProviderProduct {ProviderProduct}",
+            request.PaymentAttemptId,
+            request.ProviderCode,
+            request.ProviderProduct);
+
         var adapter = _providerRegistry.GetRequired(request.ProviderCode, request.ProviderProduct);
 
         var command = new CreateProviderPaymentSessionCommand(
@@ -67,6 +86,7 @@ public sealed class InitiateProviderPaymentHandler
             request.WebhookUrl,
             request.Metadata);
 
+        var startedAtUtc = DateTimeOffset.UtcNow;
         var result = await adapter.CreatePaymentSessionAsync(command, cancellationToken);
 
         var requestJson = JsonSerializer.Serialize(request);
@@ -84,9 +104,18 @@ public sealed class InitiateProviderPaymentHandler
             request.IdempotencyKey,
             requestJson,
             result.RawResponseJson,
-            DateTimeOffset.UtcNow);
+            startedAtUtc);
 
         await _providerSessionRepository.AddAsync(record, cancellationToken);
+
+        _logger.LogInformation(
+            "Provider payment session created for PaymentAttemptId {PaymentAttemptId}, ProviderSessionId {ProviderSessionId}, SessionStatus {SessionStatus}",
+            request.PaymentAttemptId,
+            result.ProviderSessionId,
+            result.SessionStatus);
+
+        activity?.SetTag("provider_session.id", result.ProviderSessionId);
+        activity?.SetTag("provider_session.status", result.SessionStatus);
 
         return new InitiateProviderPaymentResponse(
             request.PaymentAttemptId,
