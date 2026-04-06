@@ -6,6 +6,8 @@ obj/
 *.suo
 TestResults/
 .env
+.env.*
+!.env.example
 artifacts/
 /logs/docker-log.txt
 /logs/dotnet-test.txt
@@ -15,5 +17,12 @@ artifacts/
 /infra/docker/clean
 /infra/docker/logs
 /infra/docker/docker-compose.yml
-/infra/docker/docker-compose.yml
+/infra/docker/docker-compose-mtls.yml
 /src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/appsettings.Development.json
+/logs
+
+# Optional local Docker override files
+docker-compose.override.yml
+infra/docker/docker-compose.override.yml
+/src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/appsettings.Development.json
+*.example
