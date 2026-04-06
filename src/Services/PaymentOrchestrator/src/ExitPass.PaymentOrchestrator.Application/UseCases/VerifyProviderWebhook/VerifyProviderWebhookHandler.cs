@@ -1,10 +1,9 @@
-using System;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
 
@@ -27,6 +26,10 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhoo
 /// </summary>
 public sealed class VerifyProviderWebhookHandler
 {
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.PaymentOrchestrator.Application");
+
+    private readonly ILogger<VerifyProviderWebhookHandler> _logger;
     private readonly IPaymentProviderAdapter _adapter;
     private readonly IProviderWebhookEventRepository _providerWebhookEventRepository;
     private readonly ICentralPmsPaymentOutcomeReporter _centralPmsPaymentOutcomeReporter;
@@ -34,14 +37,17 @@ public sealed class VerifyProviderWebhookHandler
     /// <summary>
     /// Initializes a new instance of the <see cref="VerifyProviderWebhookHandler"/> class.
     /// </summary>
+    /// <param name="logger">The structured logger.</param>
     /// <param name="adapter">The provider adapter handling webhook verification.</param>
     /// <param name="providerWebhookEventRepository">The webhook event repository.</param>
     /// <param name="centralPmsPaymentOutcomeReporter">The Central PMS outcome reporter.</param>
     public VerifyProviderWebhookHandler(
+        ILogger<VerifyProviderWebhookHandler> logger,
         IPaymentProviderAdapter adapter,
         IProviderWebhookEventRepository providerWebhookEventRepository,
         ICentralPmsPaymentOutcomeReporter centralPmsPaymentOutcomeReporter)
     {
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _providerWebhookEventRepository = providerWebhookEventRepository ?? throw new ArgumentNullException(nameof(providerWebhookEventRepository));
         _centralPmsPaymentOutcomeReporter = centralPmsPaymentOutcomeReporter ?? throw new ArgumentNullException(nameof(centralPmsPaymentOutcomeReporter));
@@ -59,10 +65,24 @@ public sealed class VerifyProviderWebhookHandler
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        using var activity = ActivitySource.StartActivity("VerifyProviderWebhook");
+        activity?.SetTag("provider.code", _adapter.ProviderCode);
+        activity?.SetTag("provider.product", _adapter.ProviderProduct);
+
         var verification = await _adapter.VerifyWebhookAsync(request, cancellationToken);
+
+        activity?.SetTag("provider_event.id", verification.EventId);
+        activity?.SetTag("provider_event.type", verification.EventType);
+        activity?.SetTag("payment_attempt.id", verification.PaymentAttemptId);
+        activity?.SetTag("provider_session.id", verification.ProviderSessionId);
 
         if (!verification.IsAuthentic)
         {
+            _logger.LogWarning(
+                "Rejected provider webhook because authenticity verification failed. ProviderCode {ProviderCode}, EventId {EventId}",
+                _adapter.ProviderCode,
+                verification.EventId);
+
             return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_NOT_AUTHENTIC");
         }
 
@@ -70,6 +90,17 @@ public sealed class VerifyProviderWebhookHandler
             _adapter.ProviderCode,
             verification.EventId,
             cancellationToken);
+
+        if (isDuplicate)
+        {
+            _logger.LogInformation(
+                "Accepted duplicate provider webhook before persistence. ProviderCode {ProviderCode}, EventId {EventId}",
+                _adapter.ProviderCode,
+                verification.EventId);
+
+            activity?.SetTag("webhook.duplicate", true);
+            return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
+        }
 
         var eventRecord = new ProviderWebhookEventRecord(
             Guid.NewGuid(),
@@ -82,13 +113,21 @@ public sealed class VerifyProviderWebhookHandler
             JsonSerializer.Serialize(request.Headers),
             request.RawBody,
             true,
-            isDuplicate,
+            false,
             DateTimeOffset.UtcNow);
 
-        await _providerWebhookEventRepository.AddAsync(eventRecord, cancellationToken);
-
-        if (isDuplicate)
+        try
         {
+            await _providerWebhookEventRepository.AddAsync(eventRecord, cancellationToken);
+        }
+        catch (DuplicateProviderWebhookEventException)
+        {
+            _logger.LogInformation(
+                "Accepted duplicate provider webhook after unique-constraint detection. ProviderCode {ProviderCode}, EventId {EventId}",
+                _adapter.ProviderCode,
+                verification.EventId);
+
+            activity?.SetTag("webhook.duplicate", true);
             return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
         }
 
@@ -107,6 +146,16 @@ public sealed class VerifyProviderWebhookHandler
             verification.RawAttributes);
 
         await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(report, cancellationToken);
+
+        _logger.LogInformation(
+            "Reported verified provider outcome to Central PMS. ProviderCode {ProviderCode}, EventId {EventId}, PaymentAttemptId {PaymentAttemptId}, CanonicalStatus {CanonicalStatus}",
+            _adapter.ProviderCode,
+            verification.EventId,
+            verification.PaymentAttemptId,
+            verification.CanonicalStatus);
+
+        activity?.SetTag("webhook.duplicate", false);
+        activity?.SetTag("payment.canonical_status", verification.CanonicalStatus.ToString());
 
         return VerifyProviderWebhookResult.CreateAccepted(verification.EventId);
     }
