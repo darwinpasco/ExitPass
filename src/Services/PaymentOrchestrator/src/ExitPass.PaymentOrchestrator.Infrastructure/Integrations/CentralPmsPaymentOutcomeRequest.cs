@@ -7,9 +7,4 @@ public sealed record CentralPmsPaymentOutcomeRequest(
     Guid PaymentAttemptId,
     string ProviderReference,
     string ProviderStatus,
-    string RequestedBy,
-    string RawCallbackReference,
-    bool ProviderSignatureValid,
-    string ProviderPayloadHash,
-    decimal AmountConfirmed,
-    string CurrencyCode);
+    string RequestedBy);

@@ -13,11 +13,13 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhoo
 ///
 /// BRD:
 /// - 9.10 Payment Processing and Confirmation
+/// - 9.13 Timeout, Retry, and Duplicate Handling
 /// - 14 Audit, Logging, and Reporting
 ///
 /// SDD:
 /// - 10.5.2 Payment Provider Webhook
 /// - 10.5.3 Report Verified Payment Outcome
+/// - 10.7 Idempotency and Concurrency Rules
 ///
 /// Invariants Enforced:
 /// - Only verified provider outcomes may enter the platform.
@@ -83,6 +85,10 @@ public sealed class VerifyProviderWebhookHandler
                 _adapter.ProviderCode,
                 verification.EventId);
 
+            activity?.SetTag("webhook.accepted", false);
+            activity?.SetTag("webhook.duplicate", false);
+            activity?.SetTag("webhook.rejection_code", "WEBHOOK_NOT_AUTHENTIC");
+
             return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_NOT_AUTHENTIC");
         }
 
@@ -98,7 +104,9 @@ public sealed class VerifyProviderWebhookHandler
                 _adapter.ProviderCode,
                 verification.EventId);
 
+            activity?.SetTag("webhook.accepted", true);
             activity?.SetTag("webhook.duplicate", true);
+
             return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
         }
 
@@ -127,7 +135,9 @@ public sealed class VerifyProviderWebhookHandler
                 _adapter.ProviderCode,
                 verification.EventId);
 
+            activity?.SetTag("webhook.accepted", true);
             activity?.SetTag("webhook.duplicate", true);
+
             return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
         }
 
@@ -154,6 +164,7 @@ public sealed class VerifyProviderWebhookHandler
             verification.PaymentAttemptId,
             verification.CanonicalStatus);
 
+        activity?.SetTag("webhook.accepted", true);
         activity?.SetTag("webhook.duplicate", false);
         activity?.SetTag("payment.canonical_status", verification.CanonicalStatus.ToString());
 
