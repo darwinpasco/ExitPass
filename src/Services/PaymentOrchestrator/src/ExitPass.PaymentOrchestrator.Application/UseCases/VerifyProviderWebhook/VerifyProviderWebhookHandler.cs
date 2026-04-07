@@ -25,6 +25,7 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhoo
 /// - Only verified provider outcomes may enter the platform.
 /// - Duplicate provider callbacks must not create duplicate control transitions.
 /// - Only Central PMS may finalize PaymentAttempt state.
+/// - Unknown provider sessions must be rejected deterministically and must not surface as unhandled 500 errors.
 /// </summary>
 public sealed class VerifyProviderWebhookHandler
 {
@@ -77,6 +78,7 @@ public sealed class VerifyProviderWebhookHandler
         activity?.SetTag("provider_event.type", verification.EventType);
         activity?.SetTag("payment_attempt.id", verification.PaymentAttemptId);
         activity?.SetTag("provider_session.id", verification.ProviderSessionId);
+        activity?.SetTag("provider_reference", verification.ProviderReference);
 
         if (!verification.IsAuthentic)
         {
@@ -140,6 +142,21 @@ public sealed class VerifyProviderWebhookHandler
 
             return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
         }
+        catch (UnknownProviderSessionException exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Rejected provider webhook because the provider session is unknown. ProviderCode {ProviderCode}, EventId {EventId}, ProviderSessionId {ProviderSessionId}",
+                _adapter.ProviderCode,
+                verification.EventId,
+                verification.ProviderSessionId);
+
+            activity?.SetTag("webhook.accepted", false);
+            activity?.SetTag("webhook.duplicate", false);
+            activity?.SetTag("webhook.rejection_code", "WEBHOOK_UNKNOWN_PROVIDER_SESSION");
+
+            return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_UNKNOWN_PROVIDER_SESSION");
+        }
 
         var report = new VerifiedPaymentOutcomeReport(
             verification.PaymentAttemptId,
@@ -170,6 +187,7 @@ public sealed class VerifyProviderWebhookHandler
 
         return VerifyProviderWebhookResult.CreateAccepted(verification.EventId);
     }
+
 }
 
 /// <summary>
