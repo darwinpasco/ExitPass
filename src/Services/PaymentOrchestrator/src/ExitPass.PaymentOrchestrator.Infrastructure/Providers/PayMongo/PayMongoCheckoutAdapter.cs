@@ -1,8 +1,11 @@
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Payments;
 using ExitPass.PaymentOrchestrator.Contracts.Providers;
+using Microsoft.Extensions.Options;
 using ProviderCodeConstants = ExitPass.PaymentOrchestrator.Contracts.Providers.ProviderCode;
 using ProviderProductCodeConstants = ExitPass.PaymentOrchestrator.Contracts.Providers.ProviderProductCode;
 
@@ -22,18 +25,24 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 /// - PayMongo-specific API behavior remains behind the adapter boundary.
 /// - Provider results are normalized before entering platform control logic.
 /// - Malformed provider webhooks must fail closed instead of causing unhandled exceptions.
+/// - PayMongo webhooks must pass signature verification before they are treated as authentic.
 /// </summary>
 public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
 {
     private readonly PayMongoClient _client;
+    private readonly PayMongoOptions _options;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PayMongoCheckoutAdapter"/> class.
     /// </summary>
     /// <param name="client">The raw PayMongo client.</param>
-    public PayMongoCheckoutAdapter(PayMongoClient client)
+    /// <param name="options">The bound PayMongo options.</param>
+    public PayMongoCheckoutAdapter(
+        PayMongoClient client,
+        IOptions<PayMongoOptions> options)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
+        _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
     }
 
     /// <inheritdoc />
@@ -82,6 +91,21 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         if (!TryParseWebhookEvent(request.RawBody, out var normalizedEvent, out var rejectionCode))
         {
             return Task.FromResult(CreateRejectedResult(rejectionCode));
+        }
+
+        if (!TryGetHeaderValue(request.Headers, "Paymongo-Signature", out var signatureHeader))
+        {
+            return Task.FromResult(CreateRejectedResult("PAYMONGO_WEBHOOK_MISSING_SIGNATURE"));
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.WebhookSecretKey))
+        {
+            return Task.FromResult(CreateRejectedResult("PAYMONGO_WEBHOOK_SECRET_NOT_CONFIGURED"));
+        }
+
+        if (!IsValidPayMongoSignature(signatureHeader, request.RawBody, _options.WebhookSecretKey, _options.IsLiveMode))
+        {
+            return Task.FromResult(CreateRejectedResult("PAYMONGO_WEBHOOK_INVALID_SIGNATURE"));
         }
 
         var canonicalStatus = MapWebhookEventTypeToCanonicalStatus(normalizedEvent.EventType);
@@ -265,6 +289,83 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
             rejectionCode = "PAYMONGO_WEBHOOK_INVALID_JSON";
             return false;
         }
+    }
+
+    private static bool TryGetHeaderValue(
+        IReadOnlyDictionary<string, string> headers,
+        string headerName,
+        out string value)
+    {
+        value = string.Empty;
+
+        if (headers.TryGetValue(headerName, out var directValue) && !string.IsNullOrWhiteSpace(directValue))
+        {
+            value = directValue;
+            return true;
+        }
+
+        foreach (var pair in headers)
+        {
+            if (string.Equals(pair.Key, headerName, StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(pair.Value))
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsValidPayMongoSignature(
+        string signatureHeader,
+        string rawBody,
+        string webhookSecretKey,
+        bool isLiveMode)
+    {
+        var parts = ParseSignatureHeader(signatureHeader);
+        if (!parts.TryGetValue("t", out var timestamp) || string.IsNullOrWhiteSpace(timestamp))
+        {
+            return false;
+        }
+
+        var signatureToCompare = isLiveMode
+            ? parts.GetValueOrDefault("li", string.Empty)
+            : parts.GetValueOrDefault("te", string.Empty);
+
+        if (string.IsNullOrWhiteSpace(signatureToCompare))
+        {
+            return false;
+        }
+
+        var signedPayload = $"{timestamp}.{rawBody}";
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(webhookSecretKey));
+        var computedBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(signedPayload));
+        var computedSignature = Convert.ToHexString(computedBytes).ToLowerInvariant();
+
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(computedSignature),
+            Encoding.UTF8.GetBytes(signatureToCompare.Trim().ToLowerInvariant()));
+    }
+
+    private static Dictionary<string, string> ParseSignatureHeader(string signatureHeader)
+    {
+        var parts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var segment in signatureHeader.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separatorIndex = segment.IndexOf('=');
+            if (separatorIndex <= 0 || separatorIndex >= segment.Length - 1)
+            {
+                continue;
+            }
+
+            var key = segment[..separatorIndex].Trim();
+            var value = segment[(separatorIndex + 1)..].Trim();
+            parts[key] = value;
+        }
+
+        return parts;
     }
 
     private static CanonicalPaymentOutcomeStatus MapWebhookEventTypeToCanonicalStatus(string eventType)

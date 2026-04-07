@@ -301,16 +301,19 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
     }
 
     /// <summary>
-    /// Detects whether a signature header is present.
+    /// Detects whether a provider signature header is present.
     /// </summary>
     /// <param name="rawHeadersJson">The serialized headers JSON.</param>
-    /// <returns><c>true</c> when a signature header exists; otherwise <c>false</c>.</returns>
+    /// <returns><c>true</c> when a supported signature header exists; otherwise <c>false</c>.</returns>
     private static bool TryDetectSignaturePresence(string rawHeadersJson)
     {
         try
         {
             using var document = JsonDocument.Parse(rawHeadersJson);
-            return document.RootElement.TryGetProperty("X-Signature", out _);
+
+            return document.RootElement.TryGetProperty("X-Signature", out _) ||
+                   document.RootElement.TryGetProperty("Paymongo-Signature", out _) ||
+                   document.RootElement.TryGetProperty("paymongo-signature", out _);
         }
         catch
         {

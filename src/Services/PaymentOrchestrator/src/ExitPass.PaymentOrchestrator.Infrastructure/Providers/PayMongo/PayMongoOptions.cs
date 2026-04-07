@@ -44,4 +44,14 @@ public sealed class PayMongoOptions
     /// Gets or initializes the webhook signing secret or equivalent verification material.
     /// </summary>
     public string WebhookSigningSecret { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets the PayMongo webhook secret key used for webhook signature verification.
+    /// </summary>
+    public string WebhookSecretKey { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets a value indicating whether the configured webhook runs in live mode.
+    /// </summary>
+    public bool IsLiveMode { get; init; }
 }
