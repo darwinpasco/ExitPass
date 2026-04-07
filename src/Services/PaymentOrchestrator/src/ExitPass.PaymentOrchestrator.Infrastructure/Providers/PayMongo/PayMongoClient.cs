@@ -18,6 +18,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 /// Invariants Enforced:
 /// - Raw provider HTTP concerns must stay in infrastructure.
 /// - Provider credentials must not be hardcoded in application logic.
+/// - Provider configuration must be sourced from the bound PayMongo provider options.
 /// </summary>
 public sealed class PayMongoClient
 {
@@ -30,7 +31,7 @@ public sealed class PayMongoClient
     /// Initializes a new instance of the <see cref="PayMongoClient"/> class.
     /// </summary>
     /// <param name="httpClient">The HTTP client.</param>
-    /// <param name="options">The PayMongo provider options.</param>
+    /// <param name="options">The bound PayMongo provider options.</param>
     /// <exception cref="ArgumentNullException">Thrown when a dependency is null.</exception>
     public PayMongoClient(HttpClient httpClient, IOptions<PayMongoOptions> options)
     {
@@ -80,11 +81,25 @@ public sealed class PayMongoClient
         response.EnsureSuccessStatusCode();
 
         using var document = JsonDocument.Parse(responseJson);
-        var data = document.RootElement.GetProperty("data");
-        var attributes = data.GetProperty("attributes");
+        var root = document.RootElement;
 
-        var checkoutSessionId = data.GetProperty("id").GetString();
-        var checkoutUrl = attributes.GetProperty("checkout_url").GetString();
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("PayMongo response did not contain a valid data object.");
+        }
+
+        if (!data.TryGetProperty("attributes", out var attributes) || attributes.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("PayMongo response did not contain a valid attributes object.");
+        }
+
+        var checkoutSessionId = data.TryGetProperty("id", out var idProperty) && idProperty.ValueKind == JsonValueKind.String
+            ? idProperty.GetString()
+            : null;
+
+        var checkoutUrl = attributes.TryGetProperty("checkout_url", out var checkoutUrlProperty) && checkoutUrlProperty.ValueKind == JsonValueKind.String
+            ? checkoutUrlProperty.GetString()
+            : null;
 
         if (string.IsNullOrWhiteSpace(checkoutSessionId))
         {
@@ -111,6 +126,11 @@ public sealed class PayMongoClient
             responseJson);
     }
 
+    /// <summary>
+    /// Builds the PayMongo checkout session request payload.
+    /// </summary>
+    /// <param name="command">The normalized provider session creation command.</param>
+    /// <returns>The PayMongo request payload object.</returns>
     private object BuildCheckoutSessionRequest(CreateProviderPaymentSessionCommand command)
     {
         return new
@@ -130,20 +150,25 @@ public sealed class PayMongoClient
                             currency = command.Currency,
                             amount = command.AmountMinor,
                             name = command.Description,
-                            quantity = 1
-                        }
+                            quantity = 1,
+                        },
                     },
                     metadata = command.Metadata,
                     reference_number = command.PaymentAttemptId.ToString(),
                     send_email_receipt = false,
                     show_description = true,
                     show_line_items = true,
-                    success_url = command.SuccessUrl
-                }
-            }
+                    success_url = command.SuccessUrl,
+                },
+            },
         };
     }
 
+    /// <summary>
+    /// Builds the HTTP Basic authorization header required by PayMongo.
+    /// </summary>
+    /// <param name="secretKey">The PayMongo secret key.</param>
+    /// <returns>The Basic authorization header.</returns>
     private static AuthenticationHeaderValue BuildBasicAuthorizationHeader(string secretKey)
     {
         var raw = $"{secretKey}:";

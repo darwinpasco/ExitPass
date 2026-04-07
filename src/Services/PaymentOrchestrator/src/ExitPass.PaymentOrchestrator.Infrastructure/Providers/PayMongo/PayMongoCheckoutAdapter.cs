@@ -21,6 +21,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 /// Invariants Enforced:
 /// - PayMongo-specific API behavior remains behind the adapter boundary.
 /// - Provider results are normalized before entering platform control logic.
+/// - Malformed provider webhooks must fail closed instead of causing unhandled exceptions.
 /// </summary>
 public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
 {
@@ -73,7 +74,15 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var normalizedEvent = ParseWebhookEvent(request.RawBody);
+        if (string.IsNullOrWhiteSpace(request.RawBody))
+        {
+            return Task.FromResult(CreateRejectedResult("PAYMONGO_WEBHOOK_EMPTY_BODY"));
+        }
+
+        if (!TryParseWebhookEvent(request.RawBody, out var normalizedEvent, out var rejectionCode))
+        {
+            return Task.FromResult(CreateRejectedResult(rejectionCode));
+        }
 
         var canonicalStatus = MapWebhookEventTypeToCanonicalStatus(normalizedEvent.EventType);
         var isSuccess = canonicalStatus == CanonicalPaymentOutcomeStatus.Succeeded;
@@ -84,112 +93,178 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
             CanonicalPaymentOutcomeStatus.Cancelled;
 
         var result = new ProviderWebhookVerificationResult(
-            true,
-            normalizedEvent.EventId,
-            normalizedEvent.EventType,
-            normalizedEvent.PaymentAttemptId,
-            normalizedEvent.ProviderReference,
-            normalizedEvent.ProviderSessionId,
-            canonicalStatus,
-            normalizedEvent.OccurredAtUtc,
-            normalizedEvent.AmountMinor,
-            normalizedEvent.Currency,
-            isTerminal,
-            isSuccess,
-            normalizedEvent.RawAttributes);
+            IsAuthentic: true,
+            EventId: normalizedEvent.EventId,
+            EventType: normalizedEvent.EventType,
+            PaymentAttemptId: normalizedEvent.PaymentAttemptId,
+            ProviderReference: normalizedEvent.ProviderReference,
+            ProviderSessionId: normalizedEvent.ProviderSessionId,
+            CanonicalStatus: canonicalStatus,
+            OccurredAtUtc: normalizedEvent.OccurredAtUtc,
+            AmountMinor: normalizedEvent.AmountMinor,
+            Currency: normalizedEvent.Currency,
+            IsTerminal: isTerminal,
+            IsSuccess: isSuccess,
+            RawAttributes: normalizedEvent.RawAttributes);
 
         return Task.FromResult(result);
     }
 
-    private static PayMongoWebhookEvent ParseWebhookEvent(string rawBody)
+    private static ProviderWebhookVerificationResult CreateRejectedResult(string rejectionCode)
     {
-        using var document = JsonDocument.Parse(rawBody);
+        return new ProviderWebhookVerificationResult(
+            IsAuthentic: false,
+            EventId: rejectionCode,
+            EventType: string.Empty,
+            PaymentAttemptId: Guid.Empty,
+            ProviderReference: string.Empty,
+            ProviderSessionId: string.Empty,
+            CanonicalStatus: CanonicalPaymentOutcomeStatus.PendingProvider,
+            OccurredAtUtc: DateTimeOffset.UtcNow,
+            AmountMinor: 0,
+            Currency: "PHP",
+            IsTerminal: false,
+            IsSuccess: false,
+            RawAttributes: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["rejection_code"] = rejectionCode
+            });
+    }
 
-        var data = document.RootElement.GetProperty("data");
-        var eventId = data.GetProperty("id").GetString() ?? throw new InvalidOperationException("Webhook event id is required.");
+    private static bool TryParseWebhookEvent(
+        string rawBody,
+        out PayMongoWebhookEvent webhookEvent,
+        out string rejectionCode)
+    {
+        webhookEvent = default!;
+        rejectionCode = "PAYMONGO_WEBHOOK_MALFORMED";
 
-        var attributes = data.GetProperty("attributes");
-        var eventType = attributes.GetProperty("type").GetString() ?? throw new InvalidOperationException("Webhook event type is required.");
-
-        var occurredAtUtc = DateTimeOffset.UtcNow;
-        if (attributes.TryGetProperty("created_at", out var createdAtProperty))
+        try
         {
-            occurredAtUtc = ParseDateTimeOffset(createdAtProperty);
-        }
+            using var document = JsonDocument.Parse(rawBody);
 
-        string providerReference = string.Empty;
-        string providerSessionId = string.Empty;
-        long amountMinor = 0L;
-        string currency = "PHP";
-        Guid paymentAttemptId = Guid.Empty;
-        var rawAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        if (attributes.TryGetProperty("data", out var nestedData) &&
-            nestedData.ValueKind == JsonValueKind.Object &&
-            nestedData.TryGetProperty("attributes", out var nestedAttributes) &&
-            nestedAttributes.ValueKind == JsonValueKind.Object)
-        {
-            if (nestedData.TryGetProperty("id", out var nestedId) && nestedId.ValueKind == JsonValueKind.String)
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
             {
-                providerReference = nestedId.GetString() ?? string.Empty;
+                rejectionCode = "PAYMONGO_WEBHOOK_ROOT_NOT_OBJECT";
+                return false;
             }
 
-            if (nestedAttributes.TryGetProperty("amount", out var amountProperty) && amountProperty.ValueKind == JsonValueKind.Number)
+            if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
             {
-                amountMinor = amountProperty.GetInt64();
+                rejectionCode = "PAYMONGO_WEBHOOK_MISSING_DATA";
+                return false;
             }
 
-            if (nestedAttributes.TryGetProperty("currency", out var currencyProperty) && currencyProperty.ValueKind == JsonValueKind.String)
+            if (!TryGetRequiredString(data, "id", out var eventId))
             {
-                currency = currencyProperty.GetString() ?? currency;
+                rejectionCode = "PAYMONGO_WEBHOOK_MISSING_EVENT_ID";
+                return false;
             }
 
-            if (nestedAttributes.TryGetProperty("checkout_session_id", out var checkoutSessionProperty) &&
-                checkoutSessionProperty.ValueKind == JsonValueKind.String)
+            if (!data.TryGetProperty("attributes", out var attributes) || attributes.ValueKind != JsonValueKind.Object)
             {
-                providerSessionId = checkoutSessionProperty.GetString() ?? string.Empty;
+                rejectionCode = "PAYMONGO_WEBHOOK_MISSING_ATTRIBUTES";
+                return false;
             }
 
-            if (nestedAttributes.TryGetProperty("metadata", out var metadataProperty) &&
-                metadataProperty.ValueKind == JsonValueKind.Object)
+            if (!TryGetRequiredString(attributes, "type", out var eventType))
             {
-                foreach (var property in metadataProperty.EnumerateObject())
+                rejectionCode = "PAYMONGO_WEBHOOK_MISSING_EVENT_TYPE";
+                return false;
+            }
+
+            var occurredAtUtc = DateTimeOffset.UtcNow;
+            if (attributes.TryGetProperty("created_at", out var createdAtProperty))
+            {
+                occurredAtUtc = ParseDateTimeOffset(createdAtProperty);
+            }
+
+            string providerReference = string.Empty;
+            string providerSessionId = string.Empty;
+            long amountMinor = 0L;
+            string currency = "PHP";
+            Guid paymentAttemptId = Guid.Empty;
+            var rawAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            if (attributes.TryGetProperty("data", out var nestedData) &&
+                nestedData.ValueKind == JsonValueKind.Object)
+            {
+                if (TryGetOptionalString(nestedData, "id", out var nestedId))
                 {
-                    rawAttributes[property.Name] = property.Value.ToString();
+                    providerReference = nestedId;
                 }
 
-                if (metadataProperty.TryGetProperty("payment_attempt_id", out var paymentAttemptIdProperty) &&
-                    paymentAttemptIdProperty.ValueKind == JsonValueKind.String &&
-                    Guid.TryParse(paymentAttemptIdProperty.GetString(), out var parsedPaymentAttemptId))
+                if (nestedData.TryGetProperty("attributes", out var nestedAttributes) &&
+                    nestedAttributes.ValueKind == JsonValueKind.Object)
                 {
-                    paymentAttemptId = parsedPaymentAttemptId;
+                    if (nestedAttributes.TryGetProperty("amount", out var amountProperty) &&
+                        amountProperty.ValueKind == JsonValueKind.Number &&
+                        amountProperty.TryGetInt64(out var parsedAmountMinor))
+                    {
+                        amountMinor = parsedAmountMinor;
+                    }
+
+                    if (TryGetOptionalString(nestedAttributes, "currency", out var parsedCurrency))
+                    {
+                        currency = parsedCurrency;
+                    }
+
+                    if (TryGetOptionalString(nestedAttributes, "checkout_session_id", out var checkoutSessionId))
+                    {
+                        providerSessionId = checkoutSessionId;
+                    }
+
+                    if (nestedAttributes.TryGetProperty("metadata", out var metadataProperty) &&
+                        metadataProperty.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var property in metadataProperty.EnumerateObject())
+                        {
+                            rawAttributes[property.Name] = property.Value.ToString();
+                        }
+
+                        if (TryGetOptionalString(metadataProperty, "payment_attempt_id", out var paymentAttemptIdText) &&
+                            Guid.TryParse(paymentAttemptIdText, out var parsedPaymentAttemptId))
+                        {
+                            paymentAttemptId = parsedPaymentAttemptId;
+                        }
+                    }
                 }
             }
-        }
 
-        if (paymentAttemptId == Guid.Empty)
+            if (paymentAttemptId == Guid.Empty)
+            {
+                rejectionCode = "PAYMONGO_WEBHOOK_MISSING_PAYMENT_ATTEMPT_ID";
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(providerSessionId))
+            {
+                providerSessionId = providerReference;
+            }
+
+            rawAttributes["event_type"] = eventType;
+            rawAttributes["provider_event_id"] = eventId;
+
+            webhookEvent = new PayMongoWebhookEvent(
+                eventId,
+                eventType,
+                paymentAttemptId,
+                providerReference,
+                providerSessionId,
+                occurredAtUtc,
+                amountMinor,
+                currency,
+                rawAttributes);
+
+            rejectionCode = string.Empty;
+            return true;
+        }
+        catch (JsonException)
         {
-            throw new InvalidOperationException("PayMongo webhook did not include a valid payment_attempt_id metadata value.");
+            rejectionCode = "PAYMONGO_WEBHOOK_INVALID_JSON";
+            return false;
         }
-
-        if (string.IsNullOrWhiteSpace(providerSessionId))
-        {
-            providerSessionId = providerReference;
-        }
-
-        rawAttributes["event_type"] = eventType;
-        rawAttributes["provider_event_id"] = eventId;
-
-        return new PayMongoWebhookEvent(
-            eventId,
-            eventType,
-            paymentAttemptId,
-            providerReference,
-            providerSessionId,
-            occurredAtUtc,
-            amountMinor,
-            currency,
-            rawAttributes);
     }
 
     private static CanonicalPaymentOutcomeStatus MapWebhookEventTypeToCanonicalStatus(string eventType)
@@ -217,5 +292,47 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
 
             _ => DateTimeOffset.UtcNow
         };
+    }
+
+    private static bool TryGetRequiredString(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        var parsed = property.GetString();
+        if (string.IsNullOrWhiteSpace(parsed))
+        {
+            return false;
+        }
+
+        value = parsed;
+        return true;
+    }
+
+    private static bool TryGetOptionalString(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return false;
+        }
+
+        if (property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = property.GetString() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(value);
     }
 }
