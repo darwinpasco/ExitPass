@@ -15,6 +15,7 @@ namespace ExitPass.PaymentOrchestrator.Api.Endpoints;
 /// Invariants Enforced:
 /// - Provider webhooks must enter the system only through POA-owned ingress.
 /// - Webhook requests must be handed to provider-specific verification logic before being accepted.
+/// - Non-authoritative provider events for a rail must be acknowledged safely without mutating business state.
 /// </summary>
 public static class ProviderWebhookEndpoints
 {
@@ -65,18 +66,27 @@ public static class ProviderWebhookEndpoints
                 return Results.Unauthorized();
             }
 
+            if (result.Ignored)
+            {
+                logger.LogInformation(
+                    "Ignored non-authoritative PayMongo webhook. EventId {EventId}",
+                    result.Code);
+
+                return Results.Ok();
+            }
+
             if (result.Duplicate)
             {
                 logger.LogInformation(
                     "Accepted duplicate PayMongo webhook. EventId {EventId}",
                     result.Code);
+
+                return Results.Ok();
             }
-            else
-            {
-                logger.LogInformation(
-                    "Accepted PayMongo webhook. EventId {EventId}",
-                    result.Code);
-            }
+
+            logger.LogInformation(
+                "Accepted PayMongo webhook. EventId {EventId}",
+                result.Code);
 
             return Results.Ok();
         });

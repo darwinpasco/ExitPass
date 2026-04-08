@@ -26,6 +26,7 @@ namespace ExitPass.PaymentOrchestrator.UnitTests.Application.UseCases.VerifyProv
 /// - Only verified provider outcomes may enter the platform.
 /// - Duplicate provider callbacks must not create duplicate control transitions.
 /// - Only Central PMS may finalize PaymentAttempt state.
+/// - Non-authoritative provider events for a rail must not mutate business state.
 /// </summary>
 public sealed class VerifyProviderWebhookHandlerTests
 {
@@ -37,7 +38,7 @@ public sealed class VerifyProviderWebhookHandlerTests
         var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
 
         adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
-        adapter.SetupGet(x => x.ProviderProduct).Returns("CHECKOUT");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
         adapter
             .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateNotAuthenticVerificationResult());
@@ -48,7 +49,43 @@ public sealed class VerifyProviderWebhookHandlerTests
 
         Assert.False(result.Accepted);
         Assert.False(result.Duplicate);
+        Assert.False(result.Ignored);
         Assert.Equal("WEBHOOK_NOT_AUTHENTIC", result.Code);
+
+        repository.Verify(
+            x => x.ExistsByProviderEventIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        repository.Verify(
+            x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        reporter.Verify(
+            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenEventIsNonAuthoritativeForCheckoutRail_ReturnsAcceptedIgnored()
+    {
+        var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
+        var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
+
+        adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
+        adapter
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateAuthenticPaymentPaidVerificationResult());
+
+        var handler = CreateHandler(adapter, repository, reporter);
+
+        var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
+
+        Assert.True(result.Accepted);
+        Assert.False(result.Duplicate);
+        Assert.True(result.Ignored);
+        Assert.Equal("evt_test_009", result.Code);
 
         repository.Verify(
             x => x.ExistsByProviderEventIdAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
@@ -71,10 +108,10 @@ public sealed class VerifyProviderWebhookHandlerTests
         var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
 
         adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
-        adapter.SetupGet(x => x.ProviderProduct).Returns("CHECKOUT");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
         adapter
             .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateAuthenticVerificationResult());
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
 
         repository
             .Setup(x => x.ExistsByProviderEventIdAsync("PAYMONGO", "evt_test_009", It.IsAny<CancellationToken>()))
@@ -86,6 +123,7 @@ public sealed class VerifyProviderWebhookHandlerTests
 
         Assert.True(result.Accepted);
         Assert.True(result.Duplicate);
+        Assert.False(result.Ignored);
         Assert.Equal("evt_test_009", result.Code);
 
         repository.Verify(
@@ -105,10 +143,10 @@ public sealed class VerifyProviderWebhookHandlerTests
         var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
 
         adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
-        adapter.SetupGet(x => x.ProviderProduct).Returns("CHECKOUT");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
         adapter
             .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateAuthenticVerificationResult());
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
 
         repository
             .Setup(x => x.ExistsByProviderEventIdAsync("PAYMONGO", "evt_test_009", It.IsAny<CancellationToken>()))
@@ -124,6 +162,7 @@ public sealed class VerifyProviderWebhookHandlerTests
 
         Assert.True(result.Accepted);
         Assert.True(result.Duplicate);
+        Assert.False(result.Ignored);
         Assert.Equal("evt_test_009", result.Code);
 
         reporter.Verify(
@@ -132,17 +171,17 @@ public sealed class VerifyProviderWebhookHandlerTests
     }
 
     [Fact]
-    public async Task HandleAsync_WhenWebhookIsFirstSeen_PersistsEventReportsOutcomeAndReturnsAccepted()
+    public async Task HandleAsync_WhenAuthoritativeWebhookIsFirstSeen_PersistsEventReportsOutcomeAndReturnsAccepted()
     {
         var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
         var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
         var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
 
         adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
-        adapter.SetupGet(x => x.ProviderProduct).Returns("CHECKOUT");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
         adapter
             .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateAuthenticVerificationResult());
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
 
         repository
             .Setup(x => x.ExistsByProviderEventIdAsync("PAYMONGO", "evt_test_009", It.IsAny<CancellationToken>()))
@@ -162,6 +201,7 @@ public sealed class VerifyProviderWebhookHandlerTests
 
         Assert.True(result.Accepted);
         Assert.False(result.Duplicate);
+        Assert.False(result.Ignored);
         Assert.Equal("evt_test_009", result.Code);
 
         repository.Verify(
@@ -169,7 +209,7 @@ public sealed class VerifyProviderWebhookHandlerTests
                 It.Is<ProviderWebhookEventRecord>(r =>
                     r.ProviderCode == "PAYMONGO" &&
                     r.ProviderEventId == "evt_test_009" &&
-                    r.ProviderEventType == "payment.paid" &&
+                    r.ProviderEventType == "checkout_session.payment.paid" &&
                     r.ProviderReference == "cs_293285f3347f5496c48332d8" &&
                     r.ProviderSessionId == "cs_293285f3347f5496c48332d8" &&
                     r.PaymentAttemptId == Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076") &&
@@ -222,7 +262,7 @@ public sealed class VerifyProviderWebhookHandlerTests
         return new ProviderWebhookVerificationResult(
             IsAuthentic: false,
             EventId: "evt_test_009",
-            EventType: "payment.paid",
+            EventType: "checkout_session.payment.paid",
             PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
             ProviderReference: "cs_293285f3347f5496c48332d8",
             ProviderSessionId: "cs_293285f3347f5496c48332d8",
@@ -238,14 +278,35 @@ public sealed class VerifyProviderWebhookHandlerTests
             });
     }
 
-    private static ProviderWebhookVerificationResult CreateAuthenticVerificationResult()
+    private static ProviderWebhookVerificationResult CreateAuthenticCheckoutSessionPaidVerificationResult()
+    {
+        return new ProviderWebhookVerificationResult(
+            IsAuthentic: true,
+            EventId: "evt_test_009",
+            EventType: "checkout_session.payment.paid",
+            PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            ProviderReference: "cs_293285f3347f5496c48332d8",
+            ProviderSessionId: "cs_293285f3347f5496c48332d8",
+            CanonicalStatus: CanonicalPaymentOutcomeStatus.Succeeded,
+            OccurredAtUtc: DateTimeOffset.Parse("2026-04-06T10:00:00Z"),
+            AmountMinor: 5000,
+            Currency: "PHP",
+            IsTerminal: true,
+            IsSuccess: true,
+            RawAttributes: new Dictionary<string, string>
+            {
+                ["status"] = "SUCCEEDED"
+            });
+    }
+
+    private static ProviderWebhookVerificationResult CreateAuthenticPaymentPaidVerificationResult()
     {
         return new ProviderWebhookVerificationResult(
             IsAuthentic: true,
             EventId: "evt_test_009",
             EventType: "payment.paid",
             PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
-            ProviderReference: "cs_293285f3347f5496c48332d8",
+            ProviderReference: "pay_293285f3347f5496c48332d8",
             ProviderSessionId: "cs_293285f3347f5496c48332d8",
             CanonicalStatus: CanonicalPaymentOutcomeStatus.Succeeded,
             OccurredAtUtc: DateTimeOffset.Parse("2026-04-06T10:00:00Z"),

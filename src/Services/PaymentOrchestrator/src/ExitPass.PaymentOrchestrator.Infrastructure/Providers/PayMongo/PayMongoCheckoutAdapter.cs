@@ -26,6 +26,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 /// - Provider results are normalized before entering platform control logic.
 /// - Malformed provider webhooks must fail closed instead of causing unhandled exceptions.
 /// - PayMongo webhooks must pass signature verification before they are treated as authentic.
+/// - Checkout-session rails must preserve event-type distinctions so non-authoritative events can be safely ignored upstream.
 /// </summary>
 public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
 {
@@ -373,8 +374,10 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         return eventType switch
         {
             "checkout_session.payment.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
-            "payment.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
             "payment.failed" => CanonicalPaymentOutcomeStatus.Failed,
+            "payment.expired" => CanonicalPaymentOutcomeStatus.Expired,
+            "payment.cancelled" => CanonicalPaymentOutcomeStatus.Cancelled,
+            "payment.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
             _ => CanonicalPaymentOutcomeStatus.PendingProvider
         };
     }
