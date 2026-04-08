@@ -23,6 +23,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 /// - Duplicate provider callbacks must be detected deterministically.
 /// - Raw provider callback evidence must be persisted outside core payment truth.
 /// - Provider callback evidence must reference a known provider session.
+/// - Only authoritative callbacks that reach persistence are written as immutable evidence.
 /// </summary>
 public sealed class ProviderWebhookEventRepository : IProviderWebhookEventRepository
 {
@@ -219,11 +220,6 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
             record.IsDuplicate);
     }
 
-    /// <summary>
-    /// Normalizes raw JSON into canonical serialized form when possible.
-    /// </summary>
-    /// <param name="rawBody">The raw provider payload.</param>
-    /// <returns>The normalized JSON payload, or an empty JSON object when parsing fails.</returns>
     private static string TryNormalizeJson(string rawBody)
     {
         try
@@ -237,22 +233,12 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         }
     }
 
-    /// <summary>
-    /// Computes the SHA-256 hash of a payload string.
-    /// </summary>
-    /// <param name="value">The payload value.</param>
-    /// <returns>The uppercase hexadecimal hash.</returns>
     private static string ComputeSha256(string value)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(bytes);
     }
 
-    /// <summary>
-    /// Attempts to parse the source IP address from provider headers.
-    /// </summary>
-    /// <param name="rawHeadersJson">The serialized headers JSON.</param>
-    /// <returns>The parsed IP address when present; otherwise <c>null</c>.</returns>
     private static IPAddress? ParseSourceIp(string rawHeadersJson)
     {
         try
@@ -278,11 +264,6 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         return null;
     }
 
-    /// <summary>
-    /// Attempts to extract the provider signature key identifier from headers.
-    /// </summary>
-    /// <param name="rawHeadersJson">The serialized headers JSON.</param>
-    /// <returns>The key identifier when present; otherwise <c>null</c>.</returns>
     private static string? TryExtractSignatureKeyId(string rawHeadersJson)
     {
         try
@@ -300,11 +281,6 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         return null;
     }
 
-    /// <summary>
-    /// Detects whether a provider signature header is present.
-    /// </summary>
-    /// <param name="rawHeadersJson">The serialized headers JSON.</param>
-    /// <returns><c>true</c> when a supported signature header exists; otherwise <c>false</c>.</returns>
     private static bool TryDetectSignaturePresence(string rawHeadersJson)
     {
         try
@@ -321,24 +297,11 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         }
     }
 
-    /// <summary>
-    /// Normalizes processing status for callback evidence persistence.
-    /// </summary>
-    /// <param name="isAuthentic">Whether the callback was verified as authentic.</param>
-    /// <returns>The processing status enum value as text.</returns>
     private static string NormalizeProcessingStatus(bool isAuthentic)
     {
         return isAuthentic ? "VERIFIED" : "REJECTED";
     }
 
-    /// <summary>
-    /// Resolves the enabled payment rail identifier for the given provider code.
-    /// </summary>
-    /// <param name="connection">The open PostgreSQL connection.</param>
-    /// <param name="providerCode">The provider code.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The payment rail identifier.</returns>
-    /// <exception cref="InvalidOperationException">Thrown when no enabled payment rail exists for the provider.</exception>
     private static async Task<Guid> ResolvePaymentRailIdByProviderCodeAsync(
         NpgsqlConnection connection,
         string providerCode,
@@ -366,15 +329,6 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
             $"No enabled payment rail found for provider_name '{providerCode}'.");
     }
 
-    /// <summary>
-    /// Resolves the provider session primary key for a provider session reference.
-    /// </summary>
-    /// <param name="connection">The open PostgreSQL connection.</param>
-    /// <param name="paymentRailId">The payment rail identifier.</param>
-    /// <param name="providerSessionRef">The provider session reference.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The provider session primary key.</returns>
-    /// <exception cref="UnknownProviderSessionException">Thrown when the provider session cannot be found.</exception>
     private static async Task<Guid> ResolveProviderSessionPrimaryKeyAsync(
         NpgsqlConnection connection,
         Guid paymentRailId,
