@@ -26,3 +26,5 @@ docker-compose.override.yml
 infra/docker/docker-compose.override.yml
 /src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/appsettings.Development.json
 *.example
+/infra/docker/docker-compose - Copy.yml
+/infra/docker/docker-compose.mtls.yml
