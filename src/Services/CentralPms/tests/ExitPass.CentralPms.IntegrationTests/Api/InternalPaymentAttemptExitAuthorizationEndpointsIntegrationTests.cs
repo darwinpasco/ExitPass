@@ -36,13 +36,15 @@ public sealed class InternalPaymentAttemptExitAuthorizationEndpointsIntegrationT
         Environment.GetEnvironmentVariable(PrimaryDbConnectionStringEnvVar)
         ?? Environment.GetEnvironmentVariable(AlternateDbConnectionStringEnvVar)
         ?? Environment.GetEnvironmentVariable(LegacyDbConnectionStringEnvVar)
-        ?? "Host=localhost;Port=5432;Database=exitpass;Username=exitpass;Password=change_me";
+        ?? throw new InvalidOperationException(
+            $"Integration test database connection string is missing. Set one of: {PrimaryDbConnectionStringEnvVar}, {AlternateDbConnectionStringEnvVar}, or {LegacyDbConnectionStringEnvVar}.");
 
     private static Uri ApiBaseUri => new(
         Environment.GetEnvironmentVariable(PrimaryApiBaseUrlEnvVar)
         ?? Environment.GetEnvironmentVariable(AlternateApiBaseUrlEnvVar)
         ?? Environment.GetEnvironmentVariable(LegacyApiBaseUrlEnvVar)
-        ?? "http://localhost:8080",
+        ?? throw new InvalidOperationException(
+            $"Central PMS API base URL is missing. Set one of: {PrimaryApiBaseUrlEnvVar}, {AlternateApiBaseUrlEnvVar}, or {LegacyApiBaseUrlEnvVar}."),
         UriKind.Absolute);
 
     /// <summary>
@@ -144,7 +146,7 @@ public sealed class InternalPaymentAttemptExitAuthorizationEndpointsIntegrationT
             var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
                 ConnectionString,
                 context,
-                "idem-issue-success",
+                $"idem-issue-create-{Guid.NewGuid():N}",
                 "issue-exit-auth-test");
 
             var finalized = await PaymentRoutineTestHelper.FinalizeAttemptAsync(
@@ -157,25 +159,24 @@ public sealed class InternalPaymentAttemptExitAuthorizationEndpointsIntegrationT
             Assert.NotNull(finalized);
             Assert.Equal("CONFIRMED", finalized!.AttemptStatus);
 
+            var confirmation = await PaymentRoutineTestHelper.RecordPaymentConfirmationAsync(
+                ConnectionString,
+                created.PaymentAttemptId,
+                $"prov-{Guid.NewGuid():N}",
+                "issue-exit-auth-test",
+                context.CorrelationId);
+
+            Assert.NotNull(confirmation);
+            Assert.Equal(created.PaymentAttemptId, confirmation!.PaymentAttemptId);
+            Assert.Equal("SUCCESS", confirmation.ProviderStatus);
+
             using var client = CreateClient();
-
-            var confirmationResponse = await PostRecordPaymentConfirmationAsync(
-                client,
-                new RecordPaymentConfirmationRequest(
-                    PaymentAttemptId: created.PaymentAttemptId,
-                    ProviderReference: $"prov-{Guid.NewGuid():N}",
-                    ProviderStatus: "SUCCESS",
-                    RequestedBy: "integration-test"),
-                correlationId: context.CorrelationId,
-                idempotencyKey: $"idem-confirm-{Guid.NewGuid():N}");
-
-            Assert.Equal(HttpStatusCode.Created, confirmationResponse.StatusCode);
 
             var response = await PostIssueExitAuthorizationAsync(
                 client,
                 paymentAttemptId: created.PaymentAttemptId,
                 request: new IssueExitAuthorizationRequest(
-                    ParkingSessionId: context.ParkingSessionId,
+                    ParkingSessionId: created.ParkingSessionId,
                     RequestedByUserId: KnownTestIdentityIds.ServiceIdentityId),
                 includeCorrelationId: true,
                 includeIdempotencyKey: true,
@@ -190,10 +191,10 @@ public sealed class InternalPaymentAttemptExitAuthorizationEndpointsIntegrationT
 
             Assert.NotNull(body);
             Assert.NotEqual(Guid.Empty, body!.ExitAuthorizationId);
-            Assert.Equal(context.ParkingSessionId, body.ParkingSessionId);
+            Assert.Equal(created.ParkingSessionId, body.ParkingSessionId);
             Assert.Equal(created.PaymentAttemptId, body.PaymentAttemptId);
             Assert.False(string.IsNullOrWhiteSpace(body.AuthorizationToken));
-            Assert.False(string.IsNullOrWhiteSpace(body.AuthorizationStatus));
+            Assert.Equal("ISSUED", body.AuthorizationStatus);
         }
         finally
         {
@@ -288,37 +289,24 @@ public sealed class InternalPaymentAttemptExitAuthorizationEndpointsIntegrationT
     }
 
     /// <summary>
-    /// Sends a POST request to the live internal payment-confirmation endpoint.
+    /// Issue-exit-authorization request contract.
     /// </summary>
-    private static async Task<HttpResponseMessage> PostRecordPaymentConfirmationAsync(
-        HttpClient client,
-        RecordPaymentConfirmationRequest request,
-        Guid correlationId,
-        string idempotencyKey)
-    {
-        using var message = new HttpRequestMessage(
-            HttpMethod.Post,
-            "/v1/internal/payments/outcome")
-        {
-            Content = JsonContent.Create(request)
-        };
-
-        message.Headers.Add("X-Correlation-Id", correlationId.ToString());
-        message.Headers.Add("Idempotency-Key", idempotencyKey);
-
-        return await client.SendAsync(message);
-    }
-
+    /// <param name="ParkingSessionId">Parking session identifier.</param>
+    /// <param name="RequestedByUserId">Actor requesting issuance.</param>
     private sealed record IssueExitAuthorizationRequest(
         Guid ParkingSessionId,
         Guid RequestedByUserId);
 
-    private sealed record RecordPaymentConfirmationRequest(
-        Guid PaymentAttemptId,
-        string ProviderReference,
-        string ProviderStatus,
-        string RequestedBy);
-
+    /// <summary>
+    /// Issue-exit-authorization response contract.
+    /// </summary>
+    /// <param name="ExitAuthorizationId">Exit authorization identifier.</param>
+    /// <param name="ParkingSessionId">Parking session identifier.</param>
+    /// <param name="PaymentAttemptId">Payment attempt identifier.</param>
+    /// <param name="AuthorizationToken">Authorization token.</param>
+    /// <param name="AuthorizationStatus">Authorization status.</param>
+    /// <param name="IssuedAt">Issued timestamp.</param>
+    /// <param name="ExpirationTimestamp">Expiration timestamp.</param>
     private sealed record IssueExitAuthorizationResponse(
         Guid ExitAuthorizationId,
         Guid ParkingSessionId,
