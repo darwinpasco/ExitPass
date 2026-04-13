@@ -92,6 +92,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
 });
 
 app.MapInternalPaymentConfirmationEndpoints();
+app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
@@ -267,6 +268,8 @@ static void ConfigureApplicationServices(
         new RecordPaymentConfirmationGateway(mainDatabaseConnectionString));
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
+
+    builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 
     builder.Services.AddScoped<IFinalizePaymentAttemptUseCase, FinalizePaymentAttemptHandler>();
     builder.Services.AddScoped<IFinalizePaymentAttemptGateway>(_ =>

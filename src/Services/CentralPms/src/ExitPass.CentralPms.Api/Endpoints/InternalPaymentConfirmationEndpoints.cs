@@ -44,7 +44,7 @@ public static class InternalPaymentConfirmationEndpoints
         var group = app.MapGroup("/v1/internal/payments")
             .WithTags("InternalPayments");
 
-        group.MapPost("/outcome", HandleAsync)
+        group.MapPost("/confirmation", HandleAsync)
             .WithName("RecordPaymentConfirmation")
             .Produces<RecordPaymentConfirmationResponse>(StatusCodes.Status201Created)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
