@@ -43,9 +43,11 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
 # Required native dependency for the PostgreSQL/Npgsql stack.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
-    && rm -rf /var/lib/apt/lists/*
+#RUN apt-get update \
+    #&& apt-get install -y --no-install-recommends libgssapi-krb5-2 \
+    #&& rm -rf /var/lib/apt/lists/*
+FROM exitpass/aspnet:8.0-krb5 AS runtime
+WORKDIR /app
 
 # Runtime defaults.
 ENV ASPNETCORE_URLS=http://+:8080
