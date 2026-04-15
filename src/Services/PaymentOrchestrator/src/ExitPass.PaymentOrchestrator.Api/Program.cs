@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using ExitPass.PaymentOrchestrator.Api.Endpoints;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
@@ -12,8 +13,14 @@ using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
+
+const string ServiceName = "ExitPass.PaymentOrchestrator.Api";
 
 ConfigureConfiguration(builder);
 ConfigureLogging(builder);
@@ -26,10 +33,6 @@ ConfigureEndpoints(app);
 
 app.Run();
 
-/// <summary>
-/// Configures configuration providers for the Payment Orchestrator.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
 static void ConfigureConfiguration(WebApplicationBuilder builder)
 {
     ArgumentNullException.ThrowIfNull(builder);
@@ -37,29 +40,62 @@ static void ConfigureConfiguration(WebApplicationBuilder builder)
     builder.Configuration.AddEnvironmentVariables();
 }
 
-/// <summary>
-/// Configures logging providers for the Payment Orchestrator.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
 static void ConfigureLogging(WebApplicationBuilder builder)
 {
     ArgumentNullException.ThrowIfNull(builder);
 
+    var otlpEndpoint = builder.Configuration["Observability:Otlp:Endpoint"];
+    var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+
     builder.Logging.ClearProviders();
-    builder.Logging.AddConsole();
-    builder.Logging.AddDebug();
+
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
+
+    builder.Logging.AddConsole(options =>
+    {
+        options.IncludeScopes = true;
+    });
+
+    builder.Logging.Configure(options =>
+    {
+        options.ActivityTrackingOptions =
+            ActivityTrackingOptions.TraceId |
+            ActivityTrackingOptions.SpanId |
+            ActivityTrackingOptions.ParentId |
+            ActivityTrackingOptions.Tags |
+            ActivityTrackingOptions.Baggage;
+    });
+
+    builder.Logging.AddOpenTelemetry(options =>
+    {
+        options.IncludeFormattedMessage = true;
+        options.IncludeScopes = true;
+        options.ParseStateValues = true;
+
+        options.SetResourceBuilder(
+            ResourceBuilder.CreateDefault().AddService(
+                serviceName: ServiceName,
+                serviceVersion: serviceVersion));
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            options.AddOtlpExporter(otlp =>
+            {
+                otlp.Endpoint = new Uri(otlpEndpoint);
+            });
+        }
+    });
 }
 
-/// <summary>
-/// Configures service registrations for the Payment Orchestrator.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
 static void ConfigureServices(WebApplicationBuilder builder)
 {
     ArgumentNullException.ThrowIfNull(builder);
 
     var services = builder.Services;
     var configuration = builder.Configuration;
+    var otlpEndpoint = configuration["Observability:Otlp:Endpoint"];
+    var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "1.0.0";
 
     services.AddProblemDetails();
     services.AddEndpointsApiExplorer();
@@ -86,30 +122,68 @@ static void ConfigureServices(WebApplicationBuilder builder)
     services.AddHealthChecks()
         .AddCheck("self", static () => HealthCheckResult.Healthy());
 
+    services.AddOpenTelemetry()
+        .ConfigureResource(resource => resource.AddService(
+            serviceName: ServiceName,
+            serviceVersion: serviceVersion))
+        .WithTracing(tracing =>
+        {
+            tracing
+                .AddSource("ExitPass.PaymentOrchestrator.Api")
+                .AddSource("ExitPass.PaymentOrchestrator.Application")
+                .AddAspNetCoreInstrumentation(options =>
+                {
+                    options.RecordException = true;
+                    options.EnrichWithHttpRequest = (activity, request) =>
+                    {
+                        if (request.Headers.TryGetValue("X-Correlation-Id", out var correlationId))
+                        {
+                            activity.SetTag("correlation_id", correlationId.ToString());
+                        }
+
+                        activity.SetTag("http.request.method", request.Method);
+                        activity.SetTag("url.path", request.Path.Value);
+                    };
+
+                    options.EnrichWithHttpResponse = (activity, response) =>
+                    {
+                        activity.SetTag("http.response.status_code", response.StatusCode);
+                    };
+                })
+                .AddHttpClientInstrumentation(options =>
+                {
+                    options.RecordException = true;
+                });
+
+            if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+            {
+                tracing.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = new Uri(otlpEndpoint);
+                });
+            }
+        })
+        .WithMetrics(metrics =>
+        {
+            metrics
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddRuntimeInstrumentation();
+
+            if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+            {
+                metrics.AddOtlpExporter(options =>
+                {
+                    options.Endpoint = new Uri(otlpEndpoint);
+                });
+            }
+        });
+
     RegisterApplicationServices(services);
     RegisterInfrastructureServices(services, configuration);
     ValidateCriticalConfiguration(configuration);
 }
 
-/// <summary>
-/// Registers application-layer services.
-///
-/// BRD:
-/// - 9.9 Payment Initiation
-/// - 9.10 Payment Processing and Confirmation
-/// - 9.13 Timeout, Retry, and Duplicate Handling
-///
-/// SDD:
-/// - 10.5.1 Initiate Provider Payment
-/// - 10.5.2 Payment Provider Webhook
-/// - 10.5.3 Report Verified Payment Outcome
-///
-/// Invariants Enforced:
-/// - Payment Orchestrator executes provider flows but does not declare payment finality.
-/// - Duplicate provider callbacks must be handled idempotently.
-/// - Only verified provider outcomes may be reported to Central PMS.
-/// </summary>
-/// <param name="services">The service collection.</param>
 static void RegisterApplicationServices(IServiceCollection services)
 {
     ArgumentNullException.ThrowIfNull(services);
@@ -118,24 +192,6 @@ static void RegisterApplicationServices(IServiceCollection services)
     services.AddScoped<VerifyProviderWebhookHandler>();
 }
 
-/// <summary>
-/// Registers infrastructure-layer services.
-///
-/// BRD:
-/// - 12 Payment Orchestration
-/// - 14 Audit, Logging, and Reporting
-///
-/// SDD:
-/// - 10.5 Payment Orchestrator APIs and Webhooks
-/// - 10.7 Idempotency and Concurrency Rules
-///
-/// Invariants Enforced:
-/// - Verified outcome reporting must fail closed when Central PMS integration is not configured.
-/// - Webhook persistence must preserve deduplication and auditability.
-/// - Provider dependencies must be explicitly registered so startup validation fails fast.
-/// </summary>
-/// <param name="services">The service collection.</param>
-/// <param name="configuration">The application configuration.</param>
 static void RegisterInfrastructureServices(IServiceCollection services, IConfiguration configuration)
 {
     ArgumentNullException.ThrowIfNull(services);
@@ -165,10 +221,6 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
         .ValidateOnStart();
 }
 
-/// <summary>
-/// Validates critical configuration required for startup.
-/// </summary>
-/// <param name="configuration">The application configuration.</param>
 static void ValidateCriticalConfiguration(IConfiguration configuration)
 {
     ArgumentNullException.ThrowIfNull(configuration);
@@ -203,10 +255,6 @@ static void ValidateCriticalConfiguration(IConfiguration configuration)
     }
 }
 
-/// <summary>
-/// Configures middleware for the Payment Orchestrator.
-/// </summary>
-/// <param name="app">The web application.</param>
 static void ConfigureMiddleware(WebApplication app)
 {
     ArgumentNullException.ThrowIfNull(app);
@@ -221,13 +269,10 @@ static void ConfigureMiddleware(WebApplication app)
         app.UseHttpsRedirection();
     }
 
+    app.Use(CorrelationMiddleware);
     app.UseExceptionHandler();
 }
 
-/// <summary>
-/// Configures HTTP endpoints for the Payment Orchestrator.
-/// </summary>
-/// <param name="app">The web application.</param>
 static void ConfigureEndpoints(WebApplication app)
 {
     ArgumentNullException.ThrowIfNull(app);
@@ -246,6 +291,80 @@ static void ConfigureEndpoints(WebApplication app)
     app.MapInternalPaymentEndpoints();
 
     app.MapGet("/", static () => Results.Ok("ExitPass Payment Orchestrator API"));
+}
+
+static async Task CorrelationMiddleware(HttpContext context, Func<Task> next)
+{
+    var path = context.Request.Path.Value;
+
+    var isInfrastructureNoisePath =
+        string.Equals(path, "/metrics", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(path, "/health/live", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(path, "/health/ready", StringComparison.OrdinalIgnoreCase);
+
+    if (isInfrastructureNoisePath)
+    {
+        await next();
+        return;
+    }
+
+    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+
+    var correlationId =
+        context.Request.Headers.TryGetValue("X-Correlation-Id", out var headerValue) &&
+        !string.IsNullOrWhiteSpace(headerValue)
+            ? headerValue.ToString()
+            : Guid.NewGuid().ToString();
+
+    context.Response.Headers["X-Correlation-Id"] = correlationId;
+
+    if (Activity.Current is not null)
+    {
+        Activity.Current.SetTag("correlation_id", correlationId);
+        Activity.Current.AddBaggage("correlation_id", correlationId);
+    }
+
+    using var scope = logger.BeginScope(new Dictionary<string, object?>
+    {
+        ["correlation_id"] = correlationId,
+        ["service_name"] = ServiceName,
+        ["request_method"] = context.Request.Method,
+        ["request_path"] = context.Request.Path.Value,
+        ["request_host"] = context.Request.Host.Value,
+        ["trace_id"] = Activity.Current?.TraceId.ToString(),
+        ["span_id"] = Activity.Current?.SpanId.ToString()
+    });
+
+    try
+    {
+        logger.LogInformation("Payment Orchestrator request started.");
+
+        await next();
+
+        if (context.Response.StatusCode >= StatusCodes.Status500InternalServerError)
+        {
+            logger.LogError(
+                "Payment Orchestrator request completed with server error status code {StatusCode}.",
+                context.Response.StatusCode);
+        }
+        else if (context.Response.StatusCode >= StatusCodes.Status400BadRequest)
+        {
+            logger.LogWarning(
+                "Payment Orchestrator request completed with client error status code {StatusCode}.",
+                context.Response.StatusCode);
+        }
+        else
+        {
+            logger.LogInformation(
+                "Payment Orchestrator request completed successfully with status code {StatusCode}.",
+                context.Response.StatusCode);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Unhandled exception reached Payment Orchestrator API boundary.");
+        throw;
+    }
 }
 
 /// <summary>

@@ -1,38 +1,43 @@
-using System;
-using System.Collections.Generic;
-
 namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 
 /// <summary>
-/// Represents the verified canonical payment outcome that POA reports to Central PMS.
+/// Canonical verified payment outcome reported by POA to Central PMS.
 ///
 /// BRD:
 /// - 9.10 Payment Processing and Confirmation
-/// - 9.12 Exit Authorization
+/// - 9.13 Timeout, Retry, and Duplicate Handling
 ///
 /// SDD:
+/// - 10.5.2 Payment Provider Webhook
 /// - 10.5.3 Report Verified Payment Outcome
 ///
 /// Invariants Enforced:
-/// - Only verified provider outcomes may cross from POA into Central PMS.
-/// - Provider-specific states must be normalized before entering Central PMS.
+/// - POA reports only verified outcomes.
+/// - POA does not finalize payment state itself.
+/// - The report must carry the authoritative identifiers required by Central PMS.
 /// </summary>
-/// <param name="PaymentAttemptId">The canonical PaymentAttempt identifier.</param>
-/// <param name="ProviderCode">The provider code.</param>
-/// <param name="ProviderReference">The provider reference.</param>
-/// <param name="ProviderSessionId">The provider session identifier.</param>
-/// <param name="CanonicalStatus">The canonical normalized payment outcome status.</param>
-/// <param name="OccurredAtUtc">The provider event occurrence timestamp in UTC.</param>
-/// <param name="AmountMinor">The payment amount in minor currency units.</param>
-/// <param name="Currency">The ISO currency code.</param>
-/// <param name="EventId">The provider event identifier.</param>
-/// <param name="IsTerminal">Indicates whether the outcome is terminal.</param>
-/// <param name="IsSuccess">Indicates whether the outcome is successful.</param>
-/// <param name="RawAttributes">Additional normalized attributes for evidence and traceability.</param>
+/// <param name="PaymentAttemptId">Canonical payment attempt identifier.</param>
+/// <param name="ParkingSessionId">Canonical parking session identifier required by Central PMS.</param>
+/// <param name="RequestedByUserId">Calling actor identity required by Central PMS.</param>
+/// <param name="CorrelationId">End-to-end correlation identifier.</param>
+/// <param name="ProviderCode">Normalized provider code.</param>
+/// <param name="ProviderReference">Provider-side reference.</param>
+/// <param name="ProviderSessionId">Provider-side session identifier.</param>
+/// <param name="CanonicalStatus">Canonical payment outcome status.</param>
+/// <param name="OccurredAtUtc">Verified provider event timestamp in UTC.</param>
+/// <param name="AmountMinor">Verified amount in minor units.</param>
+/// <param name="Currency">Verified currency code.</param>
+/// <param name="EventId">Provider event identifier used as idempotency key.</param>
+/// <param name="IsTerminal">Whether the verified outcome is terminal.</param>
+/// <param name="IsSuccess">Whether the verified outcome is successful.</param>
+/// <param name="RawAttributes">Additional provider attributes kept for audit and diagnostics.</param>
 public sealed record VerifiedPaymentOutcomeReport(
     Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid RequestedByUserId,
+    Guid CorrelationId,
     string ProviderCode,
-    string ProviderReference,
+    string? ProviderReference,
     string ProviderSessionId,
     string CanonicalStatus,
     DateTimeOffset OccurredAtUtc,
@@ -41,4 +46,4 @@ public sealed record VerifiedPaymentOutcomeReport(
     string EventId,
     bool IsTerminal,
     bool IsSuccess,
-    IReadOnlyDictionary<string, string> RawAttributes);
+    IReadOnlyDictionary<string, string>? RawAttributes);

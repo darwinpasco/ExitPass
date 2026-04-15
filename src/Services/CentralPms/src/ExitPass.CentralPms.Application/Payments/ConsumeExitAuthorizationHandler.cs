@@ -27,9 +27,6 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// </summary>
 public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationUseCase
 {
-    /// <summary>
-    /// Activity source for exit authorization consumption spans.
-    /// </summary>
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Application.Payments");
 
@@ -38,13 +35,6 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<ConsumeExitAuthorizationHandler> _logger;
 
-    /// <summary>
-    /// Creates a handler for consuming exit authorizations through the canonical DB routine.
-    /// </summary>
-    /// <param name="gateway">DB-backed consume gateway.</param>
-    /// <param name="systemClock">System clock used for canonical request timestamps.</param>
-    /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
-    /// <param name="logger">Application logger.</param>
     public ConsumeExitAuthorizationHandler(
         IConsumeExitAuthorizationGateway gateway,
         ISystemClock systemClock,
@@ -57,12 +47,6 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         _logger = logger;
     }
 
-    /// <summary>
-    /// Consumes an exit authorization after validating command completeness.
-    /// </summary>
-    /// <param name="command">Consumption command containing identifiers and trace metadata.</param>
-    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
-    /// <returns>The DB-authoritative consume result mapped into the application model.</returns>
     public async Task<ConsumeExitAuthorizationResult> ExecuteAsync(
         ConsumeExitAuthorizationCommand command,
         CancellationToken cancellationToken)
@@ -108,7 +92,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.SetTag("consumed_at", dbResult.ConsumedAt);
             activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
 
-            _metrics.ExitAuthorizationConsumed("CONSUMED");
+            _metrics.ExitAuthorizationConsumeOutcome("CONSUMED", "SUCCESS");
 
             _logger.LogInformation(
                 "Exit authorization consumed successfully. exit_authorization_id={ExitAuthorizationId} authorization_status={AuthorizationStatus}",
@@ -126,7 +110,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
-            _metrics.ExitAuthorizationConsumed("REJECTED");
+            _metrics.ExitAuthorizationConsumeOutcome("REJECTED", "INVALID_REQUEST");
             _metrics.ExceptionObserved(ex.GetType().Name, "CONSUME_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
@@ -141,7 +125,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
-            _metrics.ExitAuthorizationConsumed("REJECTED");
+            _metrics.ExitAuthorizationConsumeOutcome("REJECTED", ex.GetType().Name);
             _metrics.ExceptionObserved(ex.GetType().Name, "CONSUME_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
@@ -155,6 +139,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
 
+            _metrics.ExitAuthorizationConsumeOutcome("FAILED", "UNEXPECTED_FAILURE");
             _metrics.ExceptionObserved(ex.GetType().Name, "CONSUME_EXIT_AUTHORIZATION");
 
             _logger.LogError(
@@ -166,11 +151,6 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         }
     }
 
-    /// <summary>
-    /// Validates command completeness before calling the authoritative DB path.
-    /// </summary>
-    /// <param name="command">Command to validate.</param>
-    /// <exception cref="ArgumentException">Thrown when required fields are missing or invalid.</exception>
     private static void ValidateCommand(ConsumeExitAuthorizationCommand command)
     {
         if (command.ExitAuthorizationId == Guid.Empty)
