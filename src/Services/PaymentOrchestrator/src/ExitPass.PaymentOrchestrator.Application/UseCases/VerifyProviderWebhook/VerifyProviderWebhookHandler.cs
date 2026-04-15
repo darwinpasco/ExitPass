@@ -35,7 +35,6 @@ public sealed class VerifyProviderWebhookHandler
 
     private const string PayMongoProviderCode = "PAYMONGO";
     private const string PayMongoCheckoutSessionProduct = "PAYMONGO_CHECKOUT_SESSION";
-    private const string AuthoritativeCheckoutSuccessEvent = "checkout_session.payment.paid";
     private const string NonAuthoritativePaymentPaidEvent = "payment.paid";
 
     private readonly ILogger<VerifyProviderWebhookHandler> _logger;
@@ -43,13 +42,6 @@ public sealed class VerifyProviderWebhookHandler
     private readonly IProviderWebhookEventRepository _providerWebhookEventRepository;
     private readonly ICentralPmsPaymentOutcomeReporter _centralPmsPaymentOutcomeReporter;
 
-    /// <summary>
-    /// Initializes a new instance of the <see cref="VerifyProviderWebhookHandler"/> class.
-    /// </summary>
-    /// <param name="logger">The structured logger.</param>
-    /// <param name="adapter">The provider adapter handling webhook verification.</param>
-    /// <param name="providerWebhookEventRepository">The webhook event repository.</param>
-    /// <param name="centralPmsPaymentOutcomeReporter">The Central PMS outcome reporter.</param>
     public VerifyProviderWebhookHandler(
         ILogger<VerifyProviderWebhookHandler> logger,
         IPaymentProviderAdapter adapter,
@@ -62,12 +54,6 @@ public sealed class VerifyProviderWebhookHandler
         _centralPmsPaymentOutcomeReporter = centralPmsPaymentOutcomeReporter ?? throw new ArgumentNullException(nameof(centralPmsPaymentOutcomeReporter));
     }
 
-    /// <summary>
-    /// Handles verification, persistence, deduplication, and reporting for an inbound provider webhook.
-    /// </summary>
-    /// <param name="request">The raw provider webhook request.</param>
-    /// <param name="cancellationToken">The cancellation token.</param>
-    /// <returns>The result of webhook handling.</returns>
     public async Task<VerifyProviderWebhookResult> HandleAsync(
         ProviderWebhookRequest request,
         CancellationToken cancellationToken)
@@ -93,11 +79,7 @@ public sealed class VerifyProviderWebhookHandler
                 _adapter.ProviderCode,
                 verification.EventId);
 
-            activity?.SetTag("webhook.accepted", false);
-            activity?.SetTag("webhook.duplicate", false);
-            activity?.SetTag("webhook.ignored", false);
-            activity?.SetTag("webhook.rejection_code", "WEBHOOK_NOT_AUTHENTIC");
-
+            TagRejected(activity, "WEBHOOK_NOT_AUTHENTIC");
             return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_NOT_AUTHENTIC");
         }
 
@@ -116,6 +98,18 @@ public sealed class VerifyProviderWebhookHandler
             activity?.SetTag("webhook.ignore_reason", "NON_AUTHORITATIVE_EVENT_FOR_RAIL");
 
             return VerifyProviderWebhookResult.CreateIgnored(verification.EventId);
+        }
+
+        if (!TryBuildVerifiedOutcomeReport(verification, out var report, out var rejectionCode))
+        {
+            _logger.LogWarning(
+                "Rejected verified provider webhook because required internal attributes are missing. ProviderCode {ProviderCode}, EventId {EventId}, RejectionCode {RejectionCode}",
+                _adapter.ProviderCode,
+                verification.EventId,
+                rejectionCode);
+
+            TagRejected(activity, rejectionCode!);
+            return VerifyProviderWebhookResult.CreateRejected(rejectionCode!);
         }
 
         var isDuplicate = await _providerWebhookEventRepository.ExistsByProviderEventIdAsync(
@@ -177,29 +171,11 @@ public sealed class VerifyProviderWebhookHandler
                 verification.EventId,
                 verification.ProviderSessionId);
 
-            activity?.SetTag("webhook.accepted", false);
-            activity?.SetTag("webhook.duplicate", false);
-            activity?.SetTag("webhook.ignored", false);
-            activity?.SetTag("webhook.rejection_code", "WEBHOOK_UNKNOWN_PROVIDER_SESSION");
-
+            TagRejected(activity, "WEBHOOK_UNKNOWN_PROVIDER_SESSION");
             return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_UNKNOWN_PROVIDER_SESSION");
         }
 
-        var report = new VerifiedPaymentOutcomeReport(
-            verification.PaymentAttemptId,
-            _adapter.ProviderCode,
-            verification.ProviderReference,
-            verification.ProviderSessionId,
-            verification.CanonicalStatus.ToString().ToUpperInvariant(),
-            verification.OccurredAtUtc,
-            verification.AmountMinor,
-            verification.Currency,
-            verification.EventId,
-            verification.IsTerminal,
-            verification.IsSuccess,
-            verification.RawAttributes);
-
-        await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(report, cancellationToken);
+        await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(report!, cancellationToken);
 
         _logger.LogInformation(
             "Reported verified provider outcome to Central PMS. ProviderCode {ProviderCode}, EventId {EventId}, PaymentAttemptId {PaymentAttemptId}, CanonicalStatus {CanonicalStatus}",
@@ -212,16 +188,12 @@ public sealed class VerifyProviderWebhookHandler
         activity?.SetTag("webhook.duplicate", false);
         activity?.SetTag("webhook.ignored", false);
         activity?.SetTag("payment.canonical_status", verification.CanonicalStatus.ToString());
+        activity?.SetTag("correlation_id", report!.CorrelationId);
+        activity?.SetTag("parking_session_id", report.ParkingSessionId);
 
         return VerifyProviderWebhookResult.CreateAccepted(verification.EventId);
     }
 
-    /// <summary>
-    /// Determines whether a verified webhook event should be ignored because it is non-authoritative
-    /// for the configured rail.
-    /// </summary>
-    /// <param name="eventType">The provider event type.</param>
-    /// <returns><c>true</c> when the event is valid but non-authoritative for this rail; otherwise <c>false</c>.</returns>
     private bool ShouldIgnoreAsNonAuthoritativeEvent(string eventType)
     {
         if (!string.Equals(_adapter.ProviderCode, PayMongoProviderCode, StringComparison.OrdinalIgnoreCase))
@@ -236,55 +208,101 @@ public sealed class VerifyProviderWebhookHandler
 
         return string.Equals(eventType, NonAuthoritativePaymentPaidEvent, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Builds the verified outcome report from provider verification output.
+    /// Missing internal attributes must produce deterministic business rejection,
+    /// not unhandled 500 errors.
+    /// </summary>
+    private static bool TryBuildVerifiedOutcomeReport(
+        ProviderWebhookVerificationResult verification,
+        out VerifiedPaymentOutcomeReport? report,
+        out string? rejectionCode)
+    {
+        var rawAttributes = verification.RawAttributes ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!TryGetRequiredGuid(rawAttributes, "parking_session_id", out var parkingSessionId))
+        {
+            report = null;
+            rejectionCode = "WEBHOOK_MISSING_PARKING_SESSION_ID";
+            return false;
+        }
+
+        if (!TryGetRequiredGuid(rawAttributes, "requested_by_user_id", out var requestedByUserId))
+        {
+            report = null;
+            rejectionCode = "WEBHOOK_MISSING_REQUESTED_BY_USER_ID";
+            return false;
+        }
+
+        report = new VerifiedPaymentOutcomeReport(
+            PaymentAttemptId: verification.PaymentAttemptId,
+            ParkingSessionId: parkingSessionId,
+            RequestedByUserId: requestedByUserId,
+            CorrelationId: ResolveCorrelationId(rawAttributes),
+            ProviderCode: PayMongoProviderCode,
+            ProviderReference: verification.ProviderReference,
+            ProviderSessionId: verification.ProviderSessionId,
+            CanonicalStatus: verification.CanonicalStatus.ToString().ToUpperInvariant(),
+            OccurredAtUtc: verification.OccurredAtUtc,
+            AmountMinor: verification.AmountMinor,
+            Currency: verification.Currency,
+            EventId: verification.EventId,
+            IsTerminal: verification.IsTerminal,
+            IsSuccess: verification.IsSuccess,
+            RawAttributes: rawAttributes);
+
+        rejectionCode = null;
+        return true;
+    }
+
+    private static bool TryGetRequiredGuid(
+        IReadOnlyDictionary<string, string> rawAttributes,
+        string key,
+        out Guid value)
+    {
+        value = Guid.Empty;
+
+        if (!rawAttributes.TryGetValue(key, out var rawValue) ||
+            string.IsNullOrWhiteSpace(rawValue) ||
+            !Guid.TryParse(rawValue, out var parsed))
+        {
+            return false;
+        }
+
+        value = parsed;
+        return true;
+    }
+
+    private static Guid ResolveCorrelationId(IReadOnlyDictionary<string, string> rawAttributes)
+    {
+        if (rawAttributes.TryGetValue("correlation_id", out var value) &&
+            Guid.TryParse(value, out var parsed))
+        {
+            return parsed;
+        }
+
+        return Guid.NewGuid();
+    }
+
+    private static void TagRejected(Activity? activity, string rejectionCode)
+    {
+        activity?.SetTag("webhook.accepted", false);
+        activity?.SetTag("webhook.duplicate", false);
+        activity?.SetTag("webhook.ignored", false);
+        activity?.SetTag("webhook.rejection_code", rejectionCode);
+        activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+    }
 }
 
-/// <summary>
-/// Represents the result of handling an inbound provider webhook.
-///
-/// BRD:
-/// - 9.10 Payment Processing and Confirmation
-///
-/// SDD:
-/// - 10.5.2 Payment Provider Webhook
-///
-/// Invariants Enforced:
-/// - Webhook handling outcomes must be explicit and deterministic.
-/// </summary>
-/// <param name="Accepted">Indicates whether the webhook was accepted by POA.</param>
-/// <param name="Duplicate">Indicates whether the webhook was identified as a duplicate event.</param>
-/// <param name="Ignored">Indicates whether the webhook was intentionally ignored as non-authoritative.</param>
-/// <param name="Code">The event identifier or rejection code.</param>
 public sealed record VerifyProviderWebhookResult(
     bool Accepted,
     bool Duplicate,
     bool Ignored,
     string Code)
 {
-    /// <summary>
-    /// Creates a rejected webhook result.
-    /// </summary>
-    /// <param name="code">The rejection code.</param>
-    /// <returns>A rejected webhook result.</returns>
     public static VerifyProviderWebhookResult CreateRejected(string code) => new(false, false, false, code);
-
-    /// <summary>
-    /// Creates an accepted webhook result for a first-seen authoritative event.
-    /// </summary>
-    /// <param name="eventId">The provider event identifier.</param>
-    /// <returns>An accepted webhook result.</returns>
     public static VerifyProviderWebhookResult CreateAccepted(string eventId) => new(true, false, false, eventId);
-
-    /// <summary>
-    /// Creates an accepted webhook result for a duplicate event.
-    /// </summary>
-    /// <param name="eventId">The provider event identifier.</param>
-    /// <returns>An accepted duplicate webhook result.</returns>
     public static VerifyProviderWebhookResult CreateAcceptedDuplicate(string eventId) => new(true, true, false, eventId);
-
-    /// <summary>
-    /// Creates an accepted webhook result for a non-authoritative event that is intentionally ignored.
-    /// </summary>
-    /// <param name="eventId">The provider event identifier.</param>
-    /// <returns>An accepted ignored webhook result.</returns>
     public static VerifyProviderWebhookResult CreateIgnored(string eventId) => new(true, false, true, eventId);
 }

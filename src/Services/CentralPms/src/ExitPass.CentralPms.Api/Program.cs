@@ -118,6 +118,9 @@ static void ConfigureLogging(
 {
     builder.Logging.ClearProviders();
 
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
+
     builder.Logging.AddConsole(options =>
     {
         options.IncludeScopes = true;
@@ -299,6 +302,19 @@ static void ConfigureApplicationServices(
 /// <returns>A task representing the asynchronous middleware execution.</returns>
 static async Task CorrelationMiddleware(HttpContext context, Func<Task> next)
 {
+    var path = context.Request.Path.Value;
+
+    var isInfrastructureNoisePath =
+        string.Equals(path, "/metrics", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(path, "/health/live", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(path, "/health/ready", StringComparison.OrdinalIgnoreCase);
+
+    if (isInfrastructureNoisePath)
+    {
+        await next();
+        return;
+    }
+
     var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
 
     var correlationId =

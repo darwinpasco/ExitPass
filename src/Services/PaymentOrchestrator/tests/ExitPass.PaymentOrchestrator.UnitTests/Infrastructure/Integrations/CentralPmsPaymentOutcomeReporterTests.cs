@@ -69,7 +69,7 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
     {
         var responseBody = new
         {
-            errorCode = "PAYMENT_CONFIRMATION_DUPLICATE_PROVIDER_REFERENCE",
+            errorCode = "PROVIDER_REFERENCE_ALREADY_RECORDED",
             message = "Provider reference has already been recorded.",
             correlationId = Guid.NewGuid().ToString(),
             retryable = false,
@@ -128,6 +128,9 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
 
         var report = new VerifiedPaymentOutcomeReport(
             PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            ParkingSessionId: Guid.Parse("93e97f33-5849-4b9f-a83f-1080820103d8"),
+            RequestedByUserId: Guid.Parse("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"),
+            CorrelationId: Guid.Parse("6de95bb4-8f5a-4170-9184-e8eb4cb15c57"),
             ProviderCode: "PAYMONGO",
             ProviderReference: "cs_293285f3347f5496c48332d8",
             ProviderSessionId: "cs_293285f3347f5496c48332d8",
@@ -146,6 +149,8 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
 
         using var document = JsonDocument.Parse(handler.LastRequestContent!);
         Assert.Equal("SUCCEEDED", document.RootElement.GetProperty("providerStatus").GetString());
+        Assert.Equal("93e97f33-5849-4b9f-a83f-1080820103d8", document.RootElement.GetProperty("parkingSessionId").GetString());
+        Assert.Equal("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41", document.RootElement.GetProperty("requestedByUserId").GetString());
     }
 
     [Fact]
@@ -162,6 +167,8 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
 
         using var document = JsonDocument.Parse(handler.LastRequestContent!);
         Assert.Equal("paid", document.RootElement.GetProperty("providerStatus").GetString());
+        Assert.Equal("93e97f33-5849-4b9f-a83f-1080820103d8", document.RootElement.GetProperty("parkingSessionId").GetString());
+        Assert.Equal("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41", document.RootElement.GetProperty("requestedByUserId").GetString());
     }
 
     private static CentralPmsPaymentOutcomeReporter CreateReporter(HttpMessageHandler handler)
@@ -188,6 +195,9 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
     {
         return new VerifiedPaymentOutcomeReport(
             PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            ParkingSessionId: Guid.Parse("93e97f33-5849-4b9f-a83f-1080820103d8"),
+            RequestedByUserId: Guid.Parse("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"),
+            CorrelationId: Guid.Parse("6de95bb4-8f5a-4170-9184-e8eb4cb15c57"),
             ProviderCode: "PAYMONGO",
             ProviderReference: "cs_293285f3347f5496c48332d8",
             ProviderSessionId: "cs_293285f3347f5496c48332d8",

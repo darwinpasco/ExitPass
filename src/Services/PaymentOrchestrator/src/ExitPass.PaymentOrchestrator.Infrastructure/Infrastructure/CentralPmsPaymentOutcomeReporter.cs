@@ -26,12 +26,13 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 /// - Only verified provider outcomes may be reported into Central PMS.
 /// - POA reports verified outcomes but does not finalize PaymentAttempt state.
 /// - Duplicate provider confirmation reporting must be treated as idempotent success, not as a fatal failure.
+/// - The Central PMS internal contract must be satisfied explicitly, not reconstructed from incidental attributes.
 /// </summary>
 public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcomeReporter
 {
-    private const string DuplicateProviderReferenceErrorCode = "PAYMENT_CONFIRMATION_DUPLICATE_PROVIDER_REFERENCE";
+    private const string DuplicateProviderReferenceErrorCode = "PROVIDER_REFERENCE_ALREADY_RECORDED";
     private const string RequestedByValue = "payment-orchestrator";
-    private const string UnknownProviderStatus = "unknown";
+    private const string UnknownProviderStatus = "UNKNOWN";
 
     private static readonly JsonSerializerOptions ErrorSerializerOptions = new(JsonSerializerDefaults.Web);
 
@@ -72,7 +73,6 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
     {
         ArgumentNullException.ThrowIfNull(report);
 
-        var correlationId = Guid.NewGuid().ToString();
         var requestBody = BuildCentralPmsRequest(report);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _outcomeReportUri)
@@ -80,18 +80,20 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
             Content = JsonContent.Create(requestBody),
         };
 
-        request.Headers.Add("X-Correlation-Id", correlationId);
+        request.Headers.Add("X-Correlation-Id", report.CorrelationId.ToString());
         request.Headers.Add("Idempotency-Key", report.EventId);
 
         _logger.LogInformation(
-            "Reporting verified provider outcome to Central PMS. PaymentAttemptId {PaymentAttemptId}, EventId {EventId}, ProviderReference {ProviderReference}, ProviderStatus {ProviderStatus}, CorrelationId {CorrelationId}",
+            "Reporting verified provider outcome to Central PMS. PaymentAttemptId {PaymentAttemptId}, ParkingSessionId {ParkingSessionId}, EventId {EventId}, ProviderReference {ProviderReference}, ProviderStatus {ProviderStatus}, CorrelationId {CorrelationId}",
             report.PaymentAttemptId,
+            report.ParkingSessionId,
             report.EventId,
             requestBody.ProviderReference,
             requestBody.ProviderStatus,
-            correlationId);
+            report.CorrelationId);
 
         using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (response.IsSuccessStatusCode)
         {
@@ -100,12 +102,10 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
                 (int)response.StatusCode,
                 report.PaymentAttemptId,
                 report.EventId,
-                correlationId);
+                report.CorrelationId);
 
             return;
         }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (IsDuplicateProviderReferenceIdempotentSuccess(response.StatusCode, responseBody))
         {
@@ -114,7 +114,7 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
                 report.PaymentAttemptId,
                 report.EventId,
                 requestBody.ProviderReference,
-                correlationId,
+                report.CorrelationId,
                 responseBody);
 
             return;
@@ -126,7 +126,7 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
             report.PaymentAttemptId,
             report.EventId,
             requestBody.ProviderReference,
-            correlationId,
+            report.CorrelationId,
             responseBody);
 
         response.EnsureSuccessStatusCode();
@@ -136,14 +136,19 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
     {
         return new CentralPmsPaymentOutcomeRequest(
             PaymentAttemptId: report.PaymentAttemptId,
+            ParkingSessionId: report.ParkingSessionId,
             ProviderReference: report.ProviderReference ?? string.Empty,
             ProviderStatus: ResolveProviderStatus(report),
-            RequestedBy: RequestedByValue);
+            FinalAttemptStatus: ResolveFinalAttemptStatus(report),
+            RequestedBy: RequestedByValue,
+            RequestedByUserId: report.RequestedByUserId);
     }
 
     private static string ResolveProviderStatus(VerifiedPaymentOutcomeReport report)
     {
-        if (TryGetString(report.RawAttributes, "status", out var providerStatus))
+        if (report.RawAttributes is not null &&
+            report.RawAttributes.TryGetValue("status", out var providerStatus) &&
+            !string.IsNullOrWhiteSpace(providerStatus))
         {
             return providerStatus;
         }
@@ -154,6 +159,21 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
         }
 
         return UnknownProviderStatus;
+    }
+
+    private static string ResolveFinalAttemptStatus(VerifiedPaymentOutcomeReport report)
+    {
+        if (report.IsTerminal && report.IsSuccess)
+        {
+            return "CONFIRMED";
+        }
+
+        if (report.IsTerminal && !report.IsSuccess)
+        {
+            return "FAILED";
+        }
+
+        return "PENDING_PROVIDER";
     }
 
     private static bool IsDuplicateProviderReferenceIdempotentSuccess(HttpStatusCode statusCode, string responseBody)
@@ -182,26 +202,14 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
         }
     }
 
-    private static bool TryGetString(
-        IReadOnlyDictionary<string, string>? rawAttributes,
-        string key,
-        out string value)
-    {
-        value = string.Empty;
-
-        if (rawAttributes is null || rawAttributes.Count == 0 || string.IsNullOrWhiteSpace(key))
-        {
-            return false;
-        }
-
-        if (!rawAttributes.TryGetValue(key, out var found) || string.IsNullOrWhiteSpace(found))
-        {
-            return false;
-        }
-
-        value = found;
-        return true;
-    }
+    private sealed record CentralPmsPaymentOutcomeRequest(
+        Guid PaymentAttemptId,
+        Guid ParkingSessionId,
+        string ProviderReference,
+        string ProviderStatus,
+        string FinalAttemptStatus,
+        string RequestedBy,
+        Guid RequestedByUserId);
 
     private sealed record CentralPmsErrorResponse(
         string? ErrorCode,

@@ -9,6 +9,21 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
 /// Gate-facing endpoints for consuming exit authorizations.
+///
+/// BRD:
+/// - 9.12 Exit Authorization
+/// - 9.13 Timeout, Retry, and Duplicate Handling
+///
+/// SDD:
+/// - 6.6 Consume Exit Authorization
+/// - 10.4.2 Consume Exit Authorization
+/// - 14.3 Distributed Tracing
+/// - 14.4 Structured Logging
+///
+/// Invariants Enforced:
+/// - A valid authorization may be consumed only once.
+/// - Business conflicts must be distinguished from unexpected server failures.
+/// - Trace metadata must be preserved at the HTTP boundary.
 /// </summary>
 public static class GateExitAuthorizationConsumeEndpoints
 {
@@ -29,7 +44,8 @@ public static class GateExitAuthorizationConsumeEndpoints
             .Produces<ConsumeExitAuthorizationResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
-            .Produces<ErrorResponse>(StatusCodes.Status409Conflict);
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 
         return app;
     }
@@ -37,13 +53,6 @@ public static class GateExitAuthorizationConsumeEndpoints
     /// <summary>
     /// Consumes a previously issued exit authorization.
     /// </summary>
-    /// <param name="exitAuthorizationId">Exit authorization identifier.</param>
-    /// <param name="request">Incoming HTTP request.</param>
-    /// <param name="body">Consume request body.</param>
-    /// <param name="useCase">Consume use case.</param>
-    /// <param name="loggerFactory">Logger factory.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>HTTP result.</returns>
     private static async Task<IResult> HandleAsync(
         Guid exitAuthorizationId,
         HttpRequest request,
@@ -59,12 +68,19 @@ public static class GateExitAuthorizationConsumeEndpoints
         if (!request.Headers.TryGetValue("X-Correlation-Id", out var correlationHeader) ||
             !Guid.TryParse(correlationHeader.ToString(), out var correlationId))
         {
+            activity?.SetStatus(ActivityStatusCode.Error, "X-Correlation-Id header is required.");
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "INVALID_REQUEST");
+
             return Results.BadRequest(BuildError(
                 "INVALID_REQUEST",
                 "X-Correlation-Id header is required.",
                 Guid.Empty,
                 retryable: false));
         }
+
+        activity?.SetTag("correlation_id", correlationId);
+        activity?.SetTag("exit_authorization_id", exitAuthorizationId);
 
         using var scope = logger.BeginScope(new Dictionary<string, object?>
         {
@@ -83,6 +99,10 @@ public static class GateExitAuthorizationConsumeEndpoints
                     correlationId),
                 cancellationToken);
 
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("authorization_status", result.AuthorizationStatus);
+            activity?.SetTag("consumed_at", result.ConsumedAt);
+
             logger.LogInformation(
                 "Exit authorization consumed. exit_authorization_id={ExitAuthorizationId}",
                 result.ExitAuthorizationId);
@@ -94,6 +114,11 @@ public static class GateExitAuthorizationConsumeEndpoints
         }
         catch (ArgumentException ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "INVALID_REQUEST");
+
             logger.LogWarning(ex, "Invalid consume request.");
 
             return Results.BadRequest(BuildError(
@@ -104,6 +129,11 @@ public static class GateExitAuthorizationConsumeEndpoints
         }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_NOT_FOUND");
+
             logger.LogWarning(ex, "Exit authorization not found.");
 
             return Results.NotFound(BuildError(
@@ -112,9 +142,15 @@ public static class GateExitAuthorizationConsumeEndpoints
                 correlationId,
                 retryable: false));
         }
-        catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001" &&
-                                                  ex.MessageText.Contains("is expired", StringComparison.OrdinalIgnoreCase))
+        catch (Npgsql.PostgresException ex) when (
+            ex.SqlState == "P0001" &&
+            ex.MessageText.Contains("is expired", StringComparison.OrdinalIgnoreCase))
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_EXPIRED");
+
             logger.LogWarning(ex, "Exit authorization expired.");
 
             return Results.Conflict(BuildError(
@@ -123,9 +159,15 @@ public static class GateExitAuthorizationConsumeEndpoints
                 correlationId,
                 retryable: false));
         }
-        catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001" &&
-                                                  ex.MessageText.Contains("already been consumed", StringComparison.OrdinalIgnoreCase))
+        catch (Npgsql.PostgresException ex) when (
+            ex.SqlState == "P0001" &&
+            ex.MessageText.Contains("already been consumed", StringComparison.OrdinalIgnoreCase))
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_ALREADY_CONSUMED");
+
             logger.LogWarning(ex, "Exit authorization already consumed.");
 
             return Results.Conflict(BuildError(
@@ -136,6 +178,11 @@ public static class GateExitAuthorizationConsumeEndpoints
         }
         catch (InvalidOperationException ex)
         {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_REJECTED");
+
             logger.LogWarning(ex, "Consume rejected by deterministic business rule.");
 
             return Results.Conflict(BuildError(
@@ -146,14 +193,20 @@ public static class GateExitAuthorizationConsumeEndpoints
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Unexpected failure.");
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "SYSTEM_FAILURE");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_INTERNAL_ERROR");
 
-            return Results.Conflict(BuildError(
-                "EXIT_AUTHORIZATION_CONSUME_FAILED",
-                ex.Message,
-                correlationId,
-                retryable: false));
+            logger.LogError(ex, "Unexpected failure.");
+
+            return Results.Json(
+                BuildError(
+                    "EXIT_AUTHORIZATION_CONSUME_INTERNAL_ERROR",
+                    "An unexpected error occurred while consuming the exit authorization.",
+                    correlationId,
+                    retryable: false),
+                 statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 
@@ -177,15 +230,11 @@ public static class GateExitAuthorizationConsumeEndpoints
     /// <summary>
     /// Consume request body.
     /// </summary>
-    /// <param name="RequestedByUserId">Actor requesting consumption.</param>
     public sealed record ConsumeExitAuthorizationRequest(Guid RequestedByUserId);
 
     /// <summary>
     /// Consume response body.
     /// </summary>
-    /// <param name="ExitAuthorizationId">Authorization identifier.</param>
-    /// <param name="AuthorizationStatus">Final authorization status.</param>
-    /// <param name="ConsumedAt">Consume timestamp.</param>
     public sealed record ConsumeExitAuthorizationResponse(
         Guid ExitAuthorizationId,
         string AuthorizationStatus,
