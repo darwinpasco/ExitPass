@@ -52,9 +52,11 @@ static void ConfigureLogging(WebApplicationBuilder builder)
     builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
     builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
 
-    builder.Logging.AddConsole(options =>
+    builder.Logging.AddSimpleConsole(options =>
     {
         options.IncludeScopes = true;
+        options.SingleLine = false;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ ";
     });
 
     builder.Logging.Configure(options =>

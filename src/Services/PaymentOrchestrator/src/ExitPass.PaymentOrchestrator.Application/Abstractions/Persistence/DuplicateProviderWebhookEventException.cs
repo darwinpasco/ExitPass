@@ -5,6 +5,10 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 /// </summary>
 public sealed class DuplicateProviderWebhookEventException : Exception
 {
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DuplicateProviderWebhookEventException"/> class.
+    /// </summary>
+    /// <param name="message">The exception message that describes the duplicate webhook event condition.</param>
     public DuplicateProviderWebhookEventException(string message)
         : base(message)
     {
