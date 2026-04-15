@@ -11,11 +11,17 @@ namespace ExitPass.PaymentOrchestrator.IntegrationTests.ProviderWebhooks;
 
 /// <summary>
 /// Integration tests for the PayMongo webhook endpoint.
+///
 /// Implements:
-/// - BRD requirement: Verified provider webhook intake and verified outcome reporting.
-/// - SDD section: Payment Orchestrator inbound provider webhook processing.
-/// Enforces invariant:
+/// - BRD requirement: verified provider webhook intake and verified outcome reporting.
+/// - BRD requirement: timeout, retry, and duplicate handling.
+/// - SDD section: payment orchestrator inbound provider webhook processing.
+///
+/// Enforces invariants:
 /// - Only structurally valid and authentic provider webhook payloads may reach verified-outcome handling.
+/// - Duplicate provider callbacks must be accepted idempotently.
+/// - Non-authoritative provider events for the configured rail must not mutate business state.
+/// - Missing required internal metadata must fail deterministically and must not surface as unhandled 500 errors.
 /// </summary>
 public sealed class PayMongoWebhookIntegrationTests
     : IClassFixture<PaymentOrchestratorWebApplicationFactory>
@@ -80,36 +86,112 @@ public sealed class PayMongoWebhookIntegrationTests
     }
 
     /// <summary>
-    /// Verifies that a PayMongo webhook is rejected when the required internal metadata is missing.
+    /// Verifies that a PayMongo webhook is rejected with a deterministic bad-request result
+    /// when parking_session_id is missing but payment_attempt_id is still present.
     /// </summary>
     [Fact]
-    public async Task Rejects_webhook_when_required_internal_metadata_is_missing()
+    public async Task Rejects_webhook_with_bad_request_when_parking_session_id_is_missing()
     {
-        var payload = BuildInvalidMetadataPayload(
+        var payload = BuildPayloadMissingParkingSessionId(
             eventId: "evt_test_003",
-            checkoutSessionId: "cs_test_003");
+            checkoutSessionId: "cs_test_003",
+            paymentAttemptId: "88888888-8888-8888-8888-888888888888",
+            requestedByUserId: RequestedByUserId);
 
         using var request = CreateSignedWebhookRequest(payload);
         var response = await _client.SendAsync(request);
 
-        response.StatusCode.Should().NotBe(HttpStatusCode.InternalServerError);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("WEBHOOK_MISSING_PARKING_SESSION_ID");
+    }
+
+    /// <summary>
+    /// Verifies that a PayMongo webhook is rejected with a deterministic bad-request result
+    /// when requested_by_user_id is missing but payment_attempt_id is still present.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_webhook_with_bad_request_when_requested_by_user_id_is_missing()
+    {
+        var payload = BuildPayloadMissingRequestedByUserId(
+            eventId: "evt_test_006",
+            checkoutSessionId: "cs_test_006",
+            paymentAttemptId: "99999999-9999-9999-9999-999999999999",
+            parkingSessionId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+
+        using var request = CreateSignedWebhookRequest(payload);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("WEBHOOK_MISSING_REQUESTED_BY_USER_ID");
+    }
+
+    /// <summary>
+    /// Verifies that a non-authoritative PayMongo event for the checkout-session rail
+    /// is safely acknowledged and ignored.
+    /// </summary>
+    [Fact]
+    public async Task Accepts_and_ignores_non_authoritative_payment_paid_event_for_checkout_session_rail()
+    {
+        var payload = BuildNonAuthoritativePaymentPaidPayload(
+            eventId: "evt_test_004",
+            paymentId: "pay_test_004",
+            paymentAttemptId: "55555555-5555-5555-5555-555555555555");
+
+        using var request = CreateSignedWebhookRequest(payload);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Verifies that a webhook with an invalid signature is rejected as unauthorized.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_webhook_as_unauthorized_when_signature_is_invalid()
+    {
+        var payload = BuildValidCheckoutSessionPaidPayload(
+            eventId: "evt_test_005",
+            checkoutSessionId: "cs_test_005",
+            paymentAttemptId: "66666666-6666-6666-6666-666666666666",
+            parkingSessionId: "77777777-7777-7777-7777-777777777777",
+            requestedByUserId: RequestedByUserId);
+
+        using var request = CreateSignedWebhookRequest(payload, overrideSecretKey: "not-the-real-secret");
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("WEBHOOK_NOT_AUTHENTIC");
     }
 
     /// <summary>
     /// Creates a signed HTTP request for the PayMongo webhook endpoint.
+    ///
     /// Implements:
     /// - BRD requirement: authenticated provider webhook intake.
     /// - SDD section: PayMongo webhook authenticity verification.
+    ///
     /// Enforces invariant:
     /// - The exact payload sent to the API is the exact payload used for signature generation.
     /// </summary>
     /// <param name="payload">Serialized JSON payload.</param>
+    /// <param name="overrideSecretKey">
+    /// Optional override secret key used only for negative-path signature tests.
+    /// </param>
     /// <returns>The signed HTTP request message.</returns>
-    private static HttpRequestMessage CreateSignedWebhookRequest(string payload)
+    private static HttpRequestMessage CreateSignedWebhookRequest(string payload, string? overrideSecretKey = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(payload);
 
-        var secretKey = GetRequiredPayMongoWebhookSecretKey();
+        var secretKey = string.IsNullOrWhiteSpace(overrideSecretKey)
+            ? GetRequiredPayMongoWebhookSecretKey()
+            : overrideSecretKey;
+
         var signatureHeaderValue = ComputePayMongoSignatureHeader(payload, secretKey);
 
         var request = new HttpRequestMessage(HttpMethod.Post, WebhookRoute)
@@ -124,9 +206,11 @@ public sealed class PayMongoWebhookIntegrationTests
     /// <summary>
     /// Resolves the PayMongo webhook secret key from the current process environment first,
     /// then from the local docker .env file when tests are executed from Visual Studio.
+    ///
     /// Implements:
     /// - BRD requirement: environment-backed secret management for provider integrations.
-    /// - SDD section: Payment provider configuration loading.
+    /// - SDD section: payment provider configuration loading.
+    ///
     /// Enforces invariant:
     /// - Webhook signing secrets are never hard-coded in test source.
     /// </summary>
@@ -309,14 +393,19 @@ public sealed class PayMongoWebhookIntegrationTests
     }
 
     /// <summary>
-    /// Builds a structurally valid webhook payload with missing required internal metadata.
+    /// Builds a structurally valid webhook payload that preserves payment_attempt_id
+    /// but omits parking_session_id so the handler can reject it deterministically.
     /// </summary>
     /// <param name="eventId">Provider event identifier.</param>
     /// <param name="checkoutSessionId">Provider checkout session identifier.</param>
+    /// <param name="paymentAttemptId">ExitPass payment attempt identifier.</param>
+    /// <param name="requestedByUserId">The internal user identifier required by POA.</param>
     /// <returns>A serialized webhook payload.</returns>
-    private static string BuildInvalidMetadataPayload(
+    private static string BuildPayloadMissingParkingSessionId(
         string eventId,
-        string checkoutSessionId)
+        string checkoutSessionId,
+        string paymentAttemptId,
+        string requestedByUserId)
     {
         var body = new
         {
@@ -335,7 +424,101 @@ public sealed class PayMongoWebhookIntegrationTests
                         attributes = new
                         {
                             payments = Array.Empty<object>(),
-                            metadata = new Dictionary<string, string>()
+                            metadata = new Dictionary<string, string>
+                            {
+                                ["payment_attempt_id"] = paymentAttemptId,
+                                ["requested_by_user_id"] = requestedByUserId
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        return JsonSerializer.Serialize(body);
+    }
+
+    /// <summary>
+    /// Builds a structurally valid webhook payload that preserves payment_attempt_id
+    /// but omits requested_by_user_id so the handler can reject it deterministically.
+    /// </summary>
+    /// <param name="eventId">Provider event identifier.</param>
+    /// <param name="checkoutSessionId">Provider checkout session identifier.</param>
+    /// <param name="paymentAttemptId">ExitPass payment attempt identifier.</param>
+    /// <param name="parkingSessionId">ExitPass parking session identifier.</param>
+    /// <returns>A serialized webhook payload.</returns>
+    private static string BuildPayloadMissingRequestedByUserId(
+        string eventId,
+        string checkoutSessionId,
+        string paymentAttemptId,
+        string parkingSessionId)
+    {
+        var body = new
+        {
+            data = new
+            {
+                id = eventId,
+                type = "event",
+                attributes = new
+                {
+                    type = "checkout_session.paid",
+                    livemode = false,
+                    data = new
+                    {
+                        id = checkoutSessionId,
+                        type = "checkout_session",
+                        attributes = new
+                        {
+                            payments = Array.Empty<object>(),
+                            metadata = new Dictionary<string, string>
+                            {
+                                ["payment_attempt_id"] = paymentAttemptId,
+                                ["parking_session_id"] = parkingSessionId
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        return JsonSerializer.Serialize(body);
+    }
+
+    /// <summary>
+    /// Builds a structurally valid but non-authoritative payment.paid payload for the
+    /// PayMongo checkout-session rail.
+    /// </summary>
+    /// <param name="eventId">Provider event identifier.</param>
+    /// <param name="paymentId">Provider payment identifier.</param>
+    /// <param name="paymentAttemptId">ExitPass payment attempt identifier.</param>
+    /// <returns>A serialized webhook payload.</returns>
+    private static string BuildNonAuthoritativePaymentPaidPayload(
+        string eventId,
+        string paymentId,
+        string paymentAttemptId)
+    {
+        var body = new
+        {
+            data = new
+            {
+                id = eventId,
+                type = "event",
+                attributes = new
+                {
+                    type = "payment.paid",
+                    livemode = false,
+                    data = new
+                    {
+                        id = paymentId,
+                        type = "payment",
+                        attributes = new
+                        {
+                            amount = 5000,
+                            currency = "PHP",
+                            metadata = new Dictionary<string, string>
+                            {
+                                ["payment_attempt_id"] = paymentAttemptId
+                            }
                         }
                     }
                 }

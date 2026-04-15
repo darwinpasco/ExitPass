@@ -43,8 +43,11 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
         string connectionString,
         ILogger<ConsumeExitAuthorizationGateway> logger)
     {
-        _connectionString = connectionString;
-        _logger = logger;
+        _connectionString = !string.IsNullOrWhiteSpace(connectionString)
+            ? connectionString
+            : throw new ArgumentException("Connection string is required.", nameof(connectionString));
+
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     /// <summary>
@@ -57,6 +60,8 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
         ConsumeExitAuthorizationDbRequest request,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(request);
+
         const string sql = """
             SELECT
                 exit_authorization_id,
@@ -131,12 +136,32 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
 
             return result;
         }
+        catch (PostgresException ex) when (IsDeterministicBusinessRejection(ex))
+        {
+            var duration = DateTimeOffset.UtcNow - startedAt;
+            var rejectionCode = ResolveBusinessRejectionCode(ex);
+
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("rejection_reason", rejectionCode);
+            activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
+
+            _logger.LogWarning(
+                ex,
+                "DB ConsumeExitAuthorization rejected by deterministic business rules. exit_authorization_id={ExitAuthorizationId} rejection_reason={RejectionReason}",
+                request.ExitAuthorizationId,
+                rejectionCode);
+
+            throw;
+        }
         catch (Exception ex)
         {
             var duration = DateTimeOffset.UtcNow - startedAt;
 
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
+            activity?.SetTag("failure_class", "SYSTEM_FAILURE");
             activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
 
             _logger.LogError(
@@ -146,5 +171,40 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
 
             throw;
         }
+    }
+
+    /// <summary>
+    /// Determines whether the PostgreSQL exception represents a deterministic business rejection.
+    /// </summary>
+    /// <param name="exception">The PostgreSQL exception.</param>
+    /// <returns><see langword="true"/> when the exception is a business rejection.</returns>
+    private static bool IsDeterministicBusinessRejection(PostgresException exception)
+    {
+        return exception.SqlState is PostgresErrorCodes.RaiseException or PostgresErrorCodes.NoDataFound;
+    }
+
+    /// <summary>
+    /// Resolves the business rejection code used in telemetry and structured logging.
+    /// </summary>
+    /// <param name="exception">The PostgreSQL exception.</param>
+    /// <returns>The deterministic rejection code.</returns>
+    private static string ResolveBusinessRejectionCode(PostgresException exception)
+    {
+        if (exception.SqlState == PostgresErrorCodes.NoDataFound)
+        {
+            return "EXIT_AUTHORIZATION_NOT_FOUND";
+        }
+
+        if (exception.MessageText.Contains("already been consumed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EXIT_AUTHORIZATION_ALREADY_CONSUMED";
+        }
+
+        if (exception.MessageText.Contains("expired", StringComparison.OrdinalIgnoreCase))
+        {
+            return "EXIT_AUTHORIZATION_EXPIRED";
+        }
+
+        return "EXIT_AUTHORIZATION_REJECTED";
     }
 }
