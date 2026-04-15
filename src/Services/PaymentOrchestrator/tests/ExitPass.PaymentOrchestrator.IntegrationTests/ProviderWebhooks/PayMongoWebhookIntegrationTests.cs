@@ -35,6 +35,10 @@ public sealed class PayMongoWebhookIntegrationTests
         _client = factory.CreateClient();
     }
 
+    /// <summary>
+    /// Verifies that an authentic PayMongo checkout-session-paid webhook is accepted
+    /// when the required internal metadata is complete.
+    /// </summary>
     [Fact]
     public async Task Accepts_checkout_session_paid_webhook_when_request_is_authentic_and_metadata_is_complete()
     {
@@ -51,6 +55,10 @@ public sealed class PayMongoWebhookIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// Verifies that a duplicate PayMongo webhook is handled idempotently
+    /// after the first successful processing attempt.
+    /// </summary>
     [Fact]
     public async Task Accepts_duplicate_webhook_idempotently_after_successful_first_processing()
     {
@@ -71,6 +79,9 @@ public sealed class PayMongoWebhookIntegrationTests
         secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// Verifies that a PayMongo webhook is rejected when the required internal metadata is missing.
+    /// </summary>
     [Fact]
     public async Task Rejects_webhook_when_required_internal_metadata_is_missing()
     {

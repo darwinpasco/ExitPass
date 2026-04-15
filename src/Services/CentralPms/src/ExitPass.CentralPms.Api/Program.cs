@@ -105,12 +105,6 @@ app.MapGet("/", () => Results.Ok(new
 
 app.Run();
 
-/// <summary>
-/// Configures application logging, including OpenTelemetry log export.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
-/// <param name="otlpEndpoint">The optional OTLP endpoint.</param>
-/// <param name="serviceVersion">The service version string.</param>
 static void ConfigureLogging(
     WebApplicationBuilder builder,
     string? otlpEndpoint,
@@ -121,9 +115,11 @@ static void ConfigureLogging(
     builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
     builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
 
-    builder.Logging.AddConsole(options =>
+    builder.Logging.AddSimpleConsole(options =>
     {
         options.IncludeScopes = true;
+        options.SingleLine = false;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ ";
     });
 
     builder.Logging.Configure(options =>
@@ -157,12 +153,6 @@ static void ConfigureLogging(
     });
 }
 
-/// <summary>
-/// Configures OpenTelemetry tracing and metrics for Central PMS.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
-/// <param name="otlpEndpoint">The optional OTLP endpoint.</param>
-/// <param name="serviceVersion">The service version string.</param>
 static void ConfigureOpenTelemetry(
     WebApplicationBuilder builder,
     string? otlpEndpoint,
@@ -234,10 +224,6 @@ static void ConfigureOpenTelemetry(
         });
 }
 
-/// <summary>
-/// Configures liveness and readiness health checks.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
 static void ConfigureHealthChecks(WebApplicationBuilder builder)
 {
     builder.Services
@@ -245,11 +231,6 @@ static void ConfigureHealthChecks(WebApplicationBuilder builder)
         .AddCheck("self", () => HealthCheckResult.Healthy("Central PMS Service is alive."));
 }
 
-/// <summary>
-/// Registers application, infrastructure, validation, and observability services.
-/// </summary>
-/// <param name="builder">The web application builder.</param>
-/// <param name="mainDatabaseConnectionString">The main database connection string.</param>
 static void ConfigureApplicationServices(
     WebApplicationBuilder builder,
     string mainDatabaseConnectionString)
@@ -294,12 +275,6 @@ static void ConfigureApplicationServices(
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
 }
 
-/// <summary>
-/// Correlation-aware middleware that enriches logs and activities with a stable request correlation identifier.
-/// </summary>
-/// <param name="context">The HTTP context.</param>
-/// <param name="next">The next middleware delegate.</param>
-/// <returns>A task representing the asynchronous middleware execution.</returns>
 static async Task CorrelationMiddleware(HttpContext context, Func<Task> next)
 {
     var path = context.Request.Path.Value;
