@@ -10,16 +10,20 @@ namespace ExitPass.CentralPms.IntegrationTests.Shared;
 /// - 9.6 Integrity Constraints and Concurrency Rules
 ///
 /// Invariants Enforced:
-/// - Each test owns its own canonical records
-/// - Integration tests must not share transactional identities
+/// - Each test owns its own canonical records.
+/// - Integration tests must not share transactional identities.
+/// - Database identity fields must use UUID values.
+/// - Business-readable reference fields must use codes, not database IDs.
 /// </summary>
 public sealed record PaymentTestContext(
     Guid ParkingSessionId,
     Guid TariffSnapshotId,
     Guid CorrelationId,
     Guid RequestedByUserId,
-    string SiteGroupId,
-    string SiteId,
+    Guid SiteGroupId,
+    Guid SiteId,
+    string SiteGroupCode,
+    string SiteCode,
     string VendorSystemCode)
 {
     /// <summary>
@@ -34,8 +38,10 @@ public sealed record PaymentTestContext(
             TariffSnapshotId: Guid.NewGuid(),
             CorrelationId: Guid.NewGuid(),
             RequestedByUserId: Guid.NewGuid(),
-            SiteGroupId: $"SG-TEST-{suffix}",
-            SiteId: $"SITE-TEST-{suffix}",
+            SiteGroupId: Guid.NewGuid(),
+            SiteId: Guid.NewGuid(),
+            SiteGroupCode: $"SG-TEST-{suffix}",
+            SiteCode: $"SITE-TEST-{suffix}",
             VendorSystemCode: $"VENDOR-TEST-{suffix}");
     }
 }
