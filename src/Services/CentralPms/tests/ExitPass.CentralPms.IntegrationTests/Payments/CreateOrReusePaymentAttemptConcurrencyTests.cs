@@ -118,8 +118,8 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
 
             Assert.Equal(context.ParkingSessionId, attempts[0].ParkingSessionId);
             Assert.Equal(context.TariffSnapshotId, attempts[0].TariffSnapshotId);
-            Assert.Equal("GCASH", attempts[0].PaymentProviderCode);
-            Assert.Equal("INITIATED", attempts[0].AttemptStatus);
+            Assert.Equal("PAYMONGO_QRPH_DEV", attempts[0].PaymentProviderCode);
+            Assert.Equal("REQUESTED", attempts[0].AttemptStatus);
             Assert.Equal("idem-race-a", attempts[0].IdempotencyKey);
 
             Assert.True(
@@ -318,17 +318,19 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
     {
         const string sql = """
             SELECT
-                payment_attempt_id,
-                parking_session_id,
-                tariff_snapshot_id,
-                payment_provider_code,
-                idempotency_key,
-                attempt_status,
-                created_at,
-                updated_at
-            FROM core.payment_attempts
-            WHERE parking_session_id = @parking_session_id
-            ORDER BY created_at;
+                pa.payment_attempt_id,
+                pa.parking_session_id,
+                pa.tariff_snapshot_id,
+                COALESCE(pr.rail_code, 'UNKNOWN') AS payment_provider_code,
+                pa.idempotency_key,
+                pa.attempt_status::text AS attempt_status,
+                pa.created_at,
+                pa.updated_at
+            FROM core.payment_attempts AS pa
+            LEFT JOIN payments.payment_rails AS pr
+                ON pr.payment_rail_id = pa.payment_rail_id
+            WHERE pa.parking_session_id = @parking_session_id
+            ORDER BY pa.created_at;
             """;
 
         var rows = new List<PaymentAttemptRow>();
@@ -365,7 +367,7 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
 
         foreach (var attempt in attempts)
         {
-            if (attempt.AttemptStatus is "INITIATED" or "PENDING_PROVIDER")
+            if (attempt.AttemptStatus is "REQUESTED" or "PENDING_PROVIDER")
             {
                 count++;
             }

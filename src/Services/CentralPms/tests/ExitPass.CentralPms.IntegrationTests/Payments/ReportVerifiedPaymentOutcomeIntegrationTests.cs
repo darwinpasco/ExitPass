@@ -189,11 +189,17 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
     {
         var context = PaymentTestContext.Create(
             nameof(ReportVerifiedPaymentOutcome_WhenProviderReferenceIsAlreadyRecorded_ReturnsConflict));
+        var secondContext = PaymentTestContext.Create(
+            $"{nameof(ReportVerifiedPaymentOutcome_WhenProviderReferenceIsAlreadyRecorded_ReturnsConflict)}SecondAttempt");
 
         await PaymentTestDataHelper.ResetAndSeedAsync(
             ConnectionString,
             context,
             "Seed data for report-verified-payment-outcome API tests");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            secondContext,
+            "Seed second attempt data for report-verified-payment-outcome duplicate-provider-reference tests");
 
         try
         {
@@ -201,6 +207,11 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
                 ConnectionString,
                 context,
                 $"idem-create-{Guid.NewGuid():N}",
+                "outcome-test");
+            var secondCreated = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                secondContext,
+                $"idem-create-second-{Guid.NewGuid():N}",
                 "outcome-test");
 
             var providerReference = $"prov-{Guid.NewGuid():N}";
@@ -217,9 +228,9 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
 
             var secondResponse = await PostReportVerifiedPaymentOutcomeAsync(
                 client,
-                request: BuildValidRequest(created.PaymentAttemptId, context.ParkingSessionId, providerReference),
+                request: BuildValidRequest(secondCreated.PaymentAttemptId, secondContext.ParkingSessionId, providerReference),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId,
+                correlationId: secondContext.CorrelationId,
                 includeIdempotencyKey: true,
                 idempotencyKey: $"idem-outcome-2-{Guid.NewGuid():N}");
 
@@ -231,6 +242,7 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
         }
         finally
         {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, secondContext);
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
     }

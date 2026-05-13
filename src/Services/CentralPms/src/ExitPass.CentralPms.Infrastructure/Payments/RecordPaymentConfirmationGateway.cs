@@ -15,7 +15,8 @@ namespace ExitPass.CentralPms.Infrastructure.Payments;
 ///
 /// Invariants Enforced:
 /// - Provider confirmation is recorded through the canonical DB routine only
-/// - Duplicate provider references are surfaced as deterministic business conflicts
+/// - Same-attempt webhook replay is returned by the DB routine as the existing confirmation
+/// - Cross-attempt duplicate provider references are surfaced as deterministic business conflicts
 /// </summary>
 public sealed class RecordPaymentConfirmationGateway : IRecordPaymentConfirmationGateway
 {
@@ -39,7 +40,7 @@ public sealed class RecordPaymentConfirmationGateway : IRecordPaymentConfirmatio
     /// <returns>The authoritative recorded payment confirmation.</returns>
     /// <exception cref="KeyNotFoundException">Thrown when the target payment attempt does not exist.</exception>
     /// <exception cref="DuplicatePaymentConfirmationException">
-    /// Thrown when the provider reference has already been recorded.
+    /// Thrown when the provider reference has already been recorded for another payment attempt.
     /// </exception>
     /// <exception cref="InvalidOperationException">Thrown when the DB routine returns no rows.</exception>
     public async Task<RecordPaymentConfirmationResult> RecordAsync(
@@ -105,14 +106,17 @@ public sealed class RecordPaymentConfirmationGateway : IRecordPaymentConfirmatio
         {
             var message = ex.MessageText;
 
-            if (message.Contains("uq_payment_confirmations__payment_attempt", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(ex.ConstraintName, "uq_payment_confirmations__payment_attempt", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("uq_payment_confirmations__payment_attempt", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("payment confirmation already exists", StringComparison.OrdinalIgnoreCase))
             {
                 throw new PaymentConfirmationConflictException(
                     "PAYMENT_CONFIRMATION_ALREADY_EXISTS",
                     message);
             }
 
-            if (message.Contains("provider reference", StringComparison.OrdinalIgnoreCase) ||
+            if (string.Equals(ex.ConstraintName, "ux_payment_confirmations__provider_transaction_ref", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("provider reference", StringComparison.OrdinalIgnoreCase) ||
                 message.Contains("provider_reference", StringComparison.OrdinalIgnoreCase))
             {
                 throw new PaymentConfirmationConflictException(

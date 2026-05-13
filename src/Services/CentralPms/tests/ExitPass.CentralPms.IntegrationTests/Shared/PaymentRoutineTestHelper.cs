@@ -86,7 +86,7 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
-    /// Finalizes a payment attempt by applying the ExitPass v1.2 PaymentAttempt state transition.
+    /// Finalizes a payment attempt through the canonical ExitPass v1.2 DB routine.
     /// </summary>
     /// <param name="connectionString">Integration database connection string.</param>
     /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
@@ -94,7 +94,8 @@ public static class PaymentRoutineTestHelper
     /// <param name="requestedBy">Audit actor string for the DB routine call.</param>
     /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
     /// <returns>
-    /// The v1.2 persisted payment-attempt state after setup finalization, or <see langword="null"/> if no row was returned.
+    /// The v1.2 persisted payment-attempt state returned by <c>core.finalize_payment_attempt(...)</c>,
+    /// or <see langword="null"/> if no row was returned.
     /// </returns>
     public static async Task<FinalizeAttemptResult?> FinalizeAttemptAsync(
         string connectionString,
@@ -104,32 +105,16 @@ public static class PaymentRoutineTestHelper
         Guid correlationId)
     {
         const string sql = """
-            UPDATE core.payment_attempts
-            SET
-                attempt_status = CASE @p_final_attempt_status
-                    WHEN 'CONFIRMED' THEN 'CONFIRMED'
-                    WHEN 'FAILED' THEN 'FAILED'
-                    WHEN 'EXPIRED' THEN 'EXPIRED'
-                    WHEN 'CANCELLED' THEN 'CANCELLED'
-                    ELSE attempt_status
-                END,
-                finalized_at = CASE
-                    WHEN @p_final_attempt_status IN ('CONFIRMED', 'FAILED', 'EXPIRED', 'CANCELLED')
-                    THEN COALESCE(finalized_at, @p_now)
-                    ELSE finalized_at
-                END,
-                failure_reason_code = CASE
-                    WHEN @p_final_attempt_status = 'FAILED' THEN 'TEST_FINALIZED_FAILED'
-                    ELSE NULL
-                END,
-                correlation_id = COALESCE(correlation_id, @p_correlation_id),
-                updated_at = @p_now,
-                updated_by_service_identity_id = COALESCE(updated_by_service_identity_id, created_by_service_identity_id),
-                row_version = row_version + 1
-            WHERE payment_attempt_id = @p_payment_attempt_id
-            RETURNING
+            SELECT
                 payment_attempt_id,
-                attempt_status::text;
+                attempt_status
+            FROM core.finalize_payment_attempt(
+                @p_payment_attempt_id,
+                @p_final_attempt_status,
+                @p_requested_by,
+                @p_correlation_id,
+                @p_now
+            );
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -362,17 +347,19 @@ public static class PaymentRoutineTestHelper
     {
         const string sql = """
             SELECT
-                payment_attempt_id,
-                parking_session_id,
-                tariff_snapshot_id,
-                payment_provider_code,
-                idempotency_key,
-                attempt_status,
-                created_at,
-                updated_at,
-                finalized_at
-            FROM core.payment_attempts
-            WHERE payment_attempt_id = @payment_attempt_id;
+                pa.payment_attempt_id,
+                pa.parking_session_id,
+                pa.tariff_snapshot_id,
+                COALESCE(pr.rail_code, 'UNKNOWN') AS payment_provider_code,
+                pa.idempotency_key,
+                pa.attempt_status::text AS attempt_status,
+                pa.created_at,
+                pa.updated_at,
+                pa.finalized_at
+            FROM core.payment_attempts AS pa
+            LEFT JOIN payments.payment_rails AS pr
+                ON pr.payment_rail_id = pa.payment_rail_id
+            WHERE pa.payment_attempt_id = @payment_attempt_id;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
