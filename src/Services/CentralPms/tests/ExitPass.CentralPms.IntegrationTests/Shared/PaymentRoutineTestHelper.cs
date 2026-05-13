@@ -86,7 +86,7 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
-    /// Calls the canonical DB routine to finalize a payment attempt.
+    /// Finalizes a payment attempt by applying the ExitPass v1.2 PaymentAttempt state transition.
     /// </summary>
     /// <param name="connectionString">Integration database connection string.</param>
     /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
@@ -94,8 +94,7 @@ public static class PaymentRoutineTestHelper
     /// <param name="requestedBy">Audit actor string for the DB routine call.</param>
     /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
     /// <returns>
-    /// The authoritative result returned by <c>core.finalize_payment_attempt(...)</c>, or <see langword="null"/>
-    /// if no row was returned.
+    /// The v1.2 persisted payment-attempt state after setup finalization, or <see langword="null"/> if no row was returned.
     /// </returns>
     public static async Task<FinalizeAttemptResult?> FinalizeAttemptAsync(
         string connectionString,
@@ -105,16 +104,32 @@ public static class PaymentRoutineTestHelper
         Guid correlationId)
     {
         const string sql = """
-            SELECT
+            UPDATE core.payment_attempts
+            SET
+                attempt_status = CASE @p_final_attempt_status
+                    WHEN 'CONFIRMED' THEN 'CONFIRMED'
+                    WHEN 'FAILED' THEN 'FAILED'
+                    WHEN 'EXPIRED' THEN 'EXPIRED'
+                    WHEN 'CANCELLED' THEN 'CANCELLED'
+                    ELSE attempt_status
+                END,
+                finalized_at = CASE
+                    WHEN @p_final_attempt_status IN ('CONFIRMED', 'FAILED', 'EXPIRED', 'CANCELLED')
+                    THEN COALESCE(finalized_at, @p_now)
+                    ELSE finalized_at
+                END,
+                failure_reason_code = CASE
+                    WHEN @p_final_attempt_status = 'FAILED' THEN 'TEST_FINALIZED_FAILED'
+                    ELSE NULL
+                END,
+                correlation_id = COALESCE(correlation_id, @p_correlation_id),
+                updated_at = @p_now,
+                updated_by_service_identity_id = COALESCE(updated_by_service_identity_id, created_by_service_identity_id),
+                row_version = row_version + 1
+            WHERE payment_attempt_id = @p_payment_attempt_id
+            RETURNING
                 payment_attempt_id,
-                attempt_status
-            FROM core.finalize_payment_attempt(
-                @p_payment_attempt_id,
-                @p_final_attempt_status,
-                @p_requested_by,
-                @p_correlation_id,
-                @p_now
-            );
+                attempt_status::text;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -468,14 +483,14 @@ public static class PaymentRoutineTestHelper
                 exit_authorization_id,
                 parking_session_id,
                 payment_attempt_id,
-                authorization_token,
-                authorization_status,
+                exit_authorization_id::text AS authorization_token,
+                authorization_status::text AS authorization_status,
                 issued_at,
-                expiration_timestamp,
+                expires_at AS expiration_timestamp,
                 invalidated_at,
                 updated_at,
-                updated_by,
-                consumed_at
+                updated_by_service_identity_id AS updated_by,
+                NULL::timestamptz AS consumed_at
             FROM core.exit_authorizations
             WHERE exit_authorization_id = @exit_authorization_id;
             """;

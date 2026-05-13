@@ -33,6 +33,9 @@ public sealed class IssueExitAuthorizationIntegrationTests
             $"Missing environment variable '{ConnectionStringEnvVar}'. " +
             "Point it at the ExitPass integration database.");
 
+    /// <summary>
+    /// Verifies BRD 9.12 and SDD 6.5 issuance after the v1.2 confirmation-chain invariant is satisfied.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenPaymentAttemptIsConfirmed_IssuesAuthorization()
     {
@@ -59,6 +62,15 @@ public sealed class IssueExitAuthorizationIntegrationTests
                 "central-pms-finalizer",
                 context.CorrelationId);
 
+            var confirmation = await RecordPaymentConfirmationAsync(
+                ConnectionString,
+                attempt.PaymentAttemptId,
+                $"prov-{Guid.NewGuid():N}",
+                "issue-auth-test",
+                context.CorrelationId);
+
+            Assert.NotNull(confirmation);
+
             var authorization = await IssueExitAuthorizationAsync(
                 ConnectionString,
                 attempt.ParkingSessionId,
@@ -84,6 +96,9 @@ public sealed class IssueExitAuthorizationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies BRD 10.7.2 and SDD 9.6 rejection while the v1.2 PaymentAttempt remains non-confirmed.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenPaymentAttemptIsNotConfirmed_RejectsIssuance()
     {
@@ -121,6 +136,9 @@ public sealed class IssueExitAuthorizationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies BRD 10.7.2 and SDD 8.5 rejection for a terminal failed v1.2 PaymentAttempt.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenPaymentAttemptHasFailed_RejectsIssuance()
     {
@@ -165,6 +183,9 @@ public sealed class IssueExitAuthorizationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies BRD 9.13 and SDD 9.6 deterministic replay for the same confirmed v1.2 PaymentAttempt.
+    /// </summary>
     [Fact]
     public async Task IssueExitAuthorization_WhenReplayedForSameConfirmedAttempt_IsDeterministic()
     {
@@ -190,6 +211,15 @@ public sealed class IssueExitAuthorizationIntegrationTests
                 "CONFIRMED",
                 "central-pms-finalizer",
                 context.CorrelationId);
+
+            var confirmation = await RecordPaymentConfirmationAsync(
+                ConnectionString,
+                attempt.PaymentAttemptId,
+                $"prov-{Guid.NewGuid():N}",
+                "issue-auth-test",
+                context.CorrelationId);
+
+            Assert.NotNull(confirmation);
 
             var first = await IssueExitAuthorizationAsync(
                 ConnectionString,
