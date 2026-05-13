@@ -13,7 +13,8 @@
  *
  * System Invariants:
  * - PaymentConfirmation must be anchored to an existing PaymentAttempt.
- * - Provider transaction references must not create ambiguous duplicate confirmation evidence.
+ * - Same-attempt same-provider-reference webhook replay returns the existing PaymentConfirmation.
+ * - Provider transaction references must not create ambiguous cross-attempt confirmation evidence.
  * - Confirmed provider evidence moves the canonical PaymentAttempt to terminal CONFIRMED state.
  * - All writes use ExitPass v1.2 table names and service-identity audit attribution.
  */
@@ -101,11 +102,28 @@ BEGIN
             USING ERRCODE = 'P0002';
     END IF;
 
-    IF EXISTS (
-        SELECT 1
-        FROM core.payment_confirmations AS pc
-        WHERE pc.payment_attempt_id = p_payment_attempt_id
-    ) THEN
+    SELECT pc.*
+    INTO v_confirmation
+    FROM core.payment_confirmations AS pc
+    WHERE pc.payment_attempt_id = p_payment_attempt_id
+    FOR UPDATE;
+
+    IF FOUND THEN
+        IF v_confirmation.provider_transaction_ref = v_normalized_provider_reference THEN
+            /*
+             * ExitPass v1.2 BRD 10.7.10 and SDD 7.3 require retry-safe provider webhook handling.
+             * The canonical invariant is same PaymentAttempt + same provider reference => same evidence row.
+             */
+            RETURN QUERY
+            SELECT
+                v_confirmation.payment_confirmation_id::uuid,
+                v_confirmation.payment_attempt_id::uuid,
+                v_confirmation.provider_transaction_ref::text,
+                v_normalized_provider_status::text,
+                v_confirmation.verified_at::timestamptz;
+            RETURN;
+        END IF;
+
         RAISE EXCEPTION 'payment confirmation already exists for payment attempt %', p_payment_attempt_id
             USING
                 ERRCODE = '23505',

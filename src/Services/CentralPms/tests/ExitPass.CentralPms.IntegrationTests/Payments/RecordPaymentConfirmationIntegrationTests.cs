@@ -22,7 +22,8 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 ///
 /// Invariants Enforced:
 /// - Payment confirmation must remain tied to one canonical PaymentAttempt
-/// - Duplicate provider confirmation must not create ambiguous state
+/// - Same-attempt webhook replay must return the existing PaymentConfirmation deterministically
+/// - Cross-attempt duplicate provider confirmation must not create ambiguous state
 /// - Confirmation persistence must preserve provider reference traceability
 /// </summary>
 public sealed class RecordPaymentConfirmationIntegrationTests
@@ -119,18 +120,24 @@ public sealed class RecordPaymentConfirmationIntegrationTests
 
     /// <summary>
     /// Verifies ExitPass v1.2 BRD 10.7.9 and 10.7.10, SDD 7.3 and 9.6, and the invariant that
-    /// duplicate provider references are rejected deterministically.
+    /// provider references cannot be reused across different canonical PaymentAttempts.
     /// </summary>
     [Fact]
-    public async Task RecordPaymentConfirmation_WhenProviderReferenceReplayed_RejectsDuplicate()
+    public async Task RecordPaymentConfirmation_WhenProviderReferenceUsedForDifferentAttempt_RejectsDuplicate()
     {
         var context = PaymentTestContext.Create(
-            nameof(RecordPaymentConfirmation_WhenProviderReferenceReplayed_RejectsDuplicate));
+            nameof(RecordPaymentConfirmation_WhenProviderReferenceUsedForDifferentAttempt_RejectsDuplicate));
+        var secondContext = PaymentTestContext.Create(
+            $"{nameof(RecordPaymentConfirmation_WhenProviderReferenceUsedForDifferentAttempt_RejectsDuplicate)}SecondAttempt");
 
         await PaymentTestDataHelper.ResetAndSeedAsync(
             ConnectionString,
             context,
             "Seed data for record-payment-confirmation tests");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            secondContext,
+            "Seed second attempt data for record-payment-confirmation duplicate-provider-reference tests");
 
         try
         {
@@ -138,6 +145,11 @@ public sealed class RecordPaymentConfirmationIntegrationTests
                 ConnectionString,
                 context,
                 "idem-record-confirmation-replay",
+                "payment-confirmation-test");
+            var secondAttempt = await CreateAttemptAsync(
+                ConnectionString,
+                secondContext,
+                "idem-record-confirmation-replay-second-attempt",
                 "payment-confirmation-test");
 
             var providerReference = $"PCONF-{Guid.NewGuid():N}";
@@ -154,7 +166,7 @@ public sealed class RecordPaymentConfirmationIntegrationTests
             var ex = await Assert.ThrowsAnyAsync<PostgresException>(async () =>
             {
                 await RecordPaymentConfirmationAsync(
-                    paymentAttemptId: attempt.PaymentAttemptId,
+                    paymentAttemptId: secondAttempt.PaymentAttemptId,
                     providerReference: providerReference,
                     providerStatus: "SUCCESS",
                     requestedBy: "payment-provider-callback",
@@ -169,15 +181,16 @@ public sealed class RecordPaymentConfirmationIntegrationTests
         }
         finally
         {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, secondContext);
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
     }
 
     /// <summary>
-    /// Documents the deferred ExitPass v1.2 BRD 10.7.10 idempotent replay behavior while the active
-    /// contract enforces deterministic duplicate rejection.
+    /// Verifies ExitPass v1.2 BRD 10.7.10, SDD 7.3 and 9.6, and the invariant that
+    /// same-attempt same-provider-reference webhook replay returns the existing PaymentConfirmation.
     /// </summary>
-    [Fact(Skip = "Enable after record_payment_confirmation() contract is locked to idempotent same-reference replay behavior.")]
+    [Fact]
     public async Task RecordPaymentConfirmation_WhenProviderReferenceReplayed_IsIdempotent()
     {
         var context = PaymentTestContext.Create(
