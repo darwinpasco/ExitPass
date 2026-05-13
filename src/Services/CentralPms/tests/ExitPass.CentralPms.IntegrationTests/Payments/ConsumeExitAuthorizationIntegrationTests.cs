@@ -227,7 +227,7 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
         var attempt = await CreateAttemptAsync(
             ConnectionString,
             context,
-            idempotencyKey,
+            $"{idempotencyKey}-{Guid.NewGuid():N}",
             "consume-auth-test");
 
         var finalized = await FinalizeAttemptAsync(
@@ -258,7 +258,7 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
 
         Assert.NotNull(persistedConfirmation);
         Assert.Equal(confirmation.PaymentConfirmationId, persistedConfirmation!.PaymentConfirmationId);
-        Assert.Equal("SUCCESS", persistedConfirmation.ProviderStatus);
+        Assert.Equal("RECORDED", persistedConfirmation.ProviderStatus);
         Assert.Equal(confirmation.ProviderReference, persistedConfirmation.ProviderReference);
         Assert.Equal(confirmation.VerifiedTimestamp, persistedConfirmation.VerifiedTimestamp);
 

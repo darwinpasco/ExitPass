@@ -257,7 +257,7 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
     }
 
     /// <summary>
-    /// Creates a fresh payment attempt, reports a verified successful outcome, and returns the issued authorization.
+    /// Creates a fresh payment attempt, records v1.2 payment confirmation evidence, and returns the issued authorization.
     /// </summary>
     /// <param name="context">Current payment test context.</param>
     /// <returns>The issued exit authorization response.</returns>
@@ -269,33 +269,48 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             $"idem-create-{Guid.NewGuid():N}",
             "consume-exit-auth-test");
 
-        using var client = CreateClient();
+        var finalized = await PaymentRoutineTestHelper.FinalizeAttemptAsync(
+            ConnectionString,
+            created.PaymentAttemptId,
+            "CONFIRMED",
+            "payment-orchestrator",
+            context.CorrelationId);
 
-        var outcomeResponse = await PostReportVerifiedPaymentOutcomeAsync(
-            client,
-            new ReportVerifiedPaymentOutcomeRequest(
-                PaymentAttemptId: created.PaymentAttemptId,
-                ParkingSessionId: context.ParkingSessionId,
-                ProviderReference: $"prov-{Guid.NewGuid():N}",
-                ProviderStatus: "SUCCESS",
-                FinalAttemptStatus: "CONFIRMED",
-                RequestedBy: "payment-orchestrator",
-                RequestedByUserId: KnownTestIdentityIds.ServiceIdentityId),
-            correlationId: context.CorrelationId,
-            idempotencyKey: $"idem-outcome-{Guid.NewGuid():N}");
+        Assert.NotNull(finalized);
+        Assert.Equal("CONFIRMED", finalized!.AttemptStatus);
 
-        var raw = await outcomeResponse.Content.ReadAsStringAsync();
-        Assert.Equal(HttpStatusCode.OK, outcomeResponse.StatusCode);
+        var confirmation = await PaymentRoutineTestHelper.RecordPaymentConfirmationAsync(
+            ConnectionString,
+            created.PaymentAttemptId,
+            $"prov-{Guid.NewGuid():N}",
+            "consume-exit-auth-test",
+            context.CorrelationId);
 
-        var issued = await outcomeResponse.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+        Assert.NotNull(confirmation);
+        Assert.Equal(created.PaymentAttemptId, confirmation!.PaymentAttemptId);
+        Assert.Equal("SUCCESS", confirmation.ProviderStatus);
+
+        var issued = await PaymentRoutineTestHelper.IssueExitAuthorizationAsync(
+            ConnectionString,
+            created.ParkingSessionId,
+            created.PaymentAttemptId,
+            KnownTestIdentityIds.ServiceIdentityId,
+            context.CorrelationId);
+
         Assert.NotNull(issued);
-        Assert.Equal(created.PaymentAttemptId, issued!.PaymentAttemptId);
-        Assert.Equal("CONFIRMED", issued.AttemptStatus);
-        Assert.NotNull(issued.ExitAuthorizationId);
-        Assert.Equal("ISSUED", issued.AuthorizationStatus);
+        Assert.Equal("ISSUED", issued!.AuthorizationStatus);
         Assert.False(string.IsNullOrWhiteSpace(issued.AuthorizationToken));
 
-        return issued;
+        return new ReportVerifiedPaymentOutcomeResponse(
+            confirmation.PaymentConfirmationId,
+            created.PaymentAttemptId,
+            finalized.AttemptStatus,
+            issued.ExitAuthorizationId,
+            issued.AuthorizationToken,
+            issued.AuthorizationStatus,
+            confirmation.VerifiedTimestamp,
+            issued.IssuedAt,
+            issued.ExpirationTimestamp);
     }
 
     /// <summary>
