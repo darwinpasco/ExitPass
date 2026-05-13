@@ -1,9 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Contracts.Payments;
-using Npgsql;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -29,15 +28,15 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
 {
     private const string RouteTemplate = "/v1/internal/payment-attempts/{0}/finalize";
-    private const string AuditActor = "integration-test";
     private const string RequestedByActor = "payment-orchestrator";
-    private const string ExistingSiteGroupId = "SG-TEST-001";
-    private const string ExistingSiteId = "SITE-TEST-001";
-    private const string ExistingVendorSystemCode = "VENDOR-TEST-001";
 
     private readonly HttpClient _httpClient;
     private readonly string _dbConnectionString;
+    private readonly List<PaymentTestContext> _seededContexts = [];
 
+    /// <summary>
+    /// Creates the live API integration fixture for ExitPass v1.2 payment-attempt finalization.
+    /// </summary>
     public FinalizePaymentAttemptApiIntegrationTests()
     {
         var baseUrl =
@@ -58,14 +57,28 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         };
     }
 
+    /// <summary>
+    /// Initializes the fixture; no shared data is created because each test owns its v1.2 rows.
+    /// </summary>
     public Task InitializeAsync() => Task.CompletedTask;
 
-    public Task DisposeAsync()
+    /// <summary>
+    /// Cleans up per-test v1.2 seed data created through the shared payment-chain helpers.
+    /// </summary>
+    public async Task DisposeAsync()
     {
+        foreach (var context in _seededContexts)
+        {
+            await PaymentTestDataHelper.CleanupAsync(_dbConnectionString, context);
+        }
+
         _httpClient.Dispose();
-        return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.10, SDD 6.4, and the invariant that a pending attempt
+    /// can be finalized through the HTTP boundary.
+    /// </summary>
     [Fact]
     public async Task Finalize_WithValidRequest_ReturnsSuccessStatus()
     {
@@ -95,6 +108,9 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace(body.AttemptStatus));
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 SDD 10.5.3 and the invariant that idempotency metadata is required.
+    /// </summary>
     [Fact]
     public async Task Finalize_WithoutIdempotencyKey_ReturnsBadRequest()
     {
@@ -116,6 +132,9 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 SDD 10.5.3 and the invariant that correlation metadata is required.
+    /// </summary>
     [Fact]
     public async Task Finalize_WithoutCorrelationId_ReturnsBadRequest()
     {
@@ -137,6 +156,9 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.10 and SDD 6.4 not-found behavior for unknown attempts.
+    /// </summary>
     [Fact]
     public async Task Finalize_WithUnknownPaymentAttemptId_ReturnsNotFound()
     {
@@ -155,12 +177,16 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 10.7.2, SDD 8.3, and the invariant that a terminal
+    /// PaymentAttempt cannot be re-finalized to a conflicting terminal status.
+    /// </summary>
     [Fact]
     public async Task Finalize_WhenRepeatedForAlreadyFinalAttempt_ReturnsConflict()
     {
         var seed = await SeedPendingPaymentAttemptAsync();
 
-        var request = new FinalizePaymentAttemptRequest(
+        var firstRequest = new FinalizePaymentAttemptRequest(
             FinalAttemptStatus: "CONFIRMED",
             RequestedBy: RequestedByActor);
 
@@ -168,7 +194,7 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
             paymentAttemptId: seed.PaymentAttemptId,
             correlationId: Guid.NewGuid().ToString(),
             idempotencyKey: Guid.NewGuid().ToString(),
-            request: request);
+            request: firstRequest);
 
         using var firstResponse = await _httpClient.SendAsync(firstMessage);
 
@@ -176,11 +202,15 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
             firstResponse.StatusCode == HttpStatusCode.OK || firstResponse.StatusCode == HttpStatusCode.Created,
             $"Expected first finalization to succeed, got {(int)firstResponse.StatusCode} {firstResponse.StatusCode}. Body: {await firstResponse.Content.ReadAsStringAsync()}");
 
+        var secondRequest = new FinalizePaymentAttemptRequest(
+            FinalAttemptStatus: "FAILED",
+            RequestedBy: RequestedByActor);
+
         using var secondMessage = BuildRequestMessage(
             paymentAttemptId: seed.PaymentAttemptId,
             correlationId: Guid.NewGuid().ToString(),
             idempotencyKey: Guid.NewGuid().ToString(),
-            request: request);
+            request: secondRequest);
 
         using var secondResponse = await _httpClient.SendAsync(secondMessage);
 
@@ -214,199 +244,24 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
                 "Missing DB connection string. Set EXITPASS_TEST_DB_CONNECTION_STRING, EXITPASS_INTEGRATION_DB, or ConnectionStrings__MainDatabase.");
         }
 
-        var parkingSessionId = Guid.NewGuid();
-        var tariffSnapshotId = Guid.NewGuid();
-        var paymentAttemptId = Guid.NewGuid();
+        var context = PaymentTestContext.Create(nameof(FinalizePaymentAttemptApiIntegrationTests));
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            _dbConnectionString,
+            context,
+            "Seed data for finalize-payment API tests");
 
-        var now = DateTimeOffset.UtcNow;
-        var entryTimestamp = now.AddMinutes(-30);
-        var expiresAt = now.AddMinutes(15);
+        _seededContexts.Add(context);
 
-        await using var connection = new NpgsqlConnection(_dbConnectionString);
-        await connection.OpenAsync();
-
-        await using var tx = await connection.BeginTransactionAsync();
-
-        await using (var cmd = connection.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                insert into core.parking_sessions
-                (
-                    parking_session_id,
-                    site_group_id,
-                    site_id,
-                    vendor_system_code,
-                    vendor_session_ref,
-                    identifier_type,
-                    plate_number,
-                    ticket_number,
-                    entry_timestamp,
-                    session_status,
-                    created_at,
-                    created_by,
-                    updated_at,
-                    updated_by,
-                    row_version
-                )
-                values
-                (
-                    @parking_session_id,
-                    @site_group_id,
-                    @site_id,
-                    @vendor_system_code,
-                    @vendor_session_ref,
-                    @identifier_type,
-                    @plate_number,
-                    @ticket_number,
-                    @entry_timestamp,
-                    'OPEN',
-                    @created_at,
-                    @created_by,
-                    @updated_at,
-                    @updated_by,
-                    1
-                );
-                """;
-
-            cmd.Parameters.AddWithValue("parking_session_id", parkingSessionId);
-            cmd.Parameters.AddWithValue("site_group_id", ExistingSiteGroupId);
-            cmd.Parameters.AddWithValue("site_id", ExistingSiteId);
-            cmd.Parameters.AddWithValue("vendor_system_code", ExistingVendorSystemCode);
-            cmd.Parameters.AddWithValue("vendor_session_ref", $"vendor-{Guid.NewGuid():N}");
-            cmd.Parameters.AddWithValue("identifier_type", "TICKET");
-            cmd.Parameters.AddWithValue("plate_number", DBNull.Value);
-            cmd.Parameters.AddWithValue("ticket_number", $"TICKET-{Guid.NewGuid():N}");
-            cmd.Parameters.AddWithValue("entry_timestamp", entryTimestamp.UtcDateTime);
-            cmd.Parameters.AddWithValue("created_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("created_by", AuditActor);
-            cmd.Parameters.AddWithValue("updated_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("updated_by", AuditActor);
-
-            await cmd.ExecuteNonQueryAsync();
-        }
-
-        await using (var cmd = connection.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                insert into core.tariff_snapshots
-                (
-                    tariff_snapshot_id,
-                    parking_session_id,
-                    source_type,
-                    gross_amount,
-                    statutory_discount_amount,
-                    coupon_discount_amount,
-                    net_payable,
-                    currency_code,
-                    calculated_at,
-                    expires_at,
-                    snapshot_status,
-                    created_at,
-                    created_by,
-                    updated_at,
-                    updated_by,
-                    row_version
-                )
-                values
-                (
-                    @tariff_snapshot_id,
-                    @parking_session_id,
-                    @source_type::core.tariff_snapshot_source_type_enum,
-                    100.00,
-                    0.00,
-                    0.00,
-                    100.00,
-                    @currency_code,
-                    @calculated_at,
-                    @expires_at,
-                    'ACTIVE',
-                    @created_at,
-                    @created_by,
-                    @updated_at,
-                    @updated_by,
-                    1
-                );
-                """;
-
-            cmd.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
-            cmd.Parameters.AddWithValue("parking_session_id", parkingSessionId);
-            cmd.Parameters.AddWithValue("source_type", "BASE");
-            cmd.Parameters.AddWithValue("currency_code", "PHP");
-            cmd.Parameters.AddWithValue("calculated_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("expires_at", expiresAt.UtcDateTime);
-            cmd.Parameters.AddWithValue("created_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("created_by", AuditActor);
-            cmd.Parameters.AddWithValue("updated_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("updated_by", AuditActor);
-
-            await cmd.ExecuteNonQueryAsync();
-        }
-
-        await using (var cmd = connection.CreateCommand())
-        {
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                insert into core.payment_attempts
-                (
-                    payment_attempt_id,
-                    parking_session_id,
-                    tariff_snapshot_id,
-                    payment_provider_code,
-                    idempotency_key,
-                    gross_amount_snapshot,
-                    statutory_discount_snapshot,
-                    coupon_discount_snapshot,
-                    net_amount_due_snapshot,
-                    currency_code,
-                    attempt_status,
-                    created_at,
-                    created_by,
-                    updated_at,
-                    updated_by,
-                    row_version
-                )
-                values
-                (
-                    @payment_attempt_id,
-                    @parking_session_id,
-                    @tariff_snapshot_id,
-                    'GCASH',
-                    @idempotency_key,
-                    100.00,
-                    0.00,
-                    0.00,
-                    100.00,
-                    @currency_code,
-                    'PENDING_PROVIDER',
-                    @created_at,
-                    @created_by,
-                    @updated_at,
-                    @updated_by,
-                    1
-                );
-                """;
-
-            cmd.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
-            cmd.Parameters.AddWithValue("parking_session_id", parkingSessionId);
-            cmd.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
-            cmd.Parameters.AddWithValue("idempotency_key", $"seed-{Guid.NewGuid():N}");
-            cmd.Parameters.AddWithValue("currency_code", "PHP");
-            cmd.Parameters.AddWithValue("created_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("created_by", AuditActor);
-            cmd.Parameters.AddWithValue("updated_at", now.UtcDateTime);
-            cmd.Parameters.AddWithValue("updated_by", AuditActor);
-
-            await cmd.ExecuteNonQueryAsync();
-        }
-
-        await tx.CommitAsync();
+        var attempt = await PaymentRoutineTestHelper.CreateAttemptAsync(
+            _dbConnectionString,
+            context,
+            $"idem-finalize-api-{Guid.NewGuid():N}",
+            "finalize-api-test");
 
         return new PendingPaymentAttemptSeed(
-            ParkingSessionId: parkingSessionId,
-            TariffSnapshotId: tariffSnapshotId,
-            PaymentAttemptId: paymentAttemptId);
+            ParkingSessionId: attempt.ParkingSessionId,
+            TariffSnapshotId: attempt.TariffSnapshotId,
+            PaymentAttemptId: attempt.PaymentAttemptId);
     }
 
     private sealed record PendingPaymentAttemptSeed(
