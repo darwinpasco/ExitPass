@@ -273,7 +273,7 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         var attempt = await CreateAttemptAsync(
             ConnectionString,
             context,
-            idempotencyKey,
+            $"{idempotencyKey}-{Guid.NewGuid():N}",
             "consume-auth-api-test");
 
         await FinalizeAttemptAsync(
@@ -282,6 +282,15 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             "CONFIRMED",
             "central-pms-finalizer",
             context.CorrelationId);
+
+        var confirmation = await RecordPaymentConfirmationAsync(
+            ConnectionString,
+            attempt.PaymentAttemptId,
+            providerReference: $"prov-{Guid.NewGuid():N}",
+            requestedBy: "consume-auth-api-test",
+            correlationId: context.CorrelationId);
+
+        Assert.NotNull(confirmation);
 
         var authorization = await IssueExitAuthorizationAsync(
             ConnectionString,
@@ -332,7 +341,7 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         const string sql = """
             UPDATE core.exit_authorizations
             SET issued_at = now() - interval '16 minutes',
-                expiration_timestamp = now() - interval '1 minute',
+                expires_at = now() - interval '1 minute',
                 updated_at = now(),
                 row_version = row_version + 1
             WHERE exit_authorization_id = @p_exit_authorization_id;

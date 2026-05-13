@@ -267,6 +267,18 @@ public static class PaymentTestDataHelper
             WHERE parking_session_id = @parking_session_id
               AND consumed_at IS NOT NULL;
 
+            DELETE FROM gates.gate_authorization_consumptions
+            WHERE exit_authorization_id IN (
+                SELECT exit_authorization_id
+                FROM core.exit_authorizations
+                WHERE parking_session_id = @parking_session_id
+                   OR payment_attempt_id IN (
+                        SELECT payment_attempt_id
+                        FROM core.payment_attempts
+                        WHERE parking_session_id = @parking_session_id
+                   )
+            );
+
             DELETE FROM core.exit_authorizations
             WHERE parking_session_id = @parking_session_id
                OR payment_attempt_id IN (
@@ -465,6 +477,18 @@ public static class PaymentTestDataHelper
                 row_version = row_version + 1
             WHERE parking_session_id = @parking_session_id
               AND consumed_at IS NOT NULL;
+
+            DELETE FROM gates.gate_authorization_consumptions
+            WHERE exit_authorization_id IN (
+                SELECT exit_authorization_id
+                FROM core.exit_authorizations
+                WHERE parking_session_id = @parking_session_id
+                   OR payment_attempt_id IN (
+                        SELECT payment_attempt_id
+                        FROM core.payment_attempts
+                        WHERE parking_session_id = @parking_session_id
+                   )
+            );
 
             DELETE FROM core.exit_authorizations
             WHERE parking_session_id = @parking_session_id

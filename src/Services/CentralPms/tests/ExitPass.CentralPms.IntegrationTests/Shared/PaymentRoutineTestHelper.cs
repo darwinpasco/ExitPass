@@ -419,17 +419,17 @@ public static class PaymentRoutineTestHelper
             SELECT
                 payment_confirmation_id,
                 payment_attempt_id,
-                provider_reference,
-                provider_status,
-                confirmation_status,
-                verified_timestamp,
-                raw_callback_reference,
-                provider_signature_valid,
-                provider_payload_hash,
-                amount_confirmed,
+                provider_transaction_ref AS provider_reference,
+                confirmation_status::text AS provider_status,
+                confirmation_status::text AS confirmation_status,
+                verified_at AS verified_timestamp,
+                NULL::text AS raw_callback_reference,
+                NULL::boolean AS provider_signature_valid,
+                NULL::text AS provider_payload_hash,
+                confirmed_amount AS amount_confirmed,
                 currency_code,
                 created_at,
-                created_by
+                created_by_service_identity_id::text AS created_by
             FROM core.payment_confirmations
             WHERE payment_confirmation_id = @payment_confirmation_id;
             """;
@@ -484,15 +484,26 @@ public static class PaymentRoutineTestHelper
                 parking_session_id,
                 payment_attempt_id,
                 exit_authorization_id::text AS authorization_token,
-                authorization_status::text AS authorization_status,
+                CASE
+                    WHEN consumed.consumed_at IS NOT NULL THEN 'CONSUMED'
+                    ELSE authorization_status::text
+                END AS authorization_status,
                 issued_at,
                 expires_at AS expiration_timestamp,
                 invalidated_at,
                 updated_at,
                 updated_by_service_identity_id AS updated_by,
-                NULL::timestamptz AS consumed_at
-            FROM core.exit_authorizations
-            WHERE exit_authorization_id = @exit_authorization_id;
+                consumed.consumed_at
+            FROM core.exit_authorizations AS ea
+            LEFT JOIN LATERAL (
+                SELECT gac.consumed_at
+                FROM gates.gate_authorization_consumptions AS gac
+                WHERE gac.exit_authorization_id = ea.exit_authorization_id
+                  AND gac.consume_status = 'CONSUMED'
+                ORDER BY gac.consumed_at DESC
+                LIMIT 1
+            ) AS consumed ON TRUE
+            WHERE ea.exit_authorization_id = @exit_authorization_id;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -541,9 +552,17 @@ public static class PaymentRoutineTestHelper
             UPDATE core.exit_authorizations
             SET
                 issued_at = NOW() - INTERVAL '2 minutes',
-                expiration_timestamp = NOW() - INTERVAL '1 minute',
+                expires_at = NOW() - INTERVAL '1 minute',
                 updated_at = NOW(),
-                updated_by = @updated_by,
+                updated_by_service_identity_id = COALESCE(
+                    (
+                        SELECT si.service_identity_id
+                        FROM identity.service_identities AS si
+                        WHERE si.service_identity_id = @updated_by
+                        LIMIT 1
+                    ),
+                    updated_by_service_identity_id,
+                    created_by_service_identity_id),
                 row_version = row_version + 1
             WHERE exit_authorization_id = @exit_authorization_id;
             """;
