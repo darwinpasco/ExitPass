@@ -16,25 +16,25 @@ using OpenTelemetry.Trace;
 namespace ExitPass.CentralPms.Application.PaymentAttempts;
 
 /// <summary>
-/// Handles the create-or-reuse payment attempt use case.
+/// Handles the Central PMS create-or-reuse payment attempt use case.
 /// </summary>
 /// <remarks>
-/// BRD:
-/// - 9.9 Payment Initiation
-/// - 9.21 Audit and Traceability
-/// - 10.7.4 One Active Payment Attempt Per Session
+/// ExitPass v1.2 BRD references:
+/// - Section 9.9 Payment Initiation
+/// - Section 9.21 Audit and Traceability
+/// - Section 10.7.4 One Active Payment Attempt Per Session
 ///
-/// SDD:
-/// - 6.3 Initiate Payment Attempt
-/// - 8.3 PaymentAttempt State Machine
-/// - 14.3 Distributed Tracing
-/// - 14.4 Structured Logging
+/// ExitPass v1.2 SDD references:
+/// - Section 6.3 Initiate Payment Attempt
+/// - Section 8.3 PaymentAttempt State Machine
+/// - Section 14.3 Distributed Tracing
+/// - Section 14.4 Structured Logging
 ///
-/// Invariants Enforced:
-/// - only Central PMS may create or reuse a PaymentAttempt
-/// - existence of ParkingSession and TariffSnapshot must be confirmed before the create-or-reuse path is invoked
-/// - valid idempotent replay must be decided by the authoritative DB-backed create-or-reuse path
-/// - competing active payment attempt must be rejected deterministically by the authoritative DB-backed path
+/// ExitPass v1.2 invariants enforced:
+/// - Only Central PMS may create or reuse a PaymentAttempt.
+/// - ParkingSession and TariffSnapshot existence must be confirmed before invoking the create-or-reuse path.
+/// - Idempotent replay must reuse the authoritative DB-backed PaymentAttempt.
+/// - Competing active payment attempts must be rejected deterministically by the authoritative DB-backed routine.
 /// </remarks>
 public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAttemptUseCase
 {
@@ -271,6 +271,9 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
     /// <summary>
     /// Converts DB outcome codes into deterministic domain exceptions.
+    /// BRD 9.9 Payment Initiation and BRD 10.7.4 One Active Payment Attempt Per Session require idempotent
+    /// replays to reuse the authoritative active attempt; SDD 6.3 Initiate Payment Attempt and SDD 8.3
+    /// PaymentAttempt State Machine keep the database routine as the source of truth for that invariant.
     /// </summary>
     /// <param name="dbResult">DB routine result.</param>
     /// <param name="tariffSnapshotId">Tariff snapshot ID associated with the request.</param>
@@ -280,6 +283,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         {
             case "CREATED":
             case "REUSED":
+            case "REUSED_BY_IDEMPOTENCY_KEY":
                 return;
 
             case "REJECTED_ACTIVE_ATTEMPT_EXISTS":
