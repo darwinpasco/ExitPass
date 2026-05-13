@@ -1,65 +1,99 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 
+/// <summary>
+/// Verifies the create-or-reuse payment-attempt DB routine gateway against a seeded ExitPass v1.2 database.
+///
+/// BRD:
+/// - 9.9 Payment Initiation
+/// - 10.7.4 One Active Payment Attempt Per Session
+///
+/// SDD:
+/// - 6.3 Initiate Payment Attempt
+/// - 9.6 Integrity Constraints and Concurrency Rules
+///
+/// Invariants Enforced:
+/// - First call creates a payment attempt.
+/// - Same idempotency key reuses the authoritative payment attempt.
+/// - Different idempotency key is rejected while an active attempt exists for the same session.
+/// </summary>
 public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayTests
 {
-    /*
-      BRD:
-      - 9.9 Payment Initiation
-      - 10.7.4 One Active Payment Attempt Per Session
-
-      SDD:
-      - 6.3 Initiate Payment Attempt
-      - 9.6 Integrity Constraints and Concurrency Rules
-
-      Invariants to prove in integration tests:
-      - first call creates a payment attempt
-      - second call with same idempotency key reuses the original attempt
-      - second call with different idempotency key rejects with active attempt exists
-    */
-
-    [Fact(Skip = "Requires seeded PostgreSQL integration environment.")]
+    /// <summary>
+    /// Verifies BRD 9.9 and SDD 6.3 creation through the v1.2 DB routine gateway.
+    /// </summary>
+    [Fact]
     public async Task CreateOrReusePaymentAttemptAsync_returns_created_on_first_call()
     {
+        var context = PaymentTestContext.Create(
+            nameof(CreateOrReusePaymentAttemptAsync_returns_created_on_first_call));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            GetConnectionString(),
+            context,
+            "Seed data for create-or-reuse DB routine gateway tests");
+
+        try
+        {
         var gateway = CreateGateway();
 
         var result = await gateway.CreateOrReusePaymentAttemptAsync(
             new CreateOrReusePaymentAttemptDbRequest
             {
-                ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                ParkingSessionId = context.ParkingSessionId,
+                TariffSnapshotId = context.TariffSnapshotId,
                 PaymentProviderCode = "GCASH",
-                IdempotencyKey = "itest-idem-001",
+                IdempotencyKey = $"itest-idem-{Guid.NewGuid():N}",
                 RequestedBy = "integration-test",
-                CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+                CorrelationId = context.CorrelationId,
                 RequestedAt = DateTimeOffset.UtcNow
             },
             CancellationToken.None);
 
         result.OutcomeCode.Should().Be("CREATED");
         result.WasReused.Should().BeFalse();
-        result.AttemptStatus.Should().Be("INITIATED");
+        result.AttemptStatus.Should().Be("REQUESTED");
         result.PaymentAttemptId.Should().NotBe(Guid.Empty);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(GetConnectionString(), context);
+        }
     }
 
-    [Fact(Skip = "Requires seeded PostgreSQL integration environment.")]
+    /// <summary>
+    /// Verifies BRD 10.7.4 and SDD 9.6 idempotent replay through the authoritative v1.2 routine.
+    /// </summary>
+    [Fact]
     public async Task CreateOrReusePaymentAttemptAsync_returns_reused_on_same_idempotency_key()
     {
+        var context = PaymentTestContext.Create(
+            nameof(CreateOrReusePaymentAttemptAsync_returns_reused_on_same_idempotency_key));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            GetConnectionString(),
+            context,
+            "Seed data for create-or-reuse DB routine gateway tests");
+
+        try
+        {
         var gateway = CreateGateway();
+        var idempotencyKey = $"itest-idem-{Guid.NewGuid():N}";
 
         var first = await gateway.CreateOrReusePaymentAttemptAsync(
             new CreateOrReusePaymentAttemptDbRequest
             {
-                ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                ParkingSessionId = context.ParkingSessionId,
+                TariffSnapshotId = context.TariffSnapshotId,
                 PaymentProviderCode = "GCASH",
-                IdempotencyKey = "itest-idem-002",
+                IdempotencyKey = idempotencyKey,
                 RequestedBy = "integration-test",
-                CorrelationId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                CorrelationId = context.CorrelationId,
                 RequestedAt = DateTimeOffset.UtcNow
             },
             CancellationToken.None);
@@ -67,36 +101,54 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayTests
         var second = await gateway.CreateOrReusePaymentAttemptAsync(
             new CreateOrReusePaymentAttemptDbRequest
             {
-                ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                ParkingSessionId = context.ParkingSessionId,
+                TariffSnapshotId = context.TariffSnapshotId,
                 PaymentProviderCode = "GCASH",
-                IdempotencyKey = "itest-idem-002",
+                IdempotencyKey = idempotencyKey,
                 RequestedBy = "integration-test",
-                CorrelationId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+                CorrelationId = context.CorrelationId,
                 RequestedAt = DateTimeOffset.UtcNow
             },
             CancellationToken.None);
 
         first.OutcomeCode.Should().Be("CREATED");
-        second.OutcomeCode.Should().Be("REUSED");
+        second.OutcomeCode.Should().Be("REUSED_BY_IDEMPOTENCY_KEY");
         second.WasReused.Should().BeTrue();
         second.PaymentAttemptId.Should().Be(first.PaymentAttemptId);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(GetConnectionString(), context);
+        }
     }
 
-    [Fact(Skip = "Requires seeded PostgreSQL integration environment.")]
+    /// <summary>
+    /// Verifies BRD 10.7.4 and SDD 9.6 active-attempt rejection for competing idempotency keys.
+    /// </summary>
+    [Fact]
     public async Task CreateOrReusePaymentAttemptAsync_returns_active_attempt_exists_on_different_idempotency_key()
     {
+        var context = PaymentTestContext.Create(
+            nameof(CreateOrReusePaymentAttemptAsync_returns_active_attempt_exists_on_different_idempotency_key));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            GetConnectionString(),
+            context,
+            "Seed data for create-or-reuse DB routine gateway tests");
+
+        try
+        {
         var gateway = CreateGateway();
 
         var first = await gateway.CreateOrReusePaymentAttemptAsync(
             new CreateOrReusePaymentAttemptDbRequest
             {
-                ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                ParkingSessionId = context.ParkingSessionId,
+                TariffSnapshotId = context.TariffSnapshotId,
                 PaymentProviderCode = "GCASH",
-                IdempotencyKey = "itest-idem-003a",
+                IdempotencyKey = $"itest-idem-{Guid.NewGuid():N}",
                 RequestedBy = "integration-test",
-                CorrelationId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+                CorrelationId = context.CorrelationId,
                 RequestedAt = DateTimeOffset.UtcNow
             },
             CancellationToken.None);
@@ -104,26 +156,39 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayTests
         var second = await gateway.CreateOrReusePaymentAttemptAsync(
             new CreateOrReusePaymentAttemptDbRequest
             {
-                ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                ParkingSessionId = context.ParkingSessionId,
+                TariffSnapshotId = context.TariffSnapshotId,
                 PaymentProviderCode = "GCASH",
-                IdempotencyKey = "itest-idem-003b",
+                IdempotencyKey = $"itest-idem-{Guid.NewGuid():N}",
                 RequestedBy = "integration-test",
-                CorrelationId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+                CorrelationId = context.CorrelationId,
                 RequestedAt = DateTimeOffset.UtcNow
             },
             CancellationToken.None);
 
         first.OutcomeCode.Should().Be("CREATED");
-        second.OutcomeCode.Should().Be("REJECTED_ACTIVE_ATTEMPT_EXISTS");
-        second.FailureCode.Should().Be("ACTIVE_PAYMENT_ATTEMPT_EXISTS");
+        second.OutcomeCode.Should().Be("ACTIVE_ATTEMPT_EXISTS");
+        second.FailureCode.Should().BeNull();
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(GetConnectionString(), context);
+        }
     }
 
     private static IPaymentAttemptDbRoutineGateway CreateGateway()
     {
-        var connectionString = Environment.GetEnvironmentVariable("EXITPASS_TEST_MAIN_DB")
-            ?? throw new InvalidOperationException("EXITPASS_TEST_MAIN_DB environment variable is missing.");
+        return new PaymentAttemptDbRoutineGateway(GetConnectionString());
+    }
 
-        return new PaymentAttemptDbRoutineGateway(connectionString);
+    private static string GetConnectionString()
+    {
+        return Environment.GetEnvironmentVariable("EXITPASS_TEST_MAIN_DB")
+            ?? Environment.GetEnvironmentVariable("EXITPASS_TEST_DB_CONNECTION_STRING")
+            ?? Environment.GetEnvironmentVariable("EXITPASS_INTEGRATION_DB")
+            ?? Environment.GetEnvironmentVariable("ConnectionStrings__MainDatabase")
+            ?? throw new InvalidOperationException(
+                "Missing DB connection string. Set EXITPASS_TEST_MAIN_DB, EXITPASS_TEST_DB_CONNECTION_STRING, " +
+                "EXITPASS_INTEGRATION_DB, or ConnectionStrings__MainDatabase.");
     }
 }
