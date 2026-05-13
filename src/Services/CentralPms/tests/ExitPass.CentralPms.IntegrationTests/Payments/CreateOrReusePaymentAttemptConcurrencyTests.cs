@@ -142,7 +142,11 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
         }
     }
 
-    [Fact(Skip = "Enable this after the function contract is locked to true create-or-reuse semantics for both callers.")]
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.9, BRD 10.7.4, SDD 6.3, and SDD 9.6 by enforcing
+    /// the invariant that same-key concurrent create-or-reuse callers resolve to one active PaymentAttempt.
+    /// </summary>
+    [Fact]
     public async Task CreateOrReusePaymentAttempt_WhenCalledConcurrently_ReturnsSameAttemptIdToBothCallers()
     {
         var context = PaymentTestContext.Create(
@@ -159,6 +163,7 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
 
             PaymentAttemptFunctionResult? sessionAResult = null;
             PaymentAttemptFunctionResult? sessionBResult = null;
+            const string sharedIdempotencyKey = "idem-race-shared";
 
             var sessionATask = Task.Run(async () =>
             {
@@ -171,7 +176,7 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
                     connection,
                     transaction,
                     context,
-                    idempotencyKey: "idem-race-a",
+                    idempotencyKey: sharedIdempotencyKey,
                     requestedBy: "race-test-session-a",
                     correlationId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"));
 
@@ -194,7 +199,7 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
                     connection,
                     transaction,
                     context,
-                    idempotencyKey: "idem-race-b",
+                    idempotencyKey: sharedIdempotencyKey,
                     requestedBy: "race-test-session-b",
                     correlationId: Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"));
 
@@ -206,6 +211,8 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
             Assert.NotNull(sessionAResult);
             Assert.NotNull(sessionBResult);
             Assert.Equal(sessionAResult!.PaymentAttemptId, sessionBResult!.PaymentAttemptId);
+            Assert.False(sessionAResult.WasReused);
+            Assert.True(sessionBResult.WasReused);
         }
         finally
         {
