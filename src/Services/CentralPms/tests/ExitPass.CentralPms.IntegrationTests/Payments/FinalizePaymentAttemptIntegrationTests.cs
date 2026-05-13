@@ -176,7 +176,11 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         }
     }
 
-    [Fact(Skip = "Enable after finalize_payment_attempt() contract is locked to idempotent same-status replay behavior.")]
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.13, BRD 10.7.2, SDD 6.4, and SDD 9.6 by enforcing
+    /// the invariant that same-terminal provider outcome retries return the existing finalized state.
+    /// </summary>
+    [Fact]
     public async Task FinalizePaymentAttempt_WhenSameTerminalStatusIsReplayed_IsIdempotent()
     {
         var context = PaymentTestContext.Create(
