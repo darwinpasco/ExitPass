@@ -73,6 +73,15 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
                 "central-pms-finalizer",
                 context.CorrelationId);
 
+            var confirmation = await RecordPaymentConfirmationAsync(
+                ConnectionString,
+                attempt.PaymentAttemptId,
+                $"prov-{Guid.NewGuid():N}",
+                "issue-auth-api-test",
+                context.CorrelationId);
+
+            Assert.NotNull(confirmation);
+
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
                 $"/v1/internal/payment-attempts/{attempt.PaymentAttemptId}/issue-exit-authorization");
