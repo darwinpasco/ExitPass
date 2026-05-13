@@ -1,60 +1,71 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Npgsql;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 
+/// <summary>
+/// Verifies create-or-reuse payment-attempt DB routine gateway behavior under concurrent calls.
+///
+/// BRD:
+/// - 9.9 Payment Initiation
+/// - 10.7.4 One Active Payment Attempt Per Session
+///
+/// SDD:
+/// - 6.3 Initiate Payment Attempt
+/// - 9.6 Integrity Constraints and Concurrency Rules
+///
+/// Invariants Enforced:
+/// - Only one fresh active payment attempt may be created for a parking session.
+/// - Concurrent competing idempotency keys must deterministically reject after one create.
+/// - Concurrent matching idempotency keys must resolve to one created attempt and one idempotent reuse.
+/// </summary>
 public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
 {
-    private static readonly Guid ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111");
-    private static readonly Guid TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222");
-
-    /*
-      BRD:
-      - 9.9 Payment Initiation
-      - 10.7.4 One Active Payment Attempt Per Session
-
-      SDD:
-      - 6.3 Initiate Payment Attempt
-      - 9.6 Integrity Constraints and Concurrency Rules
-
-      Invariants proved:
-      - only one fresh payment attempt may be created for a session at a time
-      - concurrent competing requests must not both create attempts
-      - row locking and DB-backed orchestration must deterministically resolve the race
-    */
-
-    [Fact(Skip = "Requires seeded PostgreSQL integration environment.")]
+    /// <summary>
+    /// Verifies BRD 10.7.4 and SDD 9.6 under parallel competing idempotency keys.
+    /// </summary>
+    [Fact]
     public async Task CreateOrReusePaymentAttemptAsync_allows_only_one_created_under_parallel_race()
     {
         var connectionString = GetConnectionString();
+        var context = PaymentTestContext.Create(
+            nameof(CreateOrReusePaymentAttemptAsync_allows_only_one_created_under_parallel_race));
 
-        await ResetScenarioStateAsync(connectionString);
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            connectionString,
+            context,
+            "Seed data for create-or-reuse DB routine gateway concurrency tests");
 
+        try
+        {
         var gateway1 = new PaymentAttemptDbRoutineGateway(connectionString);
         var gateway2 = new PaymentAttemptDbRoutineGateway(connectionString);
+        var idempotencyKey1 = $"race-idem-{Guid.NewGuid():N}";
+        var idempotencyKey2 = $"race-idem-{Guid.NewGuid():N}";
 
         var request1 = new CreateOrReusePaymentAttemptDbRequest
         {
-            ParkingSessionId = ParkingSessionId,
-            TariffSnapshotId = TariffSnapshotId,
+            ParkingSessionId = context.ParkingSessionId,
+            TariffSnapshotId = context.TariffSnapshotId,
             PaymentProviderCode = "GCASH",
-            IdempotencyKey = "race-idem-001",
+            IdempotencyKey = idempotencyKey1,
             RequestedBy = "integration-race-test",
-            CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"),
+            CorrelationId = context.CorrelationId,
             RequestedAt = DateTimeOffset.UtcNow
         };
 
         var request2 = new CreateOrReusePaymentAttemptDbRequest
         {
-            ParkingSessionId = ParkingSessionId,
-            TariffSnapshotId = TariffSnapshotId,
+            ParkingSessionId = context.ParkingSessionId,
+            TariffSnapshotId = context.TariffSnapshotId,
             PaymentProviderCode = "GCASH",
-            IdempotencyKey = "race-idem-002",
+            IdempotencyKey = idempotencyKey2,
             RequestedBy = "integration-race-test",
-            CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa2"),
+            CorrelationId = context.CorrelationId,
             RequestedAt = DateTimeOffset.UtcNow
         };
 
@@ -78,59 +89,78 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
         results.Should().HaveCount(2);
 
         results.Count(r => r.OutcomeCode == "CREATED").Should().Be(1);
-        results.Count(r => r.OutcomeCode == "REJECTED_ACTIVE_ATTEMPT_EXISTS").Should().Be(1);
+        results.Count(r => r.OutcomeCode == "ACTIVE_ATTEMPT_EXISTS").Should().Be(1);
 
         var created = results.Single(r => r.OutcomeCode == "CREATED");
-        var rejected = results.Single(r => r.OutcomeCode == "REJECTED_ACTIVE_ATTEMPT_EXISTS");
+        var rejected = results.Single(r => r.OutcomeCode == "ACTIVE_ATTEMPT_EXISTS");
 
         created.PaymentAttemptId.Should().NotBe(Guid.Empty);
-        created.AttemptStatus.Should().Be("INITIATED");
+        created.AttemptStatus.Should().Be("REQUESTED");
         created.WasReused.Should().BeFalse();
 
-        rejected.FailureCode.Should().Be("ACTIVE_PAYMENT_ATTEMPT_EXISTS");
+        rejected.FailureCode.Should().BeNull();
         rejected.PaymentAttemptId.Should().NotBe(Guid.Empty);
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
 
-        var paymentAttemptCount = await CountPaymentAttemptsForScenarioAsync(connection, request1.IdempotencyKey, request2.IdempotencyKey);
+        var paymentAttemptCount = await CountPaymentAttemptsForScenarioAsync(
+            connection,
+            context,
+            request1.IdempotencyKey,
+            request2.IdempotencyKey);
         paymentAttemptCount.Should().Be(1);
 
-        var consumedByPaymentAttemptId = await GetConsumedByPaymentAttemptIdAsync(connection);
-        consumedByPaymentAttemptId.Should().Be(created.PaymentAttemptId);
+        var consumedAt = await GetConsumedAtAsync(connection, context);
+        consumedAt.Should().NotBeNull();
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(connectionString, context);
+        }
     }
 
-    [Fact(Skip = "Requires seeded PostgreSQL integration environment.")]
+    /// <summary>
+    /// Verifies BRD 9.9 and SDD 6.3 idempotent replay under parallel matching idempotency keys.
+    /// </summary>
+    [Fact]
     public async Task CreateOrReusePaymentAttemptAsync_returns_one_created_and_one_reused_under_parallel_same_idempotency_key_race()
     {
         var connectionString = GetConnectionString();
+        var context = PaymentTestContext.Create(
+            nameof(CreateOrReusePaymentAttemptAsync_returns_one_created_and_one_reused_under_parallel_same_idempotency_key_race));
 
-        await ResetScenarioStateAsync(connectionString);
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            connectionString,
+            context,
+            "Seed data for create-or-reuse DB routine gateway concurrency tests");
 
+        try
+        {
         var gateway1 = new PaymentAttemptDbRoutineGateway(connectionString);
         var gateway2 = new PaymentAttemptDbRoutineGateway(connectionString);
 
-        var sharedIdempotencyKey = "race-idem-shared-001";
+        var sharedIdempotencyKey = $"race-idem-shared-{Guid.NewGuid():N}";
 
         var request1 = new CreateOrReusePaymentAttemptDbRequest
         {
-            ParkingSessionId = ParkingSessionId,
-            TariffSnapshotId = TariffSnapshotId,
+            ParkingSessionId = context.ParkingSessionId,
+            TariffSnapshotId = context.TariffSnapshotId,
             PaymentProviderCode = "GCASH",
             IdempotencyKey = sharedIdempotencyKey,
             RequestedBy = "integration-race-test",
-            CorrelationId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb1"),
+            CorrelationId = context.CorrelationId,
             RequestedAt = DateTimeOffset.UtcNow
         };
 
         var request2 = new CreateOrReusePaymentAttemptDbRequest
         {
-            ParkingSessionId = ParkingSessionId,
-            TariffSnapshotId = TariffSnapshotId,
+            ParkingSessionId = context.ParkingSessionId,
+            TariffSnapshotId = context.TariffSnapshotId,
             PaymentProviderCode = "GCASH",
             IdempotencyKey = sharedIdempotencyKey,
             RequestedBy = "integration-race-test",
-            CorrelationId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbb2"),
+            CorrelationId = context.CorrelationId,
             RequestedAt = DateTimeOffset.UtcNow
         };
 
@@ -153,10 +183,10 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
 
         results.Should().HaveCount(2);
         results.Count(r => r.OutcomeCode == "CREATED").Should().Be(1);
-        results.Count(r => r.OutcomeCode == "REUSED").Should().Be(1);
+        results.Count(r => r.OutcomeCode == "REUSED_BY_IDEMPOTENCY_KEY").Should().Be(1);
 
         var created = results.Single(r => r.OutcomeCode == "CREATED");
-        var reused = results.Single(r => r.OutcomeCode == "REUSED");
+        var reused = results.Single(r => r.OutcomeCode == "REUSED_BY_IDEMPOTENCY_KEY");
 
         created.PaymentAttemptId.Should().NotBe(Guid.Empty);
         reused.PaymentAttemptId.Should().Be(created.PaymentAttemptId);
@@ -165,45 +195,33 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
 
-        var paymentAttemptCount = await CountPaymentAttemptsForScenarioAsync(connection, sharedIdempotencyKey);
+        var paymentAttemptCount = await CountPaymentAttemptsForScenarioAsync(connection, context, sharedIdempotencyKey);
         paymentAttemptCount.Should().Be(1);
 
-        var consumedByPaymentAttemptId = await GetConsumedByPaymentAttemptIdAsync(connection);
-        consumedByPaymentAttemptId.Should().Be(created.PaymentAttemptId);
+        var consumedAt = await GetConsumedAtAsync(connection, context);
+        consumedAt.Should().NotBeNull();
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(connectionString, context);
+        }
     }
 
     private static string GetConnectionString()
     {
         return Environment.GetEnvironmentVariable("EXITPASS_TEST_MAIN_DB")
-            ?? throw new InvalidOperationException("EXITPASS_TEST_MAIN_DB environment variable is missing.");
+            ?? Environment.GetEnvironmentVariable("EXITPASS_TEST_DB_CONNECTION_STRING")
+            ?? Environment.GetEnvironmentVariable("EXITPASS_INTEGRATION_DB")
+            ?? Environment.GetEnvironmentVariable("ConnectionStrings__MainDatabase")
+            ?? throw new InvalidOperationException(
+                "Missing DB connection string. Set EXITPASS_TEST_MAIN_DB, EXITPASS_TEST_DB_CONNECTION_STRING, " +
+                "EXITPASS_INTEGRATION_DB, or ConnectionStrings__MainDatabase.");
     }
 
-    private static async Task ResetScenarioStateAsync(string connectionString)
-    {
-        const string sql = """
-            UPDATE core.tariff_snapshots AS ts
-               SET consumed_by_payment_attempt_id = NULL,
-                   updated_at = NOW(),
-                   updated_by = 'integration-race-reset',
-                   row_version = ts.row_version + 1
-             WHERE ts.tariff_snapshot_id = @tariff_snapshot_id;
-
-            DELETE FROM core.payment_attempts AS pa
-             WHERE pa.tariff_snapshot_id = @tariff_snapshot_id
-                OR pa.parking_session_id = @parking_session_id;
-            """;
-
-        await using var connection = new NpgsqlConnection(connectionString);
-        await connection.OpenAsync();
-
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("tariff_snapshot_id", TariffSnapshotId);
-        command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
-
-        await command.ExecuteNonQueryAsync();
-    }
-
-    private static async Task<int> CountPaymentAttemptsForScenarioAsync(NpgsqlConnection connection, params string[] idempotencyKeys)
+    private static async Task<int> CountPaymentAttemptsForScenarioAsync(
+        NpgsqlConnection connection,
+        PaymentTestContext context,
+        params string[] idempotencyKeys)
     {
         const string sql = """
             SELECT COUNT(*)
@@ -214,24 +232,26 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("parking_session_id", ParkingSessionId);
-        command.Parameters.AddWithValue("tariff_snapshot_id", TariffSnapshotId);
+        command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
+        command.Parameters.AddWithValue("tariff_snapshot_id", context.TariffSnapshotId);
         command.Parameters.AddWithValue("idempotency_keys", idempotencyKeys);
 
         var result = await command.ExecuteScalarAsync();
         return Convert.ToInt32(result);
     }
 
-    private static async Task<Guid?> GetConsumedByPaymentAttemptIdAsync(NpgsqlConnection connection)
+    private static async Task<DateTimeOffset?> GetConsumedAtAsync(
+        NpgsqlConnection connection,
+        PaymentTestContext context)
     {
         const string sql = """
-            SELECT ts.consumed_by_payment_attempt_id
+            SELECT ts.consumed_at
               FROM core.tariff_snapshots AS ts
              WHERE ts.tariff_snapshot_id = @tariff_snapshot_id;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("tariff_snapshot_id", TariffSnapshotId);
+        command.Parameters.AddWithValue("tariff_snapshot_id", context.TariffSnapshotId);
 
         var result = await command.ExecuteScalarAsync();
 
@@ -240,6 +260,12 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
             return null;
         }
 
-        return (Guid)result;
+        return result switch
+        {
+            DateTimeOffset dateTimeOffset => dateTimeOffset,
+            DateTime dateTime => new DateTimeOffset(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)),
+            _ => throw new InvalidOperationException(
+                $"Unexpected consumed_at value type '{result.GetType().FullName}'.")
+        };
     }
 }
