@@ -28,3 +28,33 @@ Get-Content .\infra\db\seed\ExitPass_Reference_Data_v1.2.sql -Raw |
 ```
 
 The reference-data seed is intended for clean v1.2 development databases. It is not an upgrade script for legacy v1.0 databases and does not carry production secrets or credential material.
+
+## One-Command Local Bootstrap
+
+Use `infra/db/scripts/Reset-ExitPassV12Database.ps1` when a local Docker PostgreSQL database must be rebuilt from the v1.2 full DDL, seeded with the v1.2 reference data baseline, replayed to prove seed idempotency, and checked with the repository validation/preflight script where available. The script writes step-specific logs under `logs/db` by default.
+
+The script refuses to drop or recreate a database unless `-ForceRecreate` is supplied.
+
+Rebuild the default development database:
+
+```powershell
+.\infra\db\scripts\Reset-ExitPassV12Database.ps1 -ForceRecreate
+```
+
+Rebuild a test database:
+
+```powershell
+.\infra\db\scripts\Reset-ExitPassV12Database.ps1 -DatabaseName exitpass_v12_seed_test -ForceRecreate
+```
+
+Skip validation/preflight:
+
+```powershell
+.\infra\db\scripts\Reset-ExitPassV12Database.ps1 -ForceRecreate -SkipValidation
+```
+
+Skip seed replay:
+
+```powershell
+.\infra\db\scripts\Reset-ExitPassV12Database.ps1 -ForceRecreate -SkipSeedReplay
+```
