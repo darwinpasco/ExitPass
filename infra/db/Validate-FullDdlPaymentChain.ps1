@@ -210,13 +210,13 @@ SET rail_code = EXCLUDED.rail_code,
 "@
     Invoke-PostgresSql -Database $DatabaseName -Sql $seedPaymentRailsSql
 
-    $env:POSTGRES_DB = $DatabaseName
-    docker compose -f $ComposeFile up -d --force-recreate --no-deps $CentralPmsService
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to recreate '$CentralPmsService' for '$DatabaseName'."
-    }
-
     if (-not $SkipTests) {
+        $env:POSTGRES_DB = $DatabaseName
+        docker compose -f $ComposeFile up -d --force-recreate --no-deps $CentralPmsService
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to recreate '$CentralPmsService' for '$DatabaseName'."
+        }
+
         $connectionString = "Host=127.0.0.1;Port=$HostPort;Database=$DatabaseName;Username=$PostgresUser;Password=change_me;Include Error Detail=true"
         $env:EXITPASS_TEST_MAIN_DB = $connectionString
         $env:EXITPASS_INTEGRATION_DB = $connectionString
