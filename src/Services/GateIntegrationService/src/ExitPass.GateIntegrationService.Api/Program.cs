@@ -4,6 +4,11 @@
 
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using ExitPass.GateIntegrationService.Api.Endpoints;
+using ExitPass.GateIntegrationService.Application.GateExit;
+using ExitPass.GateIntegrationService.Infrastructure.CentralPms;
+using ExitPass.GateIntegrationService.Infrastructure.GateExit;
+using ExitPass.GateIntegrationService.Infrastructure.GateHardware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +21,19 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services
     .AddHealthChecks()
     .AddCheck("self", () => HealthCheckResult.Healthy("Gate Integration Service is alive."));
+
+builder.Services.AddScoped<IConsumeGateExitAuthorizationUseCase, ConsumeGateExitAuthorizationHandler>();
+builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
+{
+    var baseUrl = builder.Configuration["Integrations:CentralPms:BaseUrl"] ?? "http://localhost:8080";
+    return new HttpCentralPmsExitAuthorizationClient(new HttpClient
+    {
+        BaseAddress = new Uri(baseUrl, UriKind.Absolute),
+        Timeout = TimeSpan.FromSeconds(10)
+    });
+});
+builder.Services.AddSingleton<IGateHardwareController, NoOpGateHardwareController>();
+builder.Services.AddSingleton<IGateExitAttemptRecorder, InMemoryGateExitAttemptRecorder>();
 
 var app = builder.Build();
 
@@ -33,6 +51,7 @@ app.UseRouting();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapGateExitAuthorizationEndpoints();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
