@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Application.Payments;
 
@@ -23,6 +25,12 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// </summary>
 public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPaymentOutcomeUseCase
 {
+    /// <summary>
+    /// Activity source for verified provider outcome reporting spans.
+    /// </summary>
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.CentralPms.Application.Payments");
+
     private readonly IRecordPaymentConfirmationGateway _recordPaymentConfirmationGateway;
     private readonly IFinalizePaymentAttemptUseCase _finalizePaymentAttemptUseCase;
     private readonly IIssueExitAuthorizationUseCase _issueExitAuthorizationUseCase;
@@ -64,6 +72,18 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     {
         ArgumentNullException.ThrowIfNull(command);
 
+        using var activity = ActivitySource.StartActivity("ReportVerifiedPaymentOutcome", ActivityKind.Internal);
+
+        activity?.SetTag("operation", "report_verified_payment_outcome");
+        activity?.SetTag("correlation_id", command.CorrelationId);
+        activity?.SetTag("payment_attempt_id", command.PaymentAttemptId);
+        activity?.SetTag("parking_session_id", command.ParkingSessionId);
+        activity?.SetTag("provider_reference", command.ProviderReference);
+        activity?.SetTag("provider_status", command.ProviderStatus);
+        activity?.SetTag("final_status", command.FinalAttemptStatus);
+        activity?.SetTag("requested_by", command.RequestedBy);
+        activity?.SetTag("requested_by_user_id", command.RequestedByUserId);
+
         ValidateCommand(command);
 
         _logger.LogInformation(
@@ -87,6 +107,9 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
             _systemClock.UtcNow,
             cancellationToken);
 
+        activity?.SetTag("payment_confirmation_id", confirmation.PaymentConfirmationId);
+        activity?.SetTag("verified_timestamp", confirmation.VerifiedTimestamp);
+
         var finalized = await _finalizePaymentAttemptUseCase.ExecuteAsync(
             new FinalizePaymentAttemptCommand(
                 command.PaymentAttemptId,
@@ -97,6 +120,10 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         if (!string.Equals(finalized.AttemptStatus, "CONFIRMED", StringComparison.OrdinalIgnoreCase))
         {
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("attempt_status", finalized.AttemptStatus);
+            activity?.SetTag("outcome", "finalized_without_exit_authorization");
+
             return new ReportVerifiedPaymentOutcomeResult(
                 PaymentConfirmationId: confirmation.PaymentConfirmationId,
                 PaymentAttemptId: finalized.PaymentAttemptId,
@@ -116,6 +143,12 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
                 command.RequestedByUserId,
                 command.CorrelationId),
             cancellationToken);
+
+        activity?.SetStatus(ActivityStatusCode.Ok);
+        activity?.SetTag("attempt_status", finalized.AttemptStatus);
+        activity?.SetTag("exit_authorization_id", issued.ExitAuthorizationId);
+        activity?.SetTag("authorization_status", issued.AuthorizationStatus);
+        activity?.SetTag("outcome", "exit_authorization_issued");
 
         return new ReportVerifiedPaymentOutcomeResult(
             PaymentConfirmationId: confirmation.PaymentConfirmationId,

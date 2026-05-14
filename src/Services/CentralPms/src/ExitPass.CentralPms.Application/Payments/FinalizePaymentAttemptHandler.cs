@@ -110,6 +110,8 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
 
             activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.SetTag("attempt_status", dbResult.AttemptStatus);
+            activity?.SetTag("final_status", dbResult.AttemptStatus);
+            activity?.SetTag("outcome", "finalized");
             activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
 
             _metrics.PaymentAttemptFinalized(
@@ -130,6 +132,7 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
+            activity?.SetTag("outcome", "rejected");
 
             _metrics.PaymentAttemptFinalizeFailed(
                 failureReason: "INVALID_REQUEST",
@@ -148,6 +151,7 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
+            activity?.SetTag("outcome", "rejected");
 
             _metrics.PaymentAttemptFinalizeFailed(
                 failureReason: ex.GetType().Name,
@@ -165,6 +169,7 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
+            activity?.SetTag("outcome", "failed");
 
             _metrics.PaymentAttemptFinalizeFailed(
                 failureReason: "UNEXPECTED_FAILURE",
