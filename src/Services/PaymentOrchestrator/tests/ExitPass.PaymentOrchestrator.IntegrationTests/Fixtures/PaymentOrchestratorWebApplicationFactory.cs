@@ -1,7 +1,12 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace ExitPass.PaymentOrchestrator.IntegrationTests.Fixtures;
 
@@ -19,6 +24,7 @@ namespace ExitPass.PaymentOrchestrator.IntegrationTests.Fixtures;
 /// - Required startup configuration must exist before the application entry point executes.
 /// - Secrets must come from environment variables and must never be hard-coded in tests.
 /// - Integration tests must fail closed when required provider credentials are missing.
+/// - Provider-webhook ingress tests verify POA-owned callback verification and idempotency without letting POA bypass Central PMS payment finality.
 /// </summary>
 public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFactory<Program>
 {
@@ -119,6 +125,17 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
         ArgumentNullException.ThrowIfNull(builder);
 
         builder.UseEnvironment("Test");
+
+        builder.ConfigureServices(static services =>
+        {
+            // ExitPass v1.2 BRD 9.10, 9.13, and 12; SDD 10.5.2, 10.5.3, and 10.7:
+            // provider-webhook integration tests must exercise real callback verification while keeping
+            // Central PMS as the sole owner of payment finality and exit-authorization decisions.
+            services.RemoveAll<IProviderWebhookEventRepository>();
+            services.RemoveAll<ICentralPmsPaymentOutcomeReporter>();
+            services.AddSingleton<IProviderWebhookEventRepository, InMemoryProviderWebhookEventRepository>();
+            services.AddSingleton<ICentralPmsPaymentOutcomeReporter, CapturingCentralPmsPaymentOutcomeReporter>();
+        });
     }
 
     /// <summary>
@@ -323,5 +340,51 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
         }
 
         return value;
+    }
+
+    private sealed class InMemoryProviderWebhookEventRepository : IProviderWebhookEventRepository
+    {
+        private readonly ConcurrentDictionary<string, ProviderWebhookEventRecord> _records = new(StringComparer.Ordinal);
+
+        public Task<bool> ExistsByProviderEventIdAsync(
+            string providerCode,
+            string providerEventId,
+            CancellationToken cancellationToken)
+        {
+            var key = CreateKey(providerCode, providerEventId);
+            return Task.FromResult(_records.ContainsKey(key));
+        }
+
+        public Task AddAsync(
+            ProviderWebhookEventRecord record,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+
+            var key = CreateKey(record.ProviderCode, record.ProviderEventId);
+            if (!_records.TryAdd(key, record))
+            {
+                throw new DuplicateProviderWebhookEventException(
+                    $"Provider callback already exists for callback reference '{record.ProviderEventId}'.");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private static string CreateKey(string providerCode, string providerEventId)
+        {
+            return $"{providerCode.Trim().ToUpperInvariant()}::{providerEventId.Trim()}";
+        }
+    }
+
+    private sealed class CapturingCentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcomeReporter
+    {
+        public Task ReportVerifiedOutcomeAsync(
+            VerifiedPaymentOutcomeReport report,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(report);
+            return Task.CompletedTask;
+        }
     }
 }

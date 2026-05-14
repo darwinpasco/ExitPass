@@ -171,6 +171,56 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
         Assert.Equal("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41", document.RootElement.GetProperty("requestedByUserId").GetString());
     }
 
+    /// <summary>
+    /// Verifies that provider failure evidence is reported to Central PMS as failed finality,
+    /// never as a successful payment confirmation.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedOutcomeAsync_MapsTerminalFailureToFailedFinalAttemptStatus()
+    {
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, new { status = "ok" }));
+        var reporter = CreateReporter(handler);
+
+        var report = CreateReport(
+            canonicalStatus: "FAILED",
+            rawStatus: "failed",
+            isTerminal: true,
+            isSuccess: false);
+
+        await reporter.ReportVerifiedOutcomeAsync(report, CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(handler.LastRequestContent));
+
+        using var document = JsonDocument.Parse(handler.LastRequestContent!);
+        Assert.Equal("failed", document.RootElement.GetProperty("providerStatus").GetString());
+        Assert.Equal("FAILED", document.RootElement.GetProperty("finalAttemptStatus").GetString());
+    }
+
+    /// <summary>
+    /// Verifies that non-terminal provider evidence remains pending and does not create
+    /// false payment finality inside Payment Orchestrator.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedOutcomeAsync_MapsNonTerminalOutcomeToPendingProvider()
+    {
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, new { status = "ok" }));
+        var reporter = CreateReporter(handler);
+
+        var report = CreateReport(
+            canonicalStatus: "PENDING_PROVIDER",
+            rawStatus: "awaiting_payment",
+            isTerminal: false,
+            isSuccess: false);
+
+        await reporter.ReportVerifiedOutcomeAsync(report, CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(handler.LastRequestContent));
+
+        using var document = JsonDocument.Parse(handler.LastRequestContent!);
+        Assert.Equal("awaiting_payment", document.RootElement.GetProperty("providerStatus").GetString());
+        Assert.Equal("PENDING_PROVIDER", document.RootElement.GetProperty("finalAttemptStatus").GetString());
+    }
+
     private static CentralPmsPaymentOutcomeReporter CreateReporter(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()
@@ -191,7 +241,11 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
             NullLogger<CentralPmsPaymentOutcomeReporter>.Instance);
     }
 
-    private static VerifiedPaymentOutcomeReport CreateReport(string rawStatus = "SUCCEEDED")
+    private static VerifiedPaymentOutcomeReport CreateReport(
+        string canonicalStatus = "SUCCEEDED",
+        string rawStatus = "SUCCEEDED",
+        bool isTerminal = true,
+        bool isSuccess = true)
     {
         return new VerifiedPaymentOutcomeReport(
             PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
@@ -201,13 +255,13 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
             ProviderCode: "PAYMONGO",
             ProviderReference: "cs_293285f3347f5496c48332d8",
             ProviderSessionId: "cs_293285f3347f5496c48332d8",
-            CanonicalStatus: "SUCCEEDED",
+            CanonicalStatus: canonicalStatus,
             OccurredAtUtc: DateTimeOffset.Parse("2026-04-06T10:00:00Z"),
             AmountMinor: 5000,
             Currency: "PHP",
             EventId: "evt_test_009",
-            IsTerminal: true,
-            IsSuccess: true,
+            IsTerminal: isTerminal,
+            IsSuccess: isSuccess,
             RawAttributes: new Dictionary<string, string>
             {
                 ["status"] = rawStatus
