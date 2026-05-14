@@ -1,7 +1,5 @@
 using ExitPass.GateIntegrationService.Application.GateExit;
 
-#pragma warning disable CS1591
-
 namespace ExitPass.GateIntegrationService.Infrastructure.GateHardware;
 
 /// <summary>
@@ -9,6 +7,7 @@ namespace ExitPass.GateIntegrationService.Infrastructure.GateHardware;
 /// </summary>
 public sealed class NoOpGateHardwareController : IGateHardwareController
 {
+    /// <inheritdoc />
     public Task OpenBarrierAsync(
         string gateDeviceId,
         Guid exitAuthorizationId,
@@ -18,5 +17,3 @@ public sealed class NoOpGateHardwareController : IGateHardwareController
         return Task.CompletedTask;
     }
 }
-
-#pragma warning restore CS1591

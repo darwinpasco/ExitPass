@@ -22,6 +22,12 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
     private readonly IGateHardwareController _gateHardwareController;
     private readonly IGateExitAttemptRecorder _attemptRecorder;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ConsumeGateExitAuthorizationHandler"/> class.
+    /// </summary>
+    /// <param name="centralPmsClient">Central PMS consume client that remains authoritative for authorization state.</param>
+    /// <param name="gateHardwareController">Gate hardware boundary invoked only after Central PMS returns <c>CONSUMED</c>.</param>
+    /// <param name="attemptRecorder">Recorder for reportable gate exit attempt outcomes.</param>
     public ConsumeGateExitAuthorizationHandler(
         ICentralPmsExitAuthorizationClient centralPmsClient,
         IGateHardwareController gateHardwareController,
@@ -32,6 +38,7 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
         _attemptRecorder = attemptRecorder ?? throw new ArgumentNullException(nameof(attemptRecorder));
     }
 
+    /// <inheritdoc />
     public async Task<ConsumeGateExitAuthorizationResult> ExecuteAsync(
         ConsumeGateExitAuthorizationCommand command,
         CancellationToken cancellationToken)

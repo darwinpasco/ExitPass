@@ -1,8 +1,6 @@
 using System.Collections.Concurrent;
 using ExitPass.GateIntegrationService.Application.GateExit;
 
-#pragma warning disable CS1591
-
 namespace ExitPass.GateIntegrationService.Infrastructure.GateExit;
 
 /// <summary>
@@ -12,8 +10,12 @@ public sealed class InMemoryGateExitAttemptRecorder : IGateExitAttemptRecorder
 {
     private readonly ConcurrentQueue<GateExitAttemptRecord> _records = new();
 
+    /// <summary>
+    /// Gets the process-local gate exit attempt records captured by this recorder.
+    /// </summary>
     public IReadOnlyCollection<GateExitAttemptRecord> Records => _records.ToArray();
 
+    /// <inheritdoc />
     public Task RecordAsync(
         GateExitAttemptRecord record,
         CancellationToken cancellationToken)
@@ -23,5 +25,3 @@ public sealed class InMemoryGateExitAttemptRecorder : IGateExitAttemptRecorder
         return Task.CompletedTask;
     }
 }
-
-#pragma warning restore CS1591

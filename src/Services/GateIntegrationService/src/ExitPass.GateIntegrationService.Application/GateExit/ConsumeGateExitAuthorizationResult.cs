@@ -15,6 +15,11 @@ namespace ExitPass.GateIntegrationService.Application.GateExit;
 /// - Gate open state is reported separately from Central PMS authorization state.
 /// - No financial or payment-finality authority is represented by this result.
 /// </summary>
+/// <param name="GateOpened">Indicates whether the barrier-open command was issued.</param>
+/// <param name="ResultCode">Provider-neutral result code for the gate consume attempt.</param>
+/// <param name="AuthorizationStatus">Central PMS authorization status observed by Gate Integration Service.</param>
+/// <param name="ExitAuthorizationId">Exit authorization identifier presented at the gate.</param>
+/// <param name="ConsumedAt">Central PMS consume timestamp when consume succeeded.</param>
 public sealed record ConsumeGateExitAuthorizationResult(
     bool GateOpened,
     string ResultCode,
