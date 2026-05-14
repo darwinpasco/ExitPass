@@ -286,6 +286,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             case "REUSED_BY_IDEMPOTENCY_KEY":
                 return;
 
+            case "ACTIVE_ATTEMPT_EXISTS":
             case "REJECTED_ACTIVE_ATTEMPT_EXISTS":
                 throw new ActivePaymentAttemptAlreadyExistsException(dbResult.ParkingSessionId);
 
