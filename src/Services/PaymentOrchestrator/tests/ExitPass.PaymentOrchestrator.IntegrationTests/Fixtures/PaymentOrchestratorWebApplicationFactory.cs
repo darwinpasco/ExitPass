@@ -47,6 +47,9 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
     private const string OptionalPayMongoBaseUrlEnvVar = "PAYMONGO_BASE_URL";
     private const string OptionalPayMongoIsLiveModeEnvVar = "PAYMONGO_IS_LIVE_MODE";
 
+    private readonly InMemoryProviderWebhookEventRepository _providerWebhookEventRepository = new();
+    private readonly CapturingCentralPmsPaymentOutcomeReporter _centralPmsReporter = new();
+
     /// <summary>
     /// Initializes a new instance of the <see cref="PaymentOrchestratorWebApplicationFactory"/> class.
     /// </summary>
@@ -119,6 +122,43 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
     /// </summary>
     public string PayMongoIsLiveMode { get; }
 
+    /// <summary>
+    /// Gets the verified provider outcomes captured at the POA-to-Central PMS boundary.
+    ///
+    /// BRD implemented:
+    /// - Section 9.10, Payment Processing and Confirmation
+    /// - Section 9.13, Timeout, Retry, and Duplicate Handling
+    /// - Section 12, Payment Orchestration
+    ///
+    /// SDD implemented:
+    /// - Section 10.5.2, Payment Provider Webhook
+    /// - Section 10.5.3, Report Verified Payment Outcome
+    ///
+    /// System invariant enforced:
+    /// - POA integration tests may observe provider-neutral reports, but POA must not finalize
+    ///   PaymentAttempt state or create ExitAuthorization directly.
+    /// </summary>
+    public IReadOnlyCollection<VerifiedPaymentOutcomeReport> CapturedCentralPmsReports =>
+        _centralPmsReporter.Reports;
+
+    /// <summary>
+    /// Clears in-memory webhook evidence and captured Central PMS reports for an isolated boundary test.
+    ///
+    /// BRD implemented:
+    /// - Section 9.13, Timeout, Retry, and Duplicate Handling
+    ///
+    /// SDD implemented:
+    /// - Section 10.7, Idempotency and Concurrency Rules
+    ///
+    /// System invariant enforced:
+    /// - Each integration test owns its provider-event idempotency state and captured boundary reports.
+    /// </summary>
+    public void ResetBoundaryState()
+    {
+        _providerWebhookEventRepository.Clear();
+        _centralPmsReporter.Clear();
+    }
+
     /// <inheritdoc />
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -126,15 +166,15 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
 
         builder.UseEnvironment("Test");
 
-        builder.ConfigureServices(static services =>
+        builder.ConfigureServices(services =>
         {
             // ExitPass v1.2 BRD 9.10, 9.13, and 12; SDD 10.5.2, 10.5.3, and 10.7:
             // provider-webhook integration tests must exercise real callback verification while keeping
             // Central PMS as the sole owner of payment finality and exit-authorization decisions.
             services.RemoveAll<IProviderWebhookEventRepository>();
             services.RemoveAll<ICentralPmsPaymentOutcomeReporter>();
-            services.AddSingleton<IProviderWebhookEventRepository, InMemoryProviderWebhookEventRepository>();
-            services.AddSingleton<ICentralPmsPaymentOutcomeReporter, CapturingCentralPmsPaymentOutcomeReporter>();
+            services.AddSingleton<IProviderWebhookEventRepository>(_providerWebhookEventRepository);
+            services.AddSingleton<ICentralPmsPaymentOutcomeReporter>(_centralPmsReporter);
         });
     }
 
@@ -371,6 +411,11 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
             return Task.CompletedTask;
         }
 
+        public void Clear()
+        {
+            _records.Clear();
+        }
+
         private static string CreateKey(string providerCode, string providerEventId)
         {
             return $"{providerCode.Trim().ToUpperInvariant()}::{providerEventId.Trim()}";
@@ -379,12 +424,24 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
 
     private sealed class CapturingCentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcomeReporter
     {
+        private readonly ConcurrentQueue<VerifiedPaymentOutcomeReport> _reports = new();
+
+        public IReadOnlyCollection<VerifiedPaymentOutcomeReport> Reports => _reports.ToArray();
+
         public Task ReportVerifiedOutcomeAsync(
             VerifiedPaymentOutcomeReport report,
             CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(report);
+            _reports.Enqueue(report);
             return Task.CompletedTask;
+        }
+
+        public void Clear()
+        {
+            while (_reports.TryDequeue(out _))
+            {
+            }
         }
     }
 }
