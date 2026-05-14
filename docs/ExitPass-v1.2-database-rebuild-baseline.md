@@ -15,3 +15,16 @@ Future schema changes must be made through controlled DDL updates or migrations.
 - Constraint Matrix and Index Inventory, where affected
 
 The engineering stance is rebuild baseline first, migration strategy later when production migration planning begins.
+
+## ExitPass v1.2 Reference Data Seed
+
+After a clean rebuild, apply `infra/db/seed/ExitPass_Reference_Data_v1.2.sql` to install the deterministic v1.2 reference-data baseline for local development and integration testing. The seed script is idempotent and may be re-run after the full DDL has created the database structure.
+
+Example Docker PostgreSQL command:
+
+```powershell
+Get-Content .\infra\db\seed\ExitPass_Reference_Data_v1.2.sql -Raw |
+  docker exec -i exitpass-postgres psql -v ON_ERROR_STOP=1 -U exitpass -d <database-name>
+```
+
+The reference-data seed is intended for clean v1.2 development databases. It is not an upgrade script for legacy v1.0 databases and does not carry production secrets or credential material.
