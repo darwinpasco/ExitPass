@@ -70,6 +70,9 @@ app.MapGet("/", () => Results.Ok(new
 }));
 app.Run();
 
+/// <summary>
+/// Entry point marker used by ASP.NET Core integration tests.
+/// </summary>
 public partial class Program
 {
 }

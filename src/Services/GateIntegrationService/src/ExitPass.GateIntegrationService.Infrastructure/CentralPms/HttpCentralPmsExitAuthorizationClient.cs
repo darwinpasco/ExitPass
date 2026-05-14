@@ -3,8 +3,6 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using ExitPass.GateIntegrationService.Application.GateExit;
 
-#pragma warning disable CS1591
-
 namespace ExitPass.GateIntegrationService.Infrastructure.CentralPms;
 
 /// <summary>
@@ -14,11 +12,16 @@ public sealed class HttpCentralPmsExitAuthorizationClient : ICentralPmsExitAutho
 {
     private readonly HttpClient _httpClient;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="HttpCentralPmsExitAuthorizationClient"/> class.
+    /// </summary>
+    /// <param name="httpClient">HTTP client configured for the Central PMS service boundary.</param>
     public HttpCentralPmsExitAuthorizationClient(HttpClient httpClient)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
     }
 
+    /// <inheritdoc />
     public async Task<CentralPmsConsumeAuthorizationResult> ConsumeAsync(
         Guid exitAuthorizationId,
         Guid requestedByUserId,
@@ -142,5 +145,3 @@ public sealed class HttpCentralPmsExitAuthorizationClient : ICentralPmsExitAutho
         [property: JsonPropertyName("error_code")] string? ErrorCode,
         [property: JsonPropertyName("message")] string? Message);
 }
-
-#pragma warning restore CS1591

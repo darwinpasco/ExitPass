@@ -8,6 +8,11 @@ namespace ExitPass.GateIntegrationService.Api.Endpoints;
 /// </summary>
 public static class GateExitAuthorizationEndpoints
 {
+    /// <summary>
+    /// Maps gate-facing exit authorization consume endpoints for the v1.2 Central PMS authority model.
+    /// </summary>
+    /// <param name="app">Endpoint route builder.</param>
+    /// <returns>The endpoint route builder with gate authorization endpoints registered.</returns>
     public static IEndpointRouteBuilder MapGateExitAuthorizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/gate/authorizations")
