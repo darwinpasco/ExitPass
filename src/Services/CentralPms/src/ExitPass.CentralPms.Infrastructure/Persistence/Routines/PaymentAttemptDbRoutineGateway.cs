@@ -4,10 +4,17 @@ using Npgsql;
 
 namespace ExitPass.CentralPms.Infrastructure.Persistence.Routines;
 
+/// <summary>
+/// Calls the Central PMS database routine that creates or reuses payment attempts.
+/// </summary>
 public sealed class PaymentAttemptDbRoutineGateway : IPaymentAttemptDbRoutineGateway
 {
     private readonly string _connectionString;
 
+    /// <summary>
+    /// Creates the gateway for the authoritative create-or-reuse payment attempt routine.
+    /// </summary>
+    /// <param name="connectionString">Database connection string used to reach the Central PMS routine.</param>
     public PaymentAttemptDbRoutineGateway(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);

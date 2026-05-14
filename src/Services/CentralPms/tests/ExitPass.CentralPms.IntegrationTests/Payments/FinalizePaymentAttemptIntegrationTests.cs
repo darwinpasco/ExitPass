@@ -28,6 +28,9 @@ public sealed class FinalizePaymentAttemptIntegrationTests
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
+    /// <summary>
+    /// Verifies that Central PMS finalizes an initiated payment attempt to confirmed after verified provider finality.
+    /// </summary>
     [Fact]
     public async Task FinalizePaymentAttempt_WhenAttemptIsInitiated_TransitionsToConfirmed()
     {
@@ -69,6 +72,9 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that a confirmed payment attempt cannot transition to another terminal status.
+    /// </summary>
     [Fact]
     public async Task FinalizePaymentAttempt_WhenAttemptAlreadyConfirmed_DoesNotTransitionAgain()
     {
@@ -120,6 +126,9 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that a failed payment attempt cannot later become confirmed for exit authorization.
+    /// </summary>
     [Fact]
     public async Task FinalizePaymentAttempt_WhenAttemptAlreadyFailed_DoesNotTransitionToConfirmed()
     {

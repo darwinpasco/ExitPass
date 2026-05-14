@@ -13,6 +13,12 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// </summary>
 public interface IFinalizePaymentAttemptUseCase
 {
+    /// <summary>
+    /// Finalizes the payment attempt through Central PMS after verified provider outcome processing.
+    /// </summary>
+    /// <param name="command">Finalization command carrying the payment attempt, terminal status, actor, and trace identifiers.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The application-level finalization result.</returns>
     Task<FinalizePaymentAttemptResult> ExecuteAsync(
         FinalizePaymentAttemptCommand command,
         CancellationToken cancellationToken);
