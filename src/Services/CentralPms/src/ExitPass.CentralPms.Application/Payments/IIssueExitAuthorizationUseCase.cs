@@ -15,6 +15,12 @@ namespace ExitPass.CentralPms.Application.Payments;
 /// </summary>
 public interface IIssueExitAuthorizationUseCase
 {
+    /// <summary>
+    /// Issues an exit authorization through Central PMS after confirmed payment finality.
+    /// </summary>
+    /// <param name="command">Issuance command containing session, payment attempt, actor, and trace identifiers.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The application-level issuance result.</returns>
     Task<IssueExitAuthorizationResult> ExecuteAsync(
         IssueExitAuthorizationCommand command,
         CancellationToken cancellationToken);

@@ -3,8 +3,12 @@ using ExitPass.CentralPms.Domain.Tariffs;
 
 namespace ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 
+/// <summary>
+/// Default Central PMS policy for payment attempt creation, reuse, and conflict handling.
+/// </summary>
 public sealed class PaymentAttemptCreationPolicy : IPaymentAttemptCreationPolicy
 {
+    /// <inheritdoc />
     public void ValidateRequest(CreateOrReusePaymentAttemptPolicyInput input)
     {
         ArgumentNullException.ThrowIfNull(input);
@@ -31,6 +35,7 @@ public sealed class PaymentAttemptCreationPolicy : IPaymentAttemptCreationPolicy
         snapshot.EnsureEligibleForPayment(clock);
     }
 
+    /// <inheritdoc />
     public PaymentAttemptConflictOutcome DetermineOutcome(PaymentAttemptConflictContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -66,6 +71,7 @@ public sealed class PaymentAttemptCreationPolicy : IPaymentAttemptCreationPolicy
         return PaymentAttemptConflictOutcome.CreateNew;
     }
 
+    /// <inheritdoc />
     public bool IsValidIdempotentReplay(IdempotentReplayComparison comparison)
     {
         ArgumentNullException.ThrowIfNull(comparison);

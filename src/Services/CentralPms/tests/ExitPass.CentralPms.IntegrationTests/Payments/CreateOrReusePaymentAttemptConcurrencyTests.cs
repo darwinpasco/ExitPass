@@ -29,6 +29,9 @@ public sealed class CreateOrReusePaymentAttemptConcurrencyTests
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
+    /// <summary>
+    /// Verifies that competing create-or-reuse requests do not create two active payment attempts for one parking session.
+    /// </summary>
     [Fact]
     public async Task CreateOrReusePaymentAttempt_WhenCalledConcurrently_AllowsOnlyOneActiveAttempt_AndSecondCallerWaits()
     {
