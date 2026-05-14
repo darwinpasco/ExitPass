@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
 
@@ -21,9 +22,6 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// </summary>
 public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
-    private const string IntegrationDbEnvVar = "EXITPASS_INTEGRATION_DB";
-    private const string MainDatabaseConfigEnvVar = "ConnectionStrings__MainDatabase";
-
     /// <summary>
     /// Configures the in-memory API host for integration testing.
     /// </summary>
@@ -31,13 +29,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         var integrationDbConnectionString =
-            Environment.GetEnvironmentVariable(IntegrationDbEnvVar)
-            ?? throw new InvalidOperationException(
-                $"Missing environment variable '{IntegrationDbEnvVar}'. " +
-                "Point it at the ExitPass integration database.");
-
-        // Program.cs reads configuration during startup, and default config already includes env vars.
-        Environment.SetEnvironmentVariable(MainDatabaseConfigEnvVar, integrationDbConnectionString);
+            CentralPmsIntegrationTestConfiguration.PublishResolvedDatabaseConnectionString();
 
         builder.UseEnvironment("Development");
 

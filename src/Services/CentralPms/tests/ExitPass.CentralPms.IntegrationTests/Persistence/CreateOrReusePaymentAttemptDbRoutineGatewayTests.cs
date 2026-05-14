@@ -183,12 +183,6 @@ public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayTests
 
     private static string GetConnectionString()
     {
-        return Environment.GetEnvironmentVariable("EXITPASS_TEST_MAIN_DB")
-            ?? Environment.GetEnvironmentVariable("EXITPASS_TEST_DB_CONNECTION_STRING")
-            ?? Environment.GetEnvironmentVariable("EXITPASS_INTEGRATION_DB")
-            ?? Environment.GetEnvironmentVariable("ConnectionStrings__MainDatabase")
-            ?? throw new InvalidOperationException(
-                "Missing DB connection string. Set EXITPASS_TEST_MAIN_DB, EXITPASS_TEST_DB_CONNECTION_STRING, " +
-                "EXITPASS_INTEGRATION_DB, or ConnectionStrings__MainDatabase.");
+        return CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
     }
 }

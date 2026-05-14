@@ -25,19 +25,12 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// </summary>
 public sealed class CreatePaymentAttemptPublicApiIntegrationTests
 {
-    private const string PrimaryDbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-    private const string AlternateDbConnectionStringEnvVar = "EXITPASS_TEST_DB_CONNECTION_STRING";
-    private const string LegacyDbConnectionStringEnvVar = "ConnectionStrings__MainDatabase";
-
     private const string PrimaryApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
     private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
     private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
 
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(PrimaryDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(AlternateDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(LegacyDbConnectionStringEnvVar)
-        ?? "Host=localhost;Port=5432;Database=exitpass;Username=postgres;Password=postgres";
+        CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString();
 
     private static Uri ApiBaseUri => new(
         Environment.GetEnvironmentVariable(PrimaryApiBaseUrlEnvVar)
@@ -46,6 +39,9 @@ public sealed class CreatePaymentAttemptPublicApiIntegrationTests
         ?? "http://localhost:8080",
         UriKind.Absolute);
 
+    /// <summary>
+    /// Verifies BRD 9.9 and SDD 6.3 by creating a payment attempt from a seeded active v1.2 session and tariff snapshot.
+    /// </summary>
     [Fact]
     public async Task CreatePaymentAttempt_WhenSessionAndTariffAreValid_ReturnsOkOrCreated()
     {
@@ -89,6 +85,9 @@ public sealed class CreatePaymentAttemptPublicApiIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies BRD 9.9 and SDD 6.3 reject a payment attempt when the v1.2 parking-session anchor is absent.
+    /// </summary>
     [Fact]
     public async Task CreatePaymentAttempt_WhenSessionIsInvalid_ReturnsFailure()
     {
@@ -127,6 +126,9 @@ public sealed class CreatePaymentAttemptPublicApiIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies BRD 9.9 and SDD 6.3 idempotency for repeated v1.2 payment-attempt creation requests.
+    /// </summary>
     [Fact]
     public async Task CreatePaymentAttempt_WhenSameRequestIsRepeated_ReturnsDeterministicShape()
     {
