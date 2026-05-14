@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ExitPass.GateIntegrationService.Application.GateExit;
 
 /// <summary>
@@ -18,6 +20,12 @@ namespace ExitPass.GateIntegrationService.Application.GateExit;
 /// </summary>
 public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthorizationUseCase
 {
+    /// <summary>
+    /// Activity source for Gate Integration Service consume/open evidence.
+    /// </summary>
+    private static readonly ActivitySource ActivitySource =
+        new("ExitPass.GateIntegrationService.Application.GateExit");
+
     private readonly ICentralPmsExitAuthorizationClient _centralPmsClient;
     private readonly IGateHardwareController _gateHardwareController;
     private readonly IGateExitAttemptRecorder _attemptRecorder;
@@ -44,7 +52,31 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        Validate(command);
+
+        using var activity = ActivitySource.StartActivity("ConsumeGateExitAuthorization", ActivityKind.Internal);
+
+        activity?.SetTag("operation", "consume_gate_exit_authorization");
+        activity?.SetTag("correlation_id", command.CorrelationId);
+        activity?.SetTag("exit_authorization_id", command.ExitAuthorizationId);
+        activity?.SetTag("gate_device_id", command.GateDeviceId);
+        activity?.SetTag("service_identity_id", command.ServiceIdentityId);
+        activity?.SetTag("gate_open_attempted", false);
+        activity?.SetTag("gate_open_succeeded", false);
+
+        try
+        {
+            Validate(command);
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.SetTag("central_pms_consume_result", "NOT_CALLED");
+            activity?.SetTag("result_code", "INVALID_GATE_CONSUME_REQUEST");
+            activity?.SetTag("rejection_reason", ex.Message);
+            activity?.SetTag("gate_open_attempted", false);
+            activity?.SetTag("gate_open_succeeded", false);
+            throw;
+        }
 
         var consumeResult = await _centralPmsClient.ConsumeAsync(
             command.ExitAuthorizationId,
@@ -56,6 +88,11 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
             string.Equals(consumeResult.AuthorizationStatus, "CONSUMED", StringComparison.OrdinalIgnoreCase) &&
             consumeResult.ConsumedAt.HasValue)
         {
+            activity?.SetTag("central_pms_consume_result", consumeResult.Status.ToString().ToUpperInvariant());
+            activity?.SetTag("authorization_status", consumeResult.AuthorizationStatus);
+            activity?.SetTag("consumed_at", consumeResult.ConsumedAt);
+            activity?.SetTag("gate_open_attempted", true);
+
             await _gateHardwareController.OpenBarrierAsync(
                 command.GateDeviceId,
                 command.ExitAuthorizationId,
@@ -63,6 +100,10 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
                 cancellationToken);
 
             await RecordAsync(command, "GATE_OPENED", gateOpened: true, cancellationToken);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("gate_open_succeeded", true);
+            activity?.SetTag("result_code", "GATE_OPENED");
 
             return new ConsumeGateExitAuthorizationResult(
                 GateOpened: true,
@@ -75,6 +116,13 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
         var resultCode = MapResultCode(consumeResult);
 
         await RecordAsync(command, resultCode, gateOpened: false, cancellationToken);
+
+        activity?.SetStatus(ActivityStatusCode.Ok);
+        activity?.SetTag("central_pms_consume_result", consumeResult.Status.ToString().ToUpperInvariant());
+        activity?.SetTag("authorization_status", consumeResult.AuthorizationStatus);
+        activity?.SetTag("result_code", resultCode);
+        activity?.SetTag("gate_open_attempted", false);
+        activity?.SetTag("gate_open_succeeded", false);
 
         return new ConsumeGateExitAuthorizationResult(
             GateOpened: false,

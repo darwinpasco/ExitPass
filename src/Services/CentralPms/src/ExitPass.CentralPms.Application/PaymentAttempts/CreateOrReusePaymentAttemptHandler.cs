@@ -194,6 +194,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             var dbDuration = _systemClock.UtcNow - dbStart;
 
             activity?.SetTag("db_outcome_code", dbResult.OutcomeCode);
+            activity?.SetTag("outcome", ResolveOperationalOutcome(dbResult.OutcomeCode, dbResult.WasReused));
             activity?.SetTag("payment_attempt_id", dbResult.PaymentAttemptId);
             activity?.SetTag("attempt_status", dbResult.AttemptStatus);
             activity?.SetTag("was_reused", dbResult.WasReused);
@@ -245,6 +246,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
             activity?.RecordException(ex);
             activity?.SetTag("rejection_exception_type", ex.GetType().Name);
+            activity?.SetTag("outcome", ResolveRejectionOutcome(ex));
 
             _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");
 
@@ -258,6 +260,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.RecordException(ex);
+            activity?.SetTag("outcome", "failed");
 
             _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");
 
@@ -325,5 +328,46 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             or ActivePaymentAttemptAlreadyExistsException
             or IdempotencyConflictException
             or InvalidOperationException;
+    }
+
+    /// <summary>
+    /// Resolves the v1.2 operational outcome label used for payment-attempt creation trace evidence.
+    /// </summary>
+    /// <param name="outcomeCode">Authoritative database routine outcome code.</param>
+    /// <param name="wasReused">Whether the authoritative routine reused an existing attempt.</param>
+    /// <returns>The bounded operational outcome label.</returns>
+    private static string ResolveOperationalOutcome(string outcomeCode, bool wasReused)
+    {
+        if (wasReused || outcomeCode.StartsWith("REUSED", StringComparison.OrdinalIgnoreCase))
+        {
+            return "reused";
+        }
+
+        if (string.Equals(outcomeCode, "CREATED", StringComparison.OrdinalIgnoreCase))
+        {
+            return "created";
+        }
+
+        if (outcomeCode.Contains("CONFLICT", StringComparison.OrdinalIgnoreCase) ||
+            outcomeCode.Contains("ACTIVE_ATTEMPT_EXISTS", StringComparison.OrdinalIgnoreCase))
+        {
+            return "conflict";
+        }
+
+        return outcomeCode.StartsWith("REJECTED", StringComparison.OrdinalIgnoreCase)
+            ? "rejected"
+            : "unknown";
+    }
+
+    /// <summary>
+    /// Resolves the v1.2 operational outcome label for deterministic payment-attempt rejections.
+    /// </summary>
+    /// <param name="exception">The deterministic rejection exception.</param>
+    /// <returns>The bounded operational outcome label.</returns>
+    private static string ResolveRejectionOutcome(Exception exception)
+    {
+        return exception is ActivePaymentAttemptAlreadyExistsException or IdempotencyConflictException
+            ? "conflict"
+            : "rejected";
     }
 }
