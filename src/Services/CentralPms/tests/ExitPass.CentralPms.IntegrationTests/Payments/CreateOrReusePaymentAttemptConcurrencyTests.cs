@@ -26,13 +26,8 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 /// </summary>
 public sealed class CreateOrReusePaymentAttemptConcurrencyTests
 {
-    private const string ConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(ConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Missing environment variable '{ConnectionStringEnvVar}'. " +
-            "Point it at the ExitPass integration database.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
     [Fact]
     public async Task CreateOrReusePaymentAttempt_WhenCalledConcurrently_AllowsOnlyOneActiveAttempt_AndSecondCallerWaits()

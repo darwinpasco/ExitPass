@@ -27,8 +27,6 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 public sealed class ConsumeExitAuthorizationApiIntegrationTests
     : IClassFixture<CustomWebApplicationFactory>
 {
-    private const string ConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-
     private readonly HttpClient _client;
 
     /// <summary>
@@ -40,10 +38,7 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
     }
 
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(ConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Missing environment variable '{ConnectionStringEnvVar}'. " +
-            "Point it at the ExitPass integration database.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
     /// <summary>
     /// Verifies that a valid issued authorization can be consumed successfully.

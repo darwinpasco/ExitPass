@@ -35,10 +35,6 @@ public sealed class RecordPaymentConfirmationApiIntegrationTests
     private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
     private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
 
-    private const string PrimaryDbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-    private const string AlternateDbConnectionStringEnvVar = "EXITPASS_TEST_DB_CONNECTION_STRING";
-    private const string LegacyDbConnectionStringEnvVar = "ConnectionStrings__MainDatabase";
-
     private static Uri ApiBaseUri => new(
         Environment.GetEnvironmentVariable(PrimaryApiBaseUrlEnvVar)
         ?? Environment.GetEnvironmentVariable(AlternateApiBaseUrlEnvVar)
@@ -48,11 +44,7 @@ public sealed class RecordPaymentConfirmationApiIntegrationTests
         UriKind.Absolute);
 
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(PrimaryDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(AlternateDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(LegacyDbConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Integration test database connection string is missing. Set one of: {PrimaryDbConnectionStringEnvVar}, {AlternateDbConnectionStringEnvVar}, or {LegacyDbConnectionStringEnvVar}.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
     /// <summary>
     /// Verifies that a valid request records payment finality successfully.

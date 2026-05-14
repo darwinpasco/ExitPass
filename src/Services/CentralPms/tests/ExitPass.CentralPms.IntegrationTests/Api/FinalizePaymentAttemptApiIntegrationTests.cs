@@ -46,10 +46,7 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
             ?? "http://localhost:8080";
 
         _dbConnectionString =
-            Environment.GetEnvironmentVariable("EXITPASS_TEST_DB_CONNECTION_STRING")
-            ?? Environment.GetEnvironmentVariable("EXITPASS_INTEGRATION_DB")
-            ?? Environment.GetEnvironmentVariable("ConnectionStrings__MainDatabase")
-            ?? string.Empty;
+            CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
         _httpClient = new HttpClient
         {
@@ -241,7 +238,7 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         if (string.IsNullOrWhiteSpace(_dbConnectionString))
         {
             throw new InvalidOperationException(
-                "Missing DB connection string. Set EXITPASS_TEST_DB_CONNECTION_STRING, EXITPASS_INTEGRATION_DB, or ConnectionStrings__MainDatabase.");
+                "Missing DB connection string. Set EXITPASS_TEST_MAIN_DB, EXITPASS_INTEGRATION_DB, EXITPASS_TEST_DB_CONNECTION_STRING, or ConnectionStrings__MainDatabase.");
         }
 
         var context = PaymentTestContext.Create(nameof(FinalizePaymentAttemptApiIntegrationTests));
