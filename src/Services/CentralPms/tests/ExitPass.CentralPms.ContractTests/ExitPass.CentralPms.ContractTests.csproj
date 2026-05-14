@@ -11,6 +11,7 @@
     <ItemGroup>
         <PackageReference Include="FluentAssertions" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
+        <PackageReference Include="Npgsql" />
         <PackageReference Include="xunit" />
         <PackageReference Include="xunit.runner.visualstudio">
             <PrivateAssets>all</PrivateAssets>
@@ -24,5 +25,10 @@
   <ItemGroup>
     <ProjectReference Include="../../src/ExitPass.CentralPms.Api/ExitPass.CentralPms.Api.csproj" />
     <ProjectReference Include="../../src/ExitPass.CentralPms.Contracts/ExitPass.CentralPms.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../ExitPass.CentralPms.IntegrationTests/Shared/CentralPmsIntegrationTestConfiguration.cs" Link="Shared/CentralPmsIntegrationTestConfiguration.cs" />
+    <Compile Include="../ExitPass.CentralPms.IntegrationTests/Shared/PaymentTestContext.cs" Link="Shared/PaymentTestContext.cs" />
+    <Compile Include="../ExitPass.CentralPms.IntegrationTests/Shared/PaymentTestDataHelper.cs" Link="Shared/PaymentTestDataHelper.cs" />
   </ItemGroup>
 </Project>
