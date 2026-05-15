@@ -29,6 +29,7 @@ public sealed class HikCentralParkingClientTests
         Assert.Equal("ABC123", body.RootElement.GetProperty("plateLicense").GetString());
         Assert.False(body.RootElement.TryGetProperty("cardNum", out _));
         Assert.Equal("exitpass-adapter", handler.LastRequest?.Headers.GetValues("userId").Single());
+        AssertSignedCalculateRequest(handler.LastRequest);
     }
 
     /// <summary>
@@ -48,6 +49,7 @@ public sealed class HikCentralParkingClientTests
         Assert.Equal("CARD-9", body.RootElement.GetProperty("cardNum").GetString());
         Assert.False(body.RootElement.TryGetProperty("plateLicense", out _));
         Assert.Equal("exitpass-adapter", handler.LastRequest?.Headers.GetValues("userId").Single());
+        AssertSignedCalculateRequest(handler.LastRequest);
     }
 
     /// <summary>
@@ -285,12 +287,47 @@ public sealed class HikCentralParkingClientTests
         Assert.Equal("/artemis/api/vehicle/v1/parkingfee/calculate", handler.LastRequest?.RequestUri?.AbsolutePath);
     }
 
+    /// <summary>
+    /// Verifies that calculate requests include the official HikCentral AK/SK signing headers.
+    /// </summary>
+    [Fact]
+    public async Task HikCentralParkingClient_CalculateParkingFee_SendsAkSkHeaders()
+    {
+        var handler = new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "1.00"));
+        var client = CreateClient(handler);
+
+        await client.ResolveTariffAsync(
+            new VendorTariffQuoteRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        AssertSignedCalculateRequest(handler.LastRequest);
+        Assert.DoesNotContain("test-secret", handler.LastRequestBody, StringComparison.Ordinal);
+    }
+
     private static HikCentralParkingClient CreateClient(HttpMessageHandler handler)
     {
-        return new HikCentralParkingClient(new HttpClient(handler)
-        {
-            BaseAddress = new Uri("https://hikcentral.fake")
-        });
+        var signer = new HikCentralRequestSigner(
+            new HikCentralCredentialOptions("test-ak", "test-secret"),
+            () => DateTimeOffset.FromUnixTimeMilliseconds(1479968678000));
+        return new HikCentralParkingClient(
+            new HttpClient(handler)
+            {
+                BaseAddress = new Uri("https://hikcentral.fake")
+            },
+            signer,
+            "exitpass-adapter");
+    }
+
+    private static void AssertSignedCalculateRequest(HttpRequestMessage? request)
+    {
+        Assert.NotNull(request);
+        Assert.Equal("test-ak", request.Headers.GetValues("X-Ca-Key").Single());
+        Assert.Equal("1479968678000", request.Headers.GetValues("X-Ca-Timestamp").Single());
+        Assert.Equal("x-ca-key,x-ca-timestamp", request.Headers.GetValues("X-Ca-Signature-Headers").Single());
+        Assert.NotEmpty(request.Headers.GetValues("X-Ca-Signature").Single());
+        Assert.Equal("*/*", request.Headers.Accept.Single().ToString());
+        Assert.Equal("/artemis/api/vehicle/v1/parkingfee/calculate", request.RequestUri?.AbsolutePath);
+        Assert.True(request.Content?.Headers.Contains("Content-MD5"));
     }
 
     private static HttpResponseMessage JsonResponse(string json)
