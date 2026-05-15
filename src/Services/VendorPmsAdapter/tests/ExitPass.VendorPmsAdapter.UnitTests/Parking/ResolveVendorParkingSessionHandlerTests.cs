@@ -83,5 +83,12 @@ public sealed class ResolveVendorParkingSessionHandlerTests
         {
             throw new NotSupportedException();
         }
+
+        public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+            VendorParkingFeeConfirmationRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
     }
 }

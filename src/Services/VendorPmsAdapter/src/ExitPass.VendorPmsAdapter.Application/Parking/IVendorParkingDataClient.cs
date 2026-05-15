@@ -26,4 +26,14 @@ public interface IVendorParkingDataClient
     Task<VendorTariffQuoteResponse> ResolveTariffAsync(
         VendorTariffQuoteRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Confirms a vendor PMS parking fee payment.
+    /// </summary>
+    /// <param name="request">Provider-neutral confirmation request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Provider-neutral confirmation response.</returns>
+    Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+        VendorParkingFeeConfirmationRequest request,
+        CancellationToken cancellationToken);
 }
