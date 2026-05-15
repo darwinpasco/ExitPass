@@ -26,10 +26,18 @@ public sealed class ResolveVendorParkingRequestValidator
         {
             errors.Add("siteGroupId is required.");
         }
+        else if (!Guid.TryParse(request.SiteGroupId, out _))
+        {
+            errors.Add("siteGroupId must be a valid UUID.");
+        }
 
         if (string.IsNullOrWhiteSpace(request.SiteId))
         {
             errors.Add("siteId is required.");
+        }
+        else if (!Guid.TryParse(request.SiteId, out _))
+        {
+            errors.Add("siteId must be a valid UUID.");
         }
 
         if (string.IsNullOrWhiteSpace(request.VendorSystemId))

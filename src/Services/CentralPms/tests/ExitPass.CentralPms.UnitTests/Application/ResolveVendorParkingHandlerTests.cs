@@ -208,6 +208,7 @@ public sealed class ResolveVendorParkingHandlerTests
     {
         return new ResolveVendorParkingHandler(
             vendorClient,
+            new PassThroughVendorParkingResolutionPersistence(),
             new CentralPmsMetrics(),
             NullLogger<ResolveVendorParkingHandler>.Instance);
     }
@@ -396,6 +397,22 @@ public sealed class ResolveVendorParkingHandlerTests
             return new FakeVendorPmsParkingResolutionClient(
                 new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.Found, session, null, false, CorrelationId),
                 new VendorTariffQuoteResponse(VendorParkingLookupStatus.Found, tariffQuote, null, false, CorrelationId));
+        }
+    }
+
+    private sealed class PassThroughVendorParkingResolutionPersistence : IVendorParkingResolutionPersistence
+    {
+        public Task<PersistVendorParkingResolutionResult> PersistAsync(
+            PersistVendorParkingResolutionRequest request,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new PersistVendorParkingResolutionResult
+            {
+                ParkingSession = request.ParkingSession,
+                TariffSnapshot = request.TariffSnapshot,
+                ParkingSessionWasReused = false,
+                TariffSnapshotWasReused = false
+            });
         }
     }
 

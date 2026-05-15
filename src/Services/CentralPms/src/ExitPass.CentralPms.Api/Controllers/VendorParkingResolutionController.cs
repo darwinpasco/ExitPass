@@ -97,6 +97,8 @@ public sealed class VendorParkingResolutionController : ControllerBase
         }
 
         var validRequest = request!;
+        Response.Headers["X-Correlation-Id"] = validRequest.CorrelationId.ToString();
+
         var result = await _useCase.ExecuteAsync(
             new ResolveVendorParkingCommand
             {
