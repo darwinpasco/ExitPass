@@ -115,7 +115,7 @@ public static class GateExitAuthorizationConsumeEndpoints
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "INVALID_REQUEST");
 
@@ -130,7 +130,7 @@ public static class GateExitAuthorizationConsumeEndpoints
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "EXIT_AUTHORIZATION_NOT_FOUND");
 
@@ -147,7 +147,7 @@ public static class GateExitAuthorizationConsumeEndpoints
             ex.MessageText.Contains("is expired", StringComparison.OrdinalIgnoreCase))
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "EXIT_AUTHORIZATION_EXPIRED");
 
@@ -164,7 +164,7 @@ public static class GateExitAuthorizationConsumeEndpoints
             ex.MessageText.Contains("already been consumed", StringComparison.OrdinalIgnoreCase))
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "EXIT_AUTHORIZATION_ALREADY_CONSUMED");
 
@@ -179,7 +179,7 @@ public static class GateExitAuthorizationConsumeEndpoints
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_REJECTED");
 
@@ -194,7 +194,7 @@ public static class GateExitAuthorizationConsumeEndpoints
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "SYSTEM_FAILURE");
             activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_INTERNAL_ERROR");
 

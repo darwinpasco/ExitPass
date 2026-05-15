@@ -124,7 +124,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
@@ -140,7 +140,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
@@ -158,7 +158,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             var rejectionCode = ResolveBusinessRejectionCode(ex);
 
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("rejection_reason", rejectionCode);
 
@@ -175,7 +175,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "SYSTEM_FAILURE");
 
             _metrics.ExitAuthorizationConsumeOutcome("FAILED", "UNEXPECTED_FAILURE");
