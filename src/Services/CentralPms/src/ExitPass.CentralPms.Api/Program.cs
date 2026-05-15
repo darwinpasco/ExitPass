@@ -34,6 +34,7 @@ using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.Infrastructure.VendorParking;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OpenTelemetry.Logs;
@@ -242,6 +243,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
     builder.Services.AddScoped<IVendorPmsParkingResolutionClient, FakeVendorPmsParkingResolutionClient>();
+    builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
+        new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
 

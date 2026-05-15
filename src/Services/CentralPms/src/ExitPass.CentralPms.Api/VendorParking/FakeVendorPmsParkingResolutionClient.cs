@@ -8,7 +8,7 @@ namespace ExitPass.CentralPms.Api.VendorParking;
 /// </summary>
 public sealed class FakeVendorPmsParkingResolutionClient : IVendorPmsParkingResolutionClient
 {
-    private static readonly DateTimeOffset FixedCalculatedAt = new(2026, 4, 1, 1, 30, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset FixedCalculatedAt = new(2030, 4, 1, 1, 30, 0, TimeSpan.Zero);
 
     /// <inheritdoc />
     public Task<VendorParkingSessionLookupResponse> ResolveSessionAsync(

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
@@ -17,6 +18,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
         new("ExitPass.CentralPms.Application.VendorParking");
 
     private readonly IVendorPmsParkingResolutionClient _vendorClient;
+    private readonly IVendorParkingResolutionPersistence _persistence;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<ResolveVendorParkingHandler> _logger;
 
@@ -24,14 +26,17 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     /// Initializes a new instance of the <see cref="ResolveVendorParkingHandler"/> class.
     /// </summary>
     /// <param name="vendorClient">Provider-neutral Vendor PMS Adapter client.</param>
+    /// <param name="persistence">Central PMS persistence boundary for resolved parking data.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
     public ResolveVendorParkingHandler(
         IVendorPmsParkingResolutionClient vendorClient,
+        IVendorParkingResolutionPersistence persistence,
         CentralPmsMetrics metrics,
         ILogger<ResolveVendorParkingHandler> logger)
     {
         _vendorClient = vendorClient;
+        _persistence = persistence;
         _metrics = metrics;
         _logger = logger;
     }
@@ -164,22 +169,33 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             null,
             null);
 
+        var persisted = await _persistence.PersistAsync(
+            new PersistVendorParkingResolutionRequest
+            {
+                ParkingSession = centralSession,
+                TariffSnapshot = tariffSnapshot,
+                CorrelationId = sessionResponse.CorrelationId
+            },
+            cancellationToken);
+
         activity?.SetTag("vendor_system_id", session.VendorProviderCode);
-        activity?.SetTag("parking_session_id", parkingSessionId);
-        activity?.SetTag("tariff_snapshot_id", tariffSnapshotId);
+        activity?.SetTag("parking_session_id", persisted.ParkingSession.ParkingSessionId);
+        activity?.SetTag("tariff_snapshot_id", persisted.TariffSnapshot.TariffSnapshotId);
+        activity?.SetTag("parking_session_reused", persisted.ParkingSessionWasReused);
+        activity?.SetTag("tariff_snapshot_reused", persisted.TariffSnapshotWasReused);
         activity?.SetTag("lookup.outcome", ResolveVendorParkingOutcome.Resolved.ToString());
         activity?.SetStatus(ActivityStatusCode.Ok);
 
         _logger.LogInformation(
             "Vendor parking resolution succeeded. vendor_system_id={VendorSystemId} parking_session_id={ParkingSessionId} tariff_snapshot_id={TariffSnapshotId} lookup_outcome={LookupOutcome}",
             session.VendorProviderCode,
-            parkingSessionId,
-            tariffSnapshotId,
+            persisted.ParkingSession.ParkingSessionId,
+            persisted.TariffSnapshot.TariffSnapshotId,
             ResolveVendorParkingOutcome.Resolved);
 
         return ResolveVendorParkingResult.Resolved(
-            centralSession,
-            tariffSnapshot,
+            persisted.ParkingSession,
+            persisted.TariffSnapshot,
             sessionResponse.CorrelationId,
             session.VendorProviderCode);
     }

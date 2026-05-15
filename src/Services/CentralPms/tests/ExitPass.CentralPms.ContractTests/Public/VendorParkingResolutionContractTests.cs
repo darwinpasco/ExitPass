@@ -1,5 +1,7 @@
 using System.Text.Json;
+using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Contracts.Public.VendorParking;
+using ExitPass.CentralPms.Infrastructure.VendorParking;
 using FluentAssertions;
 using Xunit;
 
@@ -88,6 +90,26 @@ public sealed class VendorParkingResolutionContractTests
         contractNames.Should().NotContain(name => name.Contains("HikCentral", StringComparison.OrdinalIgnoreCase));
         contractNames.Should().NotContain(name => name.Contains("Ak", StringComparison.OrdinalIgnoreCase));
         contractNames.Should().NotContain(name => name.Contains("Sk", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Verifies production Central PMS assemblies do not introduce an in-memory resolved-parking store.
+    /// </summary>
+    [Fact]
+    public void VendorResolveThenCreatePaymentAttempt_DoesNotUseInMemoryResolvedParkingStore()
+    {
+        var productionTypes = new[]
+        {
+            typeof(Program).Assembly,
+            typeof(IVendorParkingResolutionPersistence).Assembly,
+            typeof(VendorParkingResolutionPersistence).Assembly
+        }
+        .SelectMany(assembly => assembly.GetTypes())
+        .Select(type => type.FullName ?? type.Name);
+
+        productionTypes.Should().NotContain(name =>
+            name.Contains("InMemoryResolvedParking", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("ResolvedParkingStore", StringComparison.OrdinalIgnoreCase));
     }
 
     private static JsonSerializerOptions JsonOptions()
