@@ -58,4 +58,29 @@ public sealed class VendorParkingContractsTests
         Assert.Contains("\"errorCode\":\"VENDOR_SESSION_NOT_FOUND\"", json);
         Assert.Contains("\"retryable\":false", json);
     }
+
+    /// <summary>
+    /// Verifies that confirmed parking fee responses serialize without vendor-specific field names.
+    /// </summary>
+    [Fact]
+    public void ParkingFeeConfirmationResponse_WhenConfirmed_SerializesProviderNeutralShape()
+    {
+        var response = new VendorParkingFeeConfirmationResponse(
+            VendorParkingLookupStatus.Confirmed,
+            new VendorParkingFeeConfirmationDto(
+                20000,
+                "PHP",
+                DateTimeOffset.Parse("2022-04-12T14:48:11+08:00")),
+            null,
+            false,
+            Guid.Parse("33333333-4444-5555-6666-777777777777"));
+
+        var json = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.Contains("\"status\":6", json);
+        Assert.Contains("\"amountMinor\":20000", json);
+        Assert.Contains("\"feeTime\":\"2022-04-12T14:48:11+08:00\"", json);
+        Assert.DoesNotContain("plateLicense", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("cardNum", json, StringComparison.OrdinalIgnoreCase);
+    }
 }

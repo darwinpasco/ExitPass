@@ -68,6 +68,19 @@ public sealed class HikCentralParkingClient(
         return result.ToTariffResponse(request.CorrelationId);
     }
 
+    /// <inheritdoc />
+    public async Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+        VendorParkingFeeConfirmationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await ConfirmParkingFeeAsync(
+            HikCentralParkingFeeConfirmRequest.FromProviderNeutral(request),
+            request.CorrelationId,
+            cancellationToken);
+
+        return result.ToResponse(request.CorrelationId);
+    }
+
     private async Task<HikCentralParkingFeeLookupResult> CalculateParkingFeeAsync(
         HikCentralParkingFeeCalculateRequest calculateRequest,
         Guid correlationId,
@@ -140,6 +153,71 @@ public sealed class HikCentralParkingClient(
         }
     }
 
+    private async Task<HikCentralParkingFeeConfirmationResult> ConfirmParkingFeeAsync(
+        HikCentralParkingFeeConfirmRequest confirmRequest,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var validationError = ValidateConfirmRequest(confirmRequest);
+            if (validationError is not null)
+            {
+                return validationError;
+            }
+
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "/artemis/api/vehicle/v1/parkingfee/confirm");
+            request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
+            request.Headers.TryAddWithoutValidation("userId", userId);
+            request.Content = JsonContent.Create(confirmRequest, options: JsonOptions);
+            await _requestSigner.SignAsync(request, cancellationToken);
+
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+
+            if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout)
+            {
+                return HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return HikCentralParkingFeeConfirmationResult.AdapterError();
+            }
+
+            var envelope = await response.Content.ReadFromJsonAsync<HikCentralResponse<HikCentralParkingFeeConfirmData>>(
+                JsonOptions,
+                cancellationToken);
+
+            if (envelope is null)
+            {
+                return HikCentralParkingFeeConfirmationResult.AdapterError();
+            }
+
+            if (!envelope.IsSuccess())
+            {
+                return HikCentralParkingFeeConfirmationResult.VendorRejected();
+            }
+
+            return envelope.Data is null
+                ? HikCentralParkingFeeConfirmationResult.AdapterError()
+                : HikCentralParkingFeeConfirmationMapper.Map(envelope.Data);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+        }
+        catch (HttpRequestException)
+        {
+            return HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+        }
+        catch (JsonException)
+        {
+            return HikCentralParkingFeeConfirmationResult.AdapterError();
+        }
+    }
+
     private sealed record HikCentralParkingFeeCalculateRequest(
         [property: JsonPropertyName("plateLicense")] string? PlateLicense,
         [property: JsonPropertyName("cardNum")] string? CardNum)
@@ -156,6 +234,35 @@ public sealed class HikCentralParkingClient(
         private static string? Normalize(string? value)
         {
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+    }
+
+    private sealed record HikCentralParkingFeeConfirmRequest(
+        [property: JsonPropertyName("plateLicense")] string? PlateLicense,
+        [property: JsonPropertyName("cardNum")] string? CardNum,
+        [property: JsonPropertyName("immediatelyLeave")] int ImmediatelyLeave,
+        [property: JsonPropertyName("fee")] string? Fee)
+    {
+        public static HikCentralParkingFeeConfirmRequest FromProviderNeutral(
+            VendorParkingFeeConfirmationRequest request)
+        {
+            return new HikCentralParkingFeeConfirmRequest(
+                Normalize(request.PlateNumber),
+                Normalize(request.TicketReference),
+                request.ImmediatelyLeave,
+                FormatFee(request.AmountMinor));
+        }
+
+        private static string? Normalize(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static string? FormatFee(long? amountMinor)
+        {
+            return amountMinor.HasValue
+                ? (amountMinor.Value / 100m).ToString("0.00", CultureInfo.InvariantCulture)
+                : null;
         }
     }
 
@@ -184,6 +291,10 @@ public sealed class HikCentralParkingClient(
         [property: JsonPropertyName("feeRuleIndexCode")] string? FeeRuleIndexCode,
         [property: JsonPropertyName("feeRuleName")] string? FeeRuleName,
         [property: JsonPropertyName("fee")] string? Fee);
+
+    private sealed record HikCentralParkingFeeConfirmData(
+        [property: JsonPropertyName("fee")] string? Fee,
+        [property: JsonPropertyName("feeTime")] string? FeeTime);
 
     private sealed record HikCentralParkingFeeLookupResult(
         VendorParkingLookupStatus Status,
@@ -265,6 +376,64 @@ public sealed class HikCentralParkingClient(
         }
     }
 
+    private sealed record HikCentralParkingFeeConfirmationResult(
+        VendorParkingLookupStatus Status,
+        VendorParkingFeeConfirmationDto? Confirmation,
+        string? ErrorCode,
+        bool Retryable)
+    {
+        public static HikCentralParkingFeeConfirmationResult Confirmed(
+            VendorParkingFeeConfirmationDto confirmation)
+        {
+            return new HikCentralParkingFeeConfirmationResult(
+                VendorParkingLookupStatus.Confirmed,
+                confirmation,
+                null,
+                false);
+        }
+
+        public static HikCentralParkingFeeConfirmationResult UnavailableRetryable()
+        {
+            return new HikCentralParkingFeeConfirmationResult(
+                VendorParkingLookupStatus.UnavailableRetryable,
+                null,
+                "VENDOR_PMS_UNAVAILABLE",
+                true);
+        }
+
+        public static HikCentralParkingFeeConfirmationResult AdapterError()
+        {
+            return new HikCentralParkingFeeConfirmationResult(
+                VendorParkingLookupStatus.AdapterError,
+                null,
+                "VENDOR_PMS_ADAPTER_ERROR",
+                false);
+        }
+
+        public static HikCentralParkingFeeConfirmationResult ValidationError()
+        {
+            return new HikCentralParkingFeeConfirmationResult(
+                VendorParkingLookupStatus.ValidationError,
+                null,
+                "VENDOR_CONFIRMATION_VALIDATION_ERROR",
+                false);
+        }
+
+        public static HikCentralParkingFeeConfirmationResult VendorRejected()
+        {
+            return new HikCentralParkingFeeConfirmationResult(
+                VendorParkingLookupStatus.VendorRejected,
+                null,
+                "VENDOR_PMS_REJECTED",
+                false);
+        }
+
+        public VendorParkingFeeConfirmationResponse ToResponse(Guid correlationId)
+        {
+            return new VendorParkingFeeConfirmationResponse(Status, Confirmation, ErrorCode, Retryable, correlationId);
+        }
+    }
+
     private HikCentralParkingFeeLookupResult? ValidateCalculateRequest(
         HikCentralParkingFeeCalculateRequest calculateRequest)
     {
@@ -283,6 +452,39 @@ public sealed class HikCentralParkingClient(
         if (calculateRequest.PlateLicense?.Length > 32 || calculateRequest.CardNum?.Length > 32)
         {
             return HikCentralParkingFeeLookupResult.ValidationError();
+        }
+
+        return null;
+    }
+
+    private HikCentralParkingFeeConfirmationResult? ValidateConfirmRequest(
+        HikCentralParkingFeeConfirmRequest confirmRequest)
+    {
+        if (string.IsNullOrWhiteSpace(userId) ||
+            userId.Length > 32 ||
+            userId.IndexOfAny(UserIdForbiddenCharacters) >= 0)
+        {
+            return HikCentralParkingFeeConfirmationResult.ValidationError();
+        }
+
+        if (confirmRequest is { PlateLicense: null, CardNum: null })
+        {
+            return HikCentralParkingFeeConfirmationResult.ValidationError();
+        }
+
+        if (confirmRequest.PlateLicense?.Length > 32 || confirmRequest.CardNum?.Length > 32)
+        {
+            return HikCentralParkingFeeConfirmationResult.ValidationError();
+        }
+
+        if (confirmRequest.ImmediatelyLeave is not (0 or 1))
+        {
+            return HikCentralParkingFeeConfirmationResult.ValidationError();
+        }
+
+        if (string.IsNullOrWhiteSpace(confirmRequest.Fee) || confirmRequest.Fee.Length > 32)
+        {
+            return HikCentralParkingFeeConfirmationResult.ValidationError();
         }
 
         return null;
@@ -323,6 +525,35 @@ public sealed class HikCentralParkingClient(
         private static string BuildSessionReference(string plateLicense, DateTimeOffset entryTime)
         {
             return $"{ProviderCode}:{plateLicense}:{entryTime:yyyyMMddHHmmss}";
+        }
+
+        private static bool TryParseAmountMinor(string fee, out long amountMinor)
+        {
+            if (!decimal.TryParse(fee, NumberStyles.Number, CultureInfo.InvariantCulture, out var amount))
+            {
+                amountMinor = 0;
+                return false;
+            }
+
+            amountMinor = decimal.ToInt64(decimal.Round(amount * 100, 0, MidpointRounding.AwayFromZero));
+            return amountMinor >= 0;
+        }
+    }
+
+    private static class HikCentralParkingFeeConfirmationMapper
+    {
+        public static HikCentralParkingFeeConfirmationResult Map(HikCentralParkingFeeConfirmData data)
+        {
+            if (string.IsNullOrWhiteSpace(data.Fee) ||
+                string.IsNullOrWhiteSpace(data.FeeTime) ||
+                !DateTimeOffset.TryParse(data.FeeTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var feeTime) ||
+                !TryParseAmountMinor(data.Fee, out var amountMinor))
+            {
+                return HikCentralParkingFeeConfirmationResult.AdapterError();
+            }
+
+            return HikCentralParkingFeeConfirmationResult.Confirmed(
+                new VendorParkingFeeConfirmationDto(amountMinor, "PHP", feeTime));
         }
 
         private static bool TryParseAmountMinor(string fee, out long amountMinor)

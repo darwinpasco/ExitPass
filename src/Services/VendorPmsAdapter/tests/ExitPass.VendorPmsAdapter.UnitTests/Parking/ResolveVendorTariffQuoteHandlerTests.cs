@@ -84,5 +84,12 @@ public sealed class ResolveVendorTariffQuoteHandlerTests
             LastTariffRequest = request;
             return Task.FromResult(_tariffResponse);
         }
+
+        public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+            VendorParkingFeeConfirmationRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
     }
 }

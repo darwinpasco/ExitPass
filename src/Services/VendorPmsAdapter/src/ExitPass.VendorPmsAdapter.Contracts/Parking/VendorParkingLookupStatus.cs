@@ -33,5 +33,10 @@ public enum VendorParkingLookupStatus
     /// <summary>
     /// The vendor PMS returned a non-success business response.
     /// </summary>
-    VendorRejected = 5
+    VendorRejected = 5,
+
+    /// <summary>
+    /// The vendor PMS confirmed the parking fee payment.
+    /// </summary>
+    Confirmed = 6
 }
