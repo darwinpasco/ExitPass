@@ -169,7 +169,7 @@ public static class InternalPaymentOutcomeEndpoints
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "INVALID_REQUEST");
 
@@ -184,7 +184,7 @@ public static class InternalPaymentOutcomeEndpoints
         catch (KeyNotFoundException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "PAYMENT_ATTEMPT_NOT_FOUND");
 
@@ -199,7 +199,7 @@ public static class InternalPaymentOutcomeEndpoints
         catch (DuplicatePaymentConfirmationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "PROVIDER_REFERENCE_ALREADY_RECORDED");
 
@@ -214,7 +214,7 @@ public static class InternalPaymentOutcomeEndpoints
         catch (PaymentConfirmationConflictException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", ex.ErrorCode);
 
@@ -229,7 +229,7 @@ public static class InternalPaymentOutcomeEndpoints
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("error_code", "PAYMENT_ATTEMPT_ALREADY_FINAL");
 
@@ -244,7 +244,7 @@ public static class InternalPaymentOutcomeEndpoints
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "SYSTEM_FAILURE");
             activity?.SetTag("error_code", "INTERNAL_PAYMENT_OUTCOME_REPORT_FAILED");
 

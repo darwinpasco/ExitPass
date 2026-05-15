@@ -159,7 +159,7 @@ public static class InternalPaymentConfirmationEndpoints
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             logger.LogWarning(ex, "HTTP RecordPaymentConfirmation rejected because the request is invalid.");
 
@@ -171,7 +171,7 @@ public static class InternalPaymentConfirmationEndpoints
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             logger.LogWarning("HTTP RecordPaymentConfirmation rejected because payment attempt was not found.");
 
@@ -187,7 +187,7 @@ public static class InternalPaymentConfirmationEndpoints
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "23505")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             logger.LogWarning("HTTP RecordPaymentConfirmation rejected because provider reference was already recorded.");
 

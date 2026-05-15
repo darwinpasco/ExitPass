@@ -142,7 +142,7 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
             var rejectionCode = ResolveBusinessRejectionCode(ex);
 
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "BUSINESS_REJECTION");
             activity?.SetTag("rejection_reason", rejectionCode);
             activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
@@ -160,7 +160,7 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
             var duration = DateTimeOffset.UtcNow - startedAt;
 
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("failure_class", "SYSTEM_FAILURE");
             activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
 

@@ -244,7 +244,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         catch (Exception ex) when (IsExpectedBusinessRejection(ex))
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("rejection_exception_type", ex.GetType().Name);
             activity?.SetTag("outcome", ResolveRejectionOutcome(ex));
 
@@ -259,7 +259,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("outcome", "failed");
 
             _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");

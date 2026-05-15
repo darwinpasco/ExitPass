@@ -130,7 +130,7 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
             activity?.SetTag("outcome", "rejected");
 
@@ -149,7 +149,7 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
             activity?.SetTag("outcome", "rejected");
 
@@ -168,7 +168,7 @@ public sealed class FinalizePaymentAttemptHandler : IFinalizePaymentAttemptUseCa
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("outcome", "failed");
 
             _metrics.PaymentAttemptFinalizeFailed(
