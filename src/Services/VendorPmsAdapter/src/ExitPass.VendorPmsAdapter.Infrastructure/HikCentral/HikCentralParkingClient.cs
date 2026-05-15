@@ -15,13 +15,20 @@ namespace ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 /// Uses HikCentral Professional OpenAPI Developer Guide V3.1.0 parking fee calculation as the vendor API baseline.
 /// </remarks>
 /// <param name="httpClient">HTTP client configured by the caller.</param>
+/// <param name="requestSigner">HikCentral AK/SK request signer.</param>
 /// <param name="userId">HikCentral required userId header value.</param>
-public sealed class HikCentralParkingClient(HttpClient httpClient, string userId = "exitpass-adapter") : IVendorParkingDataClient
+public sealed class HikCentralParkingClient(
+    HttpClient httpClient,
+    IHikCentralRequestSigner requestSigner,
+    string userId = "exitpass-adapter") : IVendorParkingDataClient
 {
     /// <summary>
     /// Provider code emitted by the HikCentral adapter.
     /// </summary>
     public const string ProviderCode = "HIKCENTRAL";
+
+    private readonly IHikCentralRequestSigner _requestSigner =
+        requestSigner ?? throw new InvalidOperationException("HikCentral request signer is required.");
 
     private static readonly char[] UserIdForbiddenCharacters = ['\'', '/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
@@ -80,6 +87,7 @@ public sealed class HikCentralParkingClient(HttpClient httpClient, string userId
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
             request.Headers.TryAddWithoutValidation("userId", userId);
             request.Content = JsonContent.Create(calculateRequest, options: JsonOptions);
+            await _requestSigner.SignAsync(request, cancellationToken);
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
 
