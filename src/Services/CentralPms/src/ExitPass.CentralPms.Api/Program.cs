@@ -22,10 +22,12 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Validation;
+using ExitPass.CentralPms.Api.VendorParking;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
@@ -168,8 +170,10 @@ static void ConfigureOpenTelemetry(
             tracing
                 .AddSource("ExitPass.CentralPms.Api")
                 .AddSource("ExitPass.CentralPms.Api.PaymentAttempts")
+                .AddSource("ExitPass.CentralPms.Api.VendorParking")
                 .AddSource("ExitPass.CentralPms.Api.InternalPaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
+                .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
                 .AddSource("ExitPass.CentralPms.Infrastructure.Payments")
                 .AddAspNetCoreInstrumentation(options =>
@@ -236,11 +240,14 @@ static void ConfigureApplicationServices(
     string mainDatabaseConnectionString)
 {
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
+    builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
+    builder.Services.AddScoped<IVendorPmsParkingResolutionClient, FakeVendorPmsParkingResolutionClient>();
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();
+    builder.Services.AddScoped<ResolveVendorParkingRequestValidator>();
 
     builder.Services.AddScoped<IParkingSessionReadRepository, ParkingSessionReadRepository>();
     builder.Services.AddScoped<ITariffSnapshotReadRepository, TariffSnapshotReadRepository>();
