@@ -23,5 +23,15 @@ public enum VendorParkingLookupStatus
     /// <summary>
     /// The vendor PMS returned malformed or unsupported data.
     /// </summary>
-    AdapterError = 3
+    AdapterError = 3,
+
+    /// <summary>
+    /// The adapter rejected the lookup before calling the vendor PMS because the request is invalid.
+    /// </summary>
+    ValidationError = 4,
+
+    /// <summary>
+    /// The vendor PMS returned a non-success business response.
+    /// </summary>
+    VendorRejected = 5
 }

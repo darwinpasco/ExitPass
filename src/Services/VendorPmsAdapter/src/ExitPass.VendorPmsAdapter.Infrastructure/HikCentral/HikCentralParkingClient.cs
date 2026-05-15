@@ -15,12 +15,15 @@ namespace ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 /// Uses HikCentral Professional OpenAPI Developer Guide V3.1.0 parking fee calculation as the vendor API baseline.
 /// </remarks>
 /// <param name="httpClient">HTTP client configured by the caller.</param>
-public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorParkingDataClient
+/// <param name="userId">HikCentral required userId header value.</param>
+public sealed class HikCentralParkingClient(HttpClient httpClient, string userId = "exitpass-adapter") : IVendorParkingDataClient
 {
     /// <summary>
     /// Provider code emitted by the HikCentral adapter.
     /// </summary>
     public const string ProviderCode = "HIKCENTRAL";
+
+    private static readonly char[] UserIdForbiddenCharacters = ['\'', '/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -34,7 +37,9 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
         CancellationToken cancellationToken)
     {
         var result = await CalculateParkingFeeAsync(
-            ResolveVendorLookupValue(request.PlateNumber, request.TicketReference),
+            HikCentralParkingFeeCalculateRequest.FromProviderNeutral(
+                request.PlateNumber,
+                request.TicketReference),
             request.CorrelationId,
             cancellationToken);
 
@@ -47,32 +52,34 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
         CancellationToken cancellationToken)
     {
         var result = await CalculateParkingFeeAsync(
-            ResolveVendorLookupValue(request.PlateNumber, request.TicketReference),
+            HikCentralParkingFeeCalculateRequest.FromProviderNeutral(
+                request.PlateNumber,
+                request.TicketReference),
             request.CorrelationId,
             cancellationToken);
 
         return result.ToTariffResponse(request.CorrelationId);
     }
 
-    private static string ResolveVendorLookupValue(string? plateNumber, string? ticketReference)
-    {
-        return !string.IsNullOrWhiteSpace(plateNumber)
-            ? plateNumber.Trim()
-            : ticketReference?.Trim() ?? string.Empty;
-    }
-
     private async Task<HikCentralParkingFeeLookupResult> CalculateParkingFeeAsync(
-        string plateLicense,
+        HikCentralParkingFeeCalculateRequest calculateRequest,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
         try
         {
+            var validationError = ValidateCalculateRequest(calculateRequest);
+            if (validationError is not null)
+            {
+                return validationError;
+            }
+
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
                 "/artemis/api/vehicle/v1/parkingfee/calculate");
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
-            request.Content = JsonContent.Create(new HikCentralParkingFeeCalculateRequest(plateLicense), options: JsonOptions);
+            request.Headers.TryAddWithoutValidation("userId", userId);
+            request.Content = JsonContent.Create(calculateRequest, options: JsonOptions);
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
 
@@ -104,7 +111,7 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
             {
                 return envelope.IsNotFound()
                     ? HikCentralParkingFeeLookupResult.NotFound()
-                    : HikCentralParkingFeeLookupResult.AdapterError();
+                    : HikCentralParkingFeeLookupResult.VendorRejected();
             }
 
             return envelope.Data is null
@@ -126,7 +133,23 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
     }
 
     private sealed record HikCentralParkingFeeCalculateRequest(
-        [property: JsonPropertyName("plateLicense")] string PlateLicense);
+        [property: JsonPropertyName("plateLicense")] string? PlateLicense,
+        [property: JsonPropertyName("cardNum")] string? CardNum)
+    {
+        public static HikCentralParkingFeeCalculateRequest FromProviderNeutral(
+            string? plateNumber,
+            string? ticketReference)
+        {
+            return new HikCentralParkingFeeCalculateRequest(
+                Normalize(plateNumber),
+                Normalize(ticketReference));
+        }
+
+        private static string? Normalize(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+    }
 
     private sealed record HikCentralResponse<T>(
         [property: JsonPropertyName("code")] string? Code,
@@ -135,7 +158,7 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
     {
         public bool IsSuccess()
         {
-            return string.IsNullOrWhiteSpace(Code) || Code is "0" or "200";
+            return Code is "0";
         }
 
         public bool IsNotFound()
@@ -203,6 +226,26 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
                 false);
         }
 
+        public static HikCentralParkingFeeLookupResult ValidationError()
+        {
+            return new HikCentralParkingFeeLookupResult(
+                VendorParkingLookupStatus.ValidationError,
+                null,
+                null,
+                "VENDOR_LOOKUP_VALIDATION_ERROR",
+                false);
+        }
+
+        public static HikCentralParkingFeeLookupResult VendorRejected()
+        {
+            return new HikCentralParkingFeeLookupResult(
+                VendorParkingLookupStatus.VendorRejected,
+                null,
+                null,
+                "VENDOR_PMS_REJECTED",
+                false);
+        }
+
         public VendorParkingSessionLookupResponse ToSessionResponse(Guid correlationId)
         {
             return new VendorParkingSessionLookupResponse(Status, Session, ErrorCode, Retryable, correlationId);
@@ -212,6 +255,29 @@ public sealed class HikCentralParkingClient(HttpClient httpClient) : IVendorPark
         {
             return new VendorTariffQuoteResponse(Status, Quote, ErrorCode, Retryable, correlationId);
         }
+    }
+
+    private HikCentralParkingFeeLookupResult? ValidateCalculateRequest(
+        HikCentralParkingFeeCalculateRequest calculateRequest)
+    {
+        if (string.IsNullOrWhiteSpace(userId) ||
+            userId.Length > 32 ||
+            userId.IndexOfAny(UserIdForbiddenCharacters) >= 0)
+        {
+            return HikCentralParkingFeeLookupResult.ValidationError();
+        }
+
+        if (calculateRequest is { PlateLicense: null, CardNum: null })
+        {
+            return HikCentralParkingFeeLookupResult.ValidationError();
+        }
+
+        if (calculateRequest.PlateLicense?.Length > 32 || calculateRequest.CardNum?.Length > 32)
+        {
+            return HikCentralParkingFeeLookupResult.ValidationError();
+        }
+
+        return null;
     }
 
     private static class HikCentralParkingFeeMapper

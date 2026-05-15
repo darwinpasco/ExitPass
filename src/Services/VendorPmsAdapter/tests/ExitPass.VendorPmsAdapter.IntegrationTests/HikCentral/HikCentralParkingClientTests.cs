@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 using Xunit;
@@ -12,26 +13,86 @@ namespace ExitPass.VendorPmsAdapter.IntegrationTests.HikCentral;
 public sealed class HikCentralParkingClientTests
 {
     /// <summary>
+    /// Verifies that plate lookups send the official HikCentral V3.1.0 calculate request shape.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenPlateLicenseProvided_SendsOfficialV310Shape()
+    {
+        var handler = new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "10.00"));
+        var client = CreateClient(handler);
+
+        await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal("ABC123", body.RootElement.GetProperty("plateLicense").GetString());
+        Assert.False(body.RootElement.TryGetProperty("cardNum", out _));
+        Assert.Equal("exitpass-adapter", handler.LastRequest?.Headers.GetValues("userId").Single());
+    }
+
+    /// <summary>
+    /// Verifies that card lookups send the official HikCentral V3.1.0 calculate request shape.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenCardNumProvided_SendsOfficialV310Shape()
+    {
+        var handler = new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "10.00"));
+        var client = CreateClient(handler);
+
+        await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(null, "CARD-9", Guid.NewGuid()),
+            CancellationToken.None);
+
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal("CARD-9", body.RootElement.GetProperty("cardNum").GetString());
+        Assert.False(body.RootElement.TryGetProperty("plateLicense", out _));
+        Assert.Equal("exitpass-adapter", handler.LastRequest?.Headers.GetValues("userId").Single());
+    }
+
+    /// <summary>
+    /// Verifies that missing plate and card values fail before the fake HikCentral server is called.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenNeitherPlateNorCardProvided_ReturnsValidationError()
+    {
+        var handler = new FakeHikCentralHandler(_ => throw new InvalidOperationException("Vendor should not be called."));
+        var client = CreateClient(handler);
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(null, null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.ValidationError, result.Status);
+        Assert.Equal("VENDOR_LOOKUP_VALIDATION_ERROR", result.ErrorCode);
+        Assert.Null(handler.LastRequest);
+    }
+
+    /// <summary>
+    /// Verifies that plate values longer than the official V3.1.0 maximum fail validation.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenPlateLicenseTooLong_ReturnsValidationError()
+    {
+        var handler = new FakeHikCentralHandler(_ => throw new InvalidOperationException("Vendor should not be called."));
+        var client = CreateClient(handler);
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(new string('A', 33), null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.ValidationError, result.Status);
+        Assert.Equal("VENDOR_LOOKUP_VALIDATION_ERROR", result.ErrorCode);
+        Assert.Null(handler.LastRequest);
+    }
+
+    /// <summary>
     /// Verifies that an active HikCentral fee response maps into a provider-neutral session.
     /// </summary>
     [Fact]
     public async Task ResolveSession_WhenHikCentralReturnsActiveSession_ReturnsProviderNeutralSession()
     {
-        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
-            {
-              "code": "0",
-              "msg": "Success",
-              "data": {
-                "plateLicense": "ABC123",
-                "parkingInTime": "2026-05-15T09:00:00+08:00",
-                "parkingDuration": 3600,
-                "feeRuleType": 1,
-                "feeRuleIndexCode": "RULE-1",
-                "feeRuleName": "Standard Parking",
-                "fee": "125.00"
-              }
-            }
-            """)));
+        var client = CreateClient(new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "125.00")));
 
         var result = await client.ResolveSessionAsync(
             new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
@@ -43,6 +104,66 @@ public sealed class HikCentralParkingClientTests
         Assert.Equal("ACTIVE", result.Session?.Status);
         Assert.Equal(12500, result.Session?.TariffQuote?.AmountMinor);
         Assert.Equal("RULE-1", result.Session?.TariffQuote?.TariffVersionReference);
+    }
+
+    /// <summary>
+    /// Verifies that nonzero HikCentral response codes map to deterministic vendor rejection.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenCodeIsNonZero_ReturnsVendorRejectedOrNotFoundAsAppropriate()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            { "code": "12345", "msg": "fee calculation failed", "data": {} }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.VendorRejected, result.Status);
+        Assert.Equal("VENDOR_PMS_REJECTED", result.ErrorCode);
+    }
+
+    /// <summary>
+    /// Verifies that missing required parkingInTime maps to malformed payload behavior.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenParkingInTimeMissing_ReturnsMalformedPayload()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "plateLicense": "ABC123",
+                "parkingDuration": 3600,
+                "fee": "125.00"
+              }
+            }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_PMS_ADAPTER_ERROR", result.ErrorCode);
+    }
+
+    /// <summary>
+    /// Verifies that nonnumeric official fee strings map to malformed payload behavior.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_WhenFeeIsNonNumeric_ReturnsMalformedPayload()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "not-a-number")));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_PMS_ADAPTER_ERROR", result.ErrorCode);
     }
 
     /// <summary>
@@ -152,20 +273,7 @@ public sealed class HikCentralParkingClientTests
     public async Task HikCentralClient_SendsCorrelationId_WhenProvided()
     {
         var correlationId = Guid.Parse("33333333-4444-5555-6666-777777777777");
-        var handler = new FakeHikCentralHandler(_ => JsonResponse("""
-            {
-              "code": "0",
-              "msg": "Success",
-              "data": {
-                "plateLicense": "ABC123",
-                "parkingInTime": "2026-05-15T09:00:00+08:00",
-                "parkingDuration": 1,
-                "feeRuleIndexCode": "RULE-1",
-                "feeRuleName": "Standard",
-                "fee": "1.00"
-              }
-            }
-            """));
+        var handler = new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "1.00"));
         var client = CreateClient(handler);
 
         await client.ResolveSessionAsync(
@@ -173,6 +281,7 @@ public sealed class HikCentralParkingClientTests
             CancellationToken.None);
 
         Assert.Equal(correlationId.ToString(), handler.LastRequest?.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal("exitpass-adapter", handler.LastRequest?.Headers.GetValues("userId").Single());
         Assert.Equal("/artemis/api/vehicle/v1/parkingfee/calculate", handler.LastRequest?.RequestUri?.AbsolutePath);
     }
 
@@ -192,6 +301,25 @@ public sealed class HikCentralParkingClientTests
         };
     }
 
+    private static HttpResponseMessage SuccessfulFeeResponse(string plateLicense, string fee)
+    {
+        return JsonResponse($$"""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "plateLicense": "{{plateLicense}}",
+                "parkingInTime": "2026-05-15T09:00:00+08:00",
+                "parkingDuration": 3600,
+                "feeRuleType": 1,
+                "feeRuleIndexCode": "RULE-1",
+                "feeRuleName": "Standard Parking",
+                "fee": "{{fee}}"
+              }
+            }
+            """);
+    }
+
     private sealed class FakeHikCentralHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responseFactory;
@@ -203,12 +331,17 @@ public sealed class HikCentralParkingClientTests
 
         public HttpRequestMessage? LastRequest { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        public string? LastRequestBody { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             LastRequest = request;
-            return Task.FromResult(_responseFactory(request));
+            LastRequestBody = request.Content is null
+                ? null
+                : await request.Content.ReadAsStringAsync(cancellationToken);
+            return _responseFactory(request);
         }
     }
 }
