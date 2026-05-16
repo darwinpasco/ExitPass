@@ -9,6 +9,7 @@ using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers;
+using ExitPass.PaymentOrchestrator.Infrastructure.Providers.Aub;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -205,10 +206,12 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     });
 
     services.AddHttpClient<PayMongoClient>();
+    services.AddHttpClient<AubClient>();
 
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
     services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
 
+    services.AddScoped<IPaymentProviderAdapter, AubPaymentAdapter>();
     services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
     services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
 
@@ -221,6 +224,9 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
                 !string.IsNullOrWhiteSpace(options.BaseUrl),
             "Payments:Providers:PayMongo requires SecretKey, PublicKey, and BaseUrl.")
         .ValidateOnStart();
+
+    services.AddOptions<AubOptions>()
+        .Bind(configuration.GetSection(AubOptions.SectionName));
 }
 
 static void ValidateCriticalConfiguration(IConfiguration configuration)
