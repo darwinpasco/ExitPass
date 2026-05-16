@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Payments;
@@ -41,7 +42,8 @@ public static class InternalPaymentAttemptFinalizationEndpoints
     public static IEndpointRouteBuilder MapInternalPaymentAttemptFinalizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payment-attempts")
-            .WithTags("InternalPaymentAttempts");
+            .WithTags("InternalPaymentAttempts")
+            .RequireInternalServiceMtls();
 
         group.MapPost("/{paymentAttemptId:guid}/finalize", HandleAsync)
             .WithName("FinalizePaymentAttempt")

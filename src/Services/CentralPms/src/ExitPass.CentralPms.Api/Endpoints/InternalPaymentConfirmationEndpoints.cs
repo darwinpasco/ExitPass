@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Payments;
@@ -42,7 +43,8 @@ public static class InternalPaymentConfirmationEndpoints
     public static IEndpointRouteBuilder MapInternalPaymentConfirmationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payments")
-            .WithTags("InternalPayments");
+            .WithTags("InternalPayments")
+            .RequireInternalServiceMtls();
 
         group.MapPost("/confirmation", HandleAsync)
             .WithName("RecordPaymentConfirmation")

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
 using Microsoft.Extensions.Logging;
@@ -37,7 +38,8 @@ public static class GateExitAuthorizationConsumeEndpoints
     public static IEndpointRouteBuilder MapGateExitAuthorizationConsumeEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/gate/authorizations")
-            .WithTags("GateAuthorizations");
+            .WithTags("GateAuthorizations")
+            .RequireInternalServiceMtls();
 
         group.MapPost("/{exitAuthorizationId:guid}/consume", HandleAsync)
             .WithName("ConsumeExitAuthorization")

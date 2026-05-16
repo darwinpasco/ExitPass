@@ -21,6 +21,11 @@ artifacts/
 /src/Services/PaymentOrchestrator/src/ExitPass.PaymentOrchestrator.Api/appsettings.Development.json
 /logs
 
+# Local/generated mTLS certificate material. Placeholder .crt files may exist for mount paths.
+/infra/certs/**/*.key
+/infra/certs/**/*.pfx
+/infra/certs/**/*.p12
+
 # Optional local Docker override files
 docker-compose.override.yml
 infra/docker/docker-compose.override.yml
