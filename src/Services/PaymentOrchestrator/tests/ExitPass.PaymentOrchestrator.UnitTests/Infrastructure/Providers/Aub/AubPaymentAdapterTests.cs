@@ -12,87 +12,110 @@ using Xunit;
 namespace ExitPass.PaymentOrchestrator.UnitTests.Infrastructure.Providers.Aub;
 
 /// <summary>
-/// Unit tests for the AUB provider adapter boundary and provider-neutral mapping.
+/// Unit tests for the AUB Card Cashier adapter boundary and provider-neutral mapping.
 /// </summary>
 public sealed class AubPaymentAdapterTests
 {
     private static readonly Guid PaymentAttemptId = Guid.Parse("9c708f54-6daa-4835-a76b-6b166652dd02");
 
     /// <summary>
-    /// Verifies that AUB session creation sends the provider-specific request shape behind the adapter boundary.
+    /// Verifies that AUB session creation sends the official Card Cashier H5 request shape.
     /// </summary>
     [Fact]
-    public async Task AubProvider_WhenCreatePaymentRequested_SendsProviderSpecificRequestShape()
+    public async Task AubClient_WhenCreatePaymentRequested_SendsOfficialRequestShape()
     {
-        var handler = new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse("ACCEPTED"));
-        var adapter = CreateAdapter(handler);
+        var handler = new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse());
+        var signer = new FakeAubRequestSigner();
+        var adapter = CreateAdapter(handler, signer);
 
         var result = await adapter.CreatePaymentSessionAsync(CreateCommand(), CancellationToken.None);
 
         Assert.Equal(ProviderCode.Aub, adapter.ProviderCode);
         Assert.Equal(ProviderProductCode.AubCardCashier, adapter.ProviderProduct);
-        Assert.Equal("aub_session_001", result.ProviderSessionId);
-        Assert.Equal("aub_ref_001", result.ProviderReference);
+        Assert.Equal(PaymentAttemptId.ToString(), result.ProviderSessionId);
+        Assert.Equal(PaymentAttemptId.ToString(), result.ProviderReference);
         Assert.Equal("PENDING_PROVIDER", result.SessionStatus);
         Assert.Equal(ProviderHandoffType.Redirect, result.Handoff.Type);
-        Assert.Equal(new Uri("https://aub.test/v1/payments"), handler.LastRequestUri);
-        Assert.Equal("idem-aub-unit-001", handler.LastIdempotencyKey);
+        Assert.Equal("https://aub.test/gateway/payment/cashier/v1/payment", handler.LastRequestUri.ToString());
 
         using var document = JsonDocument.Parse(handler.LastRequestBody);
-        var root = document.RootElement;
+        var orderInformation = document.RootElement.GetProperty("orderInformation");
 
-        Assert.Equal("merchant-unit-test", root.GetProperty("merchant_id").GetString());
-        Assert.Equal(PaymentAttemptId.ToString(), root.GetProperty("reference_id").GetString());
-        Assert.Equal(12500, root.GetProperty("amount").GetInt64());
-        Assert.Equal("PHP", root.GetProperty("currency").GetString());
-        Assert.Equal("https://exitpass.test/provider/aub/webhook", root.GetProperty("callback_url").GetString());
-        Assert.Equal("unit-test", root.GetProperty("metadata").GetProperty("source").GetString());
+        Assert.Equal(12500, orderInformation.GetProperty("amount").GetInt64());
+        Assert.Equal(PaymentAttemptId.ToString(), orderInformation.GetProperty("orderId").GetString());
+        Assert.Equal("ExitPass parking payment", orderInformation.GetProperty("goodsDetail").GetString());
+        Assert.Equal("idem-aub-unit-001", orderInformation.GetProperty("attach").GetString());
+        Assert.Equal("https://exitpass.test/payments/success", orderInformation.GetProperty("callbackUrl").GetString());
+        Assert.Equal("https://exitpass.test/provider/aub/webhook", orderInformation.GetProperty("notifyUrl").GetString());
+        Assert.Equal(10, orderInformation.GetProperty("validityPeriod").GetInt32());
     }
 
     /// <summary>
-    /// Verifies that an accepted AUB provider response remains a pending provider outcome.
+    /// Verifies that official AUB authorization and request identity headers are sent through the signer boundary.
     /// </summary>
     [Fact]
-    public async Task AubProvider_WhenProviderAccepts_ReturnsPendingProviderOutcome()
+    public async Task AubClient_WhenAuthHeadersRequired_SendsOfficialAuthHeaders()
     {
-        var adapter = CreateAdapter(new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse("ACCEPTED")));
+        var handler = new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse());
+        var signer = new FakeAubRequestSigner();
+        var adapter = CreateAdapter(handler, signer);
+
+        await adapter.CreatePaymentSessionAsync(CreateCommand(), CancellationToken.None);
+
+        Assert.Equal("idem-aub-unit-001", handler.LastCustomerRequestId);
+        Assert.Equal("application/json", handler.LastAccept);
+        Assert.Equal("en-US", handler.LastAcceptLanguage);
+        Assert.Equal("AUB-TEST-SIGNATURE", handler.LastAuthorization);
+        Assert.NotNull(handler.LastDate);
+        Assert.Equal("POST", signer.LastSignedRequest.Method);
+        Assert.Equal("/gateway/payment/cashier/v1/payment", signer.LastSignedRequest.RequestPath);
+        Assert.Equal("idem-aub-unit-001", signer.LastSignedRequest.CustomerRequestId);
+    }
+
+    /// <summary>
+    /// Verifies that an accepted AUB H5 response remains a pending provider outcome until a verified notification arrives.
+    /// </summary>
+    [Fact]
+    public async Task AubClient_WhenProviderReturnsPending_MapsToPendingProvider()
+    {
+        var adapter = CreateAdapter(new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse()));
 
         var result = await adapter.CreatePaymentSessionAsync(CreateCommand(), CancellationToken.None);
 
         Assert.Equal("PENDING_PROVIDER", result.SessionStatus);
+        Assert.Equal("https://aub.test/cashier/order-001", result.Handoff.RedirectUrl);
     }
 
     /// <summary>
-    /// Verifies that AUB paid callbacks normalize to a successful terminal outcome.
+    /// Verifies that an official success notification maps to a successful terminal outcome.
     /// </summary>
     [Fact]
-    public async Task AubProvider_WhenProviderPaid_ReturnsSucceededProviderOutcome()
+    public async Task AubWebhook_WhenOfficialSuccessPayloadReceived_MapsToSucceeded()
     {
         var adapter = CreateAdapter();
 
-        var result = await adapter.VerifyWebhookAsync(
-            CreateWebhookRequest("evt_aub_paid_001", "payment.paid", "PAID"),
-            CancellationToken.None);
+        var result = await adapter.VerifyWebhookAsync(CreateWebhookRequest("SUCCESS"), CancellationToken.None);
 
         Assert.True(result.IsAuthentic);
         Assert.Equal(CanonicalPaymentOutcomeStatus.Succeeded, result.CanonicalStatus);
         Assert.True(result.IsTerminal);
         Assert.True(result.IsSuccess);
         Assert.Equal(PaymentAttemptId, result.PaymentAttemptId);
-        Assert.Equal("aub_ref_001", result.ProviderReference);
+        Assert.Equal("aub-ref-001", result.ProviderReference);
+        Assert.Equal(PaymentAttemptId.ToString(), result.ProviderSessionId);
+        Assert.Equal("58931a43-eef2-43fa-887a-38a9874d72e7", result.RawAttributes["parking_session_id"]);
+        Assert.Equal("VISA", result.RawAttributes["card_payment_brand"]);
     }
 
     /// <summary>
-    /// Verifies that AUB failed callbacks normalize to failed evidence and never a success outcome.
+    /// Verifies that an official failed notification maps to failed evidence and never a success outcome.
     /// </summary>
     [Fact]
-    public async Task AubProvider_WhenProviderFails_ReturnsFailedProviderOutcome()
+    public async Task AubWebhook_WhenOfficialFailedPayloadReceived_MapsToFailed()
     {
         var adapter = CreateAdapter();
 
-        var result = await adapter.VerifyWebhookAsync(
-            CreateWebhookRequest("evt_aub_failed_001", "payment.failed", "FAILED"),
-            CancellationToken.None);
+        var result = await adapter.VerifyWebhookAsync(CreateWebhookRequest("FAILED"), CancellationToken.None);
 
         Assert.True(result.IsAuthentic);
         Assert.Equal(CanonicalPaymentOutcomeStatus.Failed, result.CanonicalStatus);
@@ -101,20 +124,18 @@ public sealed class AubPaymentAdapterTests
     }
 
     /// <summary>
-    /// Verifies that cancelled and expired AUB states normalize deterministically.
+    /// Verifies that defensive cancelled and expired AUB notification states normalize deterministically.
     /// </summary>
     [Theory]
     [InlineData("CANCELLED", CanonicalPaymentOutcomeStatus.Cancelled)]
     [InlineData("EXPIRED", CanonicalPaymentOutcomeStatus.Expired)]
-    public async Task AubProvider_WhenProviderCancelsOrExpires_ReturnsTerminalNonSuccessOutcome(
+    public async Task AubWebhook_WhenOfficialTerminalPayloadReceived_MapsToTerminalNonSuccess(
         string providerStatus,
         CanonicalPaymentOutcomeStatus expectedStatus)
     {
         var adapter = CreateAdapter();
 
-        var result = await adapter.VerifyWebhookAsync(
-            CreateWebhookRequest($"evt_aub_{providerStatus.ToLowerInvariant()}_001", "payment.updated", providerStatus),
-            CancellationToken.None);
+        var result = await adapter.VerifyWebhookAsync(CreateWebhookRequest(providerStatus), CancellationToken.None);
 
         Assert.True(result.IsAuthentic);
         Assert.Equal(expectedStatus, result.CanonicalStatus);
@@ -123,21 +144,37 @@ public sealed class AubPaymentAdapterTests
     }
 
     /// <summary>
-    /// Verifies that malformed AUB callback payloads fail closed before provider evidence is accepted.
+    /// Verifies that pending AUB transaction results remain non-terminal provider evidence.
     /// </summary>
     [Fact]
-    public async Task AubProvider_WhenProviderResponseMalformed_ReturnsProviderError()
+    public async Task AubWebhook_WhenOfficialPendingPayloadReceived_MapsToPendingProvider()
+    {
+        var adapter = CreateAdapter();
+
+        var result = await adapter.VerifyWebhookAsync(CreateWebhookRequest("PENDING"), CancellationToken.None);
+
+        Assert.True(result.IsAuthentic);
+        Assert.Equal(CanonicalPaymentOutcomeStatus.PendingProvider, result.CanonicalStatus);
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+    }
+
+    /// <summary>
+    /// Verifies that malformed official AUB notification payloads fail closed before provider evidence is accepted.
+    /// </summary>
+    [Fact]
+    public async Task AubWebhook_WhenMalformedPayloadReceived_FailsClosed()
     {
         var adapter = CreateAdapter();
 
         var result = await adapter.VerifyWebhookAsync(
             new ProviderWebhookRequest(
                 Headers: new Dictionary<string, string>(),
-                RawBody: "{\"event_id\":\"evt_missing_required_fields\"}"),
+                RawBody: "{\"code\":\"00\",\"message\":\"Success\"}"),
             CancellationToken.None);
 
         Assert.False(result.IsAuthentic);
-        Assert.Equal("AUB_WEBHOOK_MISSING_EVENT_TYPE", result.EventId);
+        Assert.Equal("AUB_WEBHOOK_MISSING_DATA", result.EventId);
         Assert.False(result.IsTerminal);
         Assert.False(result.IsSuccess);
     }
@@ -157,10 +194,29 @@ public sealed class AubPaymentAdapterTests
     }
 
     /// <summary>
+    /// Verifies that unsuccessful AUB response codes do not generate successful provider sessions.
+    /// </summary>
+    [Fact]
+    public async Task AubProvider_WhenProviderResponseMalformed_ReturnsProviderError()
+    {
+        var response = JsonSerializer.Serialize(new
+        {
+            code = "09",
+            message = "PARAMETER IS EMPTY OR MALFORMED"
+        });
+        var adapter = CreateAdapter(new CapturingAubHandler(HttpStatusCode.OK, response));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            adapter.CreatePaymentSessionAsync(CreateCommand(), CancellationToken.None));
+
+        Assert.Contains("09", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Verifies that AUB-specific DTO fields do not leak into provider-neutral Payment Orchestrator contracts.
     /// </summary>
     [Fact]
-    public void AubProvider_DoesNotLeakProviderSpecificFieldsIntoProviderNeutralContracts()
+    public void AubProvider_DoesNotLeakAubSpecificFieldsIntoProviderNeutralContracts()
     {
         var neutralContractTypes = new[]
         {
@@ -181,31 +237,34 @@ public sealed class AubPaymentAdapterTests
     }
 
     /// <summary>
-    /// Verifies that AUB tests use fake local provider values and do not require live credentials.
+    /// Verifies that AUB tests use fake local provider values and do not require live credentials or URLs.
     /// </summary>
     [Fact]
-    public async Task AubProvider_DoesNotUseLiveCredentialsInTests()
+    public async Task AubProvider_DoesNotUseLiveCredentialsOrUrlsInTests()
     {
-        var handler = new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse("ACCEPTED"));
+        var handler = new CapturingAubHandler(HttpStatusCode.OK, PaymentSessionResponse());
         var adapter = CreateAdapter(handler);
 
         await adapter.CreatePaymentSessionAsync(CreateCommand(), CancellationToken.None);
 
         Assert.Equal("aub.test", handler.LastRequestUri.Host);
+        Assert.DoesNotContain("paymentapi.wepayez.com", handler.LastRequestUri.Host, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("api.aub", handler.LastRequestUri.Host, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("prod", handler.LastRequestUri.Host, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("Authorization", handler.LastHeaders, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static AubPaymentAdapter CreateAdapter(HttpMessageHandler? handler = null)
+    private static AubPaymentAdapter CreateAdapter(HttpMessageHandler? handler = null, IAubRequestSigner? requestSigner = null)
     {
         var options = Options.Create(new AubOptions
         {
-            BaseUrl = "https://aub.test",
+            BaseUrl = "https://aub.test/gateway/payment",
             MerchantId = "merchant-unit-test"
         });
 
-        var client = new AubClient(new HttpClient(handler ?? new ThrowingHttpMessageHandler()), options);
+        var client = new AubClient(
+            new HttpClient(handler ?? new ThrowingHttpMessageHandler()),
+            options,
+            requestSigner ?? new FakeAubRequestSigner());
         return new AubPaymentAdapter(client);
     }
 
@@ -228,25 +287,33 @@ public sealed class AubPaymentAdapterTests
             });
     }
 
-    private static ProviderWebhookRequest CreateWebhookRequest(
-        string eventId,
-        string eventType,
-        string status)
+    private static ProviderWebhookRequest CreateWebhookRequest(string status)
     {
         var body = new
         {
-            event_id = eventId,
-            event_type = eventType,
-            payment_attempt_id = PaymentAttemptId.ToString(),
-            payment_session_id = "aub_session_001",
-            reference = "aub_ref_001",
-            status,
-            occurred_at = "2026-05-16T08:00:00Z",
-            amount = 12500,
-            currency = "PHP",
-            metadata = new Dictionary<string, string>
+            code = "00",
+            message = "Success",
+            data = new
             {
-                ["parking_session_id"] = "58931a43-eef2-43fa-887a-38a9874d72e7"
+                orderInformation = new
+                {
+                    referencedId = "aub-ref-001",
+                    orderId = PaymentAttemptId.ToString(),
+                    goodsDetail = "ExitPass parking payment",
+                    attach = "parking_session_id=58931a43-eef2-43fa-887a-38a9874d72e7;requested_by_user_id=unit-test",
+                    currency = "PHP",
+                    amount = 12500,
+                    responseDate = "2026-05-16T08:00:00Z",
+                    transactionResult = status,
+                    paymentType = "PAY",
+                    paymentBrand = "VISA"
+                },
+                card = new
+                {
+                    paymentBrand = "VISA",
+                    cardBin = "420000",
+                    last4Digits = "0000"
+                }
             }
         };
 
@@ -255,15 +322,26 @@ public sealed class AubPaymentAdapterTests
             RawBody: JsonSerializer.Serialize(body));
     }
 
-    private static string PaymentSessionResponse(string status)
+    private static string PaymentSessionResponse()
     {
         var body = new
         {
-            payment_session_id = "aub_session_001",
-            reference = "aub_ref_001",
-            status,
-            redirect_url = "https://aub.test/pay/aub_session_001",
-            expires_at = "2026-05-16T08:30:00Z"
+            code = "00",
+            message = "Approved",
+            data = new
+            {
+                cashierUrl = "https://aub.test/cashier/order-001",
+                orderInformation = new
+                {
+                    orderId = PaymentAttemptId.ToString(),
+                    goodsDetail = "ExitPass parking payment",
+                    attach = "idem-aub-unit-001",
+                    currency = "PHP",
+                    amount = 12500,
+                    paymentType = "PAY",
+                    responseDate = "2026-05-16T08:00:00Z"
+                }
+            }
         };
 
         return JsonSerializer.Serialize(body);
@@ -284,9 +362,15 @@ public sealed class AubPaymentAdapterTests
 
         public string LastRequestBody { get; private set; } = string.Empty;
 
-        public string? LastIdempotencyKey { get; private set; }
+        public string? LastCustomerRequestId { get; private set; }
 
-        public string LastHeaders { get; private set; } = string.Empty;
+        public string? LastAccept { get; private set; }
+
+        public string? LastAcceptLanguage { get; private set; }
+
+        public string? LastAuthorization { get; private set; }
+
+        public DateTimeOffset? LastDate { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -296,15 +380,36 @@ public sealed class AubPaymentAdapterTests
             LastRequestBody = request.Content is null
                 ? string.Empty
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            LastIdempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var values)
-                ? values.Single()
+            LastCustomerRequestId = request.Headers.TryGetValues("Customer-Request-Id", out var customerRequestIdValues)
+                ? customerRequestIdValues.Single()
                 : null;
-            LastHeaders = string.Join(Environment.NewLine, request.Headers.Select(header => header.Key));
+            LastAccept = request.Headers.Accept.SingleOrDefault()?.MediaType;
+            LastAcceptLanguage = request.Headers.AcceptLanguage.SingleOrDefault()?.Value;
+            LastAuthorization = request.Headers.TryGetValues("Authorization", out var authorizationValues)
+                ? authorizationValues.Single()
+                : null;
+            LastDate = request.Headers.Date;
 
             return new HttpResponseMessage(_statusCode)
             {
                 Content = new StringContent(_responseBody, Encoding.UTF8, "application/json")
             };
+        }
+    }
+
+    private sealed class FakeAubRequestSigner : IAubRequestSigner
+    {
+        public AubSignedRequest LastSignedRequest { get; private set; } = new(
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            DateTimeOffset.UnixEpoch);
+
+        public string CreateAuthorizationHeader(AubSignedRequest request)
+        {
+            LastSignedRequest = request;
+            return "AUB-TEST-SIGNATURE";
         }
     }
 

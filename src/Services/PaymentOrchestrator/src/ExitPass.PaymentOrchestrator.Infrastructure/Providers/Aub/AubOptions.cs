@@ -24,4 +24,9 @@ public sealed class AubOptions
     /// Gets or initializes the HTTP request timeout in seconds.
     /// </summary>
     public int TimeoutSeconds { get; init; } = 30;
+
+    /// <summary>
+    /// Gets or initializes the default AUB cashier order validity period in minutes.
+    /// </summary>
+    public int DefaultValidityPeriodMinutes { get; init; } = 10;
 }
