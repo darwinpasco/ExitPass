@@ -31,6 +31,7 @@ using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
+using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
@@ -247,6 +248,7 @@ static void ConfigureApplicationServices(
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
+    builder.Services.AddCentralPmsEventPublishing(builder.Configuration);
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();

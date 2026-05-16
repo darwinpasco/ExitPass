@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
@@ -49,6 +50,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     private readonly IPaymentAttemptDbRoutineGateway _paymentAttemptDbRoutineGateway;
     private readonly IPaymentAttemptCreationPolicy _paymentAttemptCreationPolicy;
     private readonly IProviderHandoffFactory _providerHandoffFactory;
+    private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly ISystemClock _systemClock;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<CreateOrReusePaymentAttemptHandler> _logger;
@@ -61,6 +63,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     /// <param name="paymentAttemptDbRoutineGateway">Gateway used to invoke the authoritative DB-backed create-or-reuse routine.</param>
     /// <param name="paymentAttemptCreationPolicy">Policy used to validate the create-or-reuse request.</param>
     /// <param name="providerHandoffFactory">Factory used to create provider handoff payloads.</param>
+    /// <param name="eventPublisher">Integration event publisher for successful Central PMS state changes.</param>
     /// <param name="systemClock">System clock used for canonical timestamps.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
@@ -70,6 +73,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         IPaymentAttemptDbRoutineGateway paymentAttemptDbRoutineGateway,
         IPaymentAttemptCreationPolicy paymentAttemptCreationPolicy,
         IProviderHandoffFactory providerHandoffFactory,
+        IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
         ILogger<CreateOrReusePaymentAttemptHandler> logger)
@@ -79,6 +83,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         _paymentAttemptDbRoutineGateway = paymentAttemptDbRoutineGateway;
         _paymentAttemptCreationPolicy = paymentAttemptCreationPolicy;
         _providerHandoffFactory = providerHandoffFactory;
+        _eventPublisher = eventPublisher;
         _systemClock = systemClock;
         _metrics = metrics;
         _logger = logger;
@@ -239,6 +244,10 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                     result.AttemptStatus);
             }
 
+            await _eventPublisher.PublishAsync(
+                CreatePaymentAttemptEventEnvelope(result, dbResult, command.CorrelationId),
+                cancellationToken);
+
             return result;
         }
         catch (Exception ex) when (IsExpectedBusinessRejection(ex))
@@ -313,6 +322,63 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                 throw new InvalidOperationException(
                     $"Unsupported create-or-reuse payment attempt outcome '{dbResult.OutcomeCode}'.");
         }
+    }
+
+    /// <summary>
+    /// Creates the integration event envelope for a successful create-or-reuse payment attempt outcome.
+    /// </summary>
+    /// <param name="result">Application result returned to the caller.</param>
+    /// <param name="dbResult">Authoritative database routine result.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <returns>The integration event envelope to publish.</returns>
+    private IntegrationEventEnvelope CreatePaymentAttemptEventEnvelope(
+        CreateOrReusePaymentAttemptResult result,
+        CreateOrReusePaymentAttemptDbResult dbResult,
+        Guid correlationId)
+    {
+        var eventType = result.WasReused
+            ? IntegrationEventTypes.PaymentAttemptReused
+            : IntegrationEventTypes.PaymentAttemptCreated;
+
+        object payload = result.WasReused
+            ? new PaymentAttemptReusedPayload
+            {
+                PaymentAttemptId = result.PaymentAttemptId,
+                ParkingSessionId = result.ParkingSessionId,
+                TariffSnapshotId = result.TariffSnapshotId,
+                Status = result.AttemptStatus,
+                ReuseReason = dbResult.OutcomeCode
+            }
+            : new PaymentAttemptCreatedPayload
+            {
+                PaymentAttemptId = result.PaymentAttemptId,
+                ParkingSessionId = result.ParkingSessionId,
+                TariffSnapshotId = result.TariffSnapshotId,
+                NetPayableMinorUnits = ToMinorUnits(dbResult.NetAmountDueSnapshot),
+                Currency = dbResult.CurrencyCode,
+                ProviderCode = result.PaymentProviderCode,
+                Status = result.AttemptStatus
+            };
+
+        return new IntegrationEventEnvelope
+        {
+            EventType = eventType,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = correlationId,
+            AggregateId = result.PaymentAttemptId.ToString(),
+            AggregateType = nameof(PaymentAttempt),
+            Payload = payload
+        };
+    }
+
+    /// <summary>
+    /// Converts a decimal major-unit amount to minor currency units.
+    /// </summary>
+    /// <param name="amount">Major-unit amount.</param>
+    /// <returns>Minor-unit amount rounded away from zero.</returns>
+    private static long ToMinorUnits(decimal amount)
+    {
+        return decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
     }
 
     /// <summary>

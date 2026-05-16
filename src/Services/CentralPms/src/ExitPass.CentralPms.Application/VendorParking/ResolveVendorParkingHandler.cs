@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
@@ -19,6 +20,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
 
     private readonly IVendorPmsParkingResolutionClient _vendorClient;
     private readonly IVendorParkingResolutionPersistence _persistence;
+    private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<ResolveVendorParkingHandler> _logger;
 
@@ -27,16 +29,19 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     /// </summary>
     /// <param name="vendorClient">Provider-neutral Vendor PMS Adapter client.</param>
     /// <param name="persistence">Central PMS persistence boundary for resolved parking data.</param>
+    /// <param name="eventPublisher">Integration event publisher for successful Central PMS state changes.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
     public ResolveVendorParkingHandler(
         IVendorPmsParkingResolutionClient vendorClient,
         IVendorParkingResolutionPersistence persistence,
+        IIntegrationEventPublisher eventPublisher,
         CentralPmsMetrics metrics,
         ILogger<ResolveVendorParkingHandler> logger)
     {
         _vendorClient = vendorClient;
         _persistence = persistence;
+        _eventPublisher = eventPublisher;
         _metrics = metrics;
         _logger = logger;
     }
@@ -192,6 +197,30 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             persisted.ParkingSession.ParkingSessionId,
             persisted.TariffSnapshot.TariffSnapshotId,
             ResolveVendorParkingOutcome.Resolved);
+
+        await _eventPublisher.PublishAsync(
+            new IntegrationEventEnvelope
+            {
+                EventType = IntegrationEventTypes.VendorParkingResolved,
+                OccurredAtUtc = DateTimeOffset.UtcNow,
+                CorrelationId = sessionResponse.CorrelationId,
+                AggregateId = persisted.ParkingSession.ParkingSessionId.ToString(),
+                AggregateType = nameof(ParkingSession),
+                Payload = new VendorParkingResolvedPayload
+                {
+                    ParkingSessionId = persisted.ParkingSession.ParkingSessionId,
+                    TariffSnapshotId = persisted.TariffSnapshot.TariffSnapshotId,
+                    SiteId = persisted.ParkingSession.SiteId,
+                    SiteGroupId = persisted.ParkingSession.SiteGroupId,
+                    VendorSystemId = session.VendorProviderCode,
+                    LookupReferenceType = ResolveIdentifierType(command).ToLowerInvariant(),
+                    LookupOutcome = ResolveVendorParkingOutcome.Resolved.ToString(),
+                    NetPayableMinorUnits = validQuote.AmountMinor,
+                    Currency = persisted.TariffSnapshot.CurrencyCode,
+                    TariffExpiresAt = persisted.TariffSnapshot.ExpiresAt
+                }
+            },
+            cancellationToken);
 
         return ResolveVendorParkingResult.Resolved(
             persisted.ParkingSession,

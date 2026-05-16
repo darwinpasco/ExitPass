@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
@@ -283,6 +284,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
             gateway,
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             handoffFactory,
+            Substitute.For<IIntegrationEventPublisher>(),
             clock,
             new CentralPmsMetrics(),
             NullLogger<CreateOrReusePaymentAttemptHandler>.Instance);
