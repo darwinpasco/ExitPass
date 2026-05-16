@@ -36,23 +36,23 @@ public sealed class AubPaymentAdapter : IPaymentProviderAdapter
     {
         var providerResponse = await _client.CreatePaymentSessionAsync(command, cancellationToken);
 
-        var handoffType = string.IsNullOrWhiteSpace(providerResponse.RedirectUrl)
+        var handoffType = string.IsNullOrWhiteSpace(providerResponse.CashierUrl)
             ? ProviderHandoffType.None
             : ProviderHandoffType.Redirect;
 
         var handoff = new ProviderHandoffDto(
             handoffType,
-            providerResponse.RedirectUrl,
-            string.IsNullOrWhiteSpace(providerResponse.RedirectUrl) ? null : "GET",
+            providerResponse.CashierUrl,
+            string.IsNullOrWhiteSpace(providerResponse.CashierUrl) ? null : "GET",
             null,
             null,
             null,
             providerResponse.ExpiresAtUtc);
 
         return new CreateProviderPaymentSessionResult(
-            providerResponse.PaymentSessionId,
-            providerResponse.ProviderReference,
-            MapSessionStatus(providerResponse.Status),
+            providerResponse.OrderId,
+            providerResponse.OrderId,
+            "PENDING_PROVIDER",
             handoff,
             providerResponse.ExpiresAtUtc,
             providerResponse.RawJson);
@@ -140,81 +140,75 @@ public sealed class AubPaymentAdapter : IPaymentProviderAdapter
                 return false;
             }
 
-            if (!TryGetRequiredString(root, "event_id", out var eventId))
+            if (!TryGetRequiredString(root, "code", out var code))
             {
-                rejectionCode = "AUB_WEBHOOK_MISSING_EVENT_ID";
+                rejectionCode = "AUB_WEBHOOK_MISSING_CODE";
                 return false;
             }
 
-            if (!TryGetRequiredString(root, "event_type", out var eventType))
+            if (!string.Equals(code, "00", StringComparison.OrdinalIgnoreCase))
             {
-                rejectionCode = "AUB_WEBHOOK_MISSING_EVENT_TYPE";
+                rejectionCode = $"AUB_WEBHOOK_CODE_{code}";
                 return false;
             }
 
-            if (!TryGetRequiredString(root, "payment_attempt_id", out var paymentAttemptIdText) ||
-                !Guid.TryParse(paymentAttemptIdText, out var paymentAttemptId) ||
+            if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+            {
+                rejectionCode = "AUB_WEBHOOK_MISSING_DATA";
+                return false;
+            }
+
+            if (!data.TryGetProperty("orderInformation", out var orderInformation) ||
+                orderInformation.ValueKind != JsonValueKind.Object)
+            {
+                rejectionCode = "AUB_WEBHOOK_MISSING_ORDER_INFORMATION";
+                return false;
+            }
+
+            if (!TryGetRequiredString(orderInformation, "orderId", out var orderId) ||
+                !Guid.TryParse(orderId, out var paymentAttemptId) ||
                 paymentAttemptId == Guid.Empty)
             {
                 rejectionCode = "AUB_WEBHOOK_MISSING_PAYMENT_ATTEMPT_ID";
                 return false;
             }
 
-            if (!TryGetRequiredString(root, "payment_session_id", out var providerSessionId))
+            if (!TryGetRequiredString(orderInformation, "transactionResult", out var providerStatus))
             {
-                rejectionCode = "AUB_WEBHOOK_MISSING_PAYMENT_SESSION_ID";
+                rejectionCode = "AUB_WEBHOOK_MISSING_TRANSACTION_RESULT";
                 return false;
             }
 
-            if (!TryGetRequiredString(root, "status", out var providerStatus))
-            {
-                rejectionCode = "AUB_WEBHOOK_MISSING_STATUS";
-                return false;
-            }
-
-            var providerReference = TryGetOptionalString(root, "reference", out var parsedReference)
-                ? parsedReference
-                : providerSessionId;
-
+            var providerReference = TryGetOptionalString(orderInformation, "referencedId", out var referencedId)
+                ? referencedId
+                : orderId;
             var occurredAtUtc = DateTimeOffset.UtcNow;
-            if (root.TryGetProperty("occurred_at", out var occurredAtProperty))
+            if (orderInformation.TryGetProperty("responseDate", out var occurredAtProperty))
             {
                 occurredAtUtc = ParseDateTimeOffset(occurredAtProperty);
             }
 
             var amountMinor = 0L;
-            if (root.TryGetProperty("amount", out var amountProperty) &&
+            if (orderInformation.TryGetProperty("amount", out var amountProperty) &&
                 amountProperty.ValueKind == JsonValueKind.Number &&
                 amountProperty.TryGetInt64(out var parsedAmountMinor))
             {
                 amountMinor = parsedAmountMinor;
             }
 
-            var currency = TryGetOptionalString(root, "currency", out var parsedCurrency)
+            var currency = TryGetOptionalString(orderInformation, "currency", out var parsedCurrency)
                 ? parsedCurrency
                 : "PHP";
-
-            var rawAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["provider_status"] = providerStatus,
-                ["event_type"] = eventType,
-                ["provider_event_id"] = eventId
-            };
-
-            if (root.TryGetProperty("metadata", out var metadata) && metadata.ValueKind == JsonValueKind.Object)
-            {
-                foreach (var property in metadata.EnumerateObject())
-                {
-                    rawAttributes[property.Name] = property.Value.ToString();
-                }
-            }
+            var eventId = providerReference;
+            var eventType = "aub.card_cashier.notification";
+            var rawAttributes = CreateRawAttributes(code, providerStatus, eventType, providerReference, orderInformation, data);
 
             webhookEvent = new AubWebhookEvent(
                 eventId,
                 eventType,
                 paymentAttemptId,
                 providerReference,
-                providerSessionId,
+                orderId,
                 MapProviderStatus(providerStatus),
                 occurredAtUtc,
                 amountMinor,
@@ -231,19 +225,6 @@ public sealed class AubPaymentAdapter : IPaymentProviderAdapter
         }
     }
 
-    private static string MapSessionStatus(string providerStatus)
-    {
-        return MapProviderStatus(providerStatus) switch
-        {
-            CanonicalPaymentOutcomeStatus.Succeeded => "SUCCEEDED",
-            CanonicalPaymentOutcomeStatus.Failed => "FAILED",
-            CanonicalPaymentOutcomeStatus.Cancelled => "CANCELLED",
-            CanonicalPaymentOutcomeStatus.Expired => "EXPIRED",
-            CanonicalPaymentOutcomeStatus.AwaitingCustomerAction => "AWAITING_CUSTOMER_ACTION",
-            _ => "PENDING_PROVIDER"
-        };
-    }
-
     private static CanonicalPaymentOutcomeStatus MapProviderStatus(string providerStatus)
     {
         return providerStatus.Trim().ToUpperInvariant() switch
@@ -251,8 +232,6 @@ public sealed class AubPaymentAdapter : IPaymentProviderAdapter
             "ACCEPTED" => CanonicalPaymentOutcomeStatus.PendingProvider,
             "PENDING" => CanonicalPaymentOutcomeStatus.PendingProvider,
             "AWAITING_CUSTOMER_ACTION" => CanonicalPaymentOutcomeStatus.AwaitingCustomerAction,
-            "PAID" => CanonicalPaymentOutcomeStatus.Succeeded,
-            "SUCCEEDED" => CanonicalPaymentOutcomeStatus.Succeeded,
             "SUCCESS" => CanonicalPaymentOutcomeStatus.Succeeded,
             "FAILED" => CanonicalPaymentOutcomeStatus.Failed,
             "DECLINED" => CanonicalPaymentOutcomeStatus.Failed,
@@ -261,6 +240,81 @@ public sealed class AubPaymentAdapter : IPaymentProviderAdapter
             "EXPIRED" => CanonicalPaymentOutcomeStatus.Expired,
             _ => CanonicalPaymentOutcomeStatus.PendingProvider
         };
+    }
+
+    private static Dictionary<string, string> CreateRawAttributes(
+        string code,
+        string providerStatus,
+        string eventType,
+        string providerReference,
+        JsonElement orderInformation,
+        JsonElement data)
+    {
+        var rawAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["provider_code"] = code,
+            ["provider_status"] = providerStatus,
+            ["event_type"] = eventType,
+            ["provider_event_id"] = providerReference
+        };
+
+        if (TryGetOptionalString(orderInformation, "paymentType", out var paymentType))
+        {
+            rawAttributes["payment_type"] = paymentType;
+        }
+
+        if (TryGetOptionalString(orderInformation, "paymentBrand", out var orderPaymentBrand))
+        {
+            rawAttributes["payment_brand"] = orderPaymentBrand;
+        }
+
+        if (TryGetOptionalString(orderInformation, "attach", out var attach))
+        {
+            rawAttributes["attach"] = attach;
+            foreach (var pair in ParseAttachAttributes(attach))
+            {
+                rawAttributes[pair.Key] = pair.Value;
+            }
+        }
+
+        if (data.TryGetProperty("card", out var card) && card.ValueKind == JsonValueKind.Object)
+        {
+            if (TryGetOptionalString(card, "paymentBrand", out var cardPaymentBrand))
+            {
+                rawAttributes["card_payment_brand"] = cardPaymentBrand;
+            }
+
+            if (TryGetOptionalString(card, "cardBin", out var cardBin))
+            {
+                rawAttributes["card_bin"] = cardBin;
+            }
+
+            if (TryGetOptionalString(card, "last4Digits", out var last4Digits))
+            {
+                rawAttributes["last4_digits"] = last4Digits;
+            }
+        }
+
+        return rawAttributes;
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> ParseAttachAttributes(string attach)
+    {
+        foreach (var segment in attach.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var separatorIndex = segment.IndexOf('=', StringComparison.Ordinal);
+            if (separatorIndex <= 0 || separatorIndex == segment.Length - 1)
+            {
+                continue;
+            }
+
+            var key = segment[..separatorIndex].Trim();
+            var value = segment[(separatorIndex + 1)..].Trim();
+            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+            {
+                yield return new KeyValuePair<string, string>(key, value);
+            }
+        }
     }
 
     private static DateTimeOffset ParseDateTimeOffset(JsonElement element)

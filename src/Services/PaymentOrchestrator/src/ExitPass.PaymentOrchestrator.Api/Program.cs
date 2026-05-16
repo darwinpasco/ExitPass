@@ -207,6 +207,7 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
 
     services.AddHttpClient<PayMongoClient>();
     services.AddHttpClient<AubClient>();
+    services.AddSingleton<IAubRequestSigner, AubDeferredRequestSigner>();
 
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
     services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
