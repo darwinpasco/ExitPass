@@ -6,6 +6,7 @@ using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
 using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
+using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers;
@@ -193,6 +194,9 @@ static void RegisterApplicationServices(IServiceCollection services)
     ArgumentNullException.ThrowIfNull(services);
 
     services.AddScoped<InitiateProviderPaymentHandler>();
+    services.AddScoped<WebPayPaymentIntentHandler>();
+    services.AddScoped<IProviderPaymentHandoffInitiator, ProviderPaymentHandoffInitiator>();
+    services.AddSingleton<IProviderProductResolver, ProviderProductResolver>();
     services.AddScoped<VerifyProviderWebhookHandler>();
 }
 
@@ -202,6 +206,11 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     ArgumentNullException.ThrowIfNull(configuration);
 
     services.AddHttpClient<ICentralPmsPaymentOutcomeReporter, CentralPmsPaymentOutcomeReporter>(static client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
+
+    services.AddHttpClient<ICentralPmsWebPayClient, CentralPmsWebPayClient>(static client =>
     {
         client.Timeout = TimeSpan.FromSeconds(30);
     });
@@ -300,6 +309,7 @@ static void ConfigureEndpoints(WebApplication app)
 
     app.MapProviderWebhookEndpoints();
     app.MapInternalPaymentEndpoints();
+    app.MapWebPayPaymentIntentEndpoints();
 
     app.MapGet("/", static () => Results.Ok("ExitPass Payment Orchestrator API"));
 }
