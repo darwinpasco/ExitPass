@@ -11,6 +11,7 @@ using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers.Aub;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
+using ExitPass.PaymentOrchestrator.Infrastructure.Routing;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
@@ -211,6 +212,7 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
 
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
     services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
+    services.AddScoped<IPaymentProviderRoutingPolicyResolver, PaymentProviderRoutingPolicyResolver>();
 
     services.AddScoped<IPaymentProviderAdapter, AubPaymentAdapter>();
     services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
