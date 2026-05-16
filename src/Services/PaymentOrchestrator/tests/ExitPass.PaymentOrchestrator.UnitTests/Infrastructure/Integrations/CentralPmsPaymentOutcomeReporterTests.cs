@@ -221,6 +221,56 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
         Assert.Equal("PENDING_PROVIDER", document.RootElement.GetProperty("finalAttemptStatus").GetString());
     }
 
+    /// <summary>
+    /// Verifies that AUB outcomes are converted to the provider-neutral Central PMS payload shape.
+    /// </summary>
+    [Fact]
+    public async Task AubOutcomeReport_UsesProviderNeutralCentralPmsPayload()
+    {
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, new { status = "ok" }));
+        var reporter = CreateReporter(handler);
+
+        var report = new VerifiedPaymentOutcomeReport(
+            PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            ParkingSessionId: Guid.Parse("93e97f33-5849-4b9f-a83f-1080820103d8"),
+            RequestedByUserId: Guid.Parse("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"),
+            CorrelationId: Guid.Parse("6de95bb4-8f5a-4170-9184-e8eb4cb15c57"),
+            ProviderCode: "AUB",
+            ProviderReference: "aub-ref-001",
+            ProviderSessionId: "9c708f54-6daa-4835-a76b-6b166652dd02",
+            CanonicalStatus: "SUCCEEDED",
+            OccurredAtUtc: DateTimeOffset.Parse("2026-05-16T08:00:00Z"),
+            AmountMinor: 12500,
+            Currency: "PHP",
+            EventId: "aub-ref-001",
+            IsTerminal: true,
+            IsSuccess: true,
+            RawAttributes: new Dictionary<string, string>
+            {
+                ["provider_status"] = "SUCCESS",
+                ["card_bin"] = "420000",
+                ["last4_digits"] = "0000"
+            });
+
+        await reporter.ReportVerifiedOutcomeAsync(report, CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(handler.LastRequestContent));
+
+        using var document = JsonDocument.Parse(handler.LastRequestContent!);
+        var root = document.RootElement;
+
+        Assert.Equal(report.PaymentAttemptId.ToString(), root.GetProperty("paymentAttemptId").GetString());
+        Assert.Equal(report.ParkingSessionId.ToString(), root.GetProperty("parkingSessionId").GetString());
+        Assert.Equal("aub-ref-001", root.GetProperty("providerReference").GetString());
+        Assert.Equal("SUCCESS", root.GetProperty("providerStatus").GetString());
+        Assert.Equal("CONFIRMED", root.GetProperty("finalAttemptStatus").GetString());
+        Assert.Equal("payment-orchestrator", root.GetProperty("requestedBy").GetString());
+        Assert.False(root.TryGetProperty("cardBin", out _));
+        Assert.False(root.TryGetProperty("last4Digits", out _));
+        Assert.False(root.TryGetProperty("cashierUrl", out _));
+        Assert.False(root.TryGetProperty("orderInformation", out _));
+    }
+
     private static CentralPmsPaymentOutcomeReporter CreateReporter(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()
