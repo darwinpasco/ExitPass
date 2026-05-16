@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
@@ -42,7 +43,8 @@ public static class InternalPaymentOutcomeEndpoints
     public static IEndpointRouteBuilder MapInternalPaymentOutcomeEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payments")
-            .WithTags("InternalPayments");
+            .WithTags("InternalPayments")
+            .RequireInternalServiceMtls();
 
         group.MapPost("/outcome", HandleReportVerifiedOutcomeAsync)
             .WithName("ReportVerifiedPaymentOutcome")

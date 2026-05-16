@@ -40,7 +40,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
 
         await fixture.Sut.ExecuteAsync(CreatePaymentAttemptCommand("idem-created"), CancellationToken.None);
 
-        var activity = Assert.Single(listener.StoppedActivities);
+        var activity = Assert.Single(listener.StoppedActivities, x => HasTag(x, "idempotency_key", "idem-created"));
         Assert.Equal("CreateOrReusePaymentAttempt", activity.OperationName);
         AssertTag(activity, "correlation_id", CorrelationId);
         AssertTag(activity, "parking_session_id", ParkingSessionId);
@@ -57,7 +57,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
 
         await fixture.Sut.ExecuteAsync(CreatePaymentAttemptCommand("idem-reused"), CancellationToken.None);
 
-        var activity = Assert.Single(listener.StoppedActivities);
+        var activity = Assert.Single(listener.StoppedActivities, x => HasTag(x, "idempotency_key", "idem-reused"));
         AssertTag(activity, "correlation_id", CorrelationId);
         AssertTag(activity, "payment_attempt_id", PaymentAttemptId);
         AssertTag(activity, "was_reused", true);

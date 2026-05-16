@@ -21,6 +21,7 @@
 
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Endpoints;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Api.VendorParking;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
@@ -62,6 +63,7 @@ var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "
 ConfigureLogging(builder, otlpEndpoint, serviceVersion);
 ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
+ConfigureInternalSecurity(builder);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
 
 var app = builder.Build();
@@ -78,6 +80,7 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Secur
 app.Use(CorrelationMiddleware);
 
 app.UseRouting();
+app.UseMiddleware<InternalMtlsMiddleware>();
 app.UseAuthorization();
 
 app.UseHttpMetrics();
@@ -235,6 +238,13 @@ static void ConfigureHealthChecks(WebApplicationBuilder builder)
     builder.Services
         .AddHealthChecks()
         .AddCheck("self", () => HealthCheckResult.Healthy("Central PMS Service is alive."));
+}
+
+static void ConfigureInternalSecurity(WebApplicationBuilder builder)
+{
+    builder.Services.Configure<InternalMtlsOptions>(
+        builder.Configuration.GetSection("InternalSecurity:Mtls"));
+    builder.Services.AddSingleton<IInternalClientCertificateAccessor, HttpContextInternalClientCertificateAccessor>();
 }
 
 static void ConfigureApplicationServices(

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
 using Microsoft.Extensions.Logging;
@@ -35,7 +36,8 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
     public static IEndpointRouteBuilder MapInternalPaymentAttemptExitAuthorizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payment-attempts")
-            .WithTags("InternalPaymentAttempts");
+            .WithTags("InternalPaymentAttempts")
+            .RequireInternalServiceMtls();
 
         group.MapPost("/{paymentAttemptId:guid}/issue-exit-authorization", HandleAsync)
             .WithName("IssueExitAuthorization")
