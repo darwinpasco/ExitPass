@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
@@ -53,6 +54,38 @@ public sealed class ResolveVendorParkingHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a successful vendor parking resolution publishes the integration event envelope.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenResolved_PublishesVendorParkingResolved()
+    {
+        var publisher = new RecordingIntegrationEventPublisher();
+        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.FoundWithInlineQuote(), publisher);
+
+        var result = await sut.ExecuteAsync(PlateCommand(), CancellationToken.None);
+
+        publisher.Published.Should().ContainSingle();
+        var envelope = publisher.Published.Single();
+        envelope.EventType.Should().Be(IntegrationEventTypes.VendorParkingResolved);
+        envelope.AggregateId.Should().Be(result.ParkingSession!.ParkingSessionId.ToString());
+        envelope.AggregateType.Should().Be(nameof(ParkingSession));
+        envelope.CorrelationId.Should().Be(CorrelationId);
+        envelope.EventId.Should().NotBeEmpty();
+        envelope.SchemaVersion.Should().Be(1);
+        envelope.Payload.Should().BeOfType<VendorParkingResolvedPayload>()
+            .Which.Should().Match<VendorParkingResolvedPayload>(payload =>
+                payload.ParkingSessionId == result.ParkingSession!.ParkingSessionId &&
+                payload.TariffSnapshotId == result.TariffSnapshot!.TariffSnapshotId &&
+                payload.SiteId == "SITE-TEST-001" &&
+                payload.SiteGroupId == "SG-TEST-001" &&
+                payload.VendorSystemId == "FAKE-PMS" &&
+                payload.LookupReferenceType == "plate" &&
+                payload.LookupOutcome == ResolveVendorParkingOutcome.Resolved.ToString() &&
+                payload.NetPayableMinorUnits == 12550 &&
+                payload.Currency == "PHP");
+    }
+
+    /// <summary>
     /// Verifies that a ticket lookup maps provider-neutral vendor data into Central PMS session and tariff objects.
     /// </summary>
     [Fact]
@@ -74,7 +107,8 @@ public sealed class ResolveVendorParkingHandlerTests
     [Fact]
     public async Task ResolveVendorSession_WhenVendorReturnsNotFound_ReturnsSessionNotFound()
     {
-        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.NotFound());
+        var publisher = new RecordingIntegrationEventPublisher();
+        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.NotFound(), publisher);
 
         var result = await sut.ExecuteAsync(PlateCommand(), CancellationToken.None);
 
@@ -83,6 +117,39 @@ public sealed class ResolveVendorParkingHandlerTests
         result.Retryable.Should().BeFalse();
         result.ParkingSession.Should().BeNull();
         result.TariffSnapshot.Should().BeNull();
+        publisher.Published.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that unsuccessful vendor lookups do not publish success events.
+    /// </summary>
+    /// <param name="clientScenario">Vendor PMS client response setup name.</param>
+    [Theory]
+    [MemberData(nameof(FailedVendorResolutionClients))]
+    public async Task ResolveVendorParking_WhenNotFoundUnavailableOrMalformed_DoesNotPublishVendorParkingResolved(
+        string clientScenario)
+    {
+        var publisher = new RecordingIntegrationEventPublisher();
+        var sut = CreateSut(FailedVendorResolutionClient(clientScenario), publisher);
+
+        var result = await sut.ExecuteAsync(PlateCommand(), CancellationToken.None);
+
+        result.Outcome.Should().NotBe(ResolveVendorParkingOutcome.Resolved);
+        publisher.Published.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that the published event preserves the request correlation identifier.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_PublishedEventContainsCorrelationId()
+    {
+        var publisher = new RecordingIntegrationEventPublisher();
+        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.FoundWithInlineQuote(), publisher);
+
+        await sut.ExecuteAsync(PlateCommand(), CancellationToken.None);
+
+        publisher.Published.Single().CorrelationId.Should().Be(CorrelationId);
     }
 
     /// <summary>
@@ -204,11 +271,39 @@ public sealed class ResolveVendorParkingHandlerTests
         publicNames.Should().NotContain(name => name.Contains("Sk", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static ResolveVendorParkingHandler CreateSut(FakeVendorPmsParkingResolutionClient vendorClient)
+    /// <summary>
+    /// Provides failed vendor-resolution scenarios that must not emit success events.
+    /// </summary>
+    /// <returns>Failed vendor-resolution scenario names.</returns>
+    public static TheoryData<string> FailedVendorResolutionClients()
+    {
+        return new TheoryData<string>
+        {
+            "not-found",
+            "unavailable",
+            "malformed"
+        };
+    }
+
+    private static FakeVendorPmsParkingResolutionClient FailedVendorResolutionClient(string scenario)
+    {
+        return scenario switch
+        {
+            "not-found" => FakeVendorPmsParkingResolutionClient.NotFound(),
+            "unavailable" => FakeVendorPmsParkingResolutionClient.Unavailable(),
+            "malformed" => FakeVendorPmsParkingResolutionClient.MalformedSession(),
+            _ => throw new InvalidOperationException($"Unknown failed vendor resolution scenario '{scenario}'.")
+        };
+    }
+
+    private static ResolveVendorParkingHandler CreateSut(
+        FakeVendorPmsParkingResolutionClient vendorClient,
+        RecordingIntegrationEventPublisher? eventPublisher = null)
     {
         return new ResolveVendorParkingHandler(
             vendorClient,
             new PassThroughVendorParkingResolutionPersistence(),
+            eventPublisher ?? new RecordingIntegrationEventPublisher(),
             new CentralPmsMetrics(),
             NullLogger<ResolveVendorParkingHandler>.Instance);
     }
@@ -246,6 +341,7 @@ public sealed class ResolveVendorParkingHandlerTests
             gateway,
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             providerHandoffFactory,
+            new RecordingIntegrationEventPublisher(),
             clock,
             new CentralPmsMetrics(),
             NullLogger<CreateOrReusePaymentAttemptHandler>.Instance);
@@ -447,6 +543,17 @@ public sealed class ResolveVendorParkingHandlerTests
         {
             _snapshots.TryGetValue(tariffSnapshotId, out var snapshot);
             return Task.FromResult(snapshot);
+        }
+    }
+
+    private sealed class RecordingIntegrationEventPublisher : IIntegrationEventPublisher
+    {
+        public List<IntegrationEventEnvelope> Published { get; } = new();
+
+        public Task PublishAsync(IntegrationEventEnvelope envelope, CancellationToken cancellationToken)
+        {
+            Published.Add(envelope);
+            return Task.CompletedTask;
         }
     }
 }
