@@ -36,7 +36,8 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("AUB", result.Response!.SelectedProviderCode);
         Assert.Equal("PAYMONGO", result.Response.FallbackProviderCode);
         Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
-        Assert.Equal("QRPH", fixture.CapturedPaymentProvider);
+        Assert.Equal("AUB_QRPH", fixture.CapturedPaymentProvider);
+        Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
         Assert.Equal("AUB_CARD_CASHIER", fixture.CapturedInitiateRequest!.ProviderProduct);
     }
 
@@ -53,7 +54,54 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.True(result.Succeeded);
         Assert.Equal("PAYMONGO", result.Response!.SelectedProviderCode);
         Assert.Null(result.Response.FallbackProviderCode);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
+        Assert.Equal("GCASH", fixture.CapturedPaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedInitiateRequest!.ProviderProduct);
+    }
+
+    /// <summary>
+    /// Verifies card routes selected for AUB use the Central PMS AUB card cashier rail.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCardRequestedWithAubRoute_CreatesAubCardCashierAttempt()
+    {
+        var fixture = CreateFixture("CARD", "AUB", "PAYMONGO");
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("AUB_CARD_CASHIER", fixture.CapturedPaymentProvider);
+        Assert.Equal("CARD", fixture.CapturedPaymentMethod);
+    }
+
+    /// <summary>
+    /// Verifies Maya routes selected for PayMongo use the Central PMS PayMongo checkout rail.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenMayaRequestedWithPayMongoRoute_CreatesPayMongoCheckoutAttempt()
+    {
+        var fixture = CreateFixture("MAYA", "PAYMONGO", null);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("MAYA"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
+        Assert.Equal("MAYA", fixture.CapturedPaymentMethod);
+    }
+
+    /// <summary>
+    /// Verifies PayMongo card routes use the Central PMS PayMongo checkout rail.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCardRequestedWithPayMongoRoute_CreatesPayMongoCheckoutAttempt()
+    {
+        var fixture = CreateFixture("CARD", "PAYMONGO", null);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
+        Assert.Equal("CARD", fixture.CapturedPaymentMethod);
     }
 
     /// <summary>
@@ -89,6 +137,23 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.False(result.Succeeded);
         Assert.Equal(422, result.Error!.StatusCode);
         Assert.Equal("PREFERRED_PROVIDER_UNSUPPORTED", result.Error.ErrorCode);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies provider rail mappings reject unsupported combinations before creating a payment attempt.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenProviderRailMappingIsUnsupported_ReturnsDeterministicError()
+    {
+        var fixture = CreateFixture("GCASH", "AUB", null);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("GCASH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(422, result.Error!.StatusCode);
+        Assert.Equal("PAYMENT_PROVIDER_MAPPING_NOT_SUPPORTED", result.Error.ErrorCode);
         Assert.False(fixture.CreatePaymentAttemptWasCalled);
         Assert.Null(fixture.CapturedInitiateRequest);
     }
@@ -247,6 +312,8 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public string? CapturedPaymentProvider => CentralPms.CapturedPaymentProvider;
 
+        public string? CapturedPaymentMethod => CentralPms.CapturedPaymentMethod;
+
         public string? CapturedTicketReference => CentralPms.CapturedTicketReference;
 
         public bool ResolveVendorParkingWasCalled => CentralPms.ResolveVendorParkingWasCalled;
@@ -271,6 +338,8 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public string? CapturedPaymentProvider { get; private set; }
 
+        public string? CapturedPaymentMethod { get; private set; }
+
         public string? CapturedTicketReference { get; private set; }
 
         public Task<CentralPmsWebPayResult<CentralPmsResolvedParking>> ResolveVendorParkingAsync(
@@ -291,12 +360,14 @@ public sealed class WebPayPaymentIntentHandlerTests
             Guid parkingSessionId,
             Guid tariffSnapshotId,
             string paymentProvider,
+            string paymentMethod,
             string idempotencyKey,
             Guid correlationId,
             CancellationToken cancellationToken)
         {
             CreatePaymentAttemptWasCalled = true;
             CapturedPaymentProvider = paymentProvider;
+            CapturedPaymentMethod = paymentMethod;
 
             return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));

@@ -51,7 +51,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal("AUB", body!.SelectedProviderCode);
         Assert.Equal("PAYMONGO", body.FallbackProviderCode);
         Assert.Equal("https://payments.test/handoff", body.Handoff.HandoffUrl);
-        Assert.Equal("CARD", state.CapturedPaymentProvider);
+        Assert.Equal("AUB_CARD_CASHIER", state.CapturedPaymentProvider);
+        Assert.Equal("CARD", state.CapturedPaymentMethod);
         Assert.Equal("AUB_CARD_CASHIER", state.CapturedInitiateRequest!.ProviderProduct);
     }
 
@@ -71,6 +72,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("TICKET-FROM-FUTURE-QR-SCAN", state.CapturedTicketReference);
+        Assert.Equal("AUB_QRPH", state.CapturedPaymentProvider);
+        Assert.Equal("QRPH", state.CapturedPaymentMethod);
         var body = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("qrSource", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("camera", body, StringComparison.OrdinalIgnoreCase);
@@ -222,6 +225,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         public string? CapturedPaymentProvider { get; private set; }
 
+        public string? CapturedPaymentMethod { get; private set; }
+
         public string? CapturedTicketReference { get; private set; }
 
         public ResolvePaymentProviderRouteRequest? CapturedRouteRequest { get; private set; }
@@ -246,12 +251,14 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             Guid parkingSessionId,
             Guid tariffSnapshotId,
             string paymentProvider,
+            string paymentMethod,
             string idempotencyKey,
             Guid correlationId,
             CancellationToken cancellationToken)
         {
             CreatePaymentAttemptWasCalled = true;
             CapturedPaymentProvider = paymentProvider;
+            CapturedPaymentMethod = paymentMethod;
             return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));
         }
