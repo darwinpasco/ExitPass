@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { QrScanner } from "./QrScanner";
-import { createPaymentIntent, formatAmount, normalizeTicketReference } from "./webpay";
-import type { PaymentIntentResponse, PaymentMethod } from "./types";
+import { createPaymentIntent, extractPaymentIntentContext, formatAmount, normalizeTicketReference } from "./webpay";
+import type { PaymentIntentRequest, PaymentIntentResponse, PaymentMethod } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string }> = [
   { code: "QRPH", label: "QRPh", image: "/assets/payment-methods/qrph.png" },
@@ -15,6 +15,7 @@ type EntryMode = "ticket" | "plate";
 export function App() {
   const [entryMode, setEntryMode] = useState<EntryMode>("ticket");
   const [ticketReference, setTicketReference] = useState("");
+  const [scannedContext, setScannedContext] = useState<Partial<PaymentIntentRequest>>({});
   const [plateNumber, setPlateNumber] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRPH");
   const [result, setResult] = useState<PaymentIntentResponse | null>(null);
@@ -23,8 +24,10 @@ export function App() {
 
   function handleQrDecoded(value: string) {
     const normalized = normalizeTicketReference(value);
+    const context = extractPaymentIntentContext(value);
     setEntryMode("ticket");
     setTicketReference(normalized);
+    setScannedContext(context);
     setError("");
   }
 
@@ -45,7 +48,8 @@ export function App() {
       const response = await createPaymentIntent({
         ticketReference: hasTicket ? ticketReference : undefined,
         plateNumber: hasPlate ? plateNumber : undefined,
-        paymentMethod
+        paymentMethod,
+        ...(hasTicket ? scannedContext : {})
       });
       setResult(response);
     } catch (apiError) {
@@ -100,7 +104,10 @@ export function App() {
             <input
               name="ticketReference"
               value={ticketReference}
-              onChange={(event) => setTicketReference(event.target.value)}
+              onChange={(event) => {
+                setTicketReference(event.target.value);
+                setScannedContext({});
+              }}
               placeholder="Scan or enter ticket reference"
               autoComplete="off"
             />
