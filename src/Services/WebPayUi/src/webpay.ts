@@ -1,6 +1,17 @@
-import type { ApiError, PaymentIntentRequest, PaymentIntentResponse } from "./types";
+import type { ActivePaymentAttemptState, ApiError, PaymentIntentRequest, PaymentIntentResponse } from "./types";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
+const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
+
+export class ActivePaymentAttemptError extends Error {
+  public readonly activePaymentAttempt: ActivePaymentAttemptState;
+
+  public constructor(activePaymentAttempt: ActivePaymentAttemptState) {
+    super(activePaymentAttempt.message);
+    this.name = "ActivePaymentAttemptError";
+    this.activePaymentAttempt = activePaymentAttempt;
+  }
+}
 
 type WebPaySiteContext = Pick<PaymentIntentRequest, "siteGroupId" | "siteId" | "vendorSystemId">;
 
@@ -133,6 +144,19 @@ export async function createPaymentIntent(
   const payload = (await response.json().catch(() => ({}))) as PaymentIntentResponse | ApiError;
   if (!response.ok) {
     const error = payload as ApiError;
+    if (isActivePaymentAttemptConflict(response.status, error)) {
+      throw new ActivePaymentAttemptError({
+        kind: "active-payment-attempt",
+        message:
+          "You already have an active payment for this parking session. Continue your existing payment or check its status.",
+        correlationId: error.correlationId,
+        parkingSessionId: error.parkingSessionId,
+        paymentAttemptId: error.paymentAttemptId,
+        status: error.status,
+        handoff: error.handoff
+      });
+    }
+
     throw new Error(toFriendlyError(error.errorCode, error.message));
   }
 
@@ -168,6 +192,10 @@ export function formatAmount(amountMinorUnits: number, currency: string): string
     style: "currency",
     currency: currency || "PHP"
   }).format((amountMinorUnits || 0) / 100);
+}
+
+export function isActivePaymentAttemptConflict(statusCode: number, error: ApiError): boolean {
+  return statusCode === 409 && (error.errorCode ?? "").toUpperCase() === activePaymentAttemptErrorCode;
 }
 
 function firstNonBlank(...values: Array<string | undefined>): string | undefined {

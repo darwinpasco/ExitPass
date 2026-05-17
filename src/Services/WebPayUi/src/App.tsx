@@ -1,7 +1,13 @@
 import { FormEvent, useState } from "react";
 import { QrScanner } from "./QrScanner";
-import { createPaymentIntent, extractPaymentIntentContext, formatAmount, normalizeTicketReference } from "./webpay";
-import type { PaymentIntentRequest, PaymentIntentResponse, PaymentMethod } from "./types";
+import {
+  ActivePaymentAttemptError,
+  createPaymentIntent,
+  extractPaymentIntentContext,
+  formatAmount,
+  normalizeTicketReference
+} from "./webpay";
+import type { ActivePaymentAttemptState, PaymentIntentRequest, PaymentIntentResponse, PaymentMethod } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string }> = [
   { code: "QRPH", label: "QRPh", image: "/assets/payment-methods/qrph.png" },
@@ -19,6 +25,7 @@ export function App() {
   const [plateNumber, setPlateNumber] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRPH");
   const [result, setResult] = useState<PaymentIntentResponse | null>(null);
+  const [activePaymentAttempt, setActivePaymentAttempt] = useState<ActivePaymentAttemptState | null>(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -29,12 +36,14 @@ export function App() {
     setTicketReference(normalized);
     setScannedContext(context);
     setError("");
+    setActivePaymentAttempt(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setResult(null);
+    setActivePaymentAttempt(null);
 
     const hasTicket = entryMode === "ticket" && ticketReference.trim().length > 0;
     const hasPlate = entryMode === "plate" && plateNumber.trim().length > 0;
@@ -53,7 +62,11 @@ export function App() {
       });
       setResult(response);
     } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : "Payment intent creation failed. Please try again.");
+      if (apiError instanceof ActivePaymentAttemptError) {
+        setActivePaymentAttempt(apiError.activePaymentAttempt);
+      } else {
+        setError(apiError instanceof Error ? apiError.message : "Payment intent creation failed. Please try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -150,6 +163,51 @@ export function App() {
             <img src="/assets/icons/error.svg" alt="" aria-hidden="true" />
             <span>{error}</span>
           </div>
+        )}
+
+        {activePaymentAttempt && (
+          <section className="active-payment-panel" aria-live="polite">
+            <div>
+              <p className="eyebrow">Payment already started</p>
+              <h2>Payment already started.</h2>
+              <p>
+                You already have an active payment for this parking session. Continue your existing payment or check its
+                status.
+              </p>
+            </div>
+            {activePaymentAttempt.handoff?.handoffUrl ? (
+              <a className="primary-link" href={activePaymentAttempt.handoff.handoffUrl}>
+                Continue Payment
+              </a>
+            ) : (
+              <button type="button" className="ghost-button status-button" onClick={() => setActivePaymentAttempt(null)}>
+                Check Status
+              </button>
+            )}
+            <details className="support-details">
+              <summary>Support details</summary>
+              <dl>
+                {activePaymentAttempt.correlationId && (
+                  <div>
+                    <dt>Correlation ID</dt>
+                    <dd>{activePaymentAttempt.correlationId}</dd>
+                  </div>
+                )}
+                {activePaymentAttempt.parkingSessionId && (
+                  <div>
+                    <dt>Parking session ID</dt>
+                    <dd>{activePaymentAttempt.parkingSessionId}</dd>
+                  </div>
+                )}
+                {activePaymentAttempt.paymentAttemptId && (
+                  <div>
+                    <dt>Payment attempt ID</dt>
+                    <dd>{activePaymentAttempt.paymentAttemptId}</dd>
+                  </div>
+                )}
+              </dl>
+            </details>
+          </section>
         )}
 
         <button type="submit" className="submit-button" disabled={isSubmitting}>

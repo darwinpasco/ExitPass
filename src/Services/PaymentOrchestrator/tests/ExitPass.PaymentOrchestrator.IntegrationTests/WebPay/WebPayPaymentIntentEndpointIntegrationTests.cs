@@ -117,6 +117,35 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     /// <summary>
+    /// Verifies active Central PMS payment attempt conflicts are returned as provider-neutral 409 responses.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCentralPmsReturnsActivePaymentAttemptConflict_Returns409()
+    {
+        var state = new WebPayEndpointState("QRPH", "AUB", "PAYMONGO");
+        state.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                Guid.Parse("33333333-3333-3333-3333-333333333333")));
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.True(state.CreatePaymentAttemptWasCalled);
+        Assert.Null(state.CapturedInitiateRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("ACTIVE_PAYMENT_ATTEMPT_EXISTS", body);
+        Assert.Contains("33333333-3333-3333-3333-333333333333", body);
+        Assert.DoesNotContain("merchantReferenceNumber", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("providerProduct", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("rawResponse", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Verifies missing plate and ticket fields are rejected before any backend calls.
     /// </summary>
     [Fact]
@@ -219,6 +248,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
                 "HIKCENTRAL",
                 Guid.Parse("33333333-3333-3333-3333-333333333333")));
 
+        public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
+
         public bool ResolveVendorParkingWasCalled { get; private set; }
 
         public bool CreatePaymentAttemptWasCalled { get; private set; }
@@ -259,7 +290,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             CreatePaymentAttemptWasCalled = true;
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
-            return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            return Task.FromResult(CreateAttemptResult ?? CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));
         }
 

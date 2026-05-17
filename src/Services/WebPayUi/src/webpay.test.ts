@@ -63,6 +63,30 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/payment-intents");
   });
 
+  it("WebPay_WhenActivePaymentAttemptConflictReturned_ThrowsActivePaymentAttemptError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        errorCode: "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+        message: "An active payment attempt already exists for parking session.",
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      createPaymentIntent(
+        { ticketReference: "TICKET-001", paymentMethod: "QRPH", vendorSystemId: "HIKCENTRAL" },
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+        name: "ActivePaymentAttemptError",
+        activePaymentAttempt: {
+          correlationId: "77777777-7777-7777-7777-777777777777"
+        }
+      });
+  });
+
   it("WebPay_WhenDefaultSiteGroupIdIsConfigured_IncludesSiteGroupId", () => {
     vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
 

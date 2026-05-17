@@ -234,7 +234,8 @@ public sealed class WebPayPaymentIntentHandler
             error.StatusCode,
             error.ErrorCode,
             error.Message,
-            error.Retryable);
+            error.Retryable,
+            error.CorrelationId ?? correlationId);
     }
 
     private static string BuildIdempotencyKey(Guid parkingSessionId, string paymentMethod, Guid correlationId)

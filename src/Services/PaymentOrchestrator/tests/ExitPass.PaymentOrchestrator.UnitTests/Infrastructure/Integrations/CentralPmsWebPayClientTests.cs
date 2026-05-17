@@ -84,6 +84,39 @@ public sealed class CentralPmsWebPayClientTests
         Assert.False(result.Error.Retryable);
     }
 
+    /// <summary>
+    /// Verifies Central PMS active-attempt conflict correlation is preserved.
+    /// </summary>
+    [Fact]
+    public async Task CreateOrReusePaymentAttemptAsync_WhenActivePaymentAttemptConflict_PreservesCorrelationId()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Conflict)
+        {
+            Content = JsonContent(new
+            {
+                errorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                message = "An active payment attempt already exists for parking session.",
+                correlationId = CorrelationId,
+                retryable = false
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.CreateOrReusePaymentAttemptAsync(
+            ParkingSessionId,
+            TariffSnapshotId,
+            "AUB_QRPH",
+            "QRPH",
+            "webpay:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("ACTIVE_PAYMENT_ATTEMPT_EXISTS", result.Error.ErrorCode);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+    }
+
     private static CentralPmsWebPayClient CreateClient(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()

@@ -35,4 +35,19 @@ export type ApiError = {
   errorCode?: string;
   message?: string;
   retryable?: boolean;
+  correlationId?: string;
+  parkingSessionId?: string;
+  paymentAttemptId?: string;
+  status?: string;
+  handoff?: WebPayHandoff | null;
+};
+
+export type ActivePaymentAttemptState = {
+  kind: "active-payment-attempt";
+  message: string;
+  correlationId?: string;
+  parkingSessionId?: string;
+  paymentAttemptId?: string;
+  status?: string;
+  handoff?: WebPayHandoff | null;
 };
