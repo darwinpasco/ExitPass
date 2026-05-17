@@ -4,6 +4,9 @@ export type PaymentIntentRequest = {
   ticketReference?: string;
   plateNumber?: string;
   paymentMethod: PaymentMethod;
+  siteGroupId?: string;
+  siteId?: string;
+  vendorSystemId?: string;
 };
 
 export type WebPayHandoff = {
