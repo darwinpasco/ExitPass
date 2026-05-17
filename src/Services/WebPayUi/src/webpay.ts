@@ -2,6 +2,8 @@ import type { ApiError, PaymentIntentRequest, PaymentIntentResponse } from "./ty
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 
+type WebPaySiteContext = Pick<PaymentIntentRequest, "siteGroupId" | "siteId" | "vendorSystemId">;
+
 export function normalizeTicketReference(rawValue: string): string {
   const value = rawValue.trim();
   if (!value) {
@@ -35,14 +37,70 @@ export function normalizeTicketReference(rawValue: string): string {
   return value;
 }
 
+export function extractPaymentIntentContext(rawValue: string): WebPaySiteContext {
+  const value = rawValue.trim();
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return {
+      siteGroupId: getStringValue(parsed, "siteGroupId", "site_group_id"),
+      siteId: getStringValue(parsed, "siteId", "site_id"),
+      vendorSystemId: getStringValue(parsed, "vendorSystemId", "vendor_system_id", "vendor")
+    };
+  } catch {
+    // Not a JSON QR payload; continue with URL context handling.
+  }
+
+  try {
+    const url = new URL(value);
+    return {
+      siteGroupId: getQueryValue(url, "siteGroupId", "site_group_id"),
+      siteId: getQueryValue(url, "siteId", "site_id"),
+      vendorSystemId: getQueryValue(url, "vendorSystemId", "vendor_system_id", "vendor")
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function getApiBaseUrl(): string {
   return (import.meta.env.VITE_WEBPAY_API_BASE_URL ?? "").replace(/\/+$/, "");
 }
 
-export function buildPaymentIntentBody(request: PaymentIntentRequest): PaymentIntentRequest {
+export function getDefaultSiteContext(): WebPaySiteContext {
+  return {
+    siteGroupId: (import.meta.env.VITE_WEBPAY_DEFAULT_SITE_GROUP_ID ?? "").trim() || undefined,
+    siteId: (import.meta.env.VITE_WEBPAY_DEFAULT_SITE_ID ?? "").trim() || undefined,
+    vendorSystemId: (import.meta.env.VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID ?? "").trim() || undefined
+  };
+}
+
+export function buildPaymentIntentBody(
+  request: PaymentIntentRequest,
+  defaultContext: WebPaySiteContext = getDefaultSiteContext()
+): PaymentIntentRequest {
   const body: PaymentIntentRequest = {
     paymentMethod: request.paymentMethod
   };
+
+  const siteGroupId = firstNonBlank(request.siteGroupId, defaultContext.siteGroupId);
+  const siteId = firstNonBlank(request.siteId, defaultContext.siteId);
+  const vendorSystemId = firstNonBlank(request.vendorSystemId, defaultContext.vendorSystemId);
+
+  if (siteGroupId) {
+    body.siteGroupId = siteGroupId;
+  }
+
+  if (siteId) {
+    body.siteId = siteId;
+  }
+
+  if (vendorSystemId) {
+    body.vendorSystemId = vendorSystemId;
+  }
 
   if (request.ticketReference?.trim()) {
     body.ticketReference = request.ticketReference.trim();
@@ -59,12 +117,17 @@ export async function createPaymentIntent(
   request: PaymentIntentRequest,
   fetchImpl: typeof fetch = fetch
 ): Promise<PaymentIntentResponse> {
+  const body = buildPaymentIntentBody(request);
+  if (!body.vendorSystemId) {
+    throw new Error("WebPay is missing vendor configuration. Set VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID for local testing.");
+  }
+
   const response = await fetchImpl(`${getApiBaseUrl()}${paymentIntentPath}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(buildPaymentIntentBody(request))
+    body: JSON.stringify(body)
   });
 
   const payload = (await response.json().catch(() => ({}))) as PaymentIntentResponse | ApiError;
@@ -105,4 +168,37 @@ export function formatAmount(amountMinorUnits: number, currency: string): string
     style: "currency",
     currency: currency || "PHP"
   }).format((amountMinorUnits || 0) / 100);
+}
+
+function firstNonBlank(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
+function getStringValue(source: Record<string, unknown>, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function getQueryValue(url: URL, ...keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = url.searchParams.get(key);
+    if (value?.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
 }

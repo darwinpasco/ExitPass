@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
 vi.mock("@zxing/browser", () => ({
@@ -28,8 +28,15 @@ const successResponse = {
   correlationId: "77777777-7777-7777-7777-777777777777"
 };
 
+beforeEach(() => {
+  vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
+  vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
+  vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "HIKCENTRAL");
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("ExitPass WebPay UI", () => {
@@ -144,6 +151,12 @@ describe("ExitPass WebPay UI", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body).toEqual({ plateNumber: "ABC 1234", paymentMethod: "GCASH" });
+    expect(body).toEqual({
+      plateNumber: "ABC 1234",
+      paymentMethod: "GCASH",
+      siteGroupId: "11111111-1111-1111-1111-111111111111",
+      siteId: "22222222-2222-2222-2222-222222222222",
+      vendorSystemId: "HIKCENTRAL"
+    });
   });
 });

@@ -1,5 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
-import { buildPaymentIntentBody, createPaymentIntent, normalizeTicketReference, toFriendlyError } from "./webpay";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  buildPaymentIntentBody,
+  createPaymentIntent,
+  extractPaymentIntentContext,
+  normalizeTicketReference,
+  toFriendlyError
+} from "./webpay";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("WebPay QR and payment intent helpers", () => {
   it("WebPay_WhenQrDecoded_PopulatesTicketReference", () => {
@@ -29,7 +39,10 @@ describe("WebPay QR and payment intent helpers", () => {
       json: async () => ({ status: "PENDING_PROVIDER" })
     });
 
-    await createPaymentIntent({ ticketReference: "TICKET-001", paymentMethod: "MAYA" }, fetchMock as never);
+    await createPaymentIntent(
+      { ticketReference: "TICKET-001", paymentMethod: "MAYA", vendorSystemId: "HIKCENTRAL" },
+      fetchMock as never
+    );
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.paymentMethod).toBe("MAYA");
@@ -42,9 +55,59 @@ describe("WebPay QR and payment intent helpers", () => {
       json: async () => ({ status: "PENDING_PROVIDER" })
     });
 
-    await createPaymentIntent({ ticketReference: "TICKET-001", paymentMethod: "QRPH" }, fetchMock as never);
+    await createPaymentIntent(
+      { ticketReference: "TICKET-001", paymentMethod: "QRPH", vendorSystemId: "HIKCENTRAL" },
+      fetchMock as never
+    );
 
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenDefaultSiteGroupIdIsConfigured_IncludesSiteGroupId", () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
+
+    const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "QRPH" });
+
+    expect(body.siteGroupId).toBe("11111111-1111-1111-1111-111111111111");
+  });
+
+  it("WebPay_WhenDefaultSiteIdIsConfigured_IncludesSiteId", () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
+
+    const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "QRPH" });
+
+    expect(body.siteId).toBe("22222222-2222-2222-2222-222222222222");
+  });
+
+  it("WebPay_WhenDefaultVendorSystemIdIsConfigured_IncludesVendorSystemId", () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "HIKCENTRAL");
+
+    const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "QRPH" });
+
+    expect(body.vendorSystemId).toBe("HIKCENTRAL");
+  });
+
+  it("WebPay_WhenVendorSystemIdIsMissing_ReturnsFriendlyConfigurationErrorBeforeSubmit", async () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "");
+    const fetchMock = vi.fn();
+
+    await expect(
+      createPaymentIntent({ ticketReference: "TICKET-001", paymentMethod: "QRPH" }, fetchMock as never)
+    ).rejects.toThrow("WebPay is missing vendor configuration");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("WebPay_WhenQrUrlIncludesContext_ExtractsContextWithoutChangingTicketReference", () => {
+    const qrUrl =
+      "https://pay.exitpass.test?ticker=no&ticketReference=TICKET-QR-001&siteGroupId=11111111-1111-1111-1111-111111111111&siteId=22222222-2222-2222-2222-222222222222&vendorSystemId=HIKCENTRAL";
+
+    expect(normalizeTicketReference(qrUrl)).toBe("TICKET-QR-001");
+    expect(extractPaymentIntentContext(qrUrl)).toEqual({
+      siteGroupId: "11111111-1111-1111-1111-111111111111",
+      siteId: "22222222-2222-2222-2222-222222222222",
+      vendorSystemId: "HIKCENTRAL"
+    });
   });
 
   it("WebPay_DoesNotSubmitSelectedProviderCodeAsUserChoice", () => {
