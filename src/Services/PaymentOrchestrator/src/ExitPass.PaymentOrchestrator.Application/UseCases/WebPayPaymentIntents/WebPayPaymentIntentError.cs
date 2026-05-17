@@ -7,8 +7,10 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents
 /// <param name="ErrorCode">Provider-neutral error code.</param>
 /// <param name="Message">Provider-neutral error message.</param>
 /// <param name="Retryable">Indicates whether the request can be retried.</param>
+/// <param name="CorrelationId">Optional correlation identifier for support tracing.</param>
 public sealed record WebPayPaymentIntentError(
     int StatusCode,
     string ErrorCode,
     string Message,
-    bool Retryable);
+    bool Retryable,
+    Guid? CorrelationId = null);

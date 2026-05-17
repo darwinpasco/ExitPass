@@ -51,8 +51,14 @@ public static class WebPayPaymentIntentEndpoints
             {
                 errorCode = error.ErrorCode,
                 message = error.Message,
-                retryable = error.Retryable
+                retryable = error.Retryable,
+                correlationId = error.CorrelationId
             };
+
+            if (error.CorrelationId.HasValue)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = error.CorrelationId.Value.ToString();
+            }
 
             return Results.Json(response, statusCode: error.StatusCode);
         })

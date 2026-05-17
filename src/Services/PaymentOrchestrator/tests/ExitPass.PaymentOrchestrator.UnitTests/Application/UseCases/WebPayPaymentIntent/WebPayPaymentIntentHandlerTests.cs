@@ -213,6 +213,31 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies active payment attempt conflicts remain conflicts and do not start a provider handoff.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCentralPmsReturnsActivePaymentAttemptConflict_Returns409()
+    {
+        var fixture = CreateFixture("QRPH", "AUB", "PAYMONGO");
+        fixture.CentralPms.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                CorrelationId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("ACTIVE_PAYMENT_ATTEMPT_EXISTS", result.Error.ErrorCode);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+        Assert.True(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
     /// Verifies Central PMS payment attempt creation or reuse happens before provider handoff creation.
     /// </summary>
     [Fact]
@@ -332,6 +357,8 @@ public sealed class WebPayPaymentIntentHandlerTests
                 "HIKCENTRAL",
                 CorrelationId));
 
+        public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
+
         public bool ResolveVendorParkingWasCalled { get; private set; }
 
         public bool CreatePaymentAttemptWasCalled { get; private set; }
@@ -369,7 +396,7 @@ public sealed class WebPayPaymentIntentHandlerTests
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
 
-            return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            return Task.FromResult(CreateAttemptResult ?? CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));
         }
     }

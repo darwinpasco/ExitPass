@@ -167,7 +167,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
                     statusCode,
                     string.IsNullOrWhiteSpace(error?.ErrorCode) ? fallbackCode : error.ErrorCode,
                     string.IsNullOrWhiteSpace(error?.Message) ? "Central PMS request failed." : error.Message,
-                    error?.Retryable ?? statusCode >= 500);
+                    error?.Retryable ?? statusCode >= 500,
+                    error?.CorrelationId);
             }
 
             using var document = JsonDocument.Parse(responseBody);

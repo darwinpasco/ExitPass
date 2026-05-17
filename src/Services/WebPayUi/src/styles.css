@@ -209,6 +209,36 @@ input {
   background: #fff4f2;
 }
 
+.active-payment-panel {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+  background: #fffbeb;
+}
+
+.active-payment-panel h2,
+.active-payment-panel p {
+  margin: 0;
+}
+
+.active-payment-panel h2 {
+  color: #0b1f3a;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.active-payment-panel p {
+  color: #344054;
+  line-height: 1.45;
+}
+
+.status-button {
+  width: 100%;
+}
+
 .payment-form {
   padding: 14px;
 }

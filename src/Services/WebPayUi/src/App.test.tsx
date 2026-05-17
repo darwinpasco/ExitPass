@@ -28,6 +28,13 @@ const successResponse = {
   correlationId: "77777777-7777-7777-7777-777777777777"
 };
 
+const activePaymentAttemptConflict = {
+  errorCode: "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+  message: "An active payment attempt already exists for parking session '55555555-5555-5555-5555-555555555555'.",
+  retryable: false,
+  correlationId: "77777777-7777-7777-7777-777777777777"
+};
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -89,6 +96,114 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("could not find an active parking session");
+  });
+
+  it("WebPay_WhenActivePaymentAttemptConflict_ShowsPaymentAlreadyStarted", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => activePaymentAttemptConflict
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
+    expect(screen.getByText(/continue your existing payment or check its status/i)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("WebPay_WhenActivePaymentAttemptHasHandoff_ShowsContinuePayment", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          ...activePaymentAttemptConflict,
+          handoff: {
+            type: "Redirect",
+            handoffUrl: "https://payments.test/existing"
+          }
+        })
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("link", { name: /continue payment/i })).toHaveAttribute(
+      "href",
+      "https://payments.test/existing"
+    );
+  });
+
+  it("WebPay_WhenActivePaymentAttemptHasNoHandoff_ShowsCheckStatusFallback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => activePaymentAttemptConflict
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("button", { name: /check status/i })).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenActivePaymentAttemptConflict_DoesNotExposeProviderChoice", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => ({
+          ...activePaymentAttemptConflict,
+          selectedProviderCode: "AUB",
+          fallbackProviderCode: "PAYMONGO"
+        })
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
+    expect(screen.queryByText("AUB")).not.toBeInTheDocument();
+    expect(screen.queryByText("PAYMONGO")).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenActivePaymentAttemptConflict_ShowsCorrelationIdInSupportDetails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: async () => activePaymentAttemptConflict
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.click(await screen.findByText(/support details/i));
+
+    expect(screen.getByText("77777777-7777-7777-7777-777777777777")).toBeInTheDocument();
+    expect(screen.queryByText("55555555-5555-5555-5555-555555555555")).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenCameraUnavailable_ShowsManualFallback", async () => {

@@ -47,6 +47,26 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/payment-intents");
   });
 
+  it("WebPay_WhenActivePaymentAttemptConflictReturned_ThrowsActivePaymentAttemptError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        errorCode: "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+        message: "An active payment attempt already exists for parking session.",
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(createPaymentIntent({ ticketReference: "TICKET-001", paymentMethod: "QRPH" }, fetchMock as never))
+      .rejects.toMatchObject({
+        name: "ActivePaymentAttemptError",
+        activePaymentAttempt: {
+          correlationId: "77777777-7777-7777-7777-777777777777"
+        }
+      });
+  });
+
   it("WebPay_DoesNotSubmitSelectedProviderCodeAsUserChoice", () => {
     const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "CARD" });
 
