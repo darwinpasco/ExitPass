@@ -1,6 +1,7 @@
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Internal;
+using ExitPass.PaymentOrchestrator.Contracts.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Routing;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
 using Microsoft.Extensions.Logging;
@@ -101,6 +102,18 @@ public sealed class WebPayPaymentIntentHandler
                 422,
                 route.ErrorCode ?? "PAYMENT_PROVIDER_ROUTE_NOT_AVAILABLE",
                 "No enabled payment provider route is available for the requested payment method.",
+            false));
+        }
+
+        var centralPmsPaymentProvider = ResolveCentralPmsPaymentProvider(
+            route.SelectedProviderCode,
+            paymentMethod);
+        if (centralPmsPaymentProvider is null)
+        {
+            return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
+                422,
+                "PAYMENT_PROVIDER_MAPPING_NOT_SUPPORTED",
+                $"No Central PMS payment provider rail mapping is configured for provider '{route.SelectedProviderCode}' and payment method '{paymentMethod}'.",
                 false));
         }
 
@@ -108,6 +121,7 @@ public sealed class WebPayPaymentIntentHandler
         var attempt = await _centralPmsClient.CreateOrReusePaymentAttemptAsync(
             parking.Value.ParkingSessionId,
             parking.Value.TariffSnapshotId,
+            centralPmsPaymentProvider,
             paymentMethod,
             idempotencyKey,
             correlationId,
@@ -226,6 +240,23 @@ public sealed class WebPayPaymentIntentHandler
     private static string BuildIdempotencyKey(Guid parkingSessionId, string paymentMethod, Guid correlationId)
     {
         return $"webpay:{parkingSessionId:N}:{Normalize(paymentMethod)}:{correlationId:N}";
+    }
+
+    private static string? ResolveCentralPmsPaymentProvider(string selectedProviderCode, string paymentMethod)
+    {
+        var provider = Normalize(selectedProviderCode);
+        var method = Normalize(paymentMethod);
+
+        return (provider, method) switch
+        {
+            (ProviderCode.Aub, PaymentMethodCode.QrPh) => "AUB_QRPH",
+            (ProviderCode.Aub, PaymentMethodCode.Card) => "AUB_CARD_CASHIER",
+            (ProviderCode.PayMongo, PaymentMethodCode.QrPh) => "PAYMONGO_CHECKOUT_SESSION",
+            (ProviderCode.PayMongo, PaymentMethodCode.GCash) => "PAYMONGO_CHECKOUT_SESSION",
+            (ProviderCode.PayMongo, PaymentMethodCode.Maya) => "PAYMONGO_CHECKOUT_SESSION",
+            (ProviderCode.PayMongo, PaymentMethodCode.Card) => "PAYMONGO_CHECKOUT_SESSION",
+            _ => null
+        };
     }
 
     private static string Normalize(string value)

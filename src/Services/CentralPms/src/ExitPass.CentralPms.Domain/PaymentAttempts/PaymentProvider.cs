@@ -44,6 +44,16 @@ public sealed class PaymentProvider : IEquatable<PaymentProvider>
     public static readonly PaymentProvider PayMongoCheckoutSession = new("PAYMONGO_CHECKOUT_SESSION");
 
     /// <summary>
+    /// AUB QR Ph rail code.
+    /// </summary>
+    public static readonly PaymentProvider AubQrPh = new("AUB_QRPH");
+
+    /// <summary>
+    /// AUB card cashier rail code.
+    /// </summary>
+    public static readonly PaymentProvider AubCardCashier = new("AUB_CARD_CASHIER");
+
+    /// <summary>
     /// Gets the canonical provider or payment rail code.
     /// </summary>
     public string Code { get; }
@@ -70,6 +80,8 @@ public sealed class PaymentProvider : IEquatable<PaymentProvider>
             "CARD" => Card,
             "BANK" => Bank,
             "PAYMONGO_CHECKOUT_SESSION" => PayMongoCheckoutSession,
+            "AUB_QRPH" => AubQrPh,
+            "AUB_CARD_CASHIER" => AubCardCashier,
             _ => throw new ArgumentOutOfRangeException(nameof(code), $"Unsupported payment provider: {code}")
         };
     }

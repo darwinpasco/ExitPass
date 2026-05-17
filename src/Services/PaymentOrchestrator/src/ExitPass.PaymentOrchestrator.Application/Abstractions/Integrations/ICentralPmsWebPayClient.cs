@@ -30,7 +30,8 @@ public interface ICentralPmsWebPayClient
     /// </summary>
     /// <param name="parkingSessionId">Canonical parking session identifier.</param>
     /// <param name="tariffSnapshotId">Canonical tariff snapshot identifier.</param>
-    /// <param name="paymentProvider">Payment method or provider code recorded by Central PMS.</param>
+    /// <param name="paymentProvider">Payment provider rail code recorded by Central PMS.</param>
+    /// <param name="paymentMethod">User-selected payment method code.</param>
     /// <param name="idempotencyKey">Idempotency key for safe retries.</param>
     /// <param name="correlationId">End-to-end correlation identifier.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -39,6 +40,7 @@ public interface ICentralPmsWebPayClient
         Guid parkingSessionId,
         Guid tariffSnapshotId,
         string paymentProvider,
+        string paymentMethod,
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken);

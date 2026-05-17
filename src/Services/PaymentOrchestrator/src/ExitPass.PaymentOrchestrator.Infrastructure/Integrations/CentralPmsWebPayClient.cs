@@ -103,6 +103,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         Guid parkingSessionId,
         Guid tariffSnapshotId,
         string paymentProvider,
+        string paymentMethod,
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken)
@@ -110,7 +111,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         var body = new CreatePaymentAttemptRequest(
             ParkingSessionId: parkingSessionId,
             TariffSnapshotId: tariffSnapshotId,
-            PaymentProvider: paymentProvider);
+            PaymentProvider: paymentProvider,
+            PaymentMethod: paymentMethod);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _createPaymentAttemptUri)
         {
@@ -159,11 +161,22 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         try
         {
             var error = JsonSerializer.Deserialize<ErrorResponse>(responseBody, JsonOptions);
+            if (HasStructuredError(error))
+            {
+                return new CentralPmsWebPayError(
+                    statusCode,
+                    string.IsNullOrWhiteSpace(error?.ErrorCode) ? fallbackCode : error.ErrorCode,
+                    string.IsNullOrWhiteSpace(error?.Message) ? "Central PMS request failed." : error.Message,
+                    error?.Retryable ?? statusCode >= 500);
+            }
+
+            using var document = JsonDocument.Parse(responseBody);
+            var message = ExtractProblemMessage(document.RootElement);
             return new CentralPmsWebPayError(
                 statusCode,
-                string.IsNullOrWhiteSpace(error?.ErrorCode) ? fallbackCode : error.ErrorCode,
-                string.IsNullOrWhiteSpace(error?.Message) ? "Central PMS request failed." : error.Message,
-                error?.Retryable ?? statusCode >= 500);
+                fallbackCode,
+                string.IsNullOrWhiteSpace(message) ? responseBody : message,
+                statusCode >= 500);
         }
         catch (JsonException ex)
         {
@@ -174,6 +187,33 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
                 "Central PMS returned an unparseable error response.",
                 statusCode >= 500);
         }
+    }
+
+    private static bool HasStructuredError(ErrorResponse? error)
+    {
+        return error is not null &&
+            (!string.IsNullOrWhiteSpace(error.ErrorCode) ||
+             !string.IsNullOrWhiteSpace(error.Message) ||
+             error.Retryable.HasValue);
+    }
+
+    private static string? ExtractProblemMessage(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return root.GetRawText();
+        }
+
+        foreach (var propertyName in new[] { "message", "detail", "title", "error" })
+        {
+            if (root.TryGetProperty(propertyName, out var property) &&
+                property.ValueKind == JsonValueKind.String)
+            {
+                return property.GetString();
+            }
+        }
+
+        return root.GetRawText();
     }
 
     private sealed record VendorParkingResolveRequest(
@@ -199,7 +239,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,
         Guid TariffSnapshotId,
-        string PaymentProvider);
+        string PaymentProvider,
+        string PaymentMethod);
 
     private sealed record CreatePaymentAttemptResponse(
         Guid PaymentAttemptId,
