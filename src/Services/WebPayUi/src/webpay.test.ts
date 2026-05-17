@@ -36,6 +36,17 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(body.ticketReference).toBe("TICKET-001");
   });
 
+  it("WebPay_WhenApiBaseUrlIsUnset_SubmitsPaymentIntentToSameOriginV1Path", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "PENDING_PROVIDER" })
+    });
+
+    await createPaymentIntent({ ticketReference: "TICKET-001", paymentMethod: "QRPH" }, fetchMock as never);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/payment-intents");
+  });
+
   it("WebPay_DoesNotSubmitSelectedProviderCodeAsUserChoice", () => {
     const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "CARD" });
 
