@@ -1,0 +1,22 @@
+{
+  "brand": {
+    "exitPassNavy": "#0B1F3A",
+    "exitPassBlue": "#1B72E8",
+    "exitPassBlueDark": "#0B5ED7",
+    "exitPassTeal": "#13A76B",
+    "success": "#12B76A",
+    "warning": "#F5A623",
+    "danger": "#D92D20",
+    "surface": "#FFFFFF",
+    "surfaceMuted": "#F6F8FB",
+    "textPrimary": "#101828",
+    "textSecondary": "#667085",
+    "border": "#D0D5DD"
+  },
+  "webPay": {
+    "cameraOverlay": "rgba(11, 31, 58, 0.65)",
+    "statusPending": "#F5A623",
+    "statusPaid": "#12B76A",
+    "statusFailed": "#D92D20"
+  }
+}

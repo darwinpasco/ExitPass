@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Payment failed</title>
+  <rect width="480" height="320" rx="24" fill="#FFFFFF"/>
+  <rect x="118" y="54" width="244" height="214" rx="14" fill="#FFFFFF" stroke="#101828" stroke-width="3"/>
+  <rect x="118" y="54" width="244" height="32" rx="14" fill="#101828"/>
+  <circle cx="138" cy="70" r="4" fill="#D0D5DD"/>
+  <circle cx="154" cy="70" r="4" fill="#D0D5DD"/>
+  <circle cx="170" cy="70" r="4" fill="#D0D5DD"/>
+  <circle cx="240" cy="121" r="34" fill="#D92D20"/>
+  <path d="M227 108l26 26M253 108l-26 26" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+  <text x="240" y="177" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="800" fill="#101828">Payment failed</text>
+  <text x="240" y="202" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" fill="#667085">We couldn’t process your payment.</text>
+  <text x="240" y="221" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" fill="#667085">Please try again.</text>
+  <rect x="164" y="236" width="152" height="34" rx="7" fill="#1B72E8"/>
+  <text x="240" y="258" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="800" fill="#FFFFFF">Try Again</text>
+</svg>

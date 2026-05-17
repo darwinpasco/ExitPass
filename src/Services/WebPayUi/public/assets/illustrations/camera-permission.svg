@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Camera permission</title>
+  <rect width="480" height="320" rx="24" fill="#FFFFFF"/>
+  <rect x="132" y="34" width="152" height="226" rx="28" fill="#101828"/>
+  <rect x="146" y="60" width="124" height="174" rx="14" fill="#F6F8FB"/>
+  <rect x="180" y="42" width="56" height="8" rx="4" fill="#344054"/>
+  <path d="M177 103h-18v18M239 103h18v18M177 174h-18v-18M239 174h18v-18" stroke="#1B72E8" stroke-width="6" stroke-linecap="round"/>
+  <rect x="184" y="112" width="21" height="21" fill="#101828"/>
+  <rect x="213" y="112" width="21" height="21" fill="#101828"/>
+  <rect x="184" y="145" width="21" height="21" fill="#101828"/>
+  <path d="M217 145h10v10h-10v-10zm17 0h10v10h-10v-10zm-17 18h10v10h-10v-10zm10-10h10v10h-10v-10z" fill="#101828"/>
+  <rect x="254" y="96" width="82" height="104" rx="10" fill="#EAF2FF" stroke="#B8D4FF" stroke-width="3" transform="rotate(10 254 96)"/>
+  <rect x="276" y="129" width="26" height="26" rx="4" fill="#1B72E8" transform="rotate(10 276 129)"/>
+  <text x="287" y="149" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="21" font-weight="800" fill="#FFFFFF" transform="rotate(10 287 149)">P</text>
+  <rect x="86" y="194" width="290" height="90" rx="16" fill="#FFFFFF" stroke="#D0D5DD" stroke-width="3"/>
+  <circle cx="118" cy="224" r="15" fill="#1B72E8"/>
+  <path d="M111 224h14M118 217v14" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+  <text x="146" y="222" font-family="Inter, Arial, sans-serif" font-size="15" font-weight="800" fill="#101828">Allow WebPay to access your camera?</text>
+  <text x="146" y="245" font-family="Inter, Arial, sans-serif" font-size="12" fill="#667085">This allows you to scan QR codes or tickets.</text>
+  <rect x="146" y="258" width="82" height="24" rx="6" fill="#F2F4F7" stroke="#D0D5DD"/>
+  <text x="187" y="275" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#101828">Don’t Allow</text>
+  <rect x="240" y="258" width="82" height="24" rx="6" fill="#1B72E8"/>
+  <text x="281" y="275" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" fill="#FFFFFF">Allow</text>
+</svg>
