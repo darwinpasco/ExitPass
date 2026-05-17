@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Ticket</title>
+  <path d="M22 44a10 10 0 0 0 0 20v20a8 8 0 0 0 8 8h68a8 8 0 0 0 8-8V64a10 10 0 0 1 0-20V24a8 8 0 0 0-8-8H30a8 8 0 0 0-8 8v20z" fill="#F6F8FB" stroke="#1B72E8" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M47 28v72" stroke="#667085" stroke-width="5" stroke-dasharray="8 8" stroke-linecap="round"/>
+  <path d="M62 42h28M62 58h28M62 74h18" stroke="#101828" stroke-width="6" stroke-linecap="round"/>
+</svg>
