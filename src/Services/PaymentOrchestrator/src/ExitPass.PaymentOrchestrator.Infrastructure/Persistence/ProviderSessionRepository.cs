@@ -1,4 +1,3 @@
-using System.Data;
 using System.Text.Json;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using Microsoft.Extensions.Configuration;
@@ -21,6 +20,8 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 /// </summary>
 public sealed class ProviderSessionRepository : IProviderSessionRepository
 {
+    private const string ServiceIdentityCode = "payment-orchestrator";
+
     private readonly string _connectionString;
     private readonly ILogger<ProviderSessionRepository> _logger;
 
@@ -55,9 +56,9 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             connection,
             record.ProviderProduct,
             cancellationToken);
-
-        var handoffType = ResolveHandoffType(record.RedirectUrl);
-        var handoffPayloadJson = BuildHandoffPayloadJson(record);
+        var serviceIdentityId = await ResolvePaymentOrchestratorServiceIdentityIdAsync(
+            connection,
+            cancellationToken);
 
         const string sql = """
             insert into payments.provider_sessions
@@ -66,21 +67,20 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 payment_attempt_id,
                 payment_rail_id,
                 provider_session_ref,
-                provider_payment_ref,
-                provider_status,
-                handoff_type,
-                handoff_url,
-                handoff_payload,
-                amount_requested,
+                provider_transaction_ref,
+                idempotency_key,
+                session_status,
                 currency_code,
+                amount,
+                checkout_url,
+                qr_payload,
+                expires_at,
+                provider_created_at,
                 provider_expires_at,
-                initiated_at,
-                last_status_at,
-                created_at,
-                created_by,
-                updated_at,
-                updated_by,
-                row_version
+                raw_provider_metadata_ref,
+                correlation_id,
+                created_by_service_identity_id,
+                updated_by_service_identity_id
             )
             values
             (
@@ -88,21 +88,20 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 @payment_attempt_id,
                 @payment_rail_id,
                 @provider_session_ref,
-                @provider_payment_ref,
-                cast(@provider_status as payments.provider_session_status_enum),
-                cast(@handoff_type as payments.provider_handoff_type_enum),
-                @handoff_url,
-                cast(@handoff_payload as jsonb),
-                @amount_requested,
+                @provider_transaction_ref,
+                @idempotency_key,
+                cast(@session_status as payments.provider_session_status_enum),
                 @currency_code,
+                @amount,
+                @checkout_url,
+                @qr_payload,
+                @expires_at,
+                @provider_created_at,
                 @provider_expires_at,
-                @initiated_at,
-                @last_status_at,
-                @created_at,
-                @created_by,
-                @updated_at,
-                @updated_by,
-                @row_version
+                @raw_provider_metadata_ref,
+                @correlation_id,
+                @created_by_service_identity_id,
+                @updated_by_service_identity_id
             );
             """;
 
@@ -111,21 +110,20 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         command.Parameters.AddWithValue("payment_attempt_id", record.PaymentAttemptId);
         command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
         command.Parameters.AddWithValue("provider_session_ref", record.ProviderSessionId);
-        command.Parameters.AddWithValue("provider_payment_ref", (object?)record.ProviderReference ?? DBNull.Value);
-        command.Parameters.AddWithValue("provider_status", NormalizeProviderSessionStatus(record.SessionStatus));
-        command.Parameters.AddWithValue("handoff_type", handoffType);
-        command.Parameters.AddWithValue("handoff_url", (object?)record.RedirectUrl ?? DBNull.Value);
-        command.Parameters.AddWithValue("handoff_payload", handoffPayloadJson);
-        command.Parameters.AddWithValue("amount_requested", ExtractAmountRequested(record));
+        command.Parameters.AddWithValue("provider_transaction_ref", (object?)record.ProviderReference ?? DBNull.Value);
+        command.Parameters.AddWithValue("idempotency_key", record.IdempotencyKey);
+        command.Parameters.AddWithValue("session_status", NormalizeProviderSessionStatus(record.SessionStatus));
         command.Parameters.AddWithValue("currency_code", ExtractCurrencyCode(record));
+        command.Parameters.AddWithValue("amount", ExtractAmountRequested(record));
+        command.Parameters.AddWithValue("checkout_url", (object?)record.RedirectUrl ?? DBNull.Value);
+        command.Parameters.AddWithValue("qr_payload", (object?)record.QrPayload ?? DBNull.Value);
+        command.Parameters.AddWithValue("expires_at", (object?)record.ExpiresAtUtc ?? DBNull.Value);
+        command.Parameters.AddWithValue("provider_created_at", DBNull.Value);
         command.Parameters.AddWithValue("provider_expires_at", (object?)record.ExpiresAtUtc ?? DBNull.Value);
-        command.Parameters.AddWithValue("initiated_at", record.CreatedAtUtc);
-        command.Parameters.AddWithValue("last_status_at", record.CreatedAtUtc);
-        command.Parameters.AddWithValue("created_at", record.CreatedAtUtc);
-        command.Parameters.AddWithValue("created_by", "payment-orchestrator");
-        command.Parameters.AddWithValue("updated_at", record.CreatedAtUtc);
-        command.Parameters.AddWithValue("updated_by", "payment-orchestrator");
-        command.Parameters.AddWithValue("row_version", 1L);
+        command.Parameters.AddWithValue("raw_provider_metadata_ref", DBNull.Value);
+        command.Parameters.AddWithValue("correlation_id", (object?)record.CorrelationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("created_by_service_identity_id", serviceIdentityId);
+        command.Parameters.AddWithValue("updated_by_service_identity_id", serviceIdentityId);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
 
@@ -155,10 +153,14 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 provider_session_id,
                 payment_attempt_id,
                 provider_session_ref,
-                provider_payment_ref,
-                provider_status,
-                handoff_url,
+                provider_transaction_ref,
+                idempotency_key,
+                session_status,
+                checkout_url,
+                qr_payload,
+                expires_at,
                 provider_expires_at,
+                correlation_id,
                 created_at
             from payments.provider_sessions
             where payment_rail_id = @payment_rail_id
@@ -183,25 +185,26 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             ProviderCode: providerCode,
             ProviderProduct: string.Empty,
             ProviderSessionId: reader.GetString(reader.GetOrdinal("provider_session_ref")),
-            ProviderReference: reader.IsDBNull(reader.GetOrdinal("provider_payment_ref"))
+            ProviderReference: reader.IsDBNull(reader.GetOrdinal("provider_transaction_ref"))
                 ? null
-                : reader.GetString(reader.GetOrdinal("provider_payment_ref")),
-            SessionStatus: reader.GetString(reader.GetOrdinal("provider_status")),
-            RedirectUrl: reader.IsDBNull(reader.GetOrdinal("handoff_url"))
+                : reader.GetString(reader.GetOrdinal("provider_transaction_ref")),
+            SessionStatus: reader.GetString(reader.GetOrdinal("session_status")),
+            RedirectUrl: reader.IsDBNull(reader.GetOrdinal("checkout_url"))
                 ? null
-                : reader.GetString(reader.GetOrdinal("handoff_url")),
-            ExpiresAtUtc: reader.IsDBNull(reader.GetOrdinal("provider_expires_at"))
+                : reader.GetString(reader.GetOrdinal("checkout_url")),
+            QrPayload: reader.IsDBNull(reader.GetOrdinal("qr_payload"))
                 ? null
-                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("provider_expires_at")),
-            IdempotencyKey: string.Empty,
+                : reader.GetString(reader.GetOrdinal("qr_payload")),
+            ExpiresAtUtc: reader.IsDBNull(reader.GetOrdinal("expires_at"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("expires_at")),
+            IdempotencyKey: reader.GetString(reader.GetOrdinal("idempotency_key")),
+            CorrelationId: reader.IsDBNull(reader.GetOrdinal("correlation_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("correlation_id")),
             RequestPayloadJson: "{}",
             ResponsePayloadJson: "{}",
             CreatedAtUtc: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")));
-    }
-
-    private static string ResolveHandoffType(string? redirectUrl)
-    {
-        return string.IsNullOrWhiteSpace(redirectUrl) ? "SERVER_TO_SERVER" : "REDIRECT";
     }
 
     private static string NormalizeProviderSessionStatus(string status)
@@ -209,26 +212,17 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         return status.ToUpperInvariant() switch
         {
             "CREATED" => "CREATED",
-            "HANDOFF_READY" => "HANDOFF_READY",
-            "PENDING_PROVIDER" => "PENDING_PROVIDER",
-            "SUCCEEDED" => "SUCCEEDED",
+            "ACTIVE" => "ACTIVE",
+            "HANDOFF_READY" => "PENDING",
+            "PENDING_PROVIDER" => "PENDING",
+            "PENDING" => "PENDING",
+            "SUCCEEDED" => "PAID",
+            "PAID" => "PAID",
             "FAILED" => "FAILED",
             "EXPIRED" => "EXPIRED",
             "CANCELLED" => "CANCELLED",
-            _ => "CREATED"
+            _ => "UNKNOWN"
         };
-    }
-
-    private static string BuildHandoffPayloadJson(ProviderSessionRecord record)
-    {
-        var payload = new
-        {
-            redirect_url = record.RedirectUrl,
-            request_payload = record.RequestPayloadJson,
-            response_payload = record.ResponsePayloadJson
-        };
-
-        return JsonSerializer.Serialize(payload);
     }
 
     private static decimal ExtractAmountRequested(ProviderSessionRecord record)
@@ -256,6 +250,32 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         }
 
         return "PHP";
+    }
+
+    private static async Task<Guid> ResolvePaymentOrchestratorServiceIdentityIdAsync(
+        NpgsqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            select service_identity_id
+            from identity.service_identities
+            where service_identity_code = @service_identity_code
+              and identity_status = 'ACTIVE'
+            limit 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("service_identity_code", ServiceIdentityCode);
+
+        var scalar = await command.ExecuteScalarAsync(cancellationToken);
+
+        if (scalar is Guid serviceIdentityId)
+        {
+            return serviceIdentityId;
+        }
+
+        throw new InvalidOperationException(
+            $"No active service identity found for service_identity_code '{ServiceIdentityCode}'.");
     }
 
     private static async Task<Guid> ResolvePaymentRailIdAsync(
