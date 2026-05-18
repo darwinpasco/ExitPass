@@ -266,13 +266,13 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         const string sql = """
             select payment_rail_id
             from payments.payment_rails
-            where payment_rail_code = @payment_rail_code
-              and is_enabled = true
+            where rail_code = @rail_code
+              and rail_status = 'ACTIVE'
             limit 1;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("payment_rail_code", paymentRailCode);
+        command.Parameters.AddWithValue("rail_code", paymentRailCode);
 
         var scalar = await command.ExecuteScalarAsync(cancellationToken);
 
@@ -282,7 +282,7 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         }
 
         throw new InvalidOperationException(
-            $"No enabled payment rail found for payment_rail_code '{paymentRailCode}'.");
+            $"No active payment rail found for rail_code '{paymentRailCode}'.");
     }
 
     private static async Task<Guid> ResolvePaymentRailIdByProviderCodeAsync(
@@ -293,14 +293,14 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         const string sql = """
             select payment_rail_id
             from payments.payment_rails
-            where provider_name = @provider_name
-              and is_enabled = true
-            order by priority_rank asc
+            where provider_code = @provider_code
+              and rail_status = 'ACTIVE'
+            order by is_primary desc, effective_from desc
             limit 1;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("provider_name", providerCode);
+        command.Parameters.AddWithValue("provider_code", providerCode);
 
         var scalar = await command.ExecuteScalarAsync(cancellationToken);
 
@@ -310,6 +310,6 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
         }
 
         throw new InvalidOperationException(
-            $"No enabled payment rail found for provider_name '{providerCode}'.");
+            $"No active payment rail found for provider_code '{providerCode}'.");
     }
 }
