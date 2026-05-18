@@ -80,6 +80,24 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     /// <summary>
+    /// Verifies QRPH routed to PayMongo sends PayMongo's Central PMS provider rail while preserving QRPH as method.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenQrphRoutesToPayMongo_SendsCheckoutSessionProviderAndQrphMethod()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedPaymentProvider);
+        Assert.Equal("QRPH", state.CapturedPaymentMethod);
+        Assert.NotEqual(state.CapturedPaymentMethod, state.CapturedPaymentProvider);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedInitiateRequest!.ProviderProduct);
+    }
+
+    /// <summary>
     /// Verifies provider routing errors return a deterministic validation response.
     /// </summary>
     [Fact]

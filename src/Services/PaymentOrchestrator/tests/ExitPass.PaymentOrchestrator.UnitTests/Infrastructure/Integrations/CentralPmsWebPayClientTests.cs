@@ -56,6 +56,42 @@ public sealed class CentralPmsWebPayClientTests
     }
 
     /// <summary>
+    /// Verifies QRPH remains the payment method and is not sent as the Central PMS payment provider.
+    /// </summary>
+    [Fact]
+    public async Task CreateOrReusePaymentAttemptAsync_WhenQrphIsRoutedToPayMongo_SendsCheckoutSessionProvider()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = JsonContent(new
+            {
+                paymentAttemptId = Guid.Parse("66666666-6666-6666-6666-666666666666"),
+                attemptStatus = "PENDING_PROVIDER",
+                paymentProvider = "PAYMONGO_CHECKOUT_SESSION",
+                wasReused = false
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.CreateOrReusePaymentAttemptAsync(
+            ParkingSessionId,
+            TariffSnapshotId,
+            "PAYMONGO_CHECKOUT_SESSION",
+            "QRPH",
+            "webpay:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        using var document = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", document.RootElement.GetProperty("paymentProvider").GetString());
+        Assert.Equal("QRPH", document.RootElement.GetProperty("paymentMethod").GetString());
+        Assert.NotEqual(
+            document.RootElement.GetProperty("paymentMethod").GetString(),
+            document.RootElement.GetProperty("paymentProvider").GetString());
+    }
+
+    /// <summary>
     /// Verifies Central PMS JSON problem responses are preserved as deterministic errors.
     /// </summary>
     [Fact]
