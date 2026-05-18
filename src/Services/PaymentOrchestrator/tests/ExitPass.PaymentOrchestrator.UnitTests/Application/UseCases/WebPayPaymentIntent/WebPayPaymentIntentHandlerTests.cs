@@ -23,6 +23,34 @@ public sealed class WebPayPaymentIntentHandlerTests
     private static readonly Guid PaymentAttemptId = Guid.Parse("66666666-6666-6666-6666-666666666666");
 
     /// <summary>
+    /// Verifies WebPay provider routing is normalized into Central PMS payment provider rails.
+    /// </summary>
+    /// <param name="selectedProvider">The provider selected by routing policy.</param>
+    /// <param name="paymentMethod">The customer-selected payment method.</param>
+    /// <param name="expectedCentralPmsProvider">The Central PMS provider rail code.</param>
+    [Theory]
+    [InlineData("PAYMONGO", "QRPH", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("PAYMONGO", "GCASH", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("PAYMONGO", "MAYA", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("PAYMONGO", "CARD", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("AUB", "QRPH", "AUB_QRPH")]
+    [InlineData("AUB", "CARD", "AUB_CARD_CASHIER")]
+    public async Task WebPayPaymentIntent_WhenRouteIsSupported_SendsCentralPmsProviderRailAndPaymentMethod(
+        string selectedProvider,
+        string paymentMethod,
+        string expectedCentralPmsProvider)
+    {
+        var fixture = CreateFixture(paymentMethod, selectedProvider, null);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest(paymentMethod), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(expectedCentralPmsProvider, fixture.CapturedPaymentProvider);
+        Assert.Equal(paymentMethod, fixture.CapturedPaymentMethod);
+        Assert.NotEqual(paymentMethod, fixture.CapturedPaymentProvider);
+    }
+
+    /// <summary>
     /// Verifies QRPH routes through the DB-backed policy result and returns AUB with PayMongo fallback.
     /// </summary>
     [Fact]

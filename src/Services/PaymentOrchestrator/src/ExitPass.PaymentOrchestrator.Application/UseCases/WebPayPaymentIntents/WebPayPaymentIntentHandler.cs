@@ -105,10 +105,10 @@ public sealed class WebPayPaymentIntentHandler
             false));
         }
 
-        var centralPmsPaymentProvider = ResolveCentralPmsPaymentProvider(
+        var centralPmsPaymentProviderRail = ResolveCentralPmsPaymentProviderRail(
             route.SelectedProviderCode,
             paymentMethod);
-        if (centralPmsPaymentProvider is null)
+        if (centralPmsPaymentProviderRail is null)
         {
             return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
                 422,
@@ -121,7 +121,7 @@ public sealed class WebPayPaymentIntentHandler
         var attempt = await _centralPmsClient.CreateOrReusePaymentAttemptAsync(
             parking.Value.ParkingSessionId,
             parking.Value.TariffSnapshotId,
-            centralPmsPaymentProvider,
+            centralPmsPaymentProviderRail,
             paymentMethod,
             idempotencyKey,
             correlationId,
@@ -243,11 +243,13 @@ public sealed class WebPayPaymentIntentHandler
         return $"webpay:{parkingSessionId:N}:{Normalize(paymentMethod)}:{correlationId:N}";
     }
 
-    private static string? ResolveCentralPmsPaymentProvider(string selectedProviderCode, string paymentMethod)
+    private static string? ResolveCentralPmsPaymentProviderRail(string selectedProviderCode, string paymentMethod)
     {
         var provider = Normalize(selectedProviderCode);
         var method = Normalize(paymentMethod);
 
+        // Central PMS accepts concrete payment provider rail codes. WebPay paymentMethod remains
+        // the customer-selected method and must not be sent as the provider code.
         return (provider, method) switch
         {
             (ProviderCode.Aub, PaymentMethodCode.QrPh) => "AUB_QRPH",
