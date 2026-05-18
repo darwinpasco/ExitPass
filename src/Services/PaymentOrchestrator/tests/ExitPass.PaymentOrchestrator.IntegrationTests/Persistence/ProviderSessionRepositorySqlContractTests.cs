@@ -22,6 +22,11 @@ public sealed class ProviderSessionRepositorySqlContractTests
             "Persistence",
             "ProviderSessionRepository.cs")));
         var ddl = await File.ReadAllTextAsync(ResolveRepoPath("ExitPass_Full_Database_Creation_DDL_v1.2.sql"));
+        var payMongoRailPatch = await File.ReadAllTextAsync(ResolveRepoPath(Path.Combine(
+            "infra",
+            "db",
+            "patches",
+            "ExitPass_PayMongoPaymentRailReferenceData_v1.2.sql")));
 
         Assert.Contains("rail_code varchar(64) NOT NULL", ddl, StringComparison.Ordinal);
         Assert.DoesNotContain("payment_rail_code", ExtractPaymentRailsDdl(ddl), StringComparison.Ordinal);
@@ -29,6 +34,33 @@ public sealed class ProviderSessionRepositorySqlContractTests
         Assert.Contains("where rail_code = @rail_code", repositorySource, StringComparison.Ordinal);
         Assert.Contains("command.Parameters.AddWithValue(\"rail_code\", paymentRailCode)", repositorySource, StringComparison.Ordinal);
         Assert.DoesNotContain("payment_rail_code", repositorySource, StringComparison.Ordinal);
+
+        Assert.Contains("UPDATE payments.payment_rails", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.DoesNotContain("SET\r\n    payment_rail_id", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.DoesNotContain("SET\n    payment_rail_id", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("INSERT INTO payments.payment_rails", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("payment_rail_id", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("rail_code", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("rail_name", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("provider_code", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("rail_type", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("supported_currency_code", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("rail_status", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("is_primary", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("is_fallback", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("effective_from", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("effective_to", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("created_at", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("updated_at", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("row_version", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("WHERE rail_code = 'PAYMONGO_CHECKOUT_SESSION'", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("'PAYMONGO_CHECKOUT_SESSION'", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("'PayMongo Checkout Session'", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("'PAYMONGO'", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("'HOSTED_CHECKOUT'", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("'ACTIVE'", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.Contains("WHERE NOT EXISTS", payMongoRailPatch, StringComparison.Ordinal);
+        Assert.DoesNotContain("ON CONFLICT", payMongoRailPatch, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
