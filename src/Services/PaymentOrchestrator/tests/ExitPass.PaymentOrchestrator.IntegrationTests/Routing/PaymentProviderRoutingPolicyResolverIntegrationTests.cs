@@ -40,6 +40,39 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
     }
 
     /// <summary>
+    /// Verifies that the local/testing QRPh override patch routes QRPh through PayMongo without changing other methods.
+    /// </summary>
+    [Fact]
+    public async Task ResolveRoute_WhenQrphPayMongoOverridePatchIsApplied_RoutesQrphToPayMongoAndLeavesOtherMethodsUnchanged()
+    {
+        await EnsureRoutingPolicySchemaAsync();
+        await ApplyPatchAsync("ExitPass_QrphPayMongoRoutingOverride_v1.2.sql");
+        var resolver = CreateResolver();
+
+        var qrph = await resolver.ResolveAsync(CreateRequest(PaymentMethodCode.QrPh), CancellationToken.None);
+        var gcash = await resolver.ResolveAsync(CreateRequest(PaymentMethodCode.GCash), CancellationToken.None);
+        var maya = await resolver.ResolveAsync(CreateRequest(PaymentMethodCode.Maya), CancellationToken.None);
+        var card = await resolver.ResolveAsync(CreateRequest(PaymentMethodCode.Card), CancellationToken.None);
+
+        Assert.True(qrph.IsRouted);
+        Assert.Equal(ProviderCode.PayMongo, qrph.SelectedProviderCode);
+        Assert.Equal(ProviderCode.Aub, qrph.FallbackProviderCode);
+        Assert.Equal(ProviderRoutingReason.PrimaryProviderSelected, qrph.RoutingReason);
+
+        Assert.True(gcash.IsRouted);
+        Assert.Equal(ProviderCode.PayMongo, gcash.SelectedProviderCode);
+        Assert.Null(gcash.FallbackProviderCode);
+
+        Assert.True(maya.IsRouted);
+        Assert.Equal(ProviderCode.PayMongo, maya.SelectedProviderCode);
+        Assert.Null(maya.FallbackProviderCode);
+
+        Assert.True(card.IsRouted);
+        Assert.Equal(ProviderCode.Aub, card.SelectedProviderCode);
+        Assert.Equal(ProviderCode.PayMongo, card.FallbackProviderCode);
+    }
+
+    /// <summary>
     /// Verifies that route selection follows database policy rows rather than WebPay hard-coded logic.
     /// </summary>
     [Fact]
@@ -155,9 +188,12 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
 
     private static async Task EnsureRoutingPolicySchemaAsync()
     {
-        var patchPath = ResolveRepoPath(
-            Path.Combine("infra", "db", "patches", "ExitPass_PaymentProviderRoutingPolicy_v1.2.sql"));
+        await ApplyPatchAsync("ExitPass_PaymentProviderRoutingPolicy_v1.2.sql");
+    }
 
+    private static async Task ApplyPatchAsync(string patchFileName)
+    {
+        var patchPath = ResolveRepoPath(Path.Combine("infra", "db", "patches", patchFileName));
         var sql = await File.ReadAllTextAsync(patchPath);
 
         await using var connection = new NpgsqlConnection(ConnectionString);

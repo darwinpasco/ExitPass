@@ -34,3 +34,5 @@ infra/docker/docker-compose.override.yml
 /infra/docker/docker-compose - Copy.yml
 /infra/docker/docker-compose.mtls.yml
 /src/Services/CentralPms/src/ExitPass.CentralPms.Api/appsettings.Development.json
+/scripts/dev/Restart-WebPayQrphLocalTest.ps1
+/.gitignore

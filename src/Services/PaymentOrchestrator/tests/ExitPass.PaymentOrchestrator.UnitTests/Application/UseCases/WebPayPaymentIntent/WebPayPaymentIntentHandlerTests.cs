@@ -42,6 +42,25 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies QRPH can route through PayMongo when the DB-backed local/testing policy override is applied.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenQrphOverrideSelectsPayMongo_CreatesPayMongoCheckoutAttempt()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("PAYMONGO", result.Response!.SelectedProviderCode);
+        Assert.Equal("AUB", result.Response.FallbackProviderCode);
+        Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
+        Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedInitiateRequest!.ProviderProduct);
+    }
+
+    /// <summary>
     /// Verifies GCash routes through the DB-backed policy result and returns PayMongo.
     /// </summary>
     [Fact]
