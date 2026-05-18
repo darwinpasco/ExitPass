@@ -223,8 +223,17 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
     services.AddScoped<IPaymentProviderRoutingPolicyResolver, PaymentProviderRoutingPolicyResolver>();
 
-    services.AddScoped<IPaymentProviderAdapter, AubPaymentAdapter>();
+    services.AddScoped<AubPaymentAdapter>();
+    services.AddScoped<PayMongoCheckoutAdapter>();
     services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
+    services.AddSingleton(new PaymentProviderAdapterRegistration(
+        ProviderCode: "AUB",
+        ProviderProduct: "AUB_CARD_CASHIER",
+        CreateAdapter: static serviceProvider => serviceProvider.GetRequiredService<AubPaymentAdapter>()));
+    services.AddSingleton(new PaymentProviderAdapterRegistration(
+        ProviderCode: "PAYMONGO",
+        ProviderProduct: "PAYMONGO_CHECKOUT_SESSION",
+        CreateAdapter: static serviceProvider => serviceProvider.GetRequiredService<PayMongoCheckoutAdapter>()));
     services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
 
     services.AddOptions<PayMongoOptions>()

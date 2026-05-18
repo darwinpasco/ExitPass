@@ -16,19 +16,24 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers;
 /// </summary>
 public sealed class PaymentProviderRegistry : IPaymentProviderRegistry
 {
-    private readonly IReadOnlyDictionary<string, IPaymentProviderAdapter> _adaptersByKey;
+    private readonly IReadOnlyDictionary<string, PaymentProviderAdapterRegistration> _registrationsByKey;
+    private readonly IServiceProvider _serviceProvider;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="PaymentProviderRegistry"/> class.
     /// </summary>
-    /// <param name="adapters">The registered provider adapters.</param>
-    public PaymentProviderRegistry(IEnumerable<IPaymentProviderAdapter> adapters)
+    /// <param name="registrations">The registered provider adapter factories.</param>
+    /// <param name="serviceProvider">The scoped service provider used for lazy adapter construction.</param>
+    public PaymentProviderRegistry(
+        IEnumerable<PaymentProviderAdapterRegistration> registrations,
+        IServiceProvider serviceProvider)
     {
-        ArgumentNullException.ThrowIfNull(adapters);
+        ArgumentNullException.ThrowIfNull(registrations);
 
-        _adaptersByKey = adapters.ToDictionary(
+        _registrationsByKey = registrations.ToDictionary(
             BuildKey,
             StringComparer.OrdinalIgnoreCase);
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     }
 
     /// <inheritdoc />
@@ -46,18 +51,18 @@ public sealed class PaymentProviderRegistry : IPaymentProviderRegistry
 
         var key = BuildKey(providerCode, providerProduct);
 
-        if (_adaptersByKey.TryGetValue(key, out var adapter))
+        if (_registrationsByKey.TryGetValue(key, out var registration))
         {
-            return adapter;
+            return registration.CreateAdapter(_serviceProvider);
         }
 
         throw new InvalidOperationException(
             $"No payment provider adapter is registered for provider '{providerCode}' and product '{providerProduct}'.");
     }
 
-    private static string BuildKey(IPaymentProviderAdapter adapter)
+    private static string BuildKey(PaymentProviderAdapterRegistration registration)
     {
-        return BuildKey(adapter.ProviderCode, adapter.ProviderProduct);
+        return BuildKey(registration.ProviderCode, registration.ProviderProduct);
     }
 
     private static string BuildKey(string providerCode, string providerProduct)
@@ -65,3 +70,14 @@ public sealed class PaymentProviderRegistry : IPaymentProviderRegistry
         return $"{providerCode.Trim()}::{providerProduct.Trim()}";
     }
 }
+
+/// <summary>
+/// Describes a lazily constructed provider adapter registration.
+/// </summary>
+/// <param name="ProviderCode">Provider code implemented by the adapter.</param>
+/// <param name="ProviderProduct">Provider product code implemented by the adapter.</param>
+/// <param name="CreateAdapter">Factory that resolves the adapter only when selected.</param>
+public sealed record PaymentProviderAdapterRegistration(
+    string ProviderCode,
+    string ProviderProduct,
+    Func<IServiceProvider, IPaymentProviderAdapter> CreateAdapter);
