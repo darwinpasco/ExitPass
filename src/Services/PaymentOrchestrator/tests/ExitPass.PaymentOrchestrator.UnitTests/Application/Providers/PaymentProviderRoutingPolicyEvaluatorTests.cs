@@ -28,6 +28,34 @@ public sealed class PaymentProviderRoutingPolicyEvaluatorTests
     }
 
     /// <summary>
+    /// Verifies that the local/testing QRPh override policy routes QRPh through PayMongo with AUB fallback.
+    /// </summary>
+    [Fact]
+    public void ResolveRoute_WhenQrphOverridePolicyIsApplied_ReturnsPayMongoPrimaryAndAubFallback()
+    {
+        var policies = DefaultPolicies().Select(policy =>
+            policy.PaymentMethod == PaymentMethodCode.QrPh
+                ? policy with
+                {
+                    PrimaryProviderCode = ProviderCode.PayMongo,
+                    FallbackProviderCode = ProviderCode.Aub,
+                    PrimaryProviderEnabled = true,
+                    FallbackProviderEnabled = true
+                }
+                : policy).ToArray();
+
+        var result = new PaymentProviderRoutingPolicyEvaluator().Resolve(
+            CreateRequest(PaymentMethodCode.QrPh),
+            policies);
+
+        Assert.True(result.IsRouted);
+        Assert.Equal(ProviderCode.PayMongo, result.SelectedProviderCode);
+        Assert.Equal(ProviderCode.Aub, result.FallbackProviderCode);
+        Assert.Equal(ProviderRoutingReason.PrimaryProviderSelected, result.RoutingReason);
+        Assert.True(result.IsFallbackEligible);
+    }
+
+    /// <summary>
     /// Verifies that card routes to AUB primary with PayMongo fallback from policy data.
     /// </summary>
     [Fact]

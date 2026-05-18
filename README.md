@@ -64,6 +64,12 @@ Future schema changes must be made through controlled DDL updates or migrations,
 
 See [ExitPass v1.2 Database Rebuild Baseline](docs/ExitPass-v1.2-database-rebuild-baseline.md).
 
+### Local QRPH Provider Routing Override
+
+The baseline payment provider routing policy keeps QRPH on AUB primary with PayMongo fallback. For local and test environments where AUB test API credentials are not yet available, apply `infra/db/patches/ExitPass_QrphPayMongoRoutingOverride_v1.2.sql` after the baseline routing policy patch. The override changes only the default QRPH/PHP routing row so QRPH selects PayMongo with AUB as fallback.
+
+WebPay continues to send `paymentMethod=QRPH`; it does not expose provider selection. Do not apply this override to live environments unless the provider routing policy decision is deliberately approved for live use. The patch does not contain provider credentials or secrets.
+
 ## Top-Level Repository Structure
 
 ```text
