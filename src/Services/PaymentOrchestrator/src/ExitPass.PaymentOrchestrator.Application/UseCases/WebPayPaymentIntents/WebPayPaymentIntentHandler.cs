@@ -136,6 +136,15 @@ public sealed class WebPayPaymentIntentHandler
             route.SelectedProviderCode,
             paymentMethod);
 
+        _logger.LogInformation(
+            "WebPay provider handoff route selected. PaymentMethod {PaymentMethod}, SelectedProviderCode {SelectedProviderCode}, FallbackProviderCode {FallbackProviderCode}, CentralPmsPaymentProviderRail {CentralPmsPaymentProviderRail}, ProviderProduct {ProviderProduct}, CorrelationId {CorrelationId}",
+            paymentMethod,
+            route.SelectedProviderCode,
+            route.FallbackProviderCode,
+            centralPmsPaymentProviderRail,
+            providerProduct,
+            correlationId);
+
         var handoff = await _handoffInitiator.InitiateAsync(
             new InitiateProviderPaymentRequest(
                 attempt.Value.PaymentAttemptId,

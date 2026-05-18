@@ -74,6 +74,12 @@ public sealed class InitiateProviderPaymentHandler
 
         var adapter = _providerRegistry.GetRequired(request.ProviderCode, request.ProviderProduct);
 
+        _logger.LogInformation(
+            "Selected provider adapter for handoff. PaymentAttemptId {PaymentAttemptId}, AdapterProviderCode {AdapterProviderCode}, AdapterProviderProduct {AdapterProviderProduct}",
+            request.PaymentAttemptId,
+            adapter.ProviderCode,
+            adapter.ProviderProduct);
+
         var command = new CreateProviderPaymentSessionCommand(
             request.PaymentAttemptId,
             request.AmountMinor,
