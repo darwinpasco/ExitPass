@@ -94,6 +94,9 @@ export function App() {
         plateNumber: hasPlate ? lookupValue : undefined,
         ...(hasTicket ? scannedContext : {})
       });
+      setError("");
+      setResult(null);
+      setActivePaymentAttempt(null);
       setResolvedSession(response);
       setStage("SESSION_RESOLVED");
     } catch (apiError) {
@@ -125,10 +128,12 @@ export function App() {
 
     try {
       const response = await createPaymentIntent({
-        ticketReference: hasTicket ? ticketReference.trim() : undefined,
-        plateNumber: hasPlate ? plateNumber.trim() : undefined,
+        ticketReference: hasTicket ? (resolvedSession.ticketReference ?? ticketReference.trim()) : undefined,
+        plateNumber: hasPlate ? (resolvedSession.plateNumber ?? plateNumber.trim()) : undefined,
         paymentMethod,
-        ...(hasTicket ? scannedContext : {})
+        siteGroupId: resolvedSession.siteGroupId ?? scannedContext.siteGroupId,
+        siteId: resolvedSession.siteId ?? scannedContext.siteId,
+        vendorSystemId: resolvedSession.vendorSystemId ?? scannedContext.vendorSystemId
       });
       setResult(response);
       setStage("HANDOFF_READY");
@@ -433,6 +438,7 @@ export function App() {
 function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveResponse }) {
   const summary: ParkingSessionSummary = {
     ...result.sessionSummary,
+    siteGroupName: result.sessionSummary?.siteGroupName ?? result.siteGroupName,
     siteName: result.sessionSummary?.siteName ?? result.siteName,
     ticketReference: result.sessionSummary?.ticketReference ?? result.ticketReference,
     plateNumber: result.sessionSummary?.plateNumber ?? result.plateNumber,
@@ -449,16 +455,13 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
   };
 
   const rows = [
+    ["Property / Site Group", summary.siteGroupName],
     ["Site", summary.siteName],
-    ["Ticket", summary.ticketReference],
-    ["Plate", summary.plateNumber],
+    ["Ticket Number", summary.ticketReference],
+    ["Plate Number", summary.plateNumber],
     ["Entry Time", formatDateTime(summary.entryTime)],
-    ["Exit / Payment Time", formatDateTime(summary.exitTime ?? summary.currentFeeCalculationTime)],
-    ["Duration", summary.durationParked],
-    ["Tariff", summary.tariffName],
-    ["Parking Status", summary.sessionStatus],
-    ["Payment Status", result.paymentStatus],
-    ["Fee Valid Until", formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt)]
+    ["Fee Valid Until", formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt)],
+    ["Parking Status", summary.sessionStatus]
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
   return (
@@ -492,6 +495,10 @@ function toParkingSessionResolveResponse(result: PaymentIntentResponse): Parking
   return {
     parkingSessionId: result.parkingSessionId,
     tariffSnapshotId: result.tariffSnapshotId,
+    siteGroupId: result.siteGroupId,
+    siteId: result.siteId,
+    vendorSystemId: result.vendorSystemId,
+    siteGroupName: result.siteGroupName,
     amountMinorUnits: result.amountMinorUnits,
     currency: result.currency,
     correlationId: result.correlationId,

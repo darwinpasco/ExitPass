@@ -16,6 +16,26 @@ public sealed class ResolveVendorParkingResponse
     public Guid TariffSnapshotId { get; set; }
 
     /// <summary>
+    /// Site group that owns the resolved parking session.
+    /// </summary>
+    public string SiteGroupId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Site that owns the resolved parking session.
+    /// </summary>
+    public string SiteId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Business-friendly site group name, when available.
+    /// </summary>
+    public string? SiteGroupName { get; set; }
+
+    /// <summary>
+    /// Business-friendly site name, when available.
+    /// </summary>
+    public string? SiteName { get; set; }
+
+    /// <summary>
     /// Provider-neutral lookup outcome.
     /// </summary>
     public string LookupOutcome { get; set; } = string.Empty;
@@ -44,6 +64,11 @@ public sealed class ResolveVendorParkingResponse
     /// Timestamp after which the tariff snapshot should not be used for payment initiation.
     /// </summary>
     public DateTimeOffset TariffExpiresAt { get; set; }
+
+    /// <summary>
+    /// Tariff snapshot expiry used by WebPay as the fee-valid-until boundary.
+    /// </summary>
+    public DateTimeOffset FeeValidUntil { get; set; }
 
     /// <summary>
     /// Provider-neutral vendor system identifier used for the lookup.

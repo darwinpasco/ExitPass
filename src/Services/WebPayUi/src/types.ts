@@ -21,6 +21,7 @@ export type WebPayHandoff = {
 };
 
 export type ParkingSessionSummary = {
+  siteGroupName?: string | null;
   siteName?: string | null;
   ticketReference?: string | null;
   plateNumber?: string | null;
@@ -40,6 +41,10 @@ export type PaymentIntentResponse = {
   paymentAttemptId: string;
   parkingSessionId: string;
   tariffSnapshotId: string;
+  siteGroupId?: string | null;
+  siteId?: string | null;
+  vendorSystemId?: string | null;
+  siteGroupName?: string | null;
   amountMinorUnits: number;
   currency: string;
   paymentMethod: PaymentMethod | string;
@@ -65,6 +70,10 @@ export type PaymentIntentResponse = {
 export type ParkingSessionResolveResponse = {
   parkingSessionId: string;
   tariffSnapshotId: string;
+  siteGroupId?: string | null;
+  siteId?: string | null;
+  vendorSystemId?: string | null;
+  siteGroupName?: string | null;
   amountMinorUnits: number;
   currency: string;
   correlationId: string;

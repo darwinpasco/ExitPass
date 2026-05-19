@@ -371,12 +371,19 @@ public sealed class WebPayPaymentIntentHandlerTests
                 DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
                 "Weekend Rate",
                 "PAYABLE",
-                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
+                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+                SiteGroupId,
+                SiteId,
+                "WebPay Test Site Group"));
 
         var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
 
         Assert.True(result.Succeeded);
         Assert.Equal("Mactan Newtown Parking", result.Response!.SiteName);
+        Assert.Equal(SiteGroupId, result.Response.SiteGroupId);
+        Assert.Equal(SiteId, result.Response.SiteId);
+        Assert.Equal("HIKCENTRAL", result.Response.VendorSystemId);
+        Assert.Equal("WebPay Test Site Group", result.Response.SiteGroupName);
         Assert.Equal("TICKET-TEST-023", result.Response.TicketReference);
         Assert.Equal("ABC 1234", result.Response.PlateNumber);
         Assert.Equal("Weekend Rate", result.Response.TariffName);
@@ -405,7 +412,10 @@ public sealed class WebPayPaymentIntentHandlerTests
                 DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
                 "Weekend Rate",
                 "PAYABLE",
-                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
+                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+                SiteGroupId,
+                SiteId,
+                "WebPay Test Site Group"));
 
         var result = await fixture.Sut.ResolveAsync(new WebPayParkingSessionResolveRequest
         {
@@ -417,6 +427,10 @@ public sealed class WebPayPaymentIntentHandlerTests
         }, CancellationToken.None);
 
         Assert.True(result.Succeeded);
+        Assert.Equal(SiteGroupId, result.Response!.SiteGroupId);
+        Assert.Equal(SiteId, result.Response.SiteId);
+        Assert.Equal("HIKCENTRAL", result.Response.VendorSystemId);
+        Assert.Equal("WebPay Test Site Group", result.Response.SiteGroupName);
         Assert.Equal("Mactan Newtown Parking", result.Response!.SiteName);
         Assert.Equal("TICKET-TEST-027", result.Response.TicketReference);
         Assert.Equal("PAYABLE", result.Response.ParkingStatus);

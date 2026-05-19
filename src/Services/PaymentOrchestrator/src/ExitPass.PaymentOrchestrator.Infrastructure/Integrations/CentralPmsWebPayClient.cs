@@ -96,7 +96,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.TariffSnapshotId,
             payload.NetPayableMinorUnits,
             payload.Currency,
-            payload.VendorSystemId,
+            ResolveVendorSystemId(payload.VendorSystemId, vendorSystemId),
             payload.CorrelationId,
             payload.SiteName,
             payload.TicketReference,
@@ -105,7 +105,10 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.CurrentFeeCalculationTime,
             payload.TariffName,
             payload.ParkingStatus,
-            payload.FeeValidUntil ?? payload.TariffExpiresAt));
+            payload.FeeValidUntil ?? payload.TariffExpiresAt,
+            ParseGuid(payload.SiteGroupId),
+            ParseGuid(payload.SiteId),
+            payload.SiteGroupName));
     }
 
     /// <inheritdoc />
@@ -293,6 +296,18 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         return null;
     }
 
+    private static Guid? ParseGuid(string? value)
+    {
+        return Guid.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static string ResolveVendorSystemId(string? responseVendorSystemId, string requestedVendorSystemId)
+    {
+        return string.IsNullOrWhiteSpace(responseVendorSystemId)
+            ? requestedVendorSystemId
+            : responseVendorSystemId.Trim();
+    }
+
     private sealed record VendorParkingResolveRequest(
         string SiteGroupId,
         string SiteId,
@@ -304,20 +319,23 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private sealed record VendorParkingResolveResponse(
         Guid ParkingSessionId,
         Guid TariffSnapshotId,
+        string? SiteGroupId,
+        string? SiteId,
         string LookupOutcome,
         string? PlateNumber,
         string? TicketReference,
         long NetPayableMinorUnits,
         string Currency,
         DateTimeOffset TariffExpiresAt,
-        string VendorSystemId,
+        DateTimeOffset? FeeValidUntil,
+        string? VendorSystemId,
         Guid CorrelationId,
+        string? SiteGroupName,
         string? SiteName,
         DateTimeOffset? EntryTime,
         DateTimeOffset? CurrentFeeCalculationTime,
         string? TariffName,
-        string? ParkingStatus,
-        DateTimeOffset? FeeValidUntil);
+        string? ParkingStatus);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,

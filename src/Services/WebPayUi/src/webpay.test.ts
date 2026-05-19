@@ -81,6 +81,10 @@ describe("WebPay QR and payment intent helpers", () => {
       json: async () => ({
         parkingSessionId: "55555555-5555-5555-5555-555555555555",
         tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+        siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+        siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+        vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f",
+        siteGroupName: "WebPay Test Site Group 2026-05-19",
         amountMinorUnits: 12500,
         currency: "PHP",
         siteName: "Mactan Newtown Parking",
@@ -98,6 +102,10 @@ describe("WebPay QR and payment intent helpers", () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/parking-session");
     expect(result.siteName).toBe("Mactan Newtown Parking");
+    expect(result.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
+    expect(result.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
+    expect(result.vendorSystemId).toBe("45a625de-9034-4fb6-b527-0950d384e51f");
+    expect(result.siteGroupName).toBe("WebPay Test Site Group 2026-05-19");
     expect(result.parkingStatus).toBe("PAYABLE");
     expect(result.amountMinorUnits).toBe(12500);
   });

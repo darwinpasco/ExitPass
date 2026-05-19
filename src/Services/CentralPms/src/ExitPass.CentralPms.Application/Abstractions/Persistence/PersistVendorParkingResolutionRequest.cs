@@ -19,6 +19,11 @@ public sealed class PersistVendorParkingResolutionRequest
     public TariffSnapshot TariffSnapshot { get; init; } = null!;
 
     /// <summary>
+    /// Optional caller-resolved vendor system identifier from the WebPay context.
+    /// </summary>
+    public Guid? RequestedVendorSystemId { get; init; }
+
+    /// <summary>
     /// Correlation identifier for the vendor-to-payment flow.
     /// </summary>
     public Guid CorrelationId { get; init; }

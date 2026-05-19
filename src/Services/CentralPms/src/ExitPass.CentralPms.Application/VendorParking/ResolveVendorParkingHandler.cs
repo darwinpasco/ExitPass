@@ -179,6 +179,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             {
                 ParkingSession = centralSession,
                 TariffSnapshot = tariffSnapshot,
+                RequestedVendorSystemId = ParseOptionalGuid(command.VendorSystemId),
                 CorrelationId = sessionResponse.CorrelationId
             },
             cancellationToken);
@@ -292,6 +293,11 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     private static string ResolveIdentifierType(ResolveVendorParkingCommand command)
     {
         return string.IsNullOrWhiteSpace(command.PlateNumber) ? "TICKET" : "PLATE";
+    }
+
+    private static Guid? ParseOptionalGuid(string? value)
+    {
+        return Guid.TryParse(value, out var parsed) ? parsed : null;
     }
 
     private static string? Normalize(string? value)

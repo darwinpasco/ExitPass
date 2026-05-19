@@ -13,6 +13,10 @@ const successResponse = {
   paymentAttemptId: "44444444-4444-4444-4444-444444444444",
   parkingSessionId: "55555555-5555-5555-5555-555555555555",
   tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+  siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+  siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+  vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f",
+  siteGroupName: "WebPay Test Site Group 2026-05-19",
   amountMinorUnits: 12500,
   currency: "PHP",
   siteName: "Mactan Newtown Parking",
@@ -139,6 +143,27 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
   });
 
+  it("WebPay_WhenResolvedSessionHasContext_UsesResolvedContextForPaymentIntentInsteadOfDefaults", async () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "00000000-0000-0000-0000-000000000001");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "00000000-0000-0000-0000-000000000002");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "00000000-0000-0000-0000-000000000003");
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("WEBPAY-20260519-FRESH-001");
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
+    expect(body.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
+    expect(body.vendorSystemId).toBe("45a625de-9034-4fb6-b527-0950d384e51f");
+    expect(body.siteGroupId).not.toBe("00000000-0000-0000-0000-000000000001");
+    expect(body.siteId).not.toBe("00000000-0000-0000-0000-000000000002");
+    expect(body.vendorSystemId).not.toBe("00000000-0000-0000-0000-000000000003");
+  });
+
   it("WebPay_WhenTicketChanges_ClearsStalePaymentIntentError", async () => {
     stubWebPayFetch({
       intentOk: false,
@@ -183,10 +208,41 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /mactan newtown parking/i })).toBeInTheDocument();
     expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByText("WebPay Test Site Group 2026-05-19")).toBeInTheDocument();
     expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
-    expect(screen.getByText("Weekend Rate")).toBeInTheDocument();
+    expect(screen.getAllByText(/May 18, 2026/).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("125.00")).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenNewParkingSessionIsResolved_ClearsStalePaymentState", async () => {
+    const fetchMock = stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        ...activePaymentAttemptConflict,
+        handoff: {
+          type: "Redirect",
+          resumePaymentUrl: "https://payments.test/existing"
+        }
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
+    expect(await screen.findByRole("link", { name: /continue existing payment/i })).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText(/ticket reference/i));
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-002");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment already started/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("https://payments.test/existing")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("WebPay_WhenSiteNameMissing_HidesSiteNameInsteadOfShowingUuid", async () => {
@@ -429,9 +485,9 @@ describe("ExitPass WebPay UI", () => {
     expect(body).toEqual({
       plateNumber: "ABC 1234",
       paymentMethod: "GCASH",
-      siteGroupId: "11111111-1111-1111-1111-111111111111",
-      siteId: "22222222-2222-2222-2222-222222222222",
-      vendorSystemId: "HIKCENTRAL"
+      siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+      siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+      vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f"
     });
   });
 });

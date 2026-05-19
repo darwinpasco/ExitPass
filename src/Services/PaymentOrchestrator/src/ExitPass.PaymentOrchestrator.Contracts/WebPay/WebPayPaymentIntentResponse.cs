@@ -21,6 +21,26 @@ public sealed class WebPayPaymentIntentResponse
     public Guid TariffSnapshotId { get; set; }
 
     /// <summary>
+    /// Site group resolved with the parking session.
+    /// </summary>
+    public Guid? SiteGroupId { get; set; }
+
+    /// <summary>
+    /// Site resolved with the parking session.
+    /// </summary>
+    public Guid? SiteId { get; set; }
+
+    /// <summary>
+    /// Provider-neutral vendor system identifier resolved with the parking session.
+    /// </summary>
+    public string? VendorSystemId { get; set; }
+
+    /// <summary>
+    /// Business-friendly site group name, when available.
+    /// </summary>
+    public string? SiteGroupName { get; set; }
+
+    /// <summary>
     /// Payable amount in minor currency units.
     /// </summary>
     public long AmountMinorUnits { get; set; }

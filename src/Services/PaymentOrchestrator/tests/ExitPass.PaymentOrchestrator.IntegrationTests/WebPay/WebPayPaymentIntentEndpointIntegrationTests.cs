@@ -265,7 +265,10 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
             "Weekend Rate",
             "PAYABLE",
-            DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
+            DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            "WebPay Test Site Group"));
         using var client = CreateClient(state);
 
         using var response = await client.PostAsJsonAsync(ResolveRoute, DefaultRequest("QRPH"));
@@ -277,10 +280,15 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Null(state.CapturedInitiateRequest);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = body.RootElement;
+        Assert.Equal("11111111-1111-1111-1111-111111111111", root.GetProperty("siteGroupId").GetString());
+        Assert.Equal("22222222-2222-2222-2222-222222222222", root.GetProperty("siteId").GetString());
+        Assert.Equal("HIKCENTRAL", root.GetProperty("vendorSystemId").GetString());
+        Assert.Equal("WebPay Test Site Group", root.GetProperty("siteGroupName").GetString());
         Assert.Equal("Mactan Newtown Parking", root.GetProperty("siteName").GetString());
         Assert.Equal("TICKET-TEST-027", root.GetProperty("ticketReference").GetString());
         Assert.Equal("PAYABLE", root.GetProperty("parkingStatus").GetString());
         Assert.Equal(10000, root.GetProperty("amountMinorUnits").GetInt32());
+        Assert.NotEqual("2030-04-01T01:45:00+00:00", root.GetProperty("feeValidUntil").GetString());
     }
 
     /// <summary>

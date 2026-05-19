@@ -375,7 +375,7 @@ BEGIN
         ) s
         ORDER BY scenario, scenario_sequence
     LOOP
-        v_amount := 50.00 + v_seq;
+        v_amount := 100.00;
 
         INSERT INTO core.parking_sessions (
             site_group_id,
@@ -442,6 +442,12 @@ BEGIN
             v_service_identity_id,
             gen_random_uuid()
         );
+
+        UPDATE core.tariff_snapshots
+        SET snapshot_status = 'SUPERSEDED',
+            updated_at = now()
+        WHERE parking_session_id = v_session_id
+          AND snapshot_status = 'ACTIVE';
 
         INSERT INTO core.tariff_snapshots (
             parking_session_id,
@@ -617,3 +623,14 @@ FROM core.parking_sessions ps
 WHERE ps.vendor_session_ref LIKE 'WEBPAY-20260519%'
 GROUP BY 1
 ORDER BY 1;
+
+SELECT parking_session_id, COUNT(*)
+FROM core.tariff_snapshots
+WHERE snapshot_status = 'ACTIVE'
+  AND parking_session_id IN (
+      SELECT parking_session_id
+      FROM core.parking_sessions
+      WHERE vendor_session_ref LIKE 'WEBPAY-20260519%'
+  )
+GROUP BY parking_session_id
+HAVING COUNT(*) > 1;

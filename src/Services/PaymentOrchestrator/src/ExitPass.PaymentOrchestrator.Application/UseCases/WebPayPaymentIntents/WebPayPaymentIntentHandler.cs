@@ -32,6 +32,7 @@ public sealed class WebPayPaymentIntentHandler
     /// <param name="routingPolicyResolver">Database-backed provider routing resolver.</param>
     /// <param name="providerProductResolver">Provider product resolver.</param>
     /// <param name="handoffInitiator">Provider handoff initiator.</param>
+    /// <param name="providerSessionRepository">Provider session persistence reader.</param>
     /// <param name="logger">Structured logger.</param>
     public WebPayPaymentIntentHandler(
         ICentralPmsWebPayClient centralPmsClient,
@@ -181,6 +182,10 @@ public sealed class WebPayPaymentIntentHandler
             PaymentAttemptId = attempt.PaymentAttemptId,
             ParkingSessionId = parking.Value.ParkingSessionId,
             TariffSnapshotId = parking.Value.TariffSnapshotId,
+            SiteGroupId = parking.Value.SiteGroupId,
+            SiteId = parking.Value.SiteId,
+            VendorSystemId = BlankToNull(parking.Value.VendorSystemId),
+            SiteGroupName = BlankToNull(parking.Value.SiteGroupName),
             AmountMinorUnits = parking.Value.NetPayableMinorUnits,
             Currency = parking.Value.Currency,
             SiteName = BlankToNull(parking.Value.SiteName),
@@ -313,6 +318,10 @@ public sealed class WebPayPaymentIntentHandler
         {
             ParkingSessionId = parking.ParkingSessionId,
             TariffSnapshotId = parking.TariffSnapshotId,
+            SiteGroupId = parking.SiteGroupId,
+            SiteId = parking.SiteId,
+            VendorSystemId = BlankToNull(parking.VendorSystemId),
+            SiteGroupName = BlankToNull(parking.SiteGroupName),
             AmountMinorUnits = parking.NetPayableMinorUnits,
             Currency = parking.Currency,
             SiteName = BlankToNull(parking.SiteName),

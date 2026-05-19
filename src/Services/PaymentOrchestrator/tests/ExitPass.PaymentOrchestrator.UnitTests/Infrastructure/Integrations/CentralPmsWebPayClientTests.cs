@@ -165,14 +165,18 @@ public sealed class CentralPmsWebPayClientTests
             {
                 parkingSessionId = ParkingSessionId,
                 tariffSnapshotId = TariffSnapshotId,
+                siteGroupId = "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+                siteId = "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
                 lookupOutcome = "resolved",
                 plateNumber = "ABC 1234",
                 ticketReference = "TICKET-TEST-023",
                 netPayableMinorUnits = 12500,
                 currency = "PHP",
                 tariffExpiresAt = "2026-05-18T13:15:00+08:00",
-                vendorSystemId = "HIKCENTRAL",
+                feeValidUntil = "2026-05-18T13:15:00+08:00",
+                vendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f",
                 correlationId = CorrelationId,
+                siteGroupName = "WebPay Test Site Group 2026-05-19",
                 siteName = "Mactan Newtown Parking",
                 entryTime = "2026-05-18T10:42:00+08:00",
                 currentFeeCalculationTime = "2026-05-18T12:57:00+08:00",
@@ -184,13 +188,17 @@ public sealed class CentralPmsWebPayClientTests
         var result = await client.ResolveVendorParkingAsync(
             null,
             null,
-            "HIKCENTRAL",
+            "45a625de-9034-4fb6-b527-0950d384e51f",
             null,
             "TICKET-TEST-023",
             CorrelationId,
             CancellationToken.None);
 
         Assert.True(result.Succeeded);
+        Assert.Equal(Guid.Parse("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"), result.Value!.SiteGroupId);
+        Assert.Equal(Guid.Parse("93bd3cb3-e806-4c5c-ac8c-df6c4addff14"), result.Value.SiteId);
+        Assert.Equal("45a625de-9034-4fb6-b527-0950d384e51f", result.Value.VendorSystemId);
+        Assert.Equal("WebPay Test Site Group 2026-05-19", result.Value.SiteGroupName);
         Assert.Equal("Mactan Newtown Parking", result.Value!.SiteName);
         Assert.Equal("TICKET-TEST-023", result.Value.TicketReference);
         Assert.Equal("ABC 1234", result.Value.PlateNumber);
