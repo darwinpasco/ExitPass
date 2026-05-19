@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
@@ -113,6 +114,36 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a CREATED DB outcome publishes PaymentAttemptCreated with required envelope metadata.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_WhenCreated_PublishesPaymentAttemptCreated()
+    {
+        var fixture = CreateSuccessfulFixture(wasReused: false, outcomeCode: "CREATED");
+        var sut = fixture.CreateSut();
+
+        var result = await sut.ExecuteAsync(CreateCommand("idem-001"), CancellationToken.None);
+
+        fixture.EventPublisher.Published.Should().ContainSingle();
+        var envelope = fixture.EventPublisher.Published.Single();
+        envelope.EventType.Should().Be(IntegrationEventTypes.PaymentAttemptCreated);
+        envelope.AggregateId.Should().Be(result.PaymentAttemptId.ToString());
+        envelope.AggregateType.Should().Be(nameof(PaymentAttempt));
+        envelope.CorrelationId.Should().Be(CorrelationId);
+        envelope.EventId.Should().NotBeEmpty();
+        envelope.SchemaVersion.Should().Be(1);
+        envelope.Payload.Should().BeOfType<PaymentAttemptCreatedPayload>()
+            .Which.Should().Match<PaymentAttemptCreatedPayload>(payload =>
+                payload.PaymentAttemptId == PaymentAttemptId &&
+                payload.ParkingSessionId == ParkingSessionId &&
+                payload.TariffSnapshotId == TariffSnapshotId &&
+                payload.NetPayableMinorUnits == 10000 &&
+                payload.Currency == "PHP" &&
+                payload.ProviderCode == "GCASH" &&
+                payload.Status == "INITIATED");
+    }
+
+    /// <summary>
     /// Verifies that a REUSED DB outcome maps into a reused result.
     /// </summary>
     [Fact]
@@ -163,6 +194,91 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
 
         result.PaymentAttemptId.Should().Be(PaymentAttemptId);
         result.WasReused.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies that a REUSED DB outcome publishes PaymentAttemptReused.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_WhenReused_PublishesPaymentAttemptReused()
+    {
+        var fixture = CreateSuccessfulFixture(wasReused: true, outcomeCode: "REUSED_BY_IDEMPOTENCY_KEY");
+        var sut = fixture.CreateSut();
+
+        var result = await sut.ExecuteAsync(CreateCommand("idem-001"), CancellationToken.None);
+
+        result.WasReused.Should().BeTrue();
+        fixture.EventPublisher.Published.Should().ContainSingle();
+        var envelope = fixture.EventPublisher.Published.Single();
+        envelope.EventType.Should().Be(IntegrationEventTypes.PaymentAttemptReused);
+        envelope.CorrelationId.Should().Be(CorrelationId);
+        envelope.Payload.Should().BeOfType<PaymentAttemptReusedPayload>()
+            .Which.Should().Match<PaymentAttemptReusedPayload>(payload =>
+                payload.PaymentAttemptId == PaymentAttemptId &&
+                payload.ParkingSessionId == ParkingSessionId &&
+                payload.TariffSnapshotId == TariffSnapshotId &&
+                payload.Status == "INITIATED" &&
+                payload.ReuseReason == "REUSED_BY_IDEMPOTENCY_KEY");
+    }
+
+    /// <summary>
+    /// Verifies that a rejected create-or-reuse request does not publish created or reused success events.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_WhenRejected_DoesNotPublishCreatedOrReused()
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns((ParkingSession?)null);
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-001"), CancellationToken.None);
+
+        await act.Should().ThrowAsync<ParkingSessionNotFoundException>();
+        fixture.EventPublisher.Published.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that a successful payment-attempt event preserves the request correlation identifier.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_PublishedEventContainsCorrelationId()
+    {
+        var fixture = CreateSuccessfulFixture(wasReused: false, outcomeCode: "CREATED");
+        var sut = fixture.CreateSut();
+
+        await sut.ExecuteAsync(CreateCommand("idem-001"), CancellationToken.None);
+
+        fixture.EventPublisher.Published.Single().CorrelationId.Should().Be(CorrelationId);
+    }
+
+    /// <summary>
+    /// Verifies that event envelopes include the required metadata fields.
+    /// </summary>
+    [Fact]
+    public void EventEnvelope_ContainsRequiredMetadata()
+    {
+        var envelope = new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.PaymentAttemptCreated,
+            OccurredAtUtc = Now,
+            CorrelationId = CorrelationId,
+            AggregateId = PaymentAttemptId.ToString(),
+            AggregateType = nameof(PaymentAttempt),
+            Payload = new { PaymentAttemptId }
+        };
+
+        envelope.EventId.Should().NotBeEmpty();
+        envelope.EventType.Should().NotBeNullOrWhiteSpace();
+        envelope.OccurredAtUtc.Should().Be(Now);
+        envelope.CorrelationId.Should().Be(CorrelationId);
+        envelope.AggregateId.Should().Be(PaymentAttemptId.ToString());
+        envelope.AggregateType.Should().Be(nameof(PaymentAttempt));
+        envelope.SchemaVersion.Should().Be(1);
+        envelope.Payload.Should().NotBeNull();
     }
 
     /// <summary>
@@ -426,8 +542,59 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             Substitute.For<IPaymentAttemptDbRoutineGateway>(),
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             Substitute.For<IProviderHandoffFactory>(),
+            new RecordingIntegrationEventPublisher(),
             clock,
             new CentralPmsMetrics());
+    }
+
+    /// <summary>
+    /// Creates a fixture for successful created or reused payment attempt outcomes.
+    /// </summary>
+    /// <param name="wasReused">Whether the DB routine should return a reused attempt.</param>
+    /// <param name="outcomeCode">DB outcome code to return.</param>
+    /// <returns>A configured fixture.</returns>
+    private static Fixture CreateSuccessfulFixture(bool wasReused, string outcomeCode)
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot());
+
+        fixture.PaymentAttemptDbRoutineGateway
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new CreateOrReusePaymentAttemptDbResult
+            {
+                PaymentAttemptId = PaymentAttemptId,
+                ParkingSessionId = ParkingSessionId,
+                TariffSnapshotId = TariffSnapshotId,
+                AttemptStatus = "INITIATED",
+                PaymentProviderCode = "GCASH",
+                WasReused = wasReused,
+                OutcomeCode = outcomeCode,
+                GrossAmountSnapshot = 100m,
+                StatutoryDiscountSnapshot = 0m,
+                CouponDiscountSnapshot = 0m,
+                NetAmountDueSnapshot = 100m,
+                CurrencyCode = "PHP",
+                TariffVersionReference = "TVR-001",
+                IdempotencyKey = "idem-001"
+            });
+
+        fixture.ProviderHandoffFactory
+            .CreatePlaceholder(Arg.Any<PaymentProvider>(), PaymentAttemptId)
+            .Returns(new ProviderHandoffResult
+            {
+                Type = "REDIRECT",
+                Url = "/payments/gcash/33333333-3333-3333-3333-333333333333",
+                ExpiresAt = Now.AddMinutes(15)
+            });
+
+        return fixture;
     }
 
     /// <summary>
@@ -438,6 +605,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     /// <param name="PaymentAttemptDbRoutineGateway">Payment attempt DB routine gateway substitute.</param>
     /// <param name="PaymentAttemptCreationPolicy">Payment attempt creation policy substitute.</param>
     /// <param name="ProviderHandoffFactory">Provider handoff factory substitute.</param>
+    /// <param name="EventPublisher">Recording integration event publisher.</param>
     /// <param name="SystemClock">System clock substitute.</param>
     /// <param name="Metrics">Central PMS business metrics instance.</param>
     private sealed record Fixture(
@@ -446,6 +614,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         IPaymentAttemptDbRoutineGateway PaymentAttemptDbRoutineGateway,
         IPaymentAttemptCreationPolicy PaymentAttemptCreationPolicy,
         IProviderHandoffFactory ProviderHandoffFactory,
+        RecordingIntegrationEventPublisher EventPublisher,
         ISystemClock SystemClock,
         CentralPmsMetrics Metrics)
     {
@@ -461,9 +630,21 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
                 PaymentAttemptDbRoutineGateway,
                 PaymentAttemptCreationPolicy,
                 ProviderHandoffFactory,
+                EventPublisher,
                 SystemClock,
                 Metrics,
                 NullLogger<CreateOrReusePaymentAttemptHandler>.Instance);
+        }
+    }
+
+    private sealed class RecordingIntegrationEventPublisher : IIntegrationEventPublisher
+    {
+        public List<IntegrationEventEnvelope> Published { get; } = new();
+
+        public Task PublishAsync(IntegrationEventEnvelope envelope, CancellationToken cancellationToken)
+        {
+            Published.Add(envelope);
+            return Task.CompletedTask;
         }
     }
 }

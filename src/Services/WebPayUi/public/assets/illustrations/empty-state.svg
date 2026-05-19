@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320" viewBox="0 0 480 320" fill="none" role="img" aria-labelledby="title">
+  <title id="title">No session found</title>
+  <rect width="480" height="320" rx="24" fill="#FFFFFF"/>
+  <circle cx="240" cy="112" r="80" fill="#EAF2FF"/>
+  <rect x="160" y="114" width="62" height="94" rx="8" fill="#1B72E8"/>
+  <rect x="170" y="128" width="42" height="66" rx="4" fill="#B8D4FF"/>
+  <text x="191" y="170" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="900" fill="#FFFFFF">P</text>
+  <rect x="214" y="142" width="134" height="20" rx="8" fill="#FFFFFF" stroke="#1B72E8" stroke-width="5" transform="rotate(-8 214 142)"/>
+  <rect x="214" y="142" width="134" height="20" rx="8" stroke="#1B72E8" stroke-width="5" transform="rotate(-8 214 142)"/>
+  <path d="M310 70c26-21 42-5 45 13" stroke="#1B72E8" stroke-width="3" stroke-dasharray="6 6"/>
+  <path d="M360 55l26 10-22 14z" fill="#1B72E8"/>
+  <text x="240" y="238" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="800" fill="#101828">No session found</text>
+  <text x="240" y="263" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" fill="#667085">We couldn’t find an active parking session.</text>
+</svg>

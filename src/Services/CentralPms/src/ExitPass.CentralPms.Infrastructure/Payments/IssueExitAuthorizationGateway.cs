@@ -149,7 +149,7 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             var duration = DateTimeOffset.UtcNow - startedAt;
 
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
 
             _logger.LogError(

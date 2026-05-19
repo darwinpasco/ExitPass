@@ -1,0 +1,18 @@
+READ ME:
+
+For reference on the API documents
+
+AUB PayMate Merchant Presented-QR Code Payment API Specification_V1.4.3		-	WechatPay, UnionPay, Alipay+ QR
+
+AUB PayMate A+ Web API documentation	-	Alipay+ Web
+
+AUB ShopeePay	-	ShopeePay
+
+AUB Merchant-Presented-QR_V1.4.3	-	QRPH, Instapay, GCash Web, GrabPay Web, WechatPay, UnionPay, GCash, GrabPay
+
+How to integrate Card API_031924	-	Card Payment guide
+
+AUB Card Cashier API	-	Card Payment API
+
+
+card-demo	-	Card Payment demo code

@@ -74,6 +74,12 @@ public sealed class InitiateProviderPaymentHandler
 
         var adapter = _providerRegistry.GetRequired(request.ProviderCode, request.ProviderProduct);
 
+        _logger.LogInformation(
+            "Selected provider adapter for handoff. PaymentAttemptId {PaymentAttemptId}, AdapterProviderCode {AdapterProviderCode}, AdapterProviderProduct {AdapterProviderProduct}",
+            request.PaymentAttemptId,
+            adapter.ProviderCode,
+            adapter.ProviderProduct);
+
         var command = new CreateProviderPaymentSessionCommand(
             request.PaymentAttemptId,
             request.AmountMinor,
@@ -100,8 +106,10 @@ public sealed class InitiateProviderPaymentHandler
             result.ProviderReference,
             result.SessionStatus,
             result.Handoff.RedirectUrl,
+            result.Handoff.QrPayload,
             result.ExpiresAtUtc,
             request.IdempotencyKey,
+            TryGetCorrelationId(request.Metadata),
             requestJson,
             result.RawResponseJson,
             startedAtUtc);
@@ -126,5 +134,13 @@ public sealed class InitiateProviderPaymentHandler
             result.SessionStatus,
             result.Handoff,
             result.ExpiresAtUtc);
+    }
+
+    private static Guid? TryGetCorrelationId(IReadOnlyDictionary<string, string> metadata)
+    {
+        return metadata.TryGetValue("correlation_id", out var value) &&
+            Guid.TryParse(value, out var correlationId)
+            ? correlationId
+            : null;
     }
 }

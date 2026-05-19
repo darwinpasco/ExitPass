@@ -22,19 +22,19 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 ///
 /// Invariants Enforced:
 /// - Payment confirmation must remain tied to one canonical PaymentAttempt
-/// - Duplicate provider confirmation must not create ambiguous state
+/// - Same-attempt webhook replay must return the existing PaymentConfirmation deterministically
+/// - Cross-attempt duplicate provider confirmation must not create ambiguous state
 /// - Confirmation persistence must preserve provider reference traceability
 /// </summary>
 public sealed class RecordPaymentConfirmationIntegrationTests
 {
-    private const string ConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(ConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Missing environment variable '{ConnectionStringEnvVar}'. " +
-            "Point it at the ExitPass integration database.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.10 and 10.7.9, SDD 6.4 and 7.3, and the invariant that
+    /// provider confirmation evidence is persisted against one canonical PaymentAttempt.
+    /// </summary>
     [Fact]
     public async Task RecordPaymentConfirmation_WhenAttemptExists_PersistsConfirmation()
     {
@@ -70,7 +70,7 @@ public sealed class RecordPaymentConfirmationIntegrationTests
             Assert.NotNull(persisted);
             Assert.Equal(attempt.PaymentAttemptId, persisted!.PaymentAttemptId);
             Assert.Equal(confirmation.ProviderReference, persisted.ProviderReference);
-            Assert.Equal("SUCCESS", persisted.ProviderStatus);
+            Assert.Equal("RECORDED", persisted.ProviderStatus);
         }
         finally
         {
@@ -78,6 +78,10 @@ public sealed class RecordPaymentConfirmationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.10 and 10.7.9, SDD 7.3 and 9.6, and the invariant that
+    /// PaymentConfirmation cannot be recorded without an existing PaymentAttempt.
+    /// </summary>
     [Fact]
     public async Task RecordPaymentConfirmation_WhenAttemptIsInvalid_RejectsPersistence()
     {
@@ -109,16 +113,26 @@ public sealed class RecordPaymentConfirmationIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 10.7.9 and 10.7.10, SDD 7.3 and 9.6, and the invariant that
+    /// provider references cannot be reused across different canonical PaymentAttempts.
+    /// </summary>
     [Fact]
-    public async Task RecordPaymentConfirmation_WhenProviderReferenceReplayed_RejectsDuplicate()
+    public async Task RecordPaymentConfirmation_WhenProviderReferenceUsedForDifferentAttempt_RejectsDuplicate()
     {
         var context = PaymentTestContext.Create(
-            nameof(RecordPaymentConfirmation_WhenProviderReferenceReplayed_RejectsDuplicate));
+            nameof(RecordPaymentConfirmation_WhenProviderReferenceUsedForDifferentAttempt_RejectsDuplicate));
+        var secondContext = PaymentTestContext.Create(
+            $"{nameof(RecordPaymentConfirmation_WhenProviderReferenceUsedForDifferentAttempt_RejectsDuplicate)}SecondAttempt");
 
         await PaymentTestDataHelper.ResetAndSeedAsync(
             ConnectionString,
             context,
             "Seed data for record-payment-confirmation tests");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            secondContext,
+            "Seed second attempt data for record-payment-confirmation duplicate-provider-reference tests");
 
         try
         {
@@ -126,6 +140,11 @@ public sealed class RecordPaymentConfirmationIntegrationTests
                 ConnectionString,
                 context,
                 "idem-record-confirmation-replay",
+                "payment-confirmation-test");
+            var secondAttempt = await CreateAttemptAsync(
+                ConnectionString,
+                secondContext,
+                "idem-record-confirmation-replay-second-attempt",
                 "payment-confirmation-test");
 
             var providerReference = $"PCONF-{Guid.NewGuid():N}";
@@ -142,7 +161,7 @@ public sealed class RecordPaymentConfirmationIntegrationTests
             var ex = await Assert.ThrowsAnyAsync<PostgresException>(async () =>
             {
                 await RecordPaymentConfirmationAsync(
-                    paymentAttemptId: attempt.PaymentAttemptId,
+                    paymentAttemptId: secondAttempt.PaymentAttemptId,
                     providerReference: providerReference,
                     providerStatus: "SUCCESS",
                     requestedBy: "payment-provider-callback",
@@ -157,11 +176,16 @@ public sealed class RecordPaymentConfirmationIntegrationTests
         }
         finally
         {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, secondContext);
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
     }
 
-    [Fact(Skip = "Enable after record_payment_confirmation() contract is locked to idempotent same-reference replay behavior.")]
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 10.7.10, SDD 7.3 and 9.6, and the invariant that
+    /// same-attempt same-provider-reference webhook replay returns the existing PaymentConfirmation.
+    /// </summary>
+    [Fact]
     public async Task RecordPaymentConfirmation_WhenProviderReferenceReplayed_IsIdempotent()
     {
         var context = PaymentTestContext.Create(
@@ -266,9 +290,9 @@ public sealed class RecordPaymentConfirmationIntegrationTests
             SELECT
                 payment_confirmation_id,
                 payment_attempt_id,
-                provider_reference,
-                provider_status,
-                verified_timestamp
+                provider_transaction_ref AS provider_reference,
+                confirmation_status::text AS provider_status,
+                verified_at AS verified_timestamp
             FROM core.payment_confirmations
             WHERE payment_confirmation_id = @payment_confirmation_id;
             """;
@@ -302,11 +326,11 @@ public sealed class RecordPaymentConfirmationIntegrationTests
             SELECT
                 payment_confirmation_id,
                 payment_attempt_id,
-                provider_reference,
-                provider_status,
-                verified_timestamp
+                provider_transaction_ref AS provider_reference,
+                confirmation_status::text AS provider_status,
+                verified_at AS verified_timestamp
             FROM core.payment_confirmations
-            WHERE provider_reference = @provider_reference;
+            WHERE provider_transaction_ref = @provider_reference;
             """;
 
         await using var connection = new NpgsqlConnection(ConnectionString);

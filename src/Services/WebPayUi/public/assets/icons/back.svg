@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none" role="img" aria-labelledby="title">
+  <title id="title">Back</title>
+  <circle cx="64" cy="64" r="42" fill="#FFFFFF" stroke="#1B72E8" stroke-width="8"/>
+  <path d="M72 42L50 64l22 22M52 64h35" stroke="#101828" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

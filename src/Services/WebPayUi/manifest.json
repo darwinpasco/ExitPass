@@ -1,0 +1,26 @@
+{
+  "package": "exitpass-webpay-assets",
+  "version": "0.1.0-dev",
+  "status": "functional-placeholder",
+  "assets": [
+    "logo/exitpass-logo.svg",
+    "logo/proparking-logo-placeholder.svg",
+    "logo/favicon.svg",
+    "icons/qr-scan.svg",
+    "icons/ticket.svg",
+    "icons/plate-number.svg",
+    "icons/payment.svg",
+    "icons/success.svg",
+    "icons/error.svg",
+    "icons/back.svg",
+    "brand/colors.json",
+    "brand/theme.ts",
+    "illustrations/camera-permission.svg",
+    "illustrations/payment-pending.svg"
+  ],
+  "notes": [
+    "ExitPass branding is primary.",
+    "Pro Parking logo is a placeholder and should be replaced with the official logo.",
+    "No external CDN assets are included."
+  ]
+}

@@ -29,15 +29,11 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 /// </summary>
 public sealed class ConsumeExitAuthorizationIntegrationTests
 {
-    private const string ConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-
     /// <summary>
     /// Gets the integration database connection string from the environment.
     /// </summary>
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(ConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Missing environment variable '{ConnectionStringEnvVar}'. Point it at the ExitPass integration database.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
     /// <summary>
     /// Verifies that an issued authorization can be consumed successfully.
@@ -227,7 +223,7 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
         var attempt = await CreateAttemptAsync(
             ConnectionString,
             context,
-            idempotencyKey,
+            $"{idempotencyKey}-{Guid.NewGuid():N}",
             "consume-auth-test");
 
         var finalized = await FinalizeAttemptAsync(
@@ -258,7 +254,7 @@ public sealed class ConsumeExitAuthorizationIntegrationTests
 
         Assert.NotNull(persistedConfirmation);
         Assert.Equal(confirmation.PaymentConfirmationId, persistedConfirmation!.PaymentConfirmationId);
-        Assert.Equal("SUCCESS", persistedConfirmation.ProviderStatus);
+        Assert.Equal("RECORDED", persistedConfirmation.ProviderStatus);
         Assert.Equal(confirmation.ProviderReference, persistedConfirmation.ProviderReference);
         Assert.Equal(confirmation.VerifiedTimestamp, persistedConfirmation.VerifiedTimestamp);
 

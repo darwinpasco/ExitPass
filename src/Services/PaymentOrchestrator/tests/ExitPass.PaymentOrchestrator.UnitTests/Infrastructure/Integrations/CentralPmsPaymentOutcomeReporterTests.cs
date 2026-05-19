@@ -171,6 +171,106 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
         Assert.Equal("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41", document.RootElement.GetProperty("requestedByUserId").GetString());
     }
 
+    /// <summary>
+    /// Verifies that provider failure evidence is reported to Central PMS as failed finality,
+    /// never as a successful payment confirmation.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedOutcomeAsync_MapsTerminalFailureToFailedFinalAttemptStatus()
+    {
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, new { status = "ok" }));
+        var reporter = CreateReporter(handler);
+
+        var report = CreateReport(
+            canonicalStatus: "FAILED",
+            rawStatus: "failed",
+            isTerminal: true,
+            isSuccess: false);
+
+        await reporter.ReportVerifiedOutcomeAsync(report, CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(handler.LastRequestContent));
+
+        using var document = JsonDocument.Parse(handler.LastRequestContent!);
+        Assert.Equal("failed", document.RootElement.GetProperty("providerStatus").GetString());
+        Assert.Equal("FAILED", document.RootElement.GetProperty("finalAttemptStatus").GetString());
+    }
+
+    /// <summary>
+    /// Verifies that non-terminal provider evidence remains pending and does not create
+    /// false payment finality inside Payment Orchestrator.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedOutcomeAsync_MapsNonTerminalOutcomeToPendingProvider()
+    {
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, new { status = "ok" }));
+        var reporter = CreateReporter(handler);
+
+        var report = CreateReport(
+            canonicalStatus: "PENDING_PROVIDER",
+            rawStatus: "awaiting_payment",
+            isTerminal: false,
+            isSuccess: false);
+
+        await reporter.ReportVerifiedOutcomeAsync(report, CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(handler.LastRequestContent));
+
+        using var document = JsonDocument.Parse(handler.LastRequestContent!);
+        Assert.Equal("awaiting_payment", document.RootElement.GetProperty("providerStatus").GetString());
+        Assert.Equal("PENDING_PROVIDER", document.RootElement.GetProperty("finalAttemptStatus").GetString());
+    }
+
+    /// <summary>
+    /// Verifies that AUB outcomes are converted to the provider-neutral Central PMS payload shape.
+    /// </summary>
+    [Fact]
+    public async Task AubOutcomeReport_UsesProviderNeutralCentralPmsPayload()
+    {
+        var handler = new StubHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, new { status = "ok" }));
+        var reporter = CreateReporter(handler);
+
+        var report = new VerifiedPaymentOutcomeReport(
+            PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            ParkingSessionId: Guid.Parse("93e97f33-5849-4b9f-a83f-1080820103d8"),
+            RequestedByUserId: Guid.Parse("9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"),
+            CorrelationId: Guid.Parse("6de95bb4-8f5a-4170-9184-e8eb4cb15c57"),
+            ProviderCode: "AUB",
+            ProviderReference: "aub-ref-001",
+            ProviderSessionId: "9c708f54-6daa-4835-a76b-6b166652dd02",
+            CanonicalStatus: "SUCCEEDED",
+            OccurredAtUtc: DateTimeOffset.Parse("2026-05-16T08:00:00Z"),
+            AmountMinor: 12500,
+            Currency: "PHP",
+            EventId: "aub-ref-001",
+            IsTerminal: true,
+            IsSuccess: true,
+            RawAttributes: new Dictionary<string, string>
+            {
+                ["provider_status"] = "SUCCESS",
+                ["card_bin"] = "420000",
+                ["last4_digits"] = "0000"
+            });
+
+        await reporter.ReportVerifiedOutcomeAsync(report, CancellationToken.None);
+
+        Assert.False(string.IsNullOrWhiteSpace(handler.LastRequestContent));
+
+        using var document = JsonDocument.Parse(handler.LastRequestContent!);
+        var root = document.RootElement;
+
+        Assert.Equal(report.PaymentAttemptId.ToString(), root.GetProperty("paymentAttemptId").GetString());
+        Assert.Equal(report.ParkingSessionId.ToString(), root.GetProperty("parkingSessionId").GetString());
+        Assert.Equal("aub-ref-001", root.GetProperty("providerReference").GetString());
+        Assert.Equal("SUCCESS", root.GetProperty("providerStatus").GetString());
+        Assert.Equal("CONFIRMED", root.GetProperty("finalAttemptStatus").GetString());
+        Assert.Equal("payment-orchestrator", root.GetProperty("requestedBy").GetString());
+        Assert.False(root.TryGetProperty("cardBin", out _));
+        Assert.False(root.TryGetProperty("last4Digits", out _));
+        Assert.False(root.TryGetProperty("cashierUrl", out _));
+        Assert.False(root.TryGetProperty("orderInformation", out _));
+    }
+
     private static CentralPmsPaymentOutcomeReporter CreateReporter(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()
@@ -191,7 +291,11 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
             NullLogger<CentralPmsPaymentOutcomeReporter>.Instance);
     }
 
-    private static VerifiedPaymentOutcomeReport CreateReport(string rawStatus = "SUCCEEDED")
+    private static VerifiedPaymentOutcomeReport CreateReport(
+        string canonicalStatus = "SUCCEEDED",
+        string rawStatus = "SUCCEEDED",
+        bool isTerminal = true,
+        bool isSuccess = true)
     {
         return new VerifiedPaymentOutcomeReport(
             PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
@@ -201,13 +305,13 @@ public sealed class CentralPmsPaymentOutcomeReporterTests
             ProviderCode: "PAYMONGO",
             ProviderReference: "cs_293285f3347f5496c48332d8",
             ProviderSessionId: "cs_293285f3347f5496c48332d8",
-            CanonicalStatus: "SUCCEEDED",
+            CanonicalStatus: canonicalStatus,
             OccurredAtUtc: DateTimeOffset.Parse("2026-04-06T10:00:00Z"),
             AmountMinor: 5000,
             Currency: "PHP",
             EventId: "evt_test_009",
-            IsTerminal: true,
-            IsSuccess: true,
+            IsTerminal: isTerminal,
+            IsSuccess: isSuccess,
             RawAttributes: new Dictionary<string, string>
             {
                 ["status"] = rawStatus

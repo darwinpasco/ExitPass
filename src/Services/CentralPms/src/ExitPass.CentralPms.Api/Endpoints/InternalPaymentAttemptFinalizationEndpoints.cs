@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Payments;
@@ -41,7 +42,8 @@ public static class InternalPaymentAttemptFinalizationEndpoints
     public static IEndpointRouteBuilder MapInternalPaymentAttemptFinalizationEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/v1/internal/payment-attempts")
-            .WithTags("InternalPaymentAttempts");
+            .WithTags("InternalPaymentAttempts")
+            .RequireInternalServiceMtls();
 
         group.MapPost("/{paymentAttemptId:guid}/finalize", HandleAsync)
             .WithName("FinalizePaymentAttempt")
@@ -128,7 +130,7 @@ public static class InternalPaymentAttemptFinalizationEndpoints
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             return Results.BadRequest(BuildError(
                 errorCode: "INVALID_REQUEST",
@@ -138,7 +140,7 @@ public static class InternalPaymentAttemptFinalizationEndpoints
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             return Results.NotFound(BuildError(
                 errorCode: "PAYMENT_ATTEMPT_NOT_FOUND",
@@ -152,7 +154,7 @@ public static class InternalPaymentAttemptFinalizationEndpoints
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             return Results.Conflict(BuildError(
                 errorCode: "PAYMENT_ATTEMPT_ALREADY_FINAL",
@@ -166,7 +168,7 @@ public static class InternalPaymentAttemptFinalizationEndpoints
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "22023")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             return Results.BadRequest(BuildError(
                 errorCode: "INVALID_REQUEST",
@@ -180,7 +182,7 @@ public static class InternalPaymentAttemptFinalizationEndpoints
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             return Results.Conflict(BuildError(
                 errorCode: "PAYMENT_ATTEMPT_FINALIZATION_CONFLICT",

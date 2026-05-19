@@ -186,7 +186,7 @@ public sealed class PaymentAttemptsController : ControllerBase
         catch (ParkingSessionNotFoundException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because parking session was not found.");
             return NotFound(BuildError("SESSION_NOT_FOUND", ex.Message, correlationIdRaw));
@@ -194,7 +194,7 @@ public sealed class PaymentAttemptsController : ControllerBase
         catch (TariffSnapshotNotFoundException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because tariff snapshot was not found.");
             return NotFound(BuildError("TARIFF_SNAPSHOT_NOT_FOUND", ex.Message, correlationIdRaw));
@@ -202,7 +202,7 @@ public sealed class PaymentAttemptsController : ControllerBase
         catch (TariffSnapshotNotEligibleException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because tariff snapshot was not eligible.");
             return Conflict(BuildError("TARIFF_SNAPSHOT_INVALID", ex.Message, correlationIdRaw));
@@ -210,15 +210,23 @@ public sealed class PaymentAttemptsController : ControllerBase
         catch (ActivePaymentAttemptAlreadyExistsException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because an active payment attempt already exists.");
-            return Conflict(BuildError("ACTIVE_PAYMENT_ATTEMPT_EXISTS", ex.Message, correlationIdRaw));
+            return Conflict(BuildError(
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                ex.Message,
+                correlationIdRaw,
+                new Dictionary<string, object?>
+                {
+                    ["parking_session_id"] = ex.ParkingSessionId,
+                    ["payment_attempt_id"] = ex.PaymentAttemptId
+                }));
         }
         catch (IdempotencyConflictException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because idempotency conflict was detected.");
             return Conflict(BuildError("IDEMPOTENCY_CONFLICT", ex.Message, correlationIdRaw));
@@ -231,15 +239,21 @@ public sealed class PaymentAttemptsController : ControllerBase
     /// <param name="errorCode">Application error code.</param>
     /// <param name="message">Error message.</param>
     /// <param name="correlationIdRaw">Raw correlation ID header.</param>
+    /// <param name="details">Optional structured error details.</param>
     /// <returns>A standardized error response.</returns>
-    private static ErrorResponse BuildError(string errorCode, string message, string? correlationIdRaw)
+    private static ErrorResponse BuildError(
+        string errorCode,
+        string message,
+        string? correlationIdRaw,
+        Dictionary<string, object?>? details = null)
     {
         return new ErrorResponse
         {
             ErrorCode = errorCode,
             Message = message,
             CorrelationId = Guid.TryParse(correlationIdRaw, out var correlationId) ? correlationId : Guid.Empty,
-            Retryable = false
+            Retryable = false,
+            Details = details
         };
     }
 }

@@ -86,7 +86,7 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
-    /// Calls the canonical DB routine to finalize a payment attempt.
+    /// Finalizes a payment attempt through the canonical ExitPass v1.2 DB routine.
     /// </summary>
     /// <param name="connectionString">Integration database connection string.</param>
     /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
@@ -94,8 +94,8 @@ public static class PaymentRoutineTestHelper
     /// <param name="requestedBy">Audit actor string for the DB routine call.</param>
     /// <param name="correlationId">Canonical correlation identifier for the scenario.</param>
     /// <returns>
-    /// The authoritative result returned by <c>core.finalize_payment_attempt(...)</c>, or <see langword="null"/>
-    /// if no row was returned.
+    /// The v1.2 persisted payment-attempt state returned by <c>core.finalize_payment_attempt(...)</c>,
+    /// or <see langword="null"/> if no row was returned.
     /// </returns>
     public static async Task<FinalizeAttemptResult?> FinalizeAttemptAsync(
         string connectionString,
@@ -347,17 +347,19 @@ public static class PaymentRoutineTestHelper
     {
         const string sql = """
             SELECT
-                payment_attempt_id,
-                parking_session_id,
-                tariff_snapshot_id,
-                payment_provider_code,
-                idempotency_key,
-                attempt_status,
-                created_at,
-                updated_at,
-                finalized_at
-            FROM core.payment_attempts
-            WHERE payment_attempt_id = @payment_attempt_id;
+                pa.payment_attempt_id,
+                pa.parking_session_id,
+                pa.tariff_snapshot_id,
+                COALESCE(pr.rail_code, 'UNKNOWN') AS payment_provider_code,
+                pa.idempotency_key,
+                pa.attempt_status::text AS attempt_status,
+                pa.created_at,
+                pa.updated_at,
+                pa.finalized_at
+            FROM core.payment_attempts AS pa
+            LEFT JOIN payments.payment_rails AS pr
+                ON pr.payment_rail_id = pa.payment_rail_id
+            WHERE pa.payment_attempt_id = @payment_attempt_id;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -404,17 +406,17 @@ public static class PaymentRoutineTestHelper
             SELECT
                 payment_confirmation_id,
                 payment_attempt_id,
-                provider_reference,
-                provider_status,
-                confirmation_status,
-                verified_timestamp,
-                raw_callback_reference,
-                provider_signature_valid,
-                provider_payload_hash,
-                amount_confirmed,
+                provider_transaction_ref AS provider_reference,
+                confirmation_status::text AS provider_status,
+                confirmation_status::text AS confirmation_status,
+                verified_at AS verified_timestamp,
+                NULL::text AS raw_callback_reference,
+                NULL::boolean AS provider_signature_valid,
+                NULL::text AS provider_payload_hash,
+                confirmed_amount AS amount_confirmed,
                 currency_code,
                 created_at,
-                created_by
+                created_by_service_identity_id::text AS created_by
             FROM core.payment_confirmations
             WHERE payment_confirmation_id = @payment_confirmation_id;
             """;
@@ -468,16 +470,27 @@ public static class PaymentRoutineTestHelper
                 exit_authorization_id,
                 parking_session_id,
                 payment_attempt_id,
-                authorization_token,
-                authorization_status,
+                exit_authorization_id::text AS authorization_token,
+                CASE
+                    WHEN consumed.consumed_at IS NOT NULL THEN 'CONSUMED'
+                    ELSE authorization_status::text
+                END AS authorization_status,
                 issued_at,
-                expiration_timestamp,
+                expires_at AS expiration_timestamp,
                 invalidated_at,
                 updated_at,
-                updated_by,
-                consumed_at
-            FROM core.exit_authorizations
-            WHERE exit_authorization_id = @exit_authorization_id;
+                updated_by_service_identity_id AS updated_by,
+                consumed.consumed_at
+            FROM core.exit_authorizations AS ea
+            LEFT JOIN LATERAL (
+                SELECT gac.consumed_at
+                FROM gates.gate_authorization_consumptions AS gac
+                WHERE gac.exit_authorization_id = ea.exit_authorization_id
+                  AND gac.consume_status = 'CONSUMED'
+                ORDER BY gac.consumed_at DESC
+                LIMIT 1
+            ) AS consumed ON TRUE
+            WHERE ea.exit_authorization_id = @exit_authorization_id;
             """;
 
         await using var connection = new NpgsqlConnection(connectionString);
@@ -526,9 +539,17 @@ public static class PaymentRoutineTestHelper
             UPDATE core.exit_authorizations
             SET
                 issued_at = NOW() - INTERVAL '2 minutes',
-                expiration_timestamp = NOW() - INTERVAL '1 minute',
+                expires_at = NOW() - INTERVAL '1 minute',
                 updated_at = NOW(),
-                updated_by = @updated_by,
+                updated_by_service_identity_id = COALESCE(
+                    (
+                        SELECT si.service_identity_id
+                        FROM identity.service_identities AS si
+                        WHERE si.service_identity_id = @updated_by
+                        LIMIT 1
+                    ),
+                    updated_by_service_identity_id,
+                    created_by_service_identity_id),
                 row_version = row_version + 1
             WHERE exit_authorization_id = @exit_authorization_id;
             """;

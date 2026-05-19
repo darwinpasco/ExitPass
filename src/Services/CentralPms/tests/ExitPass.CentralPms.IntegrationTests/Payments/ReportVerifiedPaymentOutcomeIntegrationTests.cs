@@ -29,10 +29,6 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 /// </summary>
 public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
 {
-    private const string PrimaryDbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-    private const string AlternateDbConnectionStringEnvVar = "EXITPASS_TEST_DB_CONNECTION_STRING";
-    private const string LegacyDbConnectionStringEnvVar = "ConnectionStrings__MainDatabase";
-
     private const string PrimaryApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
     private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
     private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
@@ -41,11 +37,7 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
     /// Gets the configured integration-test database connection string.
     /// </summary>
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(PrimaryDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(AlternateDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(LegacyDbConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Integration test database connection string is missing. Set one of: {PrimaryDbConnectionStringEnvVar}, {AlternateDbConnectionStringEnvVar}, or {LegacyDbConnectionStringEnvVar}.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
     /// <summary>
     /// Gets the configured Central PMS API base URI.
@@ -189,11 +181,17 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
     {
         var context = PaymentTestContext.Create(
             nameof(ReportVerifiedPaymentOutcome_WhenProviderReferenceIsAlreadyRecorded_ReturnsConflict));
+        var secondContext = PaymentTestContext.Create(
+            $"{nameof(ReportVerifiedPaymentOutcome_WhenProviderReferenceIsAlreadyRecorded_ReturnsConflict)}SecondAttempt");
 
         await PaymentTestDataHelper.ResetAndSeedAsync(
             ConnectionString,
             context,
             "Seed data for report-verified-payment-outcome API tests");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            secondContext,
+            "Seed second attempt data for report-verified-payment-outcome duplicate-provider-reference tests");
 
         try
         {
@@ -201,6 +199,11 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
                 ConnectionString,
                 context,
                 $"idem-create-{Guid.NewGuid():N}",
+                "outcome-test");
+            var secondCreated = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                secondContext,
+                $"idem-create-second-{Guid.NewGuid():N}",
                 "outcome-test");
 
             var providerReference = $"prov-{Guid.NewGuid():N}";
@@ -217,9 +220,9 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
 
             var secondResponse = await PostReportVerifiedPaymentOutcomeAsync(
                 client,
-                request: BuildValidRequest(created.PaymentAttemptId, context.ParkingSessionId, providerReference),
+                request: BuildValidRequest(secondCreated.PaymentAttemptId, secondContext.ParkingSessionId, providerReference),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId,
+                correlationId: secondContext.CorrelationId,
                 includeIdempotencyKey: true,
                 idempotencyKey: $"idem-outcome-2-{Guid.NewGuid():N}");
 
@@ -231,6 +234,7 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
         }
         finally
         {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, secondContext);
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
     }
@@ -349,6 +353,116 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
     }
 
     /// <summary>
+    /// Verifies that a provider-neutral report carrying AUB success evidence finalizes the attempt and issues exit authorization.
+    /// </summary>
+    [Fact]
+    public async Task CentralPms_WhenVerifiedAubSuccessReported_FinalizesPaymentAndIssuesExitAuthorization()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(CentralPms_WhenVerifiedAubSuccessReported_FinalizesPaymentAndIssuesExitAuthorization));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for AUB verified-payment-outcome API tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"idem-create-aub-{Guid.NewGuid():N}",
+                "aub-outcome-test");
+
+            using var client = CreateClient();
+
+            var response = await PostReportVerifiedPaymentOutcomeAsync(
+                client,
+                request: BuildOutcomeRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    providerReference: $"aub-ref-{Guid.NewGuid():N}",
+                    providerStatus: "SUCCESS",
+                    finalAttemptStatus: "CONFIRMED"),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"idem-aub-success-{Guid.NewGuid():N}");
+
+            var body = await response.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.NotNull(body);
+            Assert.Equal(created.PaymentAttemptId, body!.PaymentAttemptId);
+            Assert.Equal("CONFIRMED", body.AttemptStatus);
+            Assert.NotEqual(Guid.Empty, body.PaymentConfirmationId);
+            Assert.NotNull(body.ExitAuthorizationId);
+            Assert.Equal("ISSUED", body.AuthorizationStatus);
+            Assert.False(string.IsNullOrWhiteSpace(body.AuthorizationToken));
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that a provider-neutral report carrying AUB failure evidence finalizes as failed without exit authorization.
+    /// </summary>
+    [Fact]
+    public async Task CentralPms_WhenVerifiedAubFailureReported_DoesNotIssueExitAuthorization()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(CentralPms_WhenVerifiedAubFailureReported_DoesNotIssueExitAuthorization));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for AUB failed verified-payment-outcome API tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"idem-create-aub-failed-{Guid.NewGuid():N}",
+                "aub-outcome-test");
+
+            using var client = CreateClient();
+
+            var response = await PostReportVerifiedPaymentOutcomeAsync(
+                client,
+                request: BuildOutcomeRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    providerReference: $"aub-ref-failed-{Guid.NewGuid():N}",
+                    providerStatus: "FAILED",
+                    finalAttemptStatus: "FAILED"),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"idem-aub-failed-{Guid.NewGuid():N}");
+
+            var body = await response.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.NotNull(body);
+            Assert.Equal(created.PaymentAttemptId, body!.PaymentAttemptId);
+            Assert.Equal("FAILED", body.AttemptStatus);
+            Assert.NotEqual(Guid.Empty, body.PaymentConfirmationId);
+            Assert.Null(body.ExitAuthorizationId);
+            Assert.Null(body.AuthorizationStatus);
+            Assert.Null(body.AuthorizationToken);
+            Assert.Null(body.IssuedAt);
+            Assert.Null(body.ExpirationTimestamp);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Creates a configured HTTP client for Central PMS integration tests.
     /// </summary>
     /// <returns>Configured HTTP client.</returns>
@@ -373,12 +487,36 @@ public sealed class ReportVerifiedPaymentOutcomeIntegrationTests
         Guid parkingSessionId,
         string providerReference)
     {
+        return BuildOutcomeRequest(
+            paymentAttemptId,
+            parkingSessionId,
+            providerReference,
+            providerStatus: "SUCCESS",
+            finalAttemptStatus: "CONFIRMED");
+    }
+
+    /// <summary>
+    /// Builds an internal verified-payment-outcome request.
+    /// </summary>
+    /// <param name="paymentAttemptId">Payment attempt identifier.</param>
+    /// <param name="parkingSessionId">Parking session identifier.</param>
+    /// <param name="providerReference">Provider reference.</param>
+    /// <param name="providerStatus">Provider status evidence.</param>
+    /// <param name="finalAttemptStatus">Central PMS final attempt status.</param>
+    /// <returns>The request payload.</returns>
+    private static ReportVerifiedPaymentOutcomeRequest BuildOutcomeRequest(
+        Guid paymentAttemptId,
+        Guid parkingSessionId,
+        string providerReference,
+        string providerStatus,
+        string finalAttemptStatus)
+    {
         return new ReportVerifiedPaymentOutcomeRequest(
             PaymentAttemptId: paymentAttemptId,
             ParkingSessionId: parkingSessionId,
             ProviderReference: providerReference,
-            ProviderStatus: "SUCCESS",
-            FinalAttemptStatus: "CONFIRMED",
+            ProviderStatus: providerStatus,
+            FinalAttemptStatus: finalAttemptStatus,
             RequestedBy: "payment-orchestrator",
             RequestedByUserId: KnownTestIdentityIds.ServiceIdentityId);
     }

@@ -21,12 +21,17 @@ public sealed class FinalizePaymentAttemptGateway : IFinalizePaymentAttemptGatew
 {
     private readonly string _connectionString;
 
+    /// <summary>
+    /// Creates the gateway that calls the Central PMS payment finalization routine.
+    /// </summary>
+    /// <param name="connectionString">Database connection string used to reach the authoritative routine.</param>
     public FinalizePaymentAttemptGateway(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         _connectionString = connectionString;
     }
 
+    /// <inheritdoc />
     public async Task<FinalizePaymentAttemptDbResult> FinalizeAsync(
         FinalizePaymentAttemptDbRequest request,
         CancellationToken cancellationToken)

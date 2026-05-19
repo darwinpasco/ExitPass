@@ -235,6 +235,55 @@ public sealed class VerifyProviderWebhookHandlerTests
             Times.Once);
     }
 
+    /// <summary>
+    /// Verifies that a verified provider failure is reported as evidence without being
+    /// converted into successful payment finality by the Payment Orchestrator.
+    /// </summary>
+    [Fact]
+    public async Task HandleAsync_WhenVerifiedTerminalFailureIsFirstSeen_ReportsFailedOutcomeWithoutSuccessFinality()
+    {
+        var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
+        var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
+
+        adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
+        adapter
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateAuthenticTerminalFailureVerificationResult());
+
+        repository
+            .Setup(x => x.ExistsByProviderEventIdAsync("PAYMONGO", "evt_test_failed_009", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        repository
+            .Setup(x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        reporter
+            .Setup(x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var handler = CreateHandler(adapter, repository, reporter);
+
+        var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
+
+        Assert.True(result.Accepted);
+        Assert.False(result.Duplicate);
+        Assert.False(result.Ignored);
+        Assert.Equal("evt_test_failed_009", result.Code);
+
+        reporter.Verify(
+            x => x.ReportVerifiedOutcomeAsync(
+                It.Is<VerifiedPaymentOutcomeReport>(r =>
+                    r.CanonicalStatus == "FAILED" &&
+                    r.IsTerminal &&
+                    !r.IsSuccess &&
+                    r.EventId == "evt_test_failed_009"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     private static VerifyProviderWebhookHandler CreateHandler(
         Mock<IPaymentProviderAdapter> adapter,
         Mock<IProviderWebhookEventRepository> repository,
@@ -274,7 +323,9 @@ public sealed class VerifyProviderWebhookHandlerTests
             IsSuccess: true,
             RawAttributes: new Dictionary<string, string>
             {
-                ["status"] = "SUCCEEDED"
+                ["status"] = "SUCCEEDED",
+                ["parking_session_id"] = "93e97f33-5849-4b9f-a83f-1080820103d8",
+                ["requested_by_user_id"] = "9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"
             });
     }
 
@@ -295,7 +346,9 @@ public sealed class VerifyProviderWebhookHandlerTests
             IsSuccess: true,
             RawAttributes: new Dictionary<string, string>
             {
-                ["status"] = "SUCCEEDED"
+                ["status"] = "SUCCEEDED",
+                ["parking_session_id"] = "93e97f33-5849-4b9f-a83f-1080820103d8",
+                ["requested_by_user_id"] = "9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"
             });
     }
 
@@ -317,6 +370,29 @@ public sealed class VerifyProviderWebhookHandlerTests
             RawAttributes: new Dictionary<string, string>
             {
                 ["status"] = "SUCCEEDED"
+            });
+    }
+
+    private static ProviderWebhookVerificationResult CreateAuthenticTerminalFailureVerificationResult()
+    {
+        return new ProviderWebhookVerificationResult(
+            IsAuthentic: true,
+            EventId: "evt_test_failed_009",
+            EventType: "payment.failed",
+            PaymentAttemptId: Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            ProviderReference: "pay_failed_293285f3347f5496c48332d8",
+            ProviderSessionId: "cs_293285f3347f5496c48332d8",
+            CanonicalStatus: CanonicalPaymentOutcomeStatus.Failed,
+            OccurredAtUtc: DateTimeOffset.Parse("2026-04-06T10:00:00Z"),
+            AmountMinor: 5000,
+            Currency: "PHP",
+            IsTerminal: true,
+            IsSuccess: false,
+            RawAttributes: new Dictionary<string, string>
+            {
+                ["status"] = "failed",
+                ["parking_session_id"] = "93e97f33-5849-4b9f-a83f-1080820103d8",
+                ["requested_by_user_id"] = "9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"
             });
     }
 }

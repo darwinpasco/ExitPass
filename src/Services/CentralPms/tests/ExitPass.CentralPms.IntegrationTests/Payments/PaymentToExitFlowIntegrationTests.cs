@@ -28,10 +28,6 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 /// </summary>
 public sealed class PaymentToExitFlowIntegrationTests
 {
-    private const string PrimaryDbConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-    private const string AlternateDbConnectionStringEnvVar = "EXITPASS_TEST_DB_CONNECTION_STRING";
-    private const string LegacyDbConnectionStringEnvVar = "ConnectionStrings__MainDatabase";
-
     private const string PrimaryApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
     private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
     private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
@@ -40,11 +36,7 @@ public sealed class PaymentToExitFlowIntegrationTests
     /// Gets the configured integration-test database connection string.
     /// </summary>
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(PrimaryDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(AlternateDbConnectionStringEnvVar)
-        ?? Environment.GetEnvironmentVariable(LegacyDbConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Integration test database connection string is missing. Set one of: {PrimaryDbConnectionStringEnvVar}, {AlternateDbConnectionStringEnvVar}, or {LegacyDbConnectionStringEnvVar}.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
     /// <summary>
     /// Gets the configured Central PMS API base URI.

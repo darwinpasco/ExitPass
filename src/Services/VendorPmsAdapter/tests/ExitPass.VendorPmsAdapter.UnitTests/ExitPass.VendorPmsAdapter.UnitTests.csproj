@@ -24,6 +24,7 @@
     <ItemGroup>
         <ProjectReference Include="../../src/ExitPass.VendorPmsAdapter.Domain/ExitPass.VendorPmsAdapter.Domain.csproj" />
         <ProjectReference Include="../../src/ExitPass.VendorPmsAdapter.Application/ExitPass.VendorPmsAdapter.Application.csproj" />
+        <ProjectReference Include="../../src/ExitPass.VendorPmsAdapter.Infrastructure/ExitPass.VendorPmsAdapter.Infrastructure.csproj" />
         <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Testing/ExitPass.BuildingBlocks.Testing.csproj" />
     </ItemGroup>
 

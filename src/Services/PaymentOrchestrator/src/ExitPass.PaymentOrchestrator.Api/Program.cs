@@ -6,10 +6,13 @@ using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
 using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
+using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers;
+using ExitPass.PaymentOrchestrator.Infrastructure.Providers.Aub;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
+using ExitPass.PaymentOrchestrator.Infrastructure.Routing;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.OpenApi.Models;
@@ -191,6 +194,9 @@ static void RegisterApplicationServices(IServiceCollection services)
     ArgumentNullException.ThrowIfNull(services);
 
     services.AddScoped<InitiateProviderPaymentHandler>();
+    services.AddScoped<WebPayPaymentIntentHandler>();
+    services.AddScoped<IProviderPaymentHandoffInitiator, ProviderPaymentHandoffInitiator>();
+    services.AddSingleton<IProviderProductResolver, ProviderProductResolver>();
     services.AddScoped<VerifyProviderWebhookHandler>();
 }
 
@@ -204,12 +210,30 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
         client.Timeout = TimeSpan.FromSeconds(30);
     });
 
+    services.AddHttpClient<ICentralPmsWebPayClient, CentralPmsWebPayClient>(static client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
+
     services.AddHttpClient<PayMongoClient>();
+    services.AddHttpClient<AubClient>();
+    services.AddSingleton<IAubRequestSigner, AubDeferredRequestSigner>();
 
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
     services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
+    services.AddScoped<IPaymentProviderRoutingPolicyResolver, PaymentProviderRoutingPolicyResolver>();
 
+    services.AddScoped<AubPaymentAdapter>();
+    services.AddScoped<PayMongoCheckoutAdapter>();
     services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
+    services.AddSingleton(new PaymentProviderAdapterRegistration(
+        ProviderCode: "AUB",
+        ProviderProduct: "AUB_CARD_CASHIER",
+        CreateAdapter: static serviceProvider => serviceProvider.GetRequiredService<AubPaymentAdapter>()));
+    services.AddSingleton(new PaymentProviderAdapterRegistration(
+        ProviderCode: "PAYMONGO",
+        ProviderProduct: "PAYMONGO_CHECKOUT_SESSION",
+        CreateAdapter: static serviceProvider => serviceProvider.GetRequiredService<PayMongoCheckoutAdapter>()));
     services.AddScoped<IPaymentProviderRegistry, PaymentProviderRegistry>();
 
     services.AddOptions<PayMongoOptions>()
@@ -221,6 +245,9 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
                 !string.IsNullOrWhiteSpace(options.BaseUrl),
             "Payments:Providers:PayMongo requires SecretKey, PublicKey, and BaseUrl.")
         .ValidateOnStart();
+
+    services.AddOptions<AubOptions>()
+        .Bind(configuration.GetSection(AubOptions.SectionName));
 }
 
 static void ValidateCriticalConfiguration(IConfiguration configuration)
@@ -291,6 +318,7 @@ static void ConfigureEndpoints(WebApplication app)
 
     app.MapProviderWebhookEndpoints();
     app.MapInternalPaymentEndpoints();
+    app.MapWebPayPaymentIntentEndpoints();
 
     app.MapGet("/", static () => Results.Ok("ExitPass Payment Orchestrator API"));
 }

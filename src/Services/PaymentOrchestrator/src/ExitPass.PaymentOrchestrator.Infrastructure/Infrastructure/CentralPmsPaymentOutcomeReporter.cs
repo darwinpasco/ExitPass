@@ -153,6 +153,13 @@ public sealed class CentralPmsPaymentOutcomeReporter : ICentralPmsPaymentOutcome
             return providerStatus;
         }
 
+        if (report.RawAttributes is not null &&
+            report.RawAttributes.TryGetValue("provider_status", out var namedProviderStatus) &&
+            !string.IsNullOrWhiteSpace(namedProviderStatus))
+        {
+            return namedProviderStatus;
+        }
+
         if (!string.IsNullOrWhiteSpace(report.CanonicalStatus))
         {
             return report.CanonicalStatus;

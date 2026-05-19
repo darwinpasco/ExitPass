@@ -54,6 +54,22 @@ We are not building every service in full at once. We are building in authority-
 6. API gateway and external entry points
 7. Additional services and operational tooling
 
+## ExitPass v1.2 Database Rebuild Baseline
+
+`ExitPass_Full_Database_Creation_DDL_v1.2.sql` is the authoritative clean rebuild DDL baseline for ExitPass v1.2 development databases. Validation and preflight scripts are used after rebuild to confirm the expected v1.2 schemas, enums, tables, constraints, indexes, reference constraints, and payment-chain routines.
+
+This baseline is for clean v1.2 rebuilds, not for incremental upgrade from the legacy v1.0 database. The current engineering stance is rebuild baseline first, migration strategy later when production migration planning begins.
+
+Future schema changes must be made through controlled DDL updates or migrations, with corresponding updates to the Database Design, Engineering Pack, Data Dictionary, and affected Constraint Matrix and Index Inventory entries. Update the API Contract Pack when API behavior or physical names change.
+
+See [ExitPass v1.2 Database Rebuild Baseline](docs/ExitPass-v1.2-database-rebuild-baseline.md).
+
+### Local QRPH Provider Routing Override
+
+The baseline payment provider routing policy keeps QRPH on AUB primary with PayMongo fallback. For local and test environments where AUB test API credentials are not yet available, apply `infra/db/patches/ExitPass_QrphPayMongoRoutingOverride_v1.2.sql` after the baseline routing policy patch. The override changes only the default QRPH/PHP routing row so QRPH selects PayMongo with AUB as fallback.
+
+WebPay continues to send `paymentMethod=QRPH`; it does not expose provider selection. Do not apply this override to live environments unless the provider routing policy decision is deliberately approved for live use. The patch does not contain provider credentials or secrets.
+
 ## Top-Level Repository Structure
 
 ```text

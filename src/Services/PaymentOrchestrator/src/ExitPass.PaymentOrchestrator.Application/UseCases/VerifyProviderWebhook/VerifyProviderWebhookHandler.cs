@@ -113,7 +113,7 @@ public sealed class VerifyProviderWebhookHandler
             return VerifyProviderWebhookResult.CreateIgnored(verification.EventId);
         }
 
-        if (!TryBuildVerifiedOutcomeReport(verification, out var report, out var rejectionCode))
+        if (!TryBuildVerifiedOutcomeReport(_adapter.ProviderCode, verification, out var report, out var rejectionCode))
         {
             var resolvedRejectionCode = rejectionCode ?? "WEBHOOK_REJECTED";
 
@@ -190,13 +190,26 @@ public sealed class VerifyProviderWebhookHandler
             return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_UNKNOWN_PROVIDER_SESSION");
         }
 
-        var resolvedReport = report;
-
-        if (resolvedReport is null)
+        if (!verification.IsTerminal)
         {
-            throw new InvalidOperationException(
-                "Verified payment outcome report must be created before reporting to Central PMS.");
+            _logger.LogInformation(
+                "Accepted non-terminal provider webhook without reporting finality to Central PMS. ProviderCode {ProviderCode}, EventId {EventId}, PaymentAttemptId {PaymentAttemptId}, CanonicalStatus {CanonicalStatus}",
+                _adapter.ProviderCode,
+                verification.EventId,
+                verification.PaymentAttemptId,
+                verification.CanonicalStatus);
+
+            activity?.SetTag("webhook.accepted", true);
+            activity?.SetTag("webhook.duplicate", false);
+            activity?.SetTag("webhook.ignored", false);
+            activity?.SetTag("central_pms.reported", false);
+            activity?.SetTag("payment.canonical_status", verification.CanonicalStatus.ToString().ToUpperInvariant());
+
+            return VerifyProviderWebhookResult.CreateAccepted(verification.EventId);
         }
+
+        var resolvedReport = report ?? throw new InvalidOperationException(
+            "Verified payment outcome report must be created before reporting to Central PMS.");
 
         await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(resolvedReport, cancellationToken);
 
@@ -237,11 +250,13 @@ public sealed class VerifyProviderWebhookHandler
     /// Missing internal attributes must produce deterministic business rejection,
     /// not unhandled 500 errors.
     /// </summary>
+    /// <param name="providerCode">The normalized payment provider code from the active adapter.</param>
     /// <param name="verification">The provider verification result.</param>
     /// <param name="report">The resolved verified outcome report.</param>
     /// <param name="rejectionCode">The deterministic rejection code when the report cannot be built.</param>
     /// <returns><see langword="true"/> when a valid report was produced, otherwise <see langword="false"/>.</returns>
     private static bool TryBuildVerifiedOutcomeReport(
+        string providerCode,
         ProviderWebhookVerificationResult verification,
         out VerifiedPaymentOutcomeReport? report,
         out string? rejectionCode)
@@ -267,7 +282,7 @@ public sealed class VerifyProviderWebhookHandler
             ParkingSessionId: parkingSessionId,
             RequestedByUserId: requestedByUserId,
             CorrelationId: ResolveCorrelationId(rawAttributes),
-            ProviderCode: PayMongoProviderCode,
+            ProviderCode: providerCode,
             ProviderReference: verification.ProviderReference,
             ProviderSessionId: verification.ProviderSessionId,
             CanonicalStatus: verification.CanonicalStatus.ToString().ToUpperInvariant(),

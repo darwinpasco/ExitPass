@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
@@ -16,25 +17,25 @@ using OpenTelemetry.Trace;
 namespace ExitPass.CentralPms.Application.PaymentAttempts;
 
 /// <summary>
-/// Handles the create-or-reuse payment attempt use case.
+/// Handles the Central PMS create-or-reuse payment attempt use case.
 /// </summary>
 /// <remarks>
-/// BRD:
-/// - 9.9 Payment Initiation
-/// - 9.21 Audit and Traceability
-/// - 10.7.4 One Active Payment Attempt Per Session
+/// ExitPass v1.2 BRD references:
+/// - Section 9.9 Payment Initiation
+/// - Section 9.21 Audit and Traceability
+/// - Section 10.7.4 One Active Payment Attempt Per Session
 ///
-/// SDD:
-/// - 6.3 Initiate Payment Attempt
-/// - 8.3 PaymentAttempt State Machine
-/// - 14.3 Distributed Tracing
-/// - 14.4 Structured Logging
+/// ExitPass v1.2 SDD references:
+/// - Section 6.3 Initiate Payment Attempt
+/// - Section 8.3 PaymentAttempt State Machine
+/// - Section 14.3 Distributed Tracing
+/// - Section 14.4 Structured Logging
 ///
-/// Invariants Enforced:
-/// - only Central PMS may create or reuse a PaymentAttempt
-/// - existence of ParkingSession and TariffSnapshot must be confirmed before the create-or-reuse path is invoked
-/// - valid idempotent replay must be decided by the authoritative DB-backed create-or-reuse path
-/// - competing active payment attempt must be rejected deterministically by the authoritative DB-backed path
+/// ExitPass v1.2 invariants enforced:
+/// - Only Central PMS may create or reuse a PaymentAttempt.
+/// - ParkingSession and TariffSnapshot existence must be confirmed before invoking the create-or-reuse path.
+/// - Idempotent replay must reuse the authoritative DB-backed PaymentAttempt.
+/// - Competing active payment attempts must be rejected deterministically by the authoritative DB-backed routine.
 /// </remarks>
 public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAttemptUseCase
 {
@@ -49,6 +50,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     private readonly IPaymentAttemptDbRoutineGateway _paymentAttemptDbRoutineGateway;
     private readonly IPaymentAttemptCreationPolicy _paymentAttemptCreationPolicy;
     private readonly IProviderHandoffFactory _providerHandoffFactory;
+    private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly ISystemClock _systemClock;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<CreateOrReusePaymentAttemptHandler> _logger;
@@ -61,6 +63,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     /// <param name="paymentAttemptDbRoutineGateway">Gateway used to invoke the authoritative DB-backed create-or-reuse routine.</param>
     /// <param name="paymentAttemptCreationPolicy">Policy used to validate the create-or-reuse request.</param>
     /// <param name="providerHandoffFactory">Factory used to create provider handoff payloads.</param>
+    /// <param name="eventPublisher">Integration event publisher for successful Central PMS state changes.</param>
     /// <param name="systemClock">System clock used for canonical timestamps.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
@@ -70,6 +73,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         IPaymentAttemptDbRoutineGateway paymentAttemptDbRoutineGateway,
         IPaymentAttemptCreationPolicy paymentAttemptCreationPolicy,
         IProviderHandoffFactory providerHandoffFactory,
+        IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
         ILogger<CreateOrReusePaymentAttemptHandler> logger)
@@ -79,6 +83,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         _paymentAttemptDbRoutineGateway = paymentAttemptDbRoutineGateway;
         _paymentAttemptCreationPolicy = paymentAttemptCreationPolicy;
         _providerHandoffFactory = providerHandoffFactory;
+        _eventPublisher = eventPublisher;
         _systemClock = systemClock;
         _metrics = metrics;
         _logger = logger;
@@ -194,6 +199,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             var dbDuration = _systemClock.UtcNow - dbStart;
 
             activity?.SetTag("db_outcome_code", dbResult.OutcomeCode);
+            activity?.SetTag("outcome", ResolveOperationalOutcome(dbResult.OutcomeCode, dbResult.WasReused));
             activity?.SetTag("payment_attempt_id", dbResult.PaymentAttemptId);
             activity?.SetTag("attempt_status", dbResult.AttemptStatus);
             activity?.SetTag("was_reused", dbResult.WasReused);
@@ -238,13 +244,18 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                     result.AttemptStatus);
             }
 
+            await _eventPublisher.PublishAsync(
+                CreatePaymentAttemptEventEnvelope(result, dbResult, command.CorrelationId),
+                cancellationToken);
+
             return result;
         }
         catch (Exception ex) when (IsExpectedBusinessRejection(ex))
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.GetType().Name);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("rejection_exception_type", ex.GetType().Name);
+            activity?.SetTag("outcome", ResolveRejectionOutcome(ex));
 
             _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");
 
@@ -257,7 +268,8 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
+            activity?.SetTag("outcome", "failed");
 
             _metrics.ExceptionObserved(ex.GetType().Name, "CREATE_OR_REUSE_PAYMENT_ATTEMPT");
 
@@ -271,6 +283,9 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
     /// <summary>
     /// Converts DB outcome codes into deterministic domain exceptions.
+    /// BRD 9.9 Payment Initiation and BRD 10.7.4 One Active Payment Attempt Per Session require idempotent
+    /// replays to reuse the authoritative active attempt; SDD 6.3 Initiate Payment Attempt and SDD 8.3
+    /// PaymentAttempt State Machine keep the database routine as the source of truth for that invariant.
     /// </summary>
     /// <param name="dbResult">DB routine result.</param>
     /// <param name="tariffSnapshotId">Tariff snapshot ID associated with the request.</param>
@@ -280,10 +295,14 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         {
             case "CREATED":
             case "REUSED":
+            case "REUSED_BY_IDEMPOTENCY_KEY":
                 return;
 
+            case "ACTIVE_ATTEMPT_EXISTS":
             case "REJECTED_ACTIVE_ATTEMPT_EXISTS":
-                throw new ActivePaymentAttemptAlreadyExistsException(dbResult.ParkingSessionId);
+                throw new ActivePaymentAttemptAlreadyExistsException(
+                    dbResult.ParkingSessionId,
+                    dbResult.PaymentAttemptId);
 
             case "REJECTED_IDEMPOTENCY_CONFLICT":
                 throw new IdempotencyConflictException(dbResult.IdempotencyKey ?? string.Empty);
@@ -308,6 +327,63 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     }
 
     /// <summary>
+    /// Creates the integration event envelope for a successful create-or-reuse payment attempt outcome.
+    /// </summary>
+    /// <param name="result">Application result returned to the caller.</param>
+    /// <param name="dbResult">Authoritative database routine result.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <returns>The integration event envelope to publish.</returns>
+    private IntegrationEventEnvelope CreatePaymentAttemptEventEnvelope(
+        CreateOrReusePaymentAttemptResult result,
+        CreateOrReusePaymentAttemptDbResult dbResult,
+        Guid correlationId)
+    {
+        var eventType = result.WasReused
+            ? IntegrationEventTypes.PaymentAttemptReused
+            : IntegrationEventTypes.PaymentAttemptCreated;
+
+        object payload = result.WasReused
+            ? new PaymentAttemptReusedPayload
+            {
+                PaymentAttemptId = result.PaymentAttemptId,
+                ParkingSessionId = result.ParkingSessionId,
+                TariffSnapshotId = result.TariffSnapshotId,
+                Status = result.AttemptStatus,
+                ReuseReason = dbResult.OutcomeCode
+            }
+            : new PaymentAttemptCreatedPayload
+            {
+                PaymentAttemptId = result.PaymentAttemptId,
+                ParkingSessionId = result.ParkingSessionId,
+                TariffSnapshotId = result.TariffSnapshotId,
+                NetPayableMinorUnits = ToMinorUnits(dbResult.NetAmountDueSnapshot),
+                Currency = dbResult.CurrencyCode,
+                ProviderCode = result.PaymentProviderCode,
+                Status = result.AttemptStatus
+            };
+
+        return new IntegrationEventEnvelope
+        {
+            EventType = eventType,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = correlationId,
+            AggregateId = result.PaymentAttemptId.ToString(),
+            AggregateType = nameof(PaymentAttempt),
+            Payload = payload
+        };
+    }
+
+    /// <summary>
+    /// Converts a decimal major-unit amount to minor currency units.
+    /// </summary>
+    /// <param name="amount">Major-unit amount.</param>
+    /// <returns>Minor-unit amount rounded away from zero.</returns>
+    private static long ToMinorUnits(decimal amount)
+    {
+        return decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
+    }
+
+    /// <summary>
     /// Determines whether an exception is an expected fail-closed business rejection.
     /// </summary>
     /// <param name="ex">Exception to evaluate.</param>
@@ -320,5 +396,46 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             or ActivePaymentAttemptAlreadyExistsException
             or IdempotencyConflictException
             or InvalidOperationException;
+    }
+
+    /// <summary>
+    /// Resolves the v1.2 operational outcome label used for payment-attempt creation trace evidence.
+    /// </summary>
+    /// <param name="outcomeCode">Authoritative database routine outcome code.</param>
+    /// <param name="wasReused">Whether the authoritative routine reused an existing attempt.</param>
+    /// <returns>The bounded operational outcome label.</returns>
+    private static string ResolveOperationalOutcome(string outcomeCode, bool wasReused)
+    {
+        if (wasReused || outcomeCode.StartsWith("REUSED", StringComparison.OrdinalIgnoreCase))
+        {
+            return "reused";
+        }
+
+        if (string.Equals(outcomeCode, "CREATED", StringComparison.OrdinalIgnoreCase))
+        {
+            return "created";
+        }
+
+        if (outcomeCode.Contains("CONFLICT", StringComparison.OrdinalIgnoreCase) ||
+            outcomeCode.Contains("ACTIVE_ATTEMPT_EXISTS", StringComparison.OrdinalIgnoreCase))
+        {
+            return "conflict";
+        }
+
+        return outcomeCode.StartsWith("REJECTED", StringComparison.OrdinalIgnoreCase)
+            ? "rejected"
+            : "unknown";
+    }
+
+    /// <summary>
+    /// Resolves the v1.2 operational outcome label for deterministic payment-attempt rejections.
+    /// </summary>
+    /// <param name="exception">The deterministic rejection exception.</param>
+    /// <returns>The bounded operational outcome label.</returns>
+    private static string ResolveRejectionOutcome(Exception exception)
+    {
+        return exception is ActivePaymentAttemptAlreadyExistsException or IdempotencyConflictException
+            ? "conflict"
+            : "rejected";
     }
 }

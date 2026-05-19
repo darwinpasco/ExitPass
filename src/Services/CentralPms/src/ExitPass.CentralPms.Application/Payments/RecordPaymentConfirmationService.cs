@@ -9,11 +9,21 @@ public sealed class RecordPaymentConfirmationService
 {
     private readonly IRecordPaymentConfirmationGateway _gateway;
 
+    /// <summary>
+    /// Creates the service that validates provider confirmation evidence before persistence.
+    /// </summary>
+    /// <param name="gateway">Gateway that records verified provider evidence.</param>
     public RecordPaymentConfirmationService(IRecordPaymentConfirmationGateway gateway)
     {
         _gateway = gateway;
     }
 
+    /// <summary>
+    /// Validates and records verified provider payment evidence for a payment attempt.
+    /// </summary>
+    /// <param name="command">Payment confirmation evidence normalized for Central PMS.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>The persisted confirmation result.</returns>
     public async Task<RecordPaymentConfirmationResult> ExecuteAsync(
         RecordPaymentConfirmationCommand command,
         CancellationToken cancellationToken)

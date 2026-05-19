@@ -1,0 +1,366 @@
+{
+  "name": "exitpass-webpay-complete-assets",
+  "version": "1.0.0",
+  "description": "Complete WebPay asset manifest for ExitPass v1.2 WebPay UI baseline.",
+  "targetRootWindows": "D:\\SourceCodes\\ExitPass\\src\\Services\\WebPayUi\\public\\assets",
+  "publicBasePath": "/assets",
+  "primaryBranding": "ExitPass",
+  "secondaryBranding": "Pro Parking",
+  "assetPolicy": {
+    "exitPass": "Primary WebPay payment experience branding.",
+    "proParking": "Secondary/operator branding.",
+    "paymentLogos": "Use only as payment method identifiers. Preserve aspect ratio. Do not recolor, distort, crop aggressively, or restyle.",
+    "productionNote": "For production, replace raster payment logos with official brand-owner source/vector files where available."
+  },
+  "folders": {
+    "logo": {
+      "relativePath": "logo",
+      "publicPath": "/assets/logo",
+      "purpose": "Primary and secondary brand logo assets."
+    },
+    "paymentMethods": {
+      "relativePath": "payment-methods",
+      "publicPath": "/assets/payment-methods",
+      "purpose": "Payment method and payment rail brand assets."
+    },
+    "icons": {
+      "relativePath": "icons",
+      "publicPath": "/assets/icons",
+      "purpose": "Functional UI icons for WebPay screens."
+    },
+    "illustrations": {
+      "relativePath": "illustrations",
+      "publicPath": "/assets/illustrations",
+      "purpose": "State and guidance illustrations for parker-facing flows."
+    },
+    "brand": {
+      "relativePath": "brand",
+      "publicPath": "/assets/brand",
+      "purpose": "Theme tokens and asset metadata."
+    }
+  },
+  "assets": [
+    {
+      "key": "exitpass.logo",
+      "fileName": "exitpass-logo.svg",
+      "relativePath": "logo/exitpass-logo.svg",
+      "publicPath": "/assets/logo/exitpass-logo.svg",
+      "type": "image/svg+xml",
+      "category": "logo",
+      "usage": [
+        "header",
+        "splash",
+        "payment handoff",
+        "footer"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "exitpass.favicon",
+      "fileName": "favicon.svg",
+      "relativePath": "logo/favicon.svg",
+      "publicPath": "/assets/logo/favicon.svg",
+      "type": "image/svg+xml",
+      "category": "logo",
+      "usage": [
+        "browser favicon",
+        "app icon placeholder"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "proparking.logo",
+      "fileName": "proparking-logo.png",
+      "relativePath": "logo/proparking-logo.png",
+      "publicPath": "/assets/logo/proparking-logo.png",
+      "type": "image/png",
+      "category": "logo",
+      "usage": [
+        "operator branding",
+        "site footer",
+        "secondary header"
+      ],
+      "status": "cleaned_from_user_provided_official_logo"
+    },
+    {
+      "key": "proparking.favicon",
+      "fileName": "proparking-favicon.svg",
+      "relativePath": "logo/proparking-favicon.svg",
+      "publicPath": "/assets/logo/proparking-favicon.svg",
+      "type": "image/svg+xml",
+      "category": "logo",
+      "usage": [
+        "secondary icon",
+        "operator favicon placeholder"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "payment.gcash",
+      "fileName": "gcash.png",
+      "relativePath": "payment-methods/gcash.png",
+      "publicPath": "/assets/payment-methods/gcash.png",
+      "type": "image/png",
+      "category": "payment-method",
+      "usage": [
+        "payment method selection",
+        "handoff screen",
+        "payment status"
+      ],
+      "status": "cleaned_from_user_provided_logo"
+    },
+    {
+      "key": "payment.maya",
+      "fileName": "maya.png",
+      "relativePath": "payment-methods/maya.png",
+      "publicPath": "/assets/payment-methods/maya.png",
+      "type": "image/png",
+      "category": "payment-method",
+      "usage": [
+        "payment method selection",
+        "handoff screen",
+        "payment status"
+      ],
+      "status": "cleaned_from_user_provided_logo"
+    },
+    {
+      "key": "payment.qrph",
+      "fileName": "qrph.png",
+      "relativePath": "payment-methods/qrph.png",
+      "publicPath": "/assets/payment-methods/qrph.png",
+      "type": "image/png",
+      "category": "payment-method",
+      "usage": [
+        "payment method selection",
+        "handoff screen",
+        "payment status"
+      ],
+      "status": "cleaned_from_user_provided_logo"
+    },
+    {
+      "key": "payment.visa",
+      "fileName": "visa.png",
+      "relativePath": "payment-methods/visa.png",
+      "publicPath": "/assets/payment-methods/visa.png",
+      "type": "image/png",
+      "category": "payment-method",
+      "usage": [
+        "card payment option",
+        "card handoff",
+        "payment status"
+      ],
+      "status": "cleaned_from_user_provided_logo"
+    },
+    {
+      "key": "payment.mastercard",
+      "fileName": "mastercard.png",
+      "relativePath": "payment-methods/mastercard.png",
+      "publicPath": "/assets/payment-methods/mastercard.png",
+      "type": "image/png",
+      "category": "payment-method",
+      "usage": [
+        "card payment option",
+        "card handoff",
+        "payment status"
+      ],
+      "status": "cleaned_from_user_provided_logo"
+    },
+    {
+      "key": "payment.cards",
+      "fileName": "cards-visa-mastercard.png",
+      "relativePath": "payment-methods/cards-visa-mastercard.png",
+      "publicPath": "/assets/payment-methods/cards-visa-mastercard.png",
+      "type": "image/png",
+      "category": "payment-method",
+      "usage": [
+        "combined card payment option"
+      ],
+      "status": "cleaned_from_user_provided_logo"
+    },
+    {
+      "key": "icon.qrScan",
+      "fileName": "qr-scan.svg",
+      "relativePath": "icons/qr-scan.svg",
+      "publicPath": "/assets/icons/qr-scan.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "QR scan landing",
+        "camera scanner",
+        "ticket QR scan"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "icon.ticket",
+      "fileName": "ticket.svg",
+      "relativePath": "icons/ticket.svg",
+      "publicPath": "/assets/icons/ticket.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "manual ticket fallback",
+        "ticket reference input"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "icon.plateNumber",
+      "fileName": "plate-number.svg",
+      "relativePath": "icons/plate-number.svg",
+      "publicPath": "/assets/icons/plate-number.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "plate number fallback",
+        "session lookup"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "icon.payment",
+      "fileName": "payment.svg",
+      "relativePath": "icons/payment.svg",
+      "publicPath": "/assets/icons/payment.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "payment method selection",
+        "secure payment indicator"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "icon.success",
+      "fileName": "success.svg",
+      "relativePath": "icons/success.svg",
+      "publicPath": "/assets/icons/success.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "payment success",
+        "exit authorization success"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "icon.error",
+      "fileName": "error.svg",
+      "relativePath": "icons/error.svg",
+      "publicPath": "/assets/icons/error.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "payment failure",
+        "lookup failure",
+        "validation error"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "icon.back",
+      "fileName": "back.svg",
+      "relativePath": "icons/back.svg",
+      "publicPath": "/assets/icons/back.svg",
+      "type": "image/svg+xml",
+      "category": "icon",
+      "usage": [
+        "back navigation",
+        "fallback flows"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "illustration.cameraPermission",
+      "fileName": "camera-permission.svg",
+      "relativePath": "illustrations/camera-permission.svg",
+      "publicPath": "/assets/illustrations/camera-permission.svg",
+      "type": "image/svg+xml",
+      "category": "illustration",
+      "usage": [
+        "camera permission prompt",
+        "QR scan onboarding"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "illustration.paymentPending",
+      "fileName": "payment-pending.svg",
+      "relativePath": "illustrations/payment-pending.svg",
+      "publicPath": "/assets/illustrations/payment-pending.svg",
+      "type": "image/svg+xml",
+      "category": "illustration",
+      "usage": [
+        "payment pending",
+        "provider handoff waiting state"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "illustration.paymentSuccess",
+      "fileName": "payment-success.svg",
+      "relativePath": "illustrations/payment-success.svg",
+      "publicPath": "/assets/illustrations/payment-success.svg",
+      "type": "image/svg+xml",
+      "category": "illustration",
+      "usage": [
+        "payment success",
+        "exit instruction"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "illustration.paymentFailed",
+      "fileName": "payment-failed.svg",
+      "relativePath": "illustrations/payment-failed.svg",
+      "publicPath": "/assets/illustrations/payment-failed.svg",
+      "type": "image/svg+xml",
+      "category": "illustration",
+      "usage": [
+        "payment failure",
+        "retry state"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "illustration.emptyState",
+      "fileName": "empty-state.svg",
+      "relativePath": "illustrations/empty-state.svg",
+      "publicPath": "/assets/illustrations/empty-state.svg",
+      "type": "image/svg+xml",
+      "category": "illustration",
+      "usage": [
+        "no session found",
+        "expired session",
+        "no lookup result"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "brand.colors",
+      "fileName": "colors.json",
+      "relativePath": "brand/colors.json",
+      "publicPath": "/assets/brand/colors.json",
+      "type": "application/json",
+      "category": "brand",
+      "usage": [
+        "theme tokens",
+        "CSS variables source"
+      ],
+      "status": "generated_baseline"
+    },
+    {
+      "key": "brand.theme",
+      "fileName": "theme.ts",
+      "relativePath": "brand/theme.ts",
+      "publicPath": "/assets/brand/theme.ts",
+      "type": "text/typescript",
+      "category": "brand",
+      "usage": [
+        "TypeScript theme import",
+        "UI styling"
+      ],
+      "status": "generated_baseline"
+    }
+  ]
+}

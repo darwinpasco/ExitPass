@@ -22,8 +22,10 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 /// <param name="ProviderReference">The provider reference, when available.</param>
 /// <param name="SessionStatus">The normalized session status.</param>
 /// <param name="RedirectUrl">The provider redirect URL, when applicable.</param>
+/// <param name="QrPayload">The QR payload, when applicable.</param>
 /// <param name="ExpiresAtUtc">The provider expiry timestamp, when applicable.</param>
 /// <param name="IdempotencyKey">The idempotency key used during creation.</param>
+/// <param name="CorrelationId">The cross-service correlation identifier, when available.</param>
 /// <param name="RequestPayloadJson">The serialized request payload for evidence persistence.</param>
 /// <param name="ResponsePayloadJson">The serialized response payload for evidence persistence.</param>
 /// <param name="CreatedAtUtc">The creation timestamp in UTC.</param>
@@ -36,8 +38,10 @@ public sealed record ProviderSessionRecord(
     string? ProviderReference,
     string SessionStatus,
     string? RedirectUrl,
+    string? QrPayload,
     DateTimeOffset? ExpiresAtUtc,
     string IdempotencyKey,
+    Guid? CorrelationId,
     string RequestPayloadJson,
     string ResponsePayloadJson,
     DateTimeOffset CreatedAtUtc);

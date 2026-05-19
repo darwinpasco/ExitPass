@@ -35,4 +35,24 @@ public interface IProviderSessionRepository
         string providerCode,
         string providerSessionId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the latest active provider session for a Central PMS parking session.
+    /// </summary>
+    /// <param name="parkingSessionId">The canonical parking session identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The latest resumable provider session record, or <c>null</c> if none exists.</returns>
+    Task<ProviderSessionRecord?> FindLatestActiveByParkingSessionIdAsync(
+        Guid parkingSessionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the latest provider session evidence for a Central PMS payment attempt, including non-resumable records.
+    /// </summary>
+    /// <param name="paymentAttemptId">The canonical payment attempt identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The latest provider session record for the payment attempt, or <c>null</c> if none exists.</returns>
+    Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken);
 }

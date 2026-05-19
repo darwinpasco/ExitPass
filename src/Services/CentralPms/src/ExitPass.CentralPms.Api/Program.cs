@@ -21,17 +21,22 @@
 
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Endpoints;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Api.Validation;
+using ExitPass.CentralPms.Api.VendorParking;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
+using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.Infrastructure.VendorParking;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OpenTelemetry.Logs;
@@ -58,6 +63,7 @@ var serviceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "
 ConfigureLogging(builder, otlpEndpoint, serviceVersion);
 ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
+ConfigureInternalSecurity(builder);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
 
 var app = builder.Build();
@@ -74,6 +80,7 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Secur
 app.Use(CorrelationMiddleware);
 
 app.UseRouting();
+app.UseMiddleware<InternalMtlsMiddleware>();
 app.UseAuthorization();
 
 app.UseHttpMetrics();
@@ -168,8 +175,10 @@ static void ConfigureOpenTelemetry(
             tracing
                 .AddSource("ExitPass.CentralPms.Api")
                 .AddSource("ExitPass.CentralPms.Api.PaymentAttempts")
+                .AddSource("ExitPass.CentralPms.Api.VendorParking")
                 .AddSource("ExitPass.CentralPms.Api.InternalPaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
+                .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
                 .AddSource("ExitPass.CentralPms.Infrastructure.Payments")
                 .AddAspNetCoreInstrumentation(options =>
@@ -231,16 +240,29 @@ static void ConfigureHealthChecks(WebApplicationBuilder builder)
         .AddCheck("self", () => HealthCheckResult.Healthy("Central PMS Service is alive."));
 }
 
+static void ConfigureInternalSecurity(WebApplicationBuilder builder)
+{
+    builder.Services.Configure<InternalMtlsOptions>(
+        builder.Configuration.GetSection("InternalSecurity:Mtls"));
+    builder.Services.AddSingleton<IInternalClientCertificateAccessor, HttpContextInternalClientCertificateAccessor>();
+}
+
 static void ConfigureApplicationServices(
     WebApplicationBuilder builder,
     string mainDatabaseConnectionString)
 {
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
+    builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
+    builder.Services.AddScoped<IVendorPmsParkingResolutionClient, FakeVendorPmsParkingResolutionClient>();
+    builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
+        new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
+    builder.Services.AddCentralPmsEventPublishing(builder.Configuration);
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();
+    builder.Services.AddScoped<ResolveVendorParkingRequestValidator>();
 
     builder.Services.AddScoped<IParkingSessionReadRepository, ParkingSessionReadRepository>();
     builder.Services.AddScoped<ITariffSnapshotReadRepository, TariffSnapshotReadRepository>();

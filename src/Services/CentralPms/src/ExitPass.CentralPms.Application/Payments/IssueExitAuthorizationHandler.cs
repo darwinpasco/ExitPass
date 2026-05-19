@@ -133,7 +133,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
             _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
@@ -147,7 +147,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
             _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
@@ -161,7 +161,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.RecordException(ex);
+            activity?.AddException(ex);
 
             _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 

@@ -25,14 +25,12 @@ namespace ExitPass.CentralPms.IntegrationTests.Payments;
 /// </summary>
 public sealed class FinalizePaymentAttemptIntegrationTests
 {
-    private const string ConnectionStringEnvVar = "EXITPASS_INTEGRATION_DB";
-
     private static string ConnectionString =>
-        Environment.GetEnvironmentVariable(ConnectionStringEnvVar)
-        ?? throw new InvalidOperationException(
-            $"Missing environment variable '{ConnectionStringEnvVar}'. " +
-            "Point it at the ExitPass integration database.");
+        CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
+    /// <summary>
+    /// Verifies that Central PMS finalizes an initiated payment attempt to confirmed after verified provider finality.
+    /// </summary>
     [Fact]
     public async Task FinalizePaymentAttempt_WhenAttemptIsInitiated_TransitionsToConfirmed()
     {
@@ -74,6 +72,9 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that a confirmed payment attempt cannot transition to another terminal status.
+    /// </summary>
     [Fact]
     public async Task FinalizePaymentAttempt_WhenAttemptAlreadyConfirmed_DoesNotTransitionAgain()
     {
@@ -125,6 +126,9 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Verifies that a failed payment attempt cannot later become confirmed for exit authorization.
+    /// </summary>
     [Fact]
     public async Task FinalizePaymentAttempt_WhenAttemptAlreadyFailed_DoesNotTransitionToConfirmed()
     {
@@ -176,7 +180,11 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         }
     }
 
-    [Fact(Skip = "Enable after finalize_payment_attempt() contract is locked to idempotent same-status replay behavior.")]
+    /// <summary>
+    /// Verifies ExitPass v1.2 BRD 9.13, BRD 10.7.2, SDD 6.4, and SDD 9.6 by enforcing
+    /// the invariant that same-terminal provider outcome retries return the existing finalized state.
+    /// </summary>
+    [Fact]
     public async Task FinalizePaymentAttempt_WhenSameTerminalStatusIsReplayed_IsIdempotent()
     {
         var context = PaymentTestContext.Create(

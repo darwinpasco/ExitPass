@@ -4,8 +4,7 @@
             "commandName": "Project",
             "environmentVariables": {
                 "EXITPASS_CENTRAL_PMS_BASE_URL": "http://localhost:8080",
-                "EXITPASS_CENTRAL_PMS_API_BASE_URL": "http://localhost:8080",
-                "EXITPASS_TEST_DB_CONNECTION_STRING": "Host=localhost;Port=5432;Database=exitpass;Username=exitpass;Password=change_me"
+                "EXITPASS_CENTRAL_PMS_API_BASE_URL": "http://localhost:8080"
             }
         }
     }

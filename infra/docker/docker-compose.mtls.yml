@@ -13,6 +13,11 @@ services:
       ASPNETCORE_ENVIRONMENT: SecureDevelopment
       ASPNETCORE_URLS: https://+:8443
       Security__MtlsEnabled: "true"
+      InternalSecurity__Mtls__Enabled: "true"
+      InternalSecurity__Mtls__RequireClientCertificate: "true"
+      InternalSecurity__Mtls__TrustedClientThumbprints__0: ${EXITPASS_MTLS_NGINX_TO_CORE_THUMBPRINT:-}
+      InternalSecurity__Mtls__TrustedClientThumbprints__1: ${EXITPASS_MTLS_GATE_TO_CENTRAL_PMS_THUMBPRINT:-}
+      InternalSecurity__Mtls__TrustedClientThumbprints__2: ${EXITPASS_MTLS_PAYMENT_ORCHESTRATOR_TO_CENTRAL_PMS_THUMBPRINT:-}
       Security__TrustedCaBundlePath: /etc/exitpass/certs/trust/internal-trust-bundle.crt
       Security__AllowedClientSubjects__0: CN=nginx-to-core
       Security__AllowedClientSubjects__1: CN=central-pms-to-adapters
