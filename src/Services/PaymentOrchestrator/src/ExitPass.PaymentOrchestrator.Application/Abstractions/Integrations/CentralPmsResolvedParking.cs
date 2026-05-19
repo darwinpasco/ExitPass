@@ -15,4 +15,11 @@ public sealed record CentralPmsResolvedParking(
     long NetPayableMinorUnits,
     string Currency,
     string VendorSystemId,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? SiteName = null,
+    string? TicketReference = null,
+    string? PlateNumber = null,
+    DateTimeOffset? EntryTime = null,
+    DateTimeOffset? CurrentFeeCalculationTime = null,
+    string? TariffName = null,
+    DateTimeOffset? FeeValidUntil = null);

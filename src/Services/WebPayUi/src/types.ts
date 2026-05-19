@@ -12,8 +12,26 @@ export type PaymentIntentRequest = {
 export type WebPayHandoff = {
   type?: string;
   handoffUrl?: string | null;
+  checkoutUrl?: string | null;
+  resumePaymentUrl?: string | null;
   qrCodeUrl?: string | null;
   expiresAt?: string | null;
+};
+
+export type ParkingSessionSummary = {
+  siteName?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  entryTime?: string | null;
+  exitTime?: string | null;
+  currentFeeCalculationTime?: string | null;
+  durationParked?: string | null;
+  tariffName?: string | null;
+  amountMinorUnits?: number | null;
+  currency?: string | null;
+  sessionStatus?: string | null;
+  feeValidUntil?: string | null;
+  tariffExpiresAt?: string | null;
 };
 
 export type PaymentIntentResponse = {
@@ -29,6 +47,17 @@ export type PaymentIntentResponse = {
   status: string;
   handoff?: WebPayHandoff | null;
   correlationId: string;
+  siteName?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  entryTime?: string | null;
+  exitTime?: string | null;
+  currentFeeCalculationTime?: string | null;
+  durationParked?: string | null;
+  tariffName?: string | null;
+  feeValidUntil?: string | null;
+  tariffExpiresAt?: string | null;
+  sessionSummary?: ParkingSessionSummary | null;
 };
 
 export type ApiError = {
@@ -40,6 +69,17 @@ export type ApiError = {
   paymentAttemptId?: string;
   status?: string;
   handoff?: WebPayHandoff | null;
+  handoffUrl?: string | null;
+  checkoutUrl?: string | null;
+  resumePaymentUrl?: string | null;
+  statusUrl?: string | null;
+  checkStatusUrl?: string | null;
+  paymentMethod?: PaymentMethod | string;
+  amountMinorUnits?: number | null;
+  currency?: string | null;
+  siteName?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
 };
 
 export type ActivePaymentAttemptState = {
@@ -50,4 +90,12 @@ export type ActivePaymentAttemptState = {
   paymentAttemptId?: string;
   status?: string;
   handoff?: WebPayHandoff | null;
+  statusUrl?: string | null;
+  checkStatusUrl?: string | null;
+  paymentMethod?: PaymentMethod | string;
+  amountMinorUnits?: number | null;
+  currency?: string | null;
+  siteName?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
 };

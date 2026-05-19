@@ -153,6 +153,51 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(CorrelationId, result.Error.CorrelationId);
     }
 
+    /// <summary>
+    /// Verifies optional vendor parking summary fields are mapped when Central PMS supplies them.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParkingAsync_WhenSummaryFieldsReturned_MapsSafeFields()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new
+            {
+                parkingSessionId = ParkingSessionId,
+                tariffSnapshotId = TariffSnapshotId,
+                lookupOutcome = "resolved",
+                plateNumber = "ABC 1234",
+                ticketReference = "TICKET-TEST-023",
+                netPayableMinorUnits = 12500,
+                currency = "PHP",
+                tariffExpiresAt = "2026-05-18T13:15:00+08:00",
+                vendorSystemId = "HIKCENTRAL",
+                correlationId = CorrelationId,
+                siteName = "Mactan Newtown Parking",
+                entryTime = "2026-05-18T10:42:00+08:00",
+                currentFeeCalculationTime = "2026-05-18T12:57:00+08:00",
+                tariffName = "Weekend Rate"
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.ResolveVendorParkingAsync(
+            null,
+            null,
+            "HIKCENTRAL",
+            null,
+            "TICKET-TEST-023",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Mactan Newtown Parking", result.Value!.SiteName);
+        Assert.Equal("TICKET-TEST-023", result.Value.TicketReference);
+        Assert.Equal("ABC 1234", result.Value.PlateNumber);
+        Assert.Equal("Weekend Rate", result.Value.TariffName);
+        Assert.Equal(DateTimeOffset.Parse("2026-05-18T13:15:00+08:00"), result.Value.FeeValidUntil);
+    }
+
     private static CentralPmsWebPayClient CreateClient(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()

@@ -381,6 +381,41 @@ input {
   text-align: right;
 }
 
+.session-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.session-summary-header {
+  display: grid;
+  gap: 12px;
+}
+
+.session-summary-header h2 {
+  margin: 0;
+}
+
+.amount-due {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #eef5ff;
+}
+
+.amount-due span,
+.amount-due small {
+  color: #475467;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.amount-due strong {
+  color: #0b1f3a;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
 .primary-link {
   width: 100%;
   margin-top: 4px;
@@ -431,5 +466,10 @@ input {
 
   .method-card {
     grid-template-rows: 38px auto;
+  }
+
+  .session-summary-header {
+    grid-template-columns: 1fr minmax(156px, auto);
+    align-items: start;
   }
 }

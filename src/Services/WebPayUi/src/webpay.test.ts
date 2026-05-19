@@ -3,6 +3,7 @@ import {
   buildPaymentIntentBody,
   createPaymentIntent,
   extractPaymentIntentContext,
+  getResumeUrl,
   normalizeTicketReference,
   toFriendlyError
 } from "./webpay";
@@ -85,6 +86,61 @@ describe("WebPay QR and payment intent helpers", () => {
           correlationId: "77777777-7777-7777-7777-777777777777"
         }
       });
+  });
+
+  it("WebPay_WhenActivePaymentAttemptIncludesResumeUrl_MapsHandoffAndSupportFields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        errorCode: "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+        message: "Payment already started.",
+        correlationId: "77777777-7777-7777-7777-777777777777",
+        handoffUrl: "https://payments.test/handoff",
+        resumePaymentUrl: "https://payments.test/resume",
+        paymentMethod: "QRPH",
+        amountMinorUnits: 12500,
+        currency: "PHP",
+        siteName: "Mactan Newtown Parking",
+        ticketReference: "TICKET-TEST-023",
+        plateNumber: "ABC 1234"
+      })
+    });
+
+    await expect(
+      createPaymentIntent(
+        { ticketReference: "TICKET-001", paymentMethod: "QRPH", vendorSystemId: "HIKCENTRAL" },
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+      name: "ActivePaymentAttemptError",
+      activePaymentAttempt: {
+        correlationId: "77777777-7777-7777-7777-777777777777",
+        handoff: {
+          resumePaymentUrl: "https://payments.test/resume",
+          handoffUrl: "https://payments.test/handoff"
+        },
+        amountMinorUnits: 12500,
+        currency: "PHP",
+        siteName: "Mactan Newtown Parking",
+        ticketReference: "TICKET-TEST-023",
+        plateNumber: "ABC 1234"
+      }
+    });
+  });
+
+  it("WebPay_GetResumeUrl_PrefersResumeThenHandoffThenCheckout", () => {
+    expect(
+      getResumeUrl({
+        resumePaymentUrl: "https://payments.test/resume",
+        handoffUrl: "https://payments.test/handoff",
+        checkoutUrl: "https://payments.test/checkout"
+      })
+    ).toBe("https://payments.test/resume");
+    expect(getResumeUrl({ handoffUrl: "https://payments.test/handoff", checkoutUrl: "https://payments.test/checkout" })).toBe(
+      "https://payments.test/handoff"
+    );
+    expect(getResumeUrl({ checkoutUrl: "https://payments.test/checkout" })).toBe("https://payments.test/checkout");
   });
 
   it("WebPay_WhenDefaultSiteGroupIdIsConfigured_IncludesSiteGroupId", () => {

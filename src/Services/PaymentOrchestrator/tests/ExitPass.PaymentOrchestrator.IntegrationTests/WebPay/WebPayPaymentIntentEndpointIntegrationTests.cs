@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Internal;
 using ExitPass.PaymentOrchestrator.Contracts.Payments;
@@ -208,9 +209,11 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
                 services.RemoveAll<ICentralPmsWebPayClient>();
                 services.RemoveAll<IPaymentProviderRoutingPolicyResolver>();
                 services.RemoveAll<IProviderPaymentHandoffInitiator>();
+                services.RemoveAll<IProviderSessionRepository>();
                 services.AddSingleton<ICentralPmsWebPayClient>(state);
                 services.AddSingleton<IPaymentProviderRoutingPolicyResolver>(state);
                 services.AddSingleton<IProviderPaymentHandoffInitiator>(state);
+                services.AddSingleton<IProviderSessionRepository>(state);
             });
         }).CreateClient();
     }
@@ -231,7 +234,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     private sealed class WebPayEndpointState :
         ICentralPmsWebPayClient,
         IPaymentProviderRoutingPolicyResolver,
-        IProviderPaymentHandoffInitiator
+        IProviderPaymentHandoffInitiator,
+        IProviderSessionRepository
     {
         private static readonly Guid ParkingSessionId = Guid.Parse("44444444-4444-4444-4444-444444444444");
         private static readonly Guid TariffSnapshotId = Guid.Parse("55555555-5555-5555-5555-555555555555");
@@ -281,6 +285,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public ResolvePaymentProviderRouteRequest? CapturedRouteRequest { get; private set; }
 
         public InitiateProviderPaymentRequest? CapturedInitiateRequest { get; private set; }
+
+        public ProviderSessionRecord? LatestActiveProviderSession { get; set; }
 
         public Task<CentralPmsWebPayResult<CentralPmsResolvedParking>> ResolveVendorParkingAsync(
             Guid? siteGroupId,
@@ -350,6 +356,26 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
                     null,
                     DateTimeOffset.Parse("2026-05-16T12:00:00Z")),
                 DateTimeOffset.Parse("2026-05-16T12:00:00Z")));
+        }
+
+        public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<ProviderSessionRecord?> FindByProviderSessionIdAsync(
+            string providerCode,
+            string providerSessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<ProviderSessionRecord?>(null);
+        }
+
+        public Task<ProviderSessionRecord?> FindLatestActiveByParkingSessionIdAsync(
+            Guid parkingSessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(LatestActiveProviderSession);
         }
     }
 }

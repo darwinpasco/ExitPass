@@ -1,4 +1,4 @@
-import type { ActivePaymentAttemptState, ApiError, PaymentIntentRequest, PaymentIntentResponse } from "./types";
+import type { ActivePaymentAttemptState, ApiError, PaymentIntentRequest, PaymentIntentResponse, WebPayHandoff } from "./types";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
@@ -148,12 +148,21 @@ export async function createPaymentIntent(
       throw new ActivePaymentAttemptError({
         kind: "active-payment-attempt",
         message:
+          error.message?.trim() ||
           "You already have an active payment for this parking session. Continue your existing payment or check its status.",
         correlationId: error.correlationId,
         parkingSessionId: error.parkingSessionId,
         paymentAttemptId: error.paymentAttemptId,
         status: error.status,
-        handoff: error.handoff
+        handoff: normalizeHandoff(error),
+        statusUrl: error.statusUrl,
+        checkStatusUrl: error.checkStatusUrl,
+        paymentMethod: error.paymentMethod,
+        amountMinorUnits: error.amountMinorUnits,
+        currency: error.currency,
+        siteName: error.siteName,
+        ticketReference: error.ticketReference,
+        plateNumber: error.plateNumber
       });
     }
 
@@ -188,14 +197,44 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
 }
 
 export function formatAmount(amountMinorUnits: number, currency: string): string {
+  const normalizedCurrency = currency || "PHP";
+  if (normalizedCurrency.toUpperCase() === "PHP") {
+    return new Intl.NumberFormat("en-PH", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format((amountMinorUnits || 0) / 100);
+  }
+
   return new Intl.NumberFormat("en-PH", {
     style: "currency",
-    currency: currency || "PHP"
+    currency: normalizedCurrency
   }).format((amountMinorUnits || 0) / 100);
 }
 
 export function isActivePaymentAttemptConflict(statusCode: number, error: ApiError): boolean {
   return statusCode === 409 && (error.errorCode ?? "").toUpperCase() === activePaymentAttemptErrorCode;
+}
+
+export function getResumeUrl(handoff?: WebPayHandoff | null): string | undefined {
+  return firstNonBlank(handoff?.resumePaymentUrl ?? undefined, handoff?.handoffUrl ?? undefined, handoff?.checkoutUrl ?? undefined);
+}
+
+function normalizeHandoff(error: ApiError): WebPayHandoff | null {
+  const handoff = error.handoff ?? {};
+  const resumePaymentUrl = firstNonBlank(error.resumePaymentUrl ?? undefined, handoff.resumePaymentUrl ?? undefined);
+  const handoffUrl = firstNonBlank(error.handoffUrl ?? undefined, handoff.handoffUrl ?? undefined);
+  const checkoutUrl = firstNonBlank(error.checkoutUrl ?? undefined, handoff.checkoutUrl ?? undefined);
+
+  if (!resumePaymentUrl && !handoffUrl && !checkoutUrl && !handoff.qrCodeUrl && !handoff.expiresAt && !handoff.type) {
+    return null;
+  }
+
+  return {
+    ...handoff,
+    resumePaymentUrl,
+    handoffUrl,
+    checkoutUrl
+  };
 }
 
 function firstNonBlank(...values: Array<string | undefined>): string | undefined {
