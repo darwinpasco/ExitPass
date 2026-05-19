@@ -15,6 +15,14 @@ const successResponse = {
   tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
   amountMinorUnits: 12500,
   currency: "PHP",
+  siteName: "Mactan Newtown Parking",
+  ticketReference: "TICKET-TEST-023",
+  plateNumber: "ABC 1234",
+  entryTime: "2026-05-18T10:42:00+08:00",
+  currentFeeCalculationTime: "2026-05-18T12:57:00+08:00",
+  durationParked: "2h 15m",
+  tariffName: "Weekend Rate",
+  feeValidUntil: "2026-05-18T13:15:00+08:00",
   paymentMethod: "QRPH",
   selectedProviderCode: "AUB",
   fallbackProviderCode: "PAYMONGO",
@@ -66,8 +74,68 @@ describe("ExitPass WebPay UI", () => {
       "https://payments.test/handoff"
     );
     expect(screen.getByText("PHP")).toBeInTheDocument();
-    expect(screen.getByText("PENDING_PROVIDER")).toBeInTheDocument();
-    expect(screen.getByText("₱125.00")).toBeInTheDocument();
+    expect(screen.getAllByText("PENDING_PROVIDER").length).toBeGreaterThan(0);
+    expect(screen.getByText("125.00")).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenApiReturnsSessionSummary_DisplaysParkingSessionSummary", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => successResponse
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-023");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("heading", { name: /mactan newtown parking/i })).toBeInTheDocument();
+    expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
+    expect(screen.getByText("ABC 1234")).toBeInTheDocument();
+    expect(screen.getByText("Weekend Rate")).toBeInTheDocument();
+    expect(screen.getByText("125.00")).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenSiteNameMissing_HidesSiteNameInsteadOfShowingUuid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ...successResponse, siteName: undefined })
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-023");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("heading", { name: /^parking session summary$/i })).toBeInTheDocument();
+    expect(screen.queryByText("22222222-2222-2222-2222-222222222222")).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenSummaryRenders_DoesNotExposeInternalUuidFieldsInNormalUi", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => successResponse
+      })
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-023");
+    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.queryByText("55555555-5555-5555-5555-555555555555")).not.toBeInTheDocument();
+    expect(screen.queryByText("66666666-6666-6666-6666-666666666666")).not.toBeInTheDocument();
+    expect(screen.queryByText("44444444-4444-4444-4444-444444444444")).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenApiReturnsQrCodeUrl_DisplaysQrPaymentInstructions", async () => {
@@ -119,12 +187,12 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
 
     expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
-    expect(screen.getByText(/continue your existing payment or check its status/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be resumed directly/i)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("WebPay_WhenActivePaymentAttemptHasHandoff_ShowsContinuePayment", async () => {
+  it("WebPay_WhenActivePaymentAttemptHasHandoff_ShowsContinueExistingPayment", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -134,7 +202,7 @@ describe("ExitPass WebPay UI", () => {
           ...activePaymentAttemptConflict,
           handoff: {
             type: "Redirect",
-            handoffUrl: "https://payments.test/existing"
+            resumePaymentUrl: "https://payments.test/existing"
           }
         })
       })
@@ -145,10 +213,11 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
 
-    expect(await screen.findByRole("link", { name: /continue payment/i })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: /continue existing payment/i })).toHaveAttribute(
       "href",
       "https://payments.test/existing"
     );
+    expect(screen.getByRole("button", { name: /check status/i })).toBeInTheDocument();
   });
 
   it("WebPay_WhenActivePaymentAttemptHasNoHandoff_ShowsCheckStatusFallback", async () => {
@@ -166,7 +235,27 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
 
-    expect(await screen.findByRole("button", { name: /check status/i })).toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: /check status/i })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/cannot be resumed directly/i)).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenActivePaymentAttemptVisible_OuterContinueDoesNotCreateDuplicateAttempt", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => activePaymentAttemptConflict
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    await screen.findAllByRole("button", { name: /check status/i });
+    await userEvent.click(screen.getAllByRole("button", { name: /check status/i }).at(-1)!);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("WebPay_WhenActivePaymentAttemptConflict_DoesNotExposeProviderChoice", async () => {

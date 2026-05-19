@@ -95,7 +95,14 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.NetPayableMinorUnits,
             payload.Currency,
             payload.VendorSystemId,
-            payload.CorrelationId));
+            payload.CorrelationId,
+            payload.SiteName,
+            payload.TicketReference,
+            payload.PlateNumber,
+            payload.EntryTime,
+            payload.CurrentFeeCalculationTime,
+            payload.TariffName,
+            payload.FeeValidUntil ?? payload.TariffExpiresAt));
     }
 
     /// <inheritdoc />
@@ -235,7 +242,12 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         string Currency,
         DateTimeOffset TariffExpiresAt,
         string VendorSystemId,
-        Guid CorrelationId);
+        Guid CorrelationId,
+        string? SiteName,
+        DateTimeOffset? EntryTime,
+        DateTimeOffset? CurrentFeeCalculationTime,
+        string? TariffName,
+        DateTimeOffset? FeeValidUntil);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,

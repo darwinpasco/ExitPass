@@ -1,3 +1,5 @@
+using ExitPass.PaymentOrchestrator.Contracts.WebPay;
+
 namespace ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 
 /// <summary>
@@ -13,4 +15,14 @@ public sealed record WebPayPaymentIntentError(
     string ErrorCode,
     string Message,
     bool Retryable,
-    Guid? CorrelationId = null);
+    Guid? CorrelationId = null,
+    Guid? ParkingSessionId = null,
+    Guid? PaymentAttemptId = null,
+    string? Status = null,
+    WebPayPaymentHandoffDto? Handoff = null,
+    string? PaymentMethod = null,
+    long? AmountMinorUnits = null,
+    string? Currency = null,
+    string? SiteName = null,
+    string? TicketReference = null,
+    string? PlateNumber = null);

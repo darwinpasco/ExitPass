@@ -5,9 +5,10 @@ import {
   createPaymentIntent,
   extractPaymentIntentContext,
   formatAmount,
+  getResumeUrl,
   normalizeTicketReference
 } from "./webpay";
-import type { ActivePaymentAttemptState, PaymentIntentRequest, PaymentIntentResponse, PaymentMethod } from "./types";
+import type { ActivePaymentAttemptState, ParkingSessionSummary, PaymentIntentRequest, PaymentIntentResponse, PaymentMethod } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string }> = [
   { code: "QRPH", label: "QRPh", image: "/assets/payment-methods/qrph.png" },
@@ -41,6 +42,13 @@ export function App() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (activePaymentAttempt) {
+      if (!continueActivePayment(activePaymentAttempt)) {
+        setError("Payment is already in progress. Please wait a moment before checking again.");
+      }
+      return;
+    }
+
     setError("");
     setResult(null);
     setActivePaymentAttempt(null);
@@ -73,6 +81,7 @@ export function App() {
   }
 
   const handoff = result?.handoff;
+  const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
 
   return (
     <main className="app-shell">
@@ -166,24 +175,36 @@ export function App() {
         )}
 
         {activePaymentAttempt && (
-          <section className="active-payment-panel" aria-live="polite">
+          <section className="active-payment-panel" aria-live="polite" aria-labelledby="active-payment-heading">
             <div>
               <p className="eyebrow">Payment already started</p>
-              <h2>Payment already started.</h2>
+              <h2 id="active-payment-heading">Payment already started.</h2>
               <p>
-                You already have an active payment for this parking session. Continue your existing payment or check its
-                status.
+                {activeResumeUrl
+                  ? "You already have an active payment for this parking session."
+                  : "You can check this payment status, but it cannot be resumed directly right now."}
               </p>
             </div>
-            {activePaymentAttempt.handoff?.handoffUrl ? (
-              <a className="primary-link" href={activePaymentAttempt.handoff.handoffUrl}>
-                Continue Payment
+            {activeResumeUrl && (
+              <a
+                className="primary-link"
+                aria-label="Continue Existing Payment"
+                href={activeResumeUrl}
+              >
+                Continue Existing Payment
               </a>
-            ) : (
-              <button type="button" className="ghost-button status-button" onClick={() => setActivePaymentAttempt(null)}>
-                Check Status
-              </button>
             )}
+            <button
+              type="button"
+              className={activeResumeUrl ? "ghost-button status-button" : "primary-button status-button"}
+              onClick={() => {
+                if (!checkActivePaymentStatus(activePaymentAttempt)) {
+                  setError("Payment is already in progress. Please wait a moment before checking again.");
+                }
+              }}
+            >
+                Check Status
+            </button>
             <details className="support-details">
               <summary>Support details</summary>
               <dl>
@@ -212,7 +233,7 @@ export function App() {
 
         <button type="submit" className="submit-button" disabled={isSubmitting}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
-          {isSubmitting ? "Creating payment..." : "Continue"}
+          {isSubmitting ? "Creating payment..." : activePaymentAttempt ? (activeResumeUrl ? "Continue Existing Payment" : "Check Status") : "Continue"}
         </button>
       </form>
 
@@ -225,7 +246,7 @@ export function App() {
           />
           <div>
             <p className="eyebrow">Payment handoff ready</p>
-            <h2>{formatAmount(result.amountMinorUnits, result.currency)}</h2>
+            <ParkingSessionSummaryPanel result={result} />
             <dl>
               <div>
                 <dt>Method</dt>
@@ -234,10 +255,6 @@ export function App() {
               <div>
                 <dt>Status</dt>
                 <dd>{result.status}</dd>
-              </div>
-              <div>
-                <dt>Currency</dt>
-                <dd>{result.currency}</dd>
               </div>
             </dl>
             {handoff?.handoffUrl && (
@@ -284,4 +301,100 @@ export function App() {
       )}
     </main>
   );
+}
+
+function ParkingSessionSummaryPanel({ result }: { result: PaymentIntentResponse }) {
+  const summary: ParkingSessionSummary = {
+    ...result.sessionSummary,
+    siteName: result.sessionSummary?.siteName ?? result.siteName,
+    ticketReference: result.sessionSummary?.ticketReference ?? result.ticketReference,
+    plateNumber: result.sessionSummary?.plateNumber ?? result.plateNumber,
+    entryTime: result.sessionSummary?.entryTime ?? result.entryTime,
+    exitTime: result.sessionSummary?.exitTime ?? result.exitTime,
+    currentFeeCalculationTime: result.sessionSummary?.currentFeeCalculationTime ?? result.currentFeeCalculationTime,
+    durationParked: result.sessionSummary?.durationParked ?? result.durationParked,
+    tariffName: result.sessionSummary?.tariffName ?? result.tariffName,
+    amountMinorUnits: result.sessionSummary?.amountMinorUnits ?? result.amountMinorUnits,
+    currency: result.sessionSummary?.currency ?? result.currency,
+    sessionStatus: result.sessionSummary?.sessionStatus ?? result.status,
+    feeValidUntil: result.sessionSummary?.feeValidUntil ?? result.feeValidUntil ?? result.tariffExpiresAt,
+    tariffExpiresAt: result.sessionSummary?.tariffExpiresAt ?? result.tariffExpiresAt
+  };
+
+  const rows = [
+    ["Site", summary.siteName],
+    ["Ticket", summary.ticketReference],
+    ["Plate", summary.plateNumber],
+    ["Entry Time", formatDateTime(summary.entryTime)],
+    ["Exit / Payment Time", formatDateTime(summary.exitTime ?? summary.currentFeeCalculationTime)],
+    ["Duration", summary.durationParked],
+    ["Tariff", summary.tariffName],
+    ["Status", summary.sessionStatus],
+    ["Fee Valid Until", formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt)]
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+
+  return (
+    <section className="session-summary" aria-labelledby="session-summary-heading">
+      <div className="session-summary-header">
+        <div>
+          <p className="eyebrow">Parking Session Summary</p>
+          <h2 id="session-summary-heading">{summary.siteName || "Parking Session Summary"}</h2>
+        </div>
+        <div className="amount-due">
+          <span>Amount Due</span>
+          <strong>{formatAmount(summary.amountMinorUnits ?? result.amountMinorUnits, summary.currency ?? result.currency)}</strong>
+          <small>{summary.currency ?? result.currency}</small>
+        </div>
+      </div>
+      {rows.length > 0 && (
+        <dl>
+          {rows.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </section>
+  );
+}
+
+function continueActivePayment(activePaymentAttempt: ActivePaymentAttemptState): boolean {
+  const resumeUrl = getResumeUrl(activePaymentAttempt.handoff);
+  if (resumeUrl) {
+    window.location.assign(resumeUrl);
+    return true;
+  }
+
+  return checkActivePaymentStatus(activePaymentAttempt);
+}
+
+function checkActivePaymentStatus(activePaymentAttempt: ActivePaymentAttemptState): boolean {
+  const statusUrl = activePaymentAttempt.checkStatusUrl || activePaymentAttempt.statusUrl;
+  if (statusUrl) {
+    window.location.assign(statusUrl);
+    return true;
+  }
+
+  return false;
+}
+
+function formatDateTime(value?: string | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
 }

@@ -52,7 +52,17 @@ public static class WebPayPaymentIntentEndpoints
                 errorCode = error.ErrorCode,
                 message = error.Message,
                 retryable = error.Retryable,
-                correlationId = error.CorrelationId
+                correlationId = error.CorrelationId,
+                parkingSessionId = error.ParkingSessionId,
+                paymentAttemptId = error.PaymentAttemptId,
+                status = error.Status,
+                handoff = error.Handoff,
+                paymentMethod = error.PaymentMethod,
+                amountMinorUnits = error.AmountMinorUnits,
+                currency = error.Currency,
+                siteName = error.SiteName,
+                ticketReference = error.TicketReference,
+                plateNumber = error.PlateNumber
             };
 
             if (error.CorrelationId.HasValue)

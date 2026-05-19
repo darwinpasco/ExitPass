@@ -31,6 +31,41 @@ public sealed class WebPayPaymentIntentResponse
     public string Currency { get; set; } = string.Empty;
 
     /// <summary>
+    /// Business-friendly site or parking location name, when supplied by the resolved context.
+    /// </summary>
+    public string? SiteName { get; set; }
+
+    /// <summary>
+    /// Parker-facing ticket reference, when available.
+    /// </summary>
+    public string? TicketReference { get; set; }
+
+    /// <summary>
+    /// Parker-facing plate number, when available.
+    /// </summary>
+    public string? PlateNumber { get; set; }
+
+    /// <summary>
+    /// Parking entry timestamp, when available.
+    /// </summary>
+    public DateTimeOffset? EntryTime { get; set; }
+
+    /// <summary>
+    /// Fee calculation timestamp, when available.
+    /// </summary>
+    public DateTimeOffset? CurrentFeeCalculationTime { get; set; }
+
+    /// <summary>
+    /// Human-readable tariff or rate name, when available.
+    /// </summary>
+    public string? TariffName { get; set; }
+
+    /// <summary>
+    /// Tariff snapshot expiry or fee validity timestamp, when available.
+    /// </summary>
+    public DateTimeOffset? FeeValidUntil { get; set; }
+
+    /// <summary>
     /// Customer-selected payment method code.
     /// </summary>
     public string PaymentMethod { get; set; } = string.Empty;

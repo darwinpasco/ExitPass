@@ -1,4 +1,5 @@
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Internal;
 using ExitPass.PaymentOrchestrator.Contracts.Providers;
@@ -20,6 +21,7 @@ public sealed class WebPayPaymentIntentHandler
     private readonly IPaymentProviderRoutingPolicyResolver _routingPolicyResolver;
     private readonly IProviderProductResolver _providerProductResolver;
     private readonly IProviderPaymentHandoffInitiator _handoffInitiator;
+    private readonly IProviderSessionRepository _providerSessionRepository;
     private readonly ILogger<WebPayPaymentIntentHandler> _logger;
 
     /// <summary>
@@ -35,12 +37,14 @@ public sealed class WebPayPaymentIntentHandler
         IPaymentProviderRoutingPolicyResolver routingPolicyResolver,
         IProviderProductResolver providerProductResolver,
         IProviderPaymentHandoffInitiator handoffInitiator,
+        IProviderSessionRepository providerSessionRepository,
         ILogger<WebPayPaymentIntentHandler> logger)
     {
         _centralPmsClient = centralPmsClient ?? throw new ArgumentNullException(nameof(centralPmsClient));
         _routingPolicyResolver = routingPolicyResolver ?? throw new ArgumentNullException(nameof(routingPolicyResolver));
         _providerProductResolver = providerProductResolver ?? throw new ArgumentNullException(nameof(providerProductResolver));
         _handoffInitiator = handoffInitiator ?? throw new ArgumentNullException(nameof(handoffInitiator));
+        _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -129,6 +133,18 @@ public sealed class WebPayPaymentIntentHandler
 
         if (!attempt.Succeeded || attempt.Value is null)
         {
+            if (IsActivePaymentAttemptConflict(attempt.Error))
+            {
+                var activeError = await MapActivePaymentAttemptErrorAsync(
+                    attempt.Error,
+                    parking.Value,
+                    paymentMethod,
+                    correlationId,
+                    cancellationToken);
+
+                return WebPayPaymentIntentResult.Failure(activeError);
+            }
+
             return WebPayPaymentIntentResult.Failure(MapCentralPmsError(attempt.Error, correlationId));
         }
 
@@ -176,6 +192,13 @@ public sealed class WebPayPaymentIntentHandler
             TariffSnapshotId = parking.Value.TariffSnapshotId,
             AmountMinorUnits = parking.Value.NetPayableMinorUnits,
             Currency = parking.Value.Currency,
+            SiteName = BlankToNull(parking.Value.SiteName),
+            TicketReference = BlankToNull(parking.Value.TicketReference),
+            PlateNumber = BlankToNull(parking.Value.PlateNumber),
+            EntryTime = parking.Value.EntryTime,
+            CurrentFeeCalculationTime = parking.Value.CurrentFeeCalculationTime,
+            TariffName = BlankToNull(parking.Value.TariffName),
+            FeeValidUntil = parking.Value.FeeValidUntil,
             PaymentMethod = route.PaymentMethod,
             SelectedProviderCode = route.SelectedProviderCode,
             FallbackProviderCode = route.FallbackProviderCode,
@@ -247,6 +270,48 @@ public sealed class WebPayPaymentIntentHandler
             error.CorrelationId ?? correlationId);
     }
 
+    private async Task<WebPayPaymentIntentError> MapActivePaymentAttemptErrorAsync(
+        CentralPmsWebPayError? error,
+        CentralPmsResolvedParking parking,
+        string paymentMethod,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var providerSession = await _providerSessionRepository.FindLatestActiveByParkingSessionIdAsync(
+            parking.ParkingSessionId,
+            cancellationToken);
+
+        return new WebPayPaymentIntentError(
+            error?.StatusCode ?? 409,
+            error?.ErrorCode ?? "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+            error?.Message ?? "An active payment attempt already exists for this parking session.",
+            error?.Retryable ?? false,
+            error?.CorrelationId ?? correlationId,
+            parking.ParkingSessionId,
+            providerSession?.PaymentAttemptId,
+            providerSession?.SessionStatus,
+            providerSession is null || string.IsNullOrWhiteSpace(providerSession.RedirectUrl)
+                ? null
+                : new WebPayPaymentHandoffDto
+                {
+                    Type = "Redirect",
+                    HandoffUrl = providerSession.RedirectUrl,
+                    ExpiresAt = providerSession.ExpiresAtUtc
+                },
+            paymentMethod,
+            parking.NetPayableMinorUnits,
+            parking.Currency,
+            BlankToNull(parking.SiteName),
+            BlankToNull(parking.TicketReference),
+            BlankToNull(parking.PlateNumber));
+    }
+
+    private static bool IsActivePaymentAttemptConflict(CentralPmsWebPayError? error)
+    {
+        return error?.StatusCode == 409 &&
+            string.Equals(error.ErrorCode, "ACTIVE_PAYMENT_ATTEMPT_EXISTS", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string BuildIdempotencyKey(Guid parkingSessionId, string paymentMethod, Guid correlationId)
     {
         return $"webpay:{parkingSessionId:N}:{Normalize(paymentMethod)}:{correlationId:N}";
@@ -274,5 +339,10 @@ public sealed class WebPayPaymentIntentHandler
     private static string Normalize(string value)
     {
         return value.Trim().ToUpperInvariant();
+    }
+
+    private static string? BlankToNull(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 }

@@ -35,4 +35,14 @@ public interface IProviderSessionRepository
         string providerCode,
         string providerSessionId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the latest active provider session for a Central PMS parking session.
+    /// </summary>
+    /// <param name="parkingSessionId">The canonical parking session identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The latest resumable provider session record, or <c>null</c> if none exists.</returns>
+    Task<ProviderSessionRecord?> FindLatestActiveByParkingSessionIdAsync(
+        Guid parkingSessionId,
+        CancellationToken cancellationToken);
 }
