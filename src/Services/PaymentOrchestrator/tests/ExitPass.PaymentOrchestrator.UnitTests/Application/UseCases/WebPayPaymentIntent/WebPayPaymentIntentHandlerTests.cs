@@ -427,6 +427,80 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Null(fixture.CapturedInitiateRequest);
     }
 
+    /// <summary>
+    /// Verifies orphan active attempts without provider session evidence are failed through Central PMS and retried once.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasNoProviderSession_RecoversAndCreatesFreshHandoff()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                CorrelationId,
+                PaymentAttemptId)));
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            new CentralPmsPaymentAttempt(Guid.Parse("77777777-7777-7777-7777-777777777777"), "PENDING_PROVIDER", "PAYMONGO_CHECKOUT_SESSION", false)));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(Guid.Parse("77777777-7777-7777-7777-777777777777"), result.Response!.PaymentAttemptId);
+        Assert.Equal(PaymentAttemptId, fixture.CentralPms.FinalizedPaymentAttemptId);
+        Assert.Equal("FAILED", fixture.CentralPms.FinalAttemptStatus);
+        Assert.Equal(2, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.NotNull(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies active attempts with provider evidence but no checkout URL are treated as non-resumable orphans.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("   ")]
+    public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasBlankCheckoutUrl_RecoversAndDoesNotDuplicateProviderSessions(
+        string? checkoutUrl)
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                CorrelationId,
+                PaymentAttemptId)));
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            new CentralPmsPaymentAttempt(Guid.Parse("77777777-7777-7777-7777-777777777777"), "PENDING_PROVIDER", "PAYMONGO_CHECKOUT_SESSION", false)));
+        fixture.ProviderSessions.LatestProviderSessionByPaymentAttempt = new ProviderSessionRecord(
+            Guid.Parse("99999999-9999-9999-9999-999999999999"),
+            PaymentAttemptId,
+            "PAYMONGO",
+            "PAYMONGO_CHECKOUT_SESSION",
+            "cs_test_orphan",
+            "pi_test_orphan",
+            "PENDING",
+            checkoutUrl,
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(15),
+            "existing-idempotency-key",
+            CorrelationId,
+            "{}",
+            "{}",
+            DateTimeOffset.UtcNow);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.Equal(1, fixture.CentralPms.FinalizePaymentAttemptCallCount);
+        Assert.Equal(1, fixture.Handoff.InitiateCallCount);
+        Assert.Equal(Guid.Parse("77777777-7777-7777-7777-777777777777"), fixture.CapturedInitiateRequest!.PaymentAttemptId);
+    }
+
     private static Fixture CreateFixture(
         string paymentMethod,
         string? selectedProvider,
@@ -533,15 +607,30 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
 
+        private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
+
         public bool ResolveVendorParkingWasCalled { get; private set; }
 
         public bool CreatePaymentAttemptWasCalled { get; private set; }
+
+        public int CreatePaymentAttemptCallCount { get; private set; }
+
+        public int FinalizePaymentAttemptCallCount { get; private set; }
+
+        public Guid? FinalizedPaymentAttemptId { get; private set; }
+
+        public string? FinalAttemptStatus { get; private set; }
 
         public string? CapturedPaymentProvider { get; private set; }
 
         public string? CapturedPaymentMethod { get; private set; }
 
         public string? CapturedTicketReference { get; private set; }
+
+        public void EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt> result)
+        {
+            _createAttemptResults.Enqueue(result);
+        }
 
         public Task<CentralPmsWebPayResult<CentralPmsResolvedParking>> ResolveVendorParkingAsync(
             Guid? siteGroupId,
@@ -567,17 +656,41 @@ public sealed class WebPayPaymentIntentHandlerTests
             CancellationToken cancellationToken)
         {
             CreatePaymentAttemptWasCalled = true;
+            CreatePaymentAttemptCallCount++;
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
 
+            if (_createAttemptResults.Count > 0)
+            {
+                return Task.FromResult(_createAttemptResults.Dequeue());
+            }
+
             return Task.FromResult(CreateAttemptResult ?? CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> FinalizePaymentAttemptAsync(
+            Guid paymentAttemptId,
+            string finalAttemptStatus,
+            string requestedBy,
+            string idempotencyKey,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            FinalizePaymentAttemptCallCount++;
+            FinalizedPaymentAttemptId = paymentAttemptId;
+            FinalAttemptStatus = finalAttemptStatus;
+
+            return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+                new CentralPmsPaymentAttempt(paymentAttemptId, finalAttemptStatus, string.Empty, false)));
         }
     }
 
     private sealed class FakeProviderSessionRepository : IProviderSessionRepository
     {
         public ProviderSessionRecord? LatestActiveProviderSession { get; set; }
+
+        public ProviderSessionRecord? LatestProviderSessionByPaymentAttempt { get; set; }
 
         public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
         {
@@ -597,6 +710,13 @@ public sealed class WebPayPaymentIntentHandlerTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(LatestActiveProviderSession);
+        }
+
+        public Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
+            Guid paymentAttemptId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(LatestProviderSessionByPaymentAttempt);
         }
     }
 
@@ -624,10 +744,13 @@ public sealed class WebPayPaymentIntentHandlerTests
     {
         public InitiateProviderPaymentRequest? CapturedRequest { get; private set; }
 
+        public int InitiateCallCount { get; private set; }
+
         public Task<InitiateProviderPaymentResponse> InitiateAsync(
             InitiateProviderPaymentRequest request,
             CancellationToken cancellationToken)
         {
+            InitiateCallCount++;
             CapturedRequest = request;
             return Task.FromResult(new InitiateProviderPaymentResponse(
                 request.PaymentAttemptId,

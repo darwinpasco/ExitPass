@@ -211,6 +211,40 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     /// <summary>
+    /// Verifies orphan active payment attempts are finalized through Central PMS and do not remain a permanent WebPay retry blocker.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenActivePaymentAttemptIsOrphan_RecoversAndReturnsFreshHandoff()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        state.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                Guid.Parse("66666666-6666-6666-6666-666666666666"))));
+        state.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            new CentralPmsPaymentAttempt(
+                Guid.Parse("99999999-9999-9999-9999-999999999999"),
+                "PENDING_PROVIDER",
+                "PAYMONGO_CHECKOUT_SESSION",
+                false)));
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(2, state.CreatePaymentAttemptCallCount);
+        Assert.Equal(1, state.FinalizePaymentAttemptCallCount);
+        Assert.Equal("FAILED", state.FinalAttemptStatus);
+        Assert.NotNull(state.CapturedInitiateRequest);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("https://payments.test/handoff", body.RootElement.GetProperty("handoff").GetProperty("handoffUrl").GetString());
+    }
+
+    /// <summary>
     /// Verifies parking session resolution returns safe summary fields before payment attempt creation.
     /// </summary>
     [Fact]
@@ -357,9 +391,17 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
 
+        private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
+
         public bool ResolveVendorParkingWasCalled { get; private set; }
 
         public bool CreatePaymentAttemptWasCalled { get; private set; }
+
+        public int CreatePaymentAttemptCallCount { get; private set; }
+
+        public int FinalizePaymentAttemptCallCount { get; private set; }
+
+        public string? FinalAttemptStatus { get; private set; }
 
         public string? CapturedPaymentProvider { get; private set; }
 
@@ -372,6 +414,13 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public InitiateProviderPaymentRequest? CapturedInitiateRequest { get; private set; }
 
         public ProviderSessionRecord? LatestActiveProviderSession { get; set; }
+
+        public ProviderSessionRecord? LatestProviderSessionByPaymentAttempt { get; set; }
+
+        public void EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt> result)
+        {
+            _createAttemptResults.Enqueue(result);
+        }
 
         public Task<CentralPmsWebPayResult<CentralPmsResolvedParking>> ResolveVendorParkingAsync(
             Guid? siteGroupId,
@@ -397,10 +446,31 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             CancellationToken cancellationToken)
         {
             CreatePaymentAttemptWasCalled = true;
+            CreatePaymentAttemptCallCount++;
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
+            if (_createAttemptResults.Count > 0)
+            {
+                return Task.FromResult(_createAttemptResults.Dequeue());
+            }
+
             return Task.FromResult(CreateAttemptResult ?? CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> FinalizePaymentAttemptAsync(
+            Guid paymentAttemptId,
+            string finalAttemptStatus,
+            string requestedBy,
+            string idempotencyKey,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            FinalizePaymentAttemptCallCount++;
+            FinalAttemptStatus = finalAttemptStatus;
+
+            return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+                new CentralPmsPaymentAttempt(paymentAttemptId, finalAttemptStatus, string.Empty, false)));
         }
 
         public Task<ResolvePaymentProviderRouteResponse> ResolveAsync(
@@ -461,6 +531,13 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(LatestActiveProviderSession);
+        }
+
+        public Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
+            Guid paymentAttemptId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(LatestProviderSessionByPaymentAttempt);
         }
     }
 }

@@ -8,9 +8,11 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 /// <param name="Message">Provider-neutral error message.</param>
 /// <param name="Retryable">Indicates whether the failed operation is retryable.</param>
 /// <param name="CorrelationId">Optional Central PMS correlation identifier.</param>
+/// <param name="PaymentAttemptId">Optional Central PMS payment attempt identifier associated with the error.</param>
 public sealed record CentralPmsWebPayError(
     int StatusCode,
     string ErrorCode,
     string Message,
     bool Retryable,
-    Guid? CorrelationId = null);
+    Guid? CorrelationId = null,
+    Guid? PaymentAttemptId = null);
