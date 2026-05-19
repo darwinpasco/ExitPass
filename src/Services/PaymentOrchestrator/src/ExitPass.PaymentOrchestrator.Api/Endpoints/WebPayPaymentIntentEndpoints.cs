@@ -17,6 +17,51 @@ public static class WebPayPaymentIntentEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
 
+        app.MapPost("/v1/webpay/parking-session", async (
+            WebPayParkingSessionResolveRequest request,
+            WebPayPaymentIntentHandler handler,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(handler);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            if (!request.CorrelationId.HasValue &&
+                httpContext.Request.Headers.TryGetValue("X-Correlation-Id", out var headerValue) &&
+                Guid.TryParse(headerValue.ToString(), out var headerCorrelationId))
+            {
+                request.CorrelationId = headerCorrelationId;
+            }
+
+            var result = await handler.ResolveAsync(request, cancellationToken);
+            if (result.Succeeded && result.Response is not null)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = result.Response.CorrelationId.ToString();
+                return Results.Ok(result.Response);
+            }
+
+            var error = result.Error ?? new WebPayPaymentIntentError(
+                StatusCodes.Status502BadGateway,
+                "WEBPAY_PARKING_SESSION_RESOLVE_FAILED",
+                "WebPay parking session could not be resolved.",
+                true);
+
+            if (error.CorrelationId.HasValue)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = error.CorrelationId.Value.ToString();
+            }
+
+            return Results.Json(BuildErrorResponse(error), statusCode: error.StatusCode);
+        })
+        .WithName("ResolveWebPayParkingSession")
+        .Produces<WebPayParkingSessionResolveResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         app.MapPost("/v1/webpay/payment-intents", async (
             WebPayPaymentIntentRequest request,
             WebPayPaymentIntentHandler handler,
@@ -47,30 +92,12 @@ public static class WebPayPaymentIntentEndpoints
                 "WebPay payment intent could not be created.",
                 true);
 
-            var response = new
-            {
-                errorCode = error.ErrorCode,
-                message = error.Message,
-                retryable = error.Retryable,
-                correlationId = error.CorrelationId,
-                parkingSessionId = error.ParkingSessionId,
-                paymentAttemptId = error.PaymentAttemptId,
-                status = error.Status,
-                handoff = error.Handoff,
-                paymentMethod = error.PaymentMethod,
-                amountMinorUnits = error.AmountMinorUnits,
-                currency = error.Currency,
-                siteName = error.SiteName,
-                ticketReference = error.TicketReference,
-                plateNumber = error.PlateNumber
-            };
-
             if (error.CorrelationId.HasValue)
             {
                 httpContext.Response.Headers["X-Correlation-Id"] = error.CorrelationId.Value.ToString();
             }
 
-            return Results.Json(response, statusCode: error.StatusCode);
+            return Results.Json(BuildErrorResponse(error), statusCode: error.StatusCode);
         })
         .WithName("CreateWebPayPaymentIntent")
         .Produces<WebPayPaymentIntentResponse>(StatusCodes.Status200OK)
@@ -82,5 +109,28 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
         return app;
+    }
+
+    private static object BuildErrorResponse(WebPayPaymentIntentError error)
+    {
+        return new
+        {
+            errorCode = error.ErrorCode,
+            message = error.Message,
+            retryable = error.Retryable,
+            correlationId = error.CorrelationId,
+            parkingSessionId = error.ParkingSessionId,
+            paymentAttemptId = error.PaymentAttemptId,
+            status = error.Status,
+            handoff = error.Handoff,
+            handoffUrl = error.Handoff?.HandoffUrl,
+            resumePaymentUrl = error.Handoff?.HandoffUrl,
+            paymentMethod = error.PaymentMethod,
+            amountMinorUnits = error.AmountMinorUnits,
+            currency = error.Currency,
+            siteName = error.SiteName,
+            ticketReference = error.TicketReference,
+            plateNumber = error.PlateNumber
+        };
     }
 }

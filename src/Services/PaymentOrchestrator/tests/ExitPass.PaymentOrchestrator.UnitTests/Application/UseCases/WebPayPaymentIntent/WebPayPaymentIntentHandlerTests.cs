@@ -370,6 +370,7 @@ public sealed class WebPayPaymentIntentHandlerTests
                 DateTimeOffset.Parse("2026-05-18T10:42:00+08:00"),
                 DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
                 "Weekend Rate",
+                "PAYABLE",
                 DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
 
         var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
@@ -380,6 +381,50 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("ABC 1234", result.Response.PlateNumber);
         Assert.Equal("Weekend Rate", result.Response.TariffName);
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"), result.Response.FeeValidUntil);
+    }
+
+    /// <summary>
+    /// Verifies the pre-payment parking session resolve path returns summary fields without creating payment records.
+    /// </summary>
+    [Fact]
+    public async Task WebPayParkingSessionResolve_WhenCentralPmsReturnsSummaryFields_DoesNotCreatePaymentAttemptOrHandoff()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                12500,
+                "PHP",
+                "HIKCENTRAL",
+                CorrelationId,
+                "Mactan Newtown Parking",
+                "TICKET-TEST-027",
+                "ABC 1234",
+                DateTimeOffset.Parse("2026-05-18T10:42:00+08:00"),
+                DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
+                "Weekend Rate",
+                "PAYABLE",
+                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
+
+        var result = await fixture.Sut.ResolveAsync(new WebPayParkingSessionResolveRequest
+        {
+            SiteGroupId = SiteGroupId,
+            SiteId = SiteId,
+            VendorSystemId = "HIKCENTRAL",
+            TicketReference = "TICKET-TEST-027",
+            CorrelationId = CorrelationId
+        }, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Mactan Newtown Parking", result.Response!.SiteName);
+        Assert.Equal("TICKET-TEST-027", result.Response.TicketReference);
+        Assert.Equal("PAYABLE", result.Response.ParkingStatus);
+        Assert.Equal(12500, result.Response.AmountMinorUnits);
+        Assert.True(fixture.ResolveVendorParkingWasCalled);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedRouteRequest);
+        Assert.Null(fixture.CapturedInitiateRequest);
     }
 
     private static Fixture CreateFixture(

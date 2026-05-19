@@ -215,6 +215,42 @@ public sealed class WebPayPaymentIntentHandler
         });
     }
 
+    /// <summary>
+    /// Resolves the parking session and payable amount without creating a PaymentAttempt or provider session.
+    /// </summary>
+    /// <param name="request">WebPay pre-payment resolve request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Parking session summary or deterministic error.</returns>
+    public async Task<WebPayParkingSessionResolveResult> ResolveAsync(
+        WebPayParkingSessionResolveRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var correlationId = request.CorrelationId.GetValueOrDefault(Guid.NewGuid());
+        var validationError = ValidateResolve(request, correlationId);
+        if (validationError is not null)
+        {
+            return WebPayParkingSessionResolveResult.Failure(validationError);
+        }
+
+        var parking = await _centralPmsClient.ResolveVendorParkingAsync(
+            request.SiteGroupId,
+            request.SiteId,
+            request.VendorSystemId!,
+            request.PlateNumber,
+            request.TicketReference,
+            correlationId,
+            cancellationToken);
+
+        if (!parking.Succeeded || parking.Value is null)
+        {
+            return WebPayParkingSessionResolveResult.Failure(MapCentralPmsError(parking.Error, correlationId));
+        }
+
+        return WebPayParkingSessionResolveResult.Success(BuildResolveResponse(parking.Value, correlationId));
+    }
+
     private static WebPayPaymentIntentError? Validate(
         WebPayPaymentIntentRequest request,
         Guid correlationId)
@@ -247,6 +283,57 @@ public sealed class WebPayPaymentIntentHandler
             "INVALID_REQUEST",
             $"The request is invalid. correlationId={correlationId}; errors={string.Join(" ", errors)}",
             false);
+    }
+
+    private static WebPayPaymentIntentError? ValidateResolve(
+        WebPayParkingSessionResolveRequest request,
+        Guid correlationId)
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(request.PlateNumber) &&
+            string.IsNullOrWhiteSpace(request.TicketReference))
+        {
+            errors.Add("Either plateNumber or ticketReference is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.VendorSystemId))
+        {
+            errors.Add("vendorSystemId is required.");
+        }
+
+        if (errors.Count == 0)
+        {
+            return null;
+        }
+
+        return new WebPayPaymentIntentError(
+            400,
+            "INVALID_REQUEST",
+            $"The request is invalid. correlationId={correlationId}; errors={string.Join(" ", errors)}",
+            false);
+    }
+
+    private static WebPayParkingSessionResolveResponse BuildResolveResponse(
+        CentralPmsResolvedParking parking,
+        Guid fallbackCorrelationId)
+    {
+        return new WebPayParkingSessionResolveResponse
+        {
+            ParkingSessionId = parking.ParkingSessionId,
+            TariffSnapshotId = parking.TariffSnapshotId,
+            AmountMinorUnits = parking.NetPayableMinorUnits,
+            Currency = parking.Currency,
+            SiteName = BlankToNull(parking.SiteName),
+            TicketReference = BlankToNull(parking.TicketReference),
+            PlateNumber = BlankToNull(parking.PlateNumber),
+            EntryTime = parking.EntryTime,
+            CurrentFeeCalculationTime = parking.CurrentFeeCalculationTime,
+            TariffName = BlankToNull(parking.TariffName),
+            ParkingStatus = BlankToNull(parking.ParkingStatus),
+            FeeValidUntil = parking.FeeValidUntil,
+            CorrelationId = parking.CorrelationId == Guid.Empty ? fallbackCorrelationId : parking.CorrelationId
+        };
     }
 
     private static WebPayPaymentIntentError MapCentralPmsError(

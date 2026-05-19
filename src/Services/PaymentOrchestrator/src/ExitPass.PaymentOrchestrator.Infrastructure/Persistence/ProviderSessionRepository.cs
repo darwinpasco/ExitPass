@@ -210,8 +210,7 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             join core.payment_attempts pa on pa.payment_attempt_id = ps.payment_attempt_id
             join payments.payment_rails pr on pr.payment_rail_id = ps.payment_rail_id
             where pa.parking_session_id = @parking_session_id
-              and ps.session_status in ('CREATED', 'ACTIVE', 'PENDING')
-              and (ps.expires_at is null or ps.expires_at > now())
+              and ps.checkout_url is not null
             order by ps.created_at desc
             limit 1;
             """;

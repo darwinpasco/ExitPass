@@ -9,6 +9,8 @@ export type PaymentIntentRequest = {
   vendorSystemId?: string;
 };
 
+export type ParkingSessionResolveRequest = Omit<PaymentIntentRequest, "paymentMethod">;
+
 export type WebPayHandoff = {
   type?: string;
   handoffUrl?: string | null;
@@ -55,6 +57,27 @@ export type PaymentIntentResponse = {
   currentFeeCalculationTime?: string | null;
   durationParked?: string | null;
   tariffName?: string | null;
+  feeValidUntil?: string | null;
+  tariffExpiresAt?: string | null;
+  sessionSummary?: ParkingSessionSummary | null;
+};
+
+export type ParkingSessionResolveResponse = {
+  parkingSessionId: string;
+  tariffSnapshotId: string;
+  amountMinorUnits: number;
+  currency: string;
+  correlationId: string;
+  siteName?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  entryTime?: string | null;
+  exitTime?: string | null;
+  currentFeeCalculationTime?: string | null;
+  durationParked?: string | null;
+  tariffName?: string | null;
+  parkingStatus?: string | null;
+  paymentStatus?: string | null;
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
   sessionSummary?: ParkingSessionSummary | null;

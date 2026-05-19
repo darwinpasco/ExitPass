@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
@@ -6,9 +6,17 @@ import {
   extractPaymentIntentContext,
   formatAmount,
   getResumeUrl,
-  normalizeTicketReference
+  normalizeTicketReference,
+  resolveParkingSession
 } from "./webpay";
-import type { ActivePaymentAttemptState, ParkingSessionSummary, PaymentIntentRequest, PaymentIntentResponse, PaymentMethod } from "./types";
+import type {
+  ActivePaymentAttemptState,
+  ParkingSessionResolveResponse,
+  ParkingSessionSummary,
+  PaymentIntentRequest,
+  PaymentIntentResponse,
+  PaymentMethod
+} from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string }> = [
   { code: "QRPH", label: "QRPh", image: "/assets/payment-methods/qrph.png" },
@@ -18,6 +26,7 @@ const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string 
 ];
 
 type EntryMode = "ticket" | "plate";
+type WebPayStage = "INPUT" | "SESSION_RESOLVED" | "HANDOFF_READY" | "ACTIVE_ATTEMPT" | "ERROR";
 
 export function App() {
   const [entryMode, setEntryMode] = useState<EntryMode>("ticket");
@@ -25,10 +34,14 @@ export function App() {
   const [scannedContext, setScannedContext] = useState<Partial<PaymentIntentRequest>>({});
   const [plateNumber, setPlateNumber] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRPH");
+  const [resolvedSession, setResolvedSession] = useState<ParkingSessionResolveResponse | null>(null);
   const [result, setResult] = useState<PaymentIntentResponse | null>(null);
   const [activePaymentAttempt, setActivePaymentAttempt] = useState<ActivePaymentAttemptState | null>(null);
   const [error, setError] = useState("");
+  const [resolveError, setResolveError] = useState("");
+  const [isResolving, setIsResolving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [stage, setStage] = useState<WebPayStage>("INPUT");
 
   function handleQrDecoded(value: string) {
     const normalized = normalizeTicketReference(value);
@@ -37,7 +50,108 @@ export function App() {
     setTicketReference(normalized);
     setScannedContext(context);
     setError("");
+    setResolveError("");
+    setResult(null);
+    setResolvedSession(null);
     setActivePaymentAttempt(null);
+    setStage("INPUT");
+  }
+
+  function clearLookupState() {
+    setError("");
+    setResolveError("");
+    setResult(null);
+    setResolvedSession(null);
+    setActivePaymentAttempt(null);
+    setStage("INPUT");
+  }
+
+  function currentLookup() {
+    const hasTicket = entryMode === "ticket" && ticketReference.trim().length > 0;
+    const hasPlate = entryMode === "plate" && plateNumber.trim().length > 0;
+    const lookupValue = entryMode === "ticket" ? ticketReference.trim() : plateNumber.trim();
+
+    return { hasTicket, hasPlate, lookupValue };
+  }
+
+  async function handleResolveParkingSession() {
+    const { hasTicket, hasPlate, lookupValue } = currentLookup();
+    if (!hasTicket && !hasPlate) {
+      setError(entryMode === "ticket" ? "Enter or scan a ticket reference." : "Enter a plate number.");
+      setStage("ERROR");
+      return;
+    }
+
+    setError("");
+    setResolveError("");
+    setResult(null);
+    setActivePaymentAttempt(null);
+    setIsResolving(true);
+
+    try {
+      const response = await resolveParkingSession({
+        ticketReference: hasTicket ? lookupValue : undefined,
+        plateNumber: hasPlate ? lookupValue : undefined,
+        ...(hasTicket ? scannedContext : {})
+      });
+      setResolvedSession(response);
+      setStage("SESSION_RESOLVED");
+    } catch (apiError) {
+      setResolvedSession(null);
+      setResolveError(apiError instanceof Error ? apiError.message : "Parking lookup failed. Please try again.");
+      setStage("ERROR");
+    } finally {
+      setIsResolving(false);
+    }
+  }
+
+  async function handleCreatePaymentIntent() {
+    if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
+      await handleResolveParkingSession();
+      return;
+    }
+
+    const { hasTicket, hasPlate } = currentLookup();
+    if (!hasTicket && !hasPlate) {
+      setError(entryMode === "ticket" ? "Enter or scan a ticket reference." : "Enter a plate number.");
+      setStage("ERROR");
+      return;
+    }
+
+    setError("");
+    setResult(null);
+    setActivePaymentAttempt(null);
+    setIsSubmitting(true);
+
+    try {
+      const response = await createPaymentIntent({
+        ticketReference: hasTicket ? ticketReference.trim() : undefined,
+        plateNumber: hasPlate ? plateNumber.trim() : undefined,
+        paymentMethod,
+        ...(hasTicket ? scannedContext : {})
+      });
+      setResult(response);
+      setStage("HANDOFF_READY");
+    } catch (apiError) {
+      if (apiError instanceof ActivePaymentAttemptError) {
+        setActivePaymentAttempt(apiError.activePaymentAttempt);
+        setStage("ACTIVE_ATTEMPT");
+      } else {
+        setError(apiError instanceof Error ? apiError.message : "Payment intent creation failed. Please try again.");
+        setStage("ERROR");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function handleLookupEnter(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    void handleResolveParkingSession();
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -49,39 +163,21 @@ export function App() {
       return;
     }
 
-    setError("");
-    setResult(null);
-    setActivePaymentAttempt(null);
-
-    const hasTicket = entryMode === "ticket" && ticketReference.trim().length > 0;
-    const hasPlate = entryMode === "plate" && plateNumber.trim().length > 0;
-    if (!hasTicket && !hasPlate) {
-      setError(entryMode === "ticket" ? "Enter or scan a ticket reference." : "Enter a plate number.");
+    if (isResolving || isSubmitting) {
       return;
     }
 
-    setIsSubmitting(true);
-    try {
-      const response = await createPaymentIntent({
-        ticketReference: hasTicket ? ticketReference : undefined,
-        plateNumber: hasPlate ? plateNumber : undefined,
-        paymentMethod,
-        ...(hasTicket ? scannedContext : {})
-      });
-      setResult(response);
-    } catch (apiError) {
-      if (apiError instanceof ActivePaymentAttemptError) {
-        setActivePaymentAttempt(apiError.activePaymentAttempt);
-      } else {
-        setError(apiError instanceof Error ? apiError.message : "Payment intent creation failed. Please try again.");
-      }
-    } finally {
-      setIsSubmitting(false);
+    if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
+      await handleResolveParkingSession();
+      return;
     }
+
+    await handleCreatePaymentIntent();
   }
 
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
+  const summary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
 
   return (
     <main className="app-shell">
@@ -129,7 +225,9 @@ export function App() {
               onChange={(event) => {
                 setTicketReference(event.target.value);
                 setScannedContext({});
+                clearLookupState();
               }}
+              onKeyDown={handleLookupEnter}
               placeholder="Scan or enter ticket reference"
               autoComplete="off"
             />
@@ -140,13 +238,32 @@ export function App() {
             <input
               name="plateNumber"
               value={plateNumber}
-              onChange={(event) => setPlateNumber(event.target.value)}
+              onChange={(event) => {
+                setPlateNumber(event.target.value);
+                clearLookupState();
+              }}
+              onKeyDown={handleLookupEnter}
               placeholder="ABC 1234"
               autoCapitalize="characters"
               autoComplete="off"
             />
           </label>
         )}
+
+        {isResolving && (
+          <div className="inline-status" role="status">
+            Resolving parking session...
+          </div>
+        )}
+
+        {resolveError && (
+          <div className="form-error" role="alert">
+            <img src="/assets/icons/error.svg" alt="" aria-hidden="true" />
+            <span>{resolveError}</span>
+          </div>
+        )}
+
+        {summary && <ParkingSessionSummaryPanel result={summary} />}
 
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
@@ -158,7 +275,10 @@ export function App() {
                   name="paymentMethod"
                   value={method.code}
                   checked={paymentMethod === method.code}
-                  onChange={() => setPaymentMethod(method.code)}
+                  onChange={() => {
+                    setPaymentMethod(method.code);
+                    setError("");
+                  }}
                 />
                 <img src={method.image} alt="" aria-hidden="true" />
                 <span>{method.label}</span>
@@ -231,9 +351,17 @@ export function App() {
           </section>
         )}
 
-        <button type="submit" className="submit-button" disabled={isSubmitting}>
+        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
-          {isSubmitting ? "Creating payment..." : activePaymentAttempt ? (activeResumeUrl ? "Continue Existing Payment" : "Check Status") : "Continue"}
+          {isResolving
+            ? "Resolving..."
+            : isSubmitting
+              ? "Creating payment..."
+              : activePaymentAttempt
+                ? (activeResumeUrl ? "Continue Existing Payment" : "Check Status")
+                : summary
+                  ? "Continue to Payment"
+                  : "Continue"}
         </button>
       </form>
 
@@ -246,14 +374,13 @@ export function App() {
           />
           <div>
             <p className="eyebrow">Payment handoff ready</p>
-            <ParkingSessionSummaryPanel result={result} />
             <dl>
               <div>
-                <dt>Method</dt>
+                <dt>Payment Method</dt>
                 <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? result.paymentMethod}</dd>
               </div>
               <div>
-                <dt>Status</dt>
+                <dt>Payment Status</dt>
                 <dd>{result.status}</dd>
               </div>
             </dl>
@@ -303,7 +430,7 @@ export function App() {
   );
 }
 
-function ParkingSessionSummaryPanel({ result }: { result: PaymentIntentResponse }) {
+function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveResponse }) {
   const summary: ParkingSessionSummary = {
     ...result.sessionSummary,
     siteName: result.sessionSummary?.siteName ?? result.siteName,
@@ -316,7 +443,7 @@ function ParkingSessionSummaryPanel({ result }: { result: PaymentIntentResponse 
     tariffName: result.sessionSummary?.tariffName ?? result.tariffName,
     amountMinorUnits: result.sessionSummary?.amountMinorUnits ?? result.amountMinorUnits,
     currency: result.sessionSummary?.currency ?? result.currency,
-    sessionStatus: result.sessionSummary?.sessionStatus ?? result.status,
+    sessionStatus: result.sessionSummary?.sessionStatus ?? result.parkingStatus,
     feeValidUntil: result.sessionSummary?.feeValidUntil ?? result.feeValidUntil ?? result.tariffExpiresAt,
     tariffExpiresAt: result.sessionSummary?.tariffExpiresAt ?? result.tariffExpiresAt
   };
@@ -329,7 +456,8 @@ function ParkingSessionSummaryPanel({ result }: { result: PaymentIntentResponse 
     ["Exit / Payment Time", formatDateTime(summary.exitTime ?? summary.currentFeeCalculationTime)],
     ["Duration", summary.durationParked],
     ["Tariff", summary.tariffName],
-    ["Status", summary.sessionStatus],
+    ["Parking Status", summary.sessionStatus],
+    ["Payment Status", result.paymentStatus],
     ["Fee Valid Until", formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt)]
   ].filter((row): row is [string, string] => Boolean(row[1]));
 
@@ -358,6 +486,28 @@ function ParkingSessionSummaryPanel({ result }: { result: PaymentIntentResponse 
       )}
     </section>
   );
+}
+
+function toParkingSessionResolveResponse(result: PaymentIntentResponse): ParkingSessionResolveResponse {
+  return {
+    parkingSessionId: result.parkingSessionId,
+    tariffSnapshotId: result.tariffSnapshotId,
+    amountMinorUnits: result.amountMinorUnits,
+    currency: result.currency,
+    correlationId: result.correlationId,
+    siteName: result.siteName,
+    ticketReference: result.ticketReference,
+    plateNumber: result.plateNumber,
+    entryTime: result.entryTime,
+    exitTime: result.exitTime,
+    currentFeeCalculationTime: result.currentFeeCalculationTime,
+    durationParked: result.durationParked,
+    tariffName: result.tariffName,
+    paymentStatus: result.status,
+    feeValidUntil: result.feeValidUntil,
+    tariffExpiresAt: result.tariffExpiresAt,
+    sessionSummary: result.sessionSummary
+  };
 }
 
 function continueActivePayment(activePaymentAttempt: ActivePaymentAttemptState): boolean {

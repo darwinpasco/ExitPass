@@ -102,6 +102,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.EntryTime,
             payload.CurrentFeeCalculationTime,
             payload.TariffName,
+            payload.ParkingStatus,
             payload.FeeValidUntil ?? payload.TariffExpiresAt));
     }
 
@@ -247,6 +248,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         DateTimeOffset? EntryTime,
         DateTimeOffset? CurrentFeeCalculationTime,
         string? TariffName,
+        string? ParkingStatus,
         DateTimeOffset? FeeValidUntil);
 
     private sealed record CreatePaymentAttemptRequest(

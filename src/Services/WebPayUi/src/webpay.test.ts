@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPaymentIntentBody,
+  buildParkingSessionResolveBody,
   createPaymentIntent,
   extractPaymentIntentContext,
   getResumeUrl,
   normalizeTicketReference,
+  resolveParkingSession,
   toFriendlyError
 } from "./webpay";
 
@@ -32,6 +34,15 @@ describe("WebPay QR and payment intent helpers", () => {
       plateNumber: "ABC 1234",
       paymentMethod: "GCASH"
     });
+  });
+
+  it("WebPay_WhenResolvingParkingSession_SubmitsLookupWithoutPaymentMethod", () => {
+    const body = buildParkingSessionResolveBody({ ticketReference: " TICKET-001 " });
+
+    expect(body).toEqual({
+      ticketReference: "TICKET-001"
+    });
+    expect(body).not.toHaveProperty("paymentMethod");
   });
 
   it("WebPay_WhenPaymentMethodSelected_SubmitsPaymentMethodOnly", async () => {
@@ -62,6 +73,33 @@ describe("WebPay QR and payment intent helpers", () => {
     );
 
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenParkingSessionResolveSucceeds_MapsSummaryFields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        parkingSessionId: "55555555-5555-5555-5555-555555555555",
+        tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+        amountMinorUnits: 12500,
+        currency: "PHP",
+        siteName: "Mactan Newtown Parking",
+        ticketReference: "TICKET-TEST-023",
+        plateNumber: "ABC 1234",
+        parkingStatus: "PAYABLE",
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    const result = await resolveParkingSession(
+      { ticketReference: "TICKET-TEST-023", vendorSystemId: "HIKCENTRAL" },
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/parking-session");
+    expect(result.siteName).toBe("Mactan Newtown Parking");
+    expect(result.parkingStatus).toBe("PAYABLE");
+    expect(result.amountMinorUnits).toBe(12500);
   });
 
   it("WebPay_WhenActivePaymentAttemptConflictReturned_ThrowsActivePaymentAttemptError", async () => {

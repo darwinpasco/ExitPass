@@ -23,6 +23,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     : IClassFixture<PaymentOrchestratorWebApplicationFactory>
 {
     private const string Route = "/v1/webpay/payment-intents";
+    private const string ResolveRoute = "/v1/webpay/parking-session";
 
     private readonly PaymentOrchestratorWebApplicationFactory _factory;
 
@@ -162,6 +163,90 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.DoesNotContain("merchantReferenceNumber", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("providerProduct", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("rawResponse", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies active payment attempt conflicts surface a provider-neutral resume URL when an existing checkout URL is available.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasCheckoutUrl_ReturnsResumePaymentUrl()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        state.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                Guid.Parse("33333333-3333-3333-3333-333333333333")));
+        state.LatestActiveProviderSession = new ProviderSessionRecord(
+            Guid.Parse("88888888-8888-8888-8888-888888888888"),
+            Guid.Parse("66666666-6666-6666-6666-666666666666"),
+            "PAYMONGO",
+            "PAYMONGO_CHECKOUT_SESSION",
+            "cs_test_existing",
+            "reference_test_existing",
+            "PENDING_PROVIDER",
+            "https://payments.test/existing-checkout",
+            null,
+            DateTimeOffset.Parse("2026-05-16T12:15:00Z"),
+            "existing-idempotency-key",
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            "{}",
+            "{}",
+            DateTimeOffset.Parse("2026-05-16T12:00:00Z"));
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.True(state.CreatePaymentAttemptWasCalled);
+        Assert.Null(state.CapturedInitiateRequest);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.Equal("ACTIVE_PAYMENT_ATTEMPT_EXISTS", root.GetProperty("errorCode").GetString());
+        Assert.Equal("https://payments.test/existing-checkout", root.GetProperty("resumePaymentUrl").GetString());
+        Assert.Equal("https://payments.test/existing-checkout", root.GetProperty("handoffUrl").GetString());
+        Assert.DoesNotContain("providerSessionRef", root.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies parking session resolution returns safe summary fields before payment attempt creation.
+    /// </summary>
+    [Fact]
+    public async Task WebPayParkingSessionResolve_WhenSessionResolved_ReturnsSummaryWithoutCreatingPaymentAttempt()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        state.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(new CentralPmsResolvedParking(
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            Guid.Parse("55555555-5555-5555-5555-555555555555"),
+            10000,
+            "PHP",
+            "HIKCENTRAL",
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            "Mactan Newtown Parking",
+            "TICKET-TEST-027",
+            "ABC 1234",
+            DateTimeOffset.Parse("2026-05-18T10:42:00+08:00"),
+            DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
+            "Weekend Rate",
+            "PAYABLE",
+            DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(ResolveRoute, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(state.ResolveVendorParkingWasCalled);
+        Assert.False(state.CreatePaymentAttemptWasCalled);
+        Assert.Null(state.CapturedRouteRequest);
+        Assert.Null(state.CapturedInitiateRequest);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.Equal("Mactan Newtown Parking", root.GetProperty("siteName").GetString());
+        Assert.Equal("TICKET-TEST-027", root.GetProperty("ticketReference").GetString());
+        Assert.Equal("PAYABLE", root.GetProperty("parkingStatus").GetString());
+        Assert.Equal(10000, root.GetProperty("amountMinorUnits").GetInt32());
     }
 
     /// <summary>

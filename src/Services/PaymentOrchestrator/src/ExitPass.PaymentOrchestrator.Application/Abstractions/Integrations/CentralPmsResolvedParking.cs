@@ -22,4 +22,5 @@ public sealed record CentralPmsResolvedParking(
     DateTimeOffset? EntryTime = null,
     DateTimeOffset? CurrentFeeCalculationTime = null,
     string? TariffName = null,
+    string? ParkingStatus = null,
     DateTimeOffset? FeeValidUntil = null);
