@@ -36,3 +36,6 @@ infra/docker/docker-compose.override.yml
 /src/Services/CentralPms/src/ExitPass.CentralPms.Api/appsettings.Development.json
 /scripts/dev/Restart-WebPayQrphLocalTest.ps1
 /.gitignore
+
+# Vite local cache
+src/Services/WebPayUi/.vite/
