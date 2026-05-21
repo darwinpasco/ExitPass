@@ -194,6 +194,8 @@ public sealed class WebPayPaymentIntentHandler
             EntryTime = parking.Value.EntryTime,
             CurrentFeeCalculationTime = parking.Value.CurrentFeeCalculationTime,
             TariffName = BlankToNull(parking.Value.TariffName),
+            ParkingStatus = BlankToNull(parking.Value.ParkingStatus),
+            PaymentStatus = MapPaymentStatusForDisplay(handoff.SessionStatus),
             FeeValidUntil = parking.Value.FeeValidUntil,
             PaymentMethod = route.PaymentMethod,
             SelectedProviderCode = route.SelectedProviderCode,
@@ -331,6 +333,7 @@ public sealed class WebPayPaymentIntentHandler
             CurrentFeeCalculationTime = parking.CurrentFeeCalculationTime,
             TariffName = BlankToNull(parking.TariffName),
             ParkingStatus = BlankToNull(parking.ParkingStatus),
+            PaymentStatus = BlankToNull(parking.PaymentStatus) ?? "Not Started",
             FeeValidUntil = parking.FeeValidUntil,
             CorrelationId = parking.CorrelationId == Guid.Empty ? fallbackCorrelationId : parking.CorrelationId
         };
@@ -540,6 +543,18 @@ public sealed class WebPayPaymentIntentHandler
     private static string? BlankToNull(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string MapPaymentStatusForDisplay(string? status)
+    {
+        return Normalize(status ?? PendingProviderStatus) switch
+        {
+            "REQUESTED" or "PENDING" or "PENDING_PROVIDER" or "ACTIVE" => "Pending Payment",
+            "CONFIRMED" or "PAID" or "FINALIZED" or "SUCCEEDED" or "SUCCESS" => "Paid",
+            "FAILED" or "CANCELLED" or "DECLINED" => "Failed",
+            "EXPIRED" => "Expired",
+            _ => PendingProviderStatus
+        };
     }
 
     private sealed record PaymentAttemptResolution(

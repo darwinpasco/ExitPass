@@ -434,6 +434,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     [InlineData("REJECTED_SNAPSHOT_EXPIRED")]
     [InlineData("REJECTED_SNAPSHOT_ALREADY_BOUND")]
     [InlineData("REJECTED_SNAPSHOT_SESSION_MISMATCH")]
+    [InlineData("TARIFF_SNAPSHOT_NOT_ELIGIBLE")]
     public async Task ExecuteAsync_throws_tariff_snapshot_not_eligible_when_db_routine_rejects_snapshot(string outcomeCode)
     {
         var fixture = CreateFixture();

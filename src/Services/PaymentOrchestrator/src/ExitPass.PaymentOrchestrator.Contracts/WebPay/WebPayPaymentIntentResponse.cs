@@ -86,6 +86,16 @@ public sealed class WebPayPaymentIntentResponse
     public DateTimeOffset? FeeValidUntil { get; set; }
 
     /// <summary>
+    /// Parking session status, when available.
+    /// </summary>
+    public string? ParkingStatus { get; set; }
+
+    /// <summary>
+    /// Current payment attempt or confirmation status for WebPay display.
+    /// </summary>
+    public string? PaymentStatus { get; set; }
+
+    /// <summary>
     /// Customer-selected payment method code.
     /// </summary>
     public string PaymentMethod { get; set; } = string.Empty;

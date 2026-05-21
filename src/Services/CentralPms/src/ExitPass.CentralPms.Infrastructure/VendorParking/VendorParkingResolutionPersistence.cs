@@ -87,6 +87,15 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             parkingSessionWasReused ? null : vendorTariffRef,
             cancellationToken);
 
+        if (existingTariff is null && parkingSessionWasReused)
+        {
+            existingTariff = await FindLatestExistingTariffAsync(
+                connection,
+                transaction,
+                parkingSession.ParkingSessionId,
+                cancellationToken);
+        }
+
         var tariffSnapshotWasReused = existingTariff is not null;
         var tariffSnapshot = existingTariff ?? RebindTariffSnapshot(request.TariffSnapshot, parkingSession.ParkingSessionId);
 
@@ -108,6 +117,14 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 cancellationToken);
         }
 
+        var operationalSummary = await LoadOperationalSummaryAsync(
+            connection,
+            transaction,
+            parkingSession.ParkingSessionId,
+            siteGroupId,
+            siteId,
+            cancellationToken);
+
         await transaction.CommitAsync(cancellationToken);
 
         return new PersistVendorParkingResolutionResult
@@ -115,7 +132,10 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             ParkingSession = parkingSession,
             TariffSnapshot = tariffSnapshot,
             ParkingSessionWasReused = parkingSessionWasReused,
-            TariffSnapshotWasReused = tariffSnapshotWasReused
+            TariffSnapshotWasReused = tariffSnapshotWasReused,
+            SiteGroupName = operationalSummary.SiteGroupName,
+            SiteName = operationalSummary.SiteName,
+            PaymentStatus = operationalSummary.PaymentStatus
         };
     }
 
@@ -549,7 +569,6 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
               AND (@vendor_tariff_ref IS NULL OR vendor_tariff_ref = @vendor_tariff_ref)
               AND snapshot_status = 'ACTIVE'
               AND consumed_at IS NULL
-              AND expires_at > NOW()
               AND superseded_by_tariff_snapshot_id IS NULL
             ORDER BY created_at DESC
             LIMIT 1;
@@ -558,6 +577,60 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
         command.Parameters.Add("vendor_tariff_ref", NpgsqlDbType.Text).Value = DbValue(vendorTariffRef);
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return TariffSnapshot.Rehydrate(
+            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            TariffSnapshotSourceType.Base,
+            reader.GetDecimal(reader.GetOrdinal("gross_amount")),
+            reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount")),
+            reader.GetDecimal(reader.GetOrdinal("coupon_discount_amount")),
+            reader.GetDecimal(reader.GetOrdinal("net_amount")),
+            reader.GetString(reader.GetOrdinal("currency_code")),
+            reader.GetDecimal(reader.GetOrdinal("gross_amount")),
+            reader.IsDBNull(reader.GetOrdinal("tariff_version_reference")) ? null : reader.GetString(reader.GetOrdinal("tariff_version_reference")),
+            null,
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("calculated_at")),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("expires_at")),
+            MapTariffSnapshotStatus(reader.GetString(reader.GetOrdinal("snapshot_status"))),
+            reader.IsDBNull(reader.GetOrdinal("superseded_by_tariff_snapshot_id")) ? null : reader.GetGuid(reader.GetOrdinal("superseded_by_tariff_snapshot_id")),
+            null);
+    }
+
+    private static async Task<TariffSnapshot?> FindLatestExistingTariffAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                tariff_snapshot_id,
+                parking_session_id,
+                gross_amount,
+                statutory_discount_amount,
+                coupon_discount_amount,
+                net_amount,
+                currency_code,
+                tariff_version_reference,
+                calculated_at,
+                expires_at,
+                snapshot_status::text AS snapshot_status,
+                superseded_by_tariff_snapshot_id
+            FROM core.tariff_snapshots
+            WHERE parking_session_id = @parking_session_id
+            ORDER BY created_at DESC
+            LIMIT 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
 
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -610,6 +683,54 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = CentralPmsServiceIdentityId;
 
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<OperationalSummary> LoadOperationalSummaryAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        Guid siteGroupId,
+        Guid siteId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                sg.site_group_name,
+                s.site_name,
+                (
+                    SELECT pa.attempt_status::text
+                    FROM core.payment_attempts pa
+                    WHERE pa.parking_session_id = @parking_session_id
+                    ORDER BY pa.created_at DESC
+                    LIMIT 1
+                ) AS latest_attempt_status
+            FROM sites.site_groups sg
+            INNER JOIN sites.sites s
+                ON s.site_id = @site_id
+               AND s.site_group_id = sg.site_group_id
+            WHERE sg.site_group_id = @site_group_id
+            LIMIT 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return new OperationalSummary(null, null, "Not Started");
+        }
+
+        var attemptStatus = reader.IsDBNull(reader.GetOrdinal("latest_attempt_status"))
+            ? null
+            : reader.GetString(reader.GetOrdinal("latest_attempt_status"));
+
+        return new OperationalSummary(
+            reader.IsDBNull(reader.GetOrdinal("site_group_name")) ? null : reader.GetString(reader.GetOrdinal("site_group_name")),
+            reader.IsDBNull(reader.GetOrdinal("site_name")) ? null : reader.GetString(reader.GetOrdinal("site_name")),
+            MapPaymentStatus(attemptStatus));
     }
 
     private static async Task InsertTariffSnapshotAsync(
@@ -754,6 +875,19 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         };
     }
 
+    private static string MapPaymentStatus(string? value)
+    {
+        return value?.Trim().ToUpperInvariant() switch
+        {
+            null or "" => "Not Started",
+            "REQUESTED" or "PENDING_PROVIDER" => "Pending Payment",
+            "CONFIRMED" or "PAID" or "FINALIZED" => "Paid",
+            "FAILED" or "CANCELLED" => "Failed",
+            "EXPIRED" => "Expired",
+            _ => value!.Trim()
+        };
+    }
+
     private static TariffSnapshotStatus MapTariffSnapshotStatus(string value)
     {
         return value.ToUpperInvariant() switch
@@ -766,4 +900,9 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             _ => TariffSnapshotStatus.Invalidated
         };
     }
+
+    private sealed record OperationalSummary(
+        string? SiteGroupName,
+        string? SiteName,
+        string PaymentStatus);
 }

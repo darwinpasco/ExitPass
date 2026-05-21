@@ -177,9 +177,10 @@ export async function resolveParkingSession(
 
 export async function createPaymentIntent(
   request: PaymentIntentRequest,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  defaultContext?: WebPaySiteContext
 ): Promise<PaymentIntentResponse> {
-  const body = buildPaymentIntentBody(request);
+  const body = buildPaymentIntentBody(request, defaultContext);
   if (!body.vendorSystemId) {
     throw new Error("WebPay is missing vendor configuration. Set VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID for local testing.");
   }

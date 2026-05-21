@@ -30,9 +30,12 @@ export type ParkingSessionSummary = {
   currentFeeCalculationTime?: string | null;
   durationParked?: string | null;
   tariffName?: string | null;
+  totalFeeMinorUnits?: number | null;
   amountMinorUnits?: number | null;
   currency?: string | null;
   sessionStatus?: string | null;
+  parkingStatus?: string | null;
+  paymentStatus?: string | null;
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
 };
@@ -62,8 +65,11 @@ export type PaymentIntentResponse = {
   currentFeeCalculationTime?: string | null;
   durationParked?: string | null;
   tariffName?: string | null;
+  totalFeeMinorUnits?: number | null;
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
+  parkingStatus?: string | null;
+  paymentStatus?: string | null;
   sessionSummary?: ParkingSessionSummary | null;
 };
 
@@ -85,6 +91,7 @@ export type ParkingSessionResolveResponse = {
   currentFeeCalculationTime?: string | null;
   durationParked?: string | null;
   tariffName?: string | null;
+  totalFeeMinorUnits?: number | null;
   parkingStatus?: string | null;
   paymentStatus?: string | null;
   feeValidUntil?: string | null;

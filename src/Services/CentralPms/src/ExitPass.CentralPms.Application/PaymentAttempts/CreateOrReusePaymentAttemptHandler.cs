@@ -314,6 +314,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             case "REJECTED_SNAPSHOT_EXPIRED":
             case "REJECTED_SNAPSHOT_ALREADY_BOUND":
             case "REJECTED_SNAPSHOT_SESSION_MISMATCH":
+            case "TARIFF_SNAPSHOT_NOT_ELIGIBLE":
                 throw new TariffSnapshotNotEligibleException(
                     tariffSnapshotId,
                     TariffSnapshotStatus.Invalidated,

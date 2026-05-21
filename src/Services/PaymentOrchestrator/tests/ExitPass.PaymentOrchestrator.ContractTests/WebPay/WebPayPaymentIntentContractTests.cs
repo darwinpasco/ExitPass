@@ -89,8 +89,12 @@ public sealed class WebPayPaymentIntentContractTests
             SiteGroupName = "WebPay Test Site Group 2026-05-19",
             SiteName = "WebPay Test Site 2026-05-19",
             TicketReference = "WEBPAY-20260519-FRESH-001",
+            PlateNumber = "WEBPAY001",
+            EntryTime = DateTimeOffset.Parse("2026-05-19T02:01:00+08:00"),
             AmountMinorUnits = 10000,
             Currency = "PHP",
+            ParkingStatus = "PaymentRequired",
+            PaymentStatus = "Not Started",
             FeeValidUntil = DateTimeOffset.Parse("2026-05-19T15:59:59Z"),
             CorrelationId = Guid.Parse("77777777-7777-7777-7777-777777777777")
         };
@@ -102,6 +106,10 @@ public sealed class WebPayPaymentIntentContractTests
         Assert.Contains("\"vendorSystemId\":\"45a625de-9034-4fb6-b527-0950d384e51f\"", json);
         Assert.Contains("\"amountMinorUnits\":10000", json);
         Assert.Contains("\"currency\":\"PHP\"", json);
+        Assert.Contains("\"parkingStatus\":\"PaymentRequired\"", json);
+        Assert.Contains("\"paymentStatus\":\"Not Started\"", json);
+        Assert.Contains("\"plateNumber\":\"WEBPAY001\"", json);
+        Assert.Contains("\"entryTime\":", json);
         Assert.DoesNotContain("2030-04-01", json, StringComparison.Ordinal);
     }
 }

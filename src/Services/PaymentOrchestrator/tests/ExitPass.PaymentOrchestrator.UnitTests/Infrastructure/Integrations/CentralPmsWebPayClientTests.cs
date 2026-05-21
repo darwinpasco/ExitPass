@@ -180,7 +180,9 @@ public sealed class CentralPmsWebPayClientTests
                 siteName = "Mactan Newtown Parking",
                 entryTime = "2026-05-18T10:42:00+08:00",
                 currentFeeCalculationTime = "2026-05-18T12:57:00+08:00",
-                tariffName = "Weekend Rate"
+                tariffName = "Weekend Rate",
+                parkingStatus = "PaymentRequired",
+                paymentStatus = "Not Started"
             })
         });
         var client = CreateClient(handler);
@@ -203,6 +205,8 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("TICKET-TEST-023", result.Value.TicketReference);
         Assert.Equal("ABC 1234", result.Value.PlateNumber);
         Assert.Equal("Weekend Rate", result.Value.TariffName);
+        Assert.Equal("PaymentRequired", result.Value.ParkingStatus);
+        Assert.Equal("Not Started", result.Value.PaymentStatus);
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T13:15:00+08:00"), result.Value.FeeValidUntil);
     }
 

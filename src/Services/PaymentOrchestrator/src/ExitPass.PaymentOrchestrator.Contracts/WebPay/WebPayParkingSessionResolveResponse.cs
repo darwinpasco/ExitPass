@@ -81,6 +81,11 @@ public sealed class WebPayParkingSessionResolveResponse
     public string? ParkingStatus { get; set; }
 
     /// <summary>
+    /// Current payment attempt or confirmation status for WebPay display.
+    /// </summary>
+    public string? PaymentStatus { get; set; }
+
+    /// <summary>
     /// Tariff snapshot expiry or fee validity timestamp, when available.
     /// </summary>
     public DateTimeOffset? FeeValidUntil { get; set; }

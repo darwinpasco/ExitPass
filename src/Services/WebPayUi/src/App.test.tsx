@@ -27,6 +27,8 @@ const successResponse = {
   durationParked: "2h 15m",
   tariffName: "Weekend Rate",
   feeValidUntil: "2026-05-18T13:15:00+08:00",
+  parkingStatus: "PaymentRequired",
+  paymentStatus: "Not Started",
   paymentMethod: "QRPH",
   selectedProviderCode: "AUB",
   fallbackProviderCode: "PAYMONGO",
@@ -208,11 +210,22 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /mactan newtown parking/i })).toBeInTheDocument();
     expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
-    expect(screen.getByText("WebPay Test Site Group 2026-05-19")).toBeInTheDocument();
+    expect(screen.getByText("Site Name")).toBeInTheDocument();
+    expect(screen.getAllByText("Ticket").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plate").length).toBeGreaterThan(0);
+    expect(screen.getByText("Entry Time")).toBeInTheDocument();
+    expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(screen.getByText("Total Fee")).toBeInTheDocument();
+    expect(screen.getAllByText("Amount Due").length).toBeGreaterThan(0);
+    expect(screen.getByText("Parking Status")).toBeInTheDocument();
+    expect(screen.getByText("Payment Status")).toBeInTheDocument();
+    expect(screen.getByText("Fee Valid Until")).toBeInTheDocument();
     expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
     expect(screen.getAllByText(/May 18, 2026/).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("125.00")).toBeInTheDocument();
+    expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Apr 1, 2030/i)).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenNewParkingSessionIsResolved_ClearsStalePaymentState", async () => {
@@ -282,7 +295,7 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-TEST-023");
     await continueToPayment();
 
-    expect(await screen.findByText("Payment Status")).toBeInTheDocument();
+    expect((await screen.findAllByText("Payment Status")).length).toBeGreaterThan(0);
     expect(screen.getByText("Parking Status")).toBeInTheDocument();
     expect(screen.queryByText(/^Status$/)).not.toBeInTheDocument();
   });

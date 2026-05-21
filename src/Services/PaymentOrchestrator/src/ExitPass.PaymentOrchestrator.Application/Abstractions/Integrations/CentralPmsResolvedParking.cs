@@ -17,6 +17,7 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 /// <param name="TariffName">Optional tariff display name.</param>
 /// <param name="ParkingStatus">Optional parking session status.</param>
 /// <param name="FeeValidUntil">Optional authoritative fee validity timestamp.</param>
+/// <param name="PaymentStatus">Optional current payment status.</param>
 /// <param name="SiteGroupId">Optional resolved site group identifier.</param>
 /// <param name="SiteId">Optional resolved site identifier.</param>
 /// <param name="SiteGroupName">Optional site group display name.</param>
@@ -35,6 +36,7 @@ public sealed record CentralPmsResolvedParking(
     string? TariffName = null,
     string? ParkingStatus = null,
     DateTimeOffset? FeeValidUntil = null,
+    string? PaymentStatus = null,
     Guid? SiteGroupId = null,
     Guid? SiteId = null,
     string? SiteGroupName = null);

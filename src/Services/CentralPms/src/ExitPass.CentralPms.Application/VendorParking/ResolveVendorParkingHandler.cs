@@ -227,7 +227,10 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             persisted.ParkingSession,
             persisted.TariffSnapshot,
             sessionResponse.CorrelationId,
-            session.VendorProviderCode);
+            session.VendorProviderCode,
+            persisted.SiteGroupName,
+            persisted.SiteName,
+            persisted.PaymentStatus);
     }
 
     private ResolveVendorParkingResult CompleteFailure(

@@ -372,6 +372,7 @@ public sealed class WebPayPaymentIntentHandlerTests
                 "Weekend Rate",
                 "PAYABLE",
                 DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+                "Not Started",
                 SiteGroupId,
                 SiteId,
                 "WebPay Test Site Group"));
@@ -387,6 +388,7 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("TICKET-TEST-023", result.Response.TicketReference);
         Assert.Equal("ABC 1234", result.Response.PlateNumber);
         Assert.Equal("Weekend Rate", result.Response.TariffName);
+        Assert.Equal("Pending Payment", result.Response.PaymentStatus);
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"), result.Response.FeeValidUntil);
     }
 
@@ -413,6 +415,7 @@ public sealed class WebPayPaymentIntentHandlerTests
                 "Weekend Rate",
                 "PAYABLE",
                 DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+                "Not Started",
                 SiteGroupId,
                 SiteId,
                 "WebPay Test Site Group"));
@@ -434,6 +437,7 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("Mactan Newtown Parking", result.Response!.SiteName);
         Assert.Equal("TICKET-TEST-027", result.Response.TicketReference);
         Assert.Equal("PAYABLE", result.Response.ParkingStatus);
+        Assert.Equal("Not Started", result.Response.PaymentStatus);
         Assert.Equal(12500, result.Response.AmountMinorUnits);
         Assert.True(fixture.ResolveVendorParkingWasCalled);
         Assert.False(fixture.CreatePaymentAttemptWasCalled);

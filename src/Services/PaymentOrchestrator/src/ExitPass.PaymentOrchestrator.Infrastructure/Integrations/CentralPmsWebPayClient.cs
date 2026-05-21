@@ -106,6 +106,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.TariffName,
             payload.ParkingStatus,
             payload.FeeValidUntil ?? payload.TariffExpiresAt,
+            payload.PaymentStatus,
             ParseGuid(payload.SiteGroupId),
             ParseGuid(payload.SiteId),
             payload.SiteGroupName));
@@ -335,7 +336,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         DateTimeOffset? EntryTime,
         DateTimeOffset? CurrentFeeCalculationTime,
         string? TariffName,
-        string? ParkingStatus);
+        string? ParkingStatus,
+        string? PaymentStatus);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,

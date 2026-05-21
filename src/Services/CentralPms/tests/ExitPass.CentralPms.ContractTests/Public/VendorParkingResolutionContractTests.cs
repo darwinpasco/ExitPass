@@ -56,10 +56,14 @@ public sealed class VendorParkingResolutionContractTests
             LookupOutcome = "resolved",
             PlateNumber = "ABC1234",
             TicketReference = null,
+            EntryTime = new DateTimeOffset(2026, 5, 19, 2, 1, 0, TimeSpan.FromHours(8)),
+            CurrentFeeCalculationTime = new DateTimeOffset(2026, 5, 19, 8, 0, 0, TimeSpan.FromHours(8)),
             NetPayableMinorUnits = 10000,
             Currency = "PHP",
             TariffExpiresAt = new DateTimeOffset(2026, 5, 19, 15, 59, 59, TimeSpan.Zero),
             FeeValidUntil = new DateTimeOffset(2026, 5, 19, 15, 59, 59, TimeSpan.Zero),
+            ParkingStatus = "PaymentRequired",
+            PaymentStatus = "Not Started",
             VendorSystemId = "FAKE-PMS",
             CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         };
@@ -76,11 +80,15 @@ public sealed class VendorParkingResolutionContractTests
         root.TryGetProperty("lookupOutcome", out _).Should().BeTrue();
         root.TryGetProperty("plateNumber", out _).Should().BeTrue();
         root.TryGetProperty("ticketReference", out _).Should().BeTrue();
+        root.TryGetProperty("entryTime", out _).Should().BeTrue();
+        root.TryGetProperty("currentFeeCalculationTime", out _).Should().BeTrue();
         root.TryGetProperty("netPayableMinorUnits", out _).Should().BeTrue();
         root.TryGetProperty("currency", out _).Should().BeTrue();
         root.TryGetProperty("tariffExpiresAt", out _).Should().BeTrue();
         root.TryGetProperty("feeValidUntil", out _).Should().BeTrue();
         root.GetProperty("feeValidUntil").GetString().Should().NotStartWith("2030-04-01");
+        root.TryGetProperty("parkingStatus", out _).Should().BeTrue();
+        root.TryGetProperty("paymentStatus", out _).Should().BeTrue();
         root.TryGetProperty("vendorSystemId", out _).Should().BeTrue();
         root.TryGetProperty("correlationId", out _).Should().BeTrue();
     }

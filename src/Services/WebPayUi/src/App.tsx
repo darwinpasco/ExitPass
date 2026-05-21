@@ -134,8 +134,9 @@ export function App() {
         siteGroupId: resolvedSession.siteGroupId ?? scannedContext.siteGroupId,
         siteId: resolvedSession.siteId ?? scannedContext.siteId,
         vendorSystemId: resolvedSession.vendorSystemId ?? scannedContext.vendorSystemId
-      });
+      }, fetch, {});
       setResult(response);
+      setResolvedSession(toParkingSessionResolveResponse(response));
       setStage("HANDOFF_READY");
     } catch (apiError) {
       if (apiError instanceof ActivePaymentAttemptError) {
@@ -447,22 +448,28 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     currentFeeCalculationTime: result.sessionSummary?.currentFeeCalculationTime ?? result.currentFeeCalculationTime,
     durationParked: result.sessionSummary?.durationParked ?? result.durationParked,
     tariffName: result.sessionSummary?.tariffName ?? result.tariffName,
+    totalFeeMinorUnits: result.sessionSummary?.totalFeeMinorUnits ?? result.totalFeeMinorUnits ?? result.amountMinorUnits,
     amountMinorUnits: result.sessionSummary?.amountMinorUnits ?? result.amountMinorUnits,
     currency: result.sessionSummary?.currency ?? result.currency,
     sessionStatus: result.sessionSummary?.sessionStatus ?? result.parkingStatus,
+    parkingStatus: result.sessionSummary?.parkingStatus ?? result.parkingStatus,
+    paymentStatus: result.sessionSummary?.paymentStatus ?? result.paymentStatus,
     feeValidUntil: result.sessionSummary?.feeValidUntil ?? result.feeValidUntil ?? result.tariffExpiresAt,
     tariffExpiresAt: result.sessionSummary?.tariffExpiresAt ?? result.tariffExpiresAt
   };
 
   const rows = [
-    ["Property / Site Group", summary.siteGroupName],
-    ["Site", summary.siteName],
-    ["Ticket Number", summary.ticketReference],
-    ["Plate Number", summary.plateNumber],
-    ["Entry Time", formatDateTime(summary.entryTime)],
-    ["Fee Valid Until", formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt)],
-    ["Parking Status", summary.sessionStatus]
-  ].filter((row): row is [string, string] => Boolean(row[1]));
+    ["Site Name", displayValue(summary.siteName)],
+    ["Ticket", displayValue(summary.ticketReference)],
+    ["Plate", displayValue(summary.plateNumber)],
+    ["Entry Time", displayValue(formatDateTime(summary.entryTime))],
+    ["Duration", displayValue(summary.durationParked ?? formatDuration(summary.entryTime, summary.currentFeeCalculationTime))],
+    ["Total Fee", displayValue(formatCurrencyAmount(summary.totalFeeMinorUnits ?? summary.amountMinorUnits, summary.currency ?? result.currency))],
+    ["Amount Due", displayValue(formatCurrencyAmount(summary.amountMinorUnits ?? result.amountMinorUnits, summary.currency ?? result.currency))],
+    ["Parking Status", displayValue(summary.parkingStatus ?? summary.sessionStatus)],
+    ["Payment Status", displayValue(summary.paymentStatus)],
+    ["Fee Valid Until", displayValue(formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt))]
+  ];
 
   return (
     <section className="session-summary" aria-labelledby="session-summary-heading">
@@ -477,16 +484,14 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
           <small>{summary.currency ?? result.currency}</small>
         </div>
       </div>
-      {rows.length > 0 && (
-        <dl>
-          {rows.map(([label, value]) => (
-            <div key={label}>
-              <dt>{label}</dt>
-              <dd>{value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      <dl>
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
     </section>
   );
 }
@@ -510,7 +515,9 @@ function toParkingSessionResolveResponse(result: PaymentIntentResponse): Parking
     currentFeeCalculationTime: result.currentFeeCalculationTime,
     durationParked: result.durationParked,
     tariffName: result.tariffName,
-    paymentStatus: result.status,
+    totalFeeMinorUnits: result.totalFeeMinorUnits,
+    paymentStatus: result.paymentStatus ?? result.status,
+    parkingStatus: result.parkingStatus,
     feeValidUntil: result.feeValidUntil,
     tariffExpiresAt: result.tariffExpiresAt,
     sessionSummary: result.sessionSummary
@@ -554,4 +561,43 @@ function formatDateTime(value?: string | null): string | undefined {
     hour: "numeric",
     minute: "2-digit"
   }).format(date);
+}
+
+function formatDuration(entryTime?: string | null, calculationTime?: string | null): string | undefined {
+  if (!entryTime || !calculationTime) {
+    return undefined;
+  }
+
+  const entry = new Date(entryTime);
+  const calculation = new Date(calculationTime);
+  if (Number.isNaN(entry.getTime()) || Number.isNaN(calculation.getTime())) {
+    return undefined;
+  }
+
+  const totalMinutes = Math.max(0, Math.floor((calculation.getTime() - entry.getTime()) / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours > 0 && minutes > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (hours > 0) {
+    return `${hours}h`;
+  }
+
+  return `${minutes}m`;
+}
+
+function formatCurrencyAmount(amountMinorUnits?: number | null, currency?: string | null): string | undefined {
+  if (amountMinorUnits === null || amountMinorUnits === undefined) {
+    return undefined;
+  }
+
+  const normalizedCurrency = currency?.trim() || "PHP";
+  return `${normalizedCurrency.toUpperCase()} ${formatAmount(amountMinorUnits, normalizedCurrency)}`;
+}
+
+function displayValue(value?: string | null): string {
+  return value?.trim() || "Not available";
 }

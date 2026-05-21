@@ -13,6 +13,9 @@ namespace ExitPass.CentralPms.Application.VendorParking;
 /// <param name="Retryable">Whether the lookup can be retried.</param>
 /// <param name="CorrelationId">End-to-end correlation identifier.</param>
 /// <param name="VendorSystemId">Provider-neutral vendor system identifier when available.</param>
+/// <param name="SiteGroupName">Business-friendly site group name resolved from canonical site data.</param>
+/// <param name="SiteName">Business-friendly site name resolved from canonical site data.</param>
+/// <param name="PaymentStatus">Current payment status display value derived from authoritative payment attempts.</param>
 public sealed record ResolveVendorParkingResult(
     ResolveVendorParkingOutcome Outcome,
     ParkingSession? ParkingSession,
@@ -20,7 +23,10 @@ public sealed record ResolveVendorParkingResult(
     string? ErrorCode,
     bool Retryable,
     Guid CorrelationId,
-    string? VendorSystemId)
+    string? VendorSystemId,
+    string? SiteGroupName,
+    string? SiteName,
+    string? PaymentStatus)
 {
     /// <summary>
     /// Creates a successful vendor parking resolution result.
@@ -29,12 +35,18 @@ public sealed record ResolveVendorParkingResult(
     /// <param name="tariffSnapshot">Mapped Central PMS tariff snapshot.</param>
     /// <param name="correlationId">End-to-end correlation identifier.</param>
     /// <param name="vendorSystemId">Provider-neutral vendor system identifier.</param>
+    /// <param name="siteGroupName">Business-friendly site group name resolved from canonical site data.</param>
+    /// <param name="siteName">Business-friendly site name resolved from canonical site data.</param>
+    /// <param name="paymentStatus">Current payment status display value derived from authoritative payment attempts.</param>
     /// <returns>A successful resolution result.</returns>
     public static ResolveVendorParkingResult Resolved(
         ParkingSession parkingSession,
         TariffSnapshot tariffSnapshot,
         Guid correlationId,
-        string vendorSystemId)
+        string vendorSystemId,
+        string? siteGroupName,
+        string? siteName,
+        string paymentStatus)
     {
         return new ResolveVendorParkingResult(
             ResolveVendorParkingOutcome.Resolved,
@@ -43,7 +55,10 @@ public sealed record ResolveVendorParkingResult(
             null,
             false,
             correlationId,
-            vendorSystemId);
+            vendorSystemId,
+            siteGroupName,
+            siteName,
+            paymentStatus);
     }
 
     /// <summary>
@@ -62,6 +77,6 @@ public sealed record ResolveVendorParkingResult(
         Guid correlationId,
         string? vendorSystemId = null)
     {
-        return new ResolveVendorParkingResult(outcome, null, null, errorCode, retryable, correlationId, vendorSystemId);
+        return new ResolveVendorParkingResult(outcome, null, null, errorCode, retryable, correlationId, vendorSystemId, null, null, null);
     }
 }
