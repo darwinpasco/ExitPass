@@ -66,6 +66,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
 
         var parkingSessionWasReused = existingSession is not null;
         var parkingSession = existingSession ?? request.ParkingSession;
+        var resolvedSiteGroupId = Guid.Parse(parkingSession.SiteGroupId);
+        var resolvedSiteId = Guid.Parse(parkingSession.SiteId);
 
         if (!parkingSessionWasReused)
         {
@@ -121,8 +123,13 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             connection,
             transaction,
             parkingSession.ParkingSessionId,
-            siteGroupId,
-            siteId,
+            resolvedSiteGroupId,
+            resolvedSiteId,
+            cancellationToken);
+        var resolvedVendorSystemId = await LoadParkingSessionVendorSystemIdAsync(
+            connection,
+            transaction,
+            parkingSession.ParkingSessionId,
             cancellationToken);
 
         await transaction.CommitAsync(cancellationToken);
@@ -133,6 +140,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             TariffSnapshot = tariffSnapshot,
             ParkingSessionWasReused = parkingSessionWasReused,
             TariffSnapshotWasReused = tariffSnapshotWasReused,
+            VendorSystemId = resolvedVendorSystemId.ToString(),
             SiteGroupName = operationalSummary.SiteGroupName,
             SiteName = operationalSummary.SiteName,
             PaymentStatus = operationalSummary.PaymentStatus
@@ -428,20 +436,37 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             FROM core.parking_sessions AS ps
             INNER JOIN integration.vendor_systems AS vs
                 ON vs.vendor_system_id = ps.vendor_system_id
-            WHERE ps.site_group_id = @site_group_id
-              AND ps.site_id = @site_id
-              AND ps.vendor_system_id = @vendor_system_id
-              AND (
-                  ps.vendor_session_ref = @vendor_session_ref
-                  OR (
-                      @ticket_reference IS NOT NULL
-                      AND (
-                          ps.ticket_number_masked = @ticket_reference
-                          OR ps.ticket_number_hash = @ticket_reference_hash
+            WHERE (
+                  ps.site_group_id = @site_group_id
+                  AND ps.site_id = @site_id
+                  AND ps.vendor_system_id = @vendor_system_id
+                  AND (
+                      ps.vendor_session_ref = @vendor_session_ref
+                      OR (
+                          @ticket_reference IS NOT NULL
+                          AND (
+                              ps.ticket_number_masked = @ticket_reference
+                              OR ps.ticket_number_hash = @ticket_reference_hash
+                          )
                       )
                   )
+                )
+              OR (
+                  @is_seeded_webpay_reference = TRUE
+                  AND @ticket_reference IS NOT NULL
+                  AND (
+                      ps.vendor_session_ref = @ticket_reference
+                      OR ps.ticket_number_masked = @ticket_reference
+                      OR ps.ticket_number_hash = @ticket_reference_hash
+                  )
               )
-            ORDER BY ps.created_at DESC
+            ORDER BY
+                CASE
+                    WHEN @is_seeded_webpay_reference = TRUE
+                     AND vs.vendor_code LIKE 'WEBPAY\_%' ESCAPE '\' THEN 0
+                    ELSE 1
+                END,
+                ps.created_at DESC
             LIMIT 1;
             """;
 
@@ -452,6 +477,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         command.Parameters.Add("ticket_reference", NpgsqlDbType.Text).Value = DbValue(ticketReference);
         command.Parameters.Add("ticket_reference_hash", NpgsqlDbType.Text).Value = DbValue(HashIdentifier(ticketReference));
         command.Parameters.AddWithValue("vendor_session_ref", vendorSessionRef);
+        command.Parameters.Add("is_seeded_webpay_reference", NpgsqlDbType.Boolean).Value = IsSeededWebPayReference(ticketReference);
 
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
@@ -733,6 +759,28 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             MapPaymentStatus(attemptStatus));
     }
 
+    private static async Task<Guid> LoadParkingSessionVendorSystemIdAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT vendor_system_id
+            FROM core.parking_sessions
+            WHERE parking_session_id = @parking_session_id
+            LIMIT 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is Guid vendorSystemId
+            ? vendorSystemId
+            : throw new InvalidOperationException($"Parking session '{parkingSessionId}' does not have a vendor system.");
+    }
+
     private static async Task InsertTariffSnapshotAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -873,6 +921,11 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             "INVALIDATED" => ParkingSessionStatus.Closed,
             _ => ParkingSessionStatus.PaymentRequired
         };
+    }
+
+    private static bool IsSeededWebPayReference(string? value)
+    {
+        return value?.Trim().StartsWith("WEBPAY-", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     private static string MapPaymentStatus(string? value)

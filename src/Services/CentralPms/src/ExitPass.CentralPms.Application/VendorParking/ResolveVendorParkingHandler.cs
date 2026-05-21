@@ -213,7 +213,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
                     TariffSnapshotId = persisted.TariffSnapshot.TariffSnapshotId,
                     SiteId = persisted.ParkingSession.SiteId,
                     SiteGroupId = persisted.ParkingSession.SiteGroupId,
-                    VendorSystemId = session.VendorProviderCode,
+                    VendorSystemId = persisted.VendorSystemId,
                     LookupReferenceType = ResolveIdentifierType(command).ToLowerInvariant(),
                     LookupOutcome = ResolveVendorParkingOutcome.Resolved.ToString(),
                     NetPayableMinorUnits = validQuote.AmountMinor,
@@ -227,7 +227,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             persisted.ParkingSession,
             persisted.TariffSnapshot,
             sessionResponse.CorrelationId,
-            session.VendorProviderCode,
+            persisted.VendorSystemId,
             persisted.SiteGroupName,
             persisted.SiteName,
             persisted.PaymentStatus);

@@ -16,6 +16,8 @@ namespace ExitPass.PaymentOrchestrator.UnitTests.Application.UseCases.WebPayPaym
 /// </summary>
 public sealed class WebPayPaymentIntentHandlerTests
 {
+    private const string GuidPattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
     private static readonly Guid SiteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid SiteId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -87,6 +89,46 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
         Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedInitiateRequest!.ProviderProduct);
+    }
+
+    /// <summary>
+    /// Verifies PayMongo checkout display text uses parker-facing context instead of internal UUIDs.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCreatingPayMongoCheckout_UsesParkerFriendlyDisplayText()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                10000,
+                "PHP",
+                "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+                CorrelationId,
+                SiteName: "WebPay Test Site 2026-05-21",
+                TicketReference: "WEBPAY-20260521-FRESH-001",
+                PlateNumber: "WEBPAY001",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var request = fixture.CapturedInitiateRequest!;
+        Assert.Equal("ExitPass Parking Fee - WEBPAY-20260521-FRESH-001", request.CustomerDisplayName);
+        Assert.Equal(
+            "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
+            request.Description);
+        Assert.DoesNotContain("Amount:", request.Description);
+        Assert.DoesNotContain("PHP 100.00", request.Description);
+        Assert.DoesNotMatch(GuidPattern, request.CustomerDisplayName);
+        Assert.DoesNotMatch(GuidPattern, request.Description);
+        Assert.Equal(PaymentAttemptId.ToString(), request.Metadata["payment_attempt_id"]);
+        Assert.Equal(ParkingSessionId.ToString(), request.Metadata["parking_session_id"]);
+        Assert.Equal(TariffSnapshotId.ToString(), request.Metadata["tariff_snapshot_id"]);
+        Assert.Equal(CorrelationId.ToString(), request.Metadata["correlation_id"]);
+        Assert.Equal("WEBPAY-20260521-FRESH-001", request.Metadata["ticket_reference"]);
     }
 
     /// <summary>

@@ -157,7 +157,7 @@ public sealed class VendorParkingResolutionController : ControllerBase
             FeeValidUntil = result.TariffSnapshot.ExpiresAt,
             ParkingStatus = result.ParkingSession.SessionStatus.ToString(),
             PaymentStatus = result.PaymentStatus ?? "Not Started",
-            VendorSystemId = validRequest.VendorSystemId,
+            VendorSystemId = result.VendorSystemId ?? validRequest.VendorSystemId,
             CorrelationId = result.CorrelationId
         });
     }

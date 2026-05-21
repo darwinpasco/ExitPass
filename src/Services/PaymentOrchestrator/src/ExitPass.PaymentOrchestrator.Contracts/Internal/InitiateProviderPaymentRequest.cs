@@ -29,6 +29,7 @@ namespace ExitPass.PaymentOrchestrator.Contracts.Internal;
 /// <param name="CancelUrl">The cancel return URL for the parker flow.</param>
 /// <param name="WebhookUrl">The provider callback URL exposed by POA.</param>
 /// <param name="Metadata">Additional metadata to correlate provider activity with ExitPass records.</param>
+/// <param name="CustomerDisplayName">Customer-facing product or line-item name shown by the provider, when supported.</param>
 public sealed record InitiateProviderPaymentRequest(
     Guid PaymentAttemptId,
     string ProviderCode,
@@ -41,4 +42,5 @@ public sealed record InitiateProviderPaymentRequest(
     string FailureUrl,
     string CancelUrl,
     string WebhookUrl,
-    IReadOnlyDictionary<string, string> Metadata);
+    IReadOnlyDictionary<string, string> Metadata,
+    string? CustomerDisplayName = null);

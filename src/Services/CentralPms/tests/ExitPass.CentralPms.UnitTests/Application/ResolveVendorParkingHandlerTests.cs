@@ -41,6 +41,7 @@ public sealed class ResolveVendorParkingHandlerTests
         result.Outcome.Should().Be(ResolveVendorParkingOutcome.Resolved);
         result.ParkingSession.Should().NotBeNull();
         result.TariffSnapshot.Should().NotBeNull();
+        result.VendorSystemId.Should().Be("45a625de-9034-4fb6-b527-0950d384e51f");
         result.ParkingSession!.VendorSystemCode.Should().Be("FAKE-PMS");
         result.ParkingSession.VendorSessionRef.Should().Be("VENDOR-SESSION-001");
         result.ParkingSession.IdentifierType.Should().Be("PLATE");
@@ -78,7 +79,7 @@ public sealed class ResolveVendorParkingHandlerTests
                 payload.TariffSnapshotId == result.TariffSnapshot!.TariffSnapshotId &&
                 payload.SiteId == "SITE-TEST-001" &&
                 payload.SiteGroupId == "SG-TEST-001" &&
-                payload.VendorSystemId == "FAKE-PMS" &&
+                payload.VendorSystemId == "45a625de-9034-4fb6-b527-0950d384e51f" &&
                 payload.LookupReferenceType == "plate" &&
                 payload.LookupOutcome == ResolveVendorParkingOutcome.Resolved.ToString() &&
                 payload.NetPayableMinorUnits == 12550 &&
@@ -507,7 +508,8 @@ public sealed class ResolveVendorParkingHandlerTests
                 ParkingSession = request.ParkingSession,
                 TariffSnapshot = request.TariffSnapshot,
                 ParkingSessionWasReused = false,
-                TariffSnapshotWasReused = false
+                TariffSnapshotWasReused = false,
+                VendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f"
             });
         }
     }

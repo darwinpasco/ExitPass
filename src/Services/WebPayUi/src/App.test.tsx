@@ -81,10 +81,10 @@ afterEach(() => {
 });
 
 describe("ExitPass WebPay UI", () => {
-  async function resolveTicket(ticketReference = "TICKET-001") {
+  async function resolveTicket(ticketReference = "TICKET-001", expectedAmount = "125.00") {
     await userEvent.type(screen.getByLabelText(/ticket reference/i), ticketReference);
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
-    await screen.findByText("125.00");
+    await screen.findByText(expectedAmount);
   }
 
   async function continueToPayment() {
@@ -161,6 +161,61 @@ describe("ExitPass WebPay UI", () => {
     expect(body.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
     expect(body.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
     expect(body.vendorSystemId).toBe("45a625de-9034-4fb6-b527-0950d384e51f");
+    expect(body.siteGroupId).not.toBe("00000000-0000-0000-0000-000000000001");
+    expect(body.siteId).not.toBe("00000000-0000-0000-0000-000000000002");
+    expect(body.vendorSystemId).not.toBe("00000000-0000-0000-0000-000000000003");
+  });
+
+  it("WebPay_WhenMay21SessionResolved_DoesNotUseMockIdsOrRender2030Dates", async () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "00000000-0000-0000-0000-000000000001");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "00000000-0000-0000-0000-000000000002");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "00000000-0000-0000-0000-000000000003");
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        siteGroupId: "d392e487-fba0-4281-bdf4-8d62f923d518",
+        siteId: "6c4b92bd-ced4-44e3-a61a-4349aa81f91d",
+        vendorSystemId: "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+        siteGroupName: "WebPay Test Site Group 2026-05-21",
+        siteName: "WebPay Test Site 2026-05-21",
+        ticketReference: "WEBPAY-20260521-FRESH-001",
+        plateNumber: "WEBPAY001",
+        entryTime: "2026-05-20T18:01:00+00:00",
+        currentFeeCalculationTime: "2026-05-21T00:00:00+00:00",
+        feeValidUntil: "2026-05-21T15:59:59+00:00",
+        amountMinorUnits: 10000,
+        parkingStatus: "PaymentRequired",
+        paymentStatus: "Not Started"
+      },
+      intentPayload: {
+        ...successResponse,
+        siteGroupId: "d392e487-fba0-4281-bdf4-8d62f923d518",
+        siteId: "6c4b92bd-ced4-44e3-a61a-4349aa81f91d",
+        vendorSystemId: "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+        ticketReference: "WEBPAY-20260521-FRESH-001",
+        entryTime: "2026-05-20T18:01:00+00:00",
+        currentFeeCalculationTime: "2026-05-21T00:00:00+00:00",
+        feeValidUntil: "2026-05-21T15:59:59+00:00",
+        amountMinorUnits: 10000
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("WEBPAY-20260521-FRESH-001", "100.00");
+
+    expect(screen.getAllByText("WebPay Test Site 2026-05-21").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("WEBPAY-20260521-FRESH-001").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/May 21, 2026/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Apr 1, 2030/i)).not.toBeInTheDocument();
+
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.siteGroupId).toBe("d392e487-fba0-4281-bdf4-8d62f923d518");
+    expect(body.siteId).toBe("6c4b92bd-ced4-44e3-a61a-4349aa81f91d");
+    expect(body.vendorSystemId).toBe("25831de5-7144-4a34-a6ea-4ef2bd65c89c");
     expect(body.siteGroupId).not.toBe("00000000-0000-0000-0000-000000000001");
     expect(body.siteId).not.toBe("00000000-0000-0000-0000-000000000002");
     expect(body.vendorSystemId).not.toBe("00000000-0000-0000-0000-000000000003");

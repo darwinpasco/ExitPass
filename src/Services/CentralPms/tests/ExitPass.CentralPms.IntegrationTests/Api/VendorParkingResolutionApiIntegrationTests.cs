@@ -51,7 +51,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         payload.Currency.Should().Be("PHP");
         payload.ParkingStatus.Should().Be("PaymentRequired");
         payload.PaymentStatus.Should().Be("Not Started");
-        payload.VendorSystemId.Should().Be("FAKE-PMS");
+        Guid.TryParse(payload.VendorSystemId, out var vendorSystemId).Should().BeTrue();
+        vendorSystemId.Should().NotBe(Guid.Empty);
         payload.CorrelationId.Should().Be(correlationId);
     }
 

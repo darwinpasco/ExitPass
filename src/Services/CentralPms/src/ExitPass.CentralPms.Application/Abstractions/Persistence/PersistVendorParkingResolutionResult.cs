@@ -29,6 +29,11 @@ public sealed class PersistVendorParkingResolutionResult
     public bool TariffSnapshotWasReused { get; init; }
 
     /// <summary>
+    /// Canonical vendor system identifier for the persisted or reused Central PMS parking session.
+    /// </summary>
+    public string VendorSystemId { get; init; } = string.Empty;
+
+    /// <summary>
     /// Business-friendly site group name resolved from canonical site data.
     /// </summary>
     public string? SiteGroupName { get; init; }

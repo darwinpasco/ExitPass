@@ -90,7 +90,8 @@ public sealed class InitiateProviderPaymentHandler
             request.FailureUrl,
             request.CancelUrl,
             request.WebhookUrl,
-            request.Metadata);
+            request.Metadata,
+            request.CustomerDisplayName);
 
         var startedAtUtc = DateTimeOffset.UtcNow;
         var result = await adapter.CreatePaymentSessionAsync(command, cancellationToken);

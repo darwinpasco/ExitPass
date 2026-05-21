@@ -153,6 +153,14 @@ public sealed class WebPayPaymentIntentHandler
             providerProduct,
             correlationId);
 
+        var customerDisplayName = BuildCustomerDisplayName(parking.Value);
+        var customerDescription = BuildCustomerDescription(parking.Value);
+        var metadata = BuildProviderMetadata(
+            attempt.PaymentAttemptId,
+            parking.Value,
+            paymentMethod,
+            correlationId);
+
         var handoff = await _handoffInitiator.InitiateAsync(
             new InitiateProviderPaymentRequest(
                 attempt.PaymentAttemptId,
@@ -160,21 +168,14 @@ public sealed class WebPayPaymentIntentHandler
                 providerProduct,
                 parking.Value.NetPayableMinorUnits,
                 parking.Value.Currency,
-                $"ExitPass parking payment {parking.Value.ParkingSessionId}",
+                customerDescription,
                 idempotencyKey,
                 "/webpay/payment/success",
                 "/webpay/payment/failed",
                 "/webpay/payment/cancelled",
                 "/v1/provider/webhooks",
-                new Dictionary<string, string>
-                {
-                    ["payment_attempt_id"] = attempt.PaymentAttemptId.ToString(),
-                    ["parking_session_id"] = parking.Value.ParkingSessionId.ToString(),
-                    ["tariff_snapshot_id"] = parking.Value.TariffSnapshotId.ToString(),
-                    ["payment_method"] = paymentMethod,
-                    ["requested_by"] = RequestedBy,
-                    ["correlation_id"] = correlationId.ToString()
-                }),
+                metadata,
+                customerDisplayName),
             cancellationToken);
 
         return WebPayPaymentIntentResult.Success(new WebPayPaymentIntentResponse
@@ -514,6 +515,68 @@ public sealed class WebPayPaymentIntentHandler
     private static string BuildRecoveryIdempotencyKey(Guid paymentAttemptId, Guid correlationId)
     {
         return $"webpay-recover-orphan:{paymentAttemptId:N}:{correlationId:N}";
+    }
+
+    private static string BuildCustomerDisplayName(CentralPmsResolvedParking parking)
+    {
+        var ticketReference = BlankToNull(parking.TicketReference);
+        return ticketReference is null
+            ? "ExitPass Parking Fee"
+            : $"ExitPass Parking Fee - {ticketReference}";
+    }
+
+    private static string BuildCustomerDescription(CentralPmsResolvedParking parking)
+    {
+        var parts = new List<string>();
+
+        AddDisplayPart(parts, "Site", parking.SiteName);
+        AddDisplayPart(parts, "Ticket", parking.TicketReference);
+        AddDisplayPart(parts, "Plate", parking.PlateNumber);
+
+        return parts.Count == 0
+            ? "ExitPass Parking Fee"
+            : string.Join("  ", parts);
+    }
+
+    private static Dictionary<string, string> BuildProviderMetadata(
+        Guid paymentAttemptId,
+        CentralPmsResolvedParking parking,
+        string paymentMethod,
+        Guid correlationId)
+    {
+        var metadata = new Dictionary<string, string>
+        {
+            ["payment_attempt_id"] = paymentAttemptId.ToString(),
+            ["parking_session_id"] = parking.ParkingSessionId.ToString(),
+            ["tariff_snapshot_id"] = parking.TariffSnapshotId.ToString(),
+            ["payment_method"] = paymentMethod,
+            ["requested_by"] = RequestedBy,
+            ["correlation_id"] = correlationId.ToString()
+        };
+
+        AddMetadata(metadata, "site_name", parking.SiteName);
+        AddMetadata(metadata, "ticket_reference", parking.TicketReference);
+        AddMetadata(metadata, "plate_number", parking.PlateNumber);
+
+        return metadata;
+    }
+
+    private static void AddDisplayPart(List<string> parts, string label, string? value)
+    {
+        var normalized = BlankToNull(value);
+        if (normalized is not null)
+        {
+            parts.Add($"{label}: {normalized}");
+        }
+    }
+
+    private static void AddMetadata(Dictionary<string, string> metadata, string key, string? value)
+    {
+        var normalized = BlankToNull(value);
+        if (normalized is not null)
+        {
+            metadata[key] = normalized;
+        }
     }
 
     private static string? ResolveCentralPmsPaymentProviderRail(string selectedProviderCode, string paymentMethod)
