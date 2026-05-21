@@ -213,7 +213,15 @@ public sealed class PaymentAttemptsController : ControllerBase
             activity?.AddException(ex);
 
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because an active payment attempt already exists.");
-            return Conflict(BuildError("ACTIVE_PAYMENT_ATTEMPT_EXISTS", ex.Message, correlationIdRaw));
+            return Conflict(BuildError(
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                ex.Message,
+                correlationIdRaw,
+                new Dictionary<string, object?>
+                {
+                    ["parking_session_id"] = ex.ParkingSessionId,
+                    ["payment_attempt_id"] = ex.PaymentAttemptId
+                }));
         }
         catch (IdempotencyConflictException ex)
         {
@@ -231,15 +239,21 @@ public sealed class PaymentAttemptsController : ControllerBase
     /// <param name="errorCode">Application error code.</param>
     /// <param name="message">Error message.</param>
     /// <param name="correlationIdRaw">Raw correlation ID header.</param>
+    /// <param name="details">Optional structured error details.</param>
     /// <returns>A standardized error response.</returns>
-    private static ErrorResponse BuildError(string errorCode, string message, string? correlationIdRaw)
+    private static ErrorResponse BuildError(
+        string errorCode,
+        string message,
+        string? correlationIdRaw,
+        Dictionary<string, object?>? details = null)
     {
         return new ErrorResponse
         {
             ErrorCode = errorCode,
             Message = message,
             CorrelationId = Guid.TryParse(correlationIdRaw, out var correlationId) ? correlationId : Guid.Empty,
-            Retryable = false
+            Retryable = false,
+            Details = details
         };
     }
 }

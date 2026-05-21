@@ -45,9 +45,14 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         payload.TariffSnapshotId.Should().NotBe(Guid.Empty);
         payload.LookupOutcome.Should().Be("resolved");
         payload.PlateNumber.Should().Be("ABC1234");
+        payload.EntryTime.Should().NotBeNull();
+        payload.CurrentFeeCalculationTime.Should().NotBeNull();
         payload.NetPayableMinorUnits.Should().Be(10000);
         payload.Currency.Should().Be("PHP");
-        payload.VendorSystemId.Should().Be("FAKE-PMS");
+        payload.ParkingStatus.Should().Be("PaymentRequired");
+        payload.PaymentStatus.Should().Be("Not Started");
+        Guid.TryParse(payload.VendorSystemId, out var vendorSystemId).Should().BeTrue();
+        vendorSystemId.Should().NotBe(Guid.Empty);
         payload.CorrelationId.Should().Be(correlationId);
     }
 
@@ -285,6 +290,9 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         var secondResolved = await ResolveAsync(
             client,
             Request(plateNumber: plateNumber, ticketReference: null, correlationId));
+
+        secondResolved.TariffSnapshotId.Should().Be(firstResolved.TariffSnapshotId);
+        secondResolved.FeeValidUntil.Should().Be(firstResolved.FeeValidUntil);
 
         using var secondPaymentResponse = await PostCreatePaymentAttemptAsync(
             client,

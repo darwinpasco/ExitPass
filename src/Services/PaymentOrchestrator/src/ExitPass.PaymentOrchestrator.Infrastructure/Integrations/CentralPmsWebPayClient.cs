@@ -17,6 +17,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private readonly ILogger<CentralPmsWebPayClient> _logger;
     private readonly Uri _vendorParkingResolveUri;
     private readonly Uri _createPaymentAttemptUri;
+    private readonly Uri _paymentAttemptsBaseUri;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsWebPayClient"/> class.
@@ -44,6 +45,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         _logger = logger;
         _vendorParkingResolveUri = new Uri(normalizedBaseUrl, "v1/vendor-parking/resolve");
         _createPaymentAttemptUri = new Uri(normalizedBaseUrl, "v1/public/payment-attempts");
+        _paymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/internal/payment-attempts/");
     }
 
     /// <inheritdoc />
@@ -94,7 +96,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.TariffSnapshotId,
             payload.NetPayableMinorUnits,
             payload.Currency,
-            payload.VendorSystemId,
+            ResolveVendorSystemId(payload.VendorSystemId, vendorSystemId),
             payload.CorrelationId,
             payload.SiteName,
             payload.TicketReference,
@@ -102,7 +104,12 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.EntryTime,
             payload.CurrentFeeCalculationTime,
             payload.TariffName,
-            payload.FeeValidUntil ?? payload.TariffExpiresAt));
+            payload.ParkingStatus,
+            payload.FeeValidUntil ?? payload.TariffExpiresAt,
+            payload.PaymentStatus,
+            ParseGuid(payload.SiteGroupId),
+            ParseGuid(payload.SiteId),
+            payload.SiteGroupName));
     }
 
     /// <inheritdoc />
@@ -154,6 +161,51 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.WasReused));
     }
 
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> FinalizePaymentAttemptAsync(
+        Guid paymentAttemptId,
+        string finalAttemptStatus,
+        string requestedBy,
+        string idempotencyKey,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var body = new FinalizePaymentAttemptRequest(finalAttemptStatus, requestedBy);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(_paymentAttemptsBaseUri, $"{paymentAttemptId:D}/finalize"))
+        {
+            Content = JsonContent.Create(body, options: JsonOptions)
+        };
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+                ReadError((int)response.StatusCode, responseBody, "PAYMENT_ATTEMPT_FINALIZE_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<FinalizePaymentAttemptResponse>(responseBody, JsonOptions);
+        if (payload is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_PAYMENT_ATTEMPT_FINALIZE_RESPONSE",
+                "Central PMS payment attempt finalization response could not be parsed.",
+                true));
+        }
+
+        return CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(new CentralPmsPaymentAttempt(
+            payload.PaymentAttemptId,
+            payload.AttemptStatus,
+            string.Empty,
+            false));
+    }
+
     private CentralPmsWebPayError ReadError(int statusCode, string responseBody, string fallbackCode)
     {
         if (string.IsNullOrWhiteSpace(responseBody))
@@ -175,7 +227,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
                     string.IsNullOrWhiteSpace(error?.ErrorCode) ? fallbackCode : error.ErrorCode,
                     string.IsNullOrWhiteSpace(error?.Message) ? "Central PMS request failed." : error.Message,
                     error?.Retryable ?? statusCode >= 500,
-                    error?.CorrelationId);
+                    error?.CorrelationId,
+                    ExtractPaymentAttemptId(error?.Details));
             }
 
             using var document = JsonDocument.Parse(responseBody);
@@ -224,6 +277,38 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         return root.GetRawText();
     }
 
+    private static Guid? ExtractPaymentAttemptId(JsonElement? details)
+    {
+        if (details is not { ValueKind: JsonValueKind.Object } detailsObject)
+        {
+            return null;
+        }
+
+        foreach (var propertyName in new[] { "payment_attempt_id", "paymentAttemptId" })
+        {
+            if (detailsObject.TryGetProperty(propertyName, out var property) &&
+                property.ValueKind == JsonValueKind.String &&
+                Guid.TryParse(property.GetString(), out var paymentAttemptId))
+            {
+                return paymentAttemptId;
+            }
+        }
+
+        return null;
+    }
+
+    private static Guid? ParseGuid(string? value)
+    {
+        return Guid.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static string ResolveVendorSystemId(string? responseVendorSystemId, string requestedVendorSystemId)
+    {
+        return string.IsNullOrWhiteSpace(responseVendorSystemId)
+            ? requestedVendorSystemId
+            : responseVendorSystemId.Trim();
+    }
+
     private sealed record VendorParkingResolveRequest(
         string SiteGroupId,
         string SiteId,
@@ -235,19 +320,24 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private sealed record VendorParkingResolveResponse(
         Guid ParkingSessionId,
         Guid TariffSnapshotId,
+        string? SiteGroupId,
+        string? SiteId,
         string LookupOutcome,
         string? PlateNumber,
         string? TicketReference,
         long NetPayableMinorUnits,
         string Currency,
         DateTimeOffset TariffExpiresAt,
-        string VendorSystemId,
+        DateTimeOffset? FeeValidUntil,
+        string? VendorSystemId,
         Guid CorrelationId,
+        string? SiteGroupName,
         string? SiteName,
         DateTimeOffset? EntryTime,
         DateTimeOffset? CurrentFeeCalculationTime,
         string? TariffName,
-        DateTimeOffset? FeeValidUntil);
+        string? ParkingStatus,
+        string? PaymentStatus);
 
     private sealed record CreatePaymentAttemptRequest(
         Guid ParkingSessionId,
@@ -260,6 +350,14 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         string AttemptStatus,
         string PaymentProvider,
         bool WasReused);
+
+    private sealed record FinalizePaymentAttemptRequest(
+        string FinalAttemptStatus,
+        string RequestedBy);
+
+    private sealed record FinalizePaymentAttemptResponse(
+        Guid PaymentAttemptId,
+        string AttemptStatus);
 
     private sealed record ErrorResponse(
         string? ErrorCode,

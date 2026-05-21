@@ -44,4 +44,22 @@ public interface ICentralPmsWebPayClient
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Requests Central PMS to finalize a non-resumable payment attempt.
+    /// </summary>
+    /// <param name="paymentAttemptId">Canonical payment attempt identifier.</param>
+    /// <param name="finalAttemptStatus">Terminal Central PMS payment attempt status.</param>
+    /// <param name="requestedBy">Authenticated internal actor requesting finalization.</param>
+    /// <param name="idempotencyKey">Idempotency key for safe recovery retries.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Finalized payment attempt, or a deterministic Central PMS error.</returns>
+    Task<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> FinalizePaymentAttemptAsync(
+        Guid paymentAttemptId,
+        string finalAttemptStatus,
+        string requestedBy,
+        string idempotencyKey,
+        Guid correlationId,
+        CancellationToken cancellationToken);
 }

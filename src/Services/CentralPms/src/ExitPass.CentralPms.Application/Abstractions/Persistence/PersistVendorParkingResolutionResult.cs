@@ -27,4 +27,24 @@ public sealed class PersistVendorParkingResolutionResult
     /// Indicates whether an existing Central PMS tariff snapshot was reused.
     /// </summary>
     public bool TariffSnapshotWasReused { get; init; }
+
+    /// <summary>
+    /// Canonical vendor system identifier for the persisted or reused Central PMS parking session.
+    /// </summary>
+    public string VendorSystemId { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Business-friendly site group name resolved from canonical site data.
+    /// </summary>
+    public string? SiteGroupName { get; init; }
+
+    /// <summary>
+    /// Business-friendly site name resolved from canonical site data.
+    /// </summary>
+    public string? SiteName { get; init; }
+
+    /// <summary>
+    /// Current payment status display value derived from authoritative payment attempts.
+    /// </summary>
+    public string PaymentStatus { get; init; } = "Not Started";
 }

@@ -16,6 +16,11 @@ public sealed class ResolveVendorParkingCommand
     public string SiteId { get; init; } = string.Empty;
 
     /// <summary>
+    /// Provider-neutral vendor system identifier supplied by the caller.
+    /// </summary>
+    public string VendorSystemId { get; init; } = string.Empty;
+
+    /// <summary>
     /// Vehicle plate number used for vendor lookup.
     /// </summary>
     public string? PlateNumber { get; init; }

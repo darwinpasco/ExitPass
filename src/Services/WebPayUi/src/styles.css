@@ -198,6 +198,7 @@ input {
 }
 
 .inline-error,
+.inline-status,
 .form-error {
   display: flex;
   align-items: flex-start;
@@ -207,6 +208,11 @@ input {
   border-radius: 8px;
   color: #b42318;
   background: #fff4f2;
+}
+
+.inline-status {
+  color: #344054;
+  background: #eef5ff;
 }
 
 .active-payment-panel {

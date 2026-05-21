@@ -13,6 +13,10 @@ const successResponse = {
   paymentAttemptId: "44444444-4444-4444-4444-444444444444",
   parkingSessionId: "55555555-5555-5555-5555-555555555555",
   tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+  siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+  siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+  vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f",
+  siteGroupName: "WebPay Test Site Group 2026-05-19",
   amountMinorUnits: 12500,
   currency: "PHP",
   siteName: "Mactan Newtown Parking",
@@ -23,6 +27,8 @@ const successResponse = {
   durationParked: "2h 15m",
   tariffName: "Weekend Rate",
   feeValidUntil: "2026-05-18T13:15:00+08:00",
+  parkingStatus: "PaymentRequired",
+  paymentStatus: "Not Started",
   paymentMethod: "QRPH",
   selectedProviderCode: "AUB",
   fallbackProviderCode: "PAYMONGO",
@@ -43,6 +49,26 @@ const activePaymentAttemptConflict = {
   correlationId: "77777777-7777-7777-7777-777777777777"
 };
 
+function stubWebPayFetch(options?: {
+  resolvePayload?: unknown;
+  resolveOk?: boolean;
+  resolveStatus?: number;
+  intentPayload?: unknown;
+  intentOk?: boolean;
+  intentStatus?: number;
+}) {
+  const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+    const isResolve = url.includes("/v1/webpay/parking-session");
+    return {
+      ok: isResolve ? options?.resolveOk ?? true : options?.intentOk ?? true,
+      status: isResolve ? options?.resolveStatus ?? 200 : options?.intentStatus ?? 200,
+      json: async () => (isResolve ? options?.resolvePayload ?? successResponse : options?.intentPayload ?? successResponse)
+    };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
 beforeEach(() => {
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
@@ -55,19 +81,171 @@ afterEach(() => {
 });
 
 describe("ExitPass WebPay UI", () => {
-  it("WebPay_WhenApiReturnsHandoff_DisplaysContinueToPayment", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => successResponse
-      })
-    );
+  async function resolveTicket(ticketReference = "TICKET-001", expectedAmount = "125.00") {
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), ticketReference);
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    await screen.findByText(expectedAmount);
+  }
+
+  async function continueToPayment() {
+    await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
+  }
+
+  it("WebPay_WhenEnterPressedInTicketInput_ResolvesSessionOnly", async () => {
+    const fetchMock = stubWebPayFetch();
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-027{Enter}");
+
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(fetchMock.mock.calls[0][0]).not.toContain("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenEnterPressedInPlateInput_ResolvesSessionOnly", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /plate/i }));
+    await userEvent.type(screen.getByLabelText(/plate number/i), "ABC 1234{Enter}");
+
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(fetchMock.mock.calls[0][0]).not.toContain("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenInitialContinueClicked_ResolvesSessionBeforePaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-027");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByText("125.00")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+  });
+
+  it("WebPay_WhenSummaryResolved_ContinueToPaymentCreatesPaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("TICKET-TEST-027");
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenResolvedSessionHasContext_UsesResolvedContextForPaymentIntentInsteadOfDefaults", async () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "00000000-0000-0000-0000-000000000001");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "00000000-0000-0000-0000-000000000002");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "00000000-0000-0000-0000-000000000003");
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("WEBPAY-20260519-FRESH-001");
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
+    expect(body.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
+    expect(body.vendorSystemId).toBe("45a625de-9034-4fb6-b527-0950d384e51f");
+    expect(body.siteGroupId).not.toBe("00000000-0000-0000-0000-000000000001");
+    expect(body.siteId).not.toBe("00000000-0000-0000-0000-000000000002");
+    expect(body.vendorSystemId).not.toBe("00000000-0000-0000-0000-000000000003");
+  });
+
+  it("WebPay_WhenMay21SessionResolved_DoesNotUseMockIdsOrRender2030Dates", async () => {
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "00000000-0000-0000-0000-000000000001");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "00000000-0000-0000-0000-000000000002");
+    vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "00000000-0000-0000-0000-000000000003");
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        siteGroupId: "d392e487-fba0-4281-bdf4-8d62f923d518",
+        siteId: "6c4b92bd-ced4-44e3-a61a-4349aa81f91d",
+        vendorSystemId: "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+        siteGroupName: "WebPay Test Site Group 2026-05-21",
+        siteName: "WebPay Test Site 2026-05-21",
+        ticketReference: "WEBPAY-20260521-FRESH-001",
+        plateNumber: "WEBPAY001",
+        entryTime: "2026-05-20T18:01:00+00:00",
+        currentFeeCalculationTime: "2026-05-21T00:00:00+00:00",
+        feeValidUntil: "2026-05-21T15:59:59+00:00",
+        amountMinorUnits: 10000,
+        parkingStatus: "PaymentRequired",
+        paymentStatus: "Not Started"
+      },
+      intentPayload: {
+        ...successResponse,
+        siteGroupId: "d392e487-fba0-4281-bdf4-8d62f923d518",
+        siteId: "6c4b92bd-ced4-44e3-a61a-4349aa81f91d",
+        vendorSystemId: "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+        ticketReference: "WEBPAY-20260521-FRESH-001",
+        entryTime: "2026-05-20T18:01:00+00:00",
+        currentFeeCalculationTime: "2026-05-21T00:00:00+00:00",
+        feeValidUntil: "2026-05-21T15:59:59+00:00",
+        amountMinorUnits: 10000
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("WEBPAY-20260521-FRESH-001", "100.00");
+
+    expect(screen.getAllByText("WebPay Test Site 2026-05-21").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("WEBPAY-20260521-FRESH-001").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/May 21, 2026/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Apr 1, 2030/i)).not.toBeInTheDocument();
+
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.siteGroupId).toBe("d392e487-fba0-4281-bdf4-8d62f923d518");
+    expect(body.siteId).toBe("6c4b92bd-ced4-44e3-a61a-4349aa81f91d");
+    expect(body.vendorSystemId).toBe("25831de5-7144-4a34-a6ea-4ef2bd65c89c");
+    expect(body.siteGroupId).not.toBe("00000000-0000-0000-0000-000000000001");
+    expect(body.siteId).not.toBe("00000000-0000-0000-0000-000000000002");
+    expect(body.vendorSystemId).not.toBe("00000000-0000-0000-0000-000000000003");
+  });
+
+  it("WebPay_WhenTicketChanges_ClearsStalePaymentIntentError", async () => {
+    stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 502,
+      intentPayload: { errorCode: "PAYMENT_FAILED", message: "Payment intent creation failed. Please try again." }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-TEST-027");
+    await continueToPayment();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Payment intent creation failed");
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "8");
+
+    expect(screen.queryByText(/Payment intent creation failed/i)).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenApiReturnsHandoff_DisplaysContinueToPayment", async () => {
+    stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
 
     expect(await screen.findByRole("link", { name: /continue to payment/i })).toHaveAttribute(
       "href",
@@ -79,139 +257,166 @@ describe("ExitPass WebPay UI", () => {
   });
 
   it("WebPay_WhenApiReturnsSessionSummary_DisplaysParkingSessionSummary", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => successResponse
-      })
-    );
+    stubWebPayFetch();
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-023");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-TEST-023");
 
     expect(await screen.findByRole("heading", { name: /mactan newtown parking/i })).toBeInTheDocument();
     expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByText("Site Name")).toBeInTheDocument();
+    expect(screen.getAllByText("Ticket").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Plate").length).toBeGreaterThan(0);
+    expect(screen.getByText("Entry Time")).toBeInTheDocument();
+    expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(screen.getByText("Total Fee")).toBeInTheDocument();
+    expect(screen.getAllByText("Amount Due").length).toBeGreaterThan(0);
+    expect(screen.getByText("Parking Status")).toBeInTheDocument();
+    expect(screen.getByText("Payment Status")).toBeInTheDocument();
+    expect(screen.getByText("Fee Valid Until")).toBeInTheDocument();
     expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
-    expect(screen.getByText("Weekend Rate")).toBeInTheDocument();
+    expect(screen.getAllByText(/May 18, 2026/).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("125.00")).toBeInTheDocument();
+    expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/Apr 1, 2030/i)).not.toBeInTheDocument();
   });
 
-  it("WebPay_WhenSiteNameMissing_HidesSiteNameInsteadOfShowingUuid", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ ...successResponse, siteName: undefined })
-      })
-    );
+  it("WebPay_WhenNewParkingSessionIsResolved_ClearsStalePaymentState", async () => {
+    const fetchMock = stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        ...activePaymentAttemptConflict,
+        handoff: {
+          type: "Redirect",
+          resumePaymentUrl: "https://payments.test/existing"
+        }
+      }
+    });
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-023");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
+    expect(await screen.findByRole("link", { name: /continue existing payment/i })).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText(/ticket reference/i));
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-002");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment already started/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("https://payments.test/existing")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("WebPay_WhenSiteNameMissing_HidesSiteNameInsteadOfShowingUuid", async () => {
+    stubWebPayFetch({ resolvePayload: { ...successResponse, siteName: undefined } });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-TEST-023");
 
     expect(await screen.findByRole("heading", { name: /^parking session summary$/i })).toBeInTheDocument();
     expect(screen.queryByText("22222222-2222-2222-2222-222222222222")).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenSummaryRenders_DoesNotExposeInternalUuidFieldsInNormalUi", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => successResponse
-      })
-    );
+    stubWebPayFetch();
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-023");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-TEST-023");
 
-    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
     expect(screen.queryByText("55555555-5555-5555-5555-555555555555")).not.toBeInTheDocument();
     expect(screen.queryByText("66666666-6666-6666-6666-666666666666")).not.toBeInTheDocument();
     expect(screen.queryByText("44444444-4444-4444-4444-444444444444")).not.toBeInTheDocument();
   });
 
-  it("WebPay_WhenApiReturnsQrCodeUrl_DisplaysQrPaymentInstructions", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => successResponse
-      })
-    );
+  it("WebPay_WhenPaymentHandoffRenders_UsesDistinctStatusLabels", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        parkingStatus: "PAYABLE"
+      }
+    });
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-TEST-023");
+    await continueToPayment();
+
+    expect((await screen.findAllByText("Payment Status")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Parking Status")).toBeInTheDocument();
+    expect(screen.queryByText(/^Status$/)).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenApiReturnsQrCodeUrl_DisplaysQrPaymentInstructions", async () => {
+    stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
 
     expect(await screen.findByText(/QR payment instructions/i)).toBeInTheDocument();
     expect(screen.getByText("https://payments.test/qr.png")).toBeInTheDocument();
   });
 
   it("WebPay_WhenApiReturnsError_DisplaysFriendlyError", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({ errorCode: "SESSION_NOT_FOUND", message: "Vendor parking session was not found." })
-      })
-    );
+    stubWebPayFetch({
+      resolveOk: false,
+      resolveStatus: 404,
+      resolvePayload: { errorCode: "SESSION_NOT_FOUND", message: "Vendor parking session was not found." }
+    });
 
     render(<App />);
 
     await userEvent.type(screen.getByLabelText(/ticket reference/i), "UNKNOWN");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("could not find an active parking session");
   });
 
   it("WebPay_WhenActivePaymentAttemptConflict_ShowsPaymentAlreadyStarted", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => activePaymentAttemptConflict
+    const fetchMock = stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: activePaymentAttemptConflict
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
 
     expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
     expect(screen.getByText(/cannot be resumed directly/i)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("WebPay_WhenActivePaymentAttemptHasHandoff_ShowsContinueExistingPayment", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 409,
-        json: async () => ({
-          ...activePaymentAttemptConflict,
-          handoff: {
-            type: "Redirect",
-            resumePaymentUrl: "https://payments.test/existing"
-          }
-        })
-      })
-    );
+    stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        ...activePaymentAttemptConflict,
+        handoff: {
+          type: "Redirect",
+          resumePaymentUrl: "https://payments.test/existing"
+        }
+      }
+    });
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
 
     expect(await screen.findByRole("link", { name: /continue existing payment/i })).toHaveAttribute(
       "href",
@@ -221,19 +426,16 @@ describe("ExitPass WebPay UI", () => {
   });
 
   it("WebPay_WhenActivePaymentAttemptHasNoHandoff_ShowsCheckStatusFallback", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 409,
-        json: async () => activePaymentAttemptConflict
-      })
-    );
+    stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: activePaymentAttemptConflict
+    });
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
 
     expect((await screen.findAllByRole("button", { name: /check status/i })).length).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
@@ -241,41 +443,37 @@ describe("ExitPass WebPay UI", () => {
   });
 
   it("WebPay_WhenActivePaymentAttemptVisible_OuterContinueDoesNotCreateDuplicateAttempt", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: async () => activePaymentAttemptConflict
+    const fetchMock = stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: activePaymentAttemptConflict
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
     await screen.findAllByRole("button", { name: /check status/i });
     await userEvent.click(screen.getAllByRole("button", { name: /check status/i }).at(-1)!);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("WebPay_WhenActivePaymentAttemptConflict_DoesNotExposeProviderChoice", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 409,
-        json: async () => ({
-          ...activePaymentAttemptConflict,
-          selectedProviderCode: "AUB",
-          fallbackProviderCode: "PAYMONGO"
-        })
-      })
-    );
+    stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        ...activePaymentAttemptConflict,
+        selectedProviderCode: "AUB",
+        fallbackProviderCode: "PAYMONGO"
+      }
+    });
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
 
     expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
     expect(screen.queryByText("AUB")).not.toBeInTheDocument();
@@ -283,19 +481,16 @@ describe("ExitPass WebPay UI", () => {
   });
 
   it("WebPay_WhenActivePaymentAttemptConflict_ShowsCorrelationIdInSupportDetails", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 409,
-        json: async () => activePaymentAttemptConflict
-      })
-    );
+    stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: activePaymentAttemptConflict
+    });
 
     render(<App />);
 
-    await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-001");
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await resolveTicket("TICKET-001");
+    await continueToPayment();
     await userEvent.click(await screen.findByText(/support details/i));
 
     expect(screen.getByText("77777777-7777-7777-7777-777777777777")).toBeInTheDocument();
@@ -340,27 +535,27 @@ describe("ExitPass WebPay UI", () => {
   });
 
   it("WebPay_WhenPlateEntered_SubmitsPlateNumber", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ ...successResponse, paymentMethod: "GCASH" })
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubWebPayFetch({ intentPayload: { ...successResponse, paymentMethod: "GCASH" } });
 
     render(<App />);
 
     await userEvent.click(screen.getByRole("button", { name: /plate/i }));
     await userEvent.type(screen.getByLabelText(/plate number/i), "abc 1234");
     await userEvent.click(screen.getByLabelText(/GCash/i));
-    await userEvent.click(screen.getByRole("button", { name: /continue/i }));
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    await screen.findByText("Parking Session Summary");
+    await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const intentCall = fetchMock.mock.calls[1];
+    expect(intentCall).toBeDefined();
+    const body = JSON.parse((intentCall?.[1] as RequestInit).body as string);
     expect(body).toEqual({
       plateNumber: "ABC 1234",
       paymentMethod: "GCASH",
-      siteGroupId: "11111111-1111-1111-1111-111111111111",
-      siteId: "22222222-2222-2222-2222-222222222222",
-      vendorSystemId: "HIKCENTRAL"
+      siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+      siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+      vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f"
     });
   });
 });

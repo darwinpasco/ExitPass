@@ -133,6 +133,11 @@ public sealed class PayMongoClient
     /// <returns>The PayMongo request payload object.</returns>
     private object BuildCheckoutSessionRequest(CreateProviderPaymentSessionCommand command)
     {
+        var customerDisplayName = string.IsNullOrWhiteSpace(command.CustomerDisplayName)
+            ? "ExitPass Parking Fee"
+            : command.CustomerDisplayName.Trim();
+        var referenceNumber = BuildCustomerReferenceNumber(command);
+
         return new
         {
             data = new
@@ -149,12 +154,12 @@ public sealed class PayMongoClient
                         {
                             currency = command.Currency,
                             amount = command.AmountMinor,
-                            name = command.Description,
+                            name = customerDisplayName,
                             quantity = 1,
                         },
                     },
                     metadata = command.Metadata,
-                    reference_number = command.PaymentAttemptId.ToString(),
+                    reference_number = referenceNumber,
                     send_email_receipt = false,
                     show_description = true,
                     show_line_items = true,
@@ -162,6 +167,17 @@ public sealed class PayMongoClient
                 },
             },
         };
+    }
+
+    private static string BuildCustomerReferenceNumber(CreateProviderPaymentSessionCommand command)
+    {
+        if (command.Metadata.TryGetValue("ticket_reference", out var ticketReference) &&
+            !string.IsNullOrWhiteSpace(ticketReference))
+        {
+            return ticketReference.Trim();
+        }
+
+        return $"EP-{command.PaymentAttemptId:N}"[..15].ToUpperInvariant();
     }
 
     /// <summary>

@@ -179,6 +179,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             {
                 ParkingSession = centralSession,
                 TariffSnapshot = tariffSnapshot,
+                RequestedVendorSystemId = ParseOptionalGuid(command.VendorSystemId),
                 CorrelationId = sessionResponse.CorrelationId
             },
             cancellationToken);
@@ -212,7 +213,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
                     TariffSnapshotId = persisted.TariffSnapshot.TariffSnapshotId,
                     SiteId = persisted.ParkingSession.SiteId,
                     SiteGroupId = persisted.ParkingSession.SiteGroupId,
-                    VendorSystemId = session.VendorProviderCode,
+                    VendorSystemId = persisted.VendorSystemId,
                     LookupReferenceType = ResolveIdentifierType(command).ToLowerInvariant(),
                     LookupOutcome = ResolveVendorParkingOutcome.Resolved.ToString(),
                     NetPayableMinorUnits = validQuote.AmountMinor,
@@ -226,7 +227,10 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             persisted.ParkingSession,
             persisted.TariffSnapshot,
             sessionResponse.CorrelationId,
-            session.VendorProviderCode);
+            persisted.VendorSystemId,
+            persisted.SiteGroupName,
+            persisted.SiteName,
+            persisted.PaymentStatus);
     }
 
     private ResolveVendorParkingResult CompleteFailure(
@@ -292,6 +296,11 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     private static string ResolveIdentifierType(ResolveVendorParkingCommand command)
     {
         return string.IsNullOrWhiteSpace(command.PlateNumber) ? "TICKET" : "PLATE";
+    }
+
+    private static Guid? ParseOptionalGuid(string? value)
+    {
+        return Guid.TryParse(value, out var parsed) ? parsed : null;
     }
 
     private static string? Normalize(string? value)

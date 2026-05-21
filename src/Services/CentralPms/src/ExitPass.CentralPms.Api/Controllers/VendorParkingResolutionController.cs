@@ -104,6 +104,7 @@ public sealed class VendorParkingResolutionController : ControllerBase
             {
                 SiteGroupId = validRequest.SiteGroupId,
                 SiteId = validRequest.SiteId,
+                VendorSystemId = validRequest.VendorSystemId,
                 PlateNumber = validRequest.PlateNumber,
                 TicketReference = validRequest.TicketReference,
                 CorrelationId = validRequest.CorrelationId
@@ -141,12 +142,21 @@ public sealed class VendorParkingResolutionController : ControllerBase
         {
             ParkingSessionId = result.ParkingSession.ParkingSessionId,
             TariffSnapshotId = result.TariffSnapshot.TariffSnapshotId,
+            SiteGroupId = result.ParkingSession.SiteGroupId,
+            SiteId = result.ParkingSession.SiteId,
+            SiteGroupName = result.SiteGroupName,
+            SiteName = result.SiteName,
             LookupOutcome = "resolved",
             PlateNumber = result.ParkingSession.PlateNumber,
             TicketReference = result.ParkingSession.TicketNumber,
+            EntryTime = result.ParkingSession.EntryTimestamp,
+            CurrentFeeCalculationTime = result.TariffSnapshot.CalculatedAt,
             NetPayableMinorUnits = ToMinorUnits(result.TariffSnapshot.NetPayable),
             Currency = result.TariffSnapshot.CurrencyCode,
             TariffExpiresAt = result.TariffSnapshot.ExpiresAt,
+            FeeValidUntil = result.TariffSnapshot.ExpiresAt,
+            ParkingStatus = result.ParkingSession.SessionStatus.ToString(),
+            PaymentStatus = result.PaymentStatus ?? "Not Started",
             VendorSystemId = result.VendorSystemId ?? validRequest.VendorSystemId,
             CorrelationId = result.CorrelationId
         });

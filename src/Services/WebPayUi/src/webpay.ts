@@ -1,6 +1,15 @@
-import type { ActivePaymentAttemptState, ApiError, PaymentIntentRequest, PaymentIntentResponse, WebPayHandoff } from "./types";
+import type {
+  ActivePaymentAttemptState,
+  ApiError,
+  ParkingSessionResolveRequest,
+  ParkingSessionResolveResponse,
+  PaymentIntentRequest,
+  PaymentIntentResponse,
+  WebPayHandoff
+} from "./types";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
+const parkingSessionResolvePath = "/v1/webpay/parking-session";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 
 export class ActivePaymentAttemptError extends Error {
@@ -124,11 +133,54 @@ export function buildPaymentIntentBody(
   return body;
 }
 
+export function buildParkingSessionResolveBody(
+  request: ParkingSessionResolveRequest,
+  defaultContext: WebPaySiteContext = getDefaultSiteContext()
+): ParkingSessionResolveRequest {
+  const body = buildPaymentIntentBody(
+    {
+      ...request,
+      paymentMethod: "QRPH"
+    },
+    defaultContext
+  );
+
+  const { paymentMethod: _, ...resolveBody } = body;
+  return resolveBody;
+}
+
+export async function resolveParkingSession(
+  request: ParkingSessionResolveRequest,
+  fetchImpl: typeof fetch = fetch
+): Promise<ParkingSessionResolveResponse> {
+  const body = buildParkingSessionResolveBody(request);
+  if (!body.vendorSystemId) {
+    throw new Error("WebPay is missing vendor configuration. Set VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID for local testing.");
+  }
+
+  const response = await fetchImpl(`${getApiBaseUrl()}${parkingSessionResolvePath}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as ParkingSessionResolveResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new Error(toFriendlyError(error.errorCode, error.message));
+  }
+
+  return payload as ParkingSessionResolveResponse;
+}
+
 export async function createPaymentIntent(
   request: PaymentIntentRequest,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  defaultContext?: WebPaySiteContext
 ): Promise<PaymentIntentResponse> {
-  const body = buildPaymentIntentBody(request);
+  const body = buildPaymentIntentBody(request, defaultContext);
   if (!body.vendorSystemId) {
     throw new Error("WebPay is missing vendor configuration. Set VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID for local testing.");
   }

@@ -300,7 +300,9 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
             case "ACTIVE_ATTEMPT_EXISTS":
             case "REJECTED_ACTIVE_ATTEMPT_EXISTS":
-                throw new ActivePaymentAttemptAlreadyExistsException(dbResult.ParkingSessionId);
+                throw new ActivePaymentAttemptAlreadyExistsException(
+                    dbResult.ParkingSessionId,
+                    dbResult.PaymentAttemptId);
 
             case "REJECTED_IDEMPOTENCY_CONFLICT":
                 throw new IdempotencyConflictException(dbResult.IdempotencyKey ?? string.Empty);
@@ -312,6 +314,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             case "REJECTED_SNAPSHOT_EXPIRED":
             case "REJECTED_SNAPSHOT_ALREADY_BOUND":
             case "REJECTED_SNAPSHOT_SESSION_MISMATCH":
+            case "TARIFF_SNAPSHOT_NOT_ELIGIBLE":
                 throw new TariffSnapshotNotEligibleException(
                     tariffSnapshotId,
                     TariffSnapshotStatus.Invalidated,

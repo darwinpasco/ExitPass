@@ -210,14 +210,60 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             join core.payment_attempts pa on pa.payment_attempt_id = ps.payment_attempt_id
             join payments.payment_rails pr on pr.payment_rail_id = ps.payment_rail_id
             where pa.parking_session_id = @parking_session_id
-              and ps.session_status in ('CREATED', 'ACTIVE', 'PENDING')
-              and (ps.expires_at is null or ps.expires_at > now())
+              and ps.checkout_url is not null
             order by ps.created_at desc
             limit 1;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return ReadProviderSessionRecord(
+            reader,
+            reader.GetString(reader.GetOrdinal("provider_code")),
+            reader.GetString(reader.GetOrdinal("rail_code")));
+    }
+
+    /// <inheritdoc />
+    public async Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        const string sql = """
+            select
+                ps.provider_session_id,
+                ps.payment_attempt_id,
+                ps.provider_session_ref,
+                ps.provider_transaction_ref,
+                ps.idempotency_key,
+                ps.session_status,
+                ps.checkout_url,
+                ps.qr_payload,
+                ps.expires_at,
+                ps.provider_expires_at,
+                ps.correlation_id,
+                ps.created_at,
+                pr.provider_code,
+                pr.rail_code
+            from payments.provider_sessions ps
+            join payments.payment_rails pr on pr.payment_rail_id = ps.payment_rail_id
+            where ps.payment_attempt_id = @payment_attempt_id
+            order by ps.created_at desc
+            limit 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
 

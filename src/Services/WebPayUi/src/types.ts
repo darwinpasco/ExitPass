@@ -9,6 +9,8 @@ export type PaymentIntentRequest = {
   vendorSystemId?: string;
 };
 
+export type ParkingSessionResolveRequest = Omit<PaymentIntentRequest, "paymentMethod">;
+
 export type WebPayHandoff = {
   type?: string;
   handoffUrl?: string | null;
@@ -19,6 +21,7 @@ export type WebPayHandoff = {
 };
 
 export type ParkingSessionSummary = {
+  siteGroupName?: string | null;
   siteName?: string | null;
   ticketReference?: string | null;
   plateNumber?: string | null;
@@ -27,9 +30,12 @@ export type ParkingSessionSummary = {
   currentFeeCalculationTime?: string | null;
   durationParked?: string | null;
   tariffName?: string | null;
+  totalFeeMinorUnits?: number | null;
   amountMinorUnits?: number | null;
   currency?: string | null;
   sessionStatus?: string | null;
+  parkingStatus?: string | null;
+  paymentStatus?: string | null;
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
 };
@@ -38,6 +44,10 @@ export type PaymentIntentResponse = {
   paymentAttemptId: string;
   parkingSessionId: string;
   tariffSnapshotId: string;
+  siteGroupId?: string | null;
+  siteId?: string | null;
+  vendorSystemId?: string | null;
+  siteGroupName?: string | null;
   amountMinorUnits: number;
   currency: string;
   paymentMethod: PaymentMethod | string;
@@ -55,6 +65,35 @@ export type PaymentIntentResponse = {
   currentFeeCalculationTime?: string | null;
   durationParked?: string | null;
   tariffName?: string | null;
+  totalFeeMinorUnits?: number | null;
+  feeValidUntil?: string | null;
+  tariffExpiresAt?: string | null;
+  parkingStatus?: string | null;
+  paymentStatus?: string | null;
+  sessionSummary?: ParkingSessionSummary | null;
+};
+
+export type ParkingSessionResolveResponse = {
+  parkingSessionId: string;
+  tariffSnapshotId: string;
+  siteGroupId?: string | null;
+  siteId?: string | null;
+  vendorSystemId?: string | null;
+  siteGroupName?: string | null;
+  amountMinorUnits: number;
+  currency: string;
+  correlationId: string;
+  siteName?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  entryTime?: string | null;
+  exitTime?: string | null;
+  currentFeeCalculationTime?: string | null;
+  durationParked?: string | null;
+  tariffName?: string | null;
+  totalFeeMinorUnits?: number | null;
+  parkingStatus?: string | null;
+  paymentStatus?: string | null;
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
   sessionSummary?: ParkingSessionSummary | null;

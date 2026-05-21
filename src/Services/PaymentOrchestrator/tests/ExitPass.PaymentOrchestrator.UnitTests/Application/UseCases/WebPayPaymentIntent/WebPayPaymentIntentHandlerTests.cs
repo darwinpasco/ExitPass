@@ -16,6 +16,8 @@ namespace ExitPass.PaymentOrchestrator.UnitTests.Application.UseCases.WebPayPaym
 /// </summary>
 public sealed class WebPayPaymentIntentHandlerTests
 {
+    private const string GuidPattern = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
+
     private static readonly Guid SiteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid SiteId = Guid.Parse("22222222-2222-2222-2222-222222222222");
     private static readonly Guid CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
@@ -87,6 +89,46 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
         Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedInitiateRequest!.ProviderProduct);
+    }
+
+    /// <summary>
+    /// Verifies PayMongo checkout display text uses parker-facing context instead of internal UUIDs.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCreatingPayMongoCheckout_UsesParkerFriendlyDisplayText()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                10000,
+                "PHP",
+                "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+                CorrelationId,
+                SiteName: "WebPay Test Site 2026-05-21",
+                TicketReference: "WEBPAY-20260521-FRESH-001",
+                PlateNumber: "WEBPAY001",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var request = fixture.CapturedInitiateRequest!;
+        Assert.Equal("ExitPass Parking Fee - WEBPAY-20260521-FRESH-001", request.CustomerDisplayName);
+        Assert.Equal(
+            "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
+            request.Description);
+        Assert.DoesNotContain("Amount:", request.Description);
+        Assert.DoesNotContain("PHP 100.00", request.Description);
+        Assert.DoesNotMatch(GuidPattern, request.CustomerDisplayName);
+        Assert.DoesNotMatch(GuidPattern, request.Description);
+        Assert.Equal(PaymentAttemptId.ToString(), request.Metadata["payment_attempt_id"]);
+        Assert.Equal(ParkingSessionId.ToString(), request.Metadata["parking_session_id"]);
+        Assert.Equal(TariffSnapshotId.ToString(), request.Metadata["tariff_snapshot_id"]);
+        Assert.Equal(CorrelationId.ToString(), request.Metadata["correlation_id"]);
+        Assert.Equal("WEBPAY-20260521-FRESH-001", request.Metadata["ticket_reference"]);
     }
 
     /// <summary>
@@ -370,16 +412,153 @@ public sealed class WebPayPaymentIntentHandlerTests
                 DateTimeOffset.Parse("2026-05-18T10:42:00+08:00"),
                 DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
                 "Weekend Rate",
-                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00")));
+                "PAYABLE",
+                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+                "Not Started",
+                SiteGroupId,
+                SiteId,
+                "WebPay Test Site Group"));
 
         var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
 
         Assert.True(result.Succeeded);
         Assert.Equal("Mactan Newtown Parking", result.Response!.SiteName);
+        Assert.Equal(SiteGroupId, result.Response.SiteGroupId);
+        Assert.Equal(SiteId, result.Response.SiteId);
+        Assert.Equal("HIKCENTRAL", result.Response.VendorSystemId);
+        Assert.Equal("WebPay Test Site Group", result.Response.SiteGroupName);
         Assert.Equal("TICKET-TEST-023", result.Response.TicketReference);
         Assert.Equal("ABC 1234", result.Response.PlateNumber);
         Assert.Equal("Weekend Rate", result.Response.TariffName);
+        Assert.Equal("Pending Payment", result.Response.PaymentStatus);
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"), result.Response.FeeValidUntil);
+    }
+
+    /// <summary>
+    /// Verifies the pre-payment parking session resolve path returns summary fields without creating payment records.
+    /// </summary>
+    [Fact]
+    public async Task WebPayParkingSessionResolve_WhenCentralPmsReturnsSummaryFields_DoesNotCreatePaymentAttemptOrHandoff()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                12500,
+                "PHP",
+                "HIKCENTRAL",
+                CorrelationId,
+                "Mactan Newtown Parking",
+                "TICKET-TEST-027",
+                "ABC 1234",
+                DateTimeOffset.Parse("2026-05-18T10:42:00+08:00"),
+                DateTimeOffset.Parse("2026-05-18T11:15:00+08:00"),
+                "Weekend Rate",
+                "PAYABLE",
+                DateTimeOffset.Parse("2026-05-18T11:30:00+08:00"),
+                "Not Started",
+                SiteGroupId,
+                SiteId,
+                "WebPay Test Site Group"));
+
+        var result = await fixture.Sut.ResolveAsync(new WebPayParkingSessionResolveRequest
+        {
+            SiteGroupId = SiteGroupId,
+            SiteId = SiteId,
+            VendorSystemId = "HIKCENTRAL",
+            TicketReference = "TICKET-TEST-027",
+            CorrelationId = CorrelationId
+        }, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(SiteGroupId, result.Response!.SiteGroupId);
+        Assert.Equal(SiteId, result.Response.SiteId);
+        Assert.Equal("HIKCENTRAL", result.Response.VendorSystemId);
+        Assert.Equal("WebPay Test Site Group", result.Response.SiteGroupName);
+        Assert.Equal("Mactan Newtown Parking", result.Response!.SiteName);
+        Assert.Equal("TICKET-TEST-027", result.Response.TicketReference);
+        Assert.Equal("PAYABLE", result.Response.ParkingStatus);
+        Assert.Equal("Not Started", result.Response.PaymentStatus);
+        Assert.Equal(12500, result.Response.AmountMinorUnits);
+        Assert.True(fixture.ResolveVendorParkingWasCalled);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedRouteRequest);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies orphan active attempts without provider session evidence are failed through Central PMS and retried once.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasNoProviderSession_RecoversAndCreatesFreshHandoff()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                CorrelationId,
+                PaymentAttemptId)));
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            new CentralPmsPaymentAttempt(Guid.Parse("77777777-7777-7777-7777-777777777777"), "PENDING_PROVIDER", "PAYMONGO_CHECKOUT_SESSION", false)));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(Guid.Parse("77777777-7777-7777-7777-777777777777"), result.Response!.PaymentAttemptId);
+        Assert.Equal(PaymentAttemptId, fixture.CentralPms.FinalizedPaymentAttemptId);
+        Assert.Equal("FAILED", fixture.CentralPms.FinalAttemptStatus);
+        Assert.Equal(2, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.NotNull(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies active attempts with provider evidence but no checkout URL are treated as non-resumable orphans.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("   ")]
+    public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasBlankCheckoutUrl_RecoversAndDoesNotDuplicateProviderSessions(
+        string? checkoutUrl)
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+                "An active payment attempt already exists for parking session.",
+                false,
+                CorrelationId,
+                PaymentAttemptId)));
+        fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+            new CentralPmsPaymentAttempt(Guid.Parse("77777777-7777-7777-7777-777777777777"), "PENDING_PROVIDER", "PAYMONGO_CHECKOUT_SESSION", false)));
+        fixture.ProviderSessions.LatestProviderSessionByPaymentAttempt = new ProviderSessionRecord(
+            Guid.Parse("99999999-9999-9999-9999-999999999999"),
+            PaymentAttemptId,
+            "PAYMONGO",
+            "PAYMONGO_CHECKOUT_SESSION",
+            "cs_test_orphan",
+            "pi_test_orphan",
+            "PENDING",
+            checkoutUrl,
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(15),
+            "existing-idempotency-key",
+            CorrelationId,
+            "{}",
+            "{}",
+            DateTimeOffset.UtcNow);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(2, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.Equal(1, fixture.CentralPms.FinalizePaymentAttemptCallCount);
+        Assert.Equal(1, fixture.Handoff.InitiateCallCount);
+        Assert.Equal(Guid.Parse("77777777-7777-7777-7777-777777777777"), fixture.CapturedInitiateRequest!.PaymentAttemptId);
     }
 
     private static Fixture CreateFixture(
@@ -488,15 +667,30 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
 
+        private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
+
         public bool ResolveVendorParkingWasCalled { get; private set; }
 
         public bool CreatePaymentAttemptWasCalled { get; private set; }
+
+        public int CreatePaymentAttemptCallCount { get; private set; }
+
+        public int FinalizePaymentAttemptCallCount { get; private set; }
+
+        public Guid? FinalizedPaymentAttemptId { get; private set; }
+
+        public string? FinalAttemptStatus { get; private set; }
 
         public string? CapturedPaymentProvider { get; private set; }
 
         public string? CapturedPaymentMethod { get; private set; }
 
         public string? CapturedTicketReference { get; private set; }
+
+        public void EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt> result)
+        {
+            _createAttemptResults.Enqueue(result);
+        }
 
         public Task<CentralPmsWebPayResult<CentralPmsResolvedParking>> ResolveVendorParkingAsync(
             Guid? siteGroupId,
@@ -522,17 +716,41 @@ public sealed class WebPayPaymentIntentHandlerTests
             CancellationToken cancellationToken)
         {
             CreatePaymentAttemptWasCalled = true;
+            CreatePaymentAttemptCallCount++;
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
 
+            if (_createAttemptResults.Count > 0)
+            {
+                return Task.FromResult(_createAttemptResults.Dequeue());
+            }
+
             return Task.FromResult(CreateAttemptResult ?? CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(PaymentAttemptId, "PENDING_PROVIDER", paymentProvider, false)));
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> FinalizePaymentAttemptAsync(
+            Guid paymentAttemptId,
+            string finalAttemptStatus,
+            string requestedBy,
+            string idempotencyKey,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            FinalizePaymentAttemptCallCount++;
+            FinalizedPaymentAttemptId = paymentAttemptId;
+            FinalAttemptStatus = finalAttemptStatus;
+
+            return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
+                new CentralPmsPaymentAttempt(paymentAttemptId, finalAttemptStatus, string.Empty, false)));
         }
     }
 
     private sealed class FakeProviderSessionRepository : IProviderSessionRepository
     {
         public ProviderSessionRecord? LatestActiveProviderSession { get; set; }
+
+        public ProviderSessionRecord? LatestProviderSessionByPaymentAttempt { get; set; }
 
         public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
         {
@@ -552,6 +770,13 @@ public sealed class WebPayPaymentIntentHandlerTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(LatestActiveProviderSession);
+        }
+
+        public Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
+            Guid paymentAttemptId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(LatestProviderSessionByPaymentAttempt);
         }
     }
 
@@ -579,10 +804,13 @@ public sealed class WebPayPaymentIntentHandlerTests
     {
         public InitiateProviderPaymentRequest? CapturedRequest { get; private set; }
 
+        public int InitiateCallCount { get; private set; }
+
         public Task<InitiateProviderPaymentResponse> InitiateAsync(
             InitiateProviderPaymentRequest request,
             CancellationToken cancellationToken)
         {
+            InitiateCallCount++;
             CapturedRequest = request;
             return Task.FromResult(new InitiateProviderPaymentResponse(
                 request.PaymentAttemptId,

@@ -56,7 +56,7 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
 
         Assert.True(qrph.IsRouted);
         Assert.Equal(ProviderCode.PayMongo, qrph.SelectedProviderCode);
-        Assert.Equal(ProviderCode.Aub, qrph.FallbackProviderCode);
+        Assert.Null(qrph.FallbackProviderCode);
         Assert.Equal(ProviderRoutingReason.PrimaryProviderSelected, qrph.RoutingReason);
 
         Assert.True(gcash.IsRouted);

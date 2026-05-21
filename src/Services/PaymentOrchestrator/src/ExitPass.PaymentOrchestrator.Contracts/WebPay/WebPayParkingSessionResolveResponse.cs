@@ -1,22 +1,17 @@
 namespace ExitPass.PaymentOrchestrator.Contracts.WebPay;
 
 /// <summary>
-/// WebPay-facing response containing provider-neutral payment handoff data.
+/// WebPay-facing parking session and tariff summary returned before payment attempt creation.
 /// </summary>
-public sealed class WebPayPaymentIntentResponse
+public sealed class WebPayParkingSessionResolveResponse
 {
     /// <summary>
-    /// Canonical Central PMS payment attempt identifier.
-    /// </summary>
-    public Guid PaymentAttemptId { get; set; }
-
-    /// <summary>
-    /// Canonical Central PMS parking session identifier.
+    /// Canonical Central PMS parking session identifier for support traceability.
     /// </summary>
     public Guid ParkingSessionId { get; set; }
 
     /// <summary>
-    /// Canonical Central PMS tariff snapshot identifier.
+    /// Canonical Central PMS tariff snapshot identifier for support traceability.
     /// </summary>
     public Guid TariffSnapshotId { get; set; }
 
@@ -81,11 +76,6 @@ public sealed class WebPayPaymentIntentResponse
     public string? TariffName { get; set; }
 
     /// <summary>
-    /// Tariff snapshot expiry or fee validity timestamp, when available.
-    /// </summary>
-    public DateTimeOffset? FeeValidUntil { get; set; }
-
-    /// <summary>
     /// Parking session status, when available.
     /// </summary>
     public string? ParkingStatus { get; set; }
@@ -96,34 +86,9 @@ public sealed class WebPayPaymentIntentResponse
     public string? PaymentStatus { get; set; }
 
     /// <summary>
-    /// Customer-selected payment method code.
+    /// Tariff snapshot expiry or fee validity timestamp, when available.
     /// </summary>
-    public string PaymentMethod { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Provider code selected by routing policy.
-    /// </summary>
-    public string SelectedProviderCode { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Optional fallback provider code configured by routing policy.
-    /// </summary>
-    public string? FallbackProviderCode { get; set; }
-
-    /// <summary>
-    /// Deterministic routing reason returned by provider routing.
-    /// </summary>
-    public string RoutingReason { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Current payment attempt or provider-session status.
-    /// </summary>
-    public string Status { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Provider-neutral handoff data for the browser or mobile WebPay client.
-    /// </summary>
-    public WebPayPaymentHandoffDto Handoff { get; set; } = new();
+    public DateTimeOffset? FeeValidUntil { get; set; }
 
     /// <summary>
     /// End-to-end correlation identifier.

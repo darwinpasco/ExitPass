@@ -25,6 +25,7 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 /// <param name="CancelUrl">The cancel return URL for the parker flow.</param>
 /// <param name="WebhookUrl">The callback URL that the provider should call.</param>
 /// <param name="Metadata">Additional metadata used for provider correlation.</param>
+/// <param name="CustomerDisplayName">Customer-facing product or line-item name shown by the provider, when supported.</param>
 public sealed record CreateProviderPaymentSessionCommand(
     Guid PaymentAttemptId,
     long AmountMinor,
@@ -35,4 +36,5 @@ public sealed record CreateProviderPaymentSessionCommand(
     string FailureUrl,
     string CancelUrl,
     string WebhookUrl,
-    IReadOnlyDictionary<string, string> Metadata);
+    IReadOnlyDictionary<string, string> Metadata,
+    string? CustomerDisplayName = null);
