@@ -76,7 +76,8 @@ input {
 
 .scan-panel,
 .payment-form,
-.handoff-panel {
+.handoff-panel,
+.return-panel {
   background: #ffffff;
   border: 1px solid #d0d5dd;
   border-radius: 8px;
@@ -347,6 +348,61 @@ input {
   gap: 14px;
   margin-top: 14px;
   padding: 14px;
+}
+
+.return-panel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.return-panel h1 {
+  margin: 0;
+  color: #0b1f3a;
+  font-size: 28px;
+  line-height: 1.12;
+}
+
+.return-state {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.return-state.is-paid {
+  border-color: #abefc6;
+  background: #f0fdf4;
+}
+
+.return-state img {
+  width: 72px;
+  height: auto;
+}
+
+.return-state h2,
+.return-state p {
+  margin: 0;
+}
+
+.return-state h2 {
+  color: #0b1f3a;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.return-state p {
+  margin-top: 4px;
+  color: #344054;
+}
+
+.return-actions {
+  display: grid;
+  gap: 10px;
 }
 
 .handoff-panel > img {

@@ -7,6 +7,7 @@ using ExitPass.PaymentOrchestrator.Contracts.Payments;
 using ExitPass.PaymentOrchestrator.Contracts.Routing;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace ExitPass.PaymentOrchestrator.UnitTests.Application.UseCases.WebPayPaymentIntent;
@@ -130,6 +131,16 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal(TariffSnapshotId.ToString(), request.Metadata["tariff_snapshot_id"]);
         Assert.Equal(CorrelationId.ToString(), request.Metadata["correlation_id"]);
         Assert.Equal("WEBPAY-20260523-FRESH-001", request.Metadata["ticket_reference"]);
+        Assert.StartsWith("https://webpay.public.test/webpay/payment-return?", request.SuccessUrl);
+        Assert.Contains("ticketReference=WEBPAY-20260523-FRESH-001", request.SuccessUrl);
+        Assert.Contains($"paymentAttemptId={PaymentAttemptId}", request.SuccessUrl);
+        Assert.Contains($"correlationId={CorrelationId}", request.SuccessUrl);
+        Assert.Contains("result=success", request.SuccessUrl);
+        Assert.StartsWith("https://webpay.public.test/webpay/payment-cancelled?", request.CancelUrl);
+        Assert.Contains("ticketReference=WEBPAY-20260523-FRESH-001", request.CancelUrl);
+        Assert.Contains($"paymentAttemptId={PaymentAttemptId}", request.CancelUrl);
+        Assert.Contains($"correlationId={CorrelationId}", request.CancelUrl);
+        Assert.Contains("result=cancelled", request.CancelUrl);
     }
 
     /// <summary>
@@ -306,6 +317,36 @@ public sealed class WebPayPaymentIntentHandlerTests
         Assert.Equal("AUB_CARD_CASHIER", result.Error.ProviderProduct);
         Assert.Equal(PaymentAttemptId, result.Error.PaymentAttemptId);
         Assert.Contains("AUB base URL is required.", result.Error.Message);
+    }
+
+    /// <summary>
+    /// Verifies PayMongo hosted checkout creation fails closed when no public WebPay return base URL is configured.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenWebPayPublicBaseUrlIsMissing_ReturnsProviderDiagnosticsWithoutHandoff()
+    {
+        var fixture = CreateFixture(
+            "QRPH",
+            "PAYMONGO",
+            null,
+            returnUrlOptions: new WebPayReturnUrlOptions
+            {
+                PublicBaseUrl = string.Empty,
+                PaymentSuccessPath = "/webpay/payment-return",
+                PaymentCancelPath = "/webpay/payment-cancelled"
+            });
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(502, result.Error!.StatusCode);
+        Assert.Equal("PAYMENT_PROVIDER_CONFIGURATION_ERROR", result.Error.ErrorCode);
+        Assert.Equal("PAYMONGO", result.Error.SelectedProviderCode);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", result.Error.ProviderProduct);
+        Assert.Contains("WEBPAY_PUBLIC_BASE_URL", result.Error.Message);
+        Assert.True(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+        Assert.Equal(0, fixture.Handoff.InitiateCallCount);
     }
 
     /// <summary>
@@ -627,7 +668,8 @@ public sealed class WebPayPaymentIntentHandlerTests
         string? fallbackProvider,
         bool isRouted = true,
         string routingReason = "PRIMARY_PROVIDER",
-        string? errorCode = null)
+        string? errorCode = null,
+        WebPayReturnUrlOptions? returnUrlOptions = null)
     {
         var centralPms = new FakeCentralPmsWebPayClient();
         var routing = new CapturingRoutingPolicyResolver(
@@ -650,6 +692,12 @@ public sealed class WebPayPaymentIntentHandlerTests
             new ProviderProductResolver(),
             handoff,
             providerSessions,
+            Options.Create(returnUrlOptions ?? new WebPayReturnUrlOptions
+            {
+                PublicBaseUrl = "https://webpay.public.test",
+                PaymentSuccessPath = "/webpay/payment-return",
+                PaymentCancelPath = "/webpay/payment-cancelled"
+            }),
             NullLogger<WebPayPaymentIntentHandler>.Instance);
 
         return new Fixture(sut, centralPms, routing, handoff, providerSessions);

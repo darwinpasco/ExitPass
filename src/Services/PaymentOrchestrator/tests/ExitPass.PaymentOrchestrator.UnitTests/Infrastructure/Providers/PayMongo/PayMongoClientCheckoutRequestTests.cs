@@ -37,9 +37,9 @@ public sealed class PayMongoClientCheckoutRequestTests
                 "PHP",
                 "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
                 "webpay-idempotency",
-                "/success",
+                "https://webpay.test/webpay/payment-return?ticketReference=WEBPAY-20260521-FRESH-001&paymentAttemptId=df0b6210-d30e-404d-9d43-d70b2134601e&correlationId=342434f4-76ff-496d-aef1-9781b53e5081&result=success",
                 "/failed",
-                "/cancelled",
+                "https://webpay.test/webpay/payment-cancelled?ticketReference=WEBPAY-20260521-FRESH-001&paymentAttemptId=df0b6210-d30e-404d-9d43-d70b2134601e&correlationId=342434f4-76ff-496d-aef1-9781b53e5081&result=cancelled",
                 "/webhook",
                 new Dictionary<string, string>
                 {
@@ -59,8 +59,21 @@ public sealed class PayMongoClientCheckoutRequestTests
         var description = attributes.GetProperty("description").GetString();
         var lineItemName = attributes.GetProperty("line_items")[0].GetProperty("name").GetString();
         var referenceNumber = attributes.GetProperty("reference_number").GetString();
+        var successUrl = attributes.GetProperty("success_url").GetString();
+        var cancelUrl = attributes.GetProperty("cancel_url").GetString();
         var metadata = attributes.GetProperty("metadata");
 
+        Assert.Contains("\"success_url\"", handler.RequestJson);
+        Assert.Contains("\"cancel_url\"", handler.RequestJson);
+        Assert.DoesNotContain("\"successUrl\"", handler.RequestJson);
+        Assert.DoesNotContain("\"cancelUrl\"", handler.RequestJson);
+        Assert.Contains("/webpay/payment-return", handler.RequestJson);
+        Assert.Contains("/webpay/payment-cancelled", handler.RequestJson);
+        Assert.Contains("ticketReference=WEBPAY-20260521-FRESH-001", handler.RequestJson);
+        Assert.Contains($"paymentAttemptId={paymentAttemptId}", handler.RequestJson);
+        Assert.Contains($"correlationId={correlationId}", handler.RequestJson);
+        Assert.Contains("result=success", handler.RequestJson);
+        Assert.Contains("result=cancelled", handler.RequestJson);
         Assert.Equal("ExitPass Parking Fee - WEBPAY-20260521-FRESH-001", lineItemName);
         Assert.Equal(
             "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
@@ -68,6 +81,12 @@ public sealed class PayMongoClientCheckoutRequestTests
         Assert.DoesNotContain("Amount:", description);
         Assert.DoesNotContain("PHP 100.00", description);
         Assert.Equal("WEBPAY-20260521-FRESH-001", referenceNumber);
+        Assert.Equal(
+            "https://webpay.test/webpay/payment-return?ticketReference=WEBPAY-20260521-FRESH-001&paymentAttemptId=df0b6210-d30e-404d-9d43-d70b2134601e&correlationId=342434f4-76ff-496d-aef1-9781b53e5081&result=success",
+            successUrl);
+        Assert.Equal(
+            "https://webpay.test/webpay/payment-cancelled?ticketReference=WEBPAY-20260521-FRESH-001&paymentAttemptId=df0b6210-d30e-404d-9d43-d70b2134601e&correlationId=342434f4-76ff-496d-aef1-9781b53e5081&result=cancelled",
+            cancelUrl);
         Assert.DoesNotMatch(GuidRegex, lineItemName!);
         Assert.DoesNotMatch(GuidRegex, description!);
         Assert.DoesNotMatch(GuidRegex, referenceNumber!);
