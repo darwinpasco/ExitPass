@@ -225,7 +225,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.SetTag("payment_attempt_id", result.PaymentAttemptId);
             activity?.SetTag("attempt_status", result.AttemptStatus);
-            activity?.SetTag("provider_handoff_type", result.ProviderHandoff.Type);
+            activity?.SetTag("provider_handoff_channel", result.ProviderHandoff.Type);
 
             _metrics.PaymentAttemptCreated(result.PaymentProviderCode);
 

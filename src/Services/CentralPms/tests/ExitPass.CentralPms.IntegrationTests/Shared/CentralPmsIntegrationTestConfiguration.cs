@@ -18,6 +18,12 @@ namespace ExitPass.CentralPms.IntegrationTests.Shared;
 public static class CentralPmsIntegrationTestConfiguration
 {
     /// <summary>
+    /// Preferred local Docker database connection string for Central PMS integration and contract tests.
+    /// </summary>
+    public const string PreferredLocalDockerConnectionString =
+        "Host=localhost;Port=5433;Database=exitpass_v12_dev;Username=exitpass;Password=change_me;Include Error Detail=true";
+
+    /// <summary>
     /// Environment variable containing the preferred current Central PMS test database connection string.
     /// </summary>
     public const string MainDbConnectionStringEnvVar = "EXITPASS_TEST_MAIN_DB";
@@ -46,7 +52,7 @@ public static class CentralPmsIntegrationTestConfiguration
             ?? Environment.GetEnvironmentVariable(IntegrationDbConnectionStringEnvVar)
             ?? Environment.GetEnvironmentVariable(TestDbConnectionStringEnvVar)
             ?? Environment.GetEnvironmentVariable(MainDatabaseConfigEnvVar)
-            ?? "Host=localhost;Port=5432;Database=exitpass;Username=postgres;Password=postgres";
+            ?? PreferredLocalDockerConnectionString;
     }
 
     /// <summary>
@@ -60,7 +66,9 @@ public static class CentralPmsIntegrationTestConfiguration
             throw new InvalidOperationException(
                 $"Integration test database connection string is missing. Set one of: " +
                 $"{MainDbConnectionStringEnvVar}, {IntegrationDbConnectionStringEnvVar}, " +
-                $"{TestDbConnectionStringEnvVar}, or {MainDatabaseConfigEnvVar}.");
+                $"{TestDbConnectionStringEnvVar}, or {MainDatabaseConfigEnvVar}. " +
+                $"For local Docker, use {PreferredLocalDockerConnectionString} or dot-source " +
+                "scripts/dev-env/Set-CentralPmsTestDbEnv.ps1.");
         }
 
         return connectionString;
