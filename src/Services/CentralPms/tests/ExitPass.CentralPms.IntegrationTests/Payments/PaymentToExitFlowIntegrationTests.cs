@@ -100,6 +100,12 @@ public sealed class PaymentToExitFlowIntegrationTests
             Assert.NotNull(outcomeBody.ExpirationTimestamp);
 
             var exitAuthorizationId = outcomeBody.ExitAuthorizationId!.Value;
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            Assert.Equal(1, issuedAuthorizationCount);
 
             var firstConsumeResponse = await PostConsumeExitAuthorizationAsync(
                 client,
@@ -125,6 +131,168 @@ public sealed class PaymentToExitFlowIntegrationTests
 
             Assert.Equal(HttpStatusCode.Conflict, secondConsumeResponse.StatusCode);
             Assert.Contains("EXIT_AUTHORIZATION_ALREADY_CONSUMED", secondConsumeRaw, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies duplicate verified-provider delivery is idempotent and does not create duplicate active authorizations.
+    /// </summary>
+    [Fact]
+    public async Task PaymentToExitFlow_WhenVerifiedOutcomeIsReplayed_ReusesSingleActiveAuthorization()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(PaymentToExitFlow_WhenVerifiedOutcomeIsReplayed_ReusesSingleActiveAuthorization));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for duplicate payment-to-exit replay integration tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"idem-create-{Guid.NewGuid():N}",
+                "payment-to-exit-replay-test");
+
+            using var client = CreateClient();
+
+            var providerReference = $"prov-{Guid.NewGuid():N}";
+            var request = new ReportVerifiedPaymentOutcomeRequest(
+                PaymentAttemptId: created.PaymentAttemptId,
+                ParkingSessionId: context.ParkingSessionId,
+                ProviderReference: providerReference,
+                ProviderStatus: "SUCCESS",
+                FinalAttemptStatus: "CONFIRMED",
+                RequestedBy: "payment-orchestrator",
+                RequestedByUserId: KnownTestIdentityIds.ServiceIdentityId);
+
+            var firstResponse = await PostReportVerifiedPaymentOutcomeAsync(
+                client,
+                request,
+                correlationId: context.CorrelationId,
+                idempotencyKey: $"idem-outcome-first-{Guid.NewGuid():N}");
+            var firstBody = await firstResponse.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+
+            var replayResponse = await PostReportVerifiedPaymentOutcomeAsync(
+                client,
+                request,
+                correlationId: context.CorrelationId,
+                idempotencyKey: $"idem-outcome-replay-{Guid.NewGuid():N}");
+            var replayBody = await replayResponse.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+
+            Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+            Assert.Equal(HttpStatusCode.OK, replayResponse.StatusCode);
+            Assert.NotNull(firstBody);
+            Assert.NotNull(replayBody);
+            Assert.Equal(firstBody!.PaymentConfirmationId, replayBody!.PaymentConfirmationId);
+            Assert.Equal(firstBody.ExitAuthorizationId, replayBody.ExitAuthorizationId);
+            Assert.Equal("CONFIRMED", replayBody.AttemptStatus);
+            Assert.Equal("ISSUED", replayBody.AuthorizationStatus);
+
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            Assert.Equal(1, confirmationCount);
+            Assert.Equal(1, issuedAuthorizationCount);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies an unpaid parking session has no exit authorization.
+    /// </summary>
+    [Fact]
+    public async Task PaymentToExitFlow_WhenSessionIsUnpaid_DoesNotHaveExitAuthorization()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(PaymentToExitFlow_WhenSessionIsUnpaid_DoesNotHaveExitAuthorization));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for unpaid payment-to-exit integration tests");
+
+        try
+        {
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            Assert.Equal(0, issuedAuthorizationCount);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies failed provider evidence does not issue an exit authorization.
+    /// </summary>
+    [Fact]
+    public async Task PaymentToExitFlow_WhenVerifiedOutcomeFails_DoesNotIssueExitAuthorization()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(PaymentToExitFlow_WhenVerifiedOutcomeFails_DoesNotIssueExitAuthorization));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for failed payment-to-exit integration tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"idem-create-{Guid.NewGuid():N}",
+                "payment-to-exit-failed-test");
+
+            using var client = CreateClient();
+
+            var outcomeResponse = await PostReportVerifiedPaymentOutcomeAsync(
+                client,
+                request: new ReportVerifiedPaymentOutcomeRequest(
+                    PaymentAttemptId: created.PaymentAttemptId,
+                    ParkingSessionId: context.ParkingSessionId,
+                    ProviderReference: $"prov-failed-{Guid.NewGuid():N}",
+                    ProviderStatus: "FAILED",
+                    FinalAttemptStatus: "FAILED",
+                    RequestedBy: "payment-orchestrator",
+                    RequestedByUserId: KnownTestIdentityIds.ServiceIdentityId),
+                correlationId: context.CorrelationId,
+                idempotencyKey: $"idem-outcome-failed-{Guid.NewGuid():N}");
+
+            var outcomeBody = await outcomeResponse.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+
+            Assert.Equal(HttpStatusCode.OK, outcomeResponse.StatusCode);
+            Assert.NotNull(outcomeBody);
+            Assert.Equal("FAILED", outcomeBody!.AttemptStatus);
+            Assert.Null(outcomeBody.ExitAuthorizationId);
+            Assert.Null(outcomeBody.AuthorizationStatus);
+            Assert.Null(outcomeBody.AuthorizationToken);
+
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            Assert.Equal(0, issuedAuthorizationCount);
         }
         finally
         {
