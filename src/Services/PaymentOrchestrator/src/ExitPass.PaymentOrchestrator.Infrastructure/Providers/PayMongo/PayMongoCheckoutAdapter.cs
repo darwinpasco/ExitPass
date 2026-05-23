@@ -240,6 +240,19 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
                         providerSessionId = checkoutSessionId;
                     }
 
+                    if (TryGetOptionalString(nestedData, "type", out var nestedType) &&
+                        string.Equals(nestedType, "checkout_session", StringComparison.OrdinalIgnoreCase) &&
+                        !string.IsNullOrWhiteSpace(nestedId))
+                    {
+                        providerSessionId = nestedId;
+                    }
+
+                    TryApplyPaymentEvidenceFromPaymentsArray(
+                        nestedAttributes,
+                        ref providerReference,
+                        ref amountMinor,
+                        ref currency);
+
                     if (nestedAttributes.TryGetProperty("metadata", out var metadataProperty) &&
                         metadataProperty.ValueKind == JsonValueKind.Object)
                     {
@@ -289,6 +302,53 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         {
             rejectionCode = "PAYMONGO_WEBHOOK_INVALID_JSON";
             return false;
+        }
+    }
+
+    private static void TryApplyPaymentEvidenceFromPaymentsArray(
+        JsonElement attributes,
+        ref string providerReference,
+        ref long amountMinor,
+        ref string currency)
+    {
+        if (!attributes.TryGetProperty("payments", out var payments) ||
+            payments.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var payment in payments.EnumerateArray())
+        {
+            if (payment.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (TryGetOptionalString(payment, "id", out var paymentId))
+            {
+                providerReference = paymentId;
+            }
+
+            if (!payment.TryGetProperty("attributes", out var paymentAttributes) ||
+                paymentAttributes.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            if (amountMinor == 0 &&
+                paymentAttributes.TryGetProperty("amount", out var paymentAmount) &&
+                paymentAmount.ValueKind == JsonValueKind.Number &&
+                paymentAmount.TryGetInt64(out var parsedPaymentAmount))
+            {
+                amountMinor = parsedPaymentAmount;
+            }
+
+            if (TryGetOptionalString(paymentAttributes, "currency", out var paymentCurrency))
+            {
+                currency = paymentCurrency;
+            }
+
+            return;
         }
     }
 
@@ -373,6 +433,7 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
     {
         return eventType switch
         {
+            "checkout_session.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
             "checkout_session.payment.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
             "payment.failed" => CanonicalPaymentOutcomeStatus.Failed,
             "payment.expired" => CanonicalPaymentOutcomeStatus.Expired,

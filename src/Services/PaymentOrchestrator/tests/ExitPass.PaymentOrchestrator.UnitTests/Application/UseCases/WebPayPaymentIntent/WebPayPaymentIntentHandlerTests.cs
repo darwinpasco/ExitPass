@@ -36,7 +36,6 @@ public sealed class WebPayPaymentIntentHandlerTests
     [InlineData("PAYMONGO", "GCASH", "PAYMONGO_CHECKOUT_SESSION")]
     [InlineData("PAYMONGO", "MAYA", "PAYMONGO_CHECKOUT_SESSION")]
     [InlineData("PAYMONGO", "CARD", "PAYMONGO_CHECKOUT_SESSION")]
-    [InlineData("AUB", "QRPH", "AUB_QRPH")]
     [InlineData("AUB", "CARD", "AUB_CARD_CASHIER")]
     public async Task WebPayPaymentIntent_WhenRouteIsSupported_SendsCentralPmsProviderRailAndPaymentMethod(
         string selectedProvider,
@@ -54,37 +53,18 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
-    /// Verifies QRPH routes through the DB-backed policy result and returns AUB with PayMongo fallback.
+    /// Verifies QRPH routes through PayMongo from the DB-backed policy result.
     /// </summary>
     [Fact]
-    public async Task WebPayPaymentIntent_WhenQrphRequested_SelectsAubAndPayMongoFallbackFromRoutingPolicy()
+    public async Task WebPayPaymentIntent_WhenQrphRequested_SelectsPayMongoFromRoutingPolicy()
     {
-        var fixture = CreateFixture("QRPH", "AUB", "PAYMONGO");
-
-        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
-
-        Assert.True(result.Succeeded);
-        Assert.Equal("AUB", result.Response!.SelectedProviderCode);
-        Assert.Equal("PAYMONGO", result.Response.FallbackProviderCode);
-        Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
-        Assert.Equal("AUB_QRPH", fixture.CapturedPaymentProvider);
-        Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
-        Assert.Equal("AUB_CARD_CASHIER", fixture.CapturedInitiateRequest!.ProviderProduct);
-    }
-
-    /// <summary>
-    /// Verifies QRPH can route through PayMongo when the DB-backed local/testing policy override is applied.
-    /// </summary>
-    [Fact]
-    public async Task WebPayPaymentIntent_WhenQrphOverrideSelectsPayMongo_CreatesPayMongoCheckoutAttempt()
-    {
-        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
 
         var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
 
         Assert.True(result.Succeeded);
         Assert.Equal("PAYMONGO", result.Response!.SelectedProviderCode);
-        Assert.Equal("AUB", result.Response.FallbackProviderCode);
+        Assert.Null(result.Response.FallbackProviderCode);
         Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
         Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
@@ -92,10 +72,71 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
-    /// Verifies PayMongo checkout display text uses parker-facing context instead of internal UUIDs.
+    /// Verifies stale QRPH-to-AUB routing is rejected before payment attempt creation or provider handoff.
     /// </summary>
     [Fact]
-    public async Task WebPayPaymentIntent_WhenCreatingPayMongoCheckout_UsesParkerFriendlyDisplayText()
+    public async Task WebPayPaymentIntent_WhenQrphRouteSelectsAub_ReturnsRoutingRegressionError()
+    {
+        var fixture = CreateFixture("QRPH", "AUB", "PAYMONGO");
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(422, result.Error!.StatusCode);
+        Assert.Equal("WEBPAY_QRPH_PROVIDER_ROUTE_REGRESSION", result.Error.ErrorCode);
+        Assert.Equal("AUB", result.Error.SelectedProviderCode);
+        Assert.Equal("PAYMONGO", result.Error.FallbackProviderCode);
+        Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies current-day PayMongo checkout display text uses parker-facing context instead of internal UUIDs.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCreatingPayMongoCheckoutForMay23Ticket_UsesParkerFriendlyDisplayText()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                10000,
+                "PHP",
+                "25831de5-7144-4a34-a6ea-4ef2bd65c89c",
+                CorrelationId,
+                SiteName: "WebPay Test Site 2026-05-23",
+                TicketReference: "WEBPAY-20260523-FRESH-001",
+                PlateNumber: "WEBPAY001",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        var request = fixture.CapturedInitiateRequest!;
+        Assert.Equal("PAYMONGO", result.Response!.SelectedProviderCode);
+        Assert.Equal("ExitPass Parking Fee - WEBPAY-20260523-FRESH-001", request.CustomerDisplayName);
+        Assert.Equal(
+            "Site: WebPay Test Site 2026-05-23  Ticket: WEBPAY-20260523-FRESH-001  Plate: WEBPAY001",
+            request.Description);
+        Assert.DoesNotContain("Amount:", request.Description);
+        Assert.DoesNotContain("PHP 100.00", request.Description);
+        Assert.DoesNotMatch(GuidPattern, request.CustomerDisplayName);
+        Assert.DoesNotMatch(GuidPattern, request.Description);
+        Assert.Equal(PaymentAttemptId.ToString(), request.Metadata["payment_attempt_id"]);
+        Assert.Equal(ParkingSessionId.ToString(), request.Metadata["parking_session_id"]);
+        Assert.Equal(TariffSnapshotId.ToString(), request.Metadata["tariff_snapshot_id"]);
+        Assert.Equal(CorrelationId.ToString(), request.Metadata["correlation_id"]);
+        Assert.Equal("WEBPAY-20260523-FRESH-001", request.Metadata["ticket_reference"]);
+    }
+
+    /// <summary>
+    /// Verifies expired historical tariff data is rejected without weakening Central PMS eligibility.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenHistoricalMay21TariffIsRejected_ReturnsTariffEligibilityError()
     {
         var fixture = CreateFixture("QRPH", "PAYMONGO", null);
         fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
@@ -111,24 +152,22 @@ public sealed class WebPayPaymentIntentHandlerTests
                 PlateNumber: "WEBPAY001",
                 SiteGroupId: SiteGroupId,
                 SiteId: SiteId));
+        fixture.CentralPms.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "TARIFF_SNAPSHOT_INVALID",
+                "Tariff snapshot is not eligible for payment.",
+                false,
+                CorrelationId));
 
         var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
 
-        Assert.True(result.Succeeded);
-        var request = fixture.CapturedInitiateRequest!;
-        Assert.Equal("ExitPass Parking Fee - WEBPAY-20260521-FRESH-001", request.CustomerDisplayName);
-        Assert.Equal(
-            "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
-            request.Description);
-        Assert.DoesNotContain("Amount:", request.Description);
-        Assert.DoesNotContain("PHP 100.00", request.Description);
-        Assert.DoesNotMatch(GuidPattern, request.CustomerDisplayName);
-        Assert.DoesNotMatch(GuidPattern, request.Description);
-        Assert.Equal(PaymentAttemptId.ToString(), request.Metadata["payment_attempt_id"]);
-        Assert.Equal(ParkingSessionId.ToString(), request.Metadata["parking_session_id"]);
-        Assert.Equal(TariffSnapshotId.ToString(), request.Metadata["tariff_snapshot_id"]);
-        Assert.Equal(CorrelationId.ToString(), request.Metadata["correlation_id"]);
-        Assert.Equal("WEBPAY-20260521-FRESH-001", request.Metadata["ticket_reference"]);
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("TARIFF_SNAPSHOT_INVALID", result.Error.ErrorCode);
+        Assert.Contains("not eligible", result.Error.Message);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
+        Assert.Null(fixture.CapturedInitiateRequest);
     }
 
     /// <summary>
@@ -249,6 +288,27 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies provider configuration failures return diagnosable payment-intent errors.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenProviderHandoffConfigurationFails_ReturnsProviderDiagnostics()
+    {
+        var fixture = CreateFixture("CARD", "AUB", "PAYMONGO");
+        fixture.Handoff.ExceptionToThrow = new InvalidOperationException("AUB base URL is required.");
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("CARD"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(502, result.Error!.StatusCode);
+        Assert.Equal("PAYMENT_PROVIDER_CONFIGURATION_ERROR", result.Error.ErrorCode);
+        Assert.Equal("AUB", result.Error.SelectedProviderCode);
+        Assert.Equal("PAYMONGO", result.Error.FallbackProviderCode);
+        Assert.Equal("AUB_CARD_CASHIER", result.Error.ProviderProduct);
+        Assert.Equal(PaymentAttemptId, result.Error.PaymentAttemptId);
+        Assert.Contains("AUB base URL is required.", result.Error.Message);
+    }
+
+    /// <summary>
     /// Verifies ticketReference works without QR source metadata.
     /// </summary>
     [Fact]
@@ -308,7 +368,7 @@ public sealed class WebPayPaymentIntentHandlerTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenCentralPmsReturnsActivePaymentAttemptConflict_Returns409()
     {
-        var fixture = CreateFixture("QRPH", "AUB", "PAYMONGO");
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
         fixture.CentralPms.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -778,6 +838,16 @@ public sealed class WebPayPaymentIntentHandlerTests
         {
             return Task.FromResult(LatestProviderSessionByPaymentAttempt);
         }
+
+        public Task MarkWebhookOutcomeAsync(
+            string providerCode,
+            string providerSessionId,
+            string? providerReference,
+            string sessionStatus,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class CapturingRoutingPolicyResolver : IPaymentProviderRoutingPolicyResolver
@@ -806,12 +876,19 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public int InitiateCallCount { get; private set; }
 
+        public InvalidOperationException? ExceptionToThrow { get; set; }
+
         public Task<InitiateProviderPaymentResponse> InitiateAsync(
             InitiateProviderPaymentRequest request,
             CancellationToken cancellationToken)
         {
             InitiateCallCount++;
             CapturedRequest = request;
+            if (ExceptionToThrow is not null)
+            {
+                throw ExceptionToThrow;
+            }
+
             return Task.FromResult(new InitiateProviderPaymentResponse(
                 request.PaymentAttemptId,
                 request.ProviderCode,

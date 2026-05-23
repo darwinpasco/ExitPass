@@ -30,8 +30,8 @@ const successResponse = {
   parkingStatus: "PaymentRequired",
   paymentStatus: "Not Started",
   paymentMethod: "QRPH",
-  selectedProviderCode: "AUB",
-  fallbackProviderCode: "PAYMONGO",
+  selectedProviderCode: "PAYMONGO",
+  fallbackProviderCode: null,
   routingReason: "PRIMARY_PROVIDER",
   status: "PENDING_PROVIDER",
   handoff: {
@@ -138,11 +138,39 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     await resolveTicket("TICKET-TEST-027");
+    expect(screen.getByText("Parking Status")).toBeInTheDocument();
+    expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
     await continueToPayment();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
     expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenResolvedSessionIsPaid_DoesNotCreatePaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("WEBPAY-20260521-FRESH-005");
+
+    expect(await screen.findByRole("heading", { name: /payment completed/i })).toBeInTheDocument();
+    expect(screen.getByText("Payment Status")).toBeInTheDocument();
+    expect(screen.getByText("Paid")).toBeInTheDocument();
+    expect(screen.getByText("Parking Status")).toBeInTheDocument();
+    expect(screen.getByText("Payment Completed")).toBeInTheDocument();
+    expect(screen.queryByText("PaymentRequired")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /payment completed/i })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: /payment completed/i }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
   });
 
   it("WebPay_WhenResolvedSessionHasContext_UsesResolvedContextForPaymentIntentInsteadOfDefaults", async () => {

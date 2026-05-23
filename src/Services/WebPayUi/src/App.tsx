@@ -162,6 +162,13 @@ export function App() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (isPaidStatus(resolvedSession?.paymentStatus)) {
+      setError("");
+      setStage("SESSION_RESOLVED");
+      return;
+    }
+
     if (activePaymentAttempt) {
       if (!continueActivePayment(activePaymentAttempt)) {
         setError("Payment is already in progress. Please wait a moment before checking again.");
@@ -184,6 +191,7 @@ export function App() {
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
   const summary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
+  const isPaymentComplete = isPaidStatus(summary?.paymentStatus);
 
   return (
     <main className="app-shell">
@@ -357,13 +365,25 @@ export function App() {
           </section>
         )}
 
-        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving}>
+        {isPaymentComplete && (
+          <section className="active-payment-panel" aria-live="polite" aria-labelledby="paid-payment-heading">
+            <div>
+              <p className="eyebrow">Payment completed</p>
+              <h2 id="paid-payment-heading">Payment completed.</h2>
+              <p>This parking session has a verified payment confirmation.</p>
+            </div>
+          </section>
+        )}
+
+        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
             : isSubmitting
               ? "Creating payment..."
-              : activePaymentAttempt
+              : isPaymentComplete
+                ? "Payment completed"
+                : activePaymentAttempt
                 ? (activeResumeUrl ? "Continue Existing Payment" : "Check Status")
                 : summary
                   ? "Continue to Payment"
@@ -466,7 +486,7 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     ["Duration", displayValue(summary.durationParked ?? formatDuration(summary.entryTime, summary.currentFeeCalculationTime))],
     ["Total Fee", displayValue(formatCurrencyAmount(summary.totalFeeMinorUnits ?? summary.amountMinorUnits, summary.currency ?? result.currency))],
     ["Amount Due", displayValue(formatCurrencyAmount(summary.amountMinorUnits ?? result.amountMinorUnits, summary.currency ?? result.currency))],
-    ["Parking Status", displayValue(summary.parkingStatus ?? summary.sessionStatus)],
+    ["Parking Status", displayValue(getParkerFacingParkingStatus(summary))],
     ["Payment Status", displayValue(summary.paymentStatus)],
     ["Fee Valid Until", displayValue(formatDateTime(summary.feeValidUntil ?? summary.tariffExpiresAt))]
   ];
@@ -542,6 +562,23 @@ function checkActivePaymentStatus(activePaymentAttempt: ActivePaymentAttemptStat
   }
 
   return false;
+}
+
+function isPaidStatus(status?: string | null): boolean {
+  if (!status) {
+    return false;
+  }
+
+  const normalized = status.trim().toUpperCase();
+  return normalized === "PAID" || normalized === "COMPLETED" || normalized === "CONFIRMED";
+}
+
+function getParkerFacingParkingStatus(summary: ParkingSessionSummary): string | undefined {
+  if (isPaidStatus(summary.paymentStatus)) {
+    return "Payment Completed";
+  }
+
+  return summary.parkingStatus ?? summary.sessionStatus ?? undefined;
 }
 
 function formatDateTime(value?: string | null): string | undefined {

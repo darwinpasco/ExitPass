@@ -69,6 +69,23 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
         Assert.False(result.IsSuccess);
     }
 
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenCheckoutSessionPayloadCarriesPaymentsArray_UsesPaymentEvidence()
+    {
+        var adapter = CreateAdapter();
+        var payload = BuildCheckoutSessionWebhookPayloadWithPaymentsArray();
+
+        var result = await adapter.VerifyWebhookAsync(CreateSignedRequest(payload), CancellationToken.None);
+
+        Assert.True(result.IsAuthentic);
+        Assert.Equal(CanonicalPaymentOutcomeStatus.Succeeded, result.CanonicalStatus);
+        Assert.Equal("cs_paid_with_array_001", result.ProviderSessionId);
+        Assert.Equal("pay_paid_with_array_001", result.ProviderReference);
+        Assert.Equal(10000, result.AmountMinor);
+        Assert.Equal("PHP", result.Currency);
+    }
+
+
     /// <summary>
     /// Verifies that invalid PayMongo signatures fail closed before the callback is
     /// treated as verified provider evidence.
@@ -161,6 +178,52 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
                                 ["payment_attempt_id"] = "be88ff8e-90a7-45a7-bb7d-3505cfce9076",
                                 ["parking_session_id"] = "93e97f33-5849-4b9f-a83f-1080820103d8",
                                 ["requested_by_user_id"] = "9f2e5c61-4b6e-4d7d-9d2f-6b2a7a5f8c41"
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        return JsonSerializer.Serialize(body);
+    }
+
+    private static string BuildCheckoutSessionWebhookPayloadWithPaymentsArray()
+    {
+        var body = new
+        {
+            data = new
+            {
+                id = "evt_paid_array_001",
+                type = "event",
+                attributes = new
+                {
+                    type = "checkout_session.paid",
+                    created_at = 1_775_470_400,
+                    data = new
+                    {
+                        id = "cs_paid_with_array_001",
+                        type = "checkout_session",
+                        attributes = new
+                        {
+                            payments = new[]
+                            {
+                                new
+                                {
+                                    id = "pay_paid_with_array_001",
+                                    type = "payment",
+                                    attributes = new
+                                    {
+                                        amount = 10000,
+                                        currency = "PHP"
+                                    }
+                                }
+                            },
+                            metadata = new Dictionary<string, string>
+                            {
+                                ["payment_attempt_id"] = "be88ff8e-90a7-45a7-bb7d-3505cfce9076",
+                                ["parking_session_id"] = "93e97f33-5849-4b9f-a83f-1080820103d8",
+                                ["correlation_id"] = "6de95bb4-8f5a-4170-9184-e8eb4cb15c57"
                             }
                         }
                     }

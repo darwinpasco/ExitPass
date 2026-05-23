@@ -23,10 +23,10 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
         ?? throw new InvalidOperationException("Payment Orchestrator routing tests require a main database connection string.");
 
     /// <summary>
-    /// Verifies that the default QRPh policy is loaded from the database.
+    /// Verifies that the default QRPh policy routes to PayMongo in local/dev.
     /// </summary>
     [Fact]
-    public async Task ResolveRoute_WhenPaymentMethodIsQrph_ReturnsAubPrimaryAndPayMongoFallback()
+    public async Task ResolveRoute_WhenPaymentMethodIsQrph_ReturnsPayMongoPrimary()
     {
         await EnsureRoutingPolicySchemaAsync();
         var resolver = CreateResolver();
@@ -34,13 +34,13 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
         var result = await resolver.ResolveAsync(CreateRequest(PaymentMethodCode.QrPh), CancellationToken.None);
 
         Assert.True(result.IsRouted);
-        Assert.Equal(ProviderCode.Aub, result.SelectedProviderCode);
-        Assert.Equal(ProviderCode.PayMongo, result.FallbackProviderCode);
+        Assert.Equal(ProviderCode.PayMongo, result.SelectedProviderCode);
+        Assert.Null(result.FallbackProviderCode);
         Assert.NotNull(result.RoutingPolicyId);
     }
 
     /// <summary>
-    /// Verifies that the local/testing QRPh override patch routes QRPh through PayMongo without changing other methods.
+    /// Verifies that the local/testing QRPh override patch remains idempotent and leaves other methods unchanged.
     /// </summary>
     [Fact]
     public async Task ResolveRoute_WhenQrphPayMongoOverridePatchIsApplied_RoutesQrphToPayMongoAndLeavesOtherMethodsUnchanged()

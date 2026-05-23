@@ -108,11 +108,11 @@ public sealed class PayMongoWebhookIntegrationTests
     }
 
     /// <summary>
-    /// Verifies that a PayMongo webhook is rejected with a deterministic bad-request result
-    /// when requested_by_user_id is missing but payment_attempt_id is still present.
+    /// Verifies that a PayMongo webhook can be reconciled without exposing
+    /// requested_by_user_id in provider metadata.
     /// </summary>
     [Fact]
-    public async Task Rejects_webhook_with_bad_request_when_requested_by_user_id_is_missing()
+    public async Task Accepts_webhook_when_requested_by_user_id_is_missing_and_uses_service_identity()
     {
         var payload = BuildPayloadMissingRequestedByUserId(
             eventId: "evt_test_006",
@@ -123,10 +123,7 @@ public sealed class PayMongoWebhookIntegrationTests
         using var request = CreateSignedWebhookRequest(payload);
         var response = await _client.SendAsync(request);
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("WEBHOOK_MISSING_REQUESTED_BY_USER_ID");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
     /// <summary>

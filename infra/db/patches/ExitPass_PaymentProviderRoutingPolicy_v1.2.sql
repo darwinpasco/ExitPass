@@ -66,7 +66,7 @@ INSERT INTO payments.payment_provider_routing_policies (
     effective_from
 )
 VALUES
-    ('12000000-0000-0000-0000-000000000301', 'QRPH', 'AUB', 'PAYMONGO', 'PHP', true, true, true, '2026-01-01T00:00:00Z'),
+    ('12000000-0000-0000-0000-000000000301', 'QRPH', 'PAYMONGO', NULL, 'PHP', true, true, false, '2026-01-01T00:00:00Z'),
     ('12000000-0000-0000-0000-000000000302', 'CARD', 'AUB', 'PAYMONGO', 'PHP', true, true, true, '2026-01-01T00:00:00Z'),
     ('12000000-0000-0000-0000-000000000303', 'GCASH', 'PAYMONGO', NULL, 'PHP', true, true, false, '2026-01-01T00:00:00Z'),
     ('12000000-0000-0000-0000-000000000304', 'MAYA', 'PAYMONGO', NULL, 'PHP', true, true, false, '2026-01-01T00:00:00Z')

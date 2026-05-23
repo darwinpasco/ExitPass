@@ -55,4 +55,19 @@ public interface IProviderSessionRepository
     Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
         Guid paymentAttemptId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Updates persisted provider-session evidence from a verified provider webhook outcome.
+    /// </summary>
+    /// <param name="providerCode">The provider code.</param>
+    /// <param name="providerSessionId">The provider session identifier.</param>
+    /// <param name="providerReference">The terminal provider transaction/reference identifier, when supplied.</param>
+    /// <param name="sessionStatus">The normalized provider session status.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    Task MarkWebhookOutcomeAsync(
+        string providerCode,
+        string providerSessionId,
+        string? providerReference,
+        string sessionStatus,
+        CancellationToken cancellationToken);
 }

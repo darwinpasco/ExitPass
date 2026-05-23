@@ -108,7 +108,35 @@ public sealed class WebPayPaymentIntentHandler
                 422,
                 route.ErrorCode ?? "PAYMENT_PROVIDER_ROUTE_NOT_AVAILABLE",
                 "No enabled payment provider route is available for the requested payment method.",
-            false));
+                false,
+                correlationId,
+                PaymentMethod: paymentMethod,
+                AmountMinorUnits: parking.Value.NetPayableMinorUnits,
+                Currency: parking.Value.Currency,
+                SiteName: BlankToNull(parking.Value.SiteName),
+                TicketReference: BlankToNull(parking.Value.TicketReference),
+                PlateNumber: BlankToNull(parking.Value.PlateNumber),
+                SelectedProviderCode: route.SelectedProviderCode,
+                FallbackProviderCode: route.FallbackProviderCode));
+        }
+
+        if (IsUnsupportedWebPayQrphRoute(route.SelectedProviderCode, paymentMethod))
+        {
+            return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
+                422,
+                "WEBPAY_QRPH_PROVIDER_ROUTE_REGRESSION",
+                $"WebPay QRPH/PHP must route to PAYMONGO, but routing selected '{route.SelectedProviderCode}'.",
+                false,
+                correlationId,
+                parking.Value.ParkingSessionId,
+                PaymentMethod: paymentMethod,
+                AmountMinorUnits: parking.Value.NetPayableMinorUnits,
+                Currency: parking.Value.Currency,
+                SiteName: BlankToNull(parking.Value.SiteName),
+                TicketReference: BlankToNull(parking.Value.TicketReference),
+                PlateNumber: BlankToNull(parking.Value.PlateNumber),
+                SelectedProviderCode: route.SelectedProviderCode,
+                FallbackProviderCode: route.FallbackProviderCode));
         }
 
         var centralPmsPaymentProviderRail = ResolveCentralPmsPaymentProviderRail(
@@ -120,7 +148,17 @@ public sealed class WebPayPaymentIntentHandler
                 422,
                 "PAYMENT_PROVIDER_MAPPING_NOT_SUPPORTED",
                 $"No Central PMS payment provider rail mapping is configured for provider '{route.SelectedProviderCode}' and payment method '{paymentMethod}'.",
-                false));
+                false,
+                correlationId,
+                parking.Value.ParkingSessionId,
+                PaymentMethod: paymentMethod,
+                AmountMinorUnits: parking.Value.NetPayableMinorUnits,
+                Currency: parking.Value.Currency,
+                SiteName: BlankToNull(parking.Value.SiteName),
+                TicketReference: BlankToNull(parking.Value.TicketReference),
+                PlateNumber: BlankToNull(parking.Value.PlateNumber),
+                SelectedProviderCode: route.SelectedProviderCode,
+                FallbackProviderCode: route.FallbackProviderCode));
         }
 
         var idempotencyKey = BuildIdempotencyKey(parking.Value.ParkingSessionId, paymentMethod, correlationId);
@@ -140,9 +178,32 @@ public sealed class WebPayPaymentIntentHandler
         var attempt = attemptResolution.Attempt
             ?? throw new InvalidOperationException("Payment attempt recovery returned no attempt and no error.");
 
-        var providerProduct = _providerProductResolver.ResolveProviderProduct(
-            route.SelectedProviderCode,
-            paymentMethod);
+        string providerProduct;
+        try
+        {
+            providerProduct = _providerProductResolver.ResolveProviderProduct(
+                route.SelectedProviderCode,
+                paymentMethod);
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.LogError(
+                exception,
+                "Failed to resolve WebPay provider product. PaymentMethod {PaymentMethod}, SelectedProviderCode {SelectedProviderCode}, FallbackProviderCode {FallbackProviderCode}, CorrelationId {CorrelationId}",
+                paymentMethod,
+                route.SelectedProviderCode,
+                route.FallbackProviderCode,
+                correlationId);
+
+            return WebPayPaymentIntentResult.Failure(BuildProviderConfigurationError(
+                exception,
+                parking.Value,
+                paymentMethod,
+                route.SelectedProviderCode,
+                route.FallbackProviderCode,
+                null,
+                correlationId));
+        }
 
         _logger.LogInformation(
             "WebPay provider handoff route selected. PaymentMethod {PaymentMethod}, SelectedProviderCode {SelectedProviderCode}, FallbackProviderCode {FallbackProviderCode}, CentralPmsPaymentProviderRail {CentralPmsPaymentProviderRail}, ProviderProduct {ProviderProduct}, CorrelationId {CorrelationId}",
@@ -161,22 +222,48 @@ public sealed class WebPayPaymentIntentHandler
             paymentMethod,
             correlationId);
 
-        var handoff = await _handoffInitiator.InitiateAsync(
-            new InitiateProviderPaymentRequest(
-                attempt.PaymentAttemptId,
+        InitiateProviderPaymentResponse handoff;
+        try
+        {
+            handoff = await _handoffInitiator.InitiateAsync(
+                new InitiateProviderPaymentRequest(
+                    attempt.PaymentAttemptId,
+                    route.SelectedProviderCode,
+                    providerProduct,
+                    parking.Value.NetPayableMinorUnits,
+                    parking.Value.Currency,
+                    customerDescription,
+                    idempotencyKey,
+                    "/webpay/payment/success",
+                    "/webpay/payment/failed",
+                    "/webpay/payment/cancelled",
+                    "/v1/provider/webhooks",
+                    metadata,
+                    customerDisplayName),
+                cancellationToken);
+        }
+        catch (InvalidOperationException exception)
+        {
+            _logger.LogError(
+                exception,
+                "Failed to initiate WebPay provider handoff. PaymentMethod {PaymentMethod}, SelectedProviderCode {SelectedProviderCode}, FallbackProviderCode {FallbackProviderCode}, ProviderProduct {ProviderProduct}, PaymentAttemptId {PaymentAttemptId}, CorrelationId {CorrelationId}",
+                paymentMethod,
                 route.SelectedProviderCode,
+                route.FallbackProviderCode,
                 providerProduct,
-                parking.Value.NetPayableMinorUnits,
-                parking.Value.Currency,
-                customerDescription,
-                idempotencyKey,
-                "/webpay/payment/success",
-                "/webpay/payment/failed",
-                "/webpay/payment/cancelled",
-                "/v1/provider/webhooks",
-                metadata,
-                customerDisplayName),
-            cancellationToken);
+                attempt.PaymentAttemptId,
+                correlationId);
+
+            return WebPayPaymentIntentResult.Failure(BuildProviderConfigurationError(
+                exception,
+                parking.Value,
+                paymentMethod,
+                route.SelectedProviderCode,
+                route.FallbackProviderCode,
+                providerProduct,
+                correlationId,
+                attempt.PaymentAttemptId));
+        }
 
         return WebPayPaymentIntentResult.Success(new WebPayPaymentIntentResponse
         {
@@ -501,6 +588,41 @@ public sealed class WebPayPaymentIntentHandler
             BlankToNull(parking.PlateNumber));
     }
 
+    private static WebPayPaymentIntentError BuildProviderConfigurationError(
+        Exception exception,
+        CentralPmsResolvedParking parking,
+        string paymentMethod,
+        string selectedProviderCode,
+        string? fallbackProviderCode,
+        string? providerProduct,
+        Guid correlationId,
+        Guid? paymentAttemptId = null)
+    {
+        return new WebPayPaymentIntentError(
+            502,
+            "PAYMENT_PROVIDER_CONFIGURATION_ERROR",
+            $"Payment provider handoff could not be created. selectedProviderCode={selectedProviderCode}; providerProduct={providerProduct ?? "unresolved"}; correlationId={correlationId}; detail={exception.Message}",
+            true,
+            correlationId,
+            parking.ParkingSessionId,
+            paymentAttemptId,
+            PaymentMethod: paymentMethod,
+            AmountMinorUnits: parking.NetPayableMinorUnits,
+            Currency: parking.Currency,
+            SiteName: BlankToNull(parking.SiteName),
+            TicketReference: BlankToNull(parking.TicketReference),
+            PlateNumber: BlankToNull(parking.PlateNumber),
+            SelectedProviderCode: selectedProviderCode,
+            FallbackProviderCode: fallbackProviderCode,
+            ProviderProduct: providerProduct);
+    }
+
+    private static bool IsUnsupportedWebPayQrphRoute(string selectedProviderCode, string paymentMethod)
+    {
+        return string.Equals(Normalize(paymentMethod), PaymentMethodCode.QrPh, StringComparison.Ordinal) &&
+            !string.Equals(Normalize(selectedProviderCode), ProviderCode.PayMongo, StringComparison.Ordinal);
+    }
+
     private static bool IsActivePaymentAttemptConflict(CentralPmsWebPayError? error)
     {
         return error?.StatusCode == 409 &&
@@ -588,7 +710,6 @@ public sealed class WebPayPaymentIntentHandler
         // the customer-selected method and must not be sent as the provider code.
         return (provider, method) switch
         {
-            (ProviderCode.Aub, PaymentMethodCode.QrPh) => "AUB_QRPH",
             (ProviderCode.Aub, PaymentMethodCode.Card) => "AUB_CARD_CASHIER",
             (ProviderCode.PayMongo, PaymentMethodCode.QrPh) => "PAYMONGO_CHECKOUT_SESSION",
             (ProviderCode.PayMongo, PaymentMethodCode.GCash) => "PAYMONGO_CHECKOUT_SESSION",

@@ -13,46 +13,35 @@ public sealed class PaymentProviderRoutingPolicyEvaluatorTests
     private static readonly Guid CorrelationId = Guid.Parse("6de95bb4-8f5a-4170-9184-e8eb4cb15c57");
 
     /// <summary>
-    /// Verifies that QRPh routes to AUB primary with PayMongo fallback from policy data.
+    /// Verifies that QRPh routes to PayMongo from policy data.
     /// </summary>
     [Fact]
-    public void ResolveRoute_WhenPaymentMethodIsQrph_ReturnsAubPrimaryAndPayMongoFallback()
+    public void ResolveRoute_WhenPaymentMethodIsQrph_ReturnsPayMongoPrimary()
     {
         var result = Resolve(PaymentMethodCode.QrPh);
 
         Assert.True(result.IsRouted);
-        Assert.Equal(ProviderCode.Aub, result.SelectedProviderCode);
-        Assert.Equal(ProviderCode.PayMongo, result.FallbackProviderCode);
+        Assert.Equal(ProviderCode.PayMongo, result.SelectedProviderCode);
+        Assert.Null(result.FallbackProviderCode);
         Assert.Equal(ProviderRoutingReason.PrimaryProviderSelected, result.RoutingReason);
-        Assert.True(result.IsFallbackEligible);
+        Assert.False(result.IsFallbackEligible);
     }
 
     /// <summary>
-    /// Verifies that the local/testing QRPh override policy routes QRPh through PayMongo with AUB fallback.
+    /// Verifies that a stale AUB card route does not affect QRPh routing.
     /// </summary>
     [Fact]
-    public void ResolveRoute_WhenQrphOverridePolicyIsApplied_ReturnsPayMongoPrimaryAndAubFallback()
+    public void ResolveRoute_WhenCardUsesAub_QrphStillReturnsPayMongoPrimary()
     {
-        var policies = DefaultPolicies().Select(policy =>
-            policy.PaymentMethod == PaymentMethodCode.QrPh
-                ? policy with
-                {
-                    PrimaryProviderCode = ProviderCode.PayMongo,
-                    FallbackProviderCode = ProviderCode.Aub,
-                    PrimaryProviderEnabled = true,
-                    FallbackProviderEnabled = true
-                }
-                : policy).ToArray();
-
         var result = new PaymentProviderRoutingPolicyEvaluator().Resolve(
             CreateRequest(PaymentMethodCode.QrPh),
-            policies);
+            DefaultPolicies());
 
         Assert.True(result.IsRouted);
         Assert.Equal(ProviderCode.PayMongo, result.SelectedProviderCode);
-        Assert.Equal(ProviderCode.Aub, result.FallbackProviderCode);
+        Assert.Null(result.FallbackProviderCode);
         Assert.Equal(ProviderRoutingReason.PrimaryProviderSelected, result.RoutingReason);
-        Assert.True(result.IsFallbackEligible);
+        Assert.False(result.IsFallbackEligible);
     }
 
     /// <summary>
@@ -128,12 +117,12 @@ public sealed class PaymentProviderRoutingPolicyEvaluatorTests
     public void ResolveRoute_WhenPreferredProviderIsDisabled_ReturnsValidationError()
     {
         var policies = DefaultPolicies().Select(policy =>
-            policy.PaymentMethod == PaymentMethodCode.QrPh
+            policy.PaymentMethod == PaymentMethodCode.Card
                 ? policy with { FallbackProviderEnabled = false }
                 : policy).ToArray();
 
         var result = new PaymentProviderRoutingPolicyEvaluator().Resolve(
-            CreateRequest(PaymentMethodCode.QrPh, preferredProviderCode: ProviderCode.PayMongo),
+            CreateRequest(PaymentMethodCode.Card, preferredProviderCode: ProviderCode.PayMongo),
             policies);
 
         Assert.False(result.IsRouted);
@@ -147,12 +136,12 @@ public sealed class PaymentProviderRoutingPolicyEvaluatorTests
     public void ResolveRoute_WhenPrimaryDisabled_ReturnsFallbackProvider()
     {
         var policies = DefaultPolicies().Select(policy =>
-            policy.PaymentMethod == PaymentMethodCode.QrPh
+            policy.PaymentMethod == PaymentMethodCode.Card
                 ? policy with { PrimaryProviderEnabled = false }
                 : policy).ToArray();
 
         var result = new PaymentProviderRoutingPolicyEvaluator().Resolve(
-            CreateRequest(PaymentMethodCode.QrPh),
+            CreateRequest(PaymentMethodCode.Card),
             policies);
 
         Assert.True(result.IsRouted);
@@ -251,7 +240,7 @@ public sealed class PaymentProviderRoutingPolicyEvaluatorTests
     {
         return new[]
         {
-            Policy(PaymentMethodCode.QrPh, ProviderCode.Aub, ProviderCode.PayMongo),
+            Policy(PaymentMethodCode.QrPh, ProviderCode.PayMongo, null, fallbackProviderEnabled: false),
             Policy(PaymentMethodCode.Card, ProviderCode.Aub, ProviderCode.PayMongo),
             Policy(PaymentMethodCode.GCash, ProviderCode.PayMongo, null, fallbackProviderEnabled: false),
             Policy(PaymentMethodCode.Maya, ProviderCode.PayMongo, null, fallbackProviderEnabled: false)

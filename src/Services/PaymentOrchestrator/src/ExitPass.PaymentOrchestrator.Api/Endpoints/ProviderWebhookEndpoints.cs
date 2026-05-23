@@ -139,6 +139,21 @@ public static class ProviderWebhookEndpoints
                 "WEBHOOK_UNKNOWN_PROVIDER_SESSION",
                 "The provider session referenced by the webhook is unknown."),
 
+            "WEBHOOK_PAYMENT_ATTEMPT_MISMATCH" => (
+                StatusCodes.Status409Conflict,
+                "WEBHOOK_PAYMENT_ATTEMPT_MISMATCH",
+                "The webhook payment attempt does not match the persisted provider session."),
+
+            "WEBHOOK_AMOUNT_MISMATCH" => (
+                StatusCodes.Status409Conflict,
+                "WEBHOOK_AMOUNT_MISMATCH",
+                "The webhook amount does not match the persisted provider session amount."),
+
+            "WEBHOOK_CURRENCY_MISMATCH" => (
+                StatusCodes.Status409Conflict,
+                "WEBHOOK_CURRENCY_MISMATCH",
+                "The webhook currency does not match the persisted provider session currency."),
+
             _ => (
                 StatusCodes.Status400BadRequest,
                 "WEBHOOK_REJECTED",

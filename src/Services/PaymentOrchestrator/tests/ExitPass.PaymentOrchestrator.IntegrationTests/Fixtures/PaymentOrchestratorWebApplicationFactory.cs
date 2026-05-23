@@ -48,6 +48,7 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
     private const string OptionalPayMongoIsLiveModeEnvVar = "PAYMONGO_IS_LIVE_MODE";
 
     private readonly InMemoryProviderWebhookEventRepository _providerWebhookEventRepository = new();
+    private readonly InMemoryProviderSessionRepository _providerSessionRepository = new();
     private readonly CapturingCentralPmsPaymentOutcomeReporter _centralPmsReporter = new();
 
     /// <summary>
@@ -156,6 +157,7 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
     public void ResetBoundaryState()
     {
         _providerWebhookEventRepository.Clear();
+        _providerSessionRepository.Clear();
         _centralPmsReporter.Clear();
     }
 
@@ -172,8 +174,10 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
             // provider-webhook integration tests must exercise real callback verification while keeping
             // Central PMS as the sole owner of payment finality and exit-authorization decisions.
             services.RemoveAll<IProviderWebhookEventRepository>();
+            services.RemoveAll<IProviderSessionRepository>();
             services.RemoveAll<ICentralPmsPaymentOutcomeReporter>();
             services.AddSingleton<IProviderWebhookEventRepository>(_providerWebhookEventRepository);
+            services.AddSingleton<IProviderSessionRepository>(_providerSessionRepository);
             services.AddSingleton<ICentralPmsPaymentOutcomeReporter>(_centralPmsReporter);
         });
     }
@@ -419,6 +423,96 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
         private static string CreateKey(string providerCode, string providerEventId)
         {
             return $"{providerCode.Trim().ToUpperInvariant()}::{providerEventId.Trim()}";
+        }
+    }
+
+    private sealed class InMemoryProviderSessionRepository : IProviderSessionRepository
+    {
+        private readonly ConcurrentDictionary<string, ProviderSessionRecord> _records = new(StringComparer.Ordinal);
+
+        public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(record);
+            _records[CreateKey(record.ProviderCode, record.ProviderSessionId)] = record;
+            return Task.CompletedTask;
+        }
+
+        public Task<ProviderSessionRecord?> FindByProviderSessionIdAsync(
+            string providerCode,
+            string providerSessionId,
+            CancellationToken cancellationToken)
+        {
+            var key = CreateKey(providerCode, providerSessionId);
+            if (_records.TryGetValue(key, out var record))
+            {
+                return Task.FromResult<ProviderSessionRecord?>(record);
+            }
+
+            return Task.FromResult<ProviderSessionRecord?>(CreateSyntheticRecord(providerCode, providerSessionId));
+        }
+
+        public Task<ProviderSessionRecord?> FindLatestActiveByParkingSessionIdAsync(
+            Guid parkingSessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<ProviderSessionRecord?>(null);
+        }
+
+        public Task<ProviderSessionRecord?> FindLatestByPaymentAttemptIdAsync(
+            Guid paymentAttemptId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_records.Values.FirstOrDefault(record => record.PaymentAttemptId == paymentAttemptId));
+        }
+
+        public Task MarkWebhookOutcomeAsync(
+            string providerCode,
+            string providerSessionId,
+            string? providerReference,
+            string sessionStatus,
+            CancellationToken cancellationToken)
+        {
+            var key = CreateKey(providerCode, providerSessionId);
+            var existing = _records.GetOrAdd(key, _ => CreateSyntheticRecord(providerCode, providerSessionId));
+            _records[key] = existing with
+            {
+                ProviderReference = providerReference,
+                SessionStatus = sessionStatus
+            };
+
+            return Task.CompletedTask;
+        }
+
+        public void Clear()
+        {
+            _records.Clear();
+        }
+
+        private static ProviderSessionRecord CreateSyntheticRecord(string providerCode, string providerSessionId)
+        {
+            return new ProviderSessionRecord(
+                Guid.NewGuid(),
+                Guid.Empty,
+                providerCode,
+                "PAYMONGO_CHECKOUT_SESSION",
+                providerSessionId,
+                providerSessionId,
+                "PENDING",
+                null,
+                null,
+                null,
+                $"test:{providerSessionId}",
+                null,
+                "{}",
+                "{}",
+                DateTimeOffset.UtcNow,
+                AmountMinorUnits: null,
+                CurrencyCode: null);
+        }
+
+        private static string CreateKey(string providerCode, string providerSessionId)
+        {
+            return $"{providerCode.Trim().ToUpperInvariant()}::{providerSessionId.Trim()}";
         }
     }
 

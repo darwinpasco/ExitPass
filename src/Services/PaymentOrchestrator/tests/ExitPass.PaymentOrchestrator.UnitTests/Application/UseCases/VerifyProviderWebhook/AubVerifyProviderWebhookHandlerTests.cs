@@ -143,8 +143,37 @@ public sealed class AubVerifyProviderWebhookHandlerTests
     {
         var adapter = CreateAubAdapter();
         var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var providerSessions = new Mock<IProviderSessionRepository>(MockBehavior.Strict);
         var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
 
+        providerSessions
+            .Setup(x => x.FindByProviderSessionIdAsync("AUB", PaymentAttemptId.ToString(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderSessionRecord(
+                Guid.Parse("10000000-0000-0000-0000-000000000010"),
+                PaymentAttemptId,
+                "AUB",
+                "AUB_CARD_CASHIER",
+                PaymentAttemptId.ToString(),
+                "aub-ref-001",
+                "PENDING",
+                null,
+                null,
+                null,
+                "aub-test",
+                CorrelationId,
+                "{}",
+                "{}",
+                DateTimeOffset.Parse("2026-05-16T08:00:00Z"),
+                12500,
+                "PHP"));
+        providerSessions
+            .Setup(x => x.MarkWebhookOutcomeAsync(
+                "AUB",
+                PaymentAttemptId.ToString(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         repository
             .Setup(x => x.ExistsByProviderEventIdAsync("AUB", "aub-ref-001", It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
@@ -159,6 +188,7 @@ public sealed class AubVerifyProviderWebhookHandlerTests
             NullLogger<VerifyProviderWebhookHandler>.Instance,
             adapter,
             repository.Object,
+            providerSessions.Object,
             reporter.Object);
 
         return new TestFixture(handler, repository, reporter);
