@@ -238,7 +238,7 @@ public sealed class FinalizePaymentAttemptApiIntegrationTests : IAsyncLifetime
         if (string.IsNullOrWhiteSpace(_dbConnectionString))
         {
             throw new InvalidOperationException(
-                "Missing DB connection string. Set EXITPASS_TEST_MAIN_DB, EXITPASS_INTEGRATION_DB, EXITPASS_TEST_DB_CONNECTION_STRING, or ConnectionStrings__MainDatabase.");
+                "Missing DB connection string. Set EXITPASS_TEST_MAIN_DB, EXITPASS_INTEGRATION_DB, EXITPASS_TEST_DB_CONNECTION_STRING, or ConnectionStrings__MainDatabase. For local Docker, dot-source scripts/dev-env/Set-CentralPmsTestDbEnv.ps1.");
         }
 
         var context = PaymentTestContext.Create(nameof(FinalizePaymentAttemptApiIntegrationTests));
