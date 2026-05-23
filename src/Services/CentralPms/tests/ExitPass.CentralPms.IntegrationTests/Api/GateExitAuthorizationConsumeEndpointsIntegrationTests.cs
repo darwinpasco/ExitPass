@@ -249,6 +249,52 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
     }
 
     /// <summary>
+    /// Verifies that an invalidated authorization is rejected with a clean business conflict.
+    /// </summary>
+    [Fact]
+    public async Task ConsumeExitAuthorization_WhenAuthorizationIsInvalidated_ReturnsConflict()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ConsumeExitAuthorization_WhenAuthorizationIsInvalidated_ReturnsConflict));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for invalidated consume-exit-authorization API tests");
+
+        try
+        {
+            var issued = await CreateIssuedAuthorizationAsync(context);
+            var exitAuthorizationId = issued.ExitAuthorizationId!.Value;
+
+            await PaymentRoutineTestHelper.InvalidateAuthorizationAsync(
+                ConnectionString,
+                exitAuthorizationId,
+                KnownTestIdentityIds.ServiceIdentityId);
+
+            using var client = CreateClient();
+
+            var response = await PostConsumeExitAuthorizationAsync(
+                client,
+                exitAuthorizationId: exitAuthorizationId,
+                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId);
+
+            var raw = await response.Content.ReadAsStringAsync();
+
+            Assert.True(
+                response.StatusCode == HttpStatusCode.Conflict,
+                $"Expected Conflict but received {response.StatusCode}. Body: {raw}");
+            Assert.Contains("EXIT_AUTHORIZATION_CONSUME_REJECTED", raw, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Creates a fresh payment attempt, records v1.2 payment confirmation evidence, and returns the issued authorization.
     /// </summary>
     /// <param name="context">Current payment test context.</param>
