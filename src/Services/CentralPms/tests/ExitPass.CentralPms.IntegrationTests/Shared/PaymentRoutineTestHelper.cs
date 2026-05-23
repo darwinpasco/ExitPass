@@ -524,6 +524,71 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
+    /// Counts persisted exit authorizations for a parking session.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="parkingSessionId">Canonical parking-session identifier.</param>
+    /// <param name="issuedOnly">Whether to count only currently issued authorizations.</param>
+    /// <returns>The matching authorization count.</returns>
+    public static async Task<int> CountExitAuthorizationsAsync(
+        string connectionString,
+        Guid parkingSessionId,
+        bool issuedOnly)
+    {
+        const string sql = """
+            SELECT COUNT(*)::int
+            FROM core.exit_authorizations
+            WHERE parking_session_id = @parking_session_id
+              AND (
+                  @issued_only = FALSE
+                  OR authorization_status = 'ISSUED'
+              );
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        command.Parameters.AddWithValue("issued_only", issuedOnly);
+
+        return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    /// <summary>
+    /// Counts payment confirmations for a payment attempt.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="paymentAttemptId">Canonical payment-attempt identifier.</param>
+    /// <returns>The matching payment-confirmation count.</returns>
+    public static async Task<int> CountPaymentConfirmationsAsync(
+        string connectionString,
+        Guid paymentAttemptId)
+    {
+        const string sql = """
+            SELECT COUNT(*)::int
+            FROM core.payment_confirmations
+            WHERE payment_attempt_id = @payment_attempt_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+
+        return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    /// <summary>
     /// Forces an issued exit authorization into an expired state for negative-path testing.
     /// </summary>
     /// <param name="connectionString">Integration database connection string.</param>

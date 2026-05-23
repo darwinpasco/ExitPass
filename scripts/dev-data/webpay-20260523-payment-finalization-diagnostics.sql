@@ -177,6 +177,22 @@ confirmations AS (
     JOIN attempts a
       ON a.payment_attempt_id = pc.payment_attempt_id
 ),
+exit_authorizations AS (
+    SELECT
+        ea.exit_authorization_id,
+        ea.parking_session_id,
+        ea.payment_attempt_id,
+        ea.payment_confirmation_id,
+        ea.authorization_status,
+        ea.issued_at,
+        ea.expires_at,
+        ea.invalidated_at,
+        ea.created_at,
+        ea.updated_at
+    FROM core.exit_authorizations ea
+    JOIN attempts a
+      ON a.payment_attempt_id = ea.payment_attempt_id
+),
 callbacks AS (
     SELECT
         cb.provider_callback_id,
@@ -208,7 +224,9 @@ target_counts AS (
         STRING_AGG(DISTINCT ps.provider_transaction_ref, ', ' ORDER BY ps.provider_transaction_ref) AS provider_payment_references,
         STRING_AGG(DISTINCT a.provider_code, ', ' ORDER BY a.provider_code) AS provider_codes,
         COUNT(DISTINCT c.payment_confirmation_id) AS payment_confirmations_count,
-        STRING_AGG(DISTINCT c.confirmation_status::text, ', ' ORDER BY c.confirmation_status::text) AS payment_confirmation_statuses
+        STRING_AGG(DISTINCT c.confirmation_status::text, ', ' ORDER BY c.confirmation_status::text) AS payment_confirmation_statuses,
+        COUNT(DISTINCT ea.exit_authorization_id) AS exit_authorization_count,
+        STRING_AGG(DISTINCT ea.authorization_status::text, ', ' ORDER BY ea.authorization_status::text) AS exit_authorization_statuses
     FROM target_session s
     LEFT JOIN attempts a
       ON a.parking_session_id = s.parking_session_id
@@ -216,6 +234,8 @@ target_counts AS (
       ON ps.payment_attempt_id = a.payment_attempt_id
     LEFT JOIN confirmations c
       ON c.payment_attempt_id = a.payment_attempt_id
+    LEFT JOIN exit_authorizations ea
+      ON ea.payment_attempt_id = a.payment_attempt_id
     GROUP BY s.parking_session_id
 )
 SELECT
@@ -254,6 +274,12 @@ SELECT
     c.currency_code AS confirmation_currency,
     c.confirmation_status,
     c.verified_at,
+    tc.exit_authorization_count,
+    tc.exit_authorization_statuses,
+    ea.exit_authorization_id,
+    ea.authorization_status AS exit_authorization_status,
+    ea.issued_at AS exit_authorization_issued_at,
+    ea.expires_at AS exit_authorization_expires_at,
     cb.provider_callback_id,
     cb.provider_event_ref AS provider_event_id,
     cb.provider_transaction_ref AS callback_provider_reference,
@@ -271,6 +297,8 @@ LEFT JOIN provider_sessions ps
   ON ps.payment_attempt_id = a.payment_attempt_id
 LEFT JOIN confirmations c
   ON c.payment_attempt_id = a.payment_attempt_id
+LEFT JOIN exit_authorizations ea
+  ON ea.payment_attempt_id = a.payment_attempt_id
 LEFT JOIN callbacks cb
   ON cb.provider_session_id = ps.provider_session_id
 LEFT JOIN target_counts tc
@@ -290,6 +318,20 @@ JOIN core.parking_sessions parking
 WHERE parking.vendor_session_ref = :ticket_ref
 GROUP BY cb.provider_event_ref
 HAVING COUNT(*) > 1;
+
+SELECT
+    ea.payment_attempt_id,
+    COUNT(*) AS exit_authorization_count,
+    COUNT(*) FILTER (WHERE ea.authorization_status = 'ISSUED') AS active_exit_authorization_count
+FROM core.exit_authorizations ea
+JOIN core.payment_attempts pa
+  ON pa.payment_attempt_id = ea.payment_attempt_id
+JOIN core.parking_sessions parking
+  ON parking.parking_session_id = pa.parking_session_id
+WHERE parking.vendor_session_ref = :ticket_ref
+GROUP BY ea.payment_attempt_id
+HAVING COUNT(*) > 1
+    OR COUNT(*) FILTER (WHERE ea.authorization_status = 'ISSUED') > 1;
 
 SELECT
     pc.provider_transaction_ref,
