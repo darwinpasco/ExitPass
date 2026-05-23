@@ -78,6 +78,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  window.history.pushState({}, "", "/");
 });
 
 describe("ExitPass WebPay UI", () => {
@@ -585,5 +586,77 @@ describe("ExitPass WebPay UI", () => {
       siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
       vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f"
     });
+  });
+
+  it("WebPayReturnPage_LoadsStatusByTicketReference", async () => {
+    const fetchMock = stubWebPayFetch();
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-008");
+
+    render(<App />);
+
+    expect(screen.getAllByText("Checking payment status").length).toBeGreaterThan(0);
+    expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.ticketReference).toBe("WEBPAY-20260523-FRESH-008");
+  });
+
+  it("WebPayReturnPage_DoesNotMarkPaidOnlyBecauseOfRedirect", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Not Started",
+        parkingStatus: "PaymentRequired"
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-009&result=success");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /payment is still being verified/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment status: paid/i })).not.toBeInTheDocument();
+    expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_ShowsPaidAndPaymentCompletedAfterBackendConfirms", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid",
+        parkingStatus: "PaymentRequired"
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-010");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /payment status: paid/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Parking Status: Payment Completed").length).toBeGreaterThan(0);
+    expect(screen.getByText("Payment Completed")).toBeInTheDocument();
+  });
+
+  it("WebPayCancelledPage_AllowsRetryAndStatusRefresh", async () => {
+    const fetchMock = stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        ticketReference: "WEBPAY-20260523-FRESH-011",
+        paymentStatus: "Not Started",
+        parkingStatus: "PaymentRequired"
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-cancelled?ticketReference=WEBPAY-20260523-FRESH-011");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /payment was cancelled/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /check status/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /retry payment/i })).toHaveAttribute(
+      "href",
+      "/?ticketReference=WEBPAY-20260523-FRESH-011"
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /check status/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 });

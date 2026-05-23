@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
@@ -27,10 +27,12 @@ const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string 
 
 type EntryMode = "ticket" | "plate";
 type WebPayStage = "INPUT" | "SESSION_RESOLVED" | "HANDOFF_READY" | "ACTIVE_ATTEMPT" | "ERROR";
+type ReturnPageMode = "success" | "cancelled";
 
 export function App() {
+  const initialTicketReference = getQueryParam("ticketReference");
   const [entryMode, setEntryMode] = useState<EntryMode>("ticket");
-  const [ticketReference, setTicketReference] = useState("");
+  const [ticketReference, setTicketReference] = useState(initialTicketReference);
   const [scannedContext, setScannedContext] = useState<Partial<PaymentIntentRequest>>({});
   const [plateNumber, setPlateNumber] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("QRPH");
@@ -42,6 +44,11 @@ export function App() {
   const [isResolving, setIsResolving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [stage, setStage] = useState<WebPayStage>("INPUT");
+
+  const returnPageMode = getReturnPageMode(window.location.pathname);
+  if (returnPageMode) {
+    return <WebPayReturnPage mode={returnPageMode} />;
+  }
 
   function handleQrDecoded(value: string) {
     const normalized = normalizeTicketReference(value);
@@ -456,6 +463,108 @@ export function App() {
   );
 }
 
+function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
+  const [status, setStatus] = useState<"checking" | "loaded" | "error">("checking");
+  const [summary, setSummary] = useState<ParkingSessionResolveResponse | null>(null);
+  const [error, setError] = useState("");
+  const ticketReference = getQueryParam("ticketReference");
+  const isCancelled = mode === "cancelled";
+  const isPaid = isPaidStatus(summary?.paymentStatus);
+
+  async function refreshStatus() {
+    if (!ticketReference) {
+      setStatus("error");
+      setError("Ticket reference is missing.");
+      return;
+    }
+
+    setStatus("checking");
+    setError("");
+
+    try {
+      const response = await resolveParkingSession({ ticketReference });
+      setSummary(response);
+      setStatus("loaded");
+    } catch (apiError) {
+      setSummary(null);
+      setStatus("error");
+      setError(apiError instanceof Error ? apiError.message : "Payment status is unavailable. Please try again.");
+    }
+  }
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [ticketReference]);
+
+  return (
+    <main className="app-shell">
+      <header className="brand-header">
+        <img className="exitpass-logo" src="/assets/logo/exitpass-logo.svg" alt="ExitPass" />
+        <div className="operator-brand">
+          <span>Operated with</span>
+          <img src="/assets/logo/proparking-logo.png" alt="Pro Parking" />
+        </div>
+      </header>
+
+      <section className="return-panel" aria-live="polite">
+        <p className="eyebrow">{isCancelled ? "Payment cancelled" : "Payment return"}</p>
+        <h1>{status === "checking" ? "Checking payment status" : "Payment status"}</h1>
+
+        {status === "checking" && <p role="status">Checking payment status</p>}
+
+        {status === "error" && (
+          <div className="form-error" role="alert">
+            <img src="/assets/icons/error.svg" alt="" aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {status === "loaded" && summary && (
+          <>
+            {isPaid ? (
+              <div className="return-state is-paid">
+                <img src="/assets/illustrations/payment-success.svg" alt="" aria-hidden="true" />
+                <div>
+                  <h2>Payment Status: Paid</h2>
+                  <p>Parking Status: Payment Completed</p>
+                </div>
+              </div>
+            ) : (
+              <div className="return-state">
+                <img
+                  src={isCancelled ? "/assets/illustrations/payment-failed.svg" : "/assets/illustrations/payment-pending.svg"}
+                  alt=""
+                  aria-hidden="true"
+                />
+                <div>
+                  <h2>{isCancelled ? "Payment was cancelled" : "Payment is still being verified"}</h2>
+                  <p>
+                    {isCancelled
+                      ? "You can retry payment or check status again."
+                      : "Payment is still being verified."}
+                  </p>
+                </div>
+              </div>
+            )}
+            <ParkingSessionSummaryPanel result={summary} />
+          </>
+        )}
+
+        <div className="return-actions">
+          <button type="button" className="primary-button status-button" onClick={() => void refreshStatus()}>
+            Check Status
+          </button>
+          {(isCancelled || (status === "loaded" && !isPaid)) && ticketReference && (
+            <a className="primary-link" href={`/?ticketReference=${encodeURIComponent(ticketReference)}`}>
+              Retry Payment
+            </a>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveResponse }) {
   const summary: ParkingSessionSummary = {
     ...result.sessionSummary,
@@ -571,6 +680,23 @@ function isPaidStatus(status?: string | null): boolean {
 
   const normalized = status.trim().toUpperCase();
   return normalized === "PAID" || normalized === "COMPLETED" || normalized === "CONFIRMED";
+}
+
+function getReturnPageMode(pathname: string): ReturnPageMode | null {
+  const normalized = pathname.replace(/\/+$/, "").toLowerCase();
+  if (normalized === "/webpay/payment-return") {
+    return "success";
+  }
+
+  if (normalized === "/webpay/payment-cancelled") {
+    return "cancelled";
+  }
+
+  return null;
+}
+
+function getQueryParam(name: string): string {
+  return new URLSearchParams(window.location.search).get(name)?.trim() ?? "";
 }
 
 function getParkerFacingParkingStatus(summary: ParkingSessionSummary): string | undefined {

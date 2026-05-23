@@ -186,7 +186,30 @@ static void ConfigureServices(WebApplicationBuilder builder)
 
     RegisterApplicationServices(services);
     RegisterInfrastructureServices(services, configuration);
+    ConfigureWebPayReturnUrls(services, configuration);
     ValidateCriticalConfiguration(configuration);
+}
+
+static void ConfigureWebPayReturnUrls(IServiceCollection services, IConfiguration configuration)
+{
+    ArgumentNullException.ThrowIfNull(services);
+    ArgumentNullException.ThrowIfNull(configuration);
+
+    services.Configure<WebPayReturnUrlOptions>(options =>
+    {
+        options.PublicBaseUrl =
+            configuration["WEBPAY_PUBLIC_BASE_URL"] ??
+            configuration["WebPay:PublicBaseUrl"] ??
+            string.Empty;
+        options.PaymentSuccessPath =
+            configuration["WEBPAY_PAYMENT_SUCCESS_PATH"] ??
+            configuration["WebPay:PaymentSuccessPath"] ??
+            "/webpay/payment-return";
+        options.PaymentCancelPath =
+            configuration["WEBPAY_PAYMENT_CANCEL_PATH"] ??
+            configuration["WebPay:PaymentCancelPath"] ??
+            "/webpay/payment-cancelled";
+    });
 }
 
 static void RegisterApplicationServices(IServiceCollection services)

@@ -6,6 +6,7 @@ using ExitPass.PaymentOrchestrator.Contracts.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Routing;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 
@@ -23,6 +24,7 @@ public sealed class WebPayPaymentIntentHandler
     private readonly IProviderProductResolver _providerProductResolver;
     private readonly IProviderPaymentHandoffInitiator _handoffInitiator;
     private readonly IProviderSessionRepository _providerSessionRepository;
+    private readonly WebPayReturnUrlOptions _returnUrlOptions;
     private readonly ILogger<WebPayPaymentIntentHandler> _logger;
 
     /// <summary>
@@ -33,6 +35,7 @@ public sealed class WebPayPaymentIntentHandler
     /// <param name="providerProductResolver">Provider product resolver.</param>
     /// <param name="handoffInitiator">Provider handoff initiator.</param>
     /// <param name="providerSessionRepository">Provider session persistence reader.</param>
+    /// <param name="returnUrlOptions">WebPay hosted checkout return URL options.</param>
     /// <param name="logger">Structured logger.</param>
     public WebPayPaymentIntentHandler(
         ICentralPmsWebPayClient centralPmsClient,
@@ -40,6 +43,7 @@ public sealed class WebPayPaymentIntentHandler
         IProviderProductResolver providerProductResolver,
         IProviderPaymentHandoffInitiator handoffInitiator,
         IProviderSessionRepository providerSessionRepository,
+        IOptions<WebPayReturnUrlOptions> returnUrlOptions,
         ILogger<WebPayPaymentIntentHandler> logger)
     {
         _centralPmsClient = centralPmsClient ?? throw new ArgumentNullException(nameof(centralPmsClient));
@@ -47,6 +51,7 @@ public sealed class WebPayPaymentIntentHandler
         _providerProductResolver = providerProductResolver ?? throw new ArgumentNullException(nameof(providerProductResolver));
         _handoffInitiator = handoffInitiator ?? throw new ArgumentNullException(nameof(handoffInitiator));
         _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
+        _returnUrlOptions = returnUrlOptions?.Value ?? throw new ArgumentNullException(nameof(returnUrlOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -221,10 +226,26 @@ public sealed class WebPayPaymentIntentHandler
             parking.Value,
             paymentMethod,
             correlationId);
-
         InitiateProviderPaymentResponse handoff;
         try
         {
+            var successUrl = BuildReturnUrl(
+                _returnUrlOptions.PublicBaseUrl,
+                _returnUrlOptions.PaymentSuccessPath,
+                parking.Value,
+                attempt.PaymentAttemptId,
+                correlationId,
+                "success");
+            var cancelUrl = BuildReturnUrl(
+                _returnUrlOptions.PublicBaseUrl,
+                _returnUrlOptions.PaymentCancelPath,
+                parking.Value,
+                attempt.PaymentAttemptId,
+                correlationId,
+                "cancelled");
+
+            LogReturnUrlDiagnostics(successUrl, cancelUrl, correlationId);
+
             handoff = await _handoffInitiator.InitiateAsync(
                 new InitiateProviderPaymentRequest(
                     attempt.PaymentAttemptId,
@@ -234,9 +255,9 @@ public sealed class WebPayPaymentIntentHandler
                     parking.Value.Currency,
                     customerDescription,
                     idempotencyKey,
-                    "/webpay/payment/success",
+                    successUrl,
                     "/webpay/payment/failed",
-                    "/webpay/payment/cancelled",
+                    cancelUrl,
                     "/v1/provider/webhooks",
                     metadata,
                     customerDisplayName),
@@ -683,6 +704,88 @@ public sealed class WebPayPaymentIntentHandler
         return metadata;
     }
 
+    private static string BuildReturnUrl(
+        string publicBaseUrl,
+        string configuredPath,
+        CentralPmsResolvedParking parking,
+        Guid paymentAttemptId,
+        Guid correlationId,
+        string result)
+    {
+        if (string.IsNullOrWhiteSpace(publicBaseUrl))
+        {
+            throw new InvalidOperationException("WEBPAY_PUBLIC_BASE_URL is required for PayMongo Checkout Session return URLs.");
+        }
+
+        var path = string.IsNullOrWhiteSpace(configuredPath)
+            ? "/webpay/payment-return"
+            : configuredPath.Trim();
+        if (!path.StartsWith('/'))
+        {
+            path = "/" + path;
+        }
+
+        var builder = new UriBuilder(new Uri(new Uri(publicBaseUrl.TrimEnd('/') + "/", UriKind.Absolute), path.TrimStart('/')));
+
+        var query = new List<string>
+        {
+            $"paymentAttemptId={Uri.EscapeDataString(paymentAttemptId.ToString())}",
+            $"correlationId={Uri.EscapeDataString(correlationId.ToString())}",
+            $"result={Uri.EscapeDataString(result)}"
+        };
+
+        var ticketReference = BlankToNull(parking.TicketReference);
+        if (ticketReference is not null)
+        {
+            query.Insert(0, $"ticketReference={Uri.EscapeDataString(ticketReference)}");
+        }
+
+        builder.Query = string.Join("&", query);
+        return builder.Uri.ToString();
+    }
+
+    private void LogReturnUrlDiagnostics(
+        string successUrl,
+        string cancelUrl,
+        Guid correlationId)
+    {
+        var success = BuildReturnUrlLogParts(successUrl);
+        var cancel = BuildReturnUrlLogParts(cancelUrl);
+
+        _logger.LogInformation(
+            "WebPay hosted checkout return URLs configured. PublicBaseUrlConfigured {PublicBaseUrlConfigured}, SuccessUrlHost {SuccessUrlHost}, SuccessUrlPath {SuccessUrlPath}, SuccessUrlQuery {SuccessUrlQuery}, CancelUrlHost {CancelUrlHost}, CancelUrlPath {CancelUrlPath}, CancelUrlQuery {CancelUrlQuery}, CorrelationId {CorrelationId}",
+            !string.IsNullOrWhiteSpace(_returnUrlOptions.PublicBaseUrl),
+            success.Host,
+            success.Path,
+            success.Query,
+            cancel.Host,
+            cancel.Path,
+            cancel.Query,
+            correlationId);
+    }
+
+    private static ReturnUrlLogParts BuildReturnUrlLogParts(string url)
+    {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var absolute))
+        {
+            return new ReturnUrlLogParts(
+                absolute.Host,
+                absolute.AbsolutePath,
+                absolute.Query);
+        }
+
+        if (Uri.TryCreate(url, UriKind.Relative, out var relative))
+        {
+            var raw = relative.ToString();
+            var queryStart = raw.IndexOf('?', StringComparison.Ordinal);
+            return queryStart < 0
+                ? new ReturnUrlLogParts("<relative>", raw, string.Empty)
+                : new ReturnUrlLogParts("<relative>", raw[..queryStart], raw[queryStart..]);
+        }
+
+        return new ReturnUrlLogParts("<invalid>", "<invalid>", string.Empty);
+    }
+
     private static void AddDisplayPart(List<string> parts, string label, string? value)
     {
         var normalized = BlankToNull(value);
@@ -755,4 +858,6 @@ public sealed class WebPayPaymentIntentHandler
             return new PaymentAttemptResolution(null, error);
         }
     }
+
+    private sealed record ReturnUrlLogParts(string Host, string Path, string Query);
 }

@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using Microsoft.Extensions.Options;
 
@@ -131,42 +132,34 @@ public sealed class PayMongoClient
     /// </summary>
     /// <param name="command">The normalized provider session creation command.</param>
     /// <returns>The PayMongo request payload object.</returns>
-    private object BuildCheckoutSessionRequest(CreateProviderPaymentSessionCommand command)
+    private PayMongoCheckoutSessionRequest BuildCheckoutSessionRequest(CreateProviderPaymentSessionCommand command)
     {
         var customerDisplayName = string.IsNullOrWhiteSpace(command.CustomerDisplayName)
             ? "ExitPass Parking Fee"
             : command.CustomerDisplayName.Trim();
         var referenceNumber = BuildCustomerReferenceNumber(command);
 
-        return new
-        {
-            data = new
-            {
-                attributes = new
-                {
-                    billing = (object?)null,
-                    cancel_url = command.CancelUrl,
-                    description = command.Description,
-                    payment_method_types = _options.AllowedPaymentMethodTypes,
-                    line_items = new[]
+        return new PayMongoCheckoutSessionRequest(
+            new PayMongoCheckoutSessionData(
+                new PayMongoCheckoutSessionAttributes(
+                    null,
+                    command.CancelUrl,
+                    command.Description,
+                    _options.AllowedPaymentMethodTypes,
+                    new[]
                     {
-                        new
-                        {
-                            currency = command.Currency,
-                            amount = command.AmountMinor,
-                            name = customerDisplayName,
-                            quantity = 1,
-                        },
+                        new PayMongoCheckoutSessionLineItem(
+                            command.Currency,
+                            command.AmountMinor,
+                            customerDisplayName,
+                            1)
                     },
-                    metadata = command.Metadata,
-                    reference_number = referenceNumber,
-                    send_email_receipt = false,
-                    show_description = true,
-                    show_line_items = true,
-                    success_url = command.SuccessUrl,
-                },
-            },
-        };
+                    command.Metadata,
+                    referenceNumber,
+                    false,
+                    true,
+                    true,
+                    command.SuccessUrl)));
     }
 
     private static string BuildCustomerReferenceNumber(CreateProviderPaymentSessionCommand command)
@@ -191,4 +184,29 @@ public sealed class PayMongoClient
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
         return new AuthenticationHeaderValue("Basic", encoded);
     }
+
+    private sealed record PayMongoCheckoutSessionRequest(
+        [property: JsonPropertyName("data")] PayMongoCheckoutSessionData Data);
+
+    private sealed record PayMongoCheckoutSessionData(
+        [property: JsonPropertyName("attributes")] PayMongoCheckoutSessionAttributes Attributes);
+
+    private sealed record PayMongoCheckoutSessionAttributes(
+        [property: JsonPropertyName("billing")] object? Billing,
+        [property: JsonPropertyName("cancel_url")] string CancelUrl,
+        [property: JsonPropertyName("description")] string Description,
+        [property: JsonPropertyName("payment_method_types")] IReadOnlyList<string> PaymentMethodTypes,
+        [property: JsonPropertyName("line_items")] IReadOnlyList<PayMongoCheckoutSessionLineItem> LineItems,
+        [property: JsonPropertyName("metadata")] IReadOnlyDictionary<string, string> Metadata,
+        [property: JsonPropertyName("reference_number")] string ReferenceNumber,
+        [property: JsonPropertyName("send_email_receipt")] bool SendEmailReceipt,
+        [property: JsonPropertyName("show_description")] bool ShowDescription,
+        [property: JsonPropertyName("show_line_items")] bool ShowLineItems,
+        [property: JsonPropertyName("success_url")] string SuccessUrl);
+
+    private sealed record PayMongoCheckoutSessionLineItem(
+        [property: JsonPropertyName("currency")] string Currency,
+        [property: JsonPropertyName("amount")] long Amount,
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("quantity")] int Quantity);
 }
