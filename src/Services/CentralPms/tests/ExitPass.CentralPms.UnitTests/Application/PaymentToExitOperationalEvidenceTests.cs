@@ -207,7 +207,10 @@ public sealed class PaymentToExitOperationalEvidenceTests
                 CorrelationId),
             CancellationToken.None);
 
-        var activity = Assert.Single(listener.StoppedActivities, x => x.OperationName == "IssueExitAuthorization");
+        var activity = Assert.Single(
+            listener.StoppedActivities,
+            x => x.OperationName == "IssueExitAuthorization" &&
+                HasTag(x, "exit_authorization_id", ExitAuthorizationId));
         AssertTag(activity, "correlation_id", CorrelationId);
         AssertTag(activity, "payment_attempt_id", PaymentAttemptId);
         AssertTag(activity, "exit_authorization_id", ExitAuthorizationId);

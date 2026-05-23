@@ -178,6 +178,38 @@ public static class GateExitAuthorizationConsumeEndpoints
                 correlationId,
                 retryable: false));
         }
+        catch (Npgsql.PostgresException ex) when (
+            ex.SqlState == "P0001" &&
+            ex.MessageText.Contains("not issued", StringComparison.OrdinalIgnoreCase))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
+            activity?.AddException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_REJECTED");
+
+            logger.LogWarning(ex, "Exit authorization is not in an issued state.");
+
+            return Results.Conflict(BuildError(
+                "EXIT_AUTHORIZATION_CONSUME_REJECTED",
+                ex.MessageText,
+                correlationId,
+                retryable: false));
+        }
+        catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001")
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
+            activity?.AddException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_REJECTED");
+
+            logger.LogWarning(ex, "Exit authorization consume was rejected by the database control path.");
+
+            return Results.Conflict(BuildError(
+                "EXIT_AUTHORIZATION_CONSUME_REJECTED",
+                ex.MessageText,
+                correlationId,
+                retryable: false));
+        }
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
@@ -190,6 +222,21 @@ public static class GateExitAuthorizationConsumeEndpoints
             return Results.Conflict(BuildError(
                 "EXIT_AUTHORIZATION_CONSUME_REJECTED",
                 ex.Message,
+                correlationId,
+                retryable: false));
+        }
+        catch (Exception ex) when (HasExitAuthorizationNotIssuedMessage(ex))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_CONSUME_REJECTED");
+
+            logger.LogWarning(ex, "Exit authorization is not in an issued state.");
+
+            return Results.Conflict(BuildError(
+                "EXIT_AUTHORIZATION_CONSUME_REJECTED",
+                "Exit authorization is not in an issued state.",
                 correlationId,
                 retryable: false));
         }
@@ -210,6 +257,20 @@ public static class GateExitAuthorizationConsumeEndpoints
                     retryable: false),
                  statusCode: StatusCodes.Status500InternalServerError);
         }
+    }
+
+    private static bool HasExitAuthorizationNotIssuedMessage(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("exit authorization", StringComparison.OrdinalIgnoreCase) &&
+                current.Message.Contains("not issued", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static ErrorResponse BuildError(

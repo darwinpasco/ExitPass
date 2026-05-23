@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using ExitPass.GateIntegrationService.Application.GateExit;
 
@@ -124,13 +125,26 @@ public sealed class HttpCentralPmsExitAuthorizationClient : ICentralPmsExitAutho
     {
         try
         {
-            return await response.Content.ReadFromJsonAsync<ErrorResponse>(
-                cancellationToken: cancellationToken);
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            var root = document.RootElement;
+
+            return new ErrorResponse(
+                ReadString(root, "errorCode") ?? ReadString(root, "error_code"),
+                ReadString(root, "message"));
         }
-        catch
+        catch (JsonException)
         {
             return null;
         }
+    }
+
+    private static string? ReadString(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
     }
 
     private sealed record ConsumeExitAuthorizationRequest(
@@ -141,7 +155,5 @@ public sealed class HttpCentralPmsExitAuthorizationClient : ICentralPmsExitAutho
         [property: JsonPropertyName("authorizationStatus")] string AuthorizationStatus,
         [property: JsonPropertyName("consumedAt")] DateTimeOffset? ConsumedAt);
 
-    private sealed record ErrorResponse(
-        [property: JsonPropertyName("error_code")] string? ErrorCode,
-        [property: JsonPropertyName("message")] string? Message);
+    private sealed record ErrorResponse(string? ErrorCode, string? Message);
 }

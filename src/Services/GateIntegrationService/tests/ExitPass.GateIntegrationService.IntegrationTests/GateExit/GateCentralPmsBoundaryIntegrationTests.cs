@@ -58,7 +58,7 @@ public sealed class GateCentralPmsBoundaryIntegrationTests
             statusCode,
             $$"""
             {
-              "error_code": "{{errorCode}}",
+              "errorCode": "{{errorCode}}",
               "message": "Central PMS rejected consume.",
               "correlationId": "{{CorrelationId}}",
               "retryable": false
@@ -68,6 +68,32 @@ public sealed class GateCentralPmsBoundaryIntegrationTests
         var result = await fixture.Sut.ExecuteAsync(CreateCommand(), CancellationToken.None);
 
         Assert.False(result.GateOpened);
+        Assert.Equal(errorCode, result.ResultCode);
+        Assert.Equal(0, fixture.Hardware.OpenCount);
+
+        var request = Assert.Single(fixture.CentralPms.Requests);
+        AssertCentralPmsConsumeRequest(request);
+    }
+
+    [Fact]
+    public async Task ConsumeAuthorization_WhenCentralPmsReturnsLegacySnakeCaseError_DoesNotOpenGate()
+    {
+        var fixture = new Fixture();
+        fixture.CentralPms.EnqueueJson(
+            HttpStatusCode.Conflict,
+            $$"""
+            {
+              "error_code": "EXIT_AUTHORIZATION_ALREADY_CONSUMED",
+              "message": "Exit authorization has already been consumed.",
+              "correlationId": "{{CorrelationId}}",
+              "retryable": false
+            }
+            """);
+
+        var result = await fixture.Sut.ExecuteAsync(CreateCommand(), CancellationToken.None);
+
+        Assert.False(result.GateOpened);
+        Assert.Equal("EXIT_AUTHORIZATION_ALREADY_CONSUMED", result.ResultCode);
         Assert.Equal(0, fixture.Hardware.OpenCount);
 
         var request = Assert.Single(fixture.CentralPms.Requests);
@@ -107,7 +133,7 @@ public sealed class GateCentralPmsBoundaryIntegrationTests
             HttpStatusCode.Conflict,
             $$"""
             {
-              "error_code": "EXIT_AUTHORIZATION_ALREADY_CONSUMED",
+              "errorCode": "EXIT_AUTHORIZATION_ALREADY_CONSUMED",
               "message": "Exit authorization has already been consumed.",
               "correlationId": "{{CorrelationId}}",
               "retryable": false

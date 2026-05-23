@@ -634,6 +634,52 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
+    /// Forces an issued exit authorization into an invalidated state for negative-path testing.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="exitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <param name="requestedBy">Valid seeded service identity identifier recorded as the updater.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public static async Task InvalidateAuthorizationAsync(
+        string connectionString,
+        Guid exitAuthorizationId,
+        Guid requestedBy)
+    {
+        const string sql = """
+            UPDATE core.exit_authorizations
+            SET
+                authorization_status = 'INVALIDATED',
+                invalidated_at = NOW(),
+                invalidation_reason_code = 'TEST_INVALIDATION',
+                updated_at = NOW(),
+                updated_by_service_identity_id = COALESCE(
+                    (
+                        SELECT si.service_identity_id
+                        FROM identity.service_identities AS si
+                        WHERE si.service_identity_id = @updated_by
+                        LIMIT 1
+                    ),
+                    updated_by_service_identity_id,
+                    created_by_service_identity_id),
+                row_version = row_version + 1
+            WHERE exit_authorization_id = @exit_authorization_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
+        command.Parameters.AddWithValue("updated_by", requestedBy);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
     /// Reads a nullable timestamp column as a nullable <see cref="DateTimeOffset"/>.
     /// </summary>
     /// <param name="reader">Data reader positioned on the current row.</param>
