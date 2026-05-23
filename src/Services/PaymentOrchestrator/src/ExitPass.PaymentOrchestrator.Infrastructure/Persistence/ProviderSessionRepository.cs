@@ -156,6 +156,8 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 provider_transaction_ref,
                 idempotency_key,
                 session_status,
+                currency_code,
+                amount,
                 checkout_url,
                 qr_payload,
                 expires_at,
@@ -198,6 +200,8 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 ps.provider_transaction_ref,
                 ps.idempotency_key,
                 ps.session_status,
+                ps.currency_code,
+                ps.amount,
                 ps.checkout_url,
                 ps.qr_payload,
                 ps.expires_at,
@@ -247,6 +251,8 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 ps.provider_transaction_ref,
                 ps.idempotency_key,
                 ps.session_status,
+                ps.currency_code,
+                ps.amount,
                 ps.checkout_url,
                 ps.qr_payload,
                 ps.expires_at,
@@ -276,6 +282,60 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             reader,
             reader.GetString(reader.GetOrdinal("provider_code")),
             reader.GetString(reader.GetOrdinal("rail_code")));
+    }
+
+    /// <inheritdoc />
+    public async Task MarkWebhookOutcomeAsync(
+        string providerCode,
+        string providerSessionId,
+        string? providerReference,
+        string sessionStatus,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerCode);
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerSessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionStatus);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var paymentRailId = await ResolvePaymentRailIdByProviderCodeAsync(
+            connection,
+            providerCode,
+            cancellationToken);
+        var serviceIdentityId = await ResolvePaymentOrchestratorServiceIdentityIdAsync(
+            connection,
+            cancellationToken);
+
+        const string sql = """
+            update payments.provider_sessions
+            set
+                provider_transaction_ref = coalesce(nullif(@provider_transaction_ref, ''), provider_transaction_ref),
+                session_status = cast(@session_status as payments.provider_session_status_enum),
+                updated_at = now(),
+                updated_by_service_identity_id = @updated_by_service_identity_id
+            where payment_rail_id = @payment_rail_id
+              and provider_session_ref = @provider_session_ref;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("provider_transaction_ref", (object?)providerReference ?? string.Empty);
+        command.Parameters.AddWithValue("session_status", NormalizeProviderSessionStatus(sessionStatus));
+        command.Parameters.AddWithValue("updated_by_service_identity_id", serviceIdentityId);
+        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
+        command.Parameters.AddWithValue("provider_session_ref", providerSessionId);
+
+        var rows = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (rows == 0)
+        {
+            throw new UnknownProviderSessionException(providerSessionId);
+        }
+
+        _logger.LogInformation(
+            "Updated provider session evidence from verified webhook. ProviderCode {ProviderCode}, ProviderSessionRef {ProviderSessionRef}, SessionStatus {SessionStatus}",
+            providerCode,
+            providerSessionId,
+            sessionStatus);
     }
 
     private static string NormalizeProviderSessionStatus(string status)
@@ -379,7 +439,24 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
                 : reader.GetGuid(reader.GetOrdinal("correlation_id")),
             RequestPayloadJson: "{}",
             ResponsePayloadJson: "{}",
-            CreatedAtUtc: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")));
+            CreatedAtUtc: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
+            AmountMinorUnits: ReadAmountMinorUnits(reader),
+            CurrencyCode: reader.IsDBNull(reader.GetOrdinal("currency_code"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("currency_code")));
+    }
+
+    private static long? ReadAmountMinorUnits(NpgsqlDataReader reader)
+    {
+        if (reader.IsDBNull(reader.GetOrdinal("amount")))
+        {
+            return null;
+        }
+
+        var amount = reader.GetDecimal(reader.GetOrdinal("amount"));
+        return decimal.Truncate(amount) == amount
+            ? decimal.ToInt64(amount)
+            : null;
     }
 
     private static async Task<Guid> ResolvePaymentRailIdAsync(

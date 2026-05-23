@@ -284,16 +284,185 @@ public sealed class VerifyProviderWebhookHandlerTests
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(4999, "PHP", "WEBHOOK_AMOUNT_MISMATCH")]
+    [InlineData(5000, "USD", "WEBHOOK_CURRENCY_MISMATCH")]
+    public async Task HandleAsync_WhenWebhookAmountOrCurrencyDoesNotMatchProviderSession_ReturnsRejected(
+        long expectedAmountMinor,
+        string expectedCurrency,
+        string expectedCode)
+    {
+        var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
+        var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var providerSessions = new Mock<IProviderSessionRepository>(MockBehavior.Strict);
+        var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
+
+        adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
+        adapter
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
+
+        providerSessions
+            .Setup(x => x.FindByProviderSessionIdAsync("PAYMONGO", "cs_293285f3347f5496c48332d8", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateProviderSessionRecord("PAYMONGO", "cs_293285f3347f5496c48332d8", expectedAmountMinor, expectedCurrency));
+
+        var handler = CreateHandler(adapter, repository, providerSessions, reporter);
+
+        var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
+
+        Assert.False(result.Accepted);
+        Assert.Equal(expectedCode, result.Code);
+
+        repository.Verify(
+            x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        providerSessions.Verify(
+            x => x.MarkWebhookOutcomeAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        reporter.Verify(
+            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenWebhookPaymentAttemptDoesNotMatchProviderSession_ReturnsRejected()
+    {
+        var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
+        var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var providerSessions = new Mock<IProviderSessionRepository>(MockBehavior.Strict);
+        var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
+
+        adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
+        adapter
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
+
+        providerSessions
+            .Setup(x => x.FindByProviderSessionIdAsync("PAYMONGO", "cs_293285f3347f5496c48332d8", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateProviderSessionRecord(
+                "PAYMONGO",
+                "cs_293285f3347f5496c48332d8",
+                paymentAttemptId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")));
+
+        var handler = CreateHandler(adapter, repository, providerSessions, reporter);
+
+        var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("WEBHOOK_PAYMENT_ATTEMPT_MISMATCH", result.Code);
+
+        repository.Verify(
+            x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        reporter.Verify(
+            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenProviderSessionIsUnknown_ReturnsRejected()
+    {
+        var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
+        var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var providerSessions = new Mock<IProviderSessionRepository>(MockBehavior.Strict);
+        var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
+
+        adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
+        adapter.SetupGet(x => x.ProviderProduct).Returns("PAYMONGO_CHECKOUT_SESSION");
+        adapter
+            .Setup(x => x.VerifyWebhookAsync(It.IsAny<ProviderWebhookRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateAuthenticCheckoutSessionPaidVerificationResult());
+
+        providerSessions
+            .Setup(x => x.FindByProviderSessionIdAsync("PAYMONGO", "cs_293285f3347f5496c48332d8", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderSessionRecord?)null);
+
+        var handler = CreateHandler(adapter, repository, providerSessions, reporter);
+
+        var result = await handler.HandleAsync(CreateRequest(), CancellationToken.None);
+
+        Assert.False(result.Accepted);
+        Assert.Equal("WEBHOOK_UNKNOWN_PROVIDER_SESSION", result.Code);
+
+        repository.Verify(
+            x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        reporter.Verify(
+            x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private static VerifyProviderWebhookHandler CreateHandler(
         Mock<IPaymentProviderAdapter> adapter,
         Mock<IProviderWebhookEventRepository> repository,
+        Mock<ICentralPmsPaymentOutcomeReporter> reporter)
+    {
+        var providerSessions = new Mock<IProviderSessionRepository>(MockBehavior.Strict);
+        providerSessions
+            .Setup(x => x.FindByProviderSessionIdAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string providerCode, string providerSessionId, CancellationToken _) =>
+                CreateProviderSessionRecord(providerCode, providerSessionId));
+        providerSessions
+            .Setup(x => x.MarkWebhookOutcomeAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        return new VerifyProviderWebhookHandler(
+            NullLogger<VerifyProviderWebhookHandler>.Instance,
+            adapter.Object,
+            repository.Object,
+            providerSessions.Object,
+            reporter.Object);
+    }
+
+    private static VerifyProviderWebhookHandler CreateHandler(
+        Mock<IPaymentProviderAdapter> adapter,
+        Mock<IProviderWebhookEventRepository> repository,
+        Mock<IProviderSessionRepository> providerSessions,
         Mock<ICentralPmsPaymentOutcomeReporter> reporter)
     {
         return new VerifyProviderWebhookHandler(
             NullLogger<VerifyProviderWebhookHandler>.Instance,
             adapter.Object,
             repository.Object,
+            providerSessions.Object,
             reporter.Object);
+    }
+
+    private static ProviderSessionRecord CreateProviderSessionRecord(
+        string providerCode,
+        string providerSessionId,
+        long amountMinor = 5000,
+        string currency = "PHP",
+        Guid? paymentAttemptId = null)
+    {
+        return new ProviderSessionRecord(
+            Guid.Parse("10000000-0000-0000-0000-000000000001"),
+            paymentAttemptId ?? Guid.Parse("be88ff8e-90a7-45a7-bb7d-3505cfce9076"),
+            providerCode,
+            "PAYMONGO_CHECKOUT_SESSION",
+            providerSessionId,
+            providerSessionId,
+            "PENDING",
+            "https://checkout.paymongo.test/session",
+            null,
+            DateTimeOffset.Parse("2026-04-06T10:30:00Z"),
+            "test-idempotency-key",
+            null,
+            "{}",
+            "{}",
+            DateTimeOffset.Parse("2026-04-06T10:00:00Z"),
+            amountMinor,
+            currency);
     }
 
     private static ProviderWebhookRequest CreateRequest()

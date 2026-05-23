@@ -64,7 +64,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenTicketReferenceProvided_DoesNotRequireQrSourceMetadata()
     {
-        var state = new WebPayEndpointState("QRPH", "AUB", "PAYMONGO");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         using var client = CreateClient(state);
         var request = DefaultRequest("QRPH");
         request.PlateNumber = null;
@@ -74,11 +74,32 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("TICKET-FROM-FUTURE-QR-SCAN", state.CapturedTicketReference);
-        Assert.Equal("AUB_QRPH", state.CapturedPaymentProvider);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedPaymentProvider);
         Assert.Equal("QRPH", state.CapturedPaymentMethod);
         var body = await response.Content.ReadAsStringAsync();
         Assert.DoesNotContain("qrSource", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("camera", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies stale QRPH-to-AUB routing is rejected without creating an attempt or provider handoff.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenQrphRouteSelectsAub_ReturnsRoutingRegressionError()
+    {
+        var state = new WebPayEndpointState("QRPH", "AUB", "PAYMONGO");
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.False(state.CreatePaymentAttemptWasCalled);
+        Assert.Null(state.CapturedInitiateRequest);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.Equal("WEBPAY_QRPH_PROVIDER_ROUTE_REGRESSION", root.GetProperty("errorCode").GetString());
+        Assert.Equal("AUB", root.GetProperty("selectedProviderCode").GetString());
+        Assert.Equal("PAYMONGO", root.GetProperty("fallbackProviderCode").GetString());
     }
 
     /// <summary>
@@ -142,7 +163,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenCentralPmsReturnsActivePaymentAttemptConflict_Returns409()
     {
-        var state = new WebPayEndpointState("QRPH", "AUB", "PAYMONGO");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         state.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -547,6 +568,16 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             CancellationToken cancellationToken)
         {
             return Task.FromResult(LatestProviderSessionByPaymentAttempt);
+        }
+
+        public Task MarkWebhookOutcomeAsync(
+            string providerCode,
+            string providerSessionId,
+            string? providerReference,
+            string sessionStatus,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
         }
     }
 }

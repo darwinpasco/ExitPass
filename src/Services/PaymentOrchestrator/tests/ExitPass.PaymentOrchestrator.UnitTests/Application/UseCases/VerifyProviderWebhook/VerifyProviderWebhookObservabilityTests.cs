@@ -28,6 +28,7 @@ public sealed class VerifyProviderWebhookObservabilityTests
         using var listener = new ActivityCapture("ExitPass.PaymentOrchestrator.Application");
         var adapter = new Mock<IPaymentProviderAdapter>(MockBehavior.Strict);
         var repository = new Mock<IProviderWebhookEventRepository>(MockBehavior.Strict);
+        var providerSessions = new Mock<IProviderSessionRepository>(MockBehavior.Strict);
         var reporter = new Mock<ICentralPmsPaymentOutcomeReporter>(MockBehavior.Strict);
 
         adapter.SetupGet(x => x.ProviderCode).Returns("PAYMONGO");
@@ -58,6 +59,32 @@ public sealed class VerifyProviderWebhookObservabilityTests
             .ReturnsAsync(false);
         repository.Setup(x => x.AddAsync(It.IsAny<ProviderWebhookEventRecord>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        providerSessions.Setup(x => x.FindByProviderSessionIdAsync("PAYMONGO", "cs_observability_001", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderSessionRecord(
+                Guid.Parse("20000000-0000-0000-0000-000000000010"),
+                PaymentAttemptId,
+                "PAYMONGO",
+                "PAYMONGO_CHECKOUT_SESSION",
+                "cs_observability_001",
+                "cs_observability_001",
+                "PENDING",
+                null,
+                null,
+                null,
+                "observability",
+                CorrelationId,
+                "{}",
+                "{}",
+                DateTimeOffset.Parse("2026-05-14T08:00:00Z"),
+                10000,
+                "PHP"));
+        providerSessions.Setup(x => x.MarkWebhookOutcomeAsync(
+                "PAYMONGO",
+                "cs_observability_001",
+                "cs_observability_001",
+                "SUCCEEDED",
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         reporter.Setup(x => x.ReportVerifiedOutcomeAsync(It.IsAny<VerifiedPaymentOutcomeReport>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -65,6 +92,7 @@ public sealed class VerifyProviderWebhookObservabilityTests
             NullLogger<VerifyProviderWebhookHandler>.Instance,
             adapter.Object,
             repository.Object,
+            providerSessions.Object,
             reporter.Object);
 
         await sut.HandleAsync(

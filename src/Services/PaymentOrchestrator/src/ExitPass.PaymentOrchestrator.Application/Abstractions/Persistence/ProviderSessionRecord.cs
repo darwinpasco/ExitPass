@@ -29,6 +29,8 @@ namespace ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 /// <param name="RequestPayloadJson">The serialized request payload for evidence persistence.</param>
 /// <param name="ResponsePayloadJson">The serialized response payload for evidence persistence.</param>
 /// <param name="CreatedAtUtc">The creation timestamp in UTC.</param>
+/// <param name="AmountMinorUnits">The requested provider amount in minor currency units, when loaded from persistence.</param>
+/// <param name="CurrencyCode">The requested provider currency code, when loaded from persistence.</param>
 public sealed record ProviderSessionRecord(
     Guid ProviderSessionRecordId,
     Guid PaymentAttemptId,
@@ -44,4 +46,6 @@ public sealed record ProviderSessionRecord(
     Guid? CorrelationId,
     string RequestPayloadJson,
     string ResponsePayloadJson,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc,
+    long? AmountMinorUnits = null,
+    string? CurrencyCode = null);

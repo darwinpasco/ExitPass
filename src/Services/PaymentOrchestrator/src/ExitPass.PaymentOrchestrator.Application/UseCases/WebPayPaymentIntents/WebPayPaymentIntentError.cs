@@ -20,6 +20,9 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents
 /// <param name="SiteName">Optional parking site display name.</param>
 /// <param name="TicketReference">Optional ticket reference.</param>
 /// <param name="PlateNumber">Optional plate number.</param>
+/// <param name="SelectedProviderCode">Optional selected payment provider code for diagnostics.</param>
+/// <param name="FallbackProviderCode">Optional fallback payment provider code for diagnostics.</param>
+/// <param name="ProviderProduct">Optional provider product code for diagnostics.</param>
 public sealed record WebPayPaymentIntentError(
     int StatusCode,
     string ErrorCode,
@@ -35,4 +38,7 @@ public sealed record WebPayPaymentIntentError(
     string? Currency = null,
     string? SiteName = null,
     string? TicketReference = null,
-    string? PlateNumber = null);
+    string? PlateNumber = null,
+    string? SelectedProviderCode = null,
+    string? FallbackProviderCode = null,
+    string? ProviderProduct = null);

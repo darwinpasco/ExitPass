@@ -113,24 +113,38 @@ public static class WebPayPaymentIntentEndpoints
 
     private static object BuildErrorResponse(WebPayPaymentIntentError error)
     {
-        return new
+        var response = new Dictionary<string, object?>
         {
-            errorCode = error.ErrorCode,
-            message = error.Message,
-            retryable = error.Retryable,
-            correlationId = error.CorrelationId,
-            parkingSessionId = error.ParkingSessionId,
-            paymentAttemptId = error.PaymentAttemptId,
-            status = error.Status,
-            handoff = error.Handoff,
-            handoffUrl = error.Handoff?.HandoffUrl,
-            resumePaymentUrl = error.Handoff?.HandoffUrl,
-            paymentMethod = error.PaymentMethod,
-            amountMinorUnits = error.AmountMinorUnits,
-            currency = error.Currency,
-            siteName = error.SiteName,
-            ticketReference = error.TicketReference,
-            plateNumber = error.PlateNumber
+            ["errorCode"] = error.ErrorCode,
+            ["message"] = error.Message,
+            ["retryable"] = error.Retryable,
+            ["correlationId"] = error.CorrelationId,
+            ["parkingSessionId"] = error.ParkingSessionId,
+            ["paymentAttemptId"] = error.PaymentAttemptId,
+            ["status"] = error.Status,
+            ["handoff"] = error.Handoff,
+            ["handoffUrl"] = error.Handoff?.HandoffUrl,
+            ["resumePaymentUrl"] = error.Handoff?.HandoffUrl,
+            ["paymentMethod"] = error.PaymentMethod,
+            ["amountMinorUnits"] = error.AmountMinorUnits,
+            ["currency"] = error.Currency,
+            ["siteName"] = error.SiteName,
+            ["ticketReference"] = error.TicketReference,
+            ["plateNumber"] = error.PlateNumber
         };
+
+        AddIfNotBlank(response, "selectedProviderCode", error.SelectedProviderCode);
+        AddIfNotBlank(response, "fallbackProviderCode", error.FallbackProviderCode);
+        AddIfNotBlank(response, "providerProduct", error.ProviderProduct);
+
+        return response;
+    }
+
+    private static void AddIfNotBlank(Dictionary<string, object?> response, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            response[key] = value;
+        }
     }
 }

@@ -27,7 +27,8 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 /// </summary>
 public sealed class ProviderWebhookEventRepository : IProviderWebhookEventRepository
 {
-    private const string DuplicateCallbackConstraintName = "uq_provider_callbacks__rail_callback_ref";
+    private const string DuplicatePayloadConstraintName = "uq_provider_callbacks__payload_hash";
+    private const string PaymentOrchestratorServiceIdentityCode = "payment-orchestrator";
 
     private readonly string _connectionString;
     private readonly ILogger<ProviderWebhookEventRepository> _logger;
@@ -58,23 +59,19 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var paymentRailId = await ResolvePaymentRailIdByProviderCodeAsync(
-            connection,
-            providerCode,
-            cancellationToken);
-
         const string sql = """
             select exists (
                 select 1
-                from payments.provider_callbacks
-                where payment_rail_id = @payment_rail_id
-                  and callback_reference = @callback_reference
+                from payments.provider_callbacks pc
+                join payments.payment_rails pr on pr.payment_rail_id = pc.payment_rail_id
+                where pr.provider_code = @provider_code
+                  and pc.provider_event_ref = @provider_event_ref
             );
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
-        command.Parameters.AddWithValue("callback_reference", providerEventId);
+        command.Parameters.AddWithValue("provider_code", providerCode);
+        command.Parameters.AddWithValue("provider_event_ref", providerEventId);
 
         var scalar = await command.ExecuteScalarAsync(cancellationToken);
         return scalar is bool value && value;
@@ -90,17 +87,12 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        var paymentRailId = await ResolvePaymentRailIdByProviderCodeAsync(
-            connection,
-            record.ProviderCode,
-            cancellationToken);
-
-        Guid providerSessionId;
+        ProviderCallbackSessionContext sessionContext;
         try
         {
-            providerSessionId = await ResolveProviderSessionPrimaryKeyAsync(
+            sessionContext = await ResolveProviderCallbackSessionContextAsync(
                 connection,
-                paymentRailId,
+                record.ProviderCode,
                 record.ProviderSessionId,
                 cancellationToken);
         }
@@ -115,86 +107,85 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
             throw;
         }
 
-        var payloadJson = TryNormalizeJson(record.RawBodyJson);
         var payloadHash = ComputeSha256(record.RawBodyJson);
+        var headersHash = ComputeSha256(record.RawHeadersJson);
         var sourceIp = ParseSourceIp(record.RawHeadersJson);
-        var signatureKeyId = TryExtractSignatureKeyId(record.RawHeadersJson);
-        var signaturePresent = TryDetectSignaturePresence(record.RawHeadersJson);
         var processedAt = DateTimeOffset.UtcNow;
+        var serviceIdentityId = await ResolvePaymentOrchestratorServiceIdentityIdAsync(connection, cancellationToken);
 
         const string sql = """
             insert into payments.provider_callbacks
             (
                 provider_callback_id,
-                provider_session_id,
                 payment_rail_id,
-                callback_reference,
-                http_method,
-                source_ip,
-                signature_key_id,
-                signature_present,
-                signature_valid,
-                replay_detected,
-                provider_status_raw,
-                headers_json,
-                payload_json,
-                payload_text,
+                provider_session_id,
+                payment_attempt_id,
+                provider_event_ref,
+                provider_transaction_ref,
+                callback_type,
                 payload_hash,
+                payload_storage_ref,
+                headers_hash,
+                signature_valid,
+                timestamp_valid,
+                source_valid,
+                verification_status,
+                processing_status,
                 received_at,
                 processed_at,
-                processing_status,
-                processing_error_code,
+                failure_reason_code,
+                correlation_id,
                 created_at,
-                created_by
+                created_by_service_identity_id
             )
             values
             (
                 @provider_callback_id,
-                @provider_session_id,
                 @payment_rail_id,
-                @callback_reference,
-                @http_method,
-                @source_ip,
-                @signature_key_id,
-                @signature_present,
-                @signature_valid,
-                @replay_detected,
-                @provider_status_raw,
-                cast(@headers_json as jsonb),
-                cast(@payload_json as jsonb),
-                @payload_text,
+                @provider_session_id,
+                @payment_attempt_id,
+                @provider_event_ref,
+                @provider_transaction_ref,
+                @callback_type,
                 @payload_hash,
+                @payload_storage_ref,
+                @headers_hash,
+                @signature_valid,
+                @timestamp_valid,
+                @source_valid,
+                cast(@verification_status as payments.provider_callback_verification_status_enum),
+                cast(@processing_status as payments.provider_callback_processing_status_enum),
                 @received_at,
                 @processed_at,
-                cast(@processing_status as payments.provider_callback_processing_status_enum),
-                @processing_error_code,
+                @failure_reason_code,
+                @correlation_id,
                 @created_at,
-                @created_by
+                @created_by_service_identity_id
             );
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("provider_callback_id", record.ProviderWebhookEventRecordId);
-        command.Parameters.AddWithValue("provider_session_id", providerSessionId);
-        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
-        command.Parameters.AddWithValue("callback_reference", record.ProviderEventId);
-        command.Parameters.AddWithValue("http_method", "POST");
-        command.Parameters.AddWithValue("source_ip", (object?)sourceIp ?? DBNull.Value);
-        command.Parameters.AddWithValue("signature_key_id", (object?)signatureKeyId ?? DBNull.Value);
-        command.Parameters.AddWithValue("signature_present", signaturePresent);
-        command.Parameters.AddWithValue("signature_valid", record.IsAuthentic);
-        command.Parameters.AddWithValue("replay_detected", record.IsDuplicate);
-        command.Parameters.AddWithValue("provider_status_raw", record.ProviderEventType);
-        command.Parameters.AddWithValue("headers_json", record.RawHeadersJson);
-        command.Parameters.AddWithValue("payload_json", payloadJson);
-        command.Parameters.AddWithValue("payload_text", record.RawBodyJson);
+        command.Parameters.AddWithValue("payment_rail_id", sessionContext.PaymentRailId);
+        command.Parameters.AddWithValue("provider_session_id", sessionContext.ProviderSessionId);
+        command.Parameters.AddWithValue("payment_attempt_id", sessionContext.PaymentAttemptId);
+        command.Parameters.AddWithValue("provider_event_ref", record.ProviderEventId);
+        command.Parameters.AddWithValue("provider_transaction_ref", record.ProviderReference);
+        command.Parameters.AddWithValue("callback_type", record.ProviderEventType);
         command.Parameters.AddWithValue("payload_hash", payloadHash);
+        command.Parameters.AddWithValue("payload_storage_ref", DBNull.Value);
+        command.Parameters.AddWithValue("headers_hash", headersHash);
+        command.Parameters.AddWithValue("signature_valid", record.IsAuthentic);
+        command.Parameters.AddWithValue("timestamp_valid", DBNull.Value);
+        command.Parameters.AddWithValue("source_valid", sourceIp is null ? DBNull.Value : true);
+        command.Parameters.AddWithValue("verification_status", NormalizeVerificationStatus(record.IsAuthentic));
+        command.Parameters.AddWithValue("processing_status", NormalizeProcessingStatus(record.IsAuthentic));
         command.Parameters.AddWithValue("received_at", record.ReceivedAtUtc);
         command.Parameters.AddWithValue("processed_at", processedAt);
-        command.Parameters.AddWithValue("processing_status", NormalizeProcessingStatus(record.IsAuthentic));
-        command.Parameters.AddWithValue("processing_error_code", DBNull.Value);
+        command.Parameters.AddWithValue("failure_reason_code", DBNull.Value);
+        command.Parameters.AddWithValue("correlation_id", DBNull.Value);
         command.Parameters.AddWithValue("created_at", record.ReceivedAtUtc);
-        command.Parameters.AddWithValue("created_by", "payment-orchestrator");
+        command.Parameters.AddWithValue("created_by_service_identity_id", serviceIdentityId);
 
         try
         {
@@ -202,10 +193,10 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         }
         catch (PostgresException ex) when (
             ex.SqlState == "23505" &&
-            string.Equals(ex.ConstraintName, DuplicateCallbackConstraintName, StringComparison.Ordinal))
+            string.Equals(ex.ConstraintName, DuplicatePayloadConstraintName, StringComparison.Ordinal))
         {
             _logger.LogInformation(
-                "Detected duplicate provider callback during insert. ProviderCode {ProviderCode}, CallbackReference {CallbackReference}",
+                "Detected duplicate provider callback payload during insert. ProviderCode {ProviderCode}, CallbackReference {CallbackReference}",
                 record.ProviderCode,
                 record.ProviderEventId);
 
@@ -218,19 +209,6 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
             record.ProviderCode,
             record.ProviderEventId,
             record.IsDuplicate);
-    }
-
-    private static string TryNormalizeJson(string rawBody)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(rawBody);
-            return JsonSerializer.Serialize(document.RootElement);
-        }
-        catch
-        {
-            return "{}";
-        }
     }
 
     private static string ComputeSha256(string value)
@@ -297,62 +275,77 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         }
     }
 
+    private static string NormalizeVerificationStatus(bool isAuthentic)
+    {
+        return isAuthentic ? "VERIFIED" : "FAILED_SIGNATURE";
+    }
+
     private static string NormalizeProcessingStatus(bool isAuthentic)
     {
-        return isAuthentic ? "VERIFIED" : "REJECTED";
+        return isAuthentic ? "PROCESSED" : "REJECTED";
     }
 
-    private static async Task<Guid> ResolvePaymentRailIdByProviderCodeAsync(
+    private static async Task<ProviderCallbackSessionContext> ResolveProviderCallbackSessionContextAsync(
         NpgsqlConnection connection,
         string providerCode,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            select payment_rail_id
-            from payments.payment_rails
-            where provider_name = @provider_name
-              and is_enabled = true
-            order by priority_rank asc
-            limit 1;
-            """;
-
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("provider_name", providerCode);
-
-        var scalar = await command.ExecuteScalarAsync(cancellationToken);
-        if (scalar is Guid paymentRailId)
-        {
-            return paymentRailId;
-        }
-
-        throw new InvalidOperationException(
-            $"No enabled payment rail found for provider_name '{providerCode}'.");
-    }
-
-    private static async Task<Guid> ResolveProviderSessionPrimaryKeyAsync(
-        NpgsqlConnection connection,
-        Guid paymentRailId,
         string providerSessionRef,
         CancellationToken cancellationToken)
     {
         const string sql = """
-            select provider_session_id
-            from payments.provider_sessions
-            where payment_rail_id = @payment_rail_id
-              and provider_session_ref = @provider_session_ref
+            select
+                ps.provider_session_id,
+                ps.payment_attempt_id,
+                ps.payment_rail_id
+            from payments.provider_sessions ps
+            join payments.payment_rails pr on pr.payment_rail_id = ps.payment_rail_id
+            where pr.provider_code = @provider_code
+              and ps.provider_session_ref = @provider_session_ref
             limit 1;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
+        command.Parameters.AddWithValue("provider_code", providerCode);
         command.Parameters.AddWithValue("provider_session_ref", providerSessionRef);
 
-        var scalar = await command.ExecuteScalarAsync(cancellationToken);
-        if (scalar is Guid providerSessionId)
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (await reader.ReadAsync(cancellationToken))
         {
-            return providerSessionId;
+            return new ProviderCallbackSessionContext(
+                reader.GetGuid(0),
+                reader.GetGuid(1),
+                reader.GetGuid(2));
         }
 
         throw new UnknownProviderSessionException(providerSessionRef);
     }
+
+    private static async Task<Guid> ResolvePaymentOrchestratorServiceIdentityIdAsync(
+        NpgsqlConnection connection,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            select service_identity_id
+            from identity.service_identities
+            where service_identity_code = @service_identity_code
+              and identity_status = 'ACTIVE'
+            limit 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("service_identity_code", PaymentOrchestratorServiceIdentityCode);
+
+        var scalar = await command.ExecuteScalarAsync(cancellationToken);
+        if (scalar is Guid serviceIdentityId)
+        {
+            return serviceIdentityId;
+        }
+
+        throw new InvalidOperationException(
+            $"Active service identity '{PaymentOrchestratorServiceIdentityCode}' was not found.");
+    }
+
+    private readonly record struct ProviderCallbackSessionContext(
+        Guid ProviderSessionId,
+        Guid PaymentAttemptId,
+        Guid PaymentRailId);
 }

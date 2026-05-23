@@ -36,10 +36,13 @@ public sealed class VerifyProviderWebhookHandler
     private const string PayMongoProviderCode = "PAYMONGO";
     private const string PayMongoCheckoutSessionProduct = "PAYMONGO_CHECKOUT_SESSION";
     private const string NonAuthoritativePaymentPaidEvent = "payment.paid";
+    private static readonly Guid PaymentOrchestratorServiceIdentityId =
+        Guid.Parse("d47280c6-5e0f-528d-8b22-f026e13f9cd6");
 
     private readonly ILogger<VerifyProviderWebhookHandler> _logger;
     private readonly IPaymentProviderAdapter _adapter;
     private readonly IProviderWebhookEventRepository _providerWebhookEventRepository;
+    private readonly IProviderSessionRepository _providerSessionRepository;
     private readonly ICentralPmsPaymentOutcomeReporter _centralPmsPaymentOutcomeReporter;
 
     /// <summary>
@@ -48,16 +51,19 @@ public sealed class VerifyProviderWebhookHandler
     /// <param name="logger">The logger.</param>
     /// <param name="adapter">The payment provider adapter.</param>
     /// <param name="providerWebhookEventRepository">The provider webhook event repository.</param>
+    /// <param name="providerSessionRepository">The provider session repository.</param>
     /// <param name="centralPmsPaymentOutcomeReporter">The Central PMS payment outcome reporter.</param>
     public VerifyProviderWebhookHandler(
         ILogger<VerifyProviderWebhookHandler> logger,
         IPaymentProviderAdapter adapter,
         IProviderWebhookEventRepository providerWebhookEventRepository,
+        IProviderSessionRepository providerSessionRepository,
         ICentralPmsPaymentOutcomeReporter centralPmsPaymentOutcomeReporter)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _providerWebhookEventRepository = providerWebhookEventRepository ?? throw new ArgumentNullException(nameof(providerWebhookEventRepository));
+        _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
         _centralPmsPaymentOutcomeReporter = centralPmsPaymentOutcomeReporter ?? throw new ArgumentNullException(nameof(centralPmsPaymentOutcomeReporter));
     }
 
@@ -127,6 +133,25 @@ public sealed class VerifyProviderWebhookHandler
             return VerifyProviderWebhookResult.CreateRejected(resolvedRejectionCode);
         }
 
+        var providerSession = await _providerSessionRepository.FindByProviderSessionIdAsync(
+            _adapter.ProviderCode,
+            verification.ProviderSessionId,
+            cancellationToken);
+        if (!TryValidateProviderSession(providerSession, verification, out var validationRejectionCode))
+        {
+            var resolvedRejectionCode = validationRejectionCode ?? "WEBHOOK_PROVIDER_SESSION_INVALID";
+
+            _logger.LogWarning(
+                "Rejected verified provider webhook because provider session validation failed. ProviderCode {ProviderCode}, EventId {EventId}, ProviderSessionId {ProviderSessionId}, RejectionCode {RejectionCode}",
+                _adapter.ProviderCode,
+                verification.EventId,
+                verification.ProviderSessionId,
+                resolvedRejectionCode);
+
+            TagRejected(activity, resolvedRejectionCode);
+            return VerifyProviderWebhookResult.CreateRejected(resolvedRejectionCode);
+        }
+
         var isDuplicate = await _providerWebhookEventRepository.ExistsByProviderEventIdAsync(
             _adapter.ProviderCode,
             verification.EventId,
@@ -182,6 +207,28 @@ public sealed class VerifyProviderWebhookHandler
             _logger.LogWarning(
                 exception,
                 "Rejected provider webhook because the provider session is unknown. ProviderCode {ProviderCode}, EventId {EventId}, ProviderSessionId {ProviderSessionId}",
+                _adapter.ProviderCode,
+                verification.EventId,
+                verification.ProviderSessionId);
+
+            TagRejected(activity, "WEBHOOK_UNKNOWN_PROVIDER_SESSION");
+            return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_UNKNOWN_PROVIDER_SESSION");
+        }
+
+        try
+        {
+            await _providerSessionRepository.MarkWebhookOutcomeAsync(
+                _adapter.ProviderCode,
+                verification.ProviderSessionId,
+                verification.ProviderReference,
+                verification.CanonicalStatus.ToString().ToUpperInvariant(),
+                cancellationToken);
+        }
+        catch (UnknownProviderSessionException exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Rejected provider webhook because the provider session disappeared before outcome update. ProviderCode {ProviderCode}, EventId {EventId}, ProviderSessionId {ProviderSessionId}",
                 _adapter.ProviderCode,
                 verification.EventId,
                 verification.ProviderSessionId);
@@ -270,12 +317,7 @@ public sealed class VerifyProviderWebhookHandler
             return false;
         }
 
-        if (!TryGetRequiredGuid(rawAttributes, "requested_by_user_id", out var requestedByUserId))
-        {
-            report = null;
-            rejectionCode = "WEBHOOK_MISSING_REQUESTED_BY_USER_ID";
-            return false;
-        }
+        var requestedByUserId = ResolveRequestedByUserId(rawAttributes);
 
         report = new VerifiedPaymentOutcomeReport(
             PaymentAttemptId: verification.PaymentAttemptId,
@@ -293,6 +335,49 @@ public sealed class VerifyProviderWebhookHandler
             IsTerminal: verification.IsTerminal,
             IsSuccess: verification.IsSuccess,
             RawAttributes: rawAttributes);
+
+        rejectionCode = null;
+        return true;
+    }
+
+    private static Guid ResolveRequestedByUserId(IReadOnlyDictionary<string, string> rawAttributes)
+    {
+        return TryGetRequiredGuid(rawAttributes, "requested_by_user_id", out var requestedByUserId)
+            ? requestedByUserId
+            : PaymentOrchestratorServiceIdentityId;
+    }
+
+    private static bool TryValidateProviderSession(
+        ProviderSessionRecord? providerSession,
+        ProviderWebhookVerificationResult verification,
+        out string? rejectionCode)
+    {
+        if (providerSession is null)
+        {
+            rejectionCode = "WEBHOOK_UNKNOWN_PROVIDER_SESSION";
+            return false;
+        }
+
+        if (providerSession.PaymentAttemptId != Guid.Empty &&
+            providerSession.PaymentAttemptId != verification.PaymentAttemptId)
+        {
+            rejectionCode = "WEBHOOK_PAYMENT_ATTEMPT_MISMATCH";
+            return false;
+        }
+
+        if (providerSession.AmountMinorUnits is long expectedAmount &&
+            expectedAmount != verification.AmountMinor)
+        {
+            rejectionCode = "WEBHOOK_AMOUNT_MISMATCH";
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(providerSession.CurrencyCode) &&
+            !string.Equals(providerSession.CurrencyCode, verification.Currency, StringComparison.OrdinalIgnoreCase))
+        {
+            rejectionCode = "WEBHOOK_CURRENCY_MISMATCH";
+            return false;
+        }
 
         rejectionCode = null;
         return true;

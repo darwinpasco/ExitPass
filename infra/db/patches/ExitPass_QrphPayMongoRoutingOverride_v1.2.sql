@@ -1,5 +1,5 @@
 -- ExitPass v1.2 local/testing QRPH routing override.
--- Use PayMongo for QRPH until AUB test API credentials are available.
+-- WebPay QRPH/PHP must route to PayMongo for the current integration slice.
 
 UPDATE payments.payment_provider_routing_policies
 SET
