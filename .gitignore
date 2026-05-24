@@ -39,3 +39,4 @@ infra/docker/docker-compose.override.yml
 
 # Vite local cache
 src/Services/WebPayUi/.vite/
+/scripts/dev-data/webpay-20260523-payment-finalization-diagnostics.sql
