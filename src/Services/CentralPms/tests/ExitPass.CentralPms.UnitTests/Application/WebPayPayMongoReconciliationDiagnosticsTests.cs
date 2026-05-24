@@ -93,6 +93,41 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         Assert.DoesNotContain("AUB", readSql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ExceptionResolutionWorkflowScripts_UseWorkflowTablesAndAvoidPaymentTruthMutation()
+    {
+        var script = ReadRepoFile("scripts", "dev-data", "Resolve-WebPayPayMongoReconciliationException.ps1");
+        var addNoteSql = ReadRepoFile("scripts", "dev-data", "add-webpay-paymongo-reconciliation-exception-note.sql");
+        var submitSql = ReadRepoFile("scripts", "dev-data", "submit-webpay-paymongo-reconciliation-resolution-request.sql");
+        var decideSql = ReadRepoFile("scripts", "dev-data", "decide-webpay-paymongo-reconciliation-resolution-request.sql");
+        var readSql = ReadRepoFile("scripts", "dev-data", "read-webpay-paymongo-reconciliation-workflow.sql");
+        var allSql = string.Join('\n', addNoteSql, submitSql, decideSql, readSql);
+
+        Assert.Contains("[switch] $AddNote", script, StringComparison.Ordinal);
+        Assert.Contains("[switch] $SubmitResolutionRequest", script, StringComparison.Ordinal);
+        Assert.Contains("[switch] $ApproveResolutionRequest", script, StringComparison.Ordinal);
+        Assert.Contains("[switch] $RejectResolutionRequest", script, StringComparison.Ordinal);
+        Assert.Contains("[switch] $ReadWorkflow", script, StringComparison.Ordinal);
+        Assert.Contains("RECONCILIATION_EXCEPTION_NOT_FOUND", script, StringComparison.Ordinal);
+        Assert.Contains("RECONCILIATION_RESOLUTION_REQUEST_NOT_FOUND", script, StringComparison.Ordinal);
+        Assert.Contains("FINANCIAL_IMPACT_REQUIRED", script, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_exception_notes", addNoteSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_exception_resolution_requests", submitSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_exception_resolution_approvals", decideSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_exception_status_history", allSql, StringComparison.Ordinal);
+        Assert.Contains("request_status = ia.approval_decision::text::reconciliation.reconciliation_resolution_request_status_enum", decideSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AUB", allSql, StringComparison.OrdinalIgnoreCase);
+
+        Assert.DoesNotContain("UPDATE core.payment_attempts", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE payments.provider_sessions", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.payment_confirmations", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.exit_authorizations", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE gates.gate_authorization_consumptions", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO audit.", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO events.", allSql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [MemberData(nameof(ClassificationCases))]
     public void Classify_WhenGivenPaymentProviderAndExitEvidence_ReturnsExpectedClassification(
