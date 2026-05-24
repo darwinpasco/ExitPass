@@ -23,6 +23,7 @@ builder.Services
     .AddCheck("self", () => HealthCheckResult.Healthy("Gate Integration Service is alive."));
 
 builder.Services.AddScoped<IConsumeGateExitAuthorizationUseCase, ConsumeGateExitAuthorizationHandler>();
+builder.Services.AddSingleton<GateIntegrationMetrics>();
 builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 {
     var baseUrl = builder.Configuration["Integrations:CentralPms:BaseUrl"] ?? "http://localhost:8080";

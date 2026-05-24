@@ -1,6 +1,7 @@
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
+using ExitPass.PaymentOrchestrator.Application.Observability;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text.Json;
@@ -44,6 +45,7 @@ public sealed class VerifyProviderWebhookHandler
     private readonly IProviderWebhookEventRepository _providerWebhookEventRepository;
     private readonly IProviderSessionRepository _providerSessionRepository;
     private readonly ICentralPmsPaymentOutcomeReporter _centralPmsPaymentOutcomeReporter;
+    private readonly PaymentOrchestratorMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="VerifyProviderWebhookHandler"/> class.
@@ -58,13 +60,15 @@ public sealed class VerifyProviderWebhookHandler
         IPaymentProviderAdapter adapter,
         IProviderWebhookEventRepository providerWebhookEventRepository,
         IProviderSessionRepository providerSessionRepository,
-        ICentralPmsPaymentOutcomeReporter centralPmsPaymentOutcomeReporter)
+        ICentralPmsPaymentOutcomeReporter centralPmsPaymentOutcomeReporter,
+        PaymentOrchestratorMetrics? metrics = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
         _providerWebhookEventRepository = providerWebhookEventRepository ?? throw new ArgumentNullException(nameof(providerWebhookEventRepository));
         _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
         _centralPmsPaymentOutcomeReporter = centralPmsPaymentOutcomeReporter ?? throw new ArgumentNullException(nameof(centralPmsPaymentOutcomeReporter));
+        _metrics = metrics ?? new PaymentOrchestratorMetrics();
     }
 
     /// <summary>
@@ -82,6 +86,7 @@ public sealed class VerifyProviderWebhookHandler
         using var activity = ActivitySource.StartActivity("VerifyProviderWebhook");
         activity?.SetTag("provider.code", _adapter.ProviderCode);
         activity?.SetTag("provider.product", _adapter.ProviderProduct);
+        _metrics.ProviderWebhookReceived(_adapter.ProviderCode, _adapter.ProviderProduct);
 
         var verification = await _adapter.VerifyWebhookAsync(request, cancellationToken);
 
@@ -101,6 +106,8 @@ public sealed class VerifyProviderWebhookHandler
             TagRejected(activity, "WEBHOOK_NOT_AUTHENTIC");
             return VerifyProviderWebhookResult.CreateRejected("WEBHOOK_NOT_AUTHENTIC");
         }
+
+        _metrics.ProviderWebhookVerified(_adapter.ProviderCode, _adapter.ProviderProduct, verification.EventType);
 
         if (ShouldIgnoreAsNonAuthoritativeEvent(verification.EventType))
         {
@@ -168,6 +175,8 @@ public sealed class VerifyProviderWebhookHandler
             activity?.SetTag("webhook.duplicate", true);
             activity?.SetTag("webhook.ignored", false);
 
+            _metrics.ProviderWebhookDuplicateIgnored(_adapter.ProviderCode, _adapter.ProviderProduct);
+
             return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
         }
 
@@ -199,6 +208,8 @@ public sealed class VerifyProviderWebhookHandler
             activity?.SetTag("webhook.accepted", true);
             activity?.SetTag("webhook.duplicate", true);
             activity?.SetTag("webhook.ignored", false);
+
+            _metrics.ProviderWebhookDuplicateIgnored(_adapter.ProviderCode, _adapter.ProviderProduct);
 
             return VerifyProviderWebhookResult.CreateAcceptedDuplicate(verification.EventId);
         }
@@ -258,7 +269,18 @@ public sealed class VerifyProviderWebhookHandler
         var resolvedReport = report ?? throw new InvalidOperationException(
             "Verified payment outcome report must be created before reporting to Central PMS.");
 
-        await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(resolvedReport, cancellationToken);
+        try
+        {
+            await _centralPmsPaymentOutcomeReporter.ReportVerifiedOutcomeAsync(resolvedReport, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _metrics.ProviderWebhookFinalizationFailed(
+                _adapter.ProviderCode,
+                _adapter.ProviderProduct,
+                exception.GetType().Name);
+            throw;
+        }
 
         _logger.LogInformation(
             "Reported verified provider outcome to Central PMS. ProviderCode {ProviderCode}, EventId {EventId}, PaymentAttemptId {PaymentAttemptId}, CanonicalStatus {CanonicalStatus}",

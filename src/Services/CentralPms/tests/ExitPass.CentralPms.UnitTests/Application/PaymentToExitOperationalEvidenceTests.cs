@@ -124,6 +124,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
         var recordGateway = Substitute.For<IRecordPaymentConfirmationGateway>();
         var finalizeUseCase = Substitute.For<IFinalizePaymentAttemptUseCase>();
         var issueUseCase = Substitute.For<IIssueExitAuthorizationUseCase>();
+        var eventPublisher = Substitute.For<IIntegrationEventPublisher>();
         var clock = Substitute.For<ISystemClock>();
         clock.UtcNow.Returns(Now);
 
@@ -151,6 +152,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
             recordGateway,
             finalizeUseCase,
             issueUseCase,
+            eventPublisher,
             clock,
             NullLogger<ReportVerifiedPaymentOutcomeHandler>.Instance);
 
@@ -174,6 +176,75 @@ public sealed class PaymentToExitOperationalEvidenceTests
         AssertTag(activity, "final_status", "CONFIRMED");
         AssertTag(activity, "exit_authorization_id", ExitAuthorizationId);
         AssertTag(activity, "outcome", "exit_authorization_issued");
+
+        await eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => x.EventType == IntegrationEventTypes.PaymentConfirmationRecorded),
+            Arg.Any<CancellationToken>());
+        await eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => x.EventType == IntegrationEventTypes.PaymentAttemptConfirmed),
+            Arg.Any<CancellationToken>());
+        await eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => x.EventType == IntegrationEventTypes.PaymentFinalityReportedToCentralPms),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_WhenEventPublishingFails_StillReturnsAuthoritativeFinality()
+    {
+        var recordGateway = Substitute.For<IRecordPaymentConfirmationGateway>();
+        var finalizeUseCase = Substitute.For<IFinalizePaymentAttemptUseCase>();
+        var issueUseCase = Substitute.For<IIssueExitAuthorizationUseCase>();
+        var eventPublisher = Substitute.For<IIntegrationEventPublisher>();
+        var clock = Substitute.For<ISystemClock>();
+        clock.UtcNow.Returns(Now);
+
+        recordGateway.RecordAsync(Arg.Any<RecordPaymentConfirmationCommand>(), Now, Arg.Any<CancellationToken>())
+            .Returns(new RecordPaymentConfirmationResult(
+                Guid.Parse("10000000-0000-0000-0000-000000000007"),
+                PaymentAttemptId,
+                "evt-provider-001",
+                "SUCCEEDED",
+                "VERIFIED",
+                Now));
+        finalizeUseCase.ExecuteAsync(Arg.Any<FinalizePaymentAttemptCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new FinalizePaymentAttemptResult(PaymentAttemptId, "CONFIRMED"));
+        issueUseCase.ExecuteAsync(Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new IssueExitAuthorizationResult(
+                ExitAuthorizationId,
+                ParkingSessionId,
+                PaymentAttemptId,
+                "AUTH-001",
+                "ISSUED",
+                Now,
+                Now.AddMinutes(15)));
+        eventPublisher
+            .PublishAsync(Arg.Any<IntegrationEventEnvelope>(), Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("RabbitMQ unavailable"));
+
+        var sut = new ReportVerifiedPaymentOutcomeHandler(
+            recordGateway,
+            finalizeUseCase,
+            issueUseCase,
+            eventPublisher,
+            clock,
+            NullLogger<ReportVerifiedPaymentOutcomeHandler>.Instance);
+
+        var result = await sut.ExecuteAsync(
+            new ReportVerifiedPaymentOutcomeCommand(
+                PaymentAttemptId,
+                ParkingSessionId,
+                "evt-provider-001",
+                "SUCCEEDED",
+                "CONFIRMED",
+                "payment-orchestrator",
+                RequestedByUserId,
+                CorrelationId),
+            CancellationToken.None);
+
+        Assert.Equal(PaymentAttemptId, result.PaymentAttemptId);
+        Assert.Equal("CONFIRMED", result.AttemptStatus);
+        Assert.Equal(ExitAuthorizationId, result.ExitAuthorizationId);
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
     }
 
     [Fact]
@@ -195,6 +266,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
 
         var sut = new IssueExitAuthorizationHandler(
             gateway,
+            Substitute.For<IIntegrationEventPublisher>(),
             clock,
             new CentralPmsMetrics(),
             NullLogger<IssueExitAuthorizationHandler>.Instance);

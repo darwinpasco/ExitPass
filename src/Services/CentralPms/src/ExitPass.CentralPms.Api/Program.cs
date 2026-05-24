@@ -258,7 +258,7 @@ static void ConfigureApplicationServices(
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
-    builder.Services.AddCentralPmsEventPublishing(builder.Configuration);
+    builder.Services.AddCentralPmsEventPublishing(builder.Configuration, mainDatabaseConnectionString);
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();

@@ -5,6 +5,7 @@ using ExitPass.PaymentOrchestrator.Contracts.Internal;
 using ExitPass.PaymentOrchestrator.Contracts.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Routing;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
+using ExitPass.PaymentOrchestrator.Application.Observability;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -26,6 +27,7 @@ public sealed class WebPayPaymentIntentHandler
     private readonly IProviderSessionRepository _providerSessionRepository;
     private readonly WebPayReturnUrlOptions _returnUrlOptions;
     private readonly ILogger<WebPayPaymentIntentHandler> _logger;
+    private readonly PaymentOrchestratorMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="WebPayPaymentIntentHandler"/> class.
@@ -44,7 +46,8 @@ public sealed class WebPayPaymentIntentHandler
         IProviderPaymentHandoffInitiator handoffInitiator,
         IProviderSessionRepository providerSessionRepository,
         IOptions<WebPayReturnUrlOptions> returnUrlOptions,
-        ILogger<WebPayPaymentIntentHandler> logger)
+        ILogger<WebPayPaymentIntentHandler> logger,
+        PaymentOrchestratorMetrics? metrics = null)
     {
         _centralPmsClient = centralPmsClient ?? throw new ArgumentNullException(nameof(centralPmsClient));
         _routingPolicyResolver = routingPolicyResolver ?? throw new ArgumentNullException(nameof(routingPolicyResolver));
@@ -53,6 +56,7 @@ public sealed class WebPayPaymentIntentHandler
         _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
         _returnUrlOptions = returnUrlOptions?.Value ?? throw new ArgumentNullException(nameof(returnUrlOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _metrics = metrics ?? new PaymentOrchestratorMetrics();
     }
 
     /// <summary>
@@ -177,6 +181,11 @@ public sealed class WebPayPaymentIntentHandler
 
         if (attemptResolution.Error is not null)
         {
+            if (IsActivePaymentAttemptConflictCode(attemptResolution.Error.ErrorCode))
+            {
+                _metrics.ActivePaymentAttemptConflict(paymentMethod, route.SelectedProviderCode);
+            }
+
             return WebPayPaymentIntentResult.Failure(attemptResolution.Error);
         }
 
@@ -265,6 +274,8 @@ public sealed class WebPayPaymentIntentHandler
         }
         catch (InvalidOperationException exception)
         {
+            _metrics.ProviderCheckoutCreationFailed(route.SelectedProviderCode, providerProduct, exception.GetType().Name);
+
             _logger.LogError(
                 exception,
                 "Failed to initiate WebPay provider handoff. PaymentMethod {PaymentMethod}, SelectedProviderCode {SelectedProviderCode}, FallbackProviderCode {FallbackProviderCode}, ProviderProduct {ProviderProduct}, PaymentAttemptId {PaymentAttemptId}, CorrelationId {CorrelationId}",
@@ -285,6 +296,8 @@ public sealed class WebPayPaymentIntentHandler
                 correlationId,
                 attempt.PaymentAttemptId));
         }
+
+        _metrics.WebPayPaymentIntentCreated(paymentMethod, route.SelectedProviderCode);
 
         return WebPayPaymentIntentResult.Success(new WebPayPaymentIntentResponse
         {
@@ -648,6 +661,11 @@ public sealed class WebPayPaymentIntentHandler
     {
         return error?.StatusCode == 409 &&
             string.Equals(error.ErrorCode, ActivePaymentAttemptExists, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsActivePaymentAttemptConflictCode(string? errorCode)
+    {
+        return string.Equals(errorCode, ActivePaymentAttemptExists, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildIdempotencyKey(Guid parkingSessionId, string paymentMethod, Guid correlationId)

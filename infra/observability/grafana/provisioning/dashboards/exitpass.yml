@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: ExitPass
+    orgId: 1
+    folder: ExitPass
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards/exitpass

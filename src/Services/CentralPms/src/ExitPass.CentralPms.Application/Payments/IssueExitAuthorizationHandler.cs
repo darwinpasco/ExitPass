@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         new("ExitPass.CentralPms.Application.Payments");
 
     private readonly IIssueExitAuthorizationGateway _gateway;
+    private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly ISystemClock _systemClock;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<IssueExitAuthorizationHandler> _logger;
@@ -43,16 +45,19 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     /// Creates a handler for issuing exit authorizations through the canonical DB routine.
     /// </summary>
     /// <param name="gateway">DB-backed issuance gateway.</param>
+    /// <param name="eventPublisher">Best-effort integration event publisher for already-issued authorizations.</param>
     /// <param name="systemClock">System clock used for canonical request timestamps.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
     public IssueExitAuthorizationHandler(
         IIssueExitAuthorizationGateway gateway,
+        IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
         ILogger<IssueExitAuthorizationHandler> logger)
     {
         _gateway = gateway;
+        _eventPublisher = eventPublisher;
         _systemClock = systemClock;
         _metrics = metrics;
         _logger = logger;
@@ -116,6 +121,10 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
 
             _metrics.ExitAuthorizationIssued();
 
+            await PublishBestEffortAsync(
+                CreateExitAuthorizationIssuedEvent(command, dbResult),
+                cancellationToken);
+
             _logger.LogInformation(
                 "Exit authorization issued successfully. exit_authorization_id={ExitAuthorizationId} authorization_status={AuthorizationStatus}",
                 dbResult.ExitAuthorizationId,
@@ -136,6 +145,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.AddException(ex);
             activity?.SetTag("rejection_reason", "INVALID_REQUEST");
 
+            _metrics.ExitAuthorizationIssuanceFailed("INVALID_REQUEST");
             _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
@@ -150,6 +160,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.AddException(ex);
             activity?.SetTag("rejection_reason", ex.GetType().Name);
 
+            _metrics.ExitAuthorizationIssuanceFailed(ex.GetType().Name);
             _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 
             _logger.LogWarning(
@@ -163,6 +174,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
 
+            _metrics.ExitAuthorizationIssuanceFailed("UNEXPECTED_FAILURE");
             _metrics.ExceptionObserved(ex.GetType().Name, "ISSUE_EXIT_AUTHORIZATION");
 
             _logger.LogError(
@@ -199,6 +211,48 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         if (command.CorrelationId == Guid.Empty)
         {
             throw new ArgumentException("CorrelationId is required.", nameof(command));
+        }
+    }
+
+    private IntegrationEventEnvelope CreateExitAuthorizationIssuedEvent(
+        IssueExitAuthorizationCommand command,
+        IssueExitAuthorizationDbResult dbResult)
+    {
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.ExitAuthorizationIssued,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = dbResult.ExitAuthorizationId.ToString(),
+            AggregateType = "ExitAuthorization",
+            Payload = new ExitAuthorizationIssuedPayload
+            {
+                ExitAuthorizationId = dbResult.ExitAuthorizationId,
+                ParkingSessionId = dbResult.ParkingSessionId,
+                PaymentAttemptId = dbResult.PaymentAttemptId,
+                AuthorizationStatus = dbResult.AuthorizationStatus,
+                IssuedAtUtc = dbResult.IssuedAt,
+                ExpirationTimestampUtc = dbResult.ExpirationTimestamp
+            }
+        };
+    }
+
+    private async Task PublishBestEffortAsync(
+        IntegrationEventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _eventPublisher.PublishAsync(envelope, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Non-authoritative integration event publication failed after exit authorization issuance. event_type={EventType} event_id={EventId} correlation_id={CorrelationId}",
+                envelope.EventType,
+                envelope.EventId,
+                envelope.CorrelationId);
         }
     }
 }

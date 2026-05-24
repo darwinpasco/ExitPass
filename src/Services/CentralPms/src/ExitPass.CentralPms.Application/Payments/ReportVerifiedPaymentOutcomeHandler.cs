@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -34,8 +36,10 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     private readonly IRecordPaymentConfirmationGateway _recordPaymentConfirmationGateway;
     private readonly IFinalizePaymentAttemptUseCase _finalizePaymentAttemptUseCase;
     private readonly IIssueExitAuthorizationUseCase _issueExitAuthorizationUseCase;
+    private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly ISystemClock _systemClock;
     private readonly ILogger<ReportVerifiedPaymentOutcomeHandler> _logger;
+    private readonly CentralPmsMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ReportVerifiedPaymentOutcomeHandler"/> class.
@@ -43,20 +47,25 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     /// <param name="recordPaymentConfirmationGateway">Gateway for recording canonical payment confirmation evidence.</param>
     /// <param name="finalizePaymentAttemptUseCase">Use case for finalizing the payment attempt.</param>
     /// <param name="issueExitAuthorizationUseCase">Use case for issuing exit authorization after confirmed payment.</param>
+    /// <param name="eventPublisher">Best-effort integration event publisher for already-committed finality evidence.</param>
     /// <param name="systemClock">System clock used for authoritative timestamps.</param>
     /// <param name="logger">Application logger.</param>
     public ReportVerifiedPaymentOutcomeHandler(
         IRecordPaymentConfirmationGateway recordPaymentConfirmationGateway,
         IFinalizePaymentAttemptUseCase finalizePaymentAttemptUseCase,
         IIssueExitAuthorizationUseCase issueExitAuthorizationUseCase,
+        IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
-        ILogger<ReportVerifiedPaymentOutcomeHandler> logger)
+        ILogger<ReportVerifiedPaymentOutcomeHandler> logger,
+        CentralPmsMetrics? metrics = null)
     {
         _recordPaymentConfirmationGateway = recordPaymentConfirmationGateway;
         _finalizePaymentAttemptUseCase = finalizePaymentAttemptUseCase;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
+        _eventPublisher = eventPublisher;
         _systemClock = systemClock;
         _logger = logger;
+        _metrics = metrics ?? new CentralPmsMetrics();
     }
 
     /// <summary>
@@ -85,6 +94,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         activity?.SetTag("requested_by_user_id", command.RequestedByUserId);
 
         ValidateCommand(command);
+        _metrics.VerifiedPaymentOutcomeReceived(command.ProviderStatus, command.FinalAttemptStatus);
 
         _logger.LogInformation(
             "Reporting verified payment outcome for payment_attempt_id={PaymentAttemptId}, provider_reference={ProviderReference}, final_attempt_status={FinalAttemptStatus}.",
@@ -109,6 +119,11 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         activity?.SetTag("payment_confirmation_id", confirmation.PaymentConfirmationId);
         activity?.SetTag("verified_timestamp", confirmation.VerifiedTimestamp);
+        _metrics.PaymentConfirmationRecorded(command.ProviderStatus, command.FinalAttemptStatus);
+
+        await PublishBestEffortAsync(
+            CreatePaymentConfirmationRecordedEvent(command, confirmation),
+            cancellationToken);
 
         var finalized = await _finalizePaymentAttemptUseCase.ExecuteAsync(
             new FinalizePaymentAttemptCommand(
@@ -120,6 +135,10 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         if (!string.Equals(finalized.AttemptStatus, "CONFIRMED", StringComparison.OrdinalIgnoreCase))
         {
+            await PublishBestEffortAsync(
+                CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
+                cancellationToken);
+
             activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.SetTag("attempt_status", finalized.AttemptStatus);
             activity?.SetTag("outcome", "finalized_without_exit_authorization");
@@ -136,12 +155,20 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
                 ExpirationTimestamp: null);
         }
 
+        await PublishBestEffortAsync(
+            CreatePaymentAttemptConfirmedEvent(command, finalized),
+            cancellationToken);
+
         var issued = await _issueExitAuthorizationUseCase.ExecuteAsync(
             new IssueExitAuthorizationCommand(
                 command.ParkingSessionId,
                 command.PaymentAttemptId,
                 command.RequestedByUserId,
                 command.CorrelationId),
+            cancellationToken);
+
+        await PublishBestEffortAsync(
+            CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
             cancellationToken);
 
         activity?.SetStatus(ActivityStatusCode.Ok);
@@ -202,6 +229,90 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         if (string.IsNullOrWhiteSpace(command.RequestedBy))
         {
             throw new ArgumentException("RequestedBy is required.", nameof(command));
+        }
+    }
+
+    private IntegrationEventEnvelope CreatePaymentConfirmationRecordedEvent(
+        ReportVerifiedPaymentOutcomeCommand command,
+        RecordPaymentConfirmationResult confirmation)
+    {
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.PaymentConfirmationRecorded,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = confirmation.PaymentConfirmationId.ToString(),
+            AggregateType = "PaymentConfirmation",
+            Payload = new PaymentConfirmationRecordedPayload
+            {
+                PaymentConfirmationId = confirmation.PaymentConfirmationId,
+                PaymentAttemptId = command.PaymentAttemptId,
+                ProviderReference = command.ProviderReference,
+                ProviderStatus = command.ProviderStatus,
+                VerifiedAtUtc = confirmation.VerifiedTimestamp
+            }
+        };
+    }
+
+    private IntegrationEventEnvelope CreatePaymentAttemptConfirmedEvent(
+        ReportVerifiedPaymentOutcomeCommand command,
+        FinalizePaymentAttemptResult finalized)
+    {
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.PaymentAttemptConfirmed,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = finalized.PaymentAttemptId.ToString(),
+            AggregateType = "PaymentAttempt",
+            Payload = new PaymentAttemptConfirmedPayload
+            {
+                PaymentAttemptId = finalized.PaymentAttemptId,
+                AttemptStatus = finalized.AttemptStatus,
+                ProviderReference = command.ProviderReference
+            }
+        };
+    }
+
+    private IntegrationEventEnvelope CreatePaymentFinalityReportedEvent(
+        ReportVerifiedPaymentOutcomeCommand command,
+        RecordPaymentConfirmationResult confirmation,
+        FinalizePaymentAttemptResult finalized)
+    {
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.PaymentFinalityReportedToCentralPms,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = command.PaymentAttemptId.ToString(),
+            AggregateType = "PaymentAttempt",
+            Payload = new PaymentFinalityReportedPayload
+            {
+                PaymentAttemptId = command.PaymentAttemptId,
+                ParkingSessionId = command.ParkingSessionId,
+                PaymentConfirmationId = confirmation.PaymentConfirmationId,
+                AttemptStatus = finalized.AttemptStatus,
+                ProviderReference = command.ProviderReference
+            }
+        };
+    }
+
+    private async Task PublishBestEffortAsync(
+        IntegrationEventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _eventPublisher.PublishAsync(envelope, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Non-authoritative integration event publication failed after DB finality. event_type={EventType} event_id={EventId} correlation_id={CorrelationId}",
+                envelope.EventType,
+                envelope.EventId,
+                envelope.CorrelationId);
         }
     }
 }

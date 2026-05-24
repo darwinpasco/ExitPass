@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.Observability;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,6 +29,7 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class IssueExitAuthorizationHandlerTests
 {
     private readonly IIssueExitAuthorizationGateway _gateway = Substitute.For<IIssueExitAuthorizationGateway>();
+    private readonly IIntegrationEventPublisher _eventPublisher = Substitute.For<IIntegrationEventPublisher>();
     private readonly ISystemClock _systemClock = Substitute.For<ISystemClock>();
     private readonly CentralPmsMetrics _metrics = new();
 
@@ -80,6 +82,55 @@ public sealed class IssueExitAuthorizationHandlerTests
         Assert.Equal("ISSUED", result.AuthorizationStatus);
         Assert.Equal(now, result.IssuedAt);
         Assert.Equal(now.AddMinutes(15), result.ExpirationTimestamp);
+
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x =>
+                x.EventType == IntegrationEventTypes.ExitAuthorizationIssued &&
+                x.AggregateId == exitAuthorizationId.ToString() &&
+                x.CorrelationId == correlationId),
+            Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies RabbitMQ/event-publisher failure cannot undo or block DB-authoritative issuance.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenEventPublishingFails_ReturnsMappedResult()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+
+        var parkingSessionId = Guid.NewGuid();
+        var paymentAttemptId = Guid.NewGuid();
+        var requestedByUserId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+        var exitAuthorizationId = Guid.NewGuid();
+
+        _gateway.IssueAsync(Arg.Any<IssueExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new IssueExitAuthorizationDbResult(
+                ExitAuthorizationId: exitAuthorizationId,
+                ParkingSessionId: parkingSessionId,
+                PaymentAttemptId: paymentAttemptId,
+                AuthorizationToken: "AUTH-TOKEN-001",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: now,
+                ExpirationTimestamp: now.AddMinutes(15)));
+        _eventPublisher
+            .PublishAsync(Arg.Any<IntegrationEventEnvelope>(), Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("RabbitMQ unavailable"));
+
+        var sut = CreateSut();
+
+        var result = await sut.ExecuteAsync(
+            new IssueExitAuthorizationCommand(
+                ParkingSessionId: parkingSessionId,
+                PaymentAttemptId: paymentAttemptId,
+                RequestedByUserId: requestedByUserId,
+                CorrelationId: correlationId),
+            CancellationToken.None);
+
+        Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
     }
 
     /// <summary>
@@ -170,6 +221,7 @@ public sealed class IssueExitAuthorizationHandlerTests
     {
         return new IssueExitAuthorizationHandler(
             _gateway,
+            _eventPublisher,
             _systemClock,
             _metrics,
             NullLogger<IssueExitAuthorizationHandler>.Instance);

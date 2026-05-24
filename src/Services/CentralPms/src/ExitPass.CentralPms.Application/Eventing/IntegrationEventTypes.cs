@@ -19,4 +19,34 @@ public static class IntegrationEventTypes
     /// Emitted when Central PMS reuses an existing payment attempt.
     /// </summary>
     public const string PaymentAttemptReused = "PaymentAttemptReused";
+
+    /// <summary>
+    /// Emitted when Central PMS records canonical payment confirmation evidence.
+    /// </summary>
+    public const string PaymentConfirmationRecorded = "PaymentConfirmationRecorded";
+
+    /// <summary>
+    /// Emitted when Central PMS confirms a payment attempt.
+    /// </summary>
+    public const string PaymentAttemptConfirmed = "PaymentAttemptConfirmed";
+
+    /// <summary>
+    /// Emitted when Central PMS accepts a verified provider finality report.
+    /// </summary>
+    public const string PaymentFinalityReportedToCentralPms = "PaymentFinalityReportedToCentralPms";
+
+    /// <summary>
+    /// Emitted when Central PMS issues an exit authorization.
+    /// </summary>
+    public const string ExitAuthorizationIssued = "ExitAuthorizationIssued";
+
+    /// <summary>
+    /// Emitted when Central PMS consumes an exit authorization.
+    /// </summary>
+    public const string GateAuthorizationConsumed = "GateAuthorizationConsumed";
+
+    /// <summary>
+    /// Emitted when Central PMS rejects a duplicate consume for an already-consumed exit authorization.
+    /// </summary>
+    public const string DuplicateGateConsumeRejected = "DuplicateGateConsumeRejected";
 }
