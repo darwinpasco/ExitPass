@@ -65,6 +65,34 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ExceptionReviewScript_IsReadOnlyPayMongoScopedAndSupportsFilters()
+    {
+        var script = ReadRepoFile("scripts", "dev-data", "Review-WebPayPayMongoReconciliationExceptions.ps1");
+        var readSql = ReadRepoFile("scripts", "dev-data", "read-webpay-paymongo-reconciliation-exceptions.sql");
+
+        Assert.Contains("[switch] $ListRuns", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $RunId", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $RunCode", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $ProviderCode = \"PAYMONGO\"", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $Classification", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $TicketReference", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $ExceptionStatus", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $Severity", script, StringComparison.Ordinal);
+        Assert.Contains("RECONCILIATION_RUN_NOT_FOUND", script, StringComparison.Ordinal);
+        Assert.Contains("NO_RECONCILIATION_EXCEPTIONS", script, StringComparison.Ordinal);
+        Assert.Contains("MISSING_RECONCILIATION_RUN_SCOPE", script, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_runs", readSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_items", readSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_exceptions", readSql, StringComparison.Ordinal);
+        Assert.Contains("payments.provider_sessions", readSql, StringComparison.Ordinal);
+        Assert.Contains("core.exit_authorizations", readSql, StringComparison.Ordinal);
+        Assert.Contains("gates.gate_authorization_consumptions", readSql, StringComparison.Ordinal);
+        Assert.Contains("rr.source_batch_ref LIKE (req.provider_code || ';%')", readSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AUB", readSql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [MemberData(nameof(ClassificationCases))]
     public void Classify_WhenGivenPaymentProviderAndExitEvidence_ReturnsExpectedClassification(
