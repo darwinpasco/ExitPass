@@ -28,6 +28,7 @@ using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.Reconciliation;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
@@ -36,6 +37,7 @@ using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -103,6 +105,7 @@ app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
+app.MapReconciliationWorkflowEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -177,6 +180,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Api.VendorParking")
                 .AddSource("ExitPass.CentralPms.Api.InternalPaymentAttempts")
+                .AddSource("ExitPass.CentralPms.Api.Reconciliation")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
@@ -292,6 +296,12 @@ static void ConfigureApplicationServices(
         new ConsumeExitAuthorizationGateway(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<ConsumeExitAuthorizationGateway>>()));
+
+    builder.Services.AddScoped<IReconciliationWorkflowService, ReconciliationWorkflowService>();
+    builder.Services.AddScoped<IReconciliationWorkflowRepository>(serviceProvider =>
+        new ReconciliationWorkflowRepository(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<ILogger<ReconciliationWorkflowRepository>>()));
 
     builder.Services.AddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
