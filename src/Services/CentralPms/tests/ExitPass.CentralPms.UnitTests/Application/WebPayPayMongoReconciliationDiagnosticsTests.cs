@@ -43,6 +43,28 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void PersistedRunScript_UsesExistingReconciliationTablesAndSupportsDryRunReadback()
+    {
+        var script = ReadRepoFile("scripts", "dev-data", "Invoke-WebPayPayMongoReconciliationRun.ps1");
+        var persistSql = ReadRepoFile("scripts", "dev-data", "persist-webpay-paymongo-reconciliation-run.sql");
+        var readSql = ReadRepoFile("scripts", "dev-data", "read-webpay-paymongo-reconciliation-run.sql");
+
+        Assert.Contains("[string] $ProviderCode = \"PAYMONGO\"", script, StringComparison.Ordinal);
+        Assert.Contains("[switch] $DryRun", script, StringComparison.Ordinal);
+        Assert.Contains("[string] $ReadRun", script, StringComparison.Ordinal);
+        Assert.Contains("MISSING_RECONCILIATION_SCOPE", script, StringComparison.Ordinal);
+        Assert.Contains("REQUESTED_TICKET_NOT_FOUND", script, StringComparison.Ordinal);
+        Assert.Contains("PAYMENT_PROVIDER_RECONCILIATION", script, StringComparison.Ordinal);
+        Assert.Contains("PROVIDER_TO_CORE", script, StringComparison.Ordinal);
+        Assert.Contains("Duplicate run behavior: new explicit run version per execution via unique run_code.", script, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_runs", persistSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_items", persistSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_exceptions", persistSql, StringComparison.Ordinal);
+        Assert.Contains("reconciliation.reconciliation_runs", readSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [MemberData(nameof(ClassificationCases))]
     public void Classify_WhenGivenPaymentProviderAndExitEvidence_ReturnsExpectedClassification(

@@ -1,0 +1,25 @@
+-- scripts/dev-data/persist-webpay-paymongo-reconciliation-run.sql
+-- Persistence mapping used by Invoke-WebPayPayMongoReconciliationRun.ps1.
+--
+-- This script is intentionally a reference/template rather than a standalone
+-- execution unit because the wrapper builds a VALUES list from the read-only
+-- diagnostics output. It documents the only live tables the wrapper is allowed
+-- to mutate for this slice:
+--
+-- - reconciliation.reconciliation_runs
+-- - reconciliation.reconciliation_items
+-- - reconciliation.reconciliation_exceptions
+--
+-- No payment, provider, exit authorization, gate, audit, domain event, outbox,
+-- settlement, payout, or MOPS rows are mutated by the wrapper.
+--
+-- Live-schema mapping:
+-- - run_type: PAYMENT_PROVIDER_RECONCILIATION
+-- - run_status: COMPLETED
+-- - scope_type: SOURCE_BATCH for ticket scope, TIME_WINDOW for date range scope
+-- - source_batch_ref: compact provider/scope token
+-- - comparison_basis: PROVIDER_TO_CORE
+-- - item_status: MATCHED for MATCHED rows, EXCEPTION otherwise
+-- - match_status: MATCH, AMOUNT_MISMATCH, MISSING_SOURCE, MISSING_TARGET,
+--   DUPLICATE, or INCONCLUSIVE based on diagnostics classification
+-- - exception rows are inserted only when diagnostics classification is not MATCHED
