@@ -27,6 +27,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     private readonly IReadOnlyDictionary<string, string?> _configurationOverrides;
     private readonly IInternalClientCertificateAccessor? _certificateAccessor;
+    private readonly Action<IServiceCollection>? _configureServices;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CustomWebApplicationFactory"/> class.
@@ -34,16 +35,19 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public CustomWebApplicationFactory()
         : this(
             new Dictionary<string, string?>(),
-            certificateAccessor: null)
+            certificateAccessor: null,
+            configureServices: null)
     {
     }
 
     private CustomWebApplicationFactory(
         IReadOnlyDictionary<string, string?> configurationOverrides,
-        IInternalClientCertificateAccessor? certificateAccessor)
+        IInternalClientCertificateAccessor? certificateAccessor,
+        Action<IServiceCollection>? configureServices)
     {
         _configurationOverrides = configurationOverrides;
         _certificateAccessor = certificateAccessor;
+        _configureServices = configureServices;
     }
 
     /// <summary>
@@ -72,7 +76,22 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             index++;
         }
 
-        return new CustomWebApplicationFactory(overrides, certificateAccessor);
+        return new CustomWebApplicationFactory(overrides, certificateAccessor, _configureServices);
+    }
+
+    /// <summary>
+    /// Creates a factory with additional test service overrides.
+    /// </summary>
+    /// <param name="configureServices">Service override delegate.</param>
+    /// <returns>A Central PMS API test factory with service overrides.</returns>
+    public CustomWebApplicationFactory WithServiceOverrides(Action<IServiceCollection> configureServices)
+    {
+        ArgumentNullException.ThrowIfNull(configureServices);
+
+        return new CustomWebApplicationFactory(
+            _configurationOverrides,
+            _certificateAccessor,
+            configureServices);
     }
 
     /// <summary>
@@ -103,6 +122,11 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 services.RemoveAll<IInternalClientCertificateAccessor>();
                 services.AddSingleton(_certificateAccessor);
             });
+        }
+
+        if (_configureServices is not null)
+        {
+            builder.ConfigureServices(_configureServices);
         }
     }
 }
