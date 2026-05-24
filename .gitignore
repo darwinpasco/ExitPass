@@ -41,3 +41,4 @@ infra/docker/docker-compose.override.yml
 src/Services/WebPayUi/.vite/
 /scripts/dev-data/webpay-20260523-payment-finalization-diagnostics.sql
 /scripts/dev-data/.runtime-metrics/
+/scripts/dev-data/.reconciliation-exports/

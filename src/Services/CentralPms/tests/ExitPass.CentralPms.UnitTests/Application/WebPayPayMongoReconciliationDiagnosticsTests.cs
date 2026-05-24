@@ -28,6 +28,21 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         Assert.DoesNotContain("AUB", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ExportScript_DefaultsToPayMongoRequiresExplicitScopeAndIgnoresLocalExports()
+    {
+        var script = ReadRepoFile("scripts", "dev-data", "Export-WebPayPayMongoReconciliation.ps1");
+        var gitignore = ReadRepoFile(".gitignore");
+
+        Assert.Contains("[string] $ProviderCode = \"PAYMONGO\"", script, StringComparison.Ordinal);
+        Assert.Contains("MISSING_RECONCILIATION_SCOPE", script, StringComparison.Ordinal);
+        Assert.Contains("reconciliation_classification", script, StringComparison.Ordinal);
+        Assert.Contains("webpay-paymongo-reconciliation-{0}.{1}", script, StringComparison.Ordinal);
+        Assert.Contains("webpay-paymongo-reconciliation-{0}-{1}.{2}", script, StringComparison.Ordinal);
+        Assert.Contains("/scripts/dev-data/.reconciliation-exports/", gitignore, StringComparison.Ordinal);
+        Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [MemberData(nameof(ClassificationCases))]
     public void Classify_WhenGivenPaymentProviderAndExitEvidence_ReturnsExpectedClassification(
@@ -248,15 +263,17 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
 
     private static string ReadDiagnosticsSql()
     {
+        return ReadRepoFile("scripts", "dev-data", "webpay-paymongo-reconciliation-diagnostics.sql");
+    }
+
+    private static string ReadRepoFile(params string[] pathParts)
+    {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
 
         while (current is not null)
         {
-            var candidate = Path.Combine(
-                current.FullName,
-                "scripts",
-                "dev-data",
-                "webpay-paymongo-reconciliation-diagnostics.sql");
+            var candidateParts = new[] { current.FullName }.Concat(pathParts).ToArray();
+            var candidate = Path.Combine(candidateParts);
 
             if (File.Exists(candidate))
             {
@@ -266,7 +283,7 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
             current = current.Parent;
         }
 
-        throw new FileNotFoundException("webpay-paymongo-reconciliation-diagnostics.sql was not found from the test output path.");
+        throw new FileNotFoundException($"{Path.Combine(pathParts)} was not found from the test output path.");
     }
 
     public sealed record ReconciliationEvidence(
