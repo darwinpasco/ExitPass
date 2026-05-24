@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.Observability;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -26,6 +27,7 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class ConsumeExitAuthorizationHandlerTests
 {
     private readonly IConsumeExitAuthorizationGateway _gateway = Substitute.For<IConsumeExitAuthorizationGateway>();
+    private readonly IIntegrationEventPublisher _eventPublisher = Substitute.For<IIntegrationEventPublisher>();
     private readonly ISystemClock _systemClock = Substitute.For<ISystemClock>();
     private readonly CentralPmsMetrics _metrics = new();
 
@@ -66,6 +68,48 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
         Assert.Equal("CONSUMED", result.AuthorizationStatus);
         Assert.Equal(now, result.ConsumedAt);
+
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x =>
+                x.EventType == IntegrationEventTypes.GateAuthorizationConsumed &&
+                x.AggregateId == exitAuthorizationId.ToString() &&
+                x.CorrelationId == correlationId),
+            Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies RabbitMQ/event-publisher failure cannot undo or block DB-authoritative gate consumption.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenEventPublishingFails_ReturnsMappedResult()
+    {
+        var now = new DateTimeOffset(2026, 4, 2, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+
+        var exitAuthorizationId = Guid.NewGuid();
+        var requestedByUserId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        _gateway.ConsumeAsync(Arg.Any<ConsumeExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new ConsumeExitAuthorizationDbResult(
+                ExitAuthorizationId: exitAuthorizationId,
+                AuthorizationStatus: "CONSUMED",
+                ConsumedAt: now));
+        _eventPublisher
+            .PublishAsync(Arg.Any<IntegrationEventEnvelope>(), Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("RabbitMQ unavailable"));
+
+        var sut = CreateSut();
+
+        var result = await sut.ExecuteAsync(
+            new ConsumeExitAuthorizationCommand(
+                ExitAuthorizationId: exitAuthorizationId,
+                RequestedByUserId: requestedByUserId,
+                CorrelationId: correlationId),
+            CancellationToken.None);
+
+        Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
+        Assert.Equal("CONSUMED", result.AuthorizationStatus);
     }
 
     /// <summary>
@@ -133,6 +177,7 @@ public sealed class ConsumeExitAuthorizationHandlerTests
     {
         return new ConsumeExitAuthorizationHandler(
             _gateway,
+            _eventPublisher,
             _systemClock,
             _metrics,
             NullLogger<ConsumeExitAuthorizationHandler>.Instance);

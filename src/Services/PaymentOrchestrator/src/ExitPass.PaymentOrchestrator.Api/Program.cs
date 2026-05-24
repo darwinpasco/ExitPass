@@ -4,6 +4,7 @@ using ExitPass.PaymentOrchestrator.Api.Endpoints;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
+using ExitPass.PaymentOrchestrator.Application.Observability;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
 using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
 using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
@@ -171,6 +172,7 @@ static void ConfigureServices(WebApplicationBuilder builder)
         .WithMetrics(metrics =>
         {
             metrics
+                .AddMeter(PaymentOrchestratorMetrics.MeterName)
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation();
@@ -221,6 +223,7 @@ static void RegisterApplicationServices(IServiceCollection services)
     services.AddScoped<IProviderPaymentHandoffInitiator, ProviderPaymentHandoffInitiator>();
     services.AddSingleton<IProviderProductResolver, ProviderProductResolver>();
     services.AddScoped<VerifyProviderWebhookHandler>();
+    services.AddSingleton<PaymentOrchestratorMetrics>();
 }
 
 static void RegisterInfrastructureServices(IServiceCollection services, IConfiguration configuration)

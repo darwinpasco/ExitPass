@@ -29,6 +29,7 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
     private readonly ICentralPmsExitAuthorizationClient _centralPmsClient;
     private readonly IGateHardwareController _gateHardwareController;
     private readonly IGateExitAttemptRecorder _attemptRecorder;
+    private readonly GateIntegrationMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConsumeGateExitAuthorizationHandler"/> class.
@@ -39,11 +40,13 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
     public ConsumeGateExitAuthorizationHandler(
         ICentralPmsExitAuthorizationClient centralPmsClient,
         IGateHardwareController gateHardwareController,
-        IGateExitAttemptRecorder attemptRecorder)
+        IGateExitAttemptRecorder attemptRecorder,
+        GateIntegrationMetrics? metrics = null)
     {
         _centralPmsClient = centralPmsClient ?? throw new ArgumentNullException(nameof(centralPmsClient));
         _gateHardwareController = gateHardwareController ?? throw new ArgumentNullException(nameof(gateHardwareController));
         _attemptRecorder = attemptRecorder ?? throw new ArgumentNullException(nameof(attemptRecorder));
+        _metrics = metrics ?? new GateIntegrationMetrics();
     }
 
     /// <inheritdoc />
@@ -54,6 +57,8 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
         ArgumentNullException.ThrowIfNull(command);
 
         using var activity = ActivitySource.StartActivity("ConsumeGateExitAuthorization", ActivityKind.Internal);
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        _metrics.ConsumeRequested(command.GateDeviceId);
 
         activity?.SetTag("operation", "consume_gate_exit_authorization");
         activity?.SetTag("correlation_id", command.CorrelationId);
@@ -75,6 +80,8 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
             activity?.SetTag("rejection_reason", ex.Message);
             activity?.SetTag("gate_open_attempted", false);
             activity?.SetTag("gate_open_succeeded", false);
+            _metrics.InvalidAuthorizationConsumeAttempt(command.GateDeviceId, "INVALID_GATE_CONSUME_REQUEST");
+            _metrics.ConsumeLatency(command.GateDeviceId, DateTimeOffset.UtcNow - startedAtUtc);
             throw;
         }
 
@@ -104,6 +111,8 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
             activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.SetTag("gate_open_succeeded", true);
             activity?.SetTag("result_code", "GATE_OPENED");
+            _metrics.ConsumeSucceeded(command.GateDeviceId);
+            _metrics.ConsumeLatency(command.GateDeviceId, DateTimeOffset.UtcNow - startedAtUtc);
 
             return new ConsumeGateExitAuthorizationResult(
                 GateOpened: true,
@@ -123,6 +132,16 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
         activity?.SetTag("result_code", resultCode);
         activity?.SetTag("gate_open_attempted", false);
         activity?.SetTag("gate_open_succeeded", false);
+        if (string.Equals(resultCode, "EXIT_AUTHORIZATION_ALREADY_CONSUMED", StringComparison.OrdinalIgnoreCase))
+        {
+            _metrics.DuplicateConsumeRejected(command.GateDeviceId);
+        }
+        else
+        {
+            _metrics.InvalidAuthorizationConsumeAttempt(command.GateDeviceId, resultCode);
+        }
+
+        _metrics.ConsumeLatency(command.GateDeviceId, DateTimeOffset.UtcNow - startedAtUtc);
 
         return new ConsumeGateExitAuthorizationResult(
             GateOpened: false,

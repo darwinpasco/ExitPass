@@ -1,0 +1,231 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "ExitPass Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_webpay_payment_intents_created_total[5m]))",
+          "legendFormat": "payment intents"
+        }
+      ],
+      "title": "WebPay Payment Intents Created",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_provider_checkout_sessions_created_total{provider=\"PAYMONGO\"}[5m]))",
+          "legendFormat": "PayMongo checkout sessions"
+        }
+      ],
+      "title": "PayMongo Checkout Sessions Created",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_provider_webhooks_received_total{provider=\"PAYMONGO\"}[5m]))",
+          "legendFormat": "received"
+        },
+        {
+          "expr": "sum(rate(exitpass_provider_webhooks_verified_total{provider=\"PAYMONGO\"}[5m]))",
+          "legendFormat": "verified"
+        }
+      ],
+      "title": "PayMongo Webhooks Received / Verified",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_payment_confirmations_recorded_total[5m]))",
+          "legendFormat": "payment confirmations"
+        }
+      ],
+      "title": "Payment Confirmations Recorded",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_exit_authorizations_issued_total[5m]))",
+          "legendFormat": "exit authorizations"
+        }
+      ],
+      "title": "Exit Authorizations Issued",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "id": 6,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_exit_authorization_consume_outcomes_total{result=\"CONSUMED\"}[5m]))",
+          "legendFormat": "Central PMS consumed"
+        },
+        {
+          "expr": "sum(rate(exitpass_gate_consume_successes_total[5m]))",
+          "legendFormat": "Gate opened"
+        }
+      ],
+      "title": "Gate Consume Successes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "id": 7,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_exit_authorization_consume_outcomes_total{reason=\"EXIT_AUTHORIZATION_ALREADY_CONSUMED\"}[5m]))",
+          "legendFormat": "Central PMS duplicate rejected"
+        },
+        {
+          "expr": "sum(rate(exitpass_gate_duplicate_consume_rejections_total[5m]))",
+          "legendFormat": "Gate duplicate rejected"
+        }
+      ],
+      "title": "Duplicate Consume Rejections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_provider_webhook_finalization_failures_total[5m])) + sum(rate(exitpass_payment_attempt_finalize_failures_total[5m]))",
+          "legendFormat": "payment finalization failures"
+        }
+      ],
+      "title": "Payment Finalization Failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "id": 9,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_durable_event_persistence_total{result=\"FAILURE\"}[5m]))",
+          "legendFormat": "durable event persistence failures"
+        }
+      ],
+      "title": "Durable Event Persistence Failures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "ExitPass Prometheus",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "sum(rate(exitpass_provider_checkout_creation_failures_total[5m])) + sum(rate(exitpass_provider_webhook_finalization_failures_total[5m])) + sum(rate(exitpass_exit_authorization_issuance_failures_total[5m])) + sum(rate(exitpass_durable_event_persistence_total{result=\"FAILURE\"}[5m]))",
+          "legendFormat": "control-chain errors"
+        }
+      ],
+      "title": "Current Control-Chain Error Rate",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": [
+    "exitpass",
+    "webpay",
+    "paymongo",
+    "gate"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "ExitPass WebPay Payment-to-Exit Control Chain",
+  "uid": "exitpass-webpay-payment-to-exit",
+  "version": 1,
+  "weekStart": ""
+}

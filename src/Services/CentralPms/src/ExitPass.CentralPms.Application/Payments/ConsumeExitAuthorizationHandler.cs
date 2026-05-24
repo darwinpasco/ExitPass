@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,7 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         new("ExitPass.CentralPms.Application.Payments");
 
     private readonly IConsumeExitAuthorizationGateway _gateway;
+    private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly ISystemClock _systemClock;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<ConsumeExitAuthorizationHandler> _logger;
@@ -43,16 +45,19 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
     /// Initializes a new instance of the <see cref="ConsumeExitAuthorizationHandler"/> class.
     /// </summary>
     /// <param name="gateway">Gateway for the canonical DB-backed consume routine.</param>
+    /// <param name="eventPublisher">Best-effort integration event publisher for already-consumed authorizations.</param>
     /// <param name="systemClock">System clock used for deterministic timestamps and durations.</param>
     /// <param name="metrics">Metrics recorder for consume outcome telemetry.</param>
     /// <param name="logger">Structured application logger.</param>
     public ConsumeExitAuthorizationHandler(
         IConsumeExitAuthorizationGateway gateway,
+        IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
         ILogger<ConsumeExitAuthorizationHandler> logger)
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
+        _eventPublisher = eventPublisher ?? throw new ArgumentNullException(nameof(eventPublisher));
         _systemClock = systemClock ?? throw new ArgumentNullException(nameof(systemClock));
         _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -110,6 +115,10 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
 
             _metrics.ExitAuthorizationConsumeOutcome("CONSUMED", "SUCCESS");
+
+            await PublishBestEffortAsync(
+                CreateGateAuthorizationConsumedEvent(command, dbResult),
+                cancellationToken);
 
             _logger.LogInformation(
                 "Exit authorization consumed successfully. exit_authorization_id={ExitAuthorizationId} authorization_status={AuthorizationStatus}",
@@ -169,6 +178,13 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
                 ex,
                 "ConsumeExitAuthorization was rejected by deterministic database business rules. rejection_reason={RejectionReason}",
                 rejectionCode);
+
+            if (string.Equals(rejectionCode, "EXIT_AUTHORIZATION_ALREADY_CONSUMED", StringComparison.Ordinal))
+            {
+                await PublishBestEffortAsync(
+                    CreateDuplicateGateConsumeRejectedEvent(command, rejectionCode),
+                    cancellationToken);
+            }
 
             throw;
         }
@@ -246,5 +262,63 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
         }
 
         return "EXIT_AUTHORIZATION_REJECTED";
+    }
+
+    private IntegrationEventEnvelope CreateGateAuthorizationConsumedEvent(
+        ConsumeExitAuthorizationCommand command,
+        ConsumeExitAuthorizationDbResult dbResult)
+    {
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.GateAuthorizationConsumed,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = dbResult.ExitAuthorizationId.ToString(),
+            AggregateType = "ExitAuthorization",
+            Payload = new GateAuthorizationConsumedPayload
+            {
+                ExitAuthorizationId = dbResult.ExitAuthorizationId,
+                AuthorizationStatus = dbResult.AuthorizationStatus,
+                ConsumedAtUtc = dbResult.ConsumedAt
+            }
+        };
+    }
+
+    private IntegrationEventEnvelope CreateDuplicateGateConsumeRejectedEvent(
+        ConsumeExitAuthorizationCommand command,
+        string rejectionCode)
+    {
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.DuplicateGateConsumeRejected,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = command.ExitAuthorizationId.ToString(),
+            AggregateType = "ExitAuthorization",
+            Payload = new DuplicateGateConsumeRejectedPayload
+            {
+                ExitAuthorizationId = command.ExitAuthorizationId,
+                RejectionReasonCode = rejectionCode
+            }
+        };
+    }
+
+    private async Task PublishBestEffortAsync(
+        IntegrationEventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _eventPublisher.PublishAsync(envelope, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Non-authoritative integration event publication failed after gate authorization consumption. event_type={EventType} event_id={EventId} correlation_id={CorrelationId}",
+                envelope.EventType,
+                envelope.EventId,
+                envelope.CorrelationId);
+        }
     }
 }

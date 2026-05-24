@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
+using ExitPass.PaymentOrchestrator.Application.Observability;
 using ExitPass.PaymentOrchestrator.Contracts.Internal;
 using Microsoft.Extensions.Logging;
 
@@ -30,6 +31,7 @@ public sealed class InitiateProviderPaymentHandler
     private readonly ILogger<InitiateProviderPaymentHandler> _logger;
     private readonly IPaymentProviderRegistry _providerRegistry;
     private readonly IProviderSessionRepository _providerSessionRepository;
+    private readonly PaymentOrchestratorMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="InitiateProviderPaymentHandler"/> class.
@@ -40,11 +42,13 @@ public sealed class InitiateProviderPaymentHandler
     public InitiateProviderPaymentHandler(
         ILogger<InitiateProviderPaymentHandler> logger,
         IPaymentProviderRegistry providerRegistry,
-        IProviderSessionRepository providerSessionRepository)
+        IProviderSessionRepository providerSessionRepository,
+        PaymentOrchestratorMetrics? metrics = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _providerRegistry = providerRegistry ?? throw new ArgumentNullException(nameof(providerRegistry));
         _providerSessionRepository = providerSessionRepository ?? throw new ArgumentNullException(nameof(providerSessionRepository));
+        _metrics = metrics ?? new PaymentOrchestratorMetrics();
     }
 
     /// <summary>
@@ -94,7 +98,19 @@ public sealed class InitiateProviderPaymentHandler
             request.CustomerDisplayName);
 
         var startedAtUtc = DateTimeOffset.UtcNow;
-        var result = await adapter.CreatePaymentSessionAsync(command, cancellationToken);
+        CreateProviderPaymentSessionResult result;
+        try
+        {
+            result = await adapter.CreatePaymentSessionAsync(command, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            _metrics.ProviderCheckoutCreationFailed(
+                request.ProviderCode,
+                request.ProviderProduct,
+                exception.GetType().Name);
+            throw;
+        }
 
         var requestJson = JsonSerializer.Serialize(request);
 
@@ -116,6 +132,8 @@ public sealed class InitiateProviderPaymentHandler
             startedAtUtc);
 
         await _providerSessionRepository.AddAsync(record, cancellationToken);
+
+        _metrics.ProviderCheckoutSessionCreated(request.ProviderCode, request.ProviderProduct);
 
         _logger.LogInformation(
             "Provider payment session created for PaymentAttemptId {PaymentAttemptId}, ProviderSessionId {ProviderSessionId}, SessionStatus {SessionStatus}",
