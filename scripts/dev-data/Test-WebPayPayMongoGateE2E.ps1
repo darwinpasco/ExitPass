@@ -37,7 +37,17 @@ param(
 
     [switch] $DiagnosticsOnly,
 
-    [switch] $ScriptSelfTest
+    [switch] $ScriptSelfTest,
+
+    [switch] $ValidateMetrics,
+
+    [string] $PrometheusBaseUrl = "http://localhost:9090",
+
+    [int] $MetricsPollTimeoutSeconds = 60,
+
+    [int] $MetricsPollIntervalSeconds = 5,
+
+    [string] $MetricsBaselinePath
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +70,165 @@ $summary = [ordered]@{
     DuplicateConsumeBehavior = $null
     CorrelationId = $correlationId
 }
+$metricBaselines = [ordered]@{}
+$metricFinals = [ordered]@{}
+$metricDefinitions = @(
+    [pscustomobject]@{
+        Key = "webpay_payment_intent_created"
+        LogicalName = "WebPay payment intent created"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_webpay_payment_intents_created_total"
+                Query = 'sum(exitpass_webpay_payment_intents_created_total{provider="PAYMONGO",payment_method="QRPH"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_payment_attempts_created_total"
+                Query = 'sum(exitpass_payment_attempts_created_total{provider=~"PAYMONGO|PAYMONGO_CHECKOUT_SESSION"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_payment_attempts_created_total"
+                Query = 'sum(exitpass_centralpms_business_exitpass_payment_attempts_created_total{provider=~"PAYMONGO|PAYMONGO_CHECKOUT_SESSION"})'
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "paymongo_checkout_session_created"
+        LogicalName = "PayMongo checkout session created"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_provider_checkout_sessions_created_total"
+                Query = 'sum(exitpass_provider_checkout_sessions_created_total{provider="PAYMONGO",provider_product="PAYMONGO_CHECKOUT_SESSION"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_paymentorchestrator_business_exitpass_provider_checkout_sessions_created_total"
+                Query = 'sum(exitpass_paymentorchestrator_business_exitpass_provider_checkout_sessions_created_total{provider="PAYMONGO",provider_product="PAYMONGO_CHECKOUT_SESSION"})'
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "paymongo_webhook_received"
+        LogicalName = "PayMongo webhook received"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_provider_webhooks_received_total"
+                Query = 'sum(exitpass_provider_webhooks_received_total{provider="PAYMONGO",provider_product="PAYMONGO_CHECKOUT_SESSION"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_paymentorchestrator_business_exitpass_provider_webhooks_received_total"
+                Query = 'sum(exitpass_paymentorchestrator_business_exitpass_provider_webhooks_received_total{provider="PAYMONGO",provider_product="PAYMONGO_CHECKOUT_SESSION"})'
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "paymongo_webhook_verified"
+        LogicalName = "PayMongo webhook verified"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_provider_webhooks_verified_total"
+                Query = 'sum(exitpass_provider_webhooks_verified_total{provider="PAYMONGO",provider_product="PAYMONGO_CHECKOUT_SESSION"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_paymentorchestrator_business_exitpass_provider_webhooks_verified_total"
+                Query = 'sum(exitpass_paymentorchestrator_business_exitpass_provider_webhooks_verified_total{provider="PAYMONGO",provider_product="PAYMONGO_CHECKOUT_SESSION"})'
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "verified_payment_outcome_received"
+        LogicalName = "Verified payment outcome received"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_verified_payment_outcomes_received_total"
+                Query = "sum(exitpass_verified_payment_outcomes_received_total)"
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_verified_payment_outcomes_received_total"
+                Query = "sum(exitpass_centralpms_business_exitpass_verified_payment_outcomes_received_total)"
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "payment_confirmation_recorded"
+        LogicalName = "Payment confirmation recorded"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_payment_confirmations_recorded_total"
+                Query = "sum(exitpass_payment_confirmations_recorded_total)"
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_payment_confirmations_recorded_total"
+                Query = "sum(exitpass_centralpms_business_exitpass_payment_confirmations_recorded_total)"
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "exit_authorization_issued"
+        LogicalName = "Exit authorization issued"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_exit_authorizations_issued_total"
+                Query = "sum(exitpass_exit_authorizations_issued_total)"
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_exit_authorizations_issued_total"
+                Query = "sum(exitpass_centralpms_business_exitpass_exit_authorizations_issued_total)"
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "durable_event_persistence_success"
+        LogicalName = "Durable event persistence success"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_durable_event_persistence_total"
+                Query = 'sum(exitpass_durable_event_persistence_total{result="SUCCESS"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_durable_event_persistence_total"
+                Query = 'sum(exitpass_centralpms_business_exitpass_durable_event_persistence_total{result="SUCCESS"})'
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "central_pms_gate_consume_success"
+        LogicalName = "Gate consume success"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_exit_authorization_consume_outcomes_total"
+                Query = 'sum(exitpass_exit_authorization_consume_outcomes_total{result="CONSUMED",reason="SUCCESS"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_exit_authorization_consume_outcomes_total"
+                Query = 'sum(exitpass_centralpms_business_exitpass_exit_authorization_consume_outcomes_total{result="CONSUMED",reason="SUCCESS"})'
+            }
+        )
+        RequiredDelta = 1
+    },
+    [pscustomobject]@{
+        Key = "duplicate_consume_rejection"
+        LogicalName = "Duplicate consume rejection"
+        Candidates = @(
+            [pscustomobject]@{
+                Name = "exitpass_exit_authorization_consume_outcomes_total"
+                Query = 'sum(exitpass_exit_authorization_consume_outcomes_total{result="REJECTED",reason="EXIT_AUTHORIZATION_ALREADY_CONSUMED"})'
+            },
+            [pscustomobject]@{
+                Name = "exitpass_centralpms_business_exitpass_exit_authorization_consume_outcomes_total"
+                Query = 'sum(exitpass_centralpms_business_exitpass_exit_authorization_consume_outcomes_total{result="REJECTED",reason="EXIT_AUTHORIZATION_ALREADY_CONSUMED"})'
+            }
+        )
+        RequiredDelta = 1
+    }
+)
+$resolvedMetricDefinitions = @()
 
 function Write-Step {
     param([string] $Message)
@@ -83,6 +252,370 @@ function Print-Summary {
         $value = if ($null -eq $entry.Value -or ($entry.Value -is [string] -and $entry.Value -eq "")) { "<none>" } else { $entry.Value }
         Write-Host ("  {0}: {1}" -f $entry.Key, $value)
     }
+
+    if ($ValidateMetrics) {
+        Print-MetricsSummary
+    }
+}
+
+function Print-MetricsSummary {
+    Write-Host ""
+    Write-Host "Metric Summary" -ForegroundColor Cyan
+    foreach ($metric in (Get-ActiveMetricDefinitions)) {
+        $baseline = if ($metricBaselines.Contains($metric.Key)) { $metricBaselines[$metric.Key] } else { "<not captured>" }
+        $final = if ($metricFinals.Contains($metric.Key)) { $metricFinals[$metric.Key] } else { "<not captured>" }
+        $delta = if ($baseline -is [decimal] -and $final -is [decimal]) { $final - $baseline } else { "<unknown>" }
+        Write-Host ("  {0}: actual={1}; baseline={2}; final={3}; delta={4}; query={5}" -f `
+            $metric.LogicalName,
+            $metric.ActualName,
+            $baseline,
+            $final,
+            $delta,
+            $metric.Query)
+    }
+}
+
+function Get-ActiveMetricDefinitions {
+    if ($resolvedMetricDefinitions.Count -gt 0) {
+        return $resolvedMetricDefinitions
+    }
+
+    return $metricDefinitions | ForEach-Object {
+        $candidate = $_.Candidates[0]
+        [pscustomobject]@{
+            Key = $_.Key
+            LogicalName = $_.LogicalName
+            ActualName = $candidate.Name
+            Query = $candidate.Query
+            RequiredDelta = $_.RequiredDelta
+            CandidateNames = ($_.Candidates | ForEach-Object { $_.Name })
+        }
+    }
+}
+
+function Invoke-PrometheusQuery {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Query,
+
+        [switch] $AllowMissing
+    )
+
+    $base = $PrometheusBaseUrl.TrimEnd("/")
+    $encoded = [System.Uri]::EscapeDataString($Query)
+    $url = "$base/api/v1/query?query=$encoded"
+
+    try {
+        $response = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 15
+    }
+    catch {
+        throw "PROMETHEUS_UNAVAILABLE: $PrometheusBaseUrl ($($_.Exception.Message))"
+    }
+
+    if ($response.status -ne "success") {
+        throw "PROMETHEUS_UNAVAILABLE: query failed for '$Query'."
+    }
+
+    if ($response.data.result.Count -eq 0) {
+        if ($AllowMissing) {
+            return [pscustomobject]@{
+                Found = $false
+                Value = [decimal]0
+            }
+        }
+
+        return [pscustomobject]@{
+            Found = $false
+            Value = $null
+        }
+    }
+
+    $value = [decimal]::Parse(
+        [string]$response.data.result[0].value[1],
+        [System.Globalization.CultureInfo]::InvariantCulture)
+
+    return [pscustomobject]@{
+        Found = $true
+        Value = $value
+    }
+}
+
+function Get-PrometheusMetricNames {
+    $base = $PrometheusBaseUrl.TrimEnd("/")
+    $url = "$base/api/v1/label/__name__/values"
+
+    try {
+        $response = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 15
+    }
+    catch {
+        throw "PROMETHEUS_UNAVAILABLE: $PrometheusBaseUrl ($($_.Exception.Message))"
+    }
+
+    if ($response.status -ne "success") {
+        throw "PROMETHEUS_UNAVAILABLE: metric name discovery failed."
+    }
+
+    return @($response.data)
+}
+
+function Resolve-PrometheusMetricDefinitions {
+    if (-not $ValidateMetrics) {
+        return
+    }
+
+    Write-Step "Resolving Prometheus metric names"
+    $availableNames = Get-PrometheusMetricNames
+    $nameSet = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($name in $availableNames) {
+        [void]$nameSet.Add([string]$name)
+    }
+
+    $resolved = @()
+    foreach ($definition in $metricDefinitions) {
+        $selected = $null
+        foreach ($candidate in $definition.Candidates) {
+            if ($nameSet.Contains($candidate.Name)) {
+                $selected = $candidate
+                break
+            }
+        }
+
+        $candidateNames = @($definition.Candidates | ForEach-Object { $_.Name })
+        if ($null -eq $selected) {
+            throw "METRIC_NOT_FOUND: $($definition.LogicalName). Candidates: $($candidateNames -join ', ')"
+        }
+
+        $resolved += [pscustomobject]@{
+            Key = $definition.Key
+            LogicalName = $definition.LogicalName
+            ActualName = $selected.Name
+            Query = $selected.Query
+            RequiredDelta = $definition.RequiredDelta
+            CandidateNames = $candidateNames
+        }
+
+        Write-Host ("Metric resolver: {0} -> {1}" -f $definition.LogicalName, $selected.Name)
+    }
+
+    $script:resolvedMetricDefinitions = $resolved
+}
+
+function Get-DefaultMetricsBaselinePath {
+    param([string] $Ticket)
+
+    $safeTicket = if ([string]::IsNullOrWhiteSpace($Ticket)) { "unknown-ticket" } else { $Ticket -replace '[^A-Za-z0-9_.-]', '_' }
+    return (Join-Path (Get-RuntimeMetricsDirectory) "exitpass-webpay-payment-exit-observability-$safeTicket.json")
+}
+
+function Get-RuntimeMetricsDirectory {
+    return [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".runtime-metrics"))
+}
+
+function Resolve-MetricsBaselinePath {
+    param([string] $Ticket)
+
+    if (-not [string]::IsNullOrWhiteSpace($MetricsBaselinePath)) {
+        return [System.IO.Path]::GetFullPath($MetricsBaselinePath)
+    }
+
+    return Get-DefaultMetricsBaselinePath -Ticket $Ticket
+}
+
+function Save-MetricBaselineFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Ticket,
+
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IDictionary] $Metrics
+    )
+
+    $path = Resolve-MetricsBaselinePath -Ticket $Ticket
+    $parent = [System.IO.Path]::GetDirectoryName($path)
+    if ([string]::IsNullOrWhiteSpace($parent)) {
+        throw "METRIC_BASELINE_WRITE_FAILED: baseline path has no parent directory: $path"
+    }
+
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        [void](New-Item -ItemType Directory -Force -Path $parent)
+    }
+
+    $payload = [ordered]@{
+        ticketReference = $Ticket
+        capturedAt = (Get-Date).ToString("o")
+        prometheusBaseUrl = $PrometheusBaseUrl
+        metrics = $Metrics
+        resolvedMetrics = (Get-ActiveMetricDefinitions)
+    }
+
+    $json = $payload | ConvertTo-Json -Depth 8
+    $json | Set-Content -LiteralPath $path -Encoding UTF8
+
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "METRIC_BASELINE_WRITE_FAILED: file was not created: $path"
+    }
+
+    $file = Get-Item -LiteralPath $path
+    if ($file.Length -le 0) {
+        throw "METRIC_BASELINE_WRITE_FAILED: file is empty: $path"
+    }
+
+    try {
+        $roundTrip = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    }
+    catch {
+        throw "METRIC_BASELINE_WRITE_FAILED: JSON readback failed for $path ($($_.Exception.Message))"
+    }
+
+    if ($roundTrip.ticketReference -ne $Ticket) {
+        throw "METRIC_BASELINE_WRITE_FAILED: readback ticket mismatch. expected=$Ticket actual=$($roundTrip.ticketReference)"
+    }
+
+    $capturedMetricCount = 0
+    foreach ($metric in (Get-ActiveMetricDefinitions)) {
+        if ($null -ne $roundTrip.metrics.($metric.Key)) {
+            $capturedMetricCount++
+        }
+    }
+
+    if ($capturedMetricCount -ne @(Get-ActiveMetricDefinitions).Count) {
+        throw "METRIC_BASELINE_WRITE_FAILED: expected $(@(Get-ActiveMetricDefinitions).Count) metrics, read back $capturedMetricCount."
+    }
+
+    [pscustomobject]@{
+        RuntimeMetricsDirectory = (Get-RuntimeMetricsDirectory)
+        Path = $path
+        Exists = $true
+        Bytes = $file.Length
+        CapturedMetricCount = $capturedMetricCount
+    }
+}
+
+function Assert-PrometheusAvailable {
+    if (-not $ValidateMetrics) {
+        return
+    }
+
+    Write-Step "Checking Prometheus availability"
+    [void](Invoke-PrometheusQuery -Query "up" -AllowMissing)
+    Resolve-PrometheusMetricDefinitions
+}
+
+function Capture-MetricBaselines {
+    param([string] $Ticket)
+
+    if (-not $ValidateMetrics) {
+        return
+    }
+
+    Write-Step "Capturing Prometheus metric baselines"
+    foreach ($metric in (Get-ActiveMetricDefinitions)) {
+        $result = Invoke-PrometheusQuery -Query $metric.Query -AllowMissing
+        $metricBaselines[$metric.Key] = $result.Value
+        $presence = if ($result.Found) { "present" } else { "series absent; treating baseline as 0" }
+        Write-Host ("Baseline {0} ({1}): {2} ({3})" -f $metric.LogicalName, $metric.ActualName, $result.Value, $presence)
+    }
+
+    $baselineFile = Save-MetricBaselineFile -Ticket $Ticket -Metrics $metricBaselines
+    Write-Host ("Runtime metrics directory used: {0}" -f $baselineFile.RuntimeMetricsDirectory)
+    Write-Host ("MetricsBaselinePath: {0}" -f $baselineFile.Path)
+    Write-Host ("Baseline file exists: {0}" -f $baselineFile.Exists.ToString().ToLowerInvariant())
+    Write-Host ("Baseline file bytes: {0}" -f $baselineFile.Bytes)
+    Write-Host ("Captured metric count: {0}" -f $baselineFile.CapturedMetricCount)
+}
+
+function Import-MetricBaselines {
+    param([string] $Ticket)
+
+    if (-not $ValidateMetrics) {
+        return
+    }
+
+    if ($metricBaselines.Count -gt 0) {
+        return
+    }
+
+    $path = Resolve-MetricsBaselinePath -Ticket $Ticket
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $expectedPath = Get-DefaultMetricsBaselinePath -Ticket $Ticket
+        throw "METRIC_BASELINE_NOT_FOUND: $path. Expected repo-local baseline path: $expectedPath. Start the smoke with an unpaid ticket and -ValidateMetrics before completing PayMongo payment."
+    }
+
+    Write-Host "Resolved MetricsBaselinePath: $path"
+
+    $payload = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($payload.ticketReference -ne $Ticket) {
+        throw "METRIC_BASELINE_TICKET_MISMATCH: baseline is for $($payload.ticketReference), current ticket is $Ticket."
+    }
+
+    foreach ($metric in (Get-ActiveMetricDefinitions)) {
+        $value = $payload.metrics.($metric.Key)
+        if ($null -eq $value) {
+            throw "METRIC_BASELINE_MISSING: $($metric.LogicalName)"
+        }
+
+        $metricBaselines[$metric.Key] = [decimal]$value
+    }
+
+    Write-Host "Loaded metric baselines: $path"
+}
+
+function Assert-MetricsMoved {
+    if (-not $ValidateMetrics) {
+        return
+    }
+
+    Write-Step "Polling Prometheus metrics for movement"
+    $deadline = (Get-Date).AddSeconds($MetricsPollTimeoutSeconds)
+    $pending = New-Object 'System.Collections.Generic.HashSet[string]'
+    $activeMetricDefinitions = @(Get-ActiveMetricDefinitions)
+    foreach ($metric in $activeMetricDefinitions) {
+        [void]$pending.Add($metric.Key)
+    }
+
+    do {
+        foreach ($metric in $activeMetricDefinitions) {
+            $result = Invoke-PrometheusQuery -Query $metric.Query
+            if (-not $result.Found) {
+                continue
+            }
+
+            $metricFinals[$metric.Key] = $result.Value
+            $baseline = [decimal]$metricBaselines[$metric.Key]
+            $delta = $result.Value - $baseline
+            if ($delta -ge [decimal]$metric.RequiredDelta) {
+                [void]$pending.Remove($metric.Key)
+            }
+        }
+
+        if ($pending.Count -eq 0) {
+            break
+        }
+
+        $pendingNames = ($activeMetricDefinitions | Where-Object { $pending.Contains($_.Key) } | ForEach-Object { "{0} ({1})" -f $_.LogicalName, $_.ActualName }) -join ", "
+        Write-Host "Waiting for metric movement: $pendingNames"
+        Start-Sleep -Seconds $MetricsPollIntervalSeconds
+    } while ((Get-Date) -lt $deadline)
+
+    foreach ($metric in $activeMetricDefinitions) {
+        if (-not $metricFinals.Contains($metric.Key)) {
+            $result = Invoke-PrometheusQuery -Query $metric.Query
+            if (-not $result.Found) {
+                throw "METRIC_NOT_FOUND: $($metric.LogicalName) actual=$($metric.ActualName) candidates=$($metric.CandidateNames -join ', ')"
+            }
+
+            $metricFinals[$metric.Key] = $result.Value
+        }
+
+        $baseline = [decimal]$metricBaselines[$metric.Key]
+        $final = [decimal]$metricFinals[$metric.Key]
+        $delta = $final - $baseline
+        if ($delta -lt [decimal]$metric.RequiredDelta) {
+            throw "METRIC_DID_NOT_MOVE: $($metric.LogicalName) actual=$($metric.ActualName) baseline=$baseline final=$final delta=$delta"
+        }
+    }
+
+    Print-MetricsSummary
 }
 
 function Normalize-PaymentStatus {
@@ -140,6 +673,29 @@ function Invoke-ScriptSelfTest {
         throw "Expected unpaid status to create payment intent."
     }
 
+    $metricNames = $metricDefinitions | ForEach-Object { $_.Candidates } | ForEach-Object { $_.Name }
+    foreach ($expectedMetric in @(
+        "exitpass_webpay_payment_intents_created_total",
+        "exitpass_centralpms_business_exitpass_payment_attempts_created_total",
+        "exitpass_provider_checkout_sessions_created_total",
+        "exitpass_provider_webhooks_received_total",
+        "exitpass_provider_webhooks_verified_total",
+        "exitpass_verified_payment_outcomes_received_total",
+        "exitpass_centralpms_business_exitpass_verified_payment_outcomes_received_total",
+        "exitpass_payment_confirmations_recorded_total",
+        "exitpass_centralpms_business_exitpass_payment_confirmations_recorded_total",
+        "exitpass_exit_authorizations_issued_total",
+        "exitpass_centralpms_business_exitpass_exit_authorizations_issued_total",
+        "exitpass_durable_event_persistence_total",
+        "exitpass_centralpms_business_exitpass_durable_event_persistence_total",
+        "exitpass_exit_authorization_consume_outcomes_total",
+        "exitpass_centralpms_business_exitpass_exit_authorization_consume_outcomes_total"
+    )) {
+        if ($expectedMetric -notin $metricNames) {
+            throw "Expected runtime smoke metric '$expectedMetric' is not configured."
+        }
+    }
+
     $consumedSnapshot = [pscustomobject]@{
         latest_consume_status = "CONSUMED"
         exit_authorization_status = "CONSUMED"
@@ -155,6 +711,36 @@ function Invoke-ScriptSelfTest {
     if ((Get-GateValidationAction -Snapshot $issuedSnapshot) -ne "ConsumeThenVerifyDuplicate") {
         throw "Expected issued unconsumed authorization to consume before duplicate validation."
     }
+
+    $baselineTestTicket = "SELFTEST-" + [guid]::NewGuid().ToString("N")
+    $testMetrics = [ordered]@{}
+    foreach ($metric in (Get-ActiveMetricDefinitions)) {
+        $testMetrics[$metric.Key] = [decimal]0
+    }
+
+    $expectedSelfTestPath = Get-DefaultMetricsBaselinePath -Ticket $baselineTestTicket
+    if ($expectedSelfTestPath -notlike (Join-Path (Get-RuntimeMetricsDirectory) "*")) {
+        throw "Expected default baseline path to be under repo-local .runtime-metrics, got $expectedSelfTestPath."
+    }
+
+    $baselineFile = Save-MetricBaselineFile -Ticket $baselineTestTicket -Metrics $testMetrics
+    if (-not (Test-Path -LiteralPath $baselineFile.Path -PathType Leaf)) {
+        throw "Expected baseline self-test file to exist at $($baselineFile.Path)."
+    }
+
+    if ($baselineFile.Path -ne $expectedSelfTestPath) {
+        throw "Expected baseline self-test path '$expectedSelfTestPath', got '$($baselineFile.Path)'."
+    }
+
+    if ([int64]$baselineFile.Bytes -le 0) {
+        throw "Expected baseline self-test file to have content."
+    }
+
+    if ([int]$baselineFile.CapturedMetricCount -ne @(Get-ActiveMetricDefinitions).Count) {
+        throw "Expected baseline self-test to capture all metric definitions."
+    }
+
+    Remove-Item -LiteralPath $baselineFile.Path -Force
 
     Write-Host "Script self-tests passed." -ForegroundColor Green
 }
@@ -806,6 +1392,7 @@ try {
     [void](Invoke-DockerCompose -Arguments @("ps", "postgres"))
 
     Invoke-SchemaInspection
+    Assert-PrometheusAvailable
 
     if (-not $DiagnosticsOnly) {
         Invoke-SeedIfPresent
@@ -818,7 +1405,6 @@ try {
 
     $summary.TicketReference = $TicketReference
     $context = Get-TicketContext -Ticket $TicketReference
-
     if ($DiagnosticsOnly) {
         Write-Step "Diagnostics only"
         $snapshot = Get-FinalitySnapshot -Ticket $TicketReference
@@ -834,6 +1420,8 @@ try {
         $resolved.parkingStatus)
 
     if ((Get-ResolvedPaymentAction -PaymentStatus $resolved.paymentStatus) -eq "SkipPaymentIntent") {
+        Import-MetricBaselines -Ticket $TicketReference
+
         Write-Host "Payment is already final; skipping WebPay payment intent creation." -ForegroundColor Yellow
 
         Write-Step "Loading diagnostics for already-final paid session"
@@ -841,6 +1429,7 @@ try {
         Assert-PaymentFinalitySnapshot -Snapshot $finality
 
         [void](Complete-GateValidation -Ticket $TicketReference -Snapshot $finality)
+        Assert-MetricsMoved
 
         $diag = Join-Path $PSScriptRoot ("webpay-{0}-gate-consume-diagnostics.sql" -f (Get-CurrentTicketStamp))
         if (Test-Path $diag) {
@@ -853,6 +1442,8 @@ try {
         Print-Summary
         exit 0
     }
+
+    Capture-MetricBaselines -Ticket $TicketReference
 
     $intent = New-WebPayPaymentIntent -Context $context
     $summary.Provider = $intent.selectedProviderCode
@@ -874,8 +1465,11 @@ try {
     Write-Host $checkoutUrl -ForegroundColor Yellow
 
     if ($SkipBrowserPayment) {
+        $baselinePath = Resolve-MetricsBaselinePath -Ticket $TicketReference
         Write-Host ""
         Write-Host "Manual action required: open the checkout URL, complete PayMongo payment, then rerun with -DiagnosticsOnly or rerun without -SkipBrowserPayment to continue polling." -ForegroundColor Yellow
+        Write-Host "For observability smoke resume, rerun:" -ForegroundColor Yellow
+        Write-Host (".\scripts\dev-data\Test-WebPayPayMongoGateE2E.ps1 -TicketReference {0} -ValidateMetrics -SkipSeed -MetricsBaselinePath `"{1}`"" -f $TicketReference, $baselinePath) -ForegroundColor Yellow
         Print-Summary
         exit 2
     }
@@ -886,6 +1480,7 @@ try {
     Update-SummaryFromSnapshot -Snapshot $finality
 
     [void](Complete-GateValidation -Ticket $TicketReference -Snapshot $finality)
+    Assert-MetricsMoved
 
     $diag = Join-Path $PSScriptRoot ("webpay-{0}-gate-consume-diagnostics.sql" -f (Get-CurrentTicketStamp))
     if (Test-Path $diag) {
