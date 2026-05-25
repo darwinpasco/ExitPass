@@ -111,7 +111,77 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
         Assert.Equal("PAYMONGO_WEBHOOK_INVALID_SIGNATURE", result.EventId);
     }
 
-    private static PayMongoCheckoutAdapter CreateAdapter()
+    /// <summary>
+    /// Verifies stale signed callbacks fail closed as replay-window violations.
+    /// </summary>
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenSignatureTimestampIsOutsideReplayWindow_ReturnsNotAuthentic()
+    {
+        var adapter = CreateAdapter();
+        var payload = BuildWebhookPayload("evt_stale_signature_001", "checkout_session.payment.paid", "cs_stale_001");
+
+        var request = new ProviderWebhookRequest(
+            Headers: new Dictionary<string, string>
+            {
+                ["Paymongo-Signature"] = ComputePayMongoSignatureHeader(
+                    payload,
+                    WebhookSecretKey,
+                    DateTimeOffset.UtcNow.AddMinutes(-10))
+            },
+            RawBody: payload);
+
+        var result = await adapter.VerifyWebhookAsync(request, CancellationToken.None);
+
+        Assert.False(result.IsAuthentic);
+        Assert.Equal("PAYMONGO_WEBHOOK_SIGNATURE_TIMESTAMP_OUTSIDE_WINDOW", result.EventId);
+    }
+
+    /// <summary>
+    /// Verifies live-mode signature validation uses PayMongo's live signature component.
+    /// </summary>
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenLiveModeUsesLiveSignature_ReturnsSucceededOutcome()
+    {
+        var adapter = CreateAdapter(isLiveMode: true);
+        var payload = BuildWebhookPayload("evt_live_paid_001", "payment.succeeded", "pay_live_paid_001");
+
+        var result = await adapter.VerifyWebhookAsync(
+            new ProviderWebhookRequest(
+                new Dictionary<string, string>
+                {
+                    ["Paymongo-Signature"] = ComputePayMongoSignatureHeader(payload, WebhookSecretKey, signatureKey: "li")
+                },
+                payload),
+            CancellationToken.None);
+
+        Assert.True(result.IsAuthentic);
+        Assert.Equal(CanonicalPaymentOutcomeStatus.Succeeded, result.CanonicalStatus);
+    }
+
+    /// <summary>
+    /// Verifies cancelled and expired PayMongo events are terminal but not successful.
+    /// </summary>
+    [Theory]
+    [InlineData("checkout_session.expired", CanonicalPaymentOutcomeStatus.Expired)]
+    [InlineData("checkout_session.cancelled", CanonicalPaymentOutcomeStatus.Cancelled)]
+    [InlineData("checkout_session.payment.failed", CanonicalPaymentOutcomeStatus.Failed)]
+    [InlineData("payment.canceled", CanonicalPaymentOutcomeStatus.Cancelled)]
+    public async Task VerifyWebhookAsync_WhenTerminalNonSuccessEventIsSigned_ReturnsTerminalNonSuccess(
+        string eventType,
+        CanonicalPaymentOutcomeStatus expectedStatus)
+    {
+        var adapter = CreateAdapter();
+        var payload = BuildWebhookPayload($"evt_{eventType.Replace('.', '_')}", eventType, "pay_terminal_non_success");
+
+        var result = await adapter.VerifyWebhookAsync(CreateSignedRequest(payload), CancellationToken.None);
+
+        Assert.True(result.IsAuthentic);
+        Assert.Equal(expectedStatus, result.CanonicalStatus);
+        Assert.True(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+    }
+
+    private static PayMongoCheckoutAdapter CreateAdapter(bool isLiveMode = false)
     {
         var options = Options.Create(new PayMongoOptions
         {
@@ -119,7 +189,7 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
             SecretKey = "sk_test_unit",
             PublicKey = "pk_test_unit",
             WebhookSecretKey = WebhookSecretKey,
-            IsLiveMode = false
+            IsLiveMode = isLiveMode
         });
 
         return new PayMongoCheckoutAdapter(
@@ -137,16 +207,20 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
             RawBody: payload);
     }
 
-    private static string ComputePayMongoSignatureHeader(string payload, string secretKey)
+    private static string ComputePayMongoSignatureHeader(
+        string payload,
+        string secretKey,
+        DateTimeOffset? timestamp = null,
+        string signatureKey = "te")
     {
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
-        var signedPayload = $"{timestamp}.{payload}";
+        var timestampText = (timestamp ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString();
+        var signedPayload = $"{timestampText}.{payload}";
 
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secretKey));
         var hashBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(signedPayload));
         var signature = Convert.ToHexString(hashBytes).ToLowerInvariant();
 
-        return $"t={timestamp},te={signature}";
+        return $"t={timestampText},{signatureKey}={signature}";
     }
 
     private static string BuildWebhookPayload(

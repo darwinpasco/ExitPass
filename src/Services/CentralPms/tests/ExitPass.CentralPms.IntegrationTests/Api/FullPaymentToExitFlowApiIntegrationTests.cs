@@ -62,7 +62,7 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
             var attempt = await CreateAttemptAsync(
                 ConnectionString,
                 context,
-                "idem-full-payment-to-exit-api",
+                $"idem-full-payment-to-exit-api-{context.ParkingSessionId:N}",
                 "full-payment-to-exit-api-test");
 
             var confirmation = await RecordPaymentConfirmationDirectAsync(
