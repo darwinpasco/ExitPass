@@ -66,6 +66,20 @@ public sealed class MopsTransactionRepository : IMopsTransactionRepository
             await InsertRunAsync(connection, transaction, command, runId, runCode, siteGroupId, cancellationToken);
             await InsertMopsRecordAsync(connection, transaction, command, mopsId, cancellationToken);
             await InsertReconciliationItemAsync(connection, transaction, command, runId, mopsId, itemId, cancellationToken);
+            await ReconciliationEventPersistence.PersistAsync(
+                connection,
+                transaction,
+                ReconciliationEventPersistence.MopsTransactionImported,
+                "mops_transaction_records",
+                "MopsTransactionRecord",
+                mopsId,
+                runId,
+                command.ActorUserId,
+                command.ImportedByServiceIdentityId,
+                command.CorrelationId,
+                itemId,
+                "MoPS transaction imported as reconciliation evidence.",
+                cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
 

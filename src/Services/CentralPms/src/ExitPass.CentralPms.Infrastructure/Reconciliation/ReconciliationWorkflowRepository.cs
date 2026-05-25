@@ -95,24 +95,46 @@ public sealed class ReconciliationWorkflowRepository : IReconciliationWorkflowRe
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         AddCommonParameters(dbCommand, command.ReconciliationItemId, command.ActorUserId, command.CorrelationId);
         dbCommand.Parameters.AddWithValue("note_type", command.NoteType);
         dbCommand.Parameters.AddWithValue("note_text", command.NoteText);
 
-        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        ReconciliationNoteResult result;
+        await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
         {
-            throw new ReconciliationExceptionNotFoundException(command.ReconciliationItemId);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new ReconciliationExceptionNotFoundException(command.ReconciliationItemId);
+            }
+
+            result = new ReconciliationNoteResult(
+                ReconciliationItemId: reader.GetGuid("reconciliation_item_id"),
+                ReconciliationExceptionId: reader.GetGuid("reconciliation_exception_id"),
+                ReconciliationExceptionNoteId: reader.GetGuid("reconciliation_exception_note_id"),
+                NoteType: reader.GetString("note_type"),
+                CreatedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
+                CorrelationId: reader.GetGuid("correlation_id"));
         }
 
-        return new ReconciliationNoteResult(
-            ReconciliationItemId: reader.GetGuid("reconciliation_item_id"),
-            ReconciliationExceptionId: reader.GetGuid("reconciliation_exception_id"),
-            ReconciliationExceptionNoteId: reader.GetGuid("reconciliation_exception_note_id"),
-            NoteType: reader.GetString("note_type"),
-            CreatedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
-            CorrelationId: reader.GetGuid("correlation_id"));
+        await ReconciliationEventPersistence.PersistAsync(
+            connection,
+            transaction,
+            ReconciliationEventPersistence.ReconciliationNoteAdded,
+            "reconciliation_exception_notes",
+            "ReconciliationExceptionNote",
+            result.ReconciliationExceptionNoteId,
+            result.ReconciliationExceptionId,
+            command.ActorUserId,
+            null,
+            command.CorrelationId,
+            result.ReconciliationExceptionId,
+            "Reconciliation exception note added.",
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     /// <inheritdoc />
@@ -258,7 +280,8 @@ public sealed class ReconciliationWorkflowRepository : IReconciliationWorkflowRe
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         AddCommonParameters(dbCommand, command.ReconciliationItemId, command.ActorUserId, command.CorrelationId);
         dbCommand.Parameters.AddWithValue("resolution_action", command.ResolutionAction);
         dbCommand.Parameters.AddWithValue("resolution_reason", command.ResolutionReason);
@@ -270,24 +293,46 @@ public sealed class ReconciliationWorkflowRepository : IReconciliationWorkflowRe
 
         try
         {
-            await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
+            ReconciliationResolutionRequestResult result;
+            await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
             {
-                throw new ReconciliationExceptionNotFoundException(command.ReconciliationItemId);
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    throw new ReconciliationExceptionNotFoundException(command.ReconciliationItemId);
+                }
+
+                result = new ReconciliationResolutionRequestResult(
+                    ReconciliationItemId: reader.GetGuid("reconciliation_item_id"),
+                    ReconciliationExceptionId: reader.GetGuid("reconciliation_exception_id"),
+                    ResolutionRequestId: reader.GetGuid("reconciliation_exception_resolution_request_id"),
+                    RequestStatus: reader.GetString("request_status"),
+                    PreviousExceptionStatus: reader.GetString("previous_exception_status"),
+                    ProposedExceptionStatus: reader.GetString("proposed_exception_status"),
+                    SubmittedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")),
+                    CorrelationId: reader.GetGuid("correlation_id"));
             }
 
-            return new ReconciliationResolutionRequestResult(
-                ReconciliationItemId: reader.GetGuid("reconciliation_item_id"),
-                ReconciliationExceptionId: reader.GetGuid("reconciliation_exception_id"),
-                ResolutionRequestId: reader.GetGuid("reconciliation_exception_resolution_request_id"),
-                RequestStatus: reader.GetString("request_status"),
-                PreviousExceptionStatus: reader.GetString("previous_exception_status"),
-                ProposedExceptionStatus: reader.GetString("proposed_exception_status"),
-                SubmittedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")),
-                CorrelationId: reader.GetGuid("correlation_id"));
+            await ReconciliationEventPersistence.PersistAsync(
+                connection,
+                transaction,
+                ReconciliationEventPersistence.ReconciliationResolutionRequestSubmitted,
+                "reconciliation_exception_resolution_requests",
+                "ReconciliationResolutionRequest",
+                result.ResolutionRequestId,
+                result.ReconciliationExceptionId,
+                command.ActorUserId,
+                null,
+                command.CorrelationId,
+                result.ReconciliationExceptionId,
+                "Reconciliation resolution request submitted.",
+                cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
         {
+            await transaction.RollbackAsync(cancellationToken);
             _logger.LogWarning(
                 ex,
                 "Duplicate active reconciliation resolution request rejected. reconciliation_item_id={ReconciliationItemId}",
@@ -494,7 +539,8 @@ public sealed class ReconciliationWorkflowRepository : IReconciliationWorkflowRe
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         dbCommand.Parameters.AddWithValue("resolution_request_id", command.ResolutionRequestId);
         dbCommand.Parameters.AddWithValue("decision", command.Decision);
         dbCommand.Parameters.AddWithValue("reason", command.Reason);
@@ -502,29 +548,50 @@ public sealed class ReconciliationWorkflowRepository : IReconciliationWorkflowRe
         dbCommand.Parameters.AddWithValue("actor_user_id", (object?)command.ActorUserId ?? DBNull.Value);
         dbCommand.Parameters.AddWithValue("correlation_id", command.CorrelationId);
 
-        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        ReconciliationResolutionDecisionResult result;
+        await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
         {
-            var exists = await ResolutionRequestExistsAsync(command.ResolutionRequestId, cancellationToken);
-            if (!exists)
+            if (!await reader.ReadAsync(cancellationToken))
             {
-                throw new ReconciliationResolutionRequestNotFoundException(command.ResolutionRequestId);
+                var exists = await ResolutionRequestExistsAsync(command.ResolutionRequestId, cancellationToken);
+                if (!exists)
+                {
+                    throw new ReconciliationResolutionRequestNotFoundException(command.ResolutionRequestId);
+                }
+
+                throw new ReconciliationWorkflowConflictException(
+                    "RECONCILIATION_RESOLUTION_REQUEST_ALREADY_DECIDED",
+                    "The reconciliation resolution request already has a recorded decision.");
             }
 
-            throw new ReconciliationWorkflowConflictException(
-                "RECONCILIATION_RESOLUTION_REQUEST_ALREADY_DECIDED",
-                "The reconciliation resolution request already has a recorded decision.");
+            result = new ReconciliationResolutionDecisionResult(
+                ResolutionRequestId: reader.GetGuid("reconciliation_exception_resolution_request_id"),
+                ReconciliationExceptionId: reader.GetGuid("reconciliation_exception_id"),
+                ResolutionApprovalId: reader.GetGuid("reconciliation_exception_resolution_approval_id"),
+                Decision: reader.GetString("decision"),
+                RequestStatus: reader.GetString("request_status"),
+                ExceptionStatus: reader.GetString("exception_status"),
+                DecidedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("decided_at")),
+                CorrelationId: reader.GetGuid("correlation_id"));
         }
 
-        return new ReconciliationResolutionDecisionResult(
-            ResolutionRequestId: reader.GetGuid("reconciliation_exception_resolution_request_id"),
-            ReconciliationExceptionId: reader.GetGuid("reconciliation_exception_id"),
-            ResolutionApprovalId: reader.GetGuid("reconciliation_exception_resolution_approval_id"),
-            Decision: reader.GetString("decision"),
-            RequestStatus: reader.GetString("request_status"),
-            ExceptionStatus: reader.GetString("exception_status"),
-            DecidedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("decided_at")),
-            CorrelationId: reader.GetGuid("correlation_id"));
+        await ReconciliationEventPersistence.PersistAsync(
+            connection,
+            transaction,
+            ReconciliationEventPersistence.ReconciliationResolutionDecisionRecorded,
+            "reconciliation_exception_resolution_approvals",
+            "ReconciliationResolutionApproval",
+            result.ResolutionApprovalId,
+            result.ReconciliationExceptionId,
+            command.ActorUserId,
+            null,
+            command.CorrelationId,
+            result.ResolutionRequestId,
+                $"Reconciliation resolution request {result.Decision.ToLowerInvariant()}.",
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return result;
     }
 
     /// <inheritdoc />

@@ -30,4 +30,10 @@ public interface IReconciliationEvaluationRepository
     Task<IReadOnlyList<ReconciliationItemRecord>> ListRunItemsAsync(
         Guid reconciliationRunId,
         CancellationToken cancellationToken);
+
+    /// <summary>Persists run-level reconciliation evaluation audit/event evidence.</summary>
+    Task PersistRunEvaluatedEventAsync(
+        EvaluateReconciliationRunCommand command,
+        ReconciliationRunEvaluationSummaryRecord summary,
+        CancellationToken cancellationToken);
 }

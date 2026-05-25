@@ -60,7 +60,21 @@ public sealed class ReconciliationEvaluationRepository : IReconciliationEvaluati
         CancellationToken cancellationToken)
     {
         const string sql = """
-            UPDATE reconciliation.reconciliation_items
+            WITH target_item AS (
+                SELECT
+                    *,
+                    (
+                        item_status::text IS DISTINCT FROM @item_status
+                     OR match_status::text IS DISTINCT FROM @match_status
+                     OR variance_amount IS DISTINCT FROM @variance_amount
+                     OR exception_reason_code IS DISTINCT FROM @exception_reason_code
+                    ) AS evaluation_changed
+                FROM reconciliation.reconciliation_items
+                WHERE reconciliation_item_id = @reconciliation_item_id
+                FOR UPDATE
+            ),
+            updated_item AS (
+                UPDATE reconciliation.reconciliation_items ri
                SET item_status = @item_status::reconciliation.reconciliation_item_status_enum,
                    match_status = @match_status::reconciliation.reconciliation_match_status_enum,
                    variance_amount = @variance_amount,
@@ -70,34 +84,40 @@ public sealed class ReconciliationEvaluationRepository : IReconciliationEvaluati
                    updated_by_service_identity_id = @service_identity_id,
                    correlation_id = @correlation_id,
                    row_version = row_version + 1
-             WHERE reconciliation_item_id = @reconciliation_item_id
+            FROM target_item ti
+             WHERE ri.reconciliation_item_id = ti.reconciliation_item_id
             RETURNING
-                reconciliation_item_id,
-                reconciliation_run_id,
-                mops_transaction_record_id,
-                manual_gate_log_id,
-                payment_attempt_id,
-                payment_confirmation_id,
-                provider_outcome_id,
-                target_entity_type,
-                target_entity_id,
-                comparison_basis::text AS comparison_basis,
-                item_status::text AS item_status,
-                match_status::text AS match_status,
-                expected_amount,
-                actual_amount,
-                currency_code,
-                variance_amount,
-                exception_reason_code,
-                resolved_at,
-                resolved_by_user_id,
-                created_at,
-                updated_at,
-                correlation_id;
+                ri.reconciliation_item_id,
+                ri.reconciliation_run_id,
+                ri.mops_transaction_record_id,
+                ri.manual_gate_log_id,
+                ri.payment_attempt_id,
+                ri.payment_confirmation_id,
+                ri.provider_outcome_id,
+                ri.target_entity_type,
+                ri.target_entity_id,
+                ri.comparison_basis::text AS comparison_basis,
+                ri.item_status::text AS item_status,
+                ri.match_status::text AS match_status,
+                ri.expected_amount,
+                ri.actual_amount,
+                ri.currency_code,
+                ri.variance_amount,
+                ri.exception_reason_code,
+                ri.resolved_at,
+                ri.resolved_by_user_id,
+                ri.created_at,
+                ri.updated_at,
+                ri.correlation_id,
+                ti.evaluation_changed
+            )
+            SELECT *
+            FROM updated_item;
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         dbCommand.Parameters.AddWithValue("reconciliation_item_id", command.ReconciliationItemId);
         dbCommand.Parameters.AddWithValue("item_status", decision.ItemStatus);
         dbCommand.Parameters.AddWithValue("match_status", decision.MatchStatus);
@@ -107,13 +127,39 @@ public sealed class ReconciliationEvaluationRepository : IReconciliationEvaluati
         dbCommand.Parameters.AddWithValue("service_identity_id", (object?)command.ServiceIdentityId ?? DBNull.Value);
         dbCommand.Parameters.AddWithValue("correlation_id", command.CorrelationId);
 
-        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        ReconciliationItemRecord item;
+        bool evaluationChanged;
+        await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
         {
-            throw new ReconciliationItemNotFoundException(command.ReconciliationItemId);
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new ReconciliationItemNotFoundException(command.ReconciliationItemId);
+            }
+
+            item = ReadItem(reader);
+            evaluationChanged = reader.GetBoolean(reader.GetOrdinal("evaluation_changed"));
         }
 
-        var item = ReadItem(reader);
+        if (evaluationChanged)
+        {
+            await ReconciliationEventPersistence.PersistAsync(
+                connection,
+                transaction,
+                ReconciliationEventPersistence.ReconciliationItemEvaluated,
+                "reconciliation_items",
+                "ReconciliationItem",
+                item.ReconciliationItemId,
+                item.ReconciliationRunId,
+                command.ActorUserId,
+                command.ServiceIdentityId,
+                command.CorrelationId,
+                null,
+                $"Reconciliation item evaluated as {decision.MatchStatus}.",
+                cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+
         return ToEvaluation(item, decision.EvaluationClassification, decision.EvaluationReason);
     }
 
@@ -181,6 +227,29 @@ public sealed class ReconciliationEvaluationRepository : IReconciliationEvaluati
         }
 
         return items;
+    }
+
+    /// <inheritdoc />
+    public async Task PersistRunEvaluatedEventAsync(
+        EvaluateReconciliationRunCommand command,
+        ReconciliationRunEvaluationSummaryRecord summary,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await ReconciliationEventPersistence.PersistAsync(
+            connection,
+            transaction: null,
+            ReconciliationEventPersistence.ReconciliationRunEvaluated,
+            "reconciliation_runs",
+            "ReconciliationRun",
+            command.ReconciliationRunId,
+            null,
+            command.ActorUserId,
+            command.ServiceIdentityId,
+            command.CorrelationId,
+            null,
+            $"Reconciliation run evaluated. total_items={summary.TotalItems}; evaluated_items={summary.EvaluatedItems}.",
+            cancellationToken);
     }
 
     private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

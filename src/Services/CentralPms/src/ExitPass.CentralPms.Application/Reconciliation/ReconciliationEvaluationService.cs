@@ -86,25 +86,36 @@ public sealed class ReconciliationEvaluationService : IReconciliationEvaluationS
             throw new ReconciliationRunNotFoundException(command.ReconciliationRunId);
         }
 
-        var itemIds = await _repository.ListRunItemIdsAsync(command.ReconciliationRunId, cancellationToken);
-        if (itemIds.Count == 0)
+        var currentItems = await _repository.ListRunItemsAsync(command.ReconciliationRunId, cancellationToken);
+        if (currentItems.Count == 0)
         {
             return EmptyRunSummary(command.ReconciliationRunId, command.CorrelationId);
         }
 
-        var evaluations = new List<ReconciliationItemEvaluationRecord>(itemIds.Count);
-        foreach (var itemId in itemIds)
+        var beforeSummary = BuildSummary(
+            command.ReconciliationRunId,
+            currentItems.Select(ToEvaluationRecord).ToArray(),
+            currentItems.FirstOrDefault()?.CorrelationId);
+
+        var evaluations = new List<ReconciliationItemEvaluationRecord>(currentItems.Count);
+        foreach (var item in currentItems)
         {
             evaluations.Add(await EvaluateAsync(
                 new EvaluateReconciliationItemCommand(
-                    itemId,
+                    item.ReconciliationItemId,
                     command.ActorUserId,
                     command.ServiceIdentityId,
                     command.CorrelationId),
                 cancellationToken));
         }
 
-        return BuildSummary(command.ReconciliationRunId, evaluations, command.CorrelationId);
+        var afterSummary = BuildSummary(command.ReconciliationRunId, evaluations, command.CorrelationId);
+        if (SummaryChanged(beforeSummary, afterSummary))
+        {
+            await _repository.PersistRunEvaluatedEventAsync(command, afterSummary, cancellationToken);
+        }
+
+        return afterSummary;
     }
 
     /// <inheritdoc />
@@ -125,26 +136,7 @@ public sealed class ReconciliationEvaluationService : IReconciliationEvaluationS
             return EmptyRunSummary(query.ReconciliationRunId, null);
         }
 
-        var evaluations = items.Select(item =>
-        {
-            var decision = ToCurrentEvaluation(item);
-            return new ReconciliationItemEvaluationRecord(
-                item.ReconciliationItemId,
-                item.ReconciliationRunId,
-                item.ComparisonBasis,
-                item.ItemStatus,
-                item.MatchStatus,
-                decision.EvaluationClassification,
-                decision.EvaluationReason,
-                item.ExpectedAmount,
-                item.ActualAmount,
-                item.VarianceAmount,
-                item.ExceptionReasonCode,
-                ExceptionCreatedOrUpdated: false,
-                ExceptionHandlingDeferred,
-                item.UpdatedAt,
-                item.CorrelationId);
-        }).ToArray();
+        var evaluations = items.Select(ToEvaluationRecord).ToArray();
 
         return BuildSummary(query.ReconciliationRunId, evaluations, evaluations.FirstOrDefault()?.CorrelationId);
     }
@@ -300,6 +292,38 @@ public sealed class ReconciliationEvaluationService : IReconciliationEvaluationS
             SkippedItems: evaluations.Count - evaluated,
             correlationId);
     }
+
+    private static ReconciliationItemEvaluationRecord ToEvaluationRecord(ReconciliationItemRecord item)
+    {
+        var decision = ToCurrentEvaluation(item);
+        return new ReconciliationItemEvaluationRecord(
+            item.ReconciliationItemId,
+            item.ReconciliationRunId,
+            item.ComparisonBasis,
+            item.ItemStatus,
+            item.MatchStatus,
+            decision.EvaluationClassification,
+            decision.EvaluationReason,
+            item.ExpectedAmount,
+            item.ActualAmount,
+            item.VarianceAmount,
+            item.ExceptionReasonCode,
+            ExceptionCreatedOrUpdated: false,
+            ExceptionHandlingDeferred,
+            item.UpdatedAt,
+            item.CorrelationId);
+    }
+
+    private static bool SummaryChanged(
+        ReconciliationRunEvaluationSummaryRecord before,
+        ReconciliationRunEvaluationSummaryRecord after) =>
+        before.EvaluatedItems != after.EvaluatedItems ||
+        before.MatchedItems != after.MatchedItems ||
+        before.MismatchedItems != after.MismatchedItems ||
+        before.MissingSourceItems != after.MissingSourceItems ||
+        before.MissingTargetItems != after.MissingTargetItems ||
+        before.InconclusiveItems != after.InconclusiveItems ||
+        before.SkippedItems != after.SkippedItems;
 
     private static void ValidateGuid(Guid value, string parameterName)
     {
