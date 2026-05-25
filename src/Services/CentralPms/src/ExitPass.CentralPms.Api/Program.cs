@@ -109,6 +109,7 @@ app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
 app.MapReconciliationRunItemEndpoints();
 app.MapReconciliationExceptionLifecycleEndpoints();
+app.MapReconciliationEvaluationEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -187,6 +188,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.MopsTransactions")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationRunItems")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationExceptionLifecycle")
+                .AddSource("ExitPass.CentralPms.Api.ReconciliationEvaluation")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
@@ -323,6 +325,9 @@ static void ConfigureApplicationServices(
         new ReconciliationExceptionLifecycleRepository(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<ReconciliationExceptionLifecycleRepository>>()));
+    builder.Services.AddScoped<IReconciliationEvaluationService, ReconciliationEvaluationService>();
+    builder.Services.AddScoped<IReconciliationEvaluationRepository>(_ =>
+        new ReconciliationEvaluationRepository(mainDatabaseConnectionString));
 
     builder.Services.AddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
