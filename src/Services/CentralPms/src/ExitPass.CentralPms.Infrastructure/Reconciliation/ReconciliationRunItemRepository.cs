@@ -119,7 +119,8 @@ public sealed class ReconciliationRunItemRepository : IReconciliationRunItemRepo
         var runCode = command.RunCode ?? $"RECON-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{runId.ToString("N")[..8]}";
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         dbCommand.Parameters.AddWithValue("reconciliation_run_id", runId);
         dbCommand.Parameters.AddWithValue("run_code", runCode);
         dbCommand.Parameters.AddWithValue("run_type", command.RunType);
@@ -139,10 +140,12 @@ public sealed class ReconciliationRunItemRepository : IReconciliationRunItemRepo
 
         try
         {
-            await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
-            await reader.ReadAsync(cancellationToken);
+            ReconciliationRunCreateResult result;
+            await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
+            {
+                await reader.ReadAsync(cancellationToken);
 
-            return new ReconciliationRunCreateResult(
+                result = new ReconciliationRunCreateResult(
                 reader.GetGuid("reconciliation_run_id"),
                 reader.GetString("run_code"),
                 reader.GetString("run_type"),
@@ -152,9 +155,30 @@ public sealed class ReconciliationRunItemRepository : IReconciliationRunItemRepo
                 ItemGenerationPerformed: false,
                 ItemGenerationDeferredMessage,
                 reader.GetGuid("correlation_id"));
+            }
+
+            await ReconciliationEventPersistence.PersistAsync(
+                connection,
+                transaction,
+                ReconciliationEventPersistence.ReconciliationRunCreated,
+                "reconciliation_runs",
+                "ReconciliationRun",
+                result.ReconciliationRunId,
+                null,
+                command.ActorUserId,
+                command.ServiceIdentityId,
+                command.CorrelationId,
+                null,
+                "Reconciliation run created.",
+                cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+
+            return result;
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
         {
+            await transaction.RollbackAsync(cancellationToken);
             _logger.LogWarning(ex, "Duplicate reconciliation run code rejected. run_code={RunCode}", runCode);
             throw new ReconciliationRunItemRejectedException(
                 "RECONCILIATION_RUN_CODE_ALREADY_EXISTS",
@@ -162,6 +186,7 @@ public sealed class ReconciliationRunItemRepository : IReconciliationRunItemRepo
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ForeignKeyViolation)
         {
+            await transaction.RollbackAsync(cancellationToken);
             _logger.LogWarning(ex, "Reconciliation run reference validation failed. constraint={ConstraintName}", ex.ConstraintName);
             throw new ReconciliationRunItemRejectedException(
                 MapForeignKeyErrorCode(ex.ConstraintName),

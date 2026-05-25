@@ -132,7 +132,8 @@ public sealed class ReconciliationExceptionLifecycleRepository : IReconciliation
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         dbCommand.Parameters.AddWithValue("reconciliation_exception_id", command.ReconciliationExceptionId);
         dbCommand.Parameters.AddWithValue("assigned_to_user_id", (object?)command.AssignedToUserId ?? DBNull.Value);
         dbCommand.Parameters.AddWithValue("assigned_to_service_identity_id", (object?)command.AssignedToServiceIdentityId ?? DBNull.Value);
@@ -140,9 +141,14 @@ public sealed class ReconciliationExceptionLifecycleRepository : IReconciliation
         AddLifecycleParameters(dbCommand, command.ReasonCode, command.Detail, command.ActorUserId, command.ServiceIdentityId, command.CorrelationId);
 
         return await ExecuteLifecycleAsync(
+            connection,
+            transaction,
             dbCommand,
             command.ReconciliationExceptionId,
             "ASSIGN",
+            command.ActorUserId,
+            command.ServiceIdentityId,
+            command.CorrelationId,
             cancellationToken);
     }
 
@@ -226,43 +232,76 @@ public sealed class ReconciliationExceptionLifecycleRepository : IReconciliation
             """;
 
         await using var connection = await OpenConnectionAsync(cancellationToken);
-        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
         dbCommand.Parameters.AddWithValue("reconciliation_exception_id", command.ReconciliationExceptionId);
         dbCommand.Parameters.AddWithValue("new_status", command.NewStatus);
         dbCommand.Parameters.AddWithValue("transition_summary", TransitionSummary(command.Action, command.NewStatus));
         AddLifecycleParameters(dbCommand, command.ReasonCode, command.Detail, command.ActorUserId, command.ServiceIdentityId, command.CorrelationId);
 
         return await ExecuteLifecycleAsync(
+            connection,
+            transaction,
             dbCommand,
             command.ReconciliationExceptionId,
             command.Action,
+            command.ActorUserId,
+            command.ServiceIdentityId,
+            command.CorrelationId,
             cancellationToken);
     }
 
     private async Task<ReconciliationExceptionLifecycleResult> ExecuteLifecycleAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         NpgsqlCommand dbCommand,
         Guid reconciliationExceptionId,
         string action,
+        Guid? actorUserId,
+        Guid? serviceIdentityId,
+        Guid correlationId,
         CancellationToken cancellationToken)
     {
         try
         {
-            await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
-            if (!await reader.ReadAsync(cancellationToken))
+            ReconciliationExceptionLifecycleResult result;
+            await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
             {
-                throw new ReconciliationExceptionNotFoundException(reconciliationExceptionId);
+                if (!await reader.ReadAsync(cancellationToken))
+                {
+                    throw new ReconciliationExceptionNotFoundException(reconciliationExceptionId);
+                }
+
+                result = new ReconciliationExceptionLifecycleResult(
+                    reader.GetGuid("reconciliation_exception_id"),
+                    reader.GetString("previous_status"),
+                    reader.GetString("current_status"),
+                    action,
+                    reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")),
+                    reader.GetGuid("correlation_id"));
             }
 
-            return new ReconciliationExceptionLifecycleResult(
-                reader.GetGuid("reconciliation_exception_id"),
-                reader.GetString("previous_status"),
-                reader.GetString("current_status"),
-                action,
-                reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")),
-                reader.GetGuid("correlation_id"));
+            await ReconciliationEventPersistence.PersistAsync(
+                connection,
+                transaction,
+                ReconciliationEventPersistence.ReconciliationExceptionLifecycleChanged,
+                "reconciliation_exceptions",
+                "ReconciliationException",
+                result.ReconciliationExceptionId,
+                null,
+                actorUserId,
+                serviceIdentityId,
+                correlationId,
+                null,
+                $"Reconciliation exception lifecycle action {action} recorded.",
+                cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+            return result;
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ForeignKeyViolation)
         {
+            await transaction.RollbackAsync(cancellationToken);
             _logger.LogWarning(ex, "Reconciliation exception lifecycle reference validation failed. constraint={ConstraintName}", ex.ConstraintName);
             throw new ReconciliationRunItemRejectedException(
                 MapForeignKeyErrorCode(ex.ConstraintName),

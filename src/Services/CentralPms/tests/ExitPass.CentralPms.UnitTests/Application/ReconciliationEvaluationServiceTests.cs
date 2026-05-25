@@ -132,16 +132,16 @@ public sealed class ReconciliationEvaluationServiceTests
         var inconclusiveItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa14");
         var repository = Substitute.For<IReconciliationEvaluationRepository>();
         repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(true);
-        repository.ListRunItemIdsAsync(RunId, Arg.Any<CancellationToken>())
-            .Returns(new[] { matchedItemId, mismatchedItemId, missingSourceItemId, inconclusiveItemId });
-        repository.ReadItemAsync(matchedItemId, Arg.Any<CancellationToken>())
-            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 100m, itemId: matchedItemId));
-        repository.ReadItemAsync(mismatchedItemId, Arg.Any<CancellationToken>())
-            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 110m, itemId: mismatchedItemId));
-        repository.ReadItemAsync(missingSourceItemId, Arg.Any<CancellationToken>())
-            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: null, paymentConfirmationId: TargetId, expected: 100m, actual: 100m, itemId: missingSourceItemId));
-        repository.ReadItemAsync(inconclusiveItemId, Arg.Any<CancellationToken>())
-            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: null, actual: 100m, itemId: inconclusiveItemId));
+        var matchedItem = Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 100m, itemId: matchedItemId);
+        var mismatchedItem = Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 110m, itemId: mismatchedItemId);
+        var missingSourceItem = Item("PROVIDER_TO_CORE", providerOutcomeId: null, paymentConfirmationId: TargetId, expected: 100m, actual: 100m, itemId: missingSourceItemId);
+        var inconclusiveItem = Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: null, actual: 100m, itemId: inconclusiveItemId);
+        repository.ListRunItemsAsync(RunId, Arg.Any<CancellationToken>())
+            .Returns(new[] { matchedItem, mismatchedItem, missingSourceItem, inconclusiveItem });
+        repository.ReadItemAsync(matchedItemId, Arg.Any<CancellationToken>()).Returns(matchedItem);
+        repository.ReadItemAsync(mismatchedItemId, Arg.Any<CancellationToken>()).Returns(mismatchedItem);
+        repository.ReadItemAsync(missingSourceItemId, Arg.Any<CancellationToken>()).Returns(missingSourceItem);
+        repository.ReadItemAsync(inconclusiveItemId, Arg.Any<CancellationToken>()).Returns(inconclusiveItem);
         repository.SaveEvaluationAsync(
                 Arg.Any<EvaluateReconciliationItemCommand>(),
                 Arg.Any<ReconciliationEvaluationDecision>(),
@@ -194,9 +194,9 @@ public sealed class ReconciliationEvaluationServiceTests
     {
         var repository = Substitute.For<IReconciliationEvaluationRepository>();
         repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(true);
-        repository.ListRunItemIdsAsync(RunId, Arg.Any<CancellationToken>()).Returns(new[] { ItemId });
-        repository.ReadItemAsync(ItemId, Arg.Any<CancellationToken>())
-            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 100m));
+        var item = Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 100m);
+        repository.ListRunItemsAsync(RunId, Arg.Any<CancellationToken>()).Returns(new[] { item });
+        repository.ReadItemAsync(ItemId, Arg.Any<CancellationToken>()).Returns(item);
         repository.SaveEvaluationAsync(
                 Arg.Any<EvaluateReconciliationItemCommand>(),
                 Arg.Any<ReconciliationEvaluationDecision>(),
