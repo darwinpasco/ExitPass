@@ -244,6 +244,8 @@ public sealed class ReconciliationOutboxDispatcherIntegrationTests
 
     private sealed class FailingPublisher : IReconciliationOutboxEventPublisher
     {
+        public string BrokerType => "IN_PROCESS";
+
         public Task<ReconciliationOutboxPublishOutcome> PublishAsync(
             ReconciliationOutboxEventRecord outboxEvent,
             CancellationToken cancellationToken) =>

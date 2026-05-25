@@ -8,6 +8,9 @@ namespace ExitPass.CentralPms.Infrastructure.Eventing;
 public sealed class InProcessReconciliationOutboxEventPublisher : IReconciliationOutboxEventPublisher
 {
     /// <inheritdoc />
+    public string BrokerType => "IN_PROCESS";
+
+    /// <inheritdoc />
     public Task<ReconciliationOutboxPublishOutcome> PublishAsync(
         ReconciliationOutboxEventRecord outboxEvent,
         CancellationToken cancellationToken)

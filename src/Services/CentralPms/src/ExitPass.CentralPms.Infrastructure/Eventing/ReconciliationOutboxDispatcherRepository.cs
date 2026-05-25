@@ -165,6 +165,7 @@ public sealed class ReconciliationOutboxDispatcherRepository : IReconciliationOu
                     oe.causation_id,
                     oe.retry_count,
                     oe.max_retry_count,
+                    oe.created_at,
                     publisher.publisher_service_identity_id
             ),
             publication_attempts AS (
@@ -199,7 +200,7 @@ public sealed class ReconciliationOutboxDispatcherRepository : IReconciliationOu
                     outbox_event_id,
                     publication_attempt_number,
                     publisher_service_identity_id,
-                    'IN_PROCESS',
+                    @broker_type::events.event_broker_type_enum,
                     exchange_name,
                     routing_key,
                     'STARTED',
@@ -229,7 +230,8 @@ public sealed class ReconciliationOutboxDispatcherRepository : IReconciliationOu
                 pa.correlation_id,
                 pa.causation_id,
                 pa.retry_count,
-                pa.max_retry_count
+                pa.max_retry_count,
+                pa.created_at
             FROM publication_attempts pa
             JOIN inserted_publications ip ON ip.outbox_event_id = pa.outbox_event_id
             ORDER BY pa.outbox_event_id;
@@ -241,6 +243,7 @@ public sealed class ReconciliationOutboxDispatcherRepository : IReconciliationOu
         dbCommand.Parameters.Add("publisher_service_identity_id", NpgsqlDbType.Uuid).Value =
             (object?)command.PublisherServiceIdentityId ?? DBNull.Value;
         dbCommand.Parameters.AddWithValue("limit", command.Limit);
+        dbCommand.Parameters.AddWithValue("broker_type", command.BrokerType);
 
         var claimed = new List<ReconciliationOutboxEventRecord>();
         await using (var reader = await dbCommand.ExecuteReaderAsync(cancellationToken))
@@ -436,5 +439,6 @@ public sealed class ReconciliationOutboxDispatcherRepository : IReconciliationOu
             reader.GetNullableGuid("correlation_id"),
             reader.GetNullableGuid("causation_id"),
             reader.GetInt32("retry_count"),
-            reader.GetInt32("max_retry_count"));
+            reader.GetInt32("max_retry_count"),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")));
 }

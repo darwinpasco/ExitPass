@@ -21,6 +21,7 @@ public sealed class ReconciliationOutboxDispatcherServiceTests
     {
         var repository = Substitute.For<IReconciliationOutboxDispatcherRepository>();
         var publisher = Substitute.For<IReconciliationOutboxEventPublisher>();
+        publisher.BrokerType.Returns("IN_PROCESS");
         var claimed = EventRecord();
         repository.ClaimPendingAsync(Arg.Any<DispatchReconciliationOutboxOnceCommand>(), Arg.Any<CancellationToken>())
             .Returns(new[] { claimed });
@@ -50,6 +51,7 @@ public sealed class ReconciliationOutboxDispatcherServiceTests
     {
         var repository = Substitute.For<IReconciliationOutboxDispatcherRepository>();
         var publisher = Substitute.For<IReconciliationOutboxEventPublisher>();
+        publisher.BrokerType.Returns("IN_PROCESS");
         var claimed = EventRecord();
         repository.ClaimPendingAsync(Arg.Any<DispatchReconciliationOutboxOnceCommand>(), Arg.Any<CancellationToken>())
             .Returns(new[] { claimed });
@@ -86,6 +88,7 @@ public sealed class ReconciliationOutboxDispatcherServiceTests
     {
         var repository = Substitute.For<IReconciliationOutboxDispatcherRepository>();
         var publisher = Substitute.For<IReconciliationOutboxEventPublisher>();
+        publisher.BrokerType.Returns("IN_PROCESS");
         repository.ClaimPendingAsync(Arg.Any<DispatchReconciliationOutboxOnceCommand>(), Arg.Any<CancellationToken>())
             .Returns(Array.Empty<ReconciliationOutboxEventRecord>());
 
@@ -109,6 +112,7 @@ public sealed class ReconciliationOutboxDispatcherServiceTests
     {
         var repository = Substitute.For<IReconciliationOutboxDispatcherRepository>();
         var publisher = Substitute.For<IReconciliationOutboxEventPublisher>();
+        publisher.BrokerType.Returns("RABBITMQ");
         repository.ClaimPendingAsync(Arg.Any<DispatchReconciliationOutboxOnceCommand>(), Arg.Any<CancellationToken>())
             .Returns(Array.Empty<ReconciliationOutboxEventRecord>());
 
@@ -117,7 +121,7 @@ public sealed class ReconciliationOutboxDispatcherServiceTests
         await service.DispatchOnceAsync(new DispatchReconciliationOutboxOnceCommand(requestedLimit, null), CancellationToken.None);
 
         await repository.Received(1).ClaimPendingAsync(
-            Arg.Is<DispatchReconciliationOutboxOnceCommand>(command => command.Limit == expectedLimit),
+            Arg.Is<DispatchReconciliationOutboxOnceCommand>(command => command.Limit == expectedLimit && command.BrokerType == "RABBITMQ"),
             Arg.Any<CancellationToken>());
     }
 
@@ -139,5 +143,6 @@ public sealed class ReconciliationOutboxDispatcherServiceTests
             CorrelationId: Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddd04"),
             CausationId: null,
             RetryCount: 0,
-            MaxRetryCount: 10);
+            MaxRetryCount: 10,
+            CreatedAt: DateTimeOffset.Parse("2026-05-24T10:00:00Z"));
 }

@@ -275,12 +275,12 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
     builder.Services.AddCentralPmsEventPublishing(builder.Configuration, mainDatabaseConnectionString);
+    builder.Services.AddCentralPmsReconciliationOutboxPublisher(builder.Configuration);
     builder.Services.AddScoped<IReconciliationOutboxDispatcherService, ReconciliationOutboxDispatcherService>();
     builder.Services.AddScoped<IReconciliationOutboxDispatcherRepository>(serviceProvider =>
         new ReconciliationOutboxDispatcherRepository(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<ReconciliationOutboxDispatcherRepository>>()));
-    builder.Services.AddSingleton<IReconciliationOutboxEventPublisher, InProcessReconciliationOutboxEventPublisher>();
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();
