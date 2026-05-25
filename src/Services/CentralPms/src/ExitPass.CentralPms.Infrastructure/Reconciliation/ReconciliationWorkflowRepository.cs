@@ -853,6 +853,12 @@ internal static class NpgsqlDataReaderExtensions
         return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
     }
 
+    public static decimal? GetNullableDecimal(this NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetDecimal(ordinal);
+    }
+
     public static DateTimeOffset? GetNullableDateTimeOffset(this NpgsqlDataReader reader, string columnName)
     {
         var ordinal = reader.GetOrdinal(columnName);
