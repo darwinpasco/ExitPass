@@ -265,11 +265,8 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     services.AddOptions<PayMongoOptions>()
         .Bind(configuration.GetSection("Payments:Providers:PayMongo"))
         .Validate(
-            static options =>
-                !string.IsNullOrWhiteSpace(options.SecretKey) &&
-                !string.IsNullOrWhiteSpace(options.PublicKey) &&
-                !string.IsNullOrWhiteSpace(options.BaseUrl),
-            "Payments:Providers:PayMongo requires SecretKey, PublicKey, and BaseUrl.")
+            static options => options.Validate().Count == 0,
+            "Payments:Providers:PayMongo contains invalid production settings.")
         .ValidateOnStart();
 
     services.AddOptions<AubOptions>()

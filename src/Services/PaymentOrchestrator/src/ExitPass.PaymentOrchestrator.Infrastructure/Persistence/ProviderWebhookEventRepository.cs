@@ -28,6 +28,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 public sealed class ProviderWebhookEventRepository : IProviderWebhookEventRepository
 {
     private const string DuplicatePayloadConstraintName = "uq_provider_callbacks__payload_hash";
+    private const string DuplicateProviderEventConstraintName = "ux_provider_callbacks__provider_event";
     private const string PaymentOrchestratorServiceIdentityCode = "payment-orchestrator";
 
     private readonly string _connectionString;
@@ -193,7 +194,8 @@ public sealed class ProviderWebhookEventRepository : IProviderWebhookEventReposi
         }
         catch (PostgresException ex) when (
             ex.SqlState == "23505" &&
-            string.Equals(ex.ConstraintName, DuplicatePayloadConstraintName, StringComparison.Ordinal))
+            (string.Equals(ex.ConstraintName, DuplicatePayloadConstraintName, StringComparison.Ordinal) ||
+             string.Equals(ex.ConstraintName, DuplicateProviderEventConstraintName, StringComparison.Ordinal)))
         {
             _logger.LogInformation(
                 "Detected duplicate provider callback payload during insert. ProviderCode {ProviderCode}, CallbackReference {CallbackReference}",

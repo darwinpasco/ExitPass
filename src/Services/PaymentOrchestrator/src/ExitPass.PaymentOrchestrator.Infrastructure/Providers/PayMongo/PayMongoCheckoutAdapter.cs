@@ -104,9 +104,15 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
             return Task.FromResult(CreateRejectedResult("PAYMONGO_WEBHOOK_SECRET_NOT_CONFIGURED"));
         }
 
-        if (!IsValidPayMongoSignature(signatureHeader, request.RawBody, _options.WebhookSecretKey, _options.IsLiveMode))
+        if (!TryValidatePayMongoSignature(
+                signatureHeader,
+                request.RawBody,
+                _options.WebhookSecretKey,
+                _options.IsLiveMode,
+                _options.WebhookSignatureToleranceSeconds,
+                out var signatureRejectionCode))
         {
-            return Task.FromResult(CreateRejectedResult("PAYMONGO_WEBHOOK_INVALID_SIGNATURE"));
+            return Task.FromResult(CreateRejectedResult(signatureRejectionCode));
         }
 
         var canonicalStatus = MapWebhookEventTypeToCanonicalStatus(normalizedEvent.EventType);
@@ -378,15 +384,33 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         return false;
     }
 
-    private static bool IsValidPayMongoSignature(
+    private static bool TryValidatePayMongoSignature(
         string signatureHeader,
         string rawBody,
         string webhookSecretKey,
-        bool isLiveMode)
+        bool isLiveMode,
+        int toleranceSeconds,
+        out string rejectionCode)
     {
+        rejectionCode = "PAYMONGO_WEBHOOK_INVALID_SIGNATURE";
         var parts = ParseSignatureHeader(signatureHeader);
         if (!parts.TryGetValue("t", out var timestamp) || string.IsNullOrWhiteSpace(timestamp))
         {
+            rejectionCode = "PAYMONGO_WEBHOOK_MISSING_SIGNATURE_TIMESTAMP";
+            return false;
+        }
+
+        if (!long.TryParse(timestamp, NumberStyles.Integer, CultureInfo.InvariantCulture, out var unixTimestamp))
+        {
+            rejectionCode = "PAYMONGO_WEBHOOK_INVALID_SIGNATURE_TIMESTAMP";
+            return false;
+        }
+
+        var signedAt = DateTimeOffset.FromUnixTimeSeconds(unixTimestamp);
+        var age = (DateTimeOffset.UtcNow - signedAt).Duration();
+        if (age > TimeSpan.FromSeconds(toleranceSeconds))
+        {
+            rejectionCode = "PAYMONGO_WEBHOOK_SIGNATURE_TIMESTAMP_OUTSIDE_WINDOW";
             return false;
         }
 
@@ -396,6 +420,9 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
 
         if (string.IsNullOrWhiteSpace(signatureToCompare))
         {
+            rejectionCode = isLiveMode
+                ? "PAYMONGO_WEBHOOK_MISSING_LIVE_SIGNATURE"
+                : "PAYMONGO_WEBHOOK_MISSING_TEST_SIGNATURE";
             return false;
         }
 
@@ -404,9 +431,15 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         var computedBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(signedPayload));
         var computedSignature = Convert.ToHexString(computedBytes).ToLowerInvariant();
 
-        return CryptographicOperations.FixedTimeEquals(
+        var isValid = CryptographicOperations.FixedTimeEquals(
             Encoding.UTF8.GetBytes(computedSignature),
             Encoding.UTF8.GetBytes(signatureToCompare.Trim().ToLowerInvariant()));
+        if (isValid)
+        {
+            rejectionCode = string.Empty;
+        }
+
+        return isValid;
     }
 
     private static Dictionary<string, string> ParseSignatureHeader(string signatureHeader)
@@ -435,10 +468,15 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         {
             "checkout_session.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
             "checkout_session.payment.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
+            "checkout_session.expired" => CanonicalPaymentOutcomeStatus.Expired,
+            "checkout_session.cancelled" => CanonicalPaymentOutcomeStatus.Cancelled,
+            "checkout_session.payment.failed" => CanonicalPaymentOutcomeStatus.Failed,
             "payment.failed" => CanonicalPaymentOutcomeStatus.Failed,
             "payment.expired" => CanonicalPaymentOutcomeStatus.Expired,
             "payment.cancelled" => CanonicalPaymentOutcomeStatus.Cancelled,
+            "payment.canceled" => CanonicalPaymentOutcomeStatus.Cancelled,
             "payment.paid" => CanonicalPaymentOutcomeStatus.Succeeded,
+            "payment.succeeded" => CanonicalPaymentOutcomeStatus.Succeeded,
             _ => CanonicalPaymentOutcomeStatus.PendingProvider
         };
     }

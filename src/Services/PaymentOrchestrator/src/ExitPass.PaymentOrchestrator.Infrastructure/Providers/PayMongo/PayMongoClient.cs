@@ -55,14 +55,11 @@ public sealed class PayMongoClient
     {
         ArgumentNullException.ThrowIfNull(command);
 
-        if (string.IsNullOrWhiteSpace(_options.SecretKey))
+        var validationErrors = _options.Validate();
+        if (validationErrors.Count > 0)
         {
-            throw new InvalidOperationException("PayMongo secret key is required.");
-        }
-
-        if (string.IsNullOrWhiteSpace(_options.BaseUrl))
-        {
-            throw new InvalidOperationException("PayMongo base URL is required.");
+            throw new InvalidOperationException(
+                $"PayMongo configuration is invalid: {string.Join(" ", validationErrors)}");
         }
 
         var requestPayload = BuildCheckoutSessionRequest(command);
@@ -79,7 +76,12 @@ public sealed class PayMongoClient
         using var response = await _httpClient.SendAsync(request, cancellationToken);
         var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
 
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new PayMongoProviderApiException(
+                response.StatusCode,
+                ResolveProviderFailureReason(responseJson));
+        }
 
         using var document = JsonDocument.Parse(responseJson);
         var root = document.RootElement;
@@ -183,6 +185,39 @@ public sealed class PayMongoClient
         var raw = $"{secretKey}:";
         var encoded = Convert.ToBase64String(Encoding.UTF8.GetBytes(raw));
         return new AuthenticationHeaderValue("Basic", encoded);
+    }
+
+    private static string ResolveProviderFailureReason(string responseJson)
+    {
+        if (string.IsNullOrWhiteSpace(responseJson))
+        {
+            return "PAYMONGO_HTTP_ERROR";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(responseJson);
+            if (document.RootElement.TryGetProperty("errors", out var errors) &&
+                errors.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var error in errors.EnumerateArray())
+                {
+                    if (error.ValueKind == JsonValueKind.Object &&
+                        error.TryGetProperty("code", out var code) &&
+                        code.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(code.GetString()))
+                    {
+                        return code.GetString()!;
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return "PAYMONGO_INVALID_ERROR_RESPONSE";
+        }
+
+        return "PAYMONGO_HTTP_ERROR";
     }
 
     private sealed record PayMongoCheckoutSessionRequest(

@@ -54,4 +54,51 @@ public sealed class PayMongoOptions
     /// Gets a value indicating whether the configured webhook runs in live mode.
     /// </summary>
     public bool IsLiveMode { get; init; }
+
+    /// <summary>
+    /// Gets the tolerated PayMongo signature timestamp drift in seconds.
+    /// </summary>
+    public int WebhookSignatureToleranceSeconds { get; init; } = 300;
+
+    /// <summary>
+    /// Validates the PayMongo provider options without exposing configured secrets.
+    /// </summary>
+    /// <returns>The validation errors, or an empty collection when valid.</returns>
+    public IReadOnlyList<string> Validate()
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(SecretKey))
+        {
+            errors.Add("SecretKey is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(PublicKey))
+        {
+            errors.Add("PublicKey is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(WebhookSecretKey))
+        {
+            errors.Add("WebhookSecretKey is required.");
+        }
+
+        if (!Uri.TryCreate(BaseUrl, UriKind.Absolute, out var baseUri) ||
+            (baseUri.Scheme != Uri.UriSchemeHttps && !baseUri.IsLoopback))
+        {
+            errors.Add("BaseUrl must be an absolute HTTPS URL, except for loopback test hosts.");
+        }
+
+        if (AllowedPaymentMethodTypes.Any(method => string.IsNullOrWhiteSpace(method)))
+        {
+            errors.Add("AllowedPaymentMethodTypes must not contain empty entries.");
+        }
+
+        if (WebhookSignatureToleranceSeconds is < 60 or > 86_400)
+        {
+            errors.Add("WebhookSignatureToleranceSeconds must be between 60 and 86400.");
+        }
+
+        return errors;
+    }
 }

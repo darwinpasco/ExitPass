@@ -96,6 +96,60 @@ public sealed class PayMongoClientCheckoutRequestTests
         Assert.Equal(correlationId.ToString(), metadata.GetProperty("correlation_id").GetString());
     }
 
+    /// <summary>
+    /// Verifies PayMongo option validation catches production-critical omissions without exposing secrets.
+    /// </summary>
+    [Fact]
+    public void PayMongoOptions_WhenRequiredValuesAreMissing_ReturnsSafeValidationErrors()
+    {
+        var options = new PayMongoOptions
+        {
+            BaseUrl = "http://api.paymongo.test",
+            SecretKey = "",
+            PublicKey = "",
+            WebhookSecretKey = "",
+            AllowedPaymentMethodTypes = new[] { "qrph", "" },
+            WebhookSignatureToleranceSeconds = 10
+        };
+
+        var errors = options.Validate();
+
+        Assert.Contains(errors, error => error.Contains("SecretKey", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("PublicKey", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("WebhookSecretKey", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("BaseUrl", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("AllowedPaymentMethodTypes", StringComparison.Ordinal));
+        Assert.Contains(errors, error => error.Contains("WebhookSignatureToleranceSeconds", StringComparison.Ordinal));
+        Assert.DoesNotContain(errors, error => error.Contains("sk_", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Verifies provider HTTP failures are mapped to sanitized internal exceptions.
+    /// </summary>
+    [Fact]
+    public async Task CreateCheckoutSessionAsync_WhenProviderReturnsError_ThrowsSanitizedProviderException()
+    {
+        var handler = new CapturingHttpMessageHandler(HttpStatusCode.BadRequest, """
+            {
+              "errors": [
+                {
+                  "code": "parameter_invalid",
+                  "detail": "secret body detail should not leak sk_live_secret"
+                }
+              ]
+            }
+            """);
+        var client = CreateClient(handler);
+
+        var exception = await Assert.ThrowsAsync<PayMongoProviderApiException>(() =>
+            client.CreateCheckoutSessionAsync(CreateDefaultCommand(), CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadRequest, exception.StatusCode);
+        Assert.Equal("parameter_invalid", exception.ReasonCode);
+        Assert.DoesNotContain("sk_live_secret", exception.Message);
+        Assert.DoesNotContain("secret body detail", exception.Message);
+    }
+
     private static PayMongoClient CreateClient(CapturingHttpMessageHandler handler)
     {
         var httpClient = new HttpClient(handler);
@@ -112,8 +166,50 @@ public sealed class PayMongoClientCheckoutRequestTests
         return new PayMongoClient(httpClient, options);
     }
 
+    private static CreateProviderPaymentSessionCommand CreateDefaultCommand()
+    {
+        return new CreateProviderPaymentSessionCommand(
+            Guid.Parse("df0b6210-d30e-404d-9d43-d70b2134601e"),
+            10000,
+            "PHP",
+            "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
+            "webpay-idempotency",
+            "https://webpay.test/webpay/payment-return?ticketReference=WEBPAY-20260521-FRESH-001",
+            "/failed",
+            "https://webpay.test/webpay/payment-cancelled?ticketReference=WEBPAY-20260521-FRESH-001",
+            "/webhook",
+            new Dictionary<string, string>
+            {
+                ["payment_attempt_id"] = "df0b6210-d30e-404d-9d43-d70b2134601e",
+                ["parking_session_id"] = "9b5ca2a5-391a-464c-9196-08d7d3a0c6c6",
+                ["ticket_reference"] = "WEBPAY-20260521-FRESH-001"
+            },
+            "ExitPass Parking Fee - WEBPAY-20260521-FRESH-001");
+    }
+
     private sealed class CapturingHttpMessageHandler : HttpMessageHandler
     {
+        private readonly HttpStatusCode _statusCode;
+        private readonly string _responseJson;
+
+        public CapturingHttpMessageHandler(
+            HttpStatusCode statusCode = HttpStatusCode.OK,
+            string? responseJson = null)
+        {
+            _statusCode = statusCode;
+            _responseJson = responseJson ?? """
+                {
+                  "data": {
+                    "id": "cs_unit_test",
+                    "attributes": {
+                      "checkout_url": "https://checkout.paymongo.test/cs_unit_test",
+                      "checkout_url_expires_at": "2026-05-21T15:59:59Z"
+                    }
+                  }
+                }
+                """;
+        }
+
         public string? RequestJson { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -122,20 +218,9 @@ public sealed class PayMongoClientCheckoutRequestTests
         {
             RequestJson = await request.Content!.ReadAsStringAsync(cancellationToken);
 
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(_statusCode)
             {
-                Content = new StringContent(
-                    """
-                    {
-                      "data": {
-                        "id": "cs_unit_test",
-                        "attributes": {
-                          "checkout_url": "https://checkout.paymongo.test/cs_unit_test",
-                          "checkout_url_expires_at": "2026-05-21T15:59:59Z"
-                        }
-                      }
-                    }
-                    """)
+                Content = new StringContent(_responseJson)
             };
         }
     }
