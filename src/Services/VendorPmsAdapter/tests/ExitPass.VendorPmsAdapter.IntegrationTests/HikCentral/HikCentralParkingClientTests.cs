@@ -109,6 +109,83 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
+    /// Verifies that HikCentral array payloads with one candidate still map into one provider-neutral session.
+    /// </summary>
+    [Fact]
+    public async Task ResolveSession_WhenHikCentralReturnsSingleArrayCandidate_ReturnsProviderNeutralSession()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": [
+                {
+                  "plateLicense": "ABC123",
+                  "parkingInTime": "2026-05-15T09:00:00+08:00",
+                  "parkingDuration": 3600,
+                  "feeRuleType": 1,
+                  "feeRuleIndexCode": "RULE-1",
+                  "feeRuleName": "Standard Parking",
+                  "fee": "125.00"
+                }
+              ]
+            }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.Found, result.Status);
+        Assert.Equal("HIKCENTRAL", result.Session?.VendorProviderCode);
+        Assert.Equal("ABC123", result.Session?.PlateNumber);
+        Assert.Equal(12500, result.Session?.TariffQuote?.AmountMinor);
+    }
+
+    /// <summary>
+    /// Verifies that multiple HikCentral candidates are not guessed into one ExitPass session.
+    /// </summary>
+    [Fact]
+    public async Task ResolveSession_WhenHikCentralReturnsMultipleCandidates_ReturnsAmbiguous()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": [
+                {
+                  "plateLicense": "ABC123",
+                  "parkingInTime": "2026-05-15T09:00:00+08:00",
+                  "parkingDuration": 3600,
+                  "feeRuleType": 1,
+                  "feeRuleIndexCode": "RULE-1",
+                  "feeRuleName": "Standard Parking",
+                  "fee": "125.00"
+                },
+                {
+                  "plateLicense": "ABC123",
+                  "parkingInTime": "2026-05-15T10:00:00+08:00",
+                  "parkingDuration": 1800,
+                  "feeRuleType": 1,
+                  "feeRuleIndexCode": "RULE-2",
+                  "feeRuleName": "Standard Parking",
+                  "fee": "75.00"
+                }
+              ]
+            }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.Ambiguous, result.Status);
+        Assert.Equal("VENDOR_SESSION_AMBIGUOUS", result.ErrorCode);
+        Assert.Null(result.Session);
+        Assert.False(result.Retryable);
+    }
+
+    /// <summary>
     /// Verifies that nonzero HikCentral response codes map to deterministic vendor rejection.
     /// </summary>
     [Fact]
