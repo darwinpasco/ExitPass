@@ -25,6 +25,7 @@ using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Api.VendorParking;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
@@ -40,6 +41,7 @@ using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
@@ -104,6 +106,7 @@ app.MapInternalPaymentConfirmationEndpoints();
 app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
+app.MapInternalOutboxDispatcherEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
@@ -189,6 +192,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationRunItems")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationExceptionLifecycle")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationEvaluation")
+                .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
@@ -271,6 +275,12 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
     builder.Services.AddCentralPmsEventPublishing(builder.Configuration, mainDatabaseConnectionString);
+    builder.Services.AddScoped<IReconciliationOutboxDispatcherService, ReconciliationOutboxDispatcherService>();
+    builder.Services.AddScoped<IReconciliationOutboxDispatcherRepository>(serviceProvider =>
+        new ReconciliationOutboxDispatcherRepository(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<ILogger<ReconciliationOutboxDispatcherRepository>>()));
+    builder.Services.AddSingleton<IReconciliationOutboxEventPublisher, InProcessReconciliationOutboxEventPublisher>();
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();
@@ -329,7 +339,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IReconciliationEvaluationRepository>(_ =>
         new ReconciliationEvaluationRepository(mainDatabaseConnectionString));
 
-    builder.Services.AddSingleton<CentralPmsMetrics>();
+    builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
 }
 
