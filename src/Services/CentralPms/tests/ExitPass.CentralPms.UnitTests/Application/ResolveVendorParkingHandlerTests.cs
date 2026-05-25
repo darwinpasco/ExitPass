@@ -122,6 +122,25 @@ public sealed class ResolveVendorParkingHandlerTests
     }
 
     /// <summary>
+    /// Verifies ambiguous vendor lookup results propagate deterministically without guessing a session.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenVendorReturnsAmbiguous_ReturnsAmbiguousMatch()
+    {
+        var publisher = new RecordingIntegrationEventPublisher();
+        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.Ambiguous(), publisher);
+
+        var result = await sut.ExecuteAsync(PlateCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.AmbiguousMatch);
+        result.ErrorCode.Should().Be("VENDOR_SESSION_AMBIGUOUS");
+        result.Retryable.Should().BeFalse();
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+        publisher.Published.Should().BeEmpty();
+    }
+
+    /// <summary>
     /// Verifies that unsuccessful vendor lookups do not publish success events.
     /// </summary>
     /// <param name="clientScenario">Vendor PMS client response setup name.</param>
@@ -226,6 +245,25 @@ public sealed class ResolveVendorParkingHandlerTests
             Arg.Any<CancellationToken>());
         resolved.TariffSnapshot!.NetPayable.Should().Be(250.75m);
         resolved.TariffSnapshot.TariffVersionReference.Should().Be("FAKE-TARIFF-SEPARATE");
+    }
+
+    /// <summary>
+    /// Verifies a failed separate tariff calculation remains a deterministic vendor rejection.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenSeparateTariffFails_ReturnsVendorRejected()
+    {
+        var publisher = new RecordingIntegrationEventPublisher();
+        var sut = CreateSut(FakeVendorPmsParkingResolutionClient.TariffRejected(), publisher);
+
+        var result = await sut.ExecuteAsync(PlateCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.VendorRejected);
+        result.ErrorCode.Should().Be("VENDOR_TARIFF_REJECTED");
+        result.Retryable.Should().BeFalse();
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+        publisher.Published.Should().BeEmpty();
     }
 
     /// <summary>
@@ -441,6 +479,13 @@ public sealed class ResolveVendorParkingHandlerTests
                 new VendorTariffQuoteResponse(VendorParkingLookupStatus.NotFound, null, "SESSION_NOT_FOUND", false, CorrelationId));
         }
 
+        public static FakeVendorPmsParkingResolutionClient Ambiguous()
+        {
+            return new FakeVendorPmsParkingResolutionClient(
+                new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.Ambiguous, null, "VENDOR_SESSION_AMBIGUOUS", false, CorrelationId),
+                new VendorTariffQuoteResponse(VendorParkingLookupStatus.Ambiguous, null, "VENDOR_SESSION_AMBIGUOUS", false, CorrelationId));
+        }
+
         public static FakeVendorPmsParkingResolutionClient Unavailable()
         {
             return new FakeVendorPmsParkingResolutionClient(
@@ -462,6 +507,22 @@ public sealed class ResolveVendorParkingHandlerTests
             return new FakeVendorPmsParkingResolutionClient(
                 new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.Found, malformedSession, null, false, CorrelationId),
                 new VendorTariffQuoteResponse(VendorParkingLookupStatus.Found, malformedSession.TariffQuote, null, false, CorrelationId));
+        }
+
+        public static FakeVendorPmsParkingResolutionClient TariffRejected()
+        {
+            var session = new VendorParkingSessionDto(
+                "FAKE-PMS",
+                "VENDOR-SESSION-TARIFF-REJECTED",
+                "ABC1234",
+                Now.AddHours(-2),
+                7200,
+                "PAYMENT_REQUIRED",
+                null);
+
+            return new FakeVendorPmsParkingResolutionClient(
+                new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.Found, session, null, false, CorrelationId),
+                new VendorTariffQuoteResponse(VendorParkingLookupStatus.VendorRejected, null, "VENDOR_TARIFF_REJECTED", false, CorrelationId));
         }
 
         public Task<VendorParkingSessionLookupResponse> ResolveSessionAsync(

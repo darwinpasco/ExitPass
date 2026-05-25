@@ -23,7 +23,6 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Api.Validation;
-using ExitPass.CentralPms.Api.VendorParking;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
@@ -276,7 +275,7 @@ static void ConfigureApplicationServices(
 {
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
-    builder.Services.AddScoped<IVendorPmsParkingResolutionClient, FakeVendorPmsParkingResolutionClient>();
+    builder.Services.AddCentralPmsVendorPmsAdapter(builder.Configuration);
     builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();

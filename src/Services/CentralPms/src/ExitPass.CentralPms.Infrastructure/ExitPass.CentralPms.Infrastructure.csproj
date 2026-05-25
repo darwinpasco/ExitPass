@@ -10,6 +10,8 @@
   <ItemGroup>
     <ProjectReference Include="../ExitPass.CentralPms.Application/ExitPass.CentralPms.Application.csproj" />
     <ProjectReference Include="../ExitPass.CentralPms.Domain/ExitPass.CentralPms.Domain.csproj" />
+    <ProjectReference Include="../../../VendorPmsAdapter/src/ExitPass.VendorPmsAdapter.Application/ExitPass.VendorPmsAdapter.Application.csproj" />
+    <ProjectReference Include="../../../VendorPmsAdapter/src/ExitPass.VendorPmsAdapter.Infrastructure/ExitPass.VendorPmsAdapter.Infrastructure.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Persistence/ExitPass.BuildingBlocks.Persistence.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Messaging/ExitPass.BuildingBlocks.Messaging.csproj" />
