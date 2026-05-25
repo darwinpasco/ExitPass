@@ -97,6 +97,148 @@ public sealed class ReconciliationEvaluationServiceTests
     }
 
     /// <summary>
+    /// Verifies empty runs complete deterministically with zero counts.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRunHasNoItems_ReturnsZeroSummary()
+    {
+        var repository = Substitute.For<IReconciliationEvaluationRepository>();
+        repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(true);
+        repository.ListRunItemIdsAsync(RunId, Arg.Any<CancellationToken>()).Returns(Array.Empty<Guid>());
+        var sut = new ReconciliationEvaluationService(repository);
+
+        var result = await sut.EvaluateRunAsync(
+            new EvaluateReconciliationRunCommand(RunId, null, null, CorrelationId),
+            CancellationToken.None);
+
+        result.TotalItems.Should().Be(0);
+        result.EvaluatedItems.Should().Be(0);
+        result.SkippedItems.Should().Be(0);
+        await repository.DidNotReceive().SaveEvaluationAsync(
+            Arg.Any<EvaluateReconciliationItemCommand>(),
+            Arg.Any<ReconciliationEvaluationDecision>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies run evaluation reuses item-level classification and returns summary counts.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRunHasEligibleItems_ReturnsExpectedSummaryCounts()
+    {
+        var matchedItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11");
+        var mismatchedItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa12");
+        var missingSourceItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa13");
+        var inconclusiveItemId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa14");
+        var repository = Substitute.For<IReconciliationEvaluationRepository>();
+        repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(true);
+        repository.ListRunItemIdsAsync(RunId, Arg.Any<CancellationToken>())
+            .Returns(new[] { matchedItemId, mismatchedItemId, missingSourceItemId, inconclusiveItemId });
+        repository.ReadItemAsync(matchedItemId, Arg.Any<CancellationToken>())
+            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 100m, itemId: matchedItemId));
+        repository.ReadItemAsync(mismatchedItemId, Arg.Any<CancellationToken>())
+            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 110m, itemId: mismatchedItemId));
+        repository.ReadItemAsync(missingSourceItemId, Arg.Any<CancellationToken>())
+            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: null, paymentConfirmationId: TargetId, expected: 100m, actual: 100m, itemId: missingSourceItemId));
+        repository.ReadItemAsync(inconclusiveItemId, Arg.Any<CancellationToken>())
+            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: null, actual: 100m, itemId: inconclusiveItemId));
+        repository.SaveEvaluationAsync(
+                Arg.Any<EvaluateReconciliationItemCommand>(),
+                Arg.Any<ReconciliationEvaluationDecision>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var command = call.ArgAt<EvaluateReconciliationItemCommand>(0);
+                var decision = call.ArgAt<ReconciliationEvaluationDecision>(1);
+                var item = Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, itemId: command.ReconciliationItemId);
+                return Evaluation(item, decision);
+            });
+        var sut = new ReconciliationEvaluationService(repository);
+
+        var result = await sut.EvaluateRunAsync(
+            new EvaluateReconciliationRunCommand(RunId, null, null, CorrelationId),
+            CancellationToken.None);
+
+        result.TotalItems.Should().Be(4);
+        result.EvaluatedItems.Should().Be(4);
+        result.MatchedItems.Should().Be(1);
+        result.MismatchedItems.Should().Be(1);
+        result.MissingSourceItems.Should().Be(1);
+        result.MissingTargetItems.Should().Be(0);
+        result.InconclusiveItems.Should().Be(1);
+        result.SkippedItems.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies unknown runs return deterministic not-found errors.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRunMissing_ThrowsRunNotFound()
+    {
+        var repository = Substitute.For<IReconciliationEvaluationRepository>();
+        repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(false);
+        var sut = new ReconciliationEvaluationService(repository);
+
+        var act = () => sut.EvaluateRunAsync(
+            new EvaluateReconciliationRunCommand(RunId, null, null, CorrelationId),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ReconciliationRunNotFoundException>();
+    }
+
+    /// <summary>
+    /// Verifies duplicate run evaluation is deterministic for the same underlying item state.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRepeated_ReturnsSameSummary()
+    {
+        var repository = Substitute.For<IReconciliationEvaluationRepository>();
+        repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(true);
+        repository.ListRunItemIdsAsync(RunId, Arg.Any<CancellationToken>()).Returns(new[] { ItemId });
+        repository.ReadItemAsync(ItemId, Arg.Any<CancellationToken>())
+            .Returns(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId, expected: 100m, actual: 100m));
+        repository.SaveEvaluationAsync(
+                Arg.Any<EvaluateReconciliationItemCommand>(),
+                Arg.Any<ReconciliationEvaluationDecision>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call => Evaluation(Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId), call.ArgAt<ReconciliationEvaluationDecision>(1)));
+        var sut = new ReconciliationEvaluationService(repository);
+
+        var first = await sut.EvaluateRunAsync(new EvaluateReconciliationRunCommand(RunId, null, null, CorrelationId), CancellationToken.None);
+        var second = await sut.EvaluateRunAsync(new EvaluateReconciliationRunCommand(RunId, null, null, CorrelationId), CancellationToken.None);
+
+        second.Should().BeEquivalentTo(first);
+    }
+
+    /// <summary>
+    /// Verifies run evaluation summary readback counts current item states.
+    /// </summary>
+    [Fact]
+    public async Task ReadRunEvaluationSummary_WhenRunExists_ReturnsCurrentSummary()
+    {
+        var repository = Substitute.For<IReconciliationEvaluationRepository>();
+        repository.RunExistsAsync(RunId, Arg.Any<CancellationToken>()).Returns(true);
+        repository.ListRunItemsAsync(RunId, Arg.Any<CancellationToken>())
+            .Returns(new[]
+            {
+                Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId) with { ItemStatus = "MATCHED", MatchStatus = "MATCH", VarianceAmount = 0m },
+                Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId) with { ItemStatus = "MISMATCHED", MatchStatus = "AMOUNT_MISMATCH", VarianceAmount = 5m },
+                Item("PROVIDER_TO_CORE", providerOutcomeId: SourceId, paymentConfirmationId: TargetId) with { ItemStatus = "PENDING", MatchStatus = "NOT_EVALUATED" }
+            });
+        var sut = new ReconciliationEvaluationService(repository);
+
+        var result = await sut.ReadRunEvaluationSummaryAsync(
+            new ReadReconciliationRunEvaluationSummaryQuery(RunId),
+            CancellationToken.None);
+
+        result.TotalItems.Should().Be(3);
+        result.EvaluatedItems.Should().Be(2);
+        result.MatchedItems.Should().Be(1);
+        result.MismatchedItems.Should().Be(1);
+        result.SkippedItems.Should().Be(1);
+    }
+
+    /// <summary>
     /// Verifies evaluation SQL remains bounded to reconciliation item evidence fields.
     /// </summary>
     [Fact]
@@ -112,6 +254,7 @@ public sealed class ReconciliationEvaluationServiceTests
             "ReconciliationEvaluationRepository.cs");
 
         Assert.Contains("UPDATE reconciliation.reconciliation_items", repository, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE reconciliation.reconciliation_runs", repository, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE core.payment_attempts", repository, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("INSERT INTO core.payment_confirmations", repository, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("UPDATE core.payment_confirmations", repository, StringComparison.OrdinalIgnoreCase);
@@ -186,9 +329,10 @@ public sealed class ReconciliationEvaluationServiceTests
         Guid? providerOutcomeId = null,
         Guid? paymentConfirmationId = null,
         decimal? expected = null,
-        decimal? actual = null) =>
+        decimal? actual = null,
+        Guid? itemId = null) =>
         new(
-            ItemId,
+            itemId ?? ItemId,
             RunId,
             MopsTransactionRecordId: null,
             ManualGateLogId: null,

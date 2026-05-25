@@ -115,6 +115,109 @@ public sealed class ReconciliationEvaluationApiIntegrationTests
     }
 
     /// <summary>
+    /// Verifies run-level evaluation succeeds and does not request payment truth mutation.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRunExists_ReturnsSummaryAndDoesNotMutatePaymentTruth()
+    {
+        var fake = new FakeEvaluationService();
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+
+        using var response = await SendJsonAsync(
+            client,
+            $"/v1/ops/reconciliation/runs/{RunId}/evaluate",
+            new EvaluateReconciliationRunRequest(null, null),
+            CorrelationId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ReconciliationRunEvaluationSummaryResponse>();
+        body.Should().NotBeNull();
+        body!.ReconciliationRunId.Should().Be(RunId);
+        body.TotalItems.Should().Be(2);
+        body.MatchedItems.Should().Be(1);
+        body.MismatchedItems.Should().Be(1);
+        fake.PaymentTruthMutationRequested.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies empty runs complete successfully with zero counts.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRunIsEmpty_ReturnsZeroSummary()
+    {
+        using var factory = CreateFactory(new FakeEvaluationService { EmptyRun = true });
+        using var client = factory.CreateClient();
+
+        using var response = await SendJsonAsync(
+            client,
+            $"/v1/ops/reconciliation/runs/{RunId}/evaluate",
+            new EvaluateReconciliationRunRequest(null, null),
+            CorrelationId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ReconciliationRunEvaluationSummaryResponse>();
+        body!.TotalItems.Should().Be(0);
+        body.EvaluatedItems.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies unknown runs return deterministic errors.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRunMissing_ReturnsDeterministicError()
+    {
+        using var factory = CreateFactory(new FakeEvaluationService { ReturnRunMissing = true });
+        using var client = factory.CreateClient();
+
+        using var response = await SendJsonAsync(
+            client,
+            $"/v1/ops/reconciliation/runs/{RunId}/evaluate",
+            new EvaluateReconciliationRunRequest(null, null),
+            CorrelationId);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        (await response.Content.ReadFromJsonAsync<ErrorResponse>())!
+            .ErrorCode.Should().Be("RECONCILIATION_RUN_NOT_FOUND");
+    }
+
+    /// <summary>
+    /// Verifies duplicate run evaluation returns the same summary.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateRun_WhenRepeated_ReturnsSameSummary()
+    {
+        using var factory = CreateFactory(new FakeEvaluationService());
+        using var client = factory.CreateClient();
+        var request = new EvaluateReconciliationRunRequest(null, null);
+
+        using var first = await SendJsonAsync(client, $"/v1/ops/reconciliation/runs/{RunId}/evaluate", request, CorrelationId);
+        using var second = await SendJsonAsync(client, $"/v1/ops/reconciliation/runs/{RunId}/evaluate", request, CorrelationId);
+
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+        var firstBody = await first.Content.ReadFromJsonAsync<ReconciliationRunEvaluationSummaryResponse>();
+        var secondBody = await second.Content.ReadFromJsonAsync<ReconciliationRunEvaluationSummaryResponse>();
+        secondBody.Should().BeEquivalentTo(firstBody);
+    }
+
+    /// <summary>
+    /// Verifies run evaluation summary can be read without issuing evaluation writes.
+    /// </summary>
+    [Fact]
+    public async Task GetRunEvaluationSummary_WhenRunExists_ReturnsSummary()
+    {
+        using var factory = CreateFactory(new FakeEvaluationService());
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/v1/ops/reconciliation/runs/{RunId}/evaluation-summary");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await response.Content.ReadFromJsonAsync<ReconciliationRunEvaluationSummaryResponse>())!
+            .TotalItems.Should().Be(2);
+    }
+
+    /// <summary>
     /// Verifies placeholder RBAC metadata is present for future authorization enforcement.
     /// </summary>
     [Fact]
@@ -127,13 +230,15 @@ public sealed class ReconciliationEvaluationApiIntegrationTests
             .Endpoints
             .Where(endpoint =>
                 endpoint.DisplayName?.Contains("/v1/ops/reconciliation/items/{reconciliationItemId:guid}/evaluate", StringComparison.OrdinalIgnoreCase) == true ||
-                endpoint.DisplayName?.Contains("/v1/ops/reconciliation/items/{reconciliationItemId:guid}/evaluation", StringComparison.OrdinalIgnoreCase) == true)
+                endpoint.DisplayName?.Contains("/v1/ops/reconciliation/items/{reconciliationItemId:guid}/evaluation", StringComparison.OrdinalIgnoreCase) == true ||
+                endpoint.DisplayName?.Contains("/v1/ops/reconciliation/runs/{reconciliationRunId:guid}/evaluate", StringComparison.OrdinalIgnoreCase) == true ||
+                endpoint.DisplayName?.Contains("/v1/ops/reconciliation/runs/{reconciliationRunId:guid}/evaluation-summary", StringComparison.OrdinalIgnoreCase) == true)
             .ToArray();
 
         endpoints.Should().NotBeEmpty();
         endpoints.Select(endpoint => endpoint.Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName)
             .Should()
-            .Contain(new[] { "ReconciliationItemEvaluator", "ReconciliationEvaluationViewer" });
+            .Contain(new[] { "ReconciliationItemEvaluator", "ReconciliationRunEvaluator", "ReconciliationEvaluationViewer" });
     }
 
     private static CustomWebApplicationFactory CreateFactory(FakeEvaluationService fake)
@@ -164,6 +269,10 @@ public sealed class ReconciliationEvaluationApiIntegrationTests
     {
         public bool ReturnMissing { get; init; }
 
+        public bool ReturnRunMissing { get; init; }
+
+        public bool EmptyRun { get; init; }
+
         public bool PaymentTruthMutationRequested { get; private set; }
 
         public Task<ReconciliationItemEvaluationRecord> EvaluateAsync(
@@ -190,6 +299,30 @@ public sealed class ReconciliationEvaluationApiIntegrationTests
             return Task.FromResult(Record(CorrelationId));
         }
 
+        public Task<ReconciliationRunEvaluationSummaryRecord> EvaluateRunAsync(
+            EvaluateReconciliationRunCommand command,
+            CancellationToken cancellationToken)
+        {
+            if (ReturnRunMissing)
+            {
+                throw new ReconciliationRunNotFoundException(command.ReconciliationRunId);
+            }
+
+            return Task.FromResult(Summary(command.CorrelationId));
+        }
+
+        public Task<ReconciliationRunEvaluationSummaryRecord> ReadRunEvaluationSummaryAsync(
+            ReadReconciliationRunEvaluationSummaryQuery query,
+            CancellationToken cancellationToken)
+        {
+            if (ReturnRunMissing)
+            {
+                throw new ReconciliationRunNotFoundException(query.ReconciliationRunId);
+            }
+
+            return Task.FromResult(Summary(CorrelationId));
+        }
+
         private static ReconciliationItemEvaluationRecord Record(Guid correlationId) =>
             new(
                 ItemId,
@@ -207,5 +340,10 @@ public sealed class ReconciliationEvaluationApiIntegrationTests
                 "Exception creation/update is deferred.",
                 DateTimeOffset.UtcNow,
                 correlationId);
+
+        private ReconciliationRunEvaluationSummaryRecord Summary(Guid correlationId) =>
+            EmptyRun
+                ? new ReconciliationRunEvaluationSummaryRecord(RunId, 0, 0, 0, 0, 0, 0, 0, 0, correlationId)
+                : new ReconciliationRunEvaluationSummaryRecord(RunId, 2, 2, 1, 1, 0, 0, 0, 0, correlationId);
     }
 }
