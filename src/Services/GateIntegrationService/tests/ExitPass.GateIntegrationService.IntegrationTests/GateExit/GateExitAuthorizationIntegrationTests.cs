@@ -197,6 +197,7 @@ public sealed class BlockingCentralPmsClient : ICentralPmsExitAuthorizationClien
     public async Task<CentralPmsConsumeAuthorizationResult> ConsumeAsync(
         Guid exitAuthorizationId,
         Guid requestedByUserId,
+        string gateDeviceId,
         Guid correlationId,
         CancellationToken cancellationToken)
     {

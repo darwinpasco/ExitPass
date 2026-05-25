@@ -150,6 +150,7 @@ public sealed class ConsumeGateExitAuthorizationHandlerTests
         public Task<CentralPmsConsumeAuthorizationResult> ConsumeAsync(
             Guid exitAuthorizationId,
             Guid requestedByUserId,
+            string gateDeviceId,
             Guid correlationId,
             CancellationToken cancellationToken)
         {

@@ -65,6 +65,7 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
                 $"/v1/gate/authorizations/{authorization.ExitAuthorizationId}/consume");
 
             request.Headers.Add("X-Correlation-Id", context.CorrelationId.ToString());
+            AddGateIdentityHeaders(request, context);
 
             request.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
                 RequestedByUserId: context.RequestedByUserId));
@@ -144,26 +145,41 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
     [Fact]
     public async Task ConsumeExitAuthorization_WhenAuthorizationDoesNotExist_ReturnsNotFound()
     {
-        var correlationId = Guid.NewGuid();
-        var exitAuthorizationId = Guid.NewGuid();
+        var context = PaymentTestContext.Create(
+            nameof(ConsumeExitAuthorization_WhenAuthorizationDoesNotExist_ReturnsNotFound));
 
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"/v1/gate/authorizations/{exitAuthorizationId}/consume");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for missing authorization gate identity tests");
 
-        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        try
+        {
+            var exitAuthorizationId = Guid.NewGuid();
 
-        request.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
-            RequestedByUserId: Guid.NewGuid()));
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/v1/gate/authorizations/{exitAuthorizationId}/consume");
 
-        using var response = await _client.SendAsync(request);
+            request.Headers.Add("X-Correlation-Id", context.CorrelationId.ToString());
+            AddGateIdentityHeaders(request, context);
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+            request.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
+                RequestedByUserId: context.RequestedByUserId));
 
-        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-        Assert.NotNull(body);
-        Assert.Equal("EXIT_AUTHORIZATION_NOT_FOUND", body!.ErrorCode);
-        Assert.Equal(correlationId, body.CorrelationId);
+            using var response = await _client.SendAsync(request);
+
+            Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+            var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            Assert.NotNull(body);
+            Assert.Equal("EXIT_AUTHORIZATION_NOT_FOUND", body!.ErrorCode);
+            Assert.Equal(context.CorrelationId, body.CorrelationId);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
     }
 
     /// <summary>
@@ -196,6 +212,7 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
                 $"/v1/gate/authorizations/{authorization.ExitAuthorizationId}/consume");
 
             request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString());
+            AddGateIdentityHeaders(request, context);
 
             request.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
                 RequestedByUserId: context.RequestedByUserId));
@@ -242,6 +259,7 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
                 $"/v1/gate/authorizations/{authorization.ExitAuthorizationId}/consume");
 
             request.Headers.Add("X-Correlation-Id", context.CorrelationId.ToString());
+            AddGateIdentityHeaders(request, context);
 
             request.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
                 RequestedByUserId: context.RequestedByUserId));
@@ -350,6 +368,12 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
 
         var affected = await command.ExecuteNonQueryAsync();
         Assert.Equal(1, affected);
+    }
+
+    private static void AddGateIdentityHeaders(HttpRequestMessage request, PaymentTestContext context)
+    {
+        request.Headers.Add("X-Service-Identity-Id", context.RequestedByUserId.ToString());
+        request.Headers.Add("X-Gate-Device-Id", PaymentTestDataHelper.GateDeviceCode(context));
     }
 
     private sealed record ConsumeExitAuthorizationRequest(

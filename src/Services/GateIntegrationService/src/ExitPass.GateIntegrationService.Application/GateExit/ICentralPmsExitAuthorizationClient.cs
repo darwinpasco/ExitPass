@@ -10,12 +10,14 @@ public interface ICentralPmsExitAuthorizationClient
     /// </summary>
     /// <param name="exitAuthorizationId">Exit authorization identifier to consume.</param>
     /// <param name="requestedByUserId">Service identity used as the Central PMS consume actor.</param>
+    /// <param name="gateDeviceId">Gate device identifier presented by the physical device boundary.</param>
     /// <param name="correlationId">End-to-end correlation identifier.</param>
     /// <param name="cancellationToken">Cancellation token for the consume request.</param>
     /// <returns>The Central PMS consume result; only <c>CONSUMED</c> authorizes a gate-open command.</returns>
     Task<CentralPmsConsumeAuthorizationResult> ConsumeAsync(
         Guid exitAuthorizationId,
         Guid requestedByUserId,
+        string gateDeviceId,
         Guid correlationId,
         CancellationToken cancellationToken);
 }

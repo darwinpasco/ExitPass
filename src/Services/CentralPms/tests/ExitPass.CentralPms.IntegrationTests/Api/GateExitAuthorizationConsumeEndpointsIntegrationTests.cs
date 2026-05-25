@@ -64,9 +64,10 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             var response = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: Guid.NewGuid(),
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: false,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var raw = await response.Content.ReadAsStringAsync();
 
@@ -103,9 +104,10 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             var response = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var body = await response.Content.ReadFromJsonAsync<ConsumeExitAuthorizationResponse>();
 
@@ -114,6 +116,86 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             Assert.Equal(exitAuthorizationId, body!.ExitAuthorizationId);
             Assert.Equal("CONSUMED", body.AuthorizationStatus);
             Assert.NotNull(body.ConsumedAt);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that the gate-facing endpoint rejects missing service identity before consuming.
+    /// </summary>
+    [Fact]
+    public async Task ConsumeExitAuthorization_WhenServiceIdentityHeaderIsMissing_ReturnsUnauthorized()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ConsumeExitAuthorization_WhenServiceIdentityHeaderIsMissing_ReturnsUnauthorized));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for gate device identity tests");
+
+        try
+        {
+            var issued = await CreateIssuedAuthorizationAsync(context);
+
+            using var client = CreateClient();
+
+            var response = await PostConsumeExitAuthorizationAsync(
+                client,
+                exitAuthorizationId: issued.ExitAuthorizationId!.Value,
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                context: context,
+                includeServiceIdentity: false);
+
+            var raw = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            Assert.Contains("SERVICE_IDENTITY_REQUIRED", raw, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies that an unassigned gate device cannot consume a valid authorization.
+    /// </summary>
+    [Fact]
+    public async Task ConsumeExitAuthorization_WhenGateDeviceIsUnassigned_ReturnsForbidden()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ConsumeExitAuthorization_WhenGateDeviceIsUnassigned_ReturnsForbidden));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for gate device identity tests");
+
+        try
+        {
+            var issued = await CreateIssuedAuthorizationAsync(context);
+
+            using var client = CreateClient();
+
+            var response = await PostConsumeExitAuthorizationAsync(
+                client,
+                exitAuthorizationId: issued.ExitAuthorizationId!.Value,
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                context: context,
+                gateDeviceId: $"UNASSIGNED-{Guid.NewGuid():N}");
+
+            var raw = await response.Content.ReadAsStringAsync();
+
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Contains("GATE_DEVICE_FORBIDDEN", raw, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {
@@ -145,16 +227,18 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             var firstResponse = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var secondResponse = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var secondRaw = await secondResponse.Content.ReadAsStringAsync();
 
@@ -189,9 +273,10 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             var response = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: Guid.NewGuid(),
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var raw = await response.Content.ReadAsStringAsync();
 
@@ -233,9 +318,10 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             var response = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var raw = await response.Content.ReadAsStringAsync();
 
@@ -277,9 +363,10 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
             var response = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
                 includeCorrelationId: true,
-                correlationId: context.CorrelationId);
+                correlationId: context.CorrelationId,
+                context: context);
 
             var raw = await response.Content.ReadAsStringAsync();
 
@@ -378,7 +465,12 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
         Guid exitAuthorizationId,
         ConsumeExitAuthorizationRequest request,
         bool includeCorrelationId,
-        Guid correlationId)
+        Guid correlationId,
+        PaymentTestContext context,
+        bool includeServiceIdentity = true,
+        bool includeGateDeviceIdentity = true,
+        string? gateDeviceId = null,
+        Guid? serviceIdentityId = null)
     {
         using var message = new HttpRequestMessage(
             HttpMethod.Post,
@@ -390,6 +482,16 @@ public sealed class GateExitAuthorizationConsumeEndpointsIntegrationTests
         if (includeCorrelationId)
         {
             message.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        }
+
+        if (includeServiceIdentity)
+        {
+            message.Headers.Add("X-Service-Identity-Id", (serviceIdentityId ?? request.RequestedByUserId).ToString());
+        }
+
+        if (includeGateDeviceIdentity)
+        {
+            message.Headers.Add("X-Gate-Device-Id", gateDeviceId ?? PaymentTestDataHelper.GateDeviceCode(context));
         }
 
         return await client.SendAsync(message);

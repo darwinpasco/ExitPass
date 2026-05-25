@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -23,6 +24,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 ///
 /// Invariants Enforced:
 /// - A valid authorization may be consumed only once.
+/// - Gate consume requests must carry an active DEVICE service identity and active gate assignment.
 /// - Business conflicts must be distinguished from unexpected server failures.
 /// - Trace metadata must be preserved at the HTTP boundary.
 /// </summary>
@@ -45,6 +47,8 @@ public static class GateExitAuthorizationConsumeEndpoints
             .WithName("ConsumeExitAuthorization")
             .Produces<ConsumeExitAuthorizationResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
@@ -60,6 +64,7 @@ public static class GateExitAuthorizationConsumeEndpoints
         HttpRequest request,
         ConsumeExitAuthorizationRequest body,
         IConsumeExitAuthorizationUseCase useCase,
+        IGateDeviceIdentityValidator gateDeviceIdentityValidator,
         ILoggerFactory loggerFactory,
         CancellationToken cancellationToken)
     {
@@ -84,10 +89,116 @@ public static class GateExitAuthorizationConsumeEndpoints
         activity?.SetTag("correlation_id", correlationId);
         activity?.SetTag("exit_authorization_id", exitAuthorizationId);
 
+        if (body.RequestedByUserId == Guid.Empty)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "RequestedByUserId is required.");
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "INVALID_REQUEST");
+
+            return Results.BadRequest(BuildError(
+                "INVALID_REQUEST",
+                "RequestedByUserId is required.",
+                correlationId,
+                retryable: false));
+        }
+
+        if (!request.Headers.TryGetValue("X-Service-Identity-Id", out var serviceIdentityHeader) ||
+            !Guid.TryParse(serviceIdentityHeader.ToString(), out var serviceIdentityId) ||
+            serviceIdentityId == Guid.Empty)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "X-Service-Identity-Id header is required.");
+            activity?.SetTag("failure_class", "SECURITY_REJECTION");
+            activity?.SetTag("error_code", "SERVICE_IDENTITY_REQUIRED");
+
+            return Results.Json(
+                BuildError(
+                    "SERVICE_IDENTITY_REQUIRED",
+                    "X-Service-Identity-Id header is required.",
+                    correlationId,
+                    retryable: false),
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (!request.Headers.TryGetValue("X-Gate-Device-Id", out var gateDeviceHeader) ||
+            string.IsNullOrWhiteSpace(gateDeviceHeader.ToString()))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "X-Gate-Device-Id header is required.");
+            activity?.SetTag("failure_class", "SECURITY_REJECTION");
+            activity?.SetTag("error_code", "GATE_DEVICE_IDENTITY_REQUIRED");
+
+            return Results.Json(
+                BuildError(
+                    "GATE_DEVICE_IDENTITY_REQUIRED",
+                    "X-Gate-Device-Id header is required.",
+                    correlationId,
+                    retryable: false),
+                statusCode: StatusCodes.Status401Unauthorized);
+        }
+
+        if (body.RequestedByUserId != serviceIdentityId)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "RequestedByUserId does not match caller service identity.");
+            activity?.SetTag("failure_class", "SECURITY_REJECTION");
+            activity?.SetTag("error_code", "SERVICE_IDENTITY_MISMATCH");
+
+            return Results.Json(
+                BuildError(
+                    "SERVICE_IDENTITY_MISMATCH",
+                    "RequestedByUserId must match X-Service-Identity-Id for gate consume requests.",
+                    correlationId,
+                    retryable: false),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var identityValidation = await gateDeviceIdentityValidator.ValidateConsumeAsync(
+            new GateDeviceIdentityValidationRequest(
+                exitAuthorizationId,
+                gateDeviceHeader.ToString(),
+                serviceIdentityId,
+                correlationId),
+            cancellationToken);
+
+        activity?.SetTag("service_identity_id", serviceIdentityId);
+        activity?.SetTag("gate_device_identifier", gateDeviceHeader.ToString());
+        activity?.SetTag("gate_device_identity_result", identityValidation.ResultCode);
+        if (identityValidation.GateDeviceId.HasValue)
+        {
+            activity?.SetTag("gate_device_id", identityValidation.GateDeviceId.Value);
+        }
+
+        if (!identityValidation.IsAuthorized)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, identityValidation.ResultCode);
+            activity?.SetTag("failure_class", "SECURITY_REJECTION");
+            activity?.SetTag("error_code", identityValidation.ResultCode);
+
+            var error = BuildError(
+                identityValidation.ResultCode,
+                identityValidation.Message,
+                correlationId,
+                retryable: false);
+
+            logger.LogWarning(
+                "Gate consume rejected before DB consume. error_code={ErrorCode} gate_device_identifier={GateDeviceIdentifier} service_identity_id={ServiceIdentityId}",
+                identityValidation.ResultCode,
+                gateDeviceHeader.ToString(),
+                serviceIdentityId);
+
+            return identityValidation.ResultCode switch
+            {
+                "EXIT_AUTHORIZATION_NOT_FOUND" => Results.NotFound(error),
+                _ => Results.Json(error, statusCode: StatusCodes.Status403Forbidden)
+            };
+        }
+
         using var scope = logger.BeginScope(new Dictionary<string, object?>
         {
             ["correlation_id"] = correlationId,
-            ["exit_authorization_id"] = exitAuthorizationId
+            ["exit_authorization_id"] = exitAuthorizationId,
+            ["service_identity_id"] = serviceIdentityId,
+            ["gate_device_id"] = identityValidation.GateDeviceId,
+            ["site_id"] = identityValidation.SiteId,
+            ["lane_id"] = identityValidation.LaneId
         });
 
         logger.LogInformation("HTTP ConsumeExitAuthorization request received.");

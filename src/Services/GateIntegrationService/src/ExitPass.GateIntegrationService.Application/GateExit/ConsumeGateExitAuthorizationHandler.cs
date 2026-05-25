@@ -88,6 +88,7 @@ public sealed class ConsumeGateExitAuthorizationHandler : IConsumeGateExitAuthor
         var consumeResult = await _centralPmsClient.ConsumeAsync(
             command.ExitAuthorizationId,
             command.ServiceIdentityId,
+            command.GateDeviceId,
             command.CorrelationId,
             cancellationToken);
 

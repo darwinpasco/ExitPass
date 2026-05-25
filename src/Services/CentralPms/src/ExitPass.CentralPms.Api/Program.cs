@@ -350,6 +350,8 @@ static void ConfigureApplicationServices(
         new ReconciliationEvaluationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ICentralPmsRbacRepository>(_ =>
         new CentralPmsRbacRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IGateDeviceIdentityValidator>(_ =>
+        new GateDeviceIdentityValidator(mainDatabaseConnectionString));
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
