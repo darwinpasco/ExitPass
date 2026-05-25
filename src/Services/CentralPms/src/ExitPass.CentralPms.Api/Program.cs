@@ -107,6 +107,7 @@ app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
+app.MapInternalEventRecoveryEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
@@ -193,6 +194,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationExceptionLifecycle")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationEvaluation")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
+                .AddSource("ExitPass.CentralPms.Api.EventRecovery")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
@@ -281,6 +283,9 @@ static void ConfigureApplicationServices(
         new ReconciliationOutboxDispatcherRepository(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<ReconciliationOutboxDispatcherRepository>>()));
+    builder.Services.AddScoped<IEventRecoveryService, EventRecoveryService>();
+    builder.Services.AddScoped<IEventRecoveryRepository>(_ =>
+        new EventRecoveryRepository(mainDatabaseConnectionString));
 
     builder.Services.AddScoped<CreatePaymentAttemptRequestValidator>();
     builder.Services.AddScoped<CreatePaymentAttemptHeadersValidator>();
