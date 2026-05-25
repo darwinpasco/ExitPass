@@ -165,6 +165,8 @@ public sealed class GateCentralPmsBoundaryIntegrationTests
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal($"/v1/gate/authorizations/{ExitAuthorizationId}/consume", request.Path);
         Assert.Equal(CorrelationId.ToString(), Assert.Single(request.CorrelationHeader));
+        Assert.Equal(ServiceIdentityId.ToString(), Assert.Single(request.ServiceIdentityHeader));
+        Assert.Equal("exit-gate-boundary-01", Assert.Single(request.GateDeviceHeader));
 
         using var document = JsonDocument.Parse(request.Body);
         var root = document.RootElement;
@@ -225,6 +227,12 @@ public sealed class GateCentralPmsBoundaryIntegrationTests
                 request.Headers.TryGetValues("X-Correlation-Id", out var values)
                     ? values.ToArray()
                     : Array.Empty<string>(),
+                request.Headers.TryGetValues("X-Service-Identity-Id", out var serviceIdentityValues)
+                    ? serviceIdentityValues.ToArray()
+                    : Array.Empty<string>(),
+                request.Headers.TryGetValues("X-Gate-Device-Id", out var gateDeviceValues)
+                    ? gateDeviceValues.ToArray()
+                    : Array.Empty<string>(),
                 request.Content is null
                     ? string.Empty
                     : await request.Content.ReadAsStringAsync(cancellationToken)));
@@ -242,6 +250,8 @@ public sealed class GateCentralPmsBoundaryIntegrationTests
         HttpMethod Method,
         string Path,
         string[] CorrelationHeader,
+        string[] ServiceIdentityHeader,
+        string[] GateDeviceHeader,
         string Body);
 
     private sealed class CapturingBoundaryGateHardwareController : IGateHardwareController

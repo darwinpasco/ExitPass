@@ -208,6 +208,140 @@ public static class PaymentTestDataHelper
                 updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
                 row_version = sites.sites.row_version + 1;
 
+            INSERT INTO sites.lanes (
+                lane_id,
+                site_id,
+                lane_code,
+                lane_name,
+                lane_type,
+                lane_direction,
+                lane_status,
+                display_order,
+                effective_from,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            VALUES (
+                @lane_id,
+                @site_id,
+                @lane_code,
+                @lane_name,
+                'EXIT',
+                'OUTBOUND',
+                'ACTIVE',
+                1,
+                NOW() - INTERVAL '1 minute',
+                NOW(),
+                @requested_by_service_identity_id,
+                NOW(),
+                @requested_by_service_identity_id,
+                1
+            )
+            ON CONFLICT (lane_id) DO UPDATE
+            SET
+                site_id = EXCLUDED.site_id,
+                lane_code = EXCLUDED.lane_code,
+                lane_name = EXCLUDED.lane_name,
+                lane_type = EXCLUDED.lane_type,
+                lane_direction = EXCLUDED.lane_direction,
+                lane_status = EXCLUDED.lane_status,
+                updated_at = NOW(),
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                row_version = sites.lanes.row_version + 1;
+
+            INSERT INTO gates.gate_devices (
+                gate_device_id,
+                site_id,
+                lane_id,
+                service_identity_id,
+                device_code,
+                device_name,
+                device_type,
+                device_status,
+                activated_at,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            VALUES (
+                @gate_device_id,
+                @site_id,
+                @lane_id,
+                @requested_by_service_identity_id,
+                @gate_device_code,
+                @gate_device_name,
+                'BARRIER_CONTROLLER',
+                'ACTIVE',
+                NOW() - INTERVAL '1 minute',
+                NOW(),
+                @requested_by_service_identity_id,
+                NOW(),
+                @requested_by_service_identity_id,
+                1
+            )
+            ON CONFLICT (gate_device_id) DO UPDATE
+            SET
+                site_id = EXCLUDED.site_id,
+                lane_id = EXCLUDED.lane_id,
+                service_identity_id = EXCLUDED.service_identity_id,
+                device_code = EXCLUDED.device_code,
+                device_name = EXCLUDED.device_name,
+                device_type = EXCLUDED.device_type,
+                device_status = EXCLUDED.device_status,
+                updated_at = NOW(),
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                row_version = gates.gate_devices.row_version + 1;
+
+            INSERT INTO sites.device_assignments (
+                device_assignment_id,
+                site_id,
+                lane_id,
+                gate_device_id,
+                service_identity_id,
+                assignment_type,
+                assignment_status,
+                assigned_at,
+                assigned_by_service_identity_id,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            VALUES (
+                @device_assignment_id,
+                @site_id,
+                @lane_id,
+                @gate_device_id,
+                @requested_by_service_identity_id,
+                'GATE_DEVICE',
+                'ACTIVE',
+                NOW() - INTERVAL '1 minute',
+                @requested_by_service_identity_id,
+                NOW(),
+                @requested_by_service_identity_id,
+                NOW(),
+                @requested_by_service_identity_id,
+                1
+            )
+            ON CONFLICT (device_assignment_id) DO UPDATE
+            SET
+                site_id = EXCLUDED.site_id,
+                lane_id = EXCLUDED.lane_id,
+                gate_device_id = EXCLUDED.gate_device_id,
+                service_identity_id = EXCLUDED.service_identity_id,
+                assignment_type = EXCLUDED.assignment_type,
+                assignment_status = EXCLUDED.assignment_status,
+                unassigned_at = NULL,
+                updated_at = NOW(),
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                row_version = sites.device_assignments.row_version + 1;
+
             INSERT INTO integration.vendor_systems (
                 vendor_system_id,
                 vendor_code,
@@ -452,6 +586,13 @@ public static class PaymentTestDataHelper
             ToGuid(context.SiteId, nameof(context.SiteId));
         command.Parameters.AddWithValue("site_code", $"SITE-{context.SiteId:N}");
         command.Parameters.AddWithValue("site_name", $"TEST-SITE-{context.SiteId:N}");
+        command.Parameters.Add("lane_id", NpgsqlDbType.Uuid).Value = CreateDeterministicGuid(context.SiteId, 1);
+        command.Parameters.AddWithValue("lane_code", $"EXIT-{context.SiteId:N}");
+        command.Parameters.AddWithValue("lane_name", $"TEST-EXIT-{context.SiteId:N}");
+        command.Parameters.Add("gate_device_id", NpgsqlDbType.Uuid).Value = CreateDeterministicGuid(context.RequestedByUserId, 2);
+        command.Parameters.Add("device_assignment_id", NpgsqlDbType.Uuid).Value = CreateDeterministicGuid(context.RequestedByUserId, 3);
+        command.Parameters.AddWithValue("gate_device_code", GateDeviceCode(context));
+        command.Parameters.AddWithValue("gate_device_name", $"TEST-GATE-{context.SiteId:N}");
 
         command.Parameters.AddWithValue("vendor_system_code", context.VendorSystemCode);
         command.Parameters.AddWithValue("vendor_system_name", context.VendorSystemCode);
@@ -568,6 +709,20 @@ public static class PaymentTestDataHelper
             DELETE FROM core.parking_sessions
             WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM sites.device_assignments
+            WHERE gate_device_id = @gate_device_id
+               OR service_identity_id = @requested_by_service_identity_id
+               OR site_id = @site_id;
+
+            DELETE FROM gates.gate_devices
+            WHERE gate_device_id = @gate_device_id
+               OR service_identity_id = @requested_by_service_identity_id
+               OR site_id = @site_id;
+
+            DELETE FROM sites.lanes
+            WHERE lane_id = @lane_id
+               OR site_id = @site_id;
+
             DELETE FROM sites.sites
             WHERE site_id = @site_id;
 
@@ -595,6 +750,8 @@ public static class PaymentTestDataHelper
 
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value =
             ToGuid(context.SiteId, nameof(context.SiteId));
+        command.Parameters.Add("lane_id", NpgsqlDbType.Uuid).Value = CreateDeterministicGuid(context.SiteId, 1);
+        command.Parameters.Add("gate_device_id", NpgsqlDbType.Uuid).Value = CreateDeterministicGuid(context.RequestedByUserId, 2);
 
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value =
             ToGuid(context.SiteGroupId, nameof(context.SiteGroupId));
@@ -606,6 +763,22 @@ public static class PaymentTestDataHelper
 
         await command.ExecuteNonQueryAsync();
     }
+
+    /// <summary>
+    /// Returns the seeded gate device code used by gate-facing integration tests.
+    /// </summary>
+    public static string GateDeviceCode(PaymentTestContext context)
+    {
+        return $"GATE-{context.RequestedByUserId:N}";
+    }
+
+    private static Guid CreateDeterministicGuid(Guid baseValue, byte marker)
+    {
+        var bytes = baseValue.ToByteArray();
+        bytes[15] = marker;
+        return new Guid(bytes);
+    }
+
     private static Guid ToGuid(object value, string parameterName)
     {
         return value switch

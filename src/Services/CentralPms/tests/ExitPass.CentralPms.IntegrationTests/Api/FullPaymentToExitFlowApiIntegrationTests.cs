@@ -109,6 +109,8 @@ public sealed class FullPaymentToExitFlowApiIntegrationTests
                 $"/v1/gate/authorizations/{issued.ExitAuthorizationId}/consume");
 
             consumeRequest.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString());
+            consumeRequest.Headers.Add("X-Service-Identity-Id", context.RequestedByUserId.ToString());
+            consumeRequest.Headers.Add("X-Gate-Device-Id", PaymentTestDataHelper.GateDeviceCode(context));
 
             consumeRequest.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
                 RequestedByUserId: context.RequestedByUserId));

@@ -26,6 +26,7 @@ public sealed class HttpCentralPmsExitAuthorizationClient : ICentralPmsExitAutho
     public async Task<CentralPmsConsumeAuthorizationResult> ConsumeAsync(
         Guid exitAuthorizationId,
         Guid requestedByUserId,
+        string gateDeviceId,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
@@ -37,6 +38,8 @@ public sealed class HttpCentralPmsExitAuthorizationClient : ICentralPmsExitAutho
         };
 
         request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Service-Identity-Id", requestedByUserId.ToString());
+        request.Headers.TryAddWithoutValidation("X-Gate-Device-Id", gateDeviceId);
 
         try
         {

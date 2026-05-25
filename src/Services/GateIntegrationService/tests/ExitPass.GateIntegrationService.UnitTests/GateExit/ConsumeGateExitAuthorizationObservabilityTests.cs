@@ -146,6 +146,7 @@ public sealed class ConsumeGateExitAuthorizationObservabilityTests
         public Task<CentralPmsConsumeAuthorizationResult> ConsumeAsync(
             Guid exitAuthorizationId,
             Guid requestedByUserId,
+            string gateDeviceId,
             Guid correlationId,
             CancellationToken cancellationToken)
         {

@@ -110,8 +110,9 @@ public sealed class PaymentToExitFlowIntegrationTests
             var firstConsumeResponse = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
-                correlationId: context.CorrelationId);
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
+                correlationId: context.CorrelationId,
+                context: context);
 
             var firstConsumeBody = await firstConsumeResponse.Content.ReadFromJsonAsync<ConsumeExitAuthorizationResponse>();
 
@@ -124,8 +125,9 @@ public sealed class PaymentToExitFlowIntegrationTests
             var secondConsumeResponse = await PostConsumeExitAuthorizationAsync(
                 client,
                 exitAuthorizationId: exitAuthorizationId,
-                request: new ConsumeExitAuthorizationRequest(KnownTestIdentityIds.ServiceIdentityId),
-                correlationId: context.CorrelationId);
+                request: new ConsumeExitAuthorizationRequest(context.RequestedByUserId),
+                correlationId: context.CorrelationId,
+                context: context);
 
             var secondConsumeRaw = await secondConsumeResponse.Content.ReadAsStringAsync();
 
@@ -352,7 +354,8 @@ public sealed class PaymentToExitFlowIntegrationTests
         HttpClient client,
         Guid exitAuthorizationId,
         ConsumeExitAuthorizationRequest request,
-        Guid correlationId)
+        Guid correlationId,
+        PaymentTestContext context)
     {
         using var message = new HttpRequestMessage(
             HttpMethod.Post,
@@ -362,6 +365,8 @@ public sealed class PaymentToExitFlowIntegrationTests
         };
 
         message.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        message.Headers.Add("X-Service-Identity-Id", request.RequestedByUserId.ToString());
+        message.Headers.Add("X-Gate-Device-Id", PaymentTestDataHelper.GateDeviceCode(context));
 
         return await client.SendAsync(message);
     }
