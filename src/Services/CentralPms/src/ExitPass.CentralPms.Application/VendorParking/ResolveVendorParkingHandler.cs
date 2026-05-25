@@ -271,6 +271,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             VendorParkingLookupStatus.AdapterError => ResolveVendorParkingOutcome.MalformedVendorResponse,
             VendorParkingLookupStatus.ValidationError => ResolveVendorParkingOutcome.InvalidRequest,
             VendorParkingLookupStatus.VendorRejected => ResolveVendorParkingOutcome.VendorRejected,
+            VendorParkingLookupStatus.Ambiguous => ResolveVendorParkingOutcome.AmbiguousMatch,
             _ => ResolveVendorParkingOutcome.MalformedVendorResponse
         };
     }

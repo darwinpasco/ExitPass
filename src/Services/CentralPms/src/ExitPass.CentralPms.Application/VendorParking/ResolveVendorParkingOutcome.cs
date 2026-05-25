@@ -33,5 +33,10 @@ public enum ResolveVendorParkingOutcome
     /// <summary>
     /// Vendor PMS rejected the lookup with a non-success business response.
     /// </summary>
-    VendorRejected = 5
+    VendorRejected = 5,
+
+    /// <summary>
+    /// Vendor PMS returned more than one candidate for the supplied lookup identifier.
+    /// </summary>
+    AmbiguousMatch = 6
 }

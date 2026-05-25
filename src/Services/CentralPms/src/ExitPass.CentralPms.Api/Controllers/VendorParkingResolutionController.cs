@@ -189,6 +189,7 @@ public sealed class VendorParkingResolutionController : ControllerBase
             ResolveVendorParkingOutcome.MalformedVendorResponse => StatusCode(StatusCodes.Status502BadGateway, error),
             ResolveVendorParkingOutcome.InvalidRequest => BadRequest(error),
             ResolveVendorParkingOutcome.VendorRejected => Conflict(error),
+            ResolveVendorParkingOutcome.AmbiguousMatch => Conflict(error),
             _ => StatusCode(StatusCodes.Status502BadGateway, error)
         };
     }
@@ -217,6 +218,7 @@ public sealed class VendorParkingResolutionController : ControllerBase
             ResolveVendorParkingOutcome.MalformedVendorResponse => "Vendor parking response was malformed.",
             ResolveVendorParkingOutcome.InvalidRequest => "Vendor parking resolution request is invalid.",
             ResolveVendorParkingOutcome.VendorRejected => "Vendor parking lookup was rejected.",
+            ResolveVendorParkingOutcome.AmbiguousMatch => "Vendor parking lookup returned multiple matching sessions.",
             _ => "Vendor parking resolution failed."
         };
     }

@@ -4,7 +4,9 @@ using System.Net.Http.Json;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Public.PaymentAttempts;
 using ExitPass.CentralPms.Contracts.Public.VendorParking;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
+using Npgsql;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -121,6 +123,27 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies ambiguous vendor matches map to a deterministic conflict envelope.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenVendorReturnsAmbiguous_ReturnsConflictEnvelope()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000013");
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/vendor-parking/resolve",
+            Request(plateNumber: "AMBIGUOUS", ticketReference: null, correlationId));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var payload = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        payload.Should().NotBeNull();
+        payload!.ErrorCode.Should().Be("VENDOR_SESSION_AMBIGUOUS");
+        payload.CorrelationId.Should().Be(correlationId);
+        payload.Retryable.Should().BeFalse();
+    }
+
+    /// <summary>
     /// Verifies retryable vendor unavailability maps to HTTP 503.
     /// </summary>
     [Fact]
@@ -181,6 +204,27 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies tariff calculation failure maps to a deterministic canonical error.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenTariffCalculationFails_ReturnsConflictEnvelope()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000014");
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/vendor-parking/resolve",
+            Request(plateNumber: "TARIFFFAIL", ticketReference: null, correlationId));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var payload = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        payload.Should().NotBeNull();
+        payload!.ErrorCode.Should().Be("VENDOR_TARIFF_REJECTED");
+        payload.CorrelationId.Should().Be(correlationId);
+        payload.Retryable.Should().BeFalse();
+    }
+
+    /// <summary>
     /// Verifies repeated fake-adapter resolution keeps provider-neutral tariff data stable.
     /// </summary>
     [Fact]
@@ -207,6 +251,29 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         secondPayload.VendorSystemId.Should().Be(firstPayload.VendorSystemId);
         secondPayload.ParkingSessionId.Should().NotBe(Guid.Empty);
         secondPayload.TariffSnapshotId.Should().NotBe(Guid.Empty);
+    }
+
+    /// <summary>
+    /// Verifies vendor parking resolution does not mutate payment, confirmation, or exit authorization truth.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenResolved_DoesNotCreatePaymentConfirmationOrExitTruth()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000015");
+        var plateNumber = UniqueLookup("FLOW-NO-PAYMENT");
+
+        var before = await CountPaymentExitTruthRowsAsync(correlationId);
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/vendor-parking/resolve",
+            Request(plateNumber: plateNumber, ticketReference: null, correlationId));
+
+        var raw = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, raw);
+        var after = await CountPaymentExitTruthRowsAsync(correlationId);
+
+        after.Should().Be(before);
     }
 
     /// <summary>
@@ -410,5 +477,23 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     private static string UniqueLookup(string prefix)
     {
         return $"{prefix}-{Guid.NewGuid():N}"[..32];
+    }
+
+    private static async Task<long> CountPaymentExitTruthRowsAsync(Guid correlationId)
+    {
+        const string sql = """
+            SELECT
+                (SELECT COUNT(*) FROM core.payment_attempts WHERE correlation_id = @correlation_id)
+              + (SELECT COUNT(*) FROM core.payment_confirmations WHERE correlation_id = @correlation_id)
+              + (SELECT COUNT(*) FROM core.exit_authorizations WHERE correlation_id = @correlation_id);
+            """;
+
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 }
