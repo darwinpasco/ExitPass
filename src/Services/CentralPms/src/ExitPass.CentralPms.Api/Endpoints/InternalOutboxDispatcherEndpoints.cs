@@ -26,6 +26,8 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class InternalOutboxDispatcherEndpoints
 {
+    private const string DispatcherPolicy = "EventOutboxDispatcher";
+
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher");
 
@@ -40,12 +42,14 @@ public static class InternalOutboxDispatcherEndpoints
 
         group.MapPost("/dispatch-once", DispatchOnceAsync)
             .WithName("DispatchReconciliationOutboxOnce")
+            .WithMetadata(new ReconciliationPolicyMetadata(DispatcherPolicy))
             .Produces<DispatchReconciliationOutboxOnceResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 
         group.MapGet("/pending", ListPendingAsync)
             .WithName("ListPendingReconciliationOutboxEvents")
+            .WithMetadata(new ReconciliationPolicyMetadata(DispatcherPolicy))
             .Produces<PendingReconciliationOutboxEventsResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 

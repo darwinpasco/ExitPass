@@ -30,6 +30,7 @@ using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
@@ -39,6 +40,7 @@ using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
+using ExitPass.CentralPms.Infrastructure.Security;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -85,6 +87,7 @@ app.Use(CorrelationMiddleware);
 
 app.UseRouting();
 app.UseMiddleware<InternalMtlsMiddleware>();
+app.UseMiddleware<CentralPmsRbacMiddleware>();
 app.UseAuthorization();
 
 app.UseHttpMetrics();
@@ -262,6 +265,8 @@ static void ConfigureInternalSecurity(WebApplicationBuilder builder)
 {
     builder.Services.Configure<InternalMtlsOptions>(
         builder.Configuration.GetSection("InternalSecurity:Mtls"));
+    builder.Services.Configure<CentralPmsRbacOptions>(
+        builder.Configuration.GetSection("CentralPms:Rbac"));
     builder.Services.AddSingleton<IInternalClientCertificateAccessor, HttpContextInternalClientCertificateAccessor>();
 }
 
@@ -343,6 +348,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IReconciliationEvaluationService, ReconciliationEvaluationService>();
     builder.Services.AddScoped<IReconciliationEvaluationRepository>(_ =>
         new ReconciliationEvaluationRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ICentralPmsRbacRepository>(_ =>
+        new CentralPmsRbacRepository(mainDatabaseConnectionString));
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();

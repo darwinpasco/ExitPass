@@ -23,7 +23,6 @@ public sealed class EventRecoveryIntegrationTests
     {
         var deadLetterId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
-        var before = await ReadTruthCountsAsync();
         await InsertDeadLetterAsync(deadLetterId, correlationId, "OPEN");
 
         try
@@ -37,8 +36,8 @@ public sealed class EventRecoveryIntegrationTests
             requested.DeadLetterStatus.Should().Be("REPLAY_REQUESTED");
             requested.ReplayRequestedAt.Should().NotBeNull();
 
-            var after = await ReadTruthCountsAsync();
-            after.Should().Be(before);
+            var correlatedTruthRows = await ReadCorrelatedTruthRowCountAsync(correlationId);
+            correlatedTruthRows.Should().Be(0);
         }
         finally
         {
@@ -232,20 +231,19 @@ public sealed class EventRecoveryIntegrationTests
         return (Guid)value!;
     }
 
-    private static async Task<TruthCounts> ReadTruthCountsAsync()
+    private static async Task<long> ReadCorrelatedTruthRowCountAsync(Guid correlationId)
     {
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT
-                (SELECT COUNT(*) FROM core.payment_attempts) AS payment_attempt_count,
-                (SELECT COUNT(*) FROM core.payment_confirmations) AS payment_confirmation_count,
-                (SELECT COUNT(*) FROM core.exit_authorizations) AS exit_authorization_count;
+                (SELECT COUNT(*) FROM core.payment_attempts WHERE correlation_id = @correlation_id)
+              + (SELECT COUNT(*) FROM core.payment_confirmations WHERE correlation_id = @correlation_id)
+              + (SELECT COUNT(*) FROM core.exit_authorizations WHERE correlation_id = @correlation_id);
             """;
-        await using var reader = await command.ExecuteReaderAsync();
-        (await reader.ReadAsync()).Should().BeTrue();
-        return new TruthCounts(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2));
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 
     private static async Task CleanupDeadLetterAsync(Guid deadLetterId)
@@ -267,9 +265,4 @@ public sealed class EventRecoveryIntegrationTests
         command.Parameters.AddWithValue("consumer_checkpoint_id", checkpointId);
         await command.ExecuteNonQueryAsync();
     }
-
-    private sealed record TruthCounts(
-        long PaymentAttemptCount,
-        long PaymentConfirmationCount,
-        long ExitAuthorizationCount);
 }

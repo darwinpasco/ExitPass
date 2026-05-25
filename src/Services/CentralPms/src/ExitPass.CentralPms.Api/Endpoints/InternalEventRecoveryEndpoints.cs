@@ -25,10 +25,10 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class InternalEventRecoveryEndpoints
 {
-    private const string DeadLetterViewerPolicy = "EventDeadLetterViewer";
-    private const string DeadLetterReplayPolicy = "EventDeadLetterReplay";
-    private const string CheckpointViewerPolicy = "EventConsumerCheckpointViewer";
-    private const string CheckpointOperatorPolicy = "EventConsumerCheckpointOperator";
+    private const string DeadLetterViewerPolicy = "EventRecoveryViewer";
+    private const string DeadLetterReplayPolicy = "EventDeadLetterReplayer";
+    private const string CheckpointViewerPolicy = "EventCheckpointViewer";
+    private const string CheckpointOperatorPolicy = "EventCheckpointOperator";
 
     private static readonly ActivitySource ActivitySource =
         new("ExitPass.CentralPms.Api.EventRecovery");
