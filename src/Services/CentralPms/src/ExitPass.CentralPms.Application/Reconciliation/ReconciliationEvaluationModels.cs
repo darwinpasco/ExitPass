@@ -15,6 +15,20 @@ public sealed record EvaluateReconciliationItemCommand(
 public sealed record ReadReconciliationItemEvaluationQuery(Guid ReconciliationItemId);
 
 /// <summary>
+/// Command to evaluate existing reconciliation items in one run.
+/// </summary>
+public sealed record EvaluateReconciliationRunCommand(
+    Guid ReconciliationRunId,
+    Guid? ActorUserId,
+    Guid? ServiceIdentityId,
+    Guid CorrelationId);
+
+/// <summary>
+/// Query for one reconciliation run evaluation summary.
+/// </summary>
+public sealed record ReadReconciliationRunEvaluationSummaryQuery(Guid ReconciliationRunId);
+
+/// <summary>
 /// Evaluation decision for one reconciliation item.
 /// </summary>
 public sealed record ReconciliationEvaluationDecision(
@@ -43,4 +57,19 @@ public sealed record ReconciliationItemEvaluationRecord(
     bool ExceptionCreatedOrUpdated,
     string ExceptionHandling,
     DateTimeOffset EvaluatedAt,
+    Guid? CorrelationId);
+
+/// <summary>
+/// Reconciliation run evaluation summary.
+/// </summary>
+public sealed record ReconciliationRunEvaluationSummaryRecord(
+    Guid ReconciliationRunId,
+    int TotalItems,
+    int EvaluatedItems,
+    int MatchedItems,
+    int MismatchedItems,
+    int MissingSourceItems,
+    int MissingTargetItems,
+    int InconclusiveItems,
+    int SkippedItems,
     Guid? CorrelationId);

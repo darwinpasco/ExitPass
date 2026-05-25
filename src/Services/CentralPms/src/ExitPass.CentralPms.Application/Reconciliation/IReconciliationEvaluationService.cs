@@ -14,4 +14,14 @@ public interface IReconciliationEvaluationService
     Task<ReconciliationItemEvaluationRecord> ReadEvaluationAsync(
         ReadReconciliationItemEvaluationQuery query,
         CancellationToken cancellationToken);
+
+    /// <summary>Evaluates existing reconciliation items under one run.</summary>
+    Task<ReconciliationRunEvaluationSummaryRecord> EvaluateRunAsync(
+        EvaluateReconciliationRunCommand command,
+        CancellationToken cancellationToken);
+
+    /// <summary>Reads the current evaluation summary for one existing reconciliation run.</summary>
+    Task<ReconciliationRunEvaluationSummaryRecord> ReadRunEvaluationSummaryAsync(
+        ReadReconciliationRunEvaluationSummaryQuery query,
+        CancellationToken cancellationToken);
 }

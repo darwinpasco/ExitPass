@@ -117,6 +117,72 @@ public sealed class ReconciliationEvaluationRepository : IReconciliationEvaluati
         return ToEvaluation(item, decision.EvaluationClassification, decision.EvaluationReason);
     }
 
+    /// <inheritdoc />
+    public async Task<bool> RunExistsAsync(
+        Guid reconciliationRunId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM reconciliation.reconciliation_runs
+                WHERE reconciliation_run_id = @reconciliation_run_id
+            );
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.AddWithValue("reconciliation_run_id", reconciliationRunId);
+
+        var result = await dbCommand.ExecuteScalarAsync(cancellationToken);
+        return result is bool exists && exists;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Guid>> ListRunItemIdsAsync(
+        Guid reconciliationRunId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT reconciliation_item_id
+            FROM reconciliation.reconciliation_items
+            WHERE reconciliation_run_id = @reconciliation_run_id
+            ORDER BY created_at, reconciliation_item_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.AddWithValue("reconciliation_run_id", reconciliationRunId);
+
+        var itemIds = new List<Guid>();
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            itemIds.Add(reader.GetGuid(0));
+        }
+
+        return itemIds;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ReconciliationItemRecord>> ListRunItemsAsync(
+        Guid reconciliationRunId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(ItemSql("WHERE reconciliation_run_id = @reconciliation_run_id ORDER BY created_at, reconciliation_item_id"), connection);
+        dbCommand.Parameters.AddWithValue("reconciliation_run_id", reconciliationRunId);
+
+        var items = new List<ReconciliationItemRecord>();
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(ReadItem(reader));
+        }
+
+        return items;
+    }
+
     private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new NpgsqlConnection(_connectionString);

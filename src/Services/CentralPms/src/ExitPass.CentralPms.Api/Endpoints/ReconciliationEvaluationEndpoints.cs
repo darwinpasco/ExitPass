@@ -29,6 +29,7 @@ public static class ReconciliationEvaluationEndpoints
 {
     private const string EvaluatorPolicy = "ReconciliationItemEvaluator";
     private const string ViewerPolicy = "ReconciliationEvaluationViewer";
+    private const string RunEvaluatorPolicy = "ReconciliationRunEvaluator";
 
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.ReconciliationEvaluation");
 
@@ -52,6 +53,21 @@ public static class ReconciliationEvaluationEndpoints
             .WithName("GetReconciliationItemEvaluation")
             .WithMetadata(new ReconciliationPolicyMetadata(ViewerPolicy))
             .Produces<ReconciliationItemEvaluationResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
+
+        group.MapPost("/runs/{reconciliationRunId:guid}/evaluate", EvaluateRunAsync)
+            .WithName("EvaluateReconciliationRun")
+            .WithMetadata(new ReconciliationPolicyMetadata(RunEvaluatorPolicy))
+            .Produces<ReconciliationRunEvaluationSummaryResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
+
+        group.MapGet("/runs/{reconciliationRunId:guid}/evaluation-summary", ReadRunEvaluationSummaryAsync)
+            .WithName("GetReconciliationRunEvaluationSummary")
+            .WithMetadata(new ReconciliationPolicyMetadata(ViewerPolicy))
+            .Produces<ReconciliationRunEvaluationSummaryResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError);
 
@@ -128,6 +144,78 @@ public static class ReconciliationEvaluationEndpoints
         }
     }
 
+    private static async Task<IResult> EvaluateRunAsync(
+        Guid reconciliationRunId,
+        EvaluateReconciliationRunRequest request,
+        HttpRequest httpRequest,
+        IReconciliationEvaluationService service,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity("HTTP EvaluateReconciliationRun", httpRequest, reconciliationRunId);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.ReconciliationEvaluationEndpoints");
+
+        if (!TryGetCorrelationId(httpRequest, out var correlationError, out var correlationId))
+        {
+            return correlationError;
+        }
+
+        try
+        {
+            var result = await service.EvaluateRunAsync(
+                new EvaluateReconciliationRunCommand(
+                    reconciliationRunId,
+                    request.ActorUserId,
+                    request.ServiceIdentityId,
+                    correlationId),
+                cancellationToken);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("reconciliation_run_id", result.ReconciliationRunId);
+            activity?.SetTag("evaluated_items", result.EvaluatedItems);
+
+            logger.LogInformation(
+                "Reconciliation run evaluated. reconciliation_run_id={ReconciliationRunId} total_items={TotalItems} evaluated_items={EvaluatedItems} matched_items={MatchedItems} mismatched_items={MismatchedItems}",
+                result.ReconciliationRunId,
+                result.TotalItems,
+                result.EvaluatedItems,
+                result.MatchedItems,
+                result.MismatchedItems);
+
+            return Results.Ok(ToContract(result));
+        }
+        catch (Exception ex)
+        {
+            return MapException(ex, correlationId, activity, logger);
+        }
+    }
+
+    private static async Task<IResult> ReadRunEvaluationSummaryAsync(
+        Guid reconciliationRunId,
+        IReconciliationEvaluationService service,
+        HttpRequest httpRequest,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity("HTTP GetReconciliationRunEvaluationSummary", httpRequest, reconciliationRunId);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.ReconciliationEvaluationEndpoints");
+        var correlationId = ResolveCorrelationId(httpRequest);
+
+        try
+        {
+            var result = await service.ReadRunEvaluationSummaryAsync(
+                new ReadReconciliationRunEvaluationSummaryQuery(reconciliationRunId),
+                cancellationToken);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (Exception ex)
+        {
+            return MapException(ex, correlationId, activity, logger);
+        }
+    }
+
     private static Activity? StartActivity(string activityName, HttpRequest request, Guid entityId)
     {
         var activity = ActivitySource.StartActivity(activityName, ActivityKind.Server);
@@ -165,6 +253,7 @@ public static class ReconciliationEvaluationEndpoints
         return exception switch
         {
             ArgumentException ex => Results.BadRequest(BuildError("INVALID_REQUEST", ex.Message, correlationId, retryable: false)),
+            ReconciliationRunNotFoundException ex => Results.NotFound(BuildError("RECONCILIATION_RUN_NOT_FOUND", ex.Message, correlationId, retryable: false)),
             ReconciliationItemNotFoundException ex => Results.NotFound(BuildError("RECONCILIATION_ITEM_NOT_FOUND", ex.Message, correlationId, retryable: false)),
             _ => Unexpected(exception, correlationId, logger)
         };
@@ -207,5 +296,18 @@ public static class ReconciliationEvaluationEndpoints
             record.ExceptionCreatedOrUpdated,
             record.ExceptionHandling,
             record.EvaluatedAt,
+            record.CorrelationId);
+
+    private static ReconciliationRunEvaluationSummaryResponse ToContract(ReconciliationRunEvaluationSummaryRecord record) =>
+        new(
+            record.ReconciliationRunId,
+            record.TotalItems,
+            record.EvaluatedItems,
+            record.MatchedItems,
+            record.MismatchedItems,
+            record.MissingSourceItems,
+            record.MissingTargetItems,
+            record.InconclusiveItems,
+            record.SkippedItems,
             record.CorrelationId);
 }

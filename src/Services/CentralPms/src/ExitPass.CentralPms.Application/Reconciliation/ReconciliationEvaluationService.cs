@@ -72,6 +72,83 @@ public sealed class ReconciliationEvaluationService : IReconciliationEvaluationS
             item.CorrelationId);
     }
 
+    /// <inheritdoc />
+    public async Task<ReconciliationRunEvaluationSummaryRecord> EvaluateRunAsync(
+        EvaluateReconciliationRunCommand command,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ValidateGuid(command.ReconciliationRunId, nameof(command.ReconciliationRunId));
+        ValidateGuid(command.CorrelationId, nameof(command.CorrelationId));
+
+        if (!await _repository.RunExistsAsync(command.ReconciliationRunId, cancellationToken))
+        {
+            throw new ReconciliationRunNotFoundException(command.ReconciliationRunId);
+        }
+
+        var itemIds = await _repository.ListRunItemIdsAsync(command.ReconciliationRunId, cancellationToken);
+        if (itemIds.Count == 0)
+        {
+            return EmptyRunSummary(command.ReconciliationRunId, command.CorrelationId);
+        }
+
+        var evaluations = new List<ReconciliationItemEvaluationRecord>(itemIds.Count);
+        foreach (var itemId in itemIds)
+        {
+            evaluations.Add(await EvaluateAsync(
+                new EvaluateReconciliationItemCommand(
+                    itemId,
+                    command.ActorUserId,
+                    command.ServiceIdentityId,
+                    command.CorrelationId),
+                cancellationToken));
+        }
+
+        return BuildSummary(command.ReconciliationRunId, evaluations, command.CorrelationId);
+    }
+
+    /// <inheritdoc />
+    public async Task<ReconciliationRunEvaluationSummaryRecord> ReadRunEvaluationSummaryAsync(
+        ReadReconciliationRunEvaluationSummaryQuery query,
+        CancellationToken cancellationToken)
+    {
+        ValidateGuid(query.ReconciliationRunId, nameof(query.ReconciliationRunId));
+
+        if (!await _repository.RunExistsAsync(query.ReconciliationRunId, cancellationToken))
+        {
+            throw new ReconciliationRunNotFoundException(query.ReconciliationRunId);
+        }
+
+        var items = await _repository.ListRunItemsAsync(query.ReconciliationRunId, cancellationToken);
+        if (items.Count == 0)
+        {
+            return EmptyRunSummary(query.ReconciliationRunId, null);
+        }
+
+        var evaluations = items.Select(item =>
+        {
+            var decision = ToCurrentEvaluation(item);
+            return new ReconciliationItemEvaluationRecord(
+                item.ReconciliationItemId,
+                item.ReconciliationRunId,
+                item.ComparisonBasis,
+                item.ItemStatus,
+                item.MatchStatus,
+                decision.EvaluationClassification,
+                decision.EvaluationReason,
+                item.ExpectedAmount,
+                item.ActualAmount,
+                item.VarianceAmount,
+                item.ExceptionReasonCode,
+                ExceptionCreatedOrUpdated: false,
+                ExceptionHandlingDeferred,
+                item.UpdatedAt,
+                item.CorrelationId);
+        }).ToArray();
+
+        return BuildSummary(query.ReconciliationRunId, evaluations, evaluations.FirstOrDefault()?.CorrelationId);
+    }
+
     private static ReconciliationEvaluationDecision Classify(ReconciliationItemRecord item)
     {
         var hasSource = HasSource(item);
@@ -190,6 +267,39 @@ public sealed class ReconciliationEvaluationService : IReconciliationEvaluationS
         decimal? variance,
         string? exceptionReasonCode) =>
         new(itemStatus, matchStatus, classification, reason, variance, exceptionReasonCode);
+
+    private static ReconciliationRunEvaluationSummaryRecord EmptyRunSummary(Guid runId, Guid? correlationId) =>
+        new(
+            runId,
+            TotalItems: 0,
+            EvaluatedItems: 0,
+            MatchedItems: 0,
+            MismatchedItems: 0,
+            MissingSourceItems: 0,
+            MissingTargetItems: 0,
+            InconclusiveItems: 0,
+            SkippedItems: 0,
+            correlationId);
+
+    private static ReconciliationRunEvaluationSummaryRecord BuildSummary(
+        Guid runId,
+        IReadOnlyCollection<ReconciliationItemEvaluationRecord> evaluations,
+        Guid? correlationId)
+    {
+        var evaluated = evaluations.Count(evaluation => evaluation.MatchStatus != "NOT_EVALUATED");
+
+        return new ReconciliationRunEvaluationSummaryRecord(
+            runId,
+            TotalItems: evaluations.Count,
+            EvaluatedItems: evaluated,
+            MatchedItems: evaluations.Count(evaluation => evaluation.MatchStatus == "MATCH"),
+            MismatchedItems: evaluations.Count(evaluation => evaluation.MatchStatus == "AMOUNT_MISMATCH"),
+            MissingSourceItems: evaluations.Count(evaluation => evaluation.MatchStatus == "MISSING_SOURCE"),
+            MissingTargetItems: evaluations.Count(evaluation => evaluation.MatchStatus == "MISSING_TARGET"),
+            InconclusiveItems: evaluations.Count(evaluation => evaluation.MatchStatus == "INCONCLUSIVE"),
+            SkippedItems: evaluations.Count - evaluated,
+            correlationId);
+    }
 
     private static void ValidateGuid(Guid value, string parameterName)
     {
