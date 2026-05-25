@@ -107,6 +107,7 @@ app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
+app.MapReconciliationRunItemEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -183,6 +184,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.InternalPaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Api.Reconciliation")
                 .AddSource("ExitPass.CentralPms.Api.MopsTransactions")
+                .AddSource("ExitPass.CentralPms.Api.ReconciliationRunItems")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
@@ -309,6 +311,11 @@ static void ConfigureApplicationServices(
         new MopsTransactionRepository(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<MopsTransactionRepository>>()));
+    builder.Services.AddScoped<IReconciliationRunItemService, ReconciliationRunItemService>();
+    builder.Services.AddScoped<IReconciliationRunItemRepository>(serviceProvider =>
+        new ReconciliationRunItemRepository(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<ILogger<ReconciliationRunItemRepository>>()));
 
     builder.Services.AddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
