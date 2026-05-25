@@ -40,7 +40,14 @@ public sealed class ReconciliationOutboxDispatcherService : IReconciliationOutbo
         DispatchReconciliationOutboxOnceCommand command,
         CancellationToken cancellationToken)
     {
-        var normalizedCommand = command with { Limit = NormalizeLimit(command.Limit) };
+        var brokerType = string.IsNullOrWhiteSpace(_publisher.BrokerType)
+            ? "IN_PROCESS"
+            : _publisher.BrokerType;
+        var normalizedCommand = command with
+        {
+            Limit = NormalizeLimit(command.Limit),
+            BrokerType = brokerType
+        };
         var claimed = await _repository.ClaimPendingAsync(normalizedCommand, cancellationToken);
 
         var results = new List<ReconciliationOutboxDispatchItemResult>(claimed.Count);

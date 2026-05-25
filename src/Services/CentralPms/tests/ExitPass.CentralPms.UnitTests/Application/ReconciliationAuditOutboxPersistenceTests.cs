@@ -86,7 +86,7 @@ public sealed class ReconciliationAuditOutboxPersistenceTests
         source.Should().Contain("'PUBLISHED'");
         source.Should().Contain("'RETRY_PENDING'");
         source.Should().Contain("DEAD_LETTERED");
-        source.Should().Contain("'IN_PROCESS'");
+        source.Should().Contain("@broker_type::events.event_broker_type_enum");
         source.Should().Contain("source_schema = 'reconciliation'");
         Assert.DoesNotContain("INSERT INTO core.payment_attempts", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("INSERT INTO core.payment_confirmations", source, StringComparison.OrdinalIgnoreCase);

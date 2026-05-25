@@ -5,7 +5,8 @@ namespace ExitPass.CentralPms.Application.Eventing;
 /// </summary>
 public sealed record DispatchReconciliationOutboxOnceCommand(
     int Limit,
-    Guid? PublisherServiceIdentityId);
+    Guid? PublisherServiceIdentityId,
+    string BrokerType = "IN_PROCESS");
 
 /// <summary>
 /// Query for pending reconciliation outbox events.
@@ -32,7 +33,8 @@ public sealed record ReconciliationOutboxEventRecord(
     Guid? CorrelationId,
     Guid? CausationId,
     int RetryCount,
-    int MaxRetryCount);
+    int MaxRetryCount,
+    DateTimeOffset CreatedAt);
 
 /// <summary>
 /// Pending outbox event summary.

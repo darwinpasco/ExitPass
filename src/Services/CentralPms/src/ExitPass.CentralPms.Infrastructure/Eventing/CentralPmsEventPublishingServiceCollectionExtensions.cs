@@ -81,4 +81,32 @@ public static class CentralPmsEventPublishingServiceCollectionExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Adds the configured reconciliation outbox event publisher.
+    /// </summary>
+    /// <param name="services">Service collection to configure.</param>
+    /// <param name="configuration">Application configuration.</param>
+    /// <returns>The configured service collection.</returns>
+    public static IServiceCollection AddCentralPmsReconciliationOutboxPublisher(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var options = RabbitMqReconciliationOutboxPublisherOptions.FromConfiguration(configuration);
+        services.AddSingleton(options);
+
+        if (options.IsConfigured)
+        {
+            services.AddSingleton<IReconciliationOutboxEventPublisher, RabbitMqReconciliationOutboxEventPublisher>();
+        }
+        else
+        {
+            services.AddSingleton<IReconciliationOutboxEventPublisher, InProcessReconciliationOutboxEventPublisher>();
+        }
+
+        return services;
+    }
 }
