@@ -95,6 +95,22 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
     }
 
     /// <summary>
+    /// Creates a factory with additional configuration overrides.
+    /// </summary>
+    public CustomWebApplicationFactory WithConfigurationOverrides(IReadOnlyDictionary<string, string?> configurationOverrides)
+    {
+        ArgumentNullException.ThrowIfNull(configurationOverrides);
+
+        var merged = new Dictionary<string, string?>(_configurationOverrides);
+        foreach (var pair in configurationOverrides)
+        {
+            merged[pair.Key] = pair.Value;
+        }
+
+        return new CustomWebApplicationFactory(merged, _certificateAccessor, _configureServices);
+    }
+
+    /// <summary>
     /// Configures the in-memory API host for integration testing.
     /// </summary>
     /// <param name="builder">Web host builder used to compose the test host.</param>
@@ -109,7 +125,8 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         {
             configBuilder.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:MainDatabase"] = integrationDbConnectionString
+                ["ConnectionStrings:MainDatabase"] = integrationDbConnectionString,
+                ["CentralPms:Rbac:Enabled"] = "false"
             });
 
             configBuilder.AddInMemoryCollection(_configurationOverrides);
