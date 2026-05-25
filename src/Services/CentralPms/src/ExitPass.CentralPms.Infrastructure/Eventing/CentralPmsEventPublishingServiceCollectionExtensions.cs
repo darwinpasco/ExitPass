@@ -2,6 +2,7 @@ using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace ExitPass.CentralPms.Infrastructure.Eventing;
@@ -25,6 +26,7 @@ public static class CentralPmsEventPublishingServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         var options = RabbitMqIntegrationEventPublisherOptions.FromConfiguration(configuration);
+        services.TryAddSingleton<CentralPmsMetrics>();
 
         if (options.IsConfigured)
         {
@@ -55,6 +57,7 @@ public static class CentralPmsEventPublishingServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         var options = RabbitMqIntegrationEventPublisherOptions.FromConfiguration(configuration);
+        services.TryAddSingleton<CentralPmsMetrics>();
 
         if (options.IsConfigured)
         {

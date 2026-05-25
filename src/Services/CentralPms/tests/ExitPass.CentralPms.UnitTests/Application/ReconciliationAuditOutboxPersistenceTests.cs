@@ -63,6 +63,38 @@ public sealed class ReconciliationAuditOutboxPersistenceTests
         Assert.DoesNotContain("AUB", source, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Verifies the reconciliation outbox dispatcher uses durable publication tables and row-locking discipline.
+    /// </summary>
+    [Fact]
+    public void ReconciliationOutboxDispatcherRepository_UsesDurableOutboxPublicationState()
+    {
+        var source = ReadRepoFile(
+            "src",
+            "Services",
+            "CentralPms",
+            "src",
+            "ExitPass.CentralPms.Infrastructure",
+            "Eventing",
+            "ReconciliationOutboxDispatcherRepository.cs");
+
+        source.Should().Contain("events.outbox_events");
+        source.Should().Contain("events.event_publications");
+        source.Should().Contain("events.dead_letter_records");
+        source.Should().Contain("FOR UPDATE SKIP LOCKED");
+        source.Should().Contain("'LOCKED'");
+        source.Should().Contain("'PUBLISHED'");
+        source.Should().Contain("'RETRY_PENDING'");
+        source.Should().Contain("DEAD_LETTERED");
+        source.Should().Contain("'IN_PROCESS'");
+        source.Should().Contain("source_schema = 'reconciliation'");
+        Assert.DoesNotContain("INSERT INTO core.payment_attempts", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO core.payment_confirmations", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO core.exit_authorizations", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE payments.provider_outcomes", source, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AUB", source, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string ReadRepoFile(params string[] pathParts)
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);
