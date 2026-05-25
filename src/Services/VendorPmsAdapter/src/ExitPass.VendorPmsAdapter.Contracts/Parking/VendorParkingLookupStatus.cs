@@ -38,5 +38,10 @@ public enum VendorParkingLookupStatus
     /// <summary>
     /// The vendor PMS confirmed the parking fee payment.
     /// </summary>
-    Confirmed = 6
+    Confirmed = 6,
+
+    /// <summary>
+    /// The vendor PMS returned more than one candidate for the supplied lookup identifier.
+    /// </summary>
+    Ambiguous = 7
 }

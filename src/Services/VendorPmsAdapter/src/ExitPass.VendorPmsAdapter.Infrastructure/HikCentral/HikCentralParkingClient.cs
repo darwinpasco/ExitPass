@@ -119,25 +119,7 @@ public sealed class HikCentralParkingClient(
                 return HikCentralParkingFeeLookupResult.AdapterError();
             }
 
-            var envelope = await response.Content.ReadFromJsonAsync<HikCentralResponse<HikCentralParkingFeeCalculateData>>(
-                JsonOptions,
-                cancellationToken);
-
-            if (envelope is null)
-            {
-                return HikCentralParkingFeeLookupResult.AdapterError();
-            }
-
-            if (!envelope.IsSuccess())
-            {
-                return envelope.IsNotFound()
-                    ? HikCentralParkingFeeLookupResult.NotFound()
-                    : HikCentralParkingFeeLookupResult.VendorRejected();
-            }
-
-            return envelope.Data is null
-                ? HikCentralParkingFeeLookupResult.NotFound()
-                : HikCentralParkingFeeMapper.Map(envelope.Data);
+            return await MapCalculateResponseAsync(response.Content, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -283,6 +265,83 @@ public sealed class HikCentralParkingClient(
         }
     }
 
+    private static async Task<HikCentralParkingFeeLookupResult> MapCalculateResponseAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        await using var responseStream = await content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(responseStream, cancellationToken: cancellationToken);
+
+        if (document.RootElement.ValueKind is not JsonValueKind.Object)
+        {
+            return HikCentralParkingFeeLookupResult.AdapterError();
+        }
+
+        var code = TryGetString(document.RootElement, "code");
+        var message = TryGetString(document.RootElement, "msg");
+
+        if (code is not "0")
+        {
+            return IsNotFound(code, message)
+                ? HikCentralParkingFeeLookupResult.NotFound()
+                : HikCentralParkingFeeLookupResult.VendorRejected();
+        }
+
+        if (!document.RootElement.TryGetProperty("data", out var data) ||
+            data.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return HikCentralParkingFeeLookupResult.NotFound();
+        }
+
+        return data.ValueKind switch
+        {
+            JsonValueKind.Object => MapCalculateData(data),
+            JsonValueKind.Array => MapCalculateArray(data),
+            _ => HikCentralParkingFeeLookupResult.AdapterError()
+        };
+    }
+
+    private static HikCentralParkingFeeLookupResult MapCalculateArray(JsonElement data)
+    {
+        var matchCount = data.GetArrayLength();
+        if (matchCount == 0)
+        {
+            return HikCentralParkingFeeLookupResult.NotFound();
+        }
+
+        // ExitPass v1.2 invariant: vendor IDs remain external references; ambiguous vendor matches are not collapsed
+        // into a guessed ExitPass session.
+        if (matchCount > 1)
+        {
+            return HikCentralParkingFeeLookupResult.Ambiguous();
+        }
+
+        return data[0].ValueKind is JsonValueKind.Object
+            ? MapCalculateData(data[0])
+            : HikCentralParkingFeeLookupResult.AdapterError();
+    }
+
+    private static HikCentralParkingFeeLookupResult MapCalculateData(JsonElement data)
+    {
+        var calculateData = data.Deserialize<HikCentralParkingFeeCalculateData>(JsonOptions);
+        return calculateData is null
+            ? HikCentralParkingFeeLookupResult.AdapterError()
+            : HikCentralParkingFeeMapper.Map(calculateData);
+    }
+
+    private static string? TryGetString(JsonElement root, string propertyName)
+    {
+        return root.TryGetProperty(propertyName, out var value) && value.ValueKind is JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static bool IsNotFound(string? code, string? message)
+    {
+        return message?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true ||
+               code is "404" or "0x00072002";
+    }
+
     private sealed record HikCentralParkingFeeCalculateData(
         [property: JsonPropertyName("plateLicense")] string? PlateLicense,
         [property: JsonPropertyName("parkingInTime")] string? ParkingInTime,
@@ -362,6 +421,16 @@ public sealed class HikCentralParkingClient(
                 null,
                 null,
                 "VENDOR_PMS_REJECTED",
+                false);
+        }
+
+        public static HikCentralParkingFeeLookupResult Ambiguous()
+        {
+            return new HikCentralParkingFeeLookupResult(
+                VendorParkingLookupStatus.Ambiguous,
+                null,
+                null,
+                "VENDOR_SESSION_AMBIGUOUS",
                 false);
         }
 
