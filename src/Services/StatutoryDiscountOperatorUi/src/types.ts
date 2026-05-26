@@ -12,6 +12,13 @@ export interface SessionSearchCriteria {
   plateNumber: string;
 }
 
+export type SessionLookupStatus =
+  | "not searched"
+  | "searching"
+  | "session found"
+  | "not found"
+  | "ambiguous session";
+
 export interface OperatorSessionSummary {
   parkingSessionReference: string;
   vehiclePlate: string;
@@ -20,6 +27,11 @@ export interface OperatorSessionSummary {
   payableBasisStatus: string;
   siteDisplayName: string;
 }
+
+export type SessionLookupResult =
+  | { status: "session found"; session: OperatorSessionSummary }
+  | { status: "not found" }
+  | { status: "ambiguous session"; matches: number };
 
 export interface StatutoryDiscountReview {
   entitlementType: EntitlementType;

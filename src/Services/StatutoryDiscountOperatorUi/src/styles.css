@@ -142,6 +142,20 @@ button:disabled {
   margin: 0;
 }
 
+.lookupState {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.lookupState p {
+  color: #394957;
+  margin: 0;
+}
+
 .summaryList div {
   border-bottom: 1px solid #eef2f4;
   display: grid;

@@ -1,5 +1,10 @@
-import { createStatutoryDiscountOperatorApiClient } from "./apiClient";
-import type { OperatorSessionSummary, StatutoryDiscountReview } from "./types";
+import { createStatutoryDiscountOperatorApiClient, type StatutoryDiscountOperatorApiClient } from "./apiClient";
+import { FormEvent, useMemo, useState } from "react";
+import type {
+  OperatorSessionSummary,
+  SessionLookupStatus,
+  StatutoryDiscountReview
+} from "./types";
 
 const placeholderSession: OperatorSessionSummary = {
   parkingSessionReference: "Session reference will appear here",
@@ -25,8 +30,54 @@ const validationStatuses = [
   "expired"
 ];
 
-export function App() {
-  createStatutoryDiscountOperatorApiClient();
+interface AppProps {
+  apiClient?: StatutoryDiscountOperatorApiClient;
+}
+
+export function App({ apiClient }: AppProps) {
+  const client = useMemo(() => apiClient ?? createStatutoryDiscountOperatorApiClient(), [apiClient]);
+  const [ticketNumber, setTicketNumber] = useState("");
+  const [plateNumber, setPlateNumber] = useState("");
+  const [lookupStatus, setLookupStatus] = useState<SessionLookupStatus>("not searched");
+  const [session, setSession] = useState<OperatorSessionSummary>(placeholderSession);
+  const [ambiguousMatches, setAmbiguousMatches] = useState(0);
+
+  const canSearch = ticketNumber.trim().length > 0 || plateNumber.trim().length > 0;
+
+  async function handleSearch(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!canSearch || lookupStatus === "searching") {
+      return;
+    }
+
+    setLookupStatus("searching");
+    setAmbiguousMatches(0);
+
+    const result = await client.findSession({ ticketNumber, plateNumber });
+
+    setLookupStatus(result.status);
+    if (result.status === "session found") {
+      setSession(result.session);
+      return;
+    }
+
+    if (result.status === "ambiguous session") {
+      setSession(placeholderSession);
+      setAmbiguousMatches(result.matches);
+      return;
+    }
+
+    setSession(placeholderSession);
+  }
+
+  const statusCopy = {
+    "not searched": "Enter a ticket number or plate number to look up a parking session.",
+    searching: "Searching for a matching parking session.",
+    "session found": "Session found. Review the placeholder summary before discount validation is wired.",
+    "not found": "No matching parking session was found for the entered criteria.",
+    "ambiguous session": `Multiple matching sessions were found${ambiguousMatches > 0 ? ` (${ambiguousMatches})` : ""}. Operator disambiguation will be wired in a later slice.`
+  }[lookupStatus];
 
   return (
     <main className="appShell" aria-labelledby="app-title">
@@ -39,7 +90,7 @@ export function App() {
       </header>
 
       <section className="layoutGrid" aria-label="Statutory discount operator scaffold">
-        <form className="panel searchPanel" aria-labelledby="session-search-title">
+        <form className="panel searchPanel" aria-labelledby="session-search-title" onSubmit={handleSearch}>
           <div className="panelHeader">
             <p className="eyebrow">Lookup</p>
             <h2 id="session-search-title">Session search</h2>
@@ -47,22 +98,39 @@ export function App() {
 
           <label>
             Ticket number
-            <input name="ticketNumber" type="text" placeholder="Enter ticket number" />
+            <input
+              name="ticketNumber"
+              type="text"
+              placeholder="Enter ticket number"
+              value={ticketNumber}
+              onChange={(event) => setTicketNumber(event.target.value)}
+            />
           </label>
 
           <label>
             Plate number
-            <input name="plateNumber" type="text" placeholder="Enter plate number" />
+            <input
+              name="plateNumber"
+              type="text"
+              placeholder="Enter plate number"
+              value={plateNumber}
+              onChange={(event) => setPlateNumber(event.target.value)}
+            />
           </label>
 
           <label>
             Site / site group
-            <input value={placeholderSession.siteDisplayName} readOnly />
+            <input value={session.siteDisplayName} readOnly />
           </label>
 
-          <button type="button" disabled>
-            Search session
+          <button type="submit" disabled={!canSearch || lookupStatus === "searching"}>
+            {lookupStatus === "searching" ? "Searching" : "Search session"}
           </button>
+
+          <div className="lookupState" role="status" aria-live="polite">
+            <span className="statusPill">{lookupStatus}</span>
+            <p>{statusCopy}</p>
+          </div>
         </form>
 
         <section className="panel" aria-labelledby="session-summary-title">
@@ -74,23 +142,23 @@ export function App() {
           <dl className="summaryList">
             <div>
               <dt>Parking session reference</dt>
-              <dd>{placeholderSession.parkingSessionReference}</dd>
+              <dd>{session.parkingSessionReference}</dd>
             </div>
             <div>
               <dt>Vehicle plate</dt>
-              <dd>{placeholderSession.vehiclePlate}</dd>
+              <dd>{session.vehiclePlate}</dd>
             </div>
             <div>
               <dt>Entry time</dt>
-              <dd>{placeholderSession.entryTime}</dd>
+              <dd>{session.entryTime}</dd>
             </div>
             <div>
               <dt>Current fee</dt>
-              <dd>{placeholderSession.currentFee}</dd>
+              <dd>{session.currentFee}</dd>
             </div>
             <div>
               <dt>Payable-basis status</dt>
-              <dd>{placeholderSession.payableBasisStatus}</dd>
+              <dd>{session.payableBasisStatus}</dd>
             </div>
           </dl>
         </section>
