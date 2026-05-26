@@ -56,13 +56,41 @@ function stubWebPayFetch(options?: {
   intentPayload?: unknown;
   intentOk?: boolean;
   intentStatus?: number;
+  couponPayload?: unknown;
+  couponOk?: boolean;
+  couponStatus?: number;
+  statutoryPayload?: unknown;
+  statutoryOk?: boolean;
+  statutoryStatus?: number;
 }) {
   const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
     const isResolve = url.includes("/v1/webpay/parking-session");
+    const isCoupon = url.includes("/v1/public/coupons/apply");
+    const isStatutory = url.includes("/v1/public/discounts/statutory/validate");
     return {
-      ok: isResolve ? options?.resolveOk ?? true : options?.intentOk ?? true,
-      status: isResolve ? options?.resolveStatus ?? 200 : options?.intentStatus ?? 200,
-      json: async () => (isResolve ? options?.resolvePayload ?? successResponse : options?.intentPayload ?? successResponse)
+      ok: isResolve
+        ? options?.resolveOk ?? true
+        : isCoupon
+          ? options?.couponOk ?? true
+          : isStatutory
+            ? options?.statutoryOk ?? true
+            : options?.intentOk ?? true,
+      status: isResolve
+        ? options?.resolveStatus ?? 200
+        : isCoupon
+          ? options?.couponStatus ?? 200
+          : isStatutory
+            ? options?.statutoryStatus ?? 200
+            : options?.intentStatus ?? 200,
+      json: async () => (
+        isResolve
+          ? options?.resolvePayload ?? successResponse
+          : isCoupon
+            ? options?.couponPayload ?? { status: "APPROVED", couponCode: "SAVE50", tariffSnapshotId: successResponse.tariffSnapshotId, originalAmountMinorUnits: 12500, adjustmentMinorUnits: 5000, finalAmountMinorUnits: 7500, currency: "PHP" }
+            : isStatutory
+              ? options?.statutoryPayload ?? { status: "PENDING_REVIEW", message: "Review pending." }
+              : options?.intentPayload ?? successResponse
+      )
     };
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -85,7 +113,7 @@ describe("ExitPass WebPay UI", () => {
   async function resolveTicket(ticketReference = "TICKET-001", expectedAmount = "125.00") {
     await userEvent.type(screen.getByLabelText(/ticket reference/i), ticketReference);
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
-    await screen.findByText(expectedAmount);
+    expect((await screen.findAllByText(expectedAmount)).length).toBeGreaterThan(0);
   }
 
   async function continueToPayment() {
@@ -128,7 +156,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
 
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
-    expect(screen.getByText("125.00")).toBeInTheDocument();
+    expect(screen.getAllByText("125.00").length).toBeGreaterThan(0);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
   });
@@ -158,6 +186,174 @@ describe("ExitPass WebPay UI", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
     expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
+  });
+
+  it("WebPay_WhenCouponInputRenders_AllowsCouponApplicationBeforePayment", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("TICKET-COUPON-001");
+    expect(screen.getByLabelText(/coupon code/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/coupon code/i), "save50");
+    await userEvent.click(screen.getByRole("button", { name: /apply coupon/i }));
+
+    expect((await screen.findAllByText(/coupon applied/i)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("-PHP 50.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("PHP 75.00").length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls[1][0]).toContain("/v1/public/coupons/apply");
+  });
+
+  it("WebPay_WhenInvalidCouponReturned_ShowsDeterministicError", async () => {
+    stubWebPayFetch({
+      couponOk: false,
+      couponStatus: 422,
+      couponPayload: { errorCode: "INVALID_COUPON", message: "bad coupon" }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-COUPON-002");
+    await userEvent.type(screen.getByLabelText(/coupon code/i), "bad");
+    await userEvent.click(screen.getByRole("button", { name: /apply coupon/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a valid coupon code.");
+  });
+
+  it("WebPay_WhenStatutoryRequestIsPending_BlocksPaymentInitiation", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryPayload: { status: "PENDING_REVIEW", message: "Review pending." }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-001");
+    expect(screen.getByLabelText(/statutory discount/i)).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText(/evidence reference/i), "HASH-ONLY-REF");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    expect(await screen.findByText(/pending review/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /discount review pending/i })).toBeDisabled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("WebPay_WhenStatutoryApproved_UpdatesPayableAmount", async () => {
+    stubWebPayFetch({
+      statutoryPayload: {
+        status: "APPROVED",
+        tariffSnapshotId: "77777777-7777-7777-7777-777777777777",
+        originalAmountMinorUnits: 12500,
+        adjustmentMinorUnits: 2500,
+        finalAmountMinorUnits: 10000,
+        currency: "PHP"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-002");
+    await userEvent.type(screen.getByLabelText(/evidence reference/i), "HASH-ONLY-REF");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    expect((await screen.findAllByText(/statutory discount approved/i)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("-PHP 25.00").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("PHP 100.00").length).toBeGreaterThan(0);
+  });
+
+  it("WebPay_WhenStatutoryRejectedOrExpired_RendersDeterministicErrors", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryPayload: { status: "REJECTED" }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-003");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Statutory discount validation was rejected.");
+
+    fetchMock.mockImplementation(async (url: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => url.includes("/v1/public/discounts/statutory/validate")
+        ? { status: "EXPIRED" }
+        : successResponse
+    }));
+
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Statutory discount validation has expired.");
+  });
+
+  it("WebPay_WhenCouponApplied_PaymentInitiationUsesFinalApprovedBasis", async () => {
+    const fetchMock = stubWebPayFetch({
+      couponPayload: {
+        status: "APPROVED",
+        couponCode: "SAVE50",
+        tariffSnapshotId: "77777777-7777-7777-7777-777777777777",
+        originalAmountMinorUnits: 12500,
+        adjustmentMinorUnits: 5000,
+        finalAmountMinorUnits: 7500,
+        currency: "PHP"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-COUPON-003");
+    await userEvent.type(screen.getByLabelText(/coupon code/i), "SAVE50");
+    await userEvent.click(screen.getByRole("button", { name: /apply coupon/i }));
+    expect((await screen.findAllByText(/coupon applied/i)).length).toBeGreaterThan(0);
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const body = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+    expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
+    expect(body.expectedAmountMinorUnits).toBe(7500);
+  });
+
+  it("WebPay_WhenPaymentInitiated_DiscountAndCouponCannotBeChanged", async () => {
+    stubWebPayFetch({
+      couponPayload: {
+        status: "APPROVED",
+        couponCode: "SAVE50",
+        tariffSnapshotId: "77777777-7777-7777-7777-777777777777",
+        originalAmountMinorUnits: 12500,
+        adjustmentMinorUnits: 5000,
+        finalAmountMinorUnits: 7500,
+        currency: "PHP"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-COUPON-004");
+    await userEvent.type(screen.getByLabelText(/coupon code/i), "SAVE50");
+    await userEvent.click(screen.getByRole("button", { name: /apply coupon/i }));
+    expect((await screen.findAllByText(/coupon applied/i)).length).toBeGreaterThan(0);
+    await continueToPayment();
+
+    expect(await screen.findByRole("link", { name: /continue to payment/i })).toBeInTheDocument();
+    expect(screen.getByLabelText(/coupon code/i)).toBeDisabled();
+    expect(screen.getByRole("button", { name: /coupon applied/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /request statutory discount/i })).toBeDisabled();
+  });
+
+  it("WebPay_WhenEvidenceReferenceEntered_DoesNotDisplayRawEvidencePayload", async () => {
+    stubWebPayFetch({
+      statutoryPayload: {
+        status: "PENDING_REVIEW",
+        rawEvidencePayload: "do-not-render"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-004");
+    await userEvent.type(screen.getByLabelText(/evidence reference/i), "HASH-ONLY-REF");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    expect(await screen.findByText(/pending review/i)).toBeInTheDocument();
+    expect(screen.queryByText(/do-not-render/i)).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenResolvedSessionIsPaid_DoesNotCreatePaymentIntent", async () => {
@@ -292,9 +488,9 @@ describe("ExitPass WebPay UI", () => {
       "href",
       "https://payments.test/handoff"
     );
-    expect(screen.getByText("PHP")).toBeInTheDocument();
+    expect(screen.getAllByText("PHP").length).toBeGreaterThan(0);
     expect(screen.getAllByText("PENDING_PROVIDER").length).toBeGreaterThan(0);
-    expect(screen.getByText("125.00")).toBeInTheDocument();
+    expect(screen.getAllByText("125.00").length).toBeGreaterThan(0);
   });
 
   it("WebPay_WhenApiReturnsSessionSummary_DisplaysParkingSessionSummary", async () => {
@@ -319,7 +515,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("TICKET-TEST-023")).toBeInTheDocument();
     expect(screen.getByText("ABC 1234")).toBeInTheDocument();
     expect(screen.getAllByText(/May 18, 2026/).length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("125.00")).toBeInTheDocument();
+    expect(screen.getAllByText("125.00").length).toBeGreaterThan(0);
     expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Apr 1, 2030/i)).not.toBeInTheDocument();
   });
@@ -599,7 +795,9 @@ describe("ExitPass WebPay UI", () => {
       paymentMethod: "QRPH",
       siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
       siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
-      vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f"
+      vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f",
+      tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+      expectedAmountMinorUnits: 12500
     });
   });
 
