@@ -18,11 +18,13 @@ import type {
   PaymentMethod
 } from "./types";
 
-const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string }> = [
-  { code: "QRPH", label: "QRPh", image: "/assets/payment-methods/qrph.png" },
-  { code: "CARD", label: "Card", image: "/assets/payment-methods/cards-visa-mastercard.png" },
-  { code: "GCASH", label: "GCash", image: "/assets/payment-methods/gcash.png" },
-  { code: "MAYA", label: "Maya", image: "/assets/payment-methods/maya.png" }
+const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
+  {
+    code: "QRPH",
+    label: "QRPh / PHP",
+    image: "/assets/payment-methods/qrph.png",
+    helper: "PayMongo checkout"
+  }
 ];
 
 type EntryMode = "ticket" | "plate";
@@ -85,6 +87,13 @@ export function App() {
     const { hasTicket, hasPlate, lookupValue } = currentLookup();
     if (!hasTicket && !hasPlate) {
       setError(entryMode === "ticket" ? "Enter or scan a ticket reference." : "Enter a plate number.");
+      setStage("ERROR");
+      return;
+    }
+
+    const inputError = validateLookupInput(entryMode, lookupValue);
+    if (inputError) {
+      setError(inputError);
       setStage("ERROR");
       return;
     }
@@ -288,7 +297,7 @@ export function App() {
 
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
-          <div className="method-grid">
+          <div className="method-grid method-grid-single">
             {paymentMethods.map((method) => (
               <label className={paymentMethod === method.code ? "method-card is-selected" : "method-card"} key={method.code}>
                 <input
@@ -303,6 +312,7 @@ export function App() {
                 />
                 <img src={method.image} alt="" aria-hidden="true" />
                 <span>{method.label}</span>
+                <small>{method.helper}</small>
               </label>
             ))}
           </div>
@@ -410,7 +420,7 @@ export function App() {
             <dl>
               <div>
                 <dt>Payment Method</dt>
-                <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? result.paymentMethod}</dd>
+                <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? "QRPh / PHP"}</dd>
               </div>
               <div>
                 <dt>Payment Status</dt>
@@ -697,6 +707,18 @@ function getReturnPageMode(pathname: string): ReturnPageMode | null {
 
 function getQueryParam(name: string): string {
   return new URLSearchParams(window.location.search).get(name)?.trim() ?? "";
+}
+
+function validateLookupInput(entryMode: EntryMode, lookupValue: string): string {
+  const normalized = lookupValue.trim();
+  const allowedLookupPattern = /^[A-Za-z0-9][A-Za-z0-9 -]{2,63}$/;
+  if (!allowedLookupPattern.test(normalized)) {
+    return entryMode === "ticket"
+      ? "Enter a valid ticket reference."
+      : "Enter a valid plate number.";
+  }
+
+  return "";
 }
 
 function getParkerFacingParkingStatus(summary: ParkingSessionSummary): string | undefined {

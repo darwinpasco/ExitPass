@@ -133,6 +133,18 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
   });
 
+  it("WebPay_WhenLookupInputIsInvalid_RejectsClientSide", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/ticket reference/i), "@@");
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Enter a valid ticket reference.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("WebPay_WhenSummaryResolved_ContinueToPaymentCreatesPaymentIntent", async () => {
     const fetchMock = stubWebPayFetch();
 
@@ -558,19 +570,21 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByAltText("ExitPass")).toHaveAttribute("src", "/assets/logo/exitpass-logo.svg");
     expect(screen.getByAltText("Pro Parking")).toHaveAttribute("src", "/assets/logo/proparking-logo.png");
     expect(document.body.innerHTML).toContain("/assets/payment-methods/qrph.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/cards-visa-mastercard.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/gcash.png");
-    expect(document.body.innerHTML).toContain("/assets/payment-methods/maya.png");
+    expect(document.body.innerHTML).not.toContain("/assets/payment-methods/cards-visa-mastercard.png");
+    expect(document.body.innerHTML).not.toContain("/assets/payment-methods/gcash.png");
+    expect(document.body.innerHTML).not.toContain("/assets/payment-methods/maya.png");
+    expect(screen.queryByLabelText(/card/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/gcash/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/maya/i)).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenPlateEntered_SubmitsPlateNumber", async () => {
-    const fetchMock = stubWebPayFetch({ intentPayload: { ...successResponse, paymentMethod: "GCASH" } });
+    const fetchMock = stubWebPayFetch({ intentPayload: { ...successResponse, paymentMethod: "QRPH" } });
 
     render(<App />);
 
     await userEvent.click(screen.getByRole("button", { name: /plate/i }));
     await userEvent.type(screen.getByLabelText(/plate number/i), "abc 1234");
-    await userEvent.click(screen.getByLabelText(/GCash/i));
     await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
     await screen.findByText("Parking Session Summary");
     await continueToPayment();
@@ -581,7 +595,7 @@ describe("ExitPass WebPay UI", () => {
     const body = JSON.parse((intentCall?.[1] as RequestInit).body as string);
     expect(body).toEqual({
       plateNumber: "ABC 1234",
-      paymentMethod: "GCASH",
+      paymentMethod: "QRPH",
       siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
       siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
       vendorSystemId: "45a625de-9034-4fb6-b527-0950d384e51f"

@@ -102,6 +102,15 @@ export function buildPaymentIntentBody(
   request: PaymentIntentRequest,
   defaultContext: WebPaySiteContext = getDefaultSiteContext()
 ): PaymentIntentRequest {
+  /*
+   * ExitPass v1.2 BRD 18.3 Payment Initiation.
+   * ExitPass v1.2 SDD 10.2.4 Initiate Payment Attempt.
+   * Invariant: WebPay MVP may initiate only QRPH/PHP through the PayMongo-backed server route.
+   */
+  if (request.paymentMethod !== "QRPH") {
+    throw new Error("Only QRPh / PHP payment through PayMongo is available right now.");
+  }
+
   const body: PaymentIntentRequest = {
     paymentMethod: request.paymentMethod
   };
@@ -240,8 +249,16 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
     case "PAYMENT_PROVIDER_ROUTE_NOT_AVAILABLE":
     case "NO_PAYMENT_ROUTE":
     case "NO_ROUTE":
+    case "UNSUPPORTED_PAYMENT_METHOD":
       return "This payment method is not available right now. Please choose another method.";
+    case "AMBIGUOUS_MATCH":
+      return "Multiple matching parking sessions were found. Please use the ticket reference instead.";
+    case "TARIFF_CALCULATION_FAILED":
+    case "TARIFF_SNAPSHOT_NOT_FOUND":
+    case "TARIFF_SNAPSHOT_INVALID":
+      return "We could not calculate the parking fee. Please try again shortly.";
     case "WEBPAY_PAYMENT_INTENT_FAILED":
+    case "PAYMENT_PROVIDER_CONFIGURATION_ERROR":
       return "We could not start payment. Please try again.";
     default:
       return message?.trim() || "Payment intent creation failed. Please try again.";
