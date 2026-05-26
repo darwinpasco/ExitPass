@@ -40,6 +40,14 @@ export type ParkingSessionSummary = {
   tariffExpiresAt?: string | null;
 };
 
+export type WebPayExitInstruction = {
+  status?: string | null;
+  message?: string | null;
+  exitBy?: string | null;
+  expiresAt?: string | null;
+  laneName?: string | null;
+};
+
 export type PaymentIntentResponse = {
   paymentAttemptId: string;
   parkingSessionId: string;
@@ -97,6 +105,10 @@ export type ParkingSessionResolveResponse = {
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
   sessionSummary?: ParkingSessionSummary | null;
+  exitInstruction?: WebPayExitInstruction | null;
+  exitAuthorizationStatus?: string | null;
+  exitAuthorizationExpiresAt?: string | null;
+  exitBy?: string | null;
 };
 
 export type ApiError = {

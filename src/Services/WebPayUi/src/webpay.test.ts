@@ -6,6 +6,7 @@ import {
   extractPaymentIntentContext,
   getResumeUrl,
   normalizeTicketReference,
+  retrievePaymentStatus,
   resolveParkingSession,
   toFriendlyError
 } from "./webpay";
@@ -121,6 +122,29 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(result.siteGroupName).toBe("WebPay Test Site Group 2026-05-19");
     expect(result.parkingStatus).toBe("PAYABLE");
     expect(result.amountMinorUnits).toBe(12500);
+  });
+
+  it("WebPay_WhenRetrievingPaymentStatus_UsesReadOnlyParkingSessionStatusPath", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        parkingSessionId: "55555555-5555-5555-5555-555555555555",
+        tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+        amountMinorUnits: 12500,
+        currency: "PHP",
+        paymentStatus: "Paid",
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    const result = await retrievePaymentStatus(
+      { ticketReference: "TICKET-TEST-023", vendorSystemId: "HIKCENTRAL" },
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/parking-session");
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
+    expect(result.paymentStatus).toBe("Paid");
   });
 
   it("WebPay_WhenActivePaymentAttemptConflictReturned_ThrowsActivePaymentAttemptError", async () => {

@@ -384,6 +384,18 @@ input {
   background: #f0fdf4;
 }
 
+.return-state.is-failed,
+.return-state.is-expired,
+.return-state.is-cancelled {
+  border-color: #fecdca;
+  background: #fff4f2;
+}
+
+.return-state.is-pending {
+  border-color: #fedf89;
+  background: #fffbeb;
+}
+
 .return-state img {
   width: 72px;
   height: auto;
@@ -408,6 +420,75 @@ input {
 .return-actions {
   display: grid;
   gap: 10px;
+}
+
+.receipt-panel,
+.exit-instruction-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.receipt-panel h2,
+.exit-instruction-panel h2,
+.receipt-panel p,
+.exit-instruction-panel p {
+  margin: 0;
+}
+
+.receipt-panel h2,
+.exit-instruction-panel h2 {
+  color: #0b1f3a;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.receipt-panel dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.receipt-panel dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #eef2f6;
+  padding-bottom: 8px;
+}
+
+.receipt-panel dt {
+  color: #667085;
+}
+
+.receipt-panel dd {
+  margin: 0;
+  color: #101828;
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.exit-instruction-panel {
+  border-color: #fedf89;
+  background: #fffbeb;
+}
+
+.exit-instruction-panel.is-ready {
+  border-color: #abefc6;
+  background: #f0fdf4;
+}
+
+.exit-instruction-panel p {
+  color: #344054;
+  line-height: 1.45;
+}
+
+.exit-lane {
+  font-weight: 700;
 }
 
 .handoff-panel > img {
