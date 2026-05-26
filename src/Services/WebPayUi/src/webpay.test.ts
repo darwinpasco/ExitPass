@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  applyCoupon,
   buildPaymentIntentBody,
   buildParkingSessionResolveBody,
   createPaymentIntent,
@@ -9,8 +8,7 @@ import {
   normalizeTicketReference,
   retrievePaymentStatus,
   resolveParkingSession,
-  toFriendlyError,
-  validateStatutoryDiscount
+  toFriendlyError
 } from "./webpay";
 
 afterEach(() => {
@@ -26,14 +24,14 @@ describe("WebPay QR and payment intent helpers", () => {
   });
 
   it("WebPay_WhenManualTicketEntered_SubmitsTicketReference", () => {
-    expect(buildPaymentIntentBody({ ticketReference: " TICKET-001 ", paymentMethod: "QRPH" })).toEqual({
+    expect(buildPaymentIntentBody({ ticketReference: " TICKET-001 ", paymentMethod: "QRPH" })).toMatchObject({
       ticketReference: "TICKET-001",
       paymentMethod: "QRPH"
     });
   });
 
   it("WebPay_WhenPlateEntered_SubmitsPlateNumber", () => {
-    expect(buildPaymentIntentBody({ plateNumber: " abc 1234 ", paymentMethod: "QRPH" })).toEqual({
+    expect(buildPaymentIntentBody({ plateNumber: " abc 1234 ", paymentMethod: "QRPH" })).toMatchObject({
       plateNumber: "ABC 1234",
       paymentMethod: "QRPH"
     });
@@ -42,7 +40,7 @@ describe("WebPay QR and payment intent helpers", () => {
   it("WebPay_WhenResolvingParkingSession_SubmitsLookupWithoutPaymentMethod", () => {
     const body = buildParkingSessionResolveBody({ ticketReference: " TICKET-001 " });
 
-    expect(body).toEqual({
+    expect(body).toMatchObject({
       ticketReference: "TICKET-001"
     });
     expect(body).not.toHaveProperty("paymentMethod");
@@ -76,51 +74,6 @@ describe("WebPay QR and payment intent helpers", () => {
 
     expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
     expect(body.expectedAmountMinorUnits).toBe(7500);
-  });
-
-  it("WebPay_WhenApplyingCoupon_UsesPublicCouponEndpoint", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        status: "APPROVED",
-        couponCode: "SAVE50",
-        finalAmountMinorUnits: 7500
-      })
-    });
-
-    const result = await applyCoupon({
-      parkingSessionId: "55555555-5555-5555-5555-555555555555",
-      tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
-      couponCode: " save50 ",
-      amountMinorUnits: 12500,
-      currency: "PHP"
-    }, fetchMock as never);
-
-    expect(fetchMock.mock.calls[0][0]).toBe("/v1/public/coupons/apply");
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.couponCode).toBe("SAVE50");
-    expect(result.finalAmountMinorUnits).toBe(7500);
-  });
-
-  it("WebPay_WhenStatutoryValidationRequested_UsesReferenceOnlyPayload", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "PENDING_REVIEW" })
-    });
-
-    await validateStatutoryDiscount({
-      parkingSessionId: "55555555-5555-5555-5555-555555555555",
-      tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
-      entitlementType: "SENIOR_CITIZEN",
-      evidenceReference: " HASH-ONLY-REF ",
-      amountMinorUnits: 12500,
-      currency: "PHP"
-    }, fetchMock as never);
-
-    expect(fetchMock.mock.calls[0][0]).toBe("/v1/public/discounts/statutory/validate");
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.evidenceReference).toBe("HASH-ONLY-REF");
-    expect(body).not.toHaveProperty("rawEvidencePayload");
   });
 
   it("WebPay_WhenUnsupportedPaymentMethodIsForced_RejectsBeforeApiCall", async () => {
@@ -347,7 +300,6 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(toFriendlyError("VENDOR_UNAVAILABLE")).toContain("temporarily unavailable");
     expect(toFriendlyError("NO_PAYMENT_ROUTE")).toContain("not available");
     expect(toFriendlyError("WEBPAY_PAYMENT_INTENT_FAILED")).toContain("could not start payment");
-    expect(toFriendlyError("COUPON_EXPIRED")).toContain("expired");
     expect(toFriendlyError("PAYABLE_BASIS_LOCKED")).toContain("payable amount changed");
   });
 });

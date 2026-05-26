@@ -38,6 +38,10 @@ export type ParkingSessionSummary = {
   couponAdjustmentMinorUnits?: number | null;
   statutoryAdjustmentMinorUnits?: number | null;
   totalAdjustmentMinorUnits?: number | null;
+  couponStatus?: string | null;
+  statutoryStatus?: string | null;
+  statutoryDiscountStatus?: string | null;
+  statutoryDiscountValidationStatus?: string | null;
   currency?: string | null;
   sessionStatus?: string | null;
   parkingStatus?: string | null;
@@ -80,6 +84,13 @@ export type PaymentIntentResponse = {
   durationParked?: string | null;
   tariffName?: string | null;
   totalFeeMinorUnits?: number | null;
+  couponAdjustmentMinorUnits?: number | null;
+  statutoryAdjustmentMinorUnits?: number | null;
+  totalAdjustmentMinorUnits?: number | null;
+  couponStatus?: string | null;
+  statutoryStatus?: string | null;
+  statutoryDiscountStatus?: string | null;
+  statutoryDiscountValidationStatus?: string | null;
   feeValidUntil?: string | null;
   tariffExpiresAt?: string | null;
   parkingStatus?: string | null;
@@ -99,6 +110,10 @@ export type ParkingSessionResolveResponse = {
   couponAdjustmentMinorUnits?: number | null;
   statutoryAdjustmentMinorUnits?: number | null;
   totalAdjustmentMinorUnits?: number | null;
+  couponStatus?: string | null;
+  statutoryStatus?: string | null;
+  statutoryDiscountStatus?: string | null;
+  statutoryDiscountValidationStatus?: string | null;
   currency: string;
   correlationId: string;
   siteName?: string | null;
@@ -119,56 +134,6 @@ export type ParkingSessionResolveResponse = {
   exitAuthorizationStatus?: string | null;
   exitAuthorizationExpiresAt?: string | null;
   exitBy?: string | null;
-};
-
-export type PayableBasisModifierStatus = "APPROVED" | "PENDING_REVIEW" | "REJECTED" | "EXPIRED" | "FAILED";
-
-export type CouponApplyRequest = {
-  parkingSessionId: string;
-  tariffSnapshotId: string;
-  couponCode: string;
-  amountMinorUnits: number;
-  currency: string;
-  correlationId?: string;
-};
-
-export type CouponApplyResponse = {
-  status: PayableBasisModifierStatus | string;
-  couponCode?: string | null;
-  couponApplicationId?: string | null;
-  tariffSnapshotId?: string | null;
-  originalAmountMinorUnits?: number | null;
-  adjustmentMinorUnits?: number | null;
-  finalAmountMinorUnits?: number | null;
-  currency?: string | null;
-  message?: string | null;
-  errorCode?: string | null;
-  correlationId?: string | null;
-};
-
-export type StatutoryDiscountRequest = {
-  parkingSessionId: string;
-  tariffSnapshotId: string;
-  entitlementType: "SENIOR_CITIZEN" | "PWD";
-  evidenceReference?: string;
-  amountMinorUnits: number;
-  currency: string;
-  correlationId?: string;
-};
-
-export type StatutoryDiscountResponse = {
-  status: PayableBasisModifierStatus | string;
-  entitlementType?: string | null;
-  statutoryDiscountValidationId?: string | null;
-  tariffSnapshotId?: string | null;
-  originalAmountMinorUnits?: number | null;
-  adjustmentMinorUnits?: number | null;
-  finalAmountMinorUnits?: number | null;
-  currency?: string | null;
-  evidenceRequired?: boolean | null;
-  message?: string | null;
-  errorCode?: string | null;
-  correlationId?: string | null;
 };
 
 export type ApiError = {

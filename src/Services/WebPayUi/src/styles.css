@@ -610,6 +610,12 @@ input {
   background: #f8fafc;
 }
 
+.modifier-card h3 {
+  margin: 0;
+  color: #101828;
+  font-size: 15px;
+}
+
 .modifier-card .field {
   margin-bottom: 0;
 }
@@ -623,6 +629,17 @@ input {
 
 .modifier-message.is-error {
   color: #b42318;
+}
+
+.modifier-message.is-warning {
+  color: #b54708;
+}
+
+.modifier-instruction {
+  margin: 0;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .primary-link {
