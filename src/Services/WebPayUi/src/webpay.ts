@@ -184,6 +184,19 @@ export async function resolveParkingSession(
   return payload as ParkingSessionResolveResponse;
 }
 
+export async function retrievePaymentStatus(
+  request: ParkingSessionResolveRequest,
+  fetchImpl: typeof fetch = fetch
+): Promise<ParkingSessionResolveResponse> {
+  /*
+   * ExitPass v1.2 BRD 18.3 Payment Initiation.
+   * ExitPass v1.2 SDD 10.2.4 Initiate Payment Attempt.
+   * Invariant: WebPay status display is read-only and must derive payment state from server-side
+   * Central PMS status, never from checkout redirect state.
+   */
+  return resolveParkingSession(request, fetchImpl);
+}
+
 export async function createPaymentIntent(
   request: PaymentIntentRequest,
   fetchImpl: typeof fetch = fetch,
@@ -242,6 +255,8 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
       return "Check the ticket reference or plate number and try again.";
     case "SESSION_NOT_FOUND":
     case "PARKING_SESSION_NOT_FOUND":
+    case "PAYMENT_ATTEMPT_NOT_FOUND":
+    case "UNKNOWN_PAYMENT_ATTEMPT":
       return "We could not find an active parking session for those details.";
     case "VENDOR_UNAVAILABLE":
     case "VENDOR_PARKING_RESOLUTION_FAILED":

@@ -7,6 +7,7 @@ import {
   formatAmount,
   getResumeUrl,
   normalizeTicketReference,
+  retrievePaymentStatus,
   resolveParkingSession
 } from "./webpay";
 import type {
@@ -30,6 +31,7 @@ const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string;
 type EntryMode = "ticket" | "plate";
 type WebPayStage = "INPUT" | "SESSION_RESOLVED" | "HANDOFF_READY" | "ACTIVE_ATTEMPT" | "ERROR";
 type ReturnPageMode = "success" | "cancelled";
+type PaymentStatusKind = "pending" | "confirmed" | "failed" | "expired" | "cancelled";
 
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
@@ -479,7 +481,8 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   const [error, setError] = useState("");
   const ticketReference = getQueryParam("ticketReference");
   const isCancelled = mode === "cancelled";
-  const isPaid = isPaidStatus(summary?.paymentStatus);
+  const paymentStatusKind = classifyPaymentStatus(summary?.paymentStatus, isCancelled);
+  const isPaid = paymentStatusKind === "confirmed";
 
   async function refreshStatus() {
     if (!ticketReference) {
@@ -492,7 +495,7 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
     setError("");
 
     try {
-      const response = await resolveParkingSession({ ticketReference });
+      const response = await retrievePaymentStatus({ ticketReference });
       setSummary(response);
       setStatus("loaded");
     } catch (apiError) {
@@ -531,31 +534,7 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
 
         {status === "loaded" && summary && (
           <>
-            {isPaid ? (
-              <div className="return-state is-paid">
-                <img src="/assets/illustrations/payment-success.svg" alt="" aria-hidden="true" />
-                <div>
-                  <h2>Payment Status: Paid</h2>
-                  <p>Parking Status: Payment Completed</p>
-                </div>
-              </div>
-            ) : (
-              <div className="return-state">
-                <img
-                  src={isCancelled ? "/assets/illustrations/payment-failed.svg" : "/assets/illustrations/payment-pending.svg"}
-                  alt=""
-                  aria-hidden="true"
-                />
-                <div>
-                  <h2>{isCancelled ? "Payment was cancelled" : "Payment is still being verified"}</h2>
-                  <p>
-                    {isCancelled
-                      ? "You can retry payment or check status again."
-                      : "Payment is still being verified."}
-                  </p>
-                </div>
-              </div>
-            )}
+            <PaymentStatusPanel summary={summary} statusKind={paymentStatusKind} />
             <ParkingSessionSummaryPanel result={summary} />
           </>
         )}
@@ -572,6 +551,87 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
         </div>
       </section>
     </main>
+  );
+}
+
+function PaymentStatusPanel({
+  summary,
+  statusKind
+}: {
+  summary: ParkingSessionResolveResponse;
+  statusKind: PaymentStatusKind;
+}) {
+  if (statusKind === "confirmed") {
+    return (
+      <>
+        <div className="return-state is-paid">
+          <img src="/assets/illustrations/payment-success.svg" alt="" aria-hidden="true" />
+          <div>
+            <h2>Payment confirmed</h2>
+            <p>Receipt confirmation for {displayValue(summary.ticketReference ?? summary.plateNumber)}.</p>
+          </div>
+        </div>
+        <section className="receipt-panel" aria-labelledby="receipt-heading">
+          <p className="eyebrow">Receipt confirmation</p>
+          <h2 id="receipt-heading">Payment receipt</h2>
+          <dl>
+            <div>
+              <dt>Amount Paid</dt>
+              <dd>{formatCurrencyAmount(summary.amountMinorUnits, summary.currency)}</dd>
+            </div>
+            <div>
+              <dt>Payment Status</dt>
+              <dd>{displayValue(summary.paymentStatus)}</dd>
+            </div>
+            <div>
+              <dt>Ticket</dt>
+              <dd>{displayValue(summary.ticketReference)}</dd>
+            </div>
+            <div>
+              <dt>Plate</dt>
+              <dd>{displayValue(summary.plateNumber)}</dd>
+            </div>
+            <div>
+              <dt>Correlation ID</dt>
+              <dd>{summary.correlationId}</dd>
+            </div>
+          </dl>
+        </section>
+        <ExitInstructionPanel summary={summary} />
+      </>
+    );
+  }
+
+  const copy = getPaymentStatusCopy(statusKind);
+  return (
+    <div className={`return-state is-${statusKind}`}>
+      <img src={copy.image} alt="" aria-hidden="true" />
+      <div>
+        <h2>{copy.heading}</h2>
+        <p>{copy.body}</p>
+      </div>
+    </div>
+  );
+}
+
+function ExitInstructionPanel({ summary }: { summary: ParkingSessionResolveResponse }) {
+  const instruction = summary.exitInstruction;
+  const authorizationStatus = instruction?.status ?? summary.exitAuthorizationStatus;
+  const exitBy = instruction?.exitBy ?? summary.exitBy ?? instruction?.expiresAt ?? summary.exitAuthorizationExpiresAt;
+  const hasExitAuthorization = isExitAuthorizationAvailable(authorizationStatus);
+
+  return (
+    <section className={hasExitAuthorization ? "exit-instruction-panel is-ready" : "exit-instruction-panel"} aria-labelledby="exit-instruction-heading">
+      <p className="eyebrow">Exit instruction</p>
+      <h2 id="exit-instruction-heading">{hasExitAuthorization ? "Proceed to exit" : "Preparing exit authorization"}</h2>
+      <p>
+        {hasExitAuthorization
+          ? instruction?.message ?? "Proceed to the exit lane and present your parking ticket or plate for validation."
+          : "Payment is confirmed. Exit authorization is still being prepared; check status again shortly."}
+      </p>
+      {instruction?.laneName && <p className="exit-lane">Lane: {instruction.laneName}</p>}
+      {exitBy && <p className="exit-lane">Exit by {formatDateTime(exitBy)}</p>}
+    </section>
   );
 }
 
@@ -690,6 +750,72 @@ function isPaidStatus(status?: string | null): boolean {
 
   const normalized = status.trim().toUpperCase();
   return normalized === "PAID" || normalized === "COMPLETED" || normalized === "CONFIRMED";
+}
+
+function classifyPaymentStatus(status?: string | null, checkoutWasCancelled = false): PaymentStatusKind {
+  if (isPaidStatus(status)) {
+    return "confirmed";
+  }
+
+  const normalized = status?.trim().toUpperCase() ?? "";
+  if (normalized === "FAILED" || normalized === "DECLINED") {
+    return "failed";
+  }
+
+  if (normalized === "EXPIRED") {
+    return "expired";
+  }
+
+  if (checkoutWasCancelled || normalized === "CANCELLED" || normalized === "CANCELED") {
+    return "cancelled";
+  }
+
+  return "pending";
+}
+
+function getPaymentStatusCopy(statusKind: PaymentStatusKind): { heading: string; body: string; image: string } {
+  switch (statusKind) {
+    case "failed":
+      return {
+        heading: "Payment failed",
+        body: "We could not confirm this payment. You can retry payment or check status again.",
+        image: "/assets/illustrations/payment-failed.svg"
+      };
+    case "expired":
+      return {
+        heading: "Payment expired",
+        body: "This checkout session expired before payment was confirmed. Please retry payment.",
+        image: "/assets/illustrations/payment-failed.svg"
+      };
+    case "cancelled":
+      return {
+        heading: "Payment was cancelled",
+        body: "You can retry payment or check status again.",
+        image: "/assets/illustrations/payment-failed.svg"
+      };
+    case "confirmed":
+      return {
+        heading: "Payment confirmed",
+        body: "Payment has been confirmed by ExitPass.",
+        image: "/assets/illustrations/payment-success.svg"
+      };
+    case "pending":
+    default:
+      return {
+        heading: "Payment is still being verified",
+        body: "Payment is pending server-side confirmation. Check status again in a moment.",
+        image: "/assets/illustrations/payment-pending.svg"
+      };
+  }
+}
+
+function isExitAuthorizationAvailable(status?: string | null): boolean {
+  if (!status) {
+    return false;
+  }
+
+  const normalized = status.trim().toUpperCase();
+  return normalized === "ISSUED" || normalized === "ACTIVE" || normalized === "AUTHORIZED";
 }
 
 function getReturnPageMode(pathname: string): ReturnPageMode | null {

@@ -576,6 +576,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByLabelText(/card/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/gcash/i)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/maya/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("AUB")).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenPlateEntered_SubmitsPlateNumber", async () => {
@@ -629,11 +630,11 @@ describe("ExitPass WebPay UI", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: /payment is still being verified/i })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /payment status: paid/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment confirmed/i })).not.toBeInTheDocument();
     expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
   });
 
-  it("WebPayReturnPage_ShowsPaidAndPaymentCompletedAfterBackendConfirms", async () => {
+  it("WebPayReturnPage_ShowsConfirmedReceiptAfterBackendConfirms", async () => {
     stubWebPayFetch({
       resolvePayload: {
         ...successResponse,
@@ -645,9 +646,84 @@ describe("ExitPass WebPay UI", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: /payment status: paid/i })).toBeInTheDocument();
-    expect(screen.getAllByText("Parking Status: Payment Completed").length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: /payment confirmed/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /payment receipt/i })).toBeInTheDocument();
+    expect(screen.getByText("Amount Paid")).toBeInTheDocument();
+    expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
     expect(screen.getByText("Payment Completed")).toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenPaymentFailed_ShowsDeterministicFailure", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Failed"
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FAILED");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /payment failed/i })).toBeInTheDocument();
+    expect(screen.getByText(/could not confirm this payment/i)).toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenPaymentExpired_ShowsDeterministicExpiry", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Expired"
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-EXPIRED");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /payment expired/i })).toBeInTheDocument();
+    expect(screen.getByText(/checkout session expired/i)).toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenConfirmedWithExitInstruction_RendersExitGuidance", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid",
+        exitInstruction: {
+          status: "ISSUED",
+          message: "Proceed to the exit lane and present your ticket.",
+          laneName: "Main Exit",
+          exitBy: "2026-05-23T13:15:00+08:00"
+        },
+        providerRawPayload: {
+          secret: "do-not-render"
+        }
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-PAID");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /proceed to exit/i })).toBeInTheDocument();
+    expect(screen.getByText("Proceed to the exit lane and present your ticket.")).toBeInTheDocument();
+    expect(screen.getByText("Lane: Main Exit")).toBeInTheDocument();
+    expect(screen.queryByText(/do-not-render/i)).not.toBeInTheDocument();
+  });
+
+  it("WebPayReturnPage_WhenConfirmedWithoutExitAuthorization_RendersPreparingState", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid",
+        exitInstruction: null,
+        exitAuthorizationStatus: null
+      }
+    });
+    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-PREPARING");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: /preparing exit authorization/i })).toBeInTheDocument();
+    expect(screen.getByText(/check status again shortly/i)).toBeInTheDocument();
   });
 
   it("WebPayCancelledPage_AllowsRetryAndStatusRefresh", async () => {
