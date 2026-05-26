@@ -30,9 +30,9 @@ describe("WebPay QR and payment intent helpers", () => {
   });
 
   it("WebPay_WhenPlateEntered_SubmitsPlateNumber", () => {
-    expect(buildPaymentIntentBody({ plateNumber: " abc 1234 ", paymentMethod: "GCASH" })).toEqual({
+    expect(buildPaymentIntentBody({ plateNumber: " abc 1234 ", paymentMethod: "QRPH" })).toEqual({
       plateNumber: "ABC 1234",
-      paymentMethod: "GCASH"
+      paymentMethod: "QRPH"
     });
   });
 
@@ -45,20 +45,33 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(body).not.toHaveProperty("paymentMethod");
   });
 
-  it("WebPay_WhenPaymentMethodSelected_SubmitsPaymentMethodOnly", async () => {
+  it("WebPay_WhenQrphPaymentMethodSelected_SubmitsPaymentMethodOnly", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ status: "PENDING_PROVIDER" })
     });
 
     await createPaymentIntent(
-      { ticketReference: "TICKET-001", paymentMethod: "MAYA", vendorSystemId: "HIKCENTRAL" },
+      { ticketReference: "TICKET-001", paymentMethod: "QRPH", vendorSystemId: "HIKCENTRAL" },
       fetchMock as never
     );
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.paymentMethod).toBe("MAYA");
+    expect(body.paymentMethod).toBe("QRPH");
     expect(body.ticketReference).toBe("TICKET-001");
+  });
+
+  it("WebPay_WhenUnsupportedPaymentMethodIsForced_RejectsBeforeApiCall", async () => {
+    const fetchMock = vi.fn();
+
+    await expect(
+      createPaymentIntent(
+        { ticketReference: "TICKET-001", paymentMethod: "GCASH" as never, vendorSystemId: "HIKCENTRAL" },
+        fetchMock as never
+      )
+    ).rejects.toThrow("Only QRPh / PHP payment through PayMongo is available right now.");
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("WebPay_WhenApiBaseUrlIsUnset_SubmitsPaymentIntentToSameOriginV1Path", async () => {
@@ -237,7 +250,7 @@ describe("WebPay QR and payment intent helpers", () => {
   });
 
   it("WebPay_DoesNotSubmitSelectedProviderCodeAsUserChoice", () => {
-    const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "CARD" });
+    const body = buildPaymentIntentBody({ ticketReference: "TICKET-001", paymentMethod: "QRPH" });
 
     expect(body).not.toHaveProperty("selectedProviderCode");
     expect(body).not.toHaveProperty("fallbackProviderCode");

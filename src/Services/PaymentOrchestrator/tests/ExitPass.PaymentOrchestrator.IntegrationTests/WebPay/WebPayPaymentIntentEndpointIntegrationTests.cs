@@ -42,20 +42,20 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenPlateResolved_ReturnsPaymentHandoff()
     {
-        var state = new WebPayEndpointState("CARD", "AUB", "PAYMONGO");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         using var client = CreateClient(state);
 
-        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("CARD"));
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<WebPayPaymentIntentResponse>();
         Assert.NotNull(body);
-        Assert.Equal("AUB", body!.SelectedProviderCode);
-        Assert.Equal("PAYMONGO", body.FallbackProviderCode);
+        Assert.Equal("PAYMONGO", body!.SelectedProviderCode);
+        Assert.Null(body.FallbackProviderCode);
         Assert.Equal("https://payments.test/handoff", body.Handoff.HandoffUrl);
-        Assert.Equal("AUB_CARD_CASHIER", state.CapturedPaymentProvider);
-        Assert.Equal("CARD", state.CapturedPaymentMethod);
-        Assert.Equal("AUB_CARD_CASHIER", state.CapturedInitiateRequest!.ProviderProduct);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedPaymentProvider);
+        Assert.Equal("QRPH", state.CapturedPaymentMethod);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedInitiateRequest!.ProviderProduct);
     }
 
     /// <summary>
@@ -121,14 +121,32 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     /// <summary>
+    /// Verifies unsupported WebPay methods are rejected before vendor resolution or payment attempt creation.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenUnsupportedMethodRequested_ReturnsUnsupportedPaymentMethod()
+    {
+        var state = new WebPayEndpointState("CARD", "AUB", "PAYMONGO");
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("CARD"));
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.False(state.ResolveVendorParkingWasCalled);
+        Assert.False(state.CreatePaymentAttemptWasCalled);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("UNSUPPORTED_PAYMENT_METHOD", body.RootElement.GetProperty("errorCode").GetString());
+    }
+
+    /// <summary>
     /// Verifies provider routing errors return a deterministic validation response.
     /// </summary>
     [Fact]
     public async Task WebPayPaymentIntent_WhenPreferredProviderUnsupported_ReturnsValidationError()
     {
-        var state = new WebPayEndpointState("CARD", null, null, false, "PREFERRED_PROVIDER_UNSUPPORTED");
+        var state = new WebPayEndpointState("QRPH", null, null, false, "PREFERRED_PROVIDER_UNSUPPORTED");
         using var client = CreateClient(state);
-        var request = DefaultRequest("CARD");
+        var request = DefaultRequest("QRPH");
         request.PreferredProviderCode = "UNSUPPORTED";
 
         using var response = await client.PostAsJsonAsync(Route, request);
@@ -145,12 +163,12 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenVendorNotFound_ReturnsNotFound()
     {
-        var state = new WebPayEndpointState("CARD", "AUB", "PAYMONGO");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         state.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Failure(
             new CentralPmsWebPayError(404, "SESSION_NOT_FOUND", "Vendor parking session was not found.", false));
         using var client = CreateClient(state);
 
-        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("CARD"));
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
         Assert.Null(state.CapturedRouteRequest);
@@ -319,9 +337,9 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenPlateAndTicketMissing_ReturnsBadRequest()
     {
-        var state = new WebPayEndpointState("CARD", "AUB", "PAYMONGO");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         using var client = CreateClient(state);
-        var request = DefaultRequest("CARD");
+        var request = DefaultRequest("QRPH");
         request.PlateNumber = null;
         request.TicketReference = null;
 
@@ -337,10 +355,10 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_DoesNotLeakProviderSpecificFields()
     {
-        var state = new WebPayEndpointState("GCASH", "PAYMONGO", null);
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         using var client = CreateClient(state);
 
-        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("GCASH"));
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();

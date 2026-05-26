@@ -22,7 +22,6 @@ public sealed class WebPayPaymentIntentContractTests
             VendorSystemId = "HIKCENTRAL",
             TicketReference = "TICKET-001",
             PaymentMethod = "QRPH",
-            PreferredProviderCode = "AUB",
             CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333")
         };
 
@@ -30,7 +29,7 @@ public sealed class WebPayPaymentIntentContractTests
 
         Assert.Contains("\"ticketReference\":\"TICKET-001\"", json);
         Assert.Contains("\"paymentMethod\":\"QRPH\"", json);
-        Assert.Contains("\"preferredProviderCode\":\"AUB\"", json);
+        Assert.DoesNotContain("\"preferredProviderCode\":\"AUB\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("qrScan", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("camera", json, StringComparison.OrdinalIgnoreCase);
     }
@@ -49,8 +48,8 @@ public sealed class WebPayPaymentIntentContractTests
             AmountMinorUnits = 10000,
             Currency = "PHP",
             PaymentMethod = "QRPH",
-            SelectedProviderCode = "AUB",
-            FallbackProviderCode = "PAYMONGO",
+            SelectedProviderCode = "PAYMONGO",
+            FallbackProviderCode = null,
             RoutingReason = "PRIMARY_PROVIDER",
             Status = "PENDING_PROVIDER",
             Handoff = new WebPayPaymentHandoffDto
@@ -65,8 +64,8 @@ public sealed class WebPayPaymentIntentContractTests
 
         var json = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-        Assert.Contains("\"selectedProviderCode\":\"AUB\"", json);
-        Assert.Contains("\"fallbackProviderCode\":\"PAYMONGO\"", json);
+        Assert.Contains("\"selectedProviderCode\":\"PAYMONGO\"", json);
+        Assert.Contains("\"fallbackProviderCode\":null", json);
         Assert.Contains("\"handoffUrl\":\"https://payments.test/handoff\"", json);
         Assert.DoesNotContain("merchantReferenceNumber", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("providerProduct", json, StringComparison.OrdinalIgnoreCase);

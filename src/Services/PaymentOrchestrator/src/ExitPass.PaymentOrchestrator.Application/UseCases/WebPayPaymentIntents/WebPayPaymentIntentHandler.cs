@@ -393,16 +393,32 @@ public sealed class WebPayPaymentIntentHandler
             errors.Add("vendorSystemId is required.");
         }
 
-        if (errors.Count == 0)
+        if (errors.Count > 0)
         {
-            return null;
+            return new WebPayPaymentIntentError(
+                400,
+                "INVALID_REQUEST",
+                $"The request is invalid. correlationId={correlationId}; errors={string.Join(" ", errors)}",
+                false);
         }
 
-        return new WebPayPaymentIntentError(
-            400,
-            "INVALID_REQUEST",
-            $"The request is invalid. correlationId={correlationId}; errors={string.Join(" ", errors)}",
-            false);
+        if (!string.Equals(Normalize(request.PaymentMethod!), PaymentMethodCode.QrPh, StringComparison.Ordinal))
+        {
+            /*
+             * ExitPass v1.2 BRD 18.3 Payment Initiation.
+             * ExitPass v1.2 SDD 10.2.4 Initiate Payment Attempt.
+             * Invariant: WebPay MVP exposes QRPH/PHP only, and QRPH/PHP must remain PAYMONGO-only.
+             */
+            return new WebPayPaymentIntentError(
+                422,
+                "UNSUPPORTED_PAYMENT_METHOD",
+                "WebPay MVP supports only QRPH/PHP payment initiation through PayMongo.",
+                false,
+                correlationId,
+                PaymentMethod: Normalize(request.PaymentMethod!));
+        }
+
+        return null;
     }
 
     private static WebPayPaymentIntentError? ValidateResolve(
@@ -831,11 +847,7 @@ public sealed class WebPayPaymentIntentHandler
         // the customer-selected method and must not be sent as the provider code.
         return (provider, method) switch
         {
-            (ProviderCode.Aub, PaymentMethodCode.Card) => "AUB_CARD_CASHIER",
             (ProviderCode.PayMongo, PaymentMethodCode.QrPh) => "PAYMONGO_CHECKOUT_SESSION",
-            (ProviderCode.PayMongo, PaymentMethodCode.GCash) => "PAYMONGO_CHECKOUT_SESSION",
-            (ProviderCode.PayMongo, PaymentMethodCode.Maya) => "PAYMONGO_CHECKOUT_SESSION",
-            (ProviderCode.PayMongo, PaymentMethodCode.Card) => "PAYMONGO_CHECKOUT_SESSION",
             _ => null
         };
     }
