@@ -2,21 +2,25 @@ import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
+  applyCoupon,
   createPaymentIntent,
   extractPaymentIntentContext,
   formatAmount,
   getResumeUrl,
   normalizeTicketReference,
   retrievePaymentStatus,
-  resolveParkingSession
+  resolveParkingSession,
+  validateStatutoryDiscount
 } from "./webpay";
 import type {
   ActivePaymentAttemptState,
+  CouponApplyResponse,
   ParkingSessionResolveResponse,
   ParkingSessionSummary,
   PaymentIntentRequest,
   PaymentIntentResponse,
-  PaymentMethod
+  PaymentMethod,
+  StatutoryDiscountResponse
 } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
@@ -32,6 +36,11 @@ type EntryMode = "ticket" | "plate";
 type WebPayStage = "INPUT" | "SESSION_RESOLVED" | "HANDOFF_READY" | "ACTIVE_ATTEMPT" | "ERROR";
 type ReturnPageMode = "success" | "cancelled";
 type PaymentStatusKind = "pending" | "confirmed" | "failed" | "expired" | "cancelled";
+type ModifierState<T> = {
+  status: "idle" | "applying" | "approved" | "pending" | "rejected" | "expired" | "failed";
+  response?: T | null;
+  message?: string;
+};
 
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
@@ -43,6 +52,11 @@ export function App() {
   const [resolvedSession, setResolvedSession] = useState<ParkingSessionResolveResponse | null>(null);
   const [result, setResult] = useState<PaymentIntentResponse | null>(null);
   const [activePaymentAttempt, setActivePaymentAttempt] = useState<ActivePaymentAttemptState | null>(null);
+  const [couponCode, setCouponCode] = useState("");
+  const [couponState, setCouponState] = useState<ModifierState<CouponApplyResponse>>({ status: "idle" });
+  const [statutoryEntitlement, setStatutoryEntitlement] = useState<"SENIOR_CITIZEN" | "PWD">("SENIOR_CITIZEN");
+  const [evidenceReference, setEvidenceReference] = useState("");
+  const [statutoryState, setStatutoryState] = useState<ModifierState<StatutoryDiscountResponse>>({ status: "idle" });
   const [error, setError] = useState("");
   const [resolveError, setResolveError] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -65,6 +79,7 @@ export function App() {
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
+    clearModifierState();
     setStage("INPUT");
   }
 
@@ -74,7 +89,16 @@ export function App() {
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
+    clearModifierState();
     setStage("INPUT");
+  }
+
+  function clearModifierState() {
+    setCouponCode("");
+    setCouponState({ status: "idle" });
+    setStatutoryEntitlement("SENIOR_CITIZEN");
+    setEvidenceReference("");
+    setStatutoryState({ status: "idle" });
   }
 
   function currentLookup() {
@@ -115,6 +139,7 @@ export function App() {
       setError("");
       setResult(null);
       setActivePaymentAttempt(null);
+      clearModifierState();
       setResolvedSession(response);
       setStage("SESSION_RESOLVED");
     } catch (apiError) {
@@ -151,7 +176,9 @@ export function App() {
         paymentMethod,
         siteGroupId: resolvedSession.siteGroupId ?? scannedContext.siteGroupId,
         siteId: resolvedSession.siteId ?? scannedContext.siteId,
-        vendorSystemId: resolvedSession.vendorSystemId ?? scannedContext.vendorSystemId
+        vendorSystemId: resolvedSession.vendorSystemId ?? scannedContext.vendorSystemId,
+        tariffSnapshotId: resolvedSession.tariffSnapshotId,
+        expectedAmountMinorUnits: resolvedSession.amountMinorUnits
       }, fetch, {});
       setResult(response);
       setResolvedSession(toParkingSessionResolveResponse(response));
@@ -198,6 +225,11 @@ export function App() {
       return;
     }
 
+    if (isPayableBasisPending(couponState, statutoryState)) {
+      setError("Statutory discount validation is pending review.");
+      return;
+    }
+
     if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
       await handleResolveParkingSession();
       return;
@@ -206,10 +238,87 @@ export function App() {
     await handleCreatePaymentIntent();
   }
 
+  async function handleApplyCoupon() {
+    if (!resolvedSession) {
+      setCouponState({ status: "failed", message: "Resolve parking session before applying a coupon." });
+      return;
+    }
+
+    if (isPayableBasisLocked(stage)) {
+      setCouponState({ status: "failed", message: "The payable amount is locked after payment initiation." });
+      return;
+    }
+
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(couponCode.trim())) {
+      setCouponState({ status: "failed", message: "Enter a valid coupon code." });
+      return;
+    }
+
+    setCouponState({ status: "applying" });
+    try {
+      const response = await applyCoupon({
+        parkingSessionId: resolvedSession.parkingSessionId,
+        tariffSnapshotId: resolvedSession.tariffSnapshotId,
+        couponCode,
+        amountMinorUnits: resolvedSession.amountMinorUnits,
+        currency: resolvedSession.currency,
+        correlationId: resolvedSession.correlationId
+      });
+      setResolvedSession(applyCouponToSession(resolvedSession, response));
+      setCouponState({ status: "approved", response, message: "Coupon applied." });
+      setError("");
+    } catch (apiError) {
+      setCouponState({ status: "failed", message: apiError instanceof Error ? apiError.message : "Coupon could not be applied." });
+    }
+  }
+
+  async function handleValidateStatutoryDiscount() {
+    if (!resolvedSession) {
+      setStatutoryState({ status: "failed", message: "Resolve parking session before requesting statutory discount." });
+      return;
+    }
+
+    if (isPayableBasisLocked(stage)) {
+      setStatutoryState({ status: "failed", message: "The payable amount is locked after payment initiation." });
+      return;
+    }
+
+    setStatutoryState({ status: "applying" });
+    try {
+      const response = await validateStatutoryDiscount({
+        parkingSessionId: resolvedSession.parkingSessionId,
+        tariffSnapshotId: resolvedSession.tariffSnapshotId,
+        entitlementType: statutoryEntitlement,
+        evidenceReference,
+        amountMinorUnits: resolvedSession.amountMinorUnits,
+        currency: resolvedSession.currency,
+        correlationId: resolvedSession.correlationId
+      });
+      const normalizedStatus = response.status?.trim().toUpperCase();
+      if (normalizedStatus === "APPROVED") {
+        setResolvedSession(applyStatutoryDiscountToSession(resolvedSession, response));
+        setStatutoryState({ status: "approved", response, message: "Statutory discount approved." });
+      } else if (normalizedStatus === "PENDING_REVIEW" || normalizedStatus === "REQUESTED" || normalizedStatus === "PENDING_OPERATOR_REVIEW") {
+        setStatutoryState({ status: "pending", response, message: "Statutory discount validation is pending review." });
+      } else if (normalizedStatus === "EXPIRED") {
+        setStatutoryState({ status: "expired", response, message: "Statutory discount validation has expired." });
+      } else if (normalizedStatus === "REJECTED") {
+        setStatutoryState({ status: "rejected", response, message: "Statutory discount validation was rejected." });
+      } else {
+        setStatutoryState({ status: "failed", response, message: response.message ?? "Statutory discount validation failed." });
+      }
+      setError("");
+    } catch (apiError) {
+      setStatutoryState({ status: "failed", message: apiError instanceof Error ? apiError.message : "Statutory discount validation failed." });
+    }
+  }
+
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
   const summary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
   const isPaymentComplete = isPaidStatus(summary?.paymentStatus);
+  const isModifierLocked = isPayableBasisLocked(stage);
+  const isPayablePending = isPayableBasisPending(couponState, statutoryState);
 
   return (
     <main className="app-shell">
@@ -296,6 +405,28 @@ export function App() {
         )}
 
         {summary && <ParkingSessionSummaryPanel result={summary} />}
+
+        {summary && (
+          <PayableBasisPanel
+            session={summary}
+            couponCode={couponCode}
+            couponState={couponState}
+            statutoryEntitlement={statutoryEntitlement}
+            statutoryState={statutoryState}
+            evidenceReference={evidenceReference}
+            locked={isModifierLocked}
+            onCouponCodeChange={(value) => {
+              setCouponCode(value);
+              if (couponState.status !== "approved") {
+                setCouponState({ status: "idle" });
+              }
+            }}
+            onApplyCoupon={() => void handleApplyCoupon()}
+            onEntitlementChange={setStatutoryEntitlement}
+            onEvidenceReferenceChange={setEvidenceReference}
+            onValidateStatutory={() => void handleValidateStatutoryDiscount()}
+          />
+        )}
 
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
@@ -394,12 +525,14 @@ export function App() {
           </section>
         )}
 
-        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete}>
+        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || isPayablePending}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
             : isSubmitting
               ? "Creating payment..."
+              : isPayablePending
+                ? "Discount review pending"
               : isPaymentComplete
                 ? "Payment completed"
                 : activePaymentAttempt
@@ -554,6 +687,151 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   );
 }
 
+function PayableBasisPanel({
+  session,
+  couponCode,
+  couponState,
+  statutoryEntitlement,
+  statutoryState,
+  evidenceReference,
+  locked,
+  onCouponCodeChange,
+  onApplyCoupon,
+  onEntitlementChange,
+  onEvidenceReferenceChange,
+  onValidateStatutory
+}: {
+  session: ParkingSessionResolveResponse;
+  couponCode: string;
+  couponState: ModifierState<CouponApplyResponse>;
+  statutoryEntitlement: "SENIOR_CITIZEN" | "PWD";
+  statutoryState: ModifierState<StatutoryDiscountResponse>;
+  evidenceReference: string;
+  locked: boolean;
+  onCouponCodeChange: (value: string) => void;
+  onApplyCoupon: () => void;
+  onEntitlementChange: (value: "SENIOR_CITIZEN" | "PWD") => void;
+  onEvidenceReferenceChange: (value: string) => void;
+  onValidateStatutory: () => void;
+}) {
+  const originalAmount = session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
+  const couponAdjustment = session.couponAdjustmentMinorUnits ?? 0;
+  const statutoryAdjustment = session.statutoryAdjustmentMinorUnits ?? 0;
+  const totalAdjustment = session.totalAdjustmentMinorUnits ?? couponAdjustment + statutoryAdjustment;
+
+  return (
+    <section className="payable-basis-panel" aria-labelledby="payable-basis-heading">
+      <div className="session-summary-header">
+        <div>
+          <p className="eyebrow">Payable basis</p>
+          <h2 id="payable-basis-heading">Discounts and coupons</h2>
+        </div>
+        <div className="amount-due">
+          <span>Final Amount Due</span>
+          <strong>{formatAmount(session.amountMinorUnits, session.currency)}</strong>
+          <small>{session.currency}</small>
+        </div>
+      </div>
+
+      <dl className="payable-breakdown">
+        <div>
+          <dt>Original Amount</dt>
+          <dd>{formatCurrencyAmount(originalAmount, session.currency)}</dd>
+        </div>
+        <div>
+          <dt>Coupon Adjustment</dt>
+          <dd>{formatAdjustment(couponAdjustment, session.currency)}</dd>
+        </div>
+        <div>
+          <dt>Statutory Adjustment</dt>
+          <dd>{formatAdjustment(statutoryAdjustment, session.currency)}</dd>
+        </div>
+        <div>
+          <dt>Total Adjustment</dt>
+          <dd>{formatAdjustment(totalAdjustment, session.currency)}</dd>
+        </div>
+        <div>
+          <dt>Final Amount Due</dt>
+          <dd>{formatCurrencyAmount(session.amountMinorUnits, session.currency)}</dd>
+        </div>
+      </dl>
+
+      <div className="modifier-grid">
+        <div className="modifier-card">
+          <label className="field">
+            <span>Coupon code</span>
+            <input
+              value={couponCode}
+              onChange={(event) => onCouponCodeChange(event.target.value)}
+              placeholder="Merchant coupon code"
+              disabled={locked || couponState.status === "approved"}
+              autoComplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onApplyCoupon}
+            disabled={locked || couponState.status === "applying" || couponState.status === "approved"}
+          >
+            {couponState.status === "applying" ? "Applying..." : couponState.status === "approved" ? "Coupon applied" : "Apply Coupon"}
+          </button>
+          <ModifierMessage state={couponState} />
+        </div>
+
+        <div className="modifier-card">
+          <label className="field">
+            <span>Statutory discount</span>
+            <select
+              value={statutoryEntitlement}
+              onChange={(event) => onEntitlementChange(event.target.value as "SENIOR_CITIZEN" | "PWD")}
+              disabled={locked || statutoryState.status === "approved" || statutoryState.status === "pending"}
+            >
+              <option value="SENIOR_CITIZEN">Senior Citizen</option>
+              <option value="PWD">PWD</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Evidence reference</span>
+            <input
+              value={evidenceReference}
+              onChange={(event) => onEvidenceReferenceChange(event.target.value)}
+              placeholder="Reference only"
+              disabled={locked || statutoryState.status === "approved" || statutoryState.status === "pending"}
+              autoComplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={onValidateStatutory}
+            disabled={locked || statutoryState.status === "applying" || statutoryState.status === "approved" || statutoryState.status === "pending"}
+          >
+            {statutoryState.status === "applying" ? "Requesting..." : "Request Statutory Discount"}
+          </button>
+          <ModifierMessage state={statutoryState} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ModifierMessage<T>({ state }: { state: ModifierState<T> }) {
+  if (state.status === "idle") {
+    return null;
+  }
+
+  const className = state.status === "approved" || state.status === "pending"
+    ? "modifier-message"
+    : "modifier-message is-error";
+
+  return (
+    <p className={className} role={state.status === "failed" || state.status === "rejected" || state.status === "expired" ? "alert" : "status"}>
+      {state.message ?? "Request submitted."}
+    </p>
+  );
+}
+
 function PaymentStatusPanel({
   summary,
   statusKind
@@ -649,6 +927,10 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     tariffName: result.sessionSummary?.tariffName ?? result.tariffName,
     totalFeeMinorUnits: result.sessionSummary?.totalFeeMinorUnits ?? result.totalFeeMinorUnits ?? result.amountMinorUnits,
     amountMinorUnits: result.sessionSummary?.amountMinorUnits ?? result.amountMinorUnits,
+    originalAmountMinorUnits: result.sessionSummary?.originalAmountMinorUnits ?? result.originalAmountMinorUnits ?? result.totalFeeMinorUnits ?? result.amountMinorUnits,
+    couponAdjustmentMinorUnits: result.sessionSummary?.couponAdjustmentMinorUnits ?? result.couponAdjustmentMinorUnits,
+    statutoryAdjustmentMinorUnits: result.sessionSummary?.statutoryAdjustmentMinorUnits ?? result.statutoryAdjustmentMinorUnits,
+    totalAdjustmentMinorUnits: result.sessionSummary?.totalAdjustmentMinorUnits ?? result.totalAdjustmentMinorUnits,
     currency: result.sessionSummary?.currency ?? result.currency,
     sessionStatus: result.sessionSummary?.sessionStatus ?? result.parkingStatus,
     parkingStatus: result.sessionSummary?.parkingStatus ?? result.parkingStatus,
@@ -664,6 +946,7 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     ["Entry Time", displayValue(formatDateTime(summary.entryTime))],
     ["Duration", displayValue(summary.durationParked ?? formatDuration(summary.entryTime, summary.currentFeeCalculationTime))],
     ["Total Fee", displayValue(formatCurrencyAmount(summary.totalFeeMinorUnits ?? summary.amountMinorUnits, summary.currency ?? result.currency))],
+    ["Discount/Coupon Adjustment", displayValue(formatAdjustment(summary.totalAdjustmentMinorUnits ?? (summary.couponAdjustmentMinorUnits ?? 0) + (summary.statutoryAdjustmentMinorUnits ?? 0), summary.currency ?? result.currency))],
     ["Amount Due", displayValue(formatCurrencyAmount(summary.amountMinorUnits ?? result.amountMinorUnits, summary.currency ?? result.currency))],
     ["Parking Status", displayValue(getParkerFacingParkingStatus(summary))],
     ["Payment Status", displayValue(summary.paymentStatus)],
@@ -704,6 +987,10 @@ function toParkingSessionResolveResponse(result: PaymentIntentResponse): Parking
     vendorSystemId: result.vendorSystemId,
     siteGroupName: result.siteGroupName,
     amountMinorUnits: result.amountMinorUnits,
+    originalAmountMinorUnits: result.totalFeeMinorUnits ?? result.amountMinorUnits,
+    couponAdjustmentMinorUnits: 0,
+    statutoryAdjustmentMinorUnits: 0,
+    totalAdjustmentMinorUnits: 0,
     currency: result.currency,
     correlationId: result.correlationId,
     siteName: result.siteName,
@@ -720,6 +1007,44 @@ function toParkingSessionResolveResponse(result: PaymentIntentResponse): Parking
     feeValidUntil: result.feeValidUntil,
     tariffExpiresAt: result.tariffExpiresAt,
     sessionSummary: result.sessionSummary
+  };
+}
+
+function applyCouponToSession(
+  session: ParkingSessionResolveResponse,
+  response: CouponApplyResponse
+): ParkingSessionResolveResponse {
+  const originalAmount = response.originalAmountMinorUnits ?? session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
+  const couponAdjustment = response.adjustmentMinorUnits ?? session.couponAdjustmentMinorUnits ?? 0;
+  const statutoryAdjustment = session.statutoryAdjustmentMinorUnits ?? 0;
+  return {
+    ...session,
+    tariffSnapshotId: response.tariffSnapshotId || session.tariffSnapshotId,
+    originalAmountMinorUnits: originalAmount,
+    couponAdjustmentMinorUnits: couponAdjustment,
+    statutoryAdjustmentMinorUnits: statutoryAdjustment,
+    totalAdjustmentMinorUnits: couponAdjustment + statutoryAdjustment,
+    amountMinorUnits: response.finalAmountMinorUnits ?? Math.max(0, originalAmount - couponAdjustment - statutoryAdjustment),
+    currency: response.currency || session.currency
+  };
+}
+
+function applyStatutoryDiscountToSession(
+  session: ParkingSessionResolveResponse,
+  response: StatutoryDiscountResponse
+): ParkingSessionResolveResponse {
+  const originalAmount = response.originalAmountMinorUnits ?? session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
+  const statutoryAdjustment = response.adjustmentMinorUnits ?? session.statutoryAdjustmentMinorUnits ?? 0;
+  const couponAdjustment = session.couponAdjustmentMinorUnits ?? 0;
+  return {
+    ...session,
+    tariffSnapshotId: response.tariffSnapshotId || session.tariffSnapshotId,
+    originalAmountMinorUnits: originalAmount,
+    couponAdjustmentMinorUnits: couponAdjustment,
+    statutoryAdjustmentMinorUnits: statutoryAdjustment,
+    totalAdjustmentMinorUnits: couponAdjustment + statutoryAdjustment,
+    amountMinorUnits: response.finalAmountMinorUnits ?? Math.max(0, originalAmount - couponAdjustment - statutoryAdjustment),
+    currency: response.currency || session.currency
   };
 }
 
@@ -741,6 +1066,19 @@ function checkActivePaymentStatus(activePaymentAttempt: ActivePaymentAttemptStat
   }
 
   return false;
+}
+
+function isPayableBasisLocked(stage: WebPayStage): boolean {
+  return stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT";
+}
+
+function isPayableBasisPending(
+  couponState: ModifierState<CouponApplyResponse>,
+  statutoryState: ModifierState<StatutoryDiscountResponse>
+): boolean {
+  return couponState.status === "applying" ||
+    statutoryState.status === "applying" ||
+    statutoryState.status === "pending";
 }
 
 function isPaidStatus(status?: string | null): boolean {
@@ -907,6 +1245,15 @@ function formatCurrencyAmount(amountMinorUnits?: number | null, currency?: strin
 
   const normalizedCurrency = currency?.trim() || "PHP";
   return `${normalizedCurrency.toUpperCase()} ${formatAmount(amountMinorUnits, normalizedCurrency)}`;
+}
+
+function formatAdjustment(amountMinorUnits?: number | null, currency?: string | null): string | undefined {
+  const amount = amountMinorUnits ?? 0;
+  if (amount <= 0) {
+    return formatCurrencyAmount(0, currency);
+  }
+
+  return `-${formatCurrencyAmount(amount, currency)}`;
 }
 
 function displayValue(value?: string | null): string {

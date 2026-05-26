@@ -284,7 +284,8 @@ input {
   font-weight: 700;
 }
 
-.field input {
+.field input,
+.field select {
   min-height: 50px;
   width: 100%;
   border: 1px solid #d0d5dd;
@@ -292,6 +293,7 @@ input {
   padding: 0 14px;
   color: #101828;
   background: #ffffff;
+  font: inherit;
 }
 
 .method-section {
@@ -534,6 +536,15 @@ input {
   gap: 12px;
 }
 
+.payable-basis-panel {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
 .session-summary-header {
   display: grid;
   gap: 12px;
@@ -562,6 +573,56 @@ input {
   color: #0b1f3a;
   font-size: 28px;
   line-height: 1.1;
+}
+
+.payable-breakdown {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.payable-breakdown div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eaecf0;
+}
+
+.payable-breakdown dd {
+  margin: 0;
+  color: #101828;
+  font-weight: 700;
+  text-align: right;
+}
+
+.modifier-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.modifier-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.modifier-card .field {
+  margin-bottom: 0;
+}
+
+.modifier-message {
+  margin: 0;
+  color: #126146;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.modifier-message.is-error {
+  color: #b42318;
 }
 
 .primary-link {
@@ -623,5 +684,9 @@ input {
   .session-summary-header {
     grid-template-columns: 1fr minmax(156px, auto);
     align-items: start;
+  }
+
+  .modifier-grid {
+    grid-template-columns: 1fr 1fr;
   }
 }

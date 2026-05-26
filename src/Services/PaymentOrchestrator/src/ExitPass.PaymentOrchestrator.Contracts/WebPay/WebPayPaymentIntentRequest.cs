@@ -41,6 +41,16 @@ public sealed class WebPayPaymentIntentRequest
     public string? PreferredProviderCode { get; set; }
 
     /// <summary>
+    /// Optional final approved tariff snapshot expected by WebPay after coupon or statutory discount validation.
+    /// </summary>
+    public Guid? TariffSnapshotId { get; set; }
+
+    /// <summary>
+    /// Optional final payable amount expected by WebPay after backend-approved payable-basis modifiers.
+    /// </summary>
+    public long? ExpectedAmountMinorUnits { get; set; }
+
+    /// <summary>
     /// End-to-end correlation identifier.
     /// </summary>
     public Guid? CorrelationId { get; set; }

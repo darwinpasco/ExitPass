@@ -178,6 +178,27 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies WebPay cannot create a payment attempt against a stale payable basis after coupon or statutory changes.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenExpectedPayableBasisDoesNotMatchCurrentCentralPmsBasis_ReturnsLockedError()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var request = DefaultRequest("QRPH");
+        request.TariffSnapshotId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        request.ExpectedAmountMinorUnits = 7500;
+
+        var result = await fixture.Sut.HandleAsync(request, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("PAYABLE_BASIS_LOCKED", result.Error.ErrorCode);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedRouteRequest);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
     /// Verifies non-QRPH methods are rejected before vendor resolution, routing, attempt creation, or handoff.
     /// </summary>
     [Theory]

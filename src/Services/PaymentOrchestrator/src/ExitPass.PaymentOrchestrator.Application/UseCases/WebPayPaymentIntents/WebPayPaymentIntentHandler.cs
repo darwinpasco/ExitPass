@@ -100,6 +100,12 @@ public sealed class WebPayPaymentIntentHandler
             return WebPayPaymentIntentResult.Failure(MapCentralPmsError(parking.Error, correlationId));
         }
 
+        var payableBasisError = ValidatePayableBasis(request, parking.Value, correlationId);
+        if (payableBasisError is not null)
+        {
+            return WebPayPaymentIntentResult.Failure(payableBasisError);
+        }
+
         var route = await _routingPolicyResolver.ResolveAsync(
             new ResolvePaymentProviderRouteRequest(
                 request.SiteId,
@@ -448,6 +454,63 @@ public sealed class WebPayPaymentIntentHandler
             "INVALID_REQUEST",
             $"The request is invalid. correlationId={correlationId}; errors={string.Join(" ", errors)}",
             false);
+    }
+
+    /// <summary>
+    /// Confirms WebPay payment initiation still targets the final approved payable basis returned by Central PMS.
+    /// </summary>
+    /// <param name="request">WebPay payment-intent request.</param>
+    /// <param name="parking">Current server-resolved parking payable basis.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <returns>A deterministic payable-basis error, or <see langword="null"/> when the basis matches.</returns>
+    private static WebPayPaymentIntentError? ValidatePayableBasis(
+        WebPayPaymentIntentRequest request,
+        CentralPmsResolvedParking parking,
+        Guid correlationId)
+    {
+        /*
+         * ExitPass v1.2 BRD 9.9 Payment Initiation.
+         * ExitPass v1.2 SDD 8.2 TariffSnapshot State Machine.
+         * Invariant: PaymentAttempt creation must use the final server-approved payable basis and must fail closed
+         * if WebPay submits a stale pre-coupon or pre-statutory tariff snapshot.
+         */
+        if (request.TariffSnapshotId.HasValue &&
+            request.TariffSnapshotId.Value != parking.TariffSnapshotId)
+        {
+            return new WebPayPaymentIntentError(
+                409,
+                "PAYABLE_BASIS_LOCKED",
+                "The payable basis changed before payment initiation. Restart from parking lookup.",
+                false,
+                correlationId,
+                parking.ParkingSessionId,
+                PaymentMethod: Normalize(request.PaymentMethod!),
+                AmountMinorUnits: parking.NetPayableMinorUnits,
+                Currency: parking.Currency,
+                SiteName: BlankToNull(parking.SiteName),
+                TicketReference: BlankToNull(parking.TicketReference),
+                PlateNumber: BlankToNull(parking.PlateNumber));
+        }
+
+        if (request.ExpectedAmountMinorUnits.HasValue &&
+            request.ExpectedAmountMinorUnits.Value != parking.NetPayableMinorUnits)
+        {
+            return new WebPayPaymentIntentError(
+                409,
+                "PAYABLE_BASIS_LOCKED",
+                "The payable amount changed before payment initiation. Restart from parking lookup.",
+                false,
+                correlationId,
+                parking.ParkingSessionId,
+                PaymentMethod: Normalize(request.PaymentMethod!),
+                AmountMinorUnits: parking.NetPayableMinorUnits,
+                Currency: parking.Currency,
+                SiteName: BlankToNull(parking.SiteName),
+                TicketReference: BlankToNull(parking.TicketReference),
+                PlateNumber: BlankToNull(parking.PlateNumber));
+        }
+
+        return null;
     }
 
     private static WebPayParkingSessionResolveResponse BuildResolveResponse(

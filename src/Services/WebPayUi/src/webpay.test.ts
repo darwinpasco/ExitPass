@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  applyCoupon,
   buildPaymentIntentBody,
   buildParkingSessionResolveBody,
   createPaymentIntent,
@@ -8,7 +9,8 @@ import {
   normalizeTicketReference,
   retrievePaymentStatus,
   resolveParkingSession,
-  toFriendlyError
+  toFriendlyError,
+  validateStatutoryDiscount
 } from "./webpay";
 
 afterEach(() => {
@@ -60,6 +62,63 @@ describe("WebPay QR and payment intent helpers", () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.paymentMethod).toBe("QRPH");
     expect(body.ticketReference).toBe("TICKET-001");
+  });
+
+  it("WebPay_WhenApprovedPayableBasisProvided_IncludesExpectedTariffAndAmount", () => {
+    const body = buildPaymentIntentBody({
+      ticketReference: "TICKET-001",
+      paymentMethod: "QRPH",
+      tariffSnapshotId: "77777777-7777-7777-7777-777777777777",
+      expectedAmountMinorUnits: 7500
+    });
+
+    expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
+    expect(body.expectedAmountMinorUnits).toBe(7500);
+  });
+
+  it("WebPay_WhenApplyingCoupon_UsesPublicCouponEndpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "APPROVED",
+        couponCode: "SAVE50",
+        finalAmountMinorUnits: 7500
+      })
+    });
+
+    const result = await applyCoupon({
+      parkingSessionId: "55555555-5555-5555-5555-555555555555",
+      tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+      couponCode: " save50 ",
+      amountMinorUnits: 12500,
+      currency: "PHP"
+    }, fetchMock as never);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/public/coupons/apply");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.couponCode).toBe("SAVE50");
+    expect(result.finalAmountMinorUnits).toBe(7500);
+  });
+
+  it("WebPay_WhenStatutoryValidationRequested_UsesReferenceOnlyPayload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "PENDING_REVIEW" })
+    });
+
+    await validateStatutoryDiscount({
+      parkingSessionId: "55555555-5555-5555-5555-555555555555",
+      tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
+      entitlementType: "SENIOR_CITIZEN",
+      evidenceReference: " HASH-ONLY-REF ",
+      amountMinorUnits: 12500,
+      currency: "PHP"
+    }, fetchMock as never);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/public/discounts/statutory/validate");
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.evidenceReference).toBe("HASH-ONLY-REF");
+    expect(body).not.toHaveProperty("rawEvidencePayload");
   });
 
   it("WebPay_WhenUnsupportedPaymentMethodIsForced_RejectsBeforeApiCall", async () => {
@@ -286,5 +345,7 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(toFriendlyError("VENDOR_UNAVAILABLE")).toContain("temporarily unavailable");
     expect(toFriendlyError("NO_PAYMENT_ROUTE")).toContain("not available");
     expect(toFriendlyError("WEBPAY_PAYMENT_INTENT_FAILED")).toContain("could not start payment");
+    expect(toFriendlyError("COUPON_EXPIRED")).toContain("expired");
+    expect(toFriendlyError("PAYABLE_BASIS_LOCKED")).toContain("payable amount changed");
   });
 });

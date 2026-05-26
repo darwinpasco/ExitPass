@@ -1,15 +1,21 @@
 import type {
   ActivePaymentAttemptState,
   ApiError,
+  CouponApplyRequest,
+  CouponApplyResponse,
   ParkingSessionResolveRequest,
   ParkingSessionResolveResponse,
   PaymentIntentRequest,
   PaymentIntentResponse,
+  StatutoryDiscountRequest,
+  StatutoryDiscountResponse,
   WebPayHandoff
 } from "./types";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
+const couponApplyPath = "/v1/public/coupons/apply";
+const statutoryDiscountValidatePath = "/v1/public/discounts/statutory/validate";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 
 export class ActivePaymentAttemptError extends Error {
@@ -139,6 +145,14 @@ export function buildPaymentIntentBody(
     body.plateNumber = request.plateNumber.trim().toUpperCase();
   }
 
+  if (request.tariffSnapshotId?.trim()) {
+    body.tariffSnapshotId = request.tariffSnapshotId.trim();
+  }
+
+  if (Number.isFinite(request.expectedAmountMinorUnits)) {
+    body.expectedAmountMinorUnits = request.expectedAmountMinorUnits;
+  }
+
   return body;
 }
 
@@ -246,6 +260,69 @@ export async function createPaymentIntent(
   return payload as PaymentIntentResponse;
 }
 
+export async function applyCoupon(
+  request: CouponApplyRequest,
+  fetchImpl: typeof fetch = fetch
+): Promise<CouponApplyResponse> {
+  /*
+   * ExitPass v1.2 BRD 9.9 Payment Initiation.
+   * ExitPass v1.2 SDD 8.2 TariffSnapshot State Machine.
+   * Invariant: WebPay may request coupon application, but the backend owns payable-basis approval.
+   */
+  const response = await postPublicModifier<CouponApplyRequest, CouponApplyResponse>(
+    couponApplyPath,
+    {
+      ...request,
+      couponCode: request.couponCode.trim().toUpperCase()
+    },
+    fetchImpl);
+
+  if (!isApprovedModifier(response.status)) {
+    throw new Error(toFriendlyError(response.errorCode ?? response.status, response.message ?? undefined));
+  }
+
+  return response;
+}
+
+export async function validateStatutoryDiscount(
+  request: StatutoryDiscountRequest,
+  fetchImpl: typeof fetch = fetch
+): Promise<StatutoryDiscountResponse> {
+  /*
+   * ExitPass v1.2 BRD 9.9 Payment Initiation.
+   * ExitPass v1.2 SDD 8.2 TariffSnapshot State Machine.
+   * Invariant: WebPay stores only metadata/reference evidence and never approves statutory entitlement itself.
+   */
+  return postPublicModifier<StatutoryDiscountRequest, StatutoryDiscountResponse>(
+    statutoryDiscountValidatePath,
+    {
+      ...request,
+      evidenceReference: request.evidenceReference?.trim() || undefined
+    },
+    fetchImpl);
+}
+
+async function postPublicModifier<TRequest, TResponse>(
+  path: string,
+  request: TRequest,
+  fetchImpl: typeof fetch
+): Promise<TResponse> {
+  const response = await fetchImpl(`${getApiBaseUrl()}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(request)
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as TResponse & ApiError;
+  if (!response.ok) {
+    throw new Error(toFriendlyError(payload.errorCode, payload.message));
+  }
+
+  return payload;
+}
+
 export function toFriendlyError(errorCode?: string, message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "INVALID_TICKET":
@@ -275,6 +352,32 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
     case "WEBPAY_PAYMENT_INTENT_FAILED":
     case "PAYMENT_PROVIDER_CONFIGURATION_ERROR":
       return "We could not start payment. Please try again.";
+    case "INVALID_COUPON":
+      return "Enter a valid coupon code.";
+    case "COUPON_NOT_FOUND":
+      return "Coupon code was not found.";
+    case "COUPON_EXPIRED":
+      return "This coupon has expired.";
+    case "COUPON_NOT_APPLICABLE":
+      return "This coupon is not applicable to this parking session.";
+    case "COUPON_ALREADY_APPLIED":
+      return "A coupon is already applied to this parking session.";
+    case "COUPON_WALLET_INSUFFICIENT":
+      return "This coupon is temporarily unavailable.";
+    case "STATUTORY_DISCOUNT_PENDING_REVIEW":
+    case "PENDING_REVIEW":
+      return "Statutory discount validation is pending review.";
+    case "STATUTORY_DISCOUNT_REJECTED":
+    case "REJECTED":
+      return "Statutory discount validation was rejected.";
+    case "STATUTORY_DISCOUNT_EXPIRED":
+      return "Statutory discount validation has expired.";
+    case "STATUTORY_DISCOUNT_EVIDENCE_REQUIRED":
+      return "Evidence reference is required for statutory discount validation.";
+    case "PAYABLE_BASIS_LOCKED":
+      return "The payable amount changed or payment has already started. Please restart from lookup.";
+    case "PAYMENT_ALREADY_INITIATED":
+      return "Payment has already been initiated for this payable amount.";
     default:
       return message?.trim() || "Payment intent creation failed. Please try again.";
   }
@@ -319,6 +422,10 @@ function normalizeHandoff(error: ApiError): WebPayHandoff | null {
     handoffUrl,
     checkoutUrl
   };
+}
+
+function isApprovedModifier(status?: string | null): boolean {
+  return status?.trim().toUpperCase() === "APPROVED";
 }
 
 function firstNonBlank(...values: Array<string | undefined>): string | undefined {
