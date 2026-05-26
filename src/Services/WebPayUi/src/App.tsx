@@ -2,25 +2,21 @@ import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
-  applyCoupon,
   createPaymentIntent,
   extractPaymentIntentContext,
   formatAmount,
   getResumeUrl,
   normalizeTicketReference,
   retrievePaymentStatus,
-  resolveParkingSession,
-  validateStatutoryDiscount
+  resolveParkingSession
 } from "./webpay";
 import type {
   ActivePaymentAttemptState,
-  CouponApplyResponse,
   ParkingSessionResolveResponse,
   ParkingSessionSummary,
   PaymentIntentRequest,
   PaymentIntentResponse,
-  PaymentMethod,
-  StatutoryDiscountResponse
+  PaymentMethod
 } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
@@ -54,11 +50,6 @@ type EntryMode = "ticket" | "plate";
 type WebPayStage = "INPUT" | "SESSION_RESOLVED" | "HANDOFF_READY" | "ACTIVE_ATTEMPT" | "ERROR";
 type ReturnPageMode = "success" | "cancelled";
 type PaymentStatusKind = "pending" | "confirmed" | "failed" | "expired" | "cancelled";
-type ModifierState<T> = {
-  status: "idle" | "applying" | "approved" | "pending" | "rejected" | "expired" | "failed";
-  response?: T | null;
-  message?: string;
-};
 
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
@@ -70,11 +61,6 @@ export function App() {
   const [resolvedSession, setResolvedSession] = useState<ParkingSessionResolveResponse | null>(null);
   const [result, setResult] = useState<PaymentIntentResponse | null>(null);
   const [activePaymentAttempt, setActivePaymentAttempt] = useState<ActivePaymentAttemptState | null>(null);
-  const [couponCode, setCouponCode] = useState("");
-  const [couponState, setCouponState] = useState<ModifierState<CouponApplyResponse>>({ status: "idle" });
-  const [statutoryEntitlement, setStatutoryEntitlement] = useState<"SENIOR_CITIZEN" | "PWD">("SENIOR_CITIZEN");
-  const [evidenceReference, setEvidenceReference] = useState("");
-  const [statutoryState, setStatutoryState] = useState<ModifierState<StatutoryDiscountResponse>>({ status: "idle" });
   const [error, setError] = useState("");
   const [resolveError, setResolveError] = useState("");
   const [isResolving, setIsResolving] = useState(false);
@@ -97,7 +83,6 @@ export function App() {
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
-    clearModifierState();
     setStage("INPUT");
   }
 
@@ -107,16 +92,7 @@ export function App() {
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
-    clearModifierState();
     setStage("INPUT");
-  }
-
-  function clearModifierState() {
-    setCouponCode("");
-    setCouponState({ status: "idle" });
-    setStatutoryEntitlement("SENIOR_CITIZEN");
-    setEvidenceReference("");
-    setStatutoryState({ status: "idle" });
   }
 
   function currentLookup() {
@@ -157,7 +133,6 @@ export function App() {
       setError("");
       setResult(null);
       setActivePaymentAttempt(null);
-      clearModifierState();
       setResolvedSession(response);
       setStage("SESSION_RESOLVED");
     } catch (apiError) {
@@ -243,7 +218,7 @@ export function App() {
       return;
     }
 
-    if (isPayableBasisPending(couponState, statutoryState)) {
+    if (isStatutoryValidationPending(resolvedSession)) {
       setError("Statutory discount validation is pending review.");
       return;
     }
@@ -256,87 +231,11 @@ export function App() {
     await handleCreatePaymentIntent();
   }
 
-  async function handleApplyCoupon() {
-    if (!resolvedSession) {
-      setCouponState({ status: "failed", message: "Resolve parking session before applying a coupon." });
-      return;
-    }
-
-    if (isPayableBasisLocked(stage)) {
-      setCouponState({ status: "failed", message: "The payable amount is locked after payment initiation." });
-      return;
-    }
-
-    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$/.test(couponCode.trim())) {
-      setCouponState({ status: "failed", message: "Enter a valid coupon code." });
-      return;
-    }
-
-    setCouponState({ status: "applying" });
-    try {
-      const response = await applyCoupon({
-        parkingSessionId: resolvedSession.parkingSessionId,
-        tariffSnapshotId: resolvedSession.tariffSnapshotId,
-        couponCode,
-        amountMinorUnits: resolvedSession.amountMinorUnits,
-        currency: resolvedSession.currency,
-        correlationId: resolvedSession.correlationId
-      });
-      setResolvedSession(applyCouponToSession(resolvedSession, response));
-      setCouponState({ status: "approved", response, message: "Coupon applied." });
-      setError("");
-    } catch (apiError) {
-      setCouponState({ status: "failed", message: apiError instanceof Error ? apiError.message : "Coupon could not be applied." });
-    }
-  }
-
-  async function handleValidateStatutoryDiscount() {
-    if (!resolvedSession) {
-      setStatutoryState({ status: "failed", message: "Resolve parking session before requesting statutory discount." });
-      return;
-    }
-
-    if (isPayableBasisLocked(stage)) {
-      setStatutoryState({ status: "failed", message: "The payable amount is locked after payment initiation." });
-      return;
-    }
-
-    setStatutoryState({ status: "applying" });
-    try {
-      const response = await validateStatutoryDiscount({
-        parkingSessionId: resolvedSession.parkingSessionId,
-        tariffSnapshotId: resolvedSession.tariffSnapshotId,
-        entitlementType: statutoryEntitlement,
-        evidenceReference,
-        amountMinorUnits: resolvedSession.amountMinorUnits,
-        currency: resolvedSession.currency,
-        correlationId: resolvedSession.correlationId
-      });
-      const normalizedStatus = response.status?.trim().toUpperCase();
-      if (normalizedStatus === "APPROVED") {
-        setResolvedSession(applyStatutoryDiscountToSession(resolvedSession, response));
-        setStatutoryState({ status: "approved", response, message: "Statutory discount approved." });
-      } else if (normalizedStatus === "PENDING_REVIEW" || normalizedStatus === "REQUESTED" || normalizedStatus === "PENDING_OPERATOR_REVIEW") {
-        setStatutoryState({ status: "pending", response, message: "Statutory discount validation is pending review." });
-      } else if (normalizedStatus === "EXPIRED") {
-        setStatutoryState({ status: "expired", response, message: "Statutory discount validation has expired." });
-      } else if (normalizedStatus === "REJECTED") {
-        setStatutoryState({ status: "rejected", response, message: "Statutory discount validation was rejected." });
-      } else {
-        setStatutoryState({ status: "failed", response, message: response.message ?? "Statutory discount validation failed." });
-      }
-      setError("");
-    } catch (apiError) {
-      setStatutoryState({ status: "failed", message: apiError instanceof Error ? apiError.message : "Statutory discount validation failed." });
-    }
-  }
-
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
   const summary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
   const isPaymentComplete = isPaidStatus(summary?.paymentStatus);
-  const isModifierLocked = isPayableBasisLocked(stage);
-  const isPayablePending = isPayableBasisPending(couponState, statutoryState);
+  const isPayablePending = isStatutoryValidationPending(summary);
 
   return (
     <main className="app-shell">
@@ -427,22 +326,6 @@ export function App() {
         {summary && (
           <PayableBasisPanel
             session={summary}
-            couponCode={couponCode}
-            couponState={couponState}
-            statutoryEntitlement={statutoryEntitlement}
-            statutoryState={statutoryState}
-            evidenceReference={evidenceReference}
-            locked={isModifierLocked}
-            onCouponCodeChange={(value) => {
-              setCouponCode(value);
-              if (couponState.status !== "approved") {
-                setCouponState({ status: "idle" });
-              }
-            }}
-            onApplyCoupon={() => void handleApplyCoupon()}
-            onEntitlementChange={setStatutoryEntitlement}
-            onEvidenceReferenceChange={setEvidenceReference}
-            onValidateStatutory={() => void handleValidateStatutoryDiscount()}
           />
         )}
 
@@ -706,44 +589,19 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   );
 }
 
-function PayableBasisPanel({
-  session,
-  couponCode,
-  couponState,
-  statutoryEntitlement,
-  statutoryState,
-  evidenceReference,
-  locked,
-  onCouponCodeChange,
-  onApplyCoupon,
-  onEntitlementChange,
-  onEvidenceReferenceChange,
-  onValidateStatutory
-}: {
-  session: ParkingSessionResolveResponse;
-  couponCode: string;
-  couponState: ModifierState<CouponApplyResponse>;
-  statutoryEntitlement: "SENIOR_CITIZEN" | "PWD";
-  statutoryState: ModifierState<StatutoryDiscountResponse>;
-  evidenceReference: string;
-  locked: boolean;
-  onCouponCodeChange: (value: string) => void;
-  onApplyCoupon: () => void;
-  onEntitlementChange: (value: "SENIOR_CITIZEN" | "PWD") => void;
-  onEvidenceReferenceChange: (value: string) => void;
-  onValidateStatutory: () => void;
-}) {
+function PayableBasisPanel({ session }: { session: ParkingSessionResolveResponse }) {
   const originalAmount = session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
   const couponAdjustment = session.couponAdjustmentMinorUnits ?? 0;
   const statutoryAdjustment = session.statutoryAdjustmentMinorUnits ?? 0;
   const totalAdjustment = session.totalAdjustmentMinorUnits ?? couponAdjustment + statutoryAdjustment;
+  const statutoryStatus = getStatutoryDiscountDisplay(session);
 
   return (
     <section className="payable-basis-panel" aria-labelledby="payable-basis-heading">
       <div className="session-summary-header">
         <div>
           <p className="eyebrow">Payable basis</p>
-          <h2 id="payable-basis-heading">Discounts and coupons</h2>
+          <h2 id="payable-basis-heading">Approved payable basis</h2>
         </div>
         <div className="amount-due">
           <span>Final Amount Due</span>
@@ -776,78 +634,28 @@ function PayableBasisPanel({
       </dl>
 
       <div className="modifier-grid">
-        <div className="modifier-card">
-          <label className="field">
-            <span>Coupon code</span>
-            <input
-              value={couponCode}
-              onChange={(event) => onCouponCodeChange(event.target.value)}
-              placeholder="Merchant coupon code"
-              disabled={locked || couponState.status === "approved"}
-              autoComplete="off"
-            />
-          </label>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={onApplyCoupon}
-            disabled={locked || couponState.status === "applying" || couponState.status === "approved"}
-          >
-            {couponState.status === "applying" ? "Applying..." : couponState.status === "approved" ? "Coupon applied" : "Apply Coupon"}
-          </button>
-          <ModifierMessage state={couponState} />
+        <div className="modifier-card" aria-labelledby="coupon-basis-heading">
+          <h3 id="coupon-basis-heading">Coupon</h3>
+          <p className="modifier-message">
+            {couponAdjustment > 0
+              ? `Applied adjustment: ${formatAdjustment(couponAdjustment, session.currency)}`
+              : "No approved coupon adjustment found."}
+          </p>
         </div>
 
-        <div className="modifier-card">
-          <label className="field">
-            <span>Statutory discount</span>
-            <select
-              value={statutoryEntitlement}
-              onChange={(event) => onEntitlementChange(event.target.value as "SENIOR_CITIZEN" | "PWD")}
-              disabled={locked || statutoryState.status === "approved" || statutoryState.status === "pending"}
-            >
-              <option value="SENIOR_CITIZEN">Senior Citizen</option>
-              <option value="PWD">PWD</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>Evidence reference</span>
-            <input
-              value={evidenceReference}
-              onChange={(event) => onEvidenceReferenceChange(event.target.value)}
-              placeholder="Reference only"
-              disabled={locked || statutoryState.status === "approved" || statutoryState.status === "pending"}
-              autoComplete="off"
-            />
-          </label>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={onValidateStatutory}
-            disabled={locked || statutoryState.status === "applying" || statutoryState.status === "approved" || statutoryState.status === "pending"}
-          >
-            {statutoryState.status === "applying" ? "Requesting..." : "Request Statutory Discount"}
-          </button>
-          <ModifierMessage state={statutoryState} />
+        <div className="modifier-card" aria-labelledby="statutory-basis-heading">
+          <h3 id="statutory-basis-heading">Statutory discount</h3>
+          <p className={statutoryStatus.isBlocking ? "modifier-message is-warning" : "modifier-message"}>
+            {statutoryStatus.label}
+          </p>
+          {statutoryStatus.isBlocking && (
+            <p className="modifier-instruction">
+              Please ask the parking site operator to validate your Senior Citizen or PWD discount before payment.
+            </p>
+          )}
         </div>
       </div>
     </section>
-  );
-}
-
-function ModifierMessage<T>({ state }: { state: ModifierState<T> }) {
-  if (state.status === "idle") {
-    return null;
-  }
-
-  const className = state.status === "approved" || state.status === "pending"
-    ? "modifier-message"
-    : "modifier-message is-error";
-
-  return (
-    <p className={className} role={state.status === "failed" || state.status === "rejected" || state.status === "expired" ? "alert" : "status"}>
-      {state.message ?? "Request submitted."}
-    </p>
   );
 }
 
@@ -950,6 +758,10 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     couponAdjustmentMinorUnits: result.sessionSummary?.couponAdjustmentMinorUnits ?? result.couponAdjustmentMinorUnits,
     statutoryAdjustmentMinorUnits: result.sessionSummary?.statutoryAdjustmentMinorUnits ?? result.statutoryAdjustmentMinorUnits,
     totalAdjustmentMinorUnits: result.sessionSummary?.totalAdjustmentMinorUnits ?? result.totalAdjustmentMinorUnits,
+    couponStatus: result.sessionSummary?.couponStatus ?? result.couponStatus,
+    statutoryStatus: result.sessionSummary?.statutoryStatus ?? result.statutoryStatus,
+    statutoryDiscountStatus: result.sessionSummary?.statutoryDiscountStatus ?? result.statutoryDiscountStatus,
+    statutoryDiscountValidationStatus: result.sessionSummary?.statutoryDiscountValidationStatus ?? result.statutoryDiscountValidationStatus,
     currency: result.sessionSummary?.currency ?? result.currency,
     sessionStatus: result.sessionSummary?.sessionStatus ?? result.parkingStatus,
     parkingStatus: result.sessionSummary?.parkingStatus ?? result.parkingStatus,
@@ -1007,9 +819,13 @@ function toParkingSessionResolveResponse(result: PaymentIntentResponse): Parking
     siteGroupName: result.siteGroupName,
     amountMinorUnits: result.amountMinorUnits,
     originalAmountMinorUnits: result.totalFeeMinorUnits ?? result.amountMinorUnits,
-    couponAdjustmentMinorUnits: 0,
-    statutoryAdjustmentMinorUnits: 0,
-    totalAdjustmentMinorUnits: 0,
+    couponAdjustmentMinorUnits: result.sessionSummary?.couponAdjustmentMinorUnits ?? result.couponAdjustmentMinorUnits ?? 0,
+    statutoryAdjustmentMinorUnits: result.sessionSummary?.statutoryAdjustmentMinorUnits ?? result.statutoryAdjustmentMinorUnits ?? 0,
+    totalAdjustmentMinorUnits: result.sessionSummary?.totalAdjustmentMinorUnits ?? result.totalAdjustmentMinorUnits ?? 0,
+    couponStatus: result.sessionSummary?.couponStatus ?? result.couponStatus,
+    statutoryStatus: result.sessionSummary?.statutoryStatus ?? result.statutoryStatus,
+    statutoryDiscountStatus: result.sessionSummary?.statutoryDiscountStatus ?? result.statutoryDiscountStatus,
+    statutoryDiscountValidationStatus: result.sessionSummary?.statutoryDiscountValidationStatus ?? result.statutoryDiscountValidationStatus,
     currency: result.currency,
     correlationId: result.correlationId,
     siteName: result.siteName,
@@ -1026,44 +842,6 @@ function toParkingSessionResolveResponse(result: PaymentIntentResponse): Parking
     feeValidUntil: result.feeValidUntil,
     tariffExpiresAt: result.tariffExpiresAt,
     sessionSummary: result.sessionSummary
-  };
-}
-
-function applyCouponToSession(
-  session: ParkingSessionResolveResponse,
-  response: CouponApplyResponse
-): ParkingSessionResolveResponse {
-  const originalAmount = response.originalAmountMinorUnits ?? session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
-  const couponAdjustment = response.adjustmentMinorUnits ?? session.couponAdjustmentMinorUnits ?? 0;
-  const statutoryAdjustment = session.statutoryAdjustmentMinorUnits ?? 0;
-  return {
-    ...session,
-    tariffSnapshotId: response.tariffSnapshotId || session.tariffSnapshotId,
-    originalAmountMinorUnits: originalAmount,
-    couponAdjustmentMinorUnits: couponAdjustment,
-    statutoryAdjustmentMinorUnits: statutoryAdjustment,
-    totalAdjustmentMinorUnits: couponAdjustment + statutoryAdjustment,
-    amountMinorUnits: response.finalAmountMinorUnits ?? Math.max(0, originalAmount - couponAdjustment - statutoryAdjustment),
-    currency: response.currency || session.currency
-  };
-}
-
-function applyStatutoryDiscountToSession(
-  session: ParkingSessionResolveResponse,
-  response: StatutoryDiscountResponse
-): ParkingSessionResolveResponse {
-  const originalAmount = response.originalAmountMinorUnits ?? session.originalAmountMinorUnits ?? session.totalFeeMinorUnits ?? session.amountMinorUnits;
-  const statutoryAdjustment = response.adjustmentMinorUnits ?? session.statutoryAdjustmentMinorUnits ?? 0;
-  const couponAdjustment = session.couponAdjustmentMinorUnits ?? 0;
-  return {
-    ...session,
-    tariffSnapshotId: response.tariffSnapshotId || session.tariffSnapshotId,
-    originalAmountMinorUnits: originalAmount,
-    couponAdjustmentMinorUnits: couponAdjustment,
-    statutoryAdjustmentMinorUnits: statutoryAdjustment,
-    totalAdjustmentMinorUnits: couponAdjustment + statutoryAdjustment,
-    amountMinorUnits: response.finalAmountMinorUnits ?? Math.max(0, originalAmount - couponAdjustment - statutoryAdjustment),
-    currency: response.currency || session.currency
   };
 }
 
@@ -1087,17 +865,54 @@ function checkActivePaymentStatus(activePaymentAttempt: ActivePaymentAttemptStat
   return false;
 }
 
-function isPayableBasisLocked(stage: WebPayStage): boolean {
-  return stage === "HANDOFF_READY" || stage === "ACTIVE_ATTEMPT";
+function isStatutoryValidationPending(session?: ParkingSessionResolveResponse | null): boolean {
+  return getNormalizedStatutoryStatus(session) === "PENDING";
 }
 
-function isPayableBasisPending(
-  couponState: ModifierState<CouponApplyResponse>,
-  statutoryState: ModifierState<StatutoryDiscountResponse>
-): boolean {
-  return couponState.status === "applying" ||
-    statutoryState.status === "applying" ||
-    statutoryState.status === "pending";
+function getStatutoryDiscountDisplay(session: ParkingSessionResolveResponse): { label: string; isBlocking: boolean } {
+  switch (getNormalizedStatutoryStatus(session)) {
+    case "PENDING":
+      return { label: "Pending operator validation.", isBlocking: true };
+    case "APPROVED":
+      return { label: "Approved.", isBlocking: false };
+    case "REJECTED":
+      return { label: "Rejected.", isBlocking: false };
+    case "EXPIRED":
+      return { label: "Expired.", isBlocking: false };
+    default:
+      return { label: "No approved statutory discount found.", isBlocking: false };
+  }
+}
+
+function firstNonBlank(...values: Array<string | null | undefined>): string | undefined {
+  return values.find((value) => typeof value === "string" && value.trim().length > 0)?.trim();
+}
+
+function getNormalizedStatutoryStatus(session?: ParkingSessionResolveResponse | null): "NONE" | "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED" {
+  const status = firstNonBlank(
+    session?.statutoryDiscountStatus,
+    session?.statutoryDiscountValidationStatus,
+    session?.statutoryStatus
+  )?.toUpperCase();
+
+  switch (status) {
+    case "APPROVED":
+    case "APPROVED_OPERATOR_VALIDATION":
+      return "APPROVED";
+    case "PENDING":
+    case "PENDING_REVIEW":
+    case "PENDING_OPERATOR_REVIEW":
+    case "PENDING_OPERATOR_VALIDATION":
+    case "REQUESTED":
+      return "PENDING";
+    case "REJECTED":
+    case "DECLINED":
+      return "REJECTED";
+    case "EXPIRED":
+      return "EXPIRED";
+    default:
+      return "NONE";
+  }
 }
 
 function isPaidStatus(status?: string | null): boolean {
