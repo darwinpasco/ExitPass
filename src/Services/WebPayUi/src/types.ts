@@ -1,4 +1,4 @@
-export type PaymentMethod = "QRPH";
+export type PaymentMethod = "QRPH" | "GCASH" | "MAYA" | "CARD";
 
 export type PaymentIntentRequest = {
   ticketReference?: string;

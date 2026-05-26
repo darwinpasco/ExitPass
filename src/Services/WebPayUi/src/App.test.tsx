@@ -766,13 +766,37 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByAltText("ExitPass")).toHaveAttribute("src", "/assets/logo/exitpass-logo.svg");
     expect(screen.getByAltText("Pro Parking")).toHaveAttribute("src", "/assets/logo/proparking-logo.png");
     expect(document.body.innerHTML).toContain("/assets/payment-methods/qrph.png");
-    expect(document.body.innerHTML).not.toContain("/assets/payment-methods/cards-visa-mastercard.png");
-    expect(document.body.innerHTML).not.toContain("/assets/payment-methods/gcash.png");
-    expect(document.body.innerHTML).not.toContain("/assets/payment-methods/maya.png");
-    expect(screen.queryByLabelText(/card/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/gcash/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/maya/i)).not.toBeInTheDocument();
+    expect(document.body.innerHTML).toContain("/assets/payment-methods/cards-visa-mastercard.png");
+    expect(document.body.innerHTML).toContain("/assets/payment-methods/gcash.png");
+    expect(document.body.innerHTML).toContain("/assets/payment-methods/maya.png");
+    expect(screen.getByLabelText(/qrph/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/gcash/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/maya/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/card/i)).toBeInTheDocument();
+    expect(screen.getByText("Pay using any QRPh-supported bank or e-wallet")).toBeInTheDocument();
+    expect(screen.getByText("Pay with GCash through PayMongo Checkout")).toBeInTheDocument();
+    expect(screen.getByText("Pay with Maya through PayMongo Checkout")).toBeInTheDocument();
+    expect(screen.getByText("Visa or Mastercard through PayMongo Checkout")).toBeInTheDocument();
     expect(screen.queryByText("AUB")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["QRPh", "QRPH"],
+    ["GCash", "GCASH"],
+    ["Maya", "MAYA"],
+    ["Card", "CARD"]
+  ])("WebPay_When%sSelected_InitiatesPaymentWithSelectedMethod", async (label, expectedMethod) => {
+    const fetchMock = stubWebPayFetch({ intentPayload: { ...successResponse, paymentMethod: expectedMethod } });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-001");
+    await userEvent.click(screen.getByLabelText(new RegExp(label, "i")));
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(body.paymentMethod).toBe(expectedMethod);
   });
 
   it("WebPay_WhenPlateEntered_SubmitsPlateNumber", async () => {

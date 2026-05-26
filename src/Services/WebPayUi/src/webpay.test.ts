@@ -48,19 +48,21 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(body).not.toHaveProperty("paymentMethod");
   });
 
-  it("WebPay_WhenQrphPaymentMethodSelected_SubmitsPaymentMethodOnly", async () => {
+  it.each(["QRPH", "GCASH", "MAYA", "CARD"] as const)(
+    "WebPay_WhenAllowedPaymentMethodSelected_Submits%s",
+    async (paymentMethod) => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ status: "PENDING_PROVIDER" })
     });
 
     await createPaymentIntent(
-      { ticketReference: "TICKET-001", paymentMethod: "QRPH", vendorSystemId: "HIKCENTRAL" },
+      { ticketReference: "TICKET-001", paymentMethod, vendorSystemId: "HIKCENTRAL" },
       fetchMock as never
     );
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.paymentMethod).toBe("QRPH");
+    expect(body.paymentMethod).toBe(paymentMethod);
     expect(body.ticketReference).toBe("TICKET-001");
   });
 
@@ -126,10 +128,10 @@ describe("WebPay QR and payment intent helpers", () => {
 
     await expect(
       createPaymentIntent(
-        { ticketReference: "TICKET-001", paymentMethod: "GCASH" as never, vendorSystemId: "HIKCENTRAL" },
+        { ticketReference: "TICKET-001", paymentMethod: "BANK_TRANSFER" as never, vendorSystemId: "HIKCENTRAL" },
         fetchMock as never
       )
-    ).rejects.toThrow("Only QRPh / PHP payment through PayMongo is available right now.");
+    ).rejects.toThrow("Only QRPh, GCash, Maya, and Card payment through PayMongo Checkout are available right now.");
 
     expect(fetchMock).not.toHaveBeenCalled();
   });

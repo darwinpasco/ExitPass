@@ -111,10 +111,10 @@ export function buildPaymentIntentBody(
   /*
    * ExitPass v1.2 BRD 18.3 Payment Initiation.
    * ExitPass v1.2 SDD 10.2.4 Initiate Payment Attempt.
-   * Invariant: WebPay MVP may initiate only QRPH/PHP through the PayMongo-backed server route.
+   * Invariant: WebPay customer-facing methods may initiate only through the PayMongo-backed server route.
    */
-  if (request.paymentMethod !== "QRPH") {
-    throw new Error("Only QRPh / PHP payment through PayMongo is available right now.");
+  if (!["QRPH", "GCASH", "MAYA", "CARD"].includes(request.paymentMethod)) {
+    throw new Error("Only QRPh, GCash, Maya, and Card payment through PayMongo Checkout are available right now.");
   }
 
   const body: PaymentIntentRequest = {
