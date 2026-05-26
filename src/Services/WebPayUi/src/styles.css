@@ -673,10 +673,6 @@ input {
     grid-template-columns: repeat(4, 1fr);
   }
 
-  .method-grid-single {
-    grid-template-columns: 1fr;
-  }
-
   .method-card {
     grid-template-rows: 38px auto auto;
   }

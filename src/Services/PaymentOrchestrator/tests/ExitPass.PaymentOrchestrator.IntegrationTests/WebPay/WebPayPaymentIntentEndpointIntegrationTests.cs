@@ -97,25 +97,30 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Null(state.CapturedInitiateRequest);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = body.RootElement;
-        Assert.Equal("WEBPAY_QRPH_PROVIDER_ROUTE_REGRESSION", root.GetProperty("errorCode").GetString());
+        Assert.Equal("WEBPAY_PAYMONGO_PROVIDER_ROUTE_REGRESSION", root.GetProperty("errorCode").GetString());
         Assert.Equal("AUB", root.GetProperty("selectedProviderCode").GetString());
         Assert.Equal("PAYMONGO", root.GetProperty("fallbackProviderCode").GetString());
     }
 
     /// <summary>
-    /// Verifies QRPH routed to PayMongo sends PayMongo's Central PMS provider rail while preserving QRPH as method.
+    /// Verifies WebPay methods routed to PayMongo send PayMongo's Central PMS provider rail while preserving the selected method.
     /// </summary>
-    [Fact]
-    public async Task WebPayPaymentIntent_WhenQrphRoutesToPayMongo_SendsCheckoutSessionProviderAndQrphMethod()
+    [Theory]
+    [InlineData("QRPH")]
+    [InlineData("GCASH")]
+    [InlineData("MAYA")]
+    [InlineData("CARD")]
+    public async Task WebPayPaymentIntent_WhenAllowedMethodRoutesToPayMongo_SendsCheckoutSessionProviderAndSelectedMethod(
+        string paymentMethod)
     {
-        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        var state = new WebPayEndpointState(paymentMethod, "PAYMONGO", "AUB");
         using var client = CreateClient(state);
 
-        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest(paymentMethod));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedPaymentProvider);
-        Assert.Equal("QRPH", state.CapturedPaymentMethod);
+        Assert.Equal(paymentMethod, state.CapturedPaymentMethod);
         Assert.NotEqual(state.CapturedPaymentMethod, state.CapturedPaymentProvider);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", state.CapturedInitiateRequest!.ProviderProduct);
     }
@@ -126,10 +131,10 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenUnsupportedMethodRequested_ReturnsUnsupportedPaymentMethod()
     {
-        var state = new WebPayEndpointState("CARD", "AUB", "PAYMONGO");
+        var state = new WebPayEndpointState("BANK_TRANSFER", "PAYMONGO", null);
         using var client = CreateClient(state);
 
-        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("CARD"));
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("BANK_TRANSFER"));
 
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         Assert.False(state.ResolveVendorParkingWasCalled);

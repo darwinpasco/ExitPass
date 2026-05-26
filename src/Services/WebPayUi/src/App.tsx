@@ -26,9 +26,27 @@ import type {
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
   {
     code: "QRPH",
-    label: "QRPh / PHP",
+    label: "QRPh",
     image: "/assets/payment-methods/qrph.png",
-    helper: "PayMongo checkout"
+    helper: "Pay using any QRPh-supported bank or e-wallet"
+  },
+  {
+    code: "GCASH",
+    label: "GCash",
+    image: "/assets/payment-methods/gcash.png",
+    helper: "Pay with GCash through PayMongo Checkout"
+  },
+  {
+    code: "MAYA",
+    label: "Maya",
+    image: "/assets/payment-methods/maya.png",
+    helper: "Pay with Maya through PayMongo Checkout"
+  },
+  {
+    code: "CARD",
+    label: "Card",
+    image: "/assets/payment-methods/cards-visa-mastercard.png",
+    helper: "Visa or Mastercard through PayMongo Checkout"
   }
 ];
 
@@ -430,7 +448,8 @@ export function App() {
 
         <section className="method-section" aria-labelledby="payment-method-heading">
           <h2 id="payment-method-heading">Payment method</h2>
-          <div className="method-grid method-grid-single">
+          <div className="method-grid">
+            {/* ExitPass v1.2 BRD 18.3 / SDD 10.2.4: customer-facing choices remain PayMongo-only provider routes. */}
             {paymentMethods.map((method) => (
               <label className={paymentMethod === method.code ? "method-card is-selected" : "method-card"} key={method.code}>
                 <input
@@ -555,7 +574,7 @@ export function App() {
             <dl>
               <div>
                 <dt>Payment Method</dt>
-                <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? "QRPh / PHP"}</dd>
+                <dd>{paymentMethods.find((method) => method.code === result.paymentMethod)?.label ?? "PayMongo Checkout"}</dd>
               </div>
               <div>
                 <dt>Payment Status</dt>

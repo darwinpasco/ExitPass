@@ -34,6 +34,9 @@ public sealed class WebPayPaymentIntentHandlerTests
     /// <param name="expectedCentralPmsProvider">The Central PMS provider rail code.</param>
     [Theory]
     [InlineData("PAYMONGO", "QRPH", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("PAYMONGO", "GCASH", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("PAYMONGO", "MAYA", "PAYMONGO_CHECKOUT_SESSION")]
+    [InlineData("PAYMONGO", "CARD", "PAYMONGO_CHECKOUT_SESSION")]
     public async Task WebPayPaymentIntent_WhenRouteIsSupported_SendsCentralPmsProviderRailAndPaymentMethod(
         string selectedProvider,
         string paymentMethod,
@@ -50,21 +53,25 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
-    /// Verifies QRPH routes through PayMongo from the DB-backed policy result.
+    /// Verifies WebPay customer-facing methods route through PayMongo from the DB-backed policy result.
     /// </summary>
-    [Fact]
-    public async Task WebPayPaymentIntent_WhenQrphRequested_SelectsPayMongoFromRoutingPolicy()
+    [Theory]
+    [InlineData("QRPH")]
+    [InlineData("GCASH")]
+    [InlineData("MAYA")]
+    [InlineData("CARD")]
+    public async Task WebPayPaymentIntent_WhenAllowedMethodRequested_SelectsPayMongoFromRoutingPolicy(string paymentMethod)
     {
-        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var fixture = CreateFixture(paymentMethod, "PAYMONGO", null);
 
-        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+        var result = await fixture.Sut.HandleAsync(DefaultRequest(paymentMethod), CancellationToken.None);
 
         Assert.True(result.Succeeded);
         Assert.Equal("PAYMONGO", result.Response!.SelectedProviderCode);
         Assert.Null(result.Response.FallbackProviderCode);
-        Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
+        Assert.Equal(paymentMethod, fixture.CapturedRouteRequest!.PaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
-        Assert.Equal("QRPH", fixture.CapturedPaymentMethod);
+        Assert.Equal(paymentMethod, fixture.CapturedPaymentMethod);
         Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedInitiateRequest!.ProviderProduct);
     }
 
@@ -80,7 +87,7 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         Assert.False(result.Succeeded);
         Assert.Equal(422, result.Error!.StatusCode);
-        Assert.Equal("WEBPAY_QRPH_PROVIDER_ROUTE_REGRESSION", result.Error.ErrorCode);
+        Assert.Equal("WEBPAY_PAYMONGO_PROVIDER_ROUTE_REGRESSION", result.Error.ErrorCode);
         Assert.Equal("AUB", result.Error.SelectedProviderCode);
         Assert.Equal("PAYMONGO", result.Error.FallbackProviderCode);
         Assert.Equal("QRPH", fixture.CapturedRouteRequest!.PaymentMethod);
@@ -199,12 +206,11 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
-    /// Verifies non-QRPH methods are rejected before vendor resolution, routing, attempt creation, or handoff.
+    /// Verifies unsupported methods are rejected before vendor resolution, routing, attempt creation, or handoff.
     /// </summary>
     [Theory]
-    [InlineData("GCASH")]
-    [InlineData("MAYA")]
-    [InlineData("CARD")]
+    [InlineData("BANK_TRANSFER")]
+    [InlineData("PAYPAL")]
     public async Task WebPayPaymentIntent_WhenUnsupportedMethodRequested_ReturnsUnsupportedPaymentMethod(string paymentMethod)
     {
         var fixture = CreateFixture(paymentMethod, "PAYMONGO", null);

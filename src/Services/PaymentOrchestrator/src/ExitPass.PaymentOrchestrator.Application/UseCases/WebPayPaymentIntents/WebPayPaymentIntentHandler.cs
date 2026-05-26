@@ -135,12 +135,12 @@ public sealed class WebPayPaymentIntentHandler
                 FallbackProviderCode: route.FallbackProviderCode));
         }
 
-        if (IsUnsupportedWebPayQrphRoute(route.SelectedProviderCode, paymentMethod))
+        if (IsUnsupportedWebPayPayMongoRoute(route.SelectedProviderCode, paymentMethod))
         {
             return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
                 422,
-                "WEBPAY_QRPH_PROVIDER_ROUTE_REGRESSION",
-                $"WebPay QRPH/PHP must route to PAYMONGO, but routing selected '{route.SelectedProviderCode}'.",
+                "WEBPAY_PAYMONGO_PROVIDER_ROUTE_REGRESSION",
+                $"WebPay QRPH, GCASH, MAYA, and CARD must route to PAYMONGO, but routing selected '{route.SelectedProviderCode}'.",
                 false,
                 correlationId,
                 parking.Value.ParkingSessionId,
@@ -408,17 +408,17 @@ public sealed class WebPayPaymentIntentHandler
                 false);
         }
 
-        if (!string.Equals(Normalize(request.PaymentMethod!), PaymentMethodCode.QrPh, StringComparison.Ordinal))
+        if (!IsSupportedWebPayPaymentMethod(request.PaymentMethod!))
         {
             /*
              * ExitPass v1.2 BRD 18.3 Payment Initiation.
              * ExitPass v1.2 SDD 10.2.4 Initiate Payment Attempt.
-             * Invariant: WebPay MVP exposes QRPH/PHP only, and QRPH/PHP must remain PAYMONGO-only.
+             * Invariant: WebPay exposes customer-facing methods only when they remain PAYMONGO-only.
              */
             return new WebPayPaymentIntentError(
                 422,
                 "UNSUPPORTED_PAYMENT_METHOD",
-                "WebPay MVP supports only QRPH/PHP payment initiation through PayMongo.",
+                "WebPay supports only QRPH, GCASH, MAYA, and CARD payment initiation through PayMongo.",
                 false,
                 correlationId,
                 PaymentMethod: Normalize(request.PaymentMethod!));
@@ -730,10 +730,18 @@ public sealed class WebPayPaymentIntentHandler
             ProviderProduct: providerProduct);
     }
 
-    private static bool IsUnsupportedWebPayQrphRoute(string selectedProviderCode, string paymentMethod)
+    private static bool IsUnsupportedWebPayPayMongoRoute(string selectedProviderCode, string paymentMethod)
     {
-        return string.Equals(Normalize(paymentMethod), PaymentMethodCode.QrPh, StringComparison.Ordinal) &&
+        return IsSupportedWebPayPaymentMethod(paymentMethod) &&
             !string.Equals(Normalize(selectedProviderCode), ProviderCode.PayMongo, StringComparison.Ordinal);
+    }
+
+    private static bool IsSupportedWebPayPaymentMethod(string paymentMethod)
+    {
+        return Normalize(paymentMethod) is PaymentMethodCode.QrPh
+            or PaymentMethodCode.GCash
+            or PaymentMethodCode.Maya
+            or PaymentMethodCode.Card;
     }
 
     private static bool IsActivePaymentAttemptConflict(CentralPmsWebPayError? error)
@@ -911,6 +919,9 @@ public sealed class WebPayPaymentIntentHandler
         return (provider, method) switch
         {
             (ProviderCode.PayMongo, PaymentMethodCode.QrPh) => "PAYMONGO_CHECKOUT_SESSION",
+            (ProviderCode.PayMongo, PaymentMethodCode.GCash) => "PAYMONGO_CHECKOUT_SESSION",
+            (ProviderCode.PayMongo, PaymentMethodCode.Maya) => "PAYMONGO_CHECKOUT_SESSION",
+            (ProviderCode.PayMongo, PaymentMethodCode.Card) => "PAYMONGO_CHECKOUT_SESSION",
             _ => null
         };
     }
