@@ -520,15 +520,15 @@ CREATE TABLE IF NOT EXISTS operator_console.operator_device_assignment_history (
         REFERENCES sites.sites(site_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_operator_device_assignment_history__assigned_by_user_id FOREIGN KEY (assigned_by_user_id)
         REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_operator_device_assignment_history__assigned_by_service_identity_id FOREIGN KEY (assigned_by_service_identity_id)
+    CONSTRAINT fk_op_dev_assign_hist__assigned_svc_identity FOREIGN KEY (assigned_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_operator_device_assignment_history__ended_by_user_id FOREIGN KEY (ended_by_user_id)
         REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_operator_device_assignment_history__ended_by_service_identity_id FOREIGN KEY (ended_by_service_identity_id)
+    CONSTRAINT fk_op_dev_assign_hist__ended_svc_identity FOREIGN KEY (ended_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_operator_device_assignment_history__created_by_user_id FOREIGN KEY (created_by_user_id)
         REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_operator_device_assignment_history__created_by_service_identity_id FOREIGN KEY (created_by_service_identity_id)
+    CONSTRAINT fk_op_dev_assign_hist__created_svc_identity FOREIGN KEY (created_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT ck_operator_device_assignment_history__effective_window CHECK (effective_to IS NULL OR effective_to > effective_from)
 );
@@ -641,9 +641,9 @@ CREATE TABLE IF NOT EXISTS operator_console.operator_access_evaluation_reasons (
         REFERENCES operator_console.operator_access_evaluations(operator_access_evaluation_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_operator_access_evaluation_reasons__created_by_user_id FOREIGN KEY (created_by_user_id)
         REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_operator_access_evaluation_reasons__created_by_service_identity_id FOREIGN KEY (created_by_service_identity_id)
+    CONSTRAINT fk_op_access_eval_reasons__created_svc_identity FOREIGN KEY (created_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT ck_operator_access_evaluation_reasons__display_order_nonnegative CHECK (display_order >= 0)
+    CONSTRAINT ck_op_access_eval_reasons__display_order_nonneg CHECK (display_order >= 0)
 );
 
 COMMENT ON TABLE operator_console.operator_access_evaluation_reasons IS
@@ -688,15 +688,15 @@ CREATE TABLE IF NOT EXISTS discounts.statutory_entitlement_fingerprints (
         REFERENCES discounts.statutory_discount_validations(statutory_discount_validation_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_statutory_entitlement_fingerprints__matched_existing_id FOREIGN KEY (matched_existing_fingerprint_id)
         REFERENCES discounts.statutory_entitlement_fingerprints(statutory_entitlement_fingerprint_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_statutory_entitlement_fingerprints__generated_by_service_identity_id FOREIGN KEY (generated_by_service_identity_id)
+    CONSTRAINT fk_stat_ent_fps__generated_svc_identity FOREIGN KEY (generated_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_statutory_entitlement_fingerprints__created_by_user_id FOREIGN KEY (created_by_user_id)
         REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_statutory_entitlement_fingerprints__created_by_service_identity_id FOREIGN KEY (created_by_service_identity_id)
+    CONSTRAINT fk_stat_ent_fps__created_svc_identity FOREIGN KEY (created_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT fk_statutory_entitlement_fingerprints__updated_by_user_id FOREIGN KEY (updated_by_user_id)
         REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
-    CONSTRAINT fk_statutory_entitlement_fingerprints__updated_by_service_identity_id FOREIGN KEY (updated_by_service_identity_id)
+    CONSTRAINT fk_stat_ent_fps__updated_svc_identity FOREIGN KEY (updated_by_service_identity_id)
         REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
     CONSTRAINT ck_statutory_entitlement_fingerprints__row_version_positive CHECK (row_version > 0)
 );
