@@ -34,10 +34,14 @@ It also proposes `discounts.statutory_entitlement_fingerprints` for backend-gene
 - `operator_console.operator_access_evaluation_reasons` normalizes access evaluation reason rows with controlled reason codes, message/source context, and indexes for audit/reporting.
 - `discounts.statutory_entitlement_fingerprints` stores fingerprint hashes and salt/key references only, not raw statutory ID data or secret material.
 - `duplicate_detection_scope` remains a controlled-code/reference-data value, not a hard PostgreSQL enum. The initial recommended code family is `OPERATOR_CONSOLE_DUPLICATE_DETECTION_SCOPE`, with initial values `SAME_SESSION_ONLY`, `SAME_SITE_ACTIVE_DAY`, `SAME_SITE_GROUP_ACTIVE_DAY`, `GLOBAL_ACTIVE_DAY`, and `CONFIGURED_POLICY_WINDOW`.
+- Evidence ownership is split by responsibility: Audit/Event Service owns evidence metadata governance, evidence retrieval authorization, evidence access audit, and evidence lifecycle audit; encrypted evidence objects live in an external evidence vault or object store.
+- Central PMS and Operator Console write or consume evidence references and validation results only. Neither owns raw evidence storage, and neither stores raw image bytes or raw sensitive evidence payloads in PostgreSQL.
+- Evidence references must carry storage URI/reference, object hash, hash algorithm, retention expiry, access classification, and lifecycle metadata. Deletion or purge must leave audit-safe traces where legally allowed, with retention configurable by evidence type and site policy.
+- Operators may view structured evidence only during the active validation workflow and cannot retrieve stored ID images after submission. Supervisors and compliance users may access stored evidence only through controlled, audited flows.
 
 ## Unresolved Review Questions
 
-- Evidence storage ownership remains open: Audit/Event, Central PMS, a dedicated Evidence service, or another controlled service boundary.
+None currently identified for this proposal slice.
 
 ## Non-Payment Boundary
 

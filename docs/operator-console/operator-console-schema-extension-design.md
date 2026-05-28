@@ -466,20 +466,39 @@ Initial duplicate detection scope values may include:
 
 Use existing `discounts.discount_evidence_references` for statutory evidence references.
 
+Evidence ownership is locked as a split-responsibility model:
+
+- Audit/Event Service owns evidence metadata governance, evidence access audit, evidence retrieval authorization, and evidence lifecycle audit.
+- Actual encrypted images and documents live in an external evidence vault or object store.
+- Central PMS and Operator Console write or consume evidence references and validation results only. They do not own raw evidence storage.
+- Discount validation tables and evidence reference tables store references, hashes, classifications, and retention metadata, not raw images, raw document bytes, or raw sensitive payloads.
+
 Evidence paths:
 
 - Structured metadata default path: store structured ID metadata in controlled validation request fields or a future structured metadata table, with fingerprint stored in `discounts.statutory_entitlement_fingerprints`.
 - Cropped image path: when site policy requires image capture, create `discounts.discount_evidence_references` with `evidence_type = SENIOR_CITIZEN_ID` or `PWD_ID`.
 - Hash-only path: use `evidence_type = HASH_ONLY_REFERENCE`, `evidence_storage_type = HASH_ONLY`, and `evidence_capture_status = HASH_ONLY` when only a hash/fingerprint reference is retained.
+- Image capture remains configurable by site. The default evidence path remains structured ID metadata plus entitlement fingerprint. Cropped image evidence is required only when site policy or regulation enables it.
+
+Object storage requirements:
+
+- Store only storage URI/reference, object hash, hash algorithm, retention expiry, access classification, capture metadata, and lifecycle metadata in ExitPass tables.
+- Do not store raw sensitive image bytes, raw document bytes, or raw statutory ID payloads in PostgreSQL.
+- Evidence retrieval must go through the Audit/Event-owned authorization and audit flow, not direct Operator Console or Central PMS storage access.
+
+Access control:
+
+- Operators may view structured evidence only during the active validation workflow.
+- Operators must not retrieve stored ID images after submission.
+- Supervisors and compliance users may access stored evidence only through controlled, audited flows.
 
 Retention hooks:
 
 - Use `discounts.discount_evidence_references.retention_policy_code`.
 - Use `retention_expires_at`, `redaction_status`, `purged_at`, and purge actor fields for lifecycle enforcement.
 - Use `discounts.discount_policy_references.requires_evidence_capture` for site-configurable image capture behavior.
-
-Open ownership decision:
-- The evidence storage owner is still unresolved. A later design must decide whether this lives in Audit/Event, Central PMS, a dedicated Evidence service, or another controlled service boundary.
+- Retention should be configurable by evidence type and site policy.
+- Evidence deletion or purge must leave audit-safe traces where legally allowed.
 
 ## Payable-Basis Update Storage
 

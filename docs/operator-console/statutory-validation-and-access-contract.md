@@ -21,6 +21,7 @@ This document freezes the proposed backend-facing contract before implementation
 - Statutory Discount Validation MVP uses one-step operator approval.
 - Supervisor review and override are later scope and should be added by policy.
 - Image capture is site-configurable. Structured ID metadata plus backend-generated entitlement fingerprinting is the default minimum evidence path. Cropped ID image evidence is required only when enabled by site policy or regulation.
+- Evidence ownership is split: Audit/Event Service owns evidence metadata governance, retrieval authorization, access audit, and lifecycle audit; encrypted evidence objects live in an external evidence vault or object store.
 - The non-payment boundary remains unchanged.
 
 ## Scope
@@ -390,7 +391,9 @@ The applicable value must be selected by backend policy resolution, not invented
 
 ### Evidence Reference Behavior
 
-Evidence storage is backend-owned and must not be invented by the frontend. The validation decision accepts evidence references only after an evidence service or storage contract exists.
+Evidence storage ownership is locked as a split-responsibility model. Audit/Event Service owns evidence metadata governance, evidence retrieval authorization, evidence access audit, and evidence lifecycle audit. Actual encrypted images and documents are stored in an external evidence vault or object store.
+
+Central PMS receives evidence references and validation results. Operator Console captures and submits evidence only through controlled flows allowed by site configuration and policy. Neither Central PMS nor Operator Console owns raw evidence storage.
 
 Image capture is configurable by site. The default minimum evidence path is structured ID metadata plus a backend-generated entitlement fingerprint. Cropped ID image evidence is required only when enabled by site policy or regulation.
 
@@ -439,11 +442,26 @@ Evidence references should include:
 - evidence type
 - capture level
 - storage classification
-- hash or integrity token if available
+- storage URI/reference
+- object hash
+- hash algorithm
+- retention expiry
 - capture timestamp
 - site policy requirement indicator
 
-No raw image bytes should be included in the decision endpoint.
+No raw image bytes, raw document bytes, or raw sensitive evidence payloads should be included in the decision endpoint or stored in PostgreSQL.
+
+Access rules:
+
+- Operators may view structured evidence only during the active validation workflow.
+- Operators must not retrieve stored ID images after submission.
+- Supervisors and compliance users may access stored evidence only through controlled, audited flows.
+
+Retention and lifecycle rules:
+
+- Evidence references must include retention metadata.
+- Retention should be configurable by evidence type and site policy.
+- Evidence deletion or purge must leave audit-safe traces where legally allowed.
 
 ### Entitlement Fingerprint Behavior
 
@@ -559,6 +577,8 @@ Required audit fields:
 - access evaluation ID
 - evidence level
 - evidence reference IDs
+- evidence access attempts and outcomes
+- evidence lifecycle actions, including purge or redaction where legally allowed
 - entitlement fingerprint
 - decision
 - reason code
@@ -608,7 +628,6 @@ Recommended status mappings:
 
 ## Open Questions
 
-- Which service owns evidence storage and retention policy?
 - Should access evaluation be called once per workflow start or before every controlled action?
 - What controlled schema shape should be introduced for HR/Timekeeping identity mapping, imported shifts, shift revocation, and shift takeover?
 - What controlled schema shape should be introduced for Operator Console browser key binding and access evaluation persistence?
