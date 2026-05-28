@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 
 const defaultApiProxyTarget = "http://localhost:8082";
 
-export function createStatutoryDiscountOperatorViteConfig(
+export function createOperatorConsoleViteConfig(
   apiProxyTarget = defaultApiProxyTarget
 ): UserConfig {
   const trimmedApiProxyTarget = apiProxyTarget.trim() || defaultApiProxyTarget;
@@ -31,7 +31,7 @@ export function createStatutoryDiscountOperatorViteConfig(
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "VITE_");
-  return createStatutoryDiscountOperatorViteConfig(
-    env.VITE_STATUTORY_DISCOUNT_OPERATOR_API_PROXY_TARGET
+  return createOperatorConsoleViteConfig(
+    env.VITE_OPERATOR_CONSOLE_API_PROXY_TARGET
   );
 });

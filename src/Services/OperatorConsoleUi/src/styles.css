@@ -46,6 +46,12 @@ input {
   line-height: 1;
 }
 
+.headerCopy {
+  color: #394957;
+  margin: 12px 0 0;
+  max-width: 680px;
+}
+
 .eyebrow {
   color: #5f6f7c;
   font-size: 0.78rem;
