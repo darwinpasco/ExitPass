@@ -24,6 +24,7 @@ export interface OperatorSessionSummary {
   vehiclePlate: string;
   entryTime: string;
   currentFee: string;
+  paymentStatus: string;
   payableBasisStatus: string;
   siteDisplayName: string;
 }

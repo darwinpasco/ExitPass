@@ -1,6 +1,6 @@
 import type { OperatorSessionSummary, SessionLookupResult, SessionSearchCriteria } from "./types";
 
-export interface StatutoryDiscountOperatorApiClient {
+export interface OperatorConsoleApiClient {
   findSession(criteria: SessionSearchCriteria): Promise<SessionLookupResult>;
 }
 
@@ -9,11 +9,12 @@ const placeholderSession: OperatorSessionSummary = {
   vehiclePlate: "ABC 1234",
   entryTime: "May 26, 2026 09:15 AM",
   currentFee: "PHP 120.00",
+  paymentStatus: "Payment status read-only placeholder",
   payableBasisStatus: "Backend-approved payable basis pending lookup wiring",
   siteDisplayName: "Demo Site Group / Demo Parking Site"
 };
 
-export function createStatutoryDiscountOperatorApiClient(): StatutoryDiscountOperatorApiClient {
+export function createOperatorConsoleApiClient(): OperatorConsoleApiClient {
   return {
     async findSession(criteria) {
       const ticketNumber = criteria.ticketNumber.trim().toUpperCase();

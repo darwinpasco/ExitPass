@@ -1,4 +1,4 @@
-import { createStatutoryDiscountOperatorApiClient, type StatutoryDiscountOperatorApiClient } from "./apiClient";
+import { createOperatorConsoleApiClient, type OperatorConsoleApiClient } from "./apiClient";
 import { FormEvent, useMemo, useState } from "react";
 import type {
   OperatorSessionSummary,
@@ -11,6 +11,7 @@ const placeholderSession: OperatorSessionSummary = {
   vehiclePlate: "Plate will appear here",
   entryTime: "Entry time will appear here",
   currentFee: "Current fee will appear here",
+  paymentStatus: "Payment status will appear here as read-only context",
   payableBasisStatus: "Backend-approved payable basis will appear here",
   siteDisplayName: "Site / site group will appear here"
 };
@@ -31,11 +32,11 @@ const validationStatuses = [
 ];
 
 interface AppProps {
-  apiClient?: StatutoryDiscountOperatorApiClient;
+  apiClient?: OperatorConsoleApiClient;
 }
 
 export function App({ apiClient }: AppProps) {
-  const client = useMemo(() => apiClient ?? createStatutoryDiscountOperatorApiClient(), [apiClient]);
+  const client = useMemo(() => apiClient ?? createOperatorConsoleApiClient(), [apiClient]);
   const [ticketNumber, setTicketNumber] = useState("");
   const [plateNumber, setPlateNumber] = useState("");
   const [lookupStatus, setLookupStatus] = useState<SessionLookupStatus>("not searched");
@@ -74,7 +75,7 @@ export function App({ apiClient }: AppProps) {
   const statusCopy = {
     "not searched": "Enter a ticket number or plate number to look up a parking session.",
     searching: "Searching for a matching parking session.",
-    "session found": "Session found. Review the placeholder summary before discount validation is wired.",
+    "session found": "Session found. Review the read-only session context before statutory discount validation is wired.",
     "not found": "No matching parking session was found for the entered criteria.",
     "ambiguous session": `Multiple matching sessions were found${ambiguousMatches > 0 ? ` (${ambiguousMatches})` : ""}. Operator disambiguation will be wired in a later slice.`
   }[lookupStatus];
@@ -84,12 +85,15 @@ export function App({ apiClient }: AppProps) {
       <header className="appHeader">
         <div>
           <p className="eyebrow">Operator workspace</p>
-          <h1 id="app-title">ExitPass Statutory Discount Operator</h1>
+          <h1 id="app-title">ExitPass Operator Console</h1>
+          <p className="headerCopy">
+            Operator-facing console for ExitPass site workflows. Statutory Discount Validation is the first module.
+          </p>
         </div>
         <span className="environmentBadge">Scaffold</span>
       </header>
 
-      <section className="layoutGrid" aria-label="Statutory discount operator scaffold">
+      <section className="layoutGrid" aria-label="ExitPass Operator Console scaffold">
         <form className="panel searchPanel" aria-labelledby="session-search-title" onSubmit={handleSearch}>
           <div className="panelHeader">
             <p className="eyebrow">Lookup</p>
@@ -157,6 +161,10 @@ export function App({ apiClient }: AppProps) {
               <dd>{session.currentFee}</dd>
             </div>
             <div>
+              <dt>Payment status</dt>
+              <dd>{session.paymentStatus}</dd>
+            </div>
+            <div>
               <dt>Payable-basis status</dt>
               <dd>{session.payableBasisStatus}</dd>
             </div>
@@ -165,8 +173,8 @@ export function App({ apiClient }: AppProps) {
 
         <section className="panel reviewPanel" aria-labelledby="discount-review-title">
           <div className="panelHeader">
-            <p className="eyebrow">Statutory discount</p>
-            <h2 id="discount-review-title">Review request</h2>
+            <p className="eyebrow">First module</p>
+            <h2 id="discount-review-title">Statutory Discount Validation</h2>
           </div>
 
           <div className="reviewControls" aria-label="Entitlement type">
@@ -198,8 +206,9 @@ export function App({ apiClient }: AppProps) {
           </dl>
 
           <p className="notice">
-            This scaffold does not capture evidence, evaluate entitlement, apply coupons, initiate payment,
-            or issue exit authorization.
+            Payment collection is out of scope. This console cannot accept payments, confirm payments, issue
+            refunds, manually mark payments as paid, apply coupons, or issue exit authorization. Payment status is
+            displayed read-only when needed for operator context.
           </p>
 
           <div className="actionBar" aria-label="Operator decision controls">

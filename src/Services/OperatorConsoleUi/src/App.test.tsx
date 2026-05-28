@@ -2,24 +2,27 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { StatutoryDiscountOperatorApiClient } from "./apiClient";
+import type { OperatorConsoleApiClient } from "./apiClient";
 
 const foundSession = {
   parkingSessionReference: "STAT-FOUND-001",
   vehiclePlate: "XYZ 9876",
   entryTime: "May 26, 2026 10:45 AM",
   currentFee: "PHP 150.00",
+  paymentStatus: "Paid via WebPay - read-only",
   payableBasisStatus: "Backend-approved payable basis placeholder",
   siteDisplayName: "North Site Group / Terminal Parking"
 };
 
-describe("ExitPass Statutory Discount Operator UI", () => {
-  it("StatutoryDiscountOperator_WhenRendered_ShowsOperatorScaffold", () => {
+describe("ExitPass Operator Console UI", () => {
+  it("OperatorConsole_WhenRendered_ShowsOperatorScaffold", () => {
     render(<App />);
 
     expect(
-      screen.getByRole("heading", { name: "ExitPass Statutory Discount Operator" })
+      screen.getByRole("heading", { name: "ExitPass Operator Console" })
     ).toBeInTheDocument();
+    expect(screen.getByText(/operator-facing console for exitpass site workflows/i)).toBeInTheDocument();
+    expect(screen.getByText(/statutory discount validation is the first module/i)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /session search/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/ticket number/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/plate number/i)).toBeInTheDocument();
@@ -29,24 +32,26 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(screen.getByText(/vehicle plate/i)).toBeInTheDocument();
     expect(screen.getAllByText(/entry time/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/current fee/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/payment status/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/payment status will appear here as read-only context/i)).toBeInTheDocument();
     expect(screen.getByText(/payable-basis status/i)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /review request/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /statutory discount validation/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/senior citizen/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^pwd$/i)).toBeInTheDocument();
     expect(screen.getByText("not searched")).toBeInTheDocument();
     expect(screen.getByText(/enter a ticket number or plate number/i)).toBeInTheDocument();
   });
 
-  it("StatutoryDiscountOperator_IsSeparateFromWebPay", () => {
+  it("OperatorConsole_IsSeparateFromWebPay", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "ExitPass Statutory Discount Operator" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "ExitPass Operator Console" })).toBeInTheDocument();
     expect(screen.queryByText(/webpay/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /continue to payment/i })).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/payment method/i)).not.toBeInTheDocument();
   });
 
-  it("StatutoryDiscountOperator_DoesNotExposeCouponInputs", () => {
+  it("OperatorConsole_DoesNotExposeCouponInputs", () => {
     render(<App />);
 
     expect(screen.queryByLabelText(/coupon/i)).not.toBeInTheDocument();
@@ -54,7 +59,7 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(screen.queryByRole("button", { name: /apply coupon/i })).not.toBeInTheDocument();
   });
 
-  it("StatutoryDiscountOperator_WhenRendered_DoesNotCallCouponPaymentOrExitApis", () => {
+  it("OperatorConsole_WhenRendered_DoesNotCallCouponPaymentOrExitApis", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -67,10 +72,10 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/.*authorization/i);
   });
 
-  it("StatutoryDiscountOperator_WhenSearchStarts_ShowsSearchingState", async () => {
-    let resolveLookup: (value: Awaited<ReturnType<StatutoryDiscountOperatorApiClient["findSession"]>>) => void;
-    const apiClient: StatutoryDiscountOperatorApiClient = {
-      findSession: vi.fn<StatutoryDiscountOperatorApiClient["findSession"]>(
+  it("OperatorConsole_WhenSearchStarts_ShowsSearchingState", async () => {
+    let resolveLookup: (value: Awaited<ReturnType<OperatorConsoleApiClient["findSession"]>>) => void;
+    const apiClient: OperatorConsoleApiClient = {
+      findSession: vi.fn<OperatorConsoleApiClient["findSession"]>(
         async () =>
           new Promise((resolve) => {
             resolveLookup = resolve;
@@ -90,9 +95,9 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(await screen.findByText("session found")).toBeInTheDocument();
   });
 
-  it("StatutoryDiscountOperator_WhenSessionFound_RendersPlaceholderSessionSummary", async () => {
-    const apiClient: StatutoryDiscountOperatorApiClient = {
-      findSession: vi.fn<StatutoryDiscountOperatorApiClient["findSession"]>(
+  it("OperatorConsole_WhenSessionFound_RendersPlaceholderSessionSummary", async () => {
+    const apiClient: OperatorConsoleApiClient = {
+      findSession: vi.fn<OperatorConsoleApiClient["findSession"]>(
         async () => ({ status: "session found", session: foundSession })
       )
     };
@@ -106,12 +111,13 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(screen.getByText("STAT-FOUND-001")).toBeInTheDocument();
     expect(screen.getByText("XYZ 9876")).toBeInTheDocument();
     expect(screen.getByText("PHP 150.00")).toBeInTheDocument();
+    expect(screen.getByText("Paid via WebPay - read-only")).toBeInTheDocument();
     expect(apiClient.findSession).toHaveBeenCalledWith({ ticketNumber: "", plateNumber: "XYZ 9876" });
   });
 
-  it("StatutoryDiscountOperator_WhenSessionNotFound_ShowsDeterministicNotFoundState", async () => {
-    const apiClient: StatutoryDiscountOperatorApiClient = {
-      findSession: vi.fn<StatutoryDiscountOperatorApiClient["findSession"]>(
+  it("OperatorConsole_WhenSessionNotFound_ShowsDeterministicNotFoundState", async () => {
+    const apiClient: OperatorConsoleApiClient = {
+      findSession: vi.fn<OperatorConsoleApiClient["findSession"]>(
         async () => ({ status: "not found" })
       )
     };
@@ -125,9 +131,9 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(screen.getByText(/no matching parking session was found/i)).toBeInTheDocument();
   });
 
-  it("StatutoryDiscountOperator_WhenSessionAmbiguous_ShowsDisambiguationPlaceholder", async () => {
-    const apiClient: StatutoryDiscountOperatorApiClient = {
-      findSession: vi.fn<StatutoryDiscountOperatorApiClient["findSession"]>(
+  it("OperatorConsole_WhenSessionAmbiguous_ShowsDisambiguationPlaceholder", async () => {
+    const apiClient: OperatorConsoleApiClient = {
+      findSession: vi.fn<OperatorConsoleApiClient["findSession"]>(
         async () => ({ status: "ambiguous session", matches: 2 })
       )
     };
@@ -142,7 +148,7 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(screen.getByText(/operator disambiguation will be wired in a later slice/i)).toBeInTheDocument();
   });
 
-  it("StatutoryDiscountOperator_WhenLookupRuns_DoesNotCallPaymentCouponOrStatutoryWriteApis", async () => {
+  it("OperatorConsole_WhenLookupRuns_DoesNotCallPaymentCouponOrStatutoryWriteApis", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
@@ -158,13 +164,15 @@ describe("ExitPass Statutory Discount Operator UI", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/public\/discounts\/statutory\/validate/i);
   });
 
-  it("StatutoryDiscountOperator_RendersDisabledDecisionControlsAndLaterSliceCopy", () => {
+  it("OperatorConsole_RendersDisabledDecisionControlsAndLaterSliceCopy", () => {
     render(<App />);
 
     expect(screen.getByRole("button", { name: /approve/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /^reject$/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: /request more information/i })).toBeDisabled();
     expect(screen.getByText(/evidence capture and backend statutory discount validation/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment collection is out of scope/i)).toBeInTheDocument();
+    expect(screen.getByText(/payment status is displayed read-only/i)).toBeInTheDocument();
     expect(screen.getByText(/pending operator review/i)).toBeInTheDocument();
     expect(screen.getAllByText(/approved/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/rejected/i)).toBeInTheDocument();
