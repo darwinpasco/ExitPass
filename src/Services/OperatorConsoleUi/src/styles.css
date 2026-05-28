@@ -62,7 +62,8 @@ input {
 }
 
 .environmentBadge,
-.statusPill {
+.statusPill,
+.moduleStatus {
   background: #e8eef2;
   border: 1px solid #ccd6dd;
   border-radius: 999px;
@@ -74,12 +75,96 @@ input {
   white-space: nowrap;
 }
 
+.platformShell {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  margin: 0 auto;
+  max-width: 1180px;
+}
+
+.moduleRail {
+  background: #ffffff;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  box-shadow: 0 16px 32px rgb(22 34 45 / 8%);
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.moduleRail nav {
+  display: grid;
+  gap: 8px;
+}
+
+.moduleLink {
+  border: 1px solid #dfe5ea;
+  border-radius: 6px;
+  color: #17202a;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  text-decoration: none;
+}
+
+.moduleLink:focus,
+.moduleLink:hover {
+  border-color: #8ba4b5;
+}
+
+.moduleRailCopy {
+  border-top: 1px solid #eef2f4;
+  color: #394957;
+  margin: 0;
+  padding-top: 14px;
+}
+
+.workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.moduleOverview {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.moduleCard {
+  background: #ffffff;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  min-height: 160px;
+  padding: 16px;
+}
+
+.moduleCard h3 {
+  font-size: 1rem;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+}
+
+.moduleCard p {
+  color: #394957;
+  margin: 0;
+}
+
+.moduleStatus {
+  align-self: end;
+  font-size: 0.72rem;
+  justify-self: start;
+  padding: 5px 8px;
+  text-transform: uppercase;
+}
+
 .layoutGrid {
   display: grid;
   gap: 16px;
   grid-template-columns: minmax(260px, 0.9fr) minmax(300px, 1fr);
-  margin: 0 auto;
-  max-width: 1180px;
 }
 
 .panel {
@@ -223,8 +308,19 @@ dd {
   }
 
   .appHeader,
+  .platformShell,
   .layoutGrid {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .moduleOverview {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 1080px) {
+  .moduleOverview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

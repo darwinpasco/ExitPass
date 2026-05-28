@@ -1,6 +1,7 @@
 import { createOperatorConsoleApiClient, type OperatorConsoleApiClient } from "./apiClient";
 import { FormEvent, useMemo, useState } from "react";
 import type {
+  OperatorConsoleModule,
   OperatorSessionSummary,
   SessionLookupStatus,
   StatutoryDiscountReview
@@ -29,6 +30,34 @@ const validationStatuses = [
   "approved",
   "rejected",
   "expired"
+];
+
+const operatorConsoleModules: OperatorConsoleModule[] = [
+  {
+    name: "Session Lookup",
+    status: "available",
+    description: "Find parking sessions by ticket or plate before reviewing operator workflows."
+  },
+  {
+    name: "Statutory Discount Validation",
+    status: "first module",
+    description: "Initial module for senior citizen and PWD validation review."
+  },
+  {
+    name: "Registered Device and Shift Access",
+    status: "planned",
+    description: "Placeholder for device registration and shift-based operator access."
+  },
+  {
+    name: "Supervisor Review and Overrides",
+    status: "planned",
+    description: "Placeholder for supervised review paths and override workflows."
+  },
+  {
+    name: "Audit and Reporting",
+    status: "planned",
+    description: "Placeholder for operational audit trails and reporting views."
+  }
 ];
 
 interface AppProps {
@@ -93,135 +122,171 @@ export function App({ apiClient }: AppProps) {
         <span className="environmentBadge">Scaffold</span>
       </header>
 
-      <section className="layoutGrid" aria-label="ExitPass Operator Console scaffold">
-        <form className="panel searchPanel" aria-labelledby="session-search-title" onSubmit={handleSearch}>
+      <section className="platformShell" aria-label="ExitPass Operator Console platform shell">
+        <aside className="moduleRail" aria-labelledby="module-navigation-title">
           <div className="panelHeader">
-            <p className="eyebrow">Lookup</p>
-            <h2 id="session-search-title">Session search</h2>
+            <p className="eyebrow">Platform modules</p>
+            <h2 id="module-navigation-title">Navigation</h2>
           </div>
 
-          <label>
-            Ticket number
-            <input
-              name="ticketNumber"
-              type="text"
-              placeholder="Enter ticket number"
-              value={ticketNumber}
-              onChange={(event) => setTicketNumber(event.target.value)}
-            />
-          </label>
+          <nav aria-label="Operator Console modules">
+            {operatorConsoleModules.map((module) => (
+              <a className="moduleLink" href={`#${module.name.toLowerCase().replaceAll(" ", "-")}`} key={module.name}>
+                <span>{module.name}</span>
+                <span className="moduleStatus">{module.status}</span>
+              </a>
+            ))}
+          </nav>
 
-          <label>
-            Plate number
-            <input
-              name="plateNumber"
-              type="text"
-              placeholder="Enter plate number"
-              value={plateNumber}
-              onChange={(event) => setPlateNumber(event.target.value)}
-            />
-          </label>
-
-          <label>
-            Site / site group
-            <input value={session.siteDisplayName} readOnly />
-          </label>
-
-          <button type="submit" disabled={!canSearch || lookupStatus === "searching"}>
-            {lookupStatus === "searching" ? "Searching" : "Search session"}
-          </button>
-
-          <div className="lookupState" role="status" aria-live="polite">
-            <span className="statusPill">{lookupStatus}</span>
-            <p>{statusCopy}</p>
-          </div>
-        </form>
-
-        <section className="panel" aria-labelledby="session-summary-title">
-          <div className="panelHeader">
-            <p className="eyebrow">Parking session</p>
-            <h2 id="session-summary-title">Session summary</h2>
-          </div>
-
-          <dl className="summaryList">
-            <div>
-              <dt>Parking session reference</dt>
-              <dd>{session.parkingSessionReference}</dd>
-            </div>
-            <div>
-              <dt>Vehicle plate</dt>
-              <dd>{session.vehiclePlate}</dd>
-            </div>
-            <div>
-              <dt>Entry time</dt>
-              <dd>{session.entryTime}</dd>
-            </div>
-            <div>
-              <dt>Current fee</dt>
-              <dd>{session.currentFee}</dd>
-            </div>
-            <div>
-              <dt>Payment status</dt>
-              <dd>{session.paymentStatus}</dd>
-            </div>
-            <div>
-              <dt>Payable-basis status</dt>
-              <dd>{session.payableBasisStatus}</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="panel reviewPanel" aria-labelledby="discount-review-title">
-          <div className="panelHeader">
-            <p className="eyebrow">First module</p>
-            <h2 id="discount-review-title">Statutory Discount Validation</h2>
-          </div>
-
-          <div className="reviewControls" aria-label="Entitlement type">
-            <label>
-              <input type="radio" name="entitlementType" value="Senior Citizen" defaultChecked disabled />
-              Senior Citizen
-            </label>
-            <label>
-              <input type="radio" name="entitlementType" value="PWD" disabled />
-              PWD
-            </label>
-          </div>
-
-          <dl className="summaryList">
-            <div>
-              <dt>Validation status</dt>
-              <dd>
-                <span className="statusPill">{placeholderReview.validationStatus}</span>
-              </dd>
-            </div>
-            <div>
-              <dt>Available statuses</dt>
-              <dd>{validationStatuses.join(", ")}</dd>
-            </div>
-            <div>
-              <dt>Operator instruction</dt>
-              <dd>{placeholderReview.operatorInstruction}</dd>
-            </div>
-          </dl>
-
-          <p className="notice">
-            Payment collection is out of scope. This console cannot accept payments, confirm payments, issue
-            refunds, manually mark payments as paid, apply coupons, or issue exit authorization. Payment status is
-            displayed read-only when needed for operator context.
+          <p className="moduleRailCopy">
+            Payment collection stays outside the Operator Console. Payment status appears only as read-only context.
           </p>
+        </aside>
 
-          <div className="actionBar" aria-label="Operator decision controls">
-            <button type="button" disabled>
-              Approve
-            </button>
-            <button type="button" disabled>
-              Reject
-            </button>
-            <button type="button" disabled>
-              Request more information
-            </button>
-          </div>
+        <section className="workspace" aria-label="Operator Console workspace">
+          <section className="moduleOverview" aria-label="Module placeholders">
+            {operatorConsoleModules.map((module) => (
+              <article className="moduleCard" id={module.name.toLowerCase().replaceAll(" ", "-")} key={module.name}>
+                <div>
+                  <h3>{module.name}</h3>
+                  <p>{module.description}</p>
+                </div>
+                <span className="moduleStatus">{module.status}</span>
+              </article>
+            ))}
+          </section>
+
+          <section className="layoutGrid" aria-label="Session Lookup and Statutory Discount Validation workspace">
+            <form className="panel searchPanel" aria-labelledby="session-search-title" onSubmit={handleSearch}>
+              <div className="panelHeader">
+                <p className="eyebrow">Session Lookup</p>
+                <h2 id="session-search-title">Session search</h2>
+              </div>
+
+              <label>
+                Ticket number
+                <input
+                  name="ticketNumber"
+                  type="text"
+                  placeholder="Enter ticket number"
+                  value={ticketNumber}
+                  onChange={(event) => setTicketNumber(event.target.value)}
+                />
+              </label>
+
+              <label>
+                Plate number
+                <input
+                  name="plateNumber"
+                  type="text"
+                  placeholder="Enter plate number"
+                  value={plateNumber}
+                  onChange={(event) => setPlateNumber(event.target.value)}
+                />
+              </label>
+
+              <label>
+                Site / site group
+                <input value={session.siteDisplayName} readOnly />
+              </label>
+
+              <button type="submit" disabled={!canSearch || lookupStatus === "searching"}>
+                {lookupStatus === "searching" ? "Searching" : "Search session"}
+              </button>
+
+              <div className="lookupState" role="status" aria-live="polite">
+                <span className="statusPill">{lookupStatus}</span>
+                <p>{statusCopy}</p>
+              </div>
+            </form>
+
+            <section className="panel" aria-labelledby="session-summary-title">
+              <div className="panelHeader">
+                <p className="eyebrow">Read-only context</p>
+                <h2 id="session-summary-title">Session summary</h2>
+              </div>
+
+              <dl className="summaryList">
+                <div>
+                  <dt>Parking session reference</dt>
+                  <dd>{session.parkingSessionReference}</dd>
+                </div>
+                <div>
+                  <dt>Vehicle plate</dt>
+                  <dd>{session.vehiclePlate}</dd>
+                </div>
+                <div>
+                  <dt>Entry time</dt>
+                  <dd>{session.entryTime}</dd>
+                </div>
+                <div>
+                  <dt>Current fee</dt>
+                  <dd>{session.currentFee}</dd>
+                </div>
+                <div>
+                  <dt>Payment status</dt>
+                  <dd>{session.paymentStatus}</dd>
+                </div>
+                <div>
+                  <dt>Payable-basis status</dt>
+                  <dd>{session.payableBasisStatus}</dd>
+                </div>
+              </dl>
+            </section>
+
+            <section className="panel reviewPanel" aria-labelledby="discount-review-title">
+              <div className="panelHeader">
+                <p className="eyebrow">Module</p>
+                <h2 id="discount-review-title">Statutory Discount Validation</h2>
+              </div>
+
+              <div className="reviewControls" aria-label="Entitlement type">
+                <label>
+                  <input type="radio" name="entitlementType" value="Senior Citizen" defaultChecked disabled />
+                  Senior Citizen
+                </label>
+                <label>
+                  <input type="radio" name="entitlementType" value="PWD" disabled />
+                  PWD
+                </label>
+              </div>
+
+              <dl className="summaryList">
+                <div>
+                  <dt>Validation status</dt>
+                  <dd>
+                    <span className="statusPill">{placeholderReview.validationStatus}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt>Available statuses</dt>
+                  <dd>{validationStatuses.join(", ")}</dd>
+                </div>
+                <div>
+                  <dt>Operator instruction</dt>
+                  <dd>{placeholderReview.operatorInstruction}</dd>
+                </div>
+              </dl>
+
+              <p className="notice">
+                Payment collection is out of scope. This console cannot accept payments, confirm payments, issue
+                refunds, manually mark payments as paid, apply coupons, or issue exit authorization. Payment status is
+                displayed read-only when needed for operator context.
+              </p>
+
+              <div className="actionBar" aria-label="Operator decision controls">
+                <button type="button" disabled>
+                  Approve
+                </button>
+                <button type="button" disabled>
+                  Reject
+                </button>
+                <button type="button" disabled>
+                  Request more information
+                </button>
+              </div>
+            </section>
+          </section>
         </section>
       </section>
     </main>
