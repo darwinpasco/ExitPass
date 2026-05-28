@@ -11,6 +11,8 @@ References:
 
 This is a documentation-only schema design. It proposes future controlled DDL/migration work and does not implement runtime behavior, migrations, or API contract source changes.
 
+Review-only DDL proposal: `docs/operator-console/proposals/operator-console-ddl-proposal.sql`.
+
 ## Design Goals
 
 - Preserve ExitPass as the operational access authority while using HR/Timekeeping as the shift schedule/import source.
