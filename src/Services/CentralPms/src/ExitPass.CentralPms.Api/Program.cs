@@ -26,6 +26,7 @@ using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
@@ -38,6 +39,7 @@ using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.Infrastructure.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.Security;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
@@ -353,6 +355,8 @@ static void ConfigureApplicationServices(
         new CentralPmsRbacRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateDeviceIdentityValidator>(_ =>
         new GateDeviceIdentityValidator(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleAccessEvaluationReadRepository>(_ =>
+        new OperatorConsoleAccessEvaluationReadRepository(mainDatabaseConnectionString));
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
