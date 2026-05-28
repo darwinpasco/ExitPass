@@ -314,15 +314,71 @@ These should reuse the same access evaluation and idempotency rules.
 
 ### Status Values
 
-Use v1.2 DDL-aligned status values where available. Proposed frontend-visible values are:
+Use v1.2 DDL-aligned status values from `discounts.statutory_discount_validations.validation_status`, whose type is `discounts.statutory_discount_validations_status_enum`.
 
-- `no_request`
-- `pending_operator_review`
-- `approved`
-- `rejected`
-- `expired`
+Verified DDL values:
 
-Before implementation, confirm the actual database enum/check constraint values from the live schema and DDL. Do not assume these exact storage values until verified.
+- `REQUESTED`
+- `PENDING_OPERATOR_REVIEW`
+- `APPROVED`
+- `REJECTED`
+- `FAILED`
+- `EXPIRED`
+- `CANCELLED`
+
+Operator Console MVP mapping:
+
+| Operator Console state | Persisted DDL value | Notes |
+| --- | --- | --- |
+| No request | none | UI-only state before a row exists. Do not persist `NO_REQUEST`. |
+| Start validation submitted | `REQUESTED` | Initial backend row state. |
+| Waiting for operator decision | `PENDING_OPERATOR_REVIEW` | Use for in-progress operator-assisted review. |
+| One-step approval complete | `APPROVED` | Final successful MVP decision. |
+| One-step rejection complete | `REJECTED` | Final rejected MVP decision. |
+| Backend/system validation failed | `FAILED` | Failure state, not an operator rejection. |
+| Review window expired | `EXPIRED` | Expiry state. |
+| Request cancelled | `CANCELLED` | Cancelled workflow state. |
+
+UI labels such as `no request`, `mock only`, `later slice`, `blocked`, `access allowed`, `device not registered`, and `site mismatch` are UI-only or response-only labels. They must not be inserted into `discounts.statutory_discount_validations.validation_status`.
+
+### Entitlement Type Values
+
+The statutory entitlement type is stored in `discounts.statutory_discount_validations.entitlement_type`, whose type is `discounts.statutory_entitlement_type_enum`.
+
+Verified DDL values:
+
+- `SENIOR_CITIZEN`
+- `PWD`
+- `OTHER_STATUTORY`
+
+Operator Console MVP allows only:
+
+- `SENIOR_CITIZEN`
+- `PWD`
+
+`OTHER_STATUTORY` exists in v1.2 DDL for future statutory categories, but it is later scope for Operator Console MVP. The MVP UI must not offer `OTHER_STATUTORY` unless a later policy/design slice explicitly enables it.
+
+### Channel and Policy Values
+
+Operator Console statutory validation should use `discounts.statutory_discount_validations.validation_channel = OPERATOR_ASSISTED`.
+
+The DDL type is `discounts.statutory_discount_validations_channel_enum` with values:
+
+- `WEB_PAY`
+- `OPERATOR_ASSISTED`
+- `SYSTEM_VALIDATED`
+- `SUPPORT_REVIEW`
+- `RECONCILIATION_REVIEW`
+
+Policy resolution is stored in `discounts.statutory_discount_validations.policy_resolution_basis`, type `discounts.policy_resolution_basis_enum`, with values:
+
+- `LOCAL_ORDINANCE_APPLIED`
+- `NATIONAL_LAW_FALLBACK`
+- `SITE_POLICY_OPERATIONAL_ONLY`
+- `MANUAL_POLICY_SELECTION`
+- `SYSTEM_DEFAULT`
+
+The applicable value must be selected by backend policy resolution, not invented by the UI.
 
 ### Idempotency Behavior
 
@@ -336,6 +392,45 @@ Before implementation, confirm the actual database enum/check constraint values 
 Evidence storage is backend-owned and must not be invented by the frontend. The validation decision accepts evidence references only after an evidence service or storage contract exists.
 
 Image capture is configurable by site. The default minimum evidence path is structured ID metadata plus a backend-generated entitlement fingerprint. Cropped ID image evidence is required only when enabled by site policy or regulation.
+
+Evidence references align to `discounts.discount_evidence_references`.
+
+Relevant DDL columns and enum types:
+
+- `discounts.discount_evidence_references.evidence_type`: `discounts.discount_evidence_type_enum`
+- `discounts.discount_evidence_references.evidence_storage_type`: `discounts.evidence_storage_type_enum`
+- `discounts.discount_evidence_references.evidence_capture_status`: `discounts.evidence_capture_status_enum`
+- `discounts.discount_evidence_references.access_classification`: `discounts.evidence_access_classification_enum`
+- `discounts.discount_evidence_references.redaction_status`: `discounts.evidence_redaction_status_enum`
+
+Verified `discounts.discount_evidence_type_enum` values:
+
+- `SENIOR_CITIZEN_ID`
+- `PWD_ID`
+- `AUTHORIZATION_LETTER`
+- `SUPPORTING_DOCUMENT`
+- `VALIDATION_SCREENSHOT`
+- `HASH_ONLY_REFERENCE`
+- `OTHER`
+
+Verified `discounts.evidence_capture_status_enum` values:
+
+- `CAPTURED`
+- `REFERENCED`
+- `REDACTED`
+- `PURGED`
+- `HASH_ONLY`
+- `REJECTED`
+
+Verified `discounts.evidence_storage_type_enum` values:
+
+- `OBJECT_STORAGE`
+- `EVIDENCE_VAULT`
+- `HASH_ONLY`
+- `EXTERNAL_REFERENCE`
+- `REDACTED_REFERENCE`
+
+Site-configurable image evidence maps to `SENIOR_CITIZEN_ID` or `PWD_ID` with `evidence_capture_status = CAPTURED` when image evidence is captured, or `REFERENCED` when an external controlled evidence reference is used. The default minimum evidence path may use `HASH_ONLY_REFERENCE` plus `evidence_storage_type = HASH_ONLY` when only the entitlement fingerprint/hash reference is retained. No new DDL status is needed for "image required"; use `discounts.statutory_discount_validations.evidence_required` and `evidence_captured`, backed by site policy from `discounts.discount_policy_references.requires_evidence_capture`.
 
 Evidence references should include:
 
@@ -353,7 +448,7 @@ No raw image bytes should be included in the decision endpoint.
 
 The backend generates the entitlement fingerprint from normalized statutory ID attributes and policy-approved matching fields. The frontend must not generate the fingerprint.
 
-The response should expose only the fingerprint reference or stable opaque fingerprint value needed for audit and duplicate detection. Sensitive source fields must remain protected.
+The v1.2 DDL does not expose a dedicated `entitlement_fingerprint` column on `discounts.statutory_discount_validations`. Until a controlled schema design adds one, the contract should treat the entitlement fingerprint as backend-derived evidence/audit metadata, not as an assumed statutory validation table column. Sensitive source fields must remain protected.
 
 ### Payable-Basis Update Boundary
 
@@ -361,9 +456,72 @@ The statutory validation service owns the decision. The payable-basis update is 
 
 The Operator Console must not manually mark payment as paid, change payment state, or directly edit payable amounts. It may show update status such as `not_started`, `queued`, `applied`, or `failed` as read-only context.
 
+The DDL materializes approved statutory discount effect through existing backend-owned fields, including `discounts.statutory_discount_validations.tariff_snapshot_id`, `statutory_discount_amount`, `net_amount_after_discount`, and `core.tariff_snapshots.statutory_discount_validation_id`. Operator Console response labels such as `queued`, `applied`, or `failed` for payable-basis update are response-only workflow labels unless a later schema design adds a persisted payable-basis update status.
+
+## Operator Access and Shift Storage Alignment
+
+Access evaluation response statuses and denial reason codes are contract-level values. The v1.2 DDL does not define a persisted access evaluation table or enum for Operator Console access decisions.
+
+Existing relevant DDL:
+
+- `identity.users`: ExitPass users. Operators must be registered here.
+- `identity.roles`, `identity.user_roles`, `identity.role_permissions`: role and permission assignment.
+- `identity.service_identities`: non-human service/device identities; supports credential references and `MTLS_CERTIFICATE_REFERENCE` through `identity.service_credential_type_enum`.
+- `sites.device_assignments`: site/lane/service-identity assignment with `sites.device_assignment_status_enum`.
+- `operations.operator_action_logs`: generic operator audit/action log with `operations.operator_action_status_enum`.
+- `audit.audit_events`: generic audit events.
+
+Verified `sites.device_assignment_status_enum` values:
+
+- `ACTIVE`
+- `SUSPENDED`
+- `SUPERSEDED`
+- `EXPIRED`
+- `RETIRED`
+
+Verified `operations.operator_action_status_enum` values:
+
+- `RECORDED`
+- `SUCCESS`
+- `FAILED`
+- `DENIED`
+- `CANCELLED`
+
+Verified `identity.user_status_enum` values:
+
+- `INVITED`
+- `ACTIVE`
+- `LOCKED`
+- `SUSPENDED`
+- `INACTIVE`
+- `RETIRED`
+
+Verified `identity.user_role_assignment_status_enum` values:
+
+- `ACTIVE`
+- `SUSPENDED`
+- `REVOKED`
+- `EXPIRED`
+- `RETIRED`
+
+DDL gaps for future implementation:
+
+- No dedicated Operator Console access evaluation table exists.
+- No dedicated registered Operator Console browser/device binding table exists.
+- No HR/Timekeeping identity mapping table exists.
+- No imported operator shift table exists.
+- No shift revocation table/status enum exists.
+- No controlled shift takeover table/status enum exists.
+
+Future implementation must introduce those concepts through a controlled schema design. Do not overload `gates.gate_devices` or `sites.device_assignments` to represent browser key binding or HR shift state without a dedicated design update.
+
+Operator Console denial reasons such as `DEVICE_NOT_REGISTERED`, `SHIFT_REVOKED`, `SHIFT_TAKEOVER_NOT_APPROVED`, and `SITE_MISMATCH` remain response/audit reason codes, not existing DDL enums.
+
 ### WebPay Notification and Display Boundary
 
 WebPay may display updated payable basis or discount outcome after backend propagation. The Operator Console must not call WebPay payment-intent, payment confirmation, refund, or collection endpoints.
+
+The Operator Console must not create or mutate `core.payment_attempts`, `core.payment_confirmations`, `payments.provider_outcomes`, `core.exit_authorizations`, `gates.gate_authorization_consumptions`, `coupons.coupon_applications`, or settlement truth records.
 
 ## Audit Requirements
 
@@ -449,6 +607,7 @@ Recommended status mappings:
 
 ## Open Questions
 
-- Which existing v1.2 DDL status values should be reused exactly for statutory validation storage?
 - Which service owns evidence storage and retention policy?
 - Should access evaluation be called once per workflow start or before every controlled action?
+- What controlled schema shape should be introduced for HR/Timekeeping identity mapping, imported shifts, shift revocation, and shift takeover?
+- What controlled schema shape should be introduced for Operator Console browser key binding and access evaluation persistence?
