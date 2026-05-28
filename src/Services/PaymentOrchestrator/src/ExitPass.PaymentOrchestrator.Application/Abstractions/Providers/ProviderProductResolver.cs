@@ -15,7 +15,6 @@ public sealed class ProviderProductResolver : IProviderProductResolver
 
         return providerCode.Trim().ToUpperInvariant() switch
         {
-            ProviderCode.Aub => ProviderProductCode.AubCardCashier,
             ProviderCode.PayMongo => ProviderProductCode.PayMongoCheckoutSession,
             _ => throw new InvalidOperationException(
                 $"No provider product is configured for provider '{providerCode}'.")

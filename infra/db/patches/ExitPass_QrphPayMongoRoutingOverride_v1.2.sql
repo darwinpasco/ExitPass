@@ -1,5 +1,7 @@
--- ExitPass v1.2 local/testing QRPH routing override.
--- WebPay QRPH/PHP must route to PayMongo for the current integration slice.
+-- ExitPass v1.2 local/testing WebPay routing override.
+-- WebPay QRPH, GCash, Maya, and Card PHP payments must route to PayMongo
+-- for the current integration slice. AUB must not be configured as primary
+-- or fallback until the AUB integration slice is explicitly started.
 
 UPDATE payments.payment_provider_routing_policies
 SET
@@ -12,7 +14,7 @@ SET
     row_version = row_version + 1
 WHERE site_id IS NULL
   AND site_group_id IS NULL
-  AND payment_method_code = 'QRPH'
+  AND payment_method_code IN ('QRPH', 'GCASH', 'MAYA', 'CARD')
   AND currency_code = 'PHP'
   AND min_amount_minor_units IS NULL
   AND max_amount_minor_units IS NULL
