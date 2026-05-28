@@ -59,6 +59,38 @@ describe("ExitPass Operator Console UI", () => {
     expect(screen.getByText(/operational audit trails and reporting views/i)).toBeInTheDocument();
   });
 
+  it("OperatorConsole_WhenRendered_ShowsRegisteredDeviceAndShiftAccessPlaceholder", () => {
+    render(<App />);
+
+    expect(
+      screen.getAllByRole("heading", { name: /registered device and shift access/i }).length
+    ).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: /device trust state/i })).toBeInTheDocument();
+    expect(screen.getByText("Device ID placeholder")).toBeInTheDocument();
+    expect(screen.getByText("Operator kiosk placeholder")).toBeInTheDocument();
+    expect(screen.getAllByText("Assigned site placeholder").length).toBeGreaterThan(0);
+    expect(screen.getByText(/pending, active, suspended, revoked, lost/i)).toBeInTheDocument();
+    expect(screen.getByText(/mtls certificate or browser key binding placeholder/i)).toBeInTheDocument();
+
+    expect(screen.getByRole("heading", { name: /shift state/i })).toBeInTheDocument();
+    expect(screen.getByText("Operator role placeholder")).toBeInTheDocument();
+    expect(screen.getByText(/scheduled, active, ended, suspended/i)).toBeInTheDocument();
+    expect(screen.getByText("Clock-in placeholder")).toBeInTheDocument();
+    expect(screen.getByText("Clock-out placeholder")).toBeInTheDocument();
+  });
+
+  it("OperatorConsole_WhenRendered_ShowsReadOnlyAccessGateResultStates", () => {
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: /access gate result states/i })).toBeInTheDocument();
+    expect(screen.getByText("access allowed")).toBeInTheDocument();
+    expect(screen.getByText("device not registered")).toBeInTheDocument();
+    expect(screen.getByText("device suspended/revoked")).toBeInTheDocument();
+    expect(screen.getByText("no active shift")).toBeInTheDocument();
+    expect(screen.getByText("site mismatch")).toBeInTheDocument();
+    expect(screen.getByText(/backend identity, device, and shift validation will be wired/i)).toBeInTheDocument();
+  });
+
   it("OperatorConsole_IsSeparateFromWebPay", () => {
     render(<App />);
 
@@ -87,6 +119,18 @@ describe("ExitPass Operator Console UI", () => {
     expect(screen.queryByRole("button", { name: /gate/i })).not.toBeInTheDocument();
   });
 
+  it("OperatorConsole_DoesNotExposeIdentityDeviceOrShiftMutationControls", () => {
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: /log in/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /enroll device/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /generate key/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /issue certificate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clock in/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /clock out/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/does not perform login, device enrollment/i)).toBeInTheDocument();
+  });
+
   it("OperatorConsole_WhenRendered_DoesNotCallCouponPaymentOrExitApis", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -98,6 +142,9 @@ describe("ExitPass Operator Console UI", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/webpay\/payment-intents/i);
     expect(document.body.innerHTML).not.toMatch(/\/v1\/exit/i);
     expect(document.body.innerHTML).not.toMatch(/\/v1\/.*authorization/i);
+    expect(document.body.innerHTML).not.toMatch(/\/v1\/.*devices/i);
+    expect(document.body.innerHTML).not.toMatch(/\/v1\/.*shifts/i);
+    expect(document.body.innerHTML).not.toMatch(/\/v1\/.*identity/i);
   });
 
   it("OperatorConsole_WhenSearchStarts_ShowsSearchingState", async () => {

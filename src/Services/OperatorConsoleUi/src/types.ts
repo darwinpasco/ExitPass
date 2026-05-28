@@ -27,6 +27,33 @@ export interface OperatorConsoleModule {
   description: string;
 }
 
+export type DeviceTrustStatus = "pending" | "active" | "suspended" | "revoked" | "lost";
+
+export type ShiftAccessStatus = "scheduled" | "active" | "ended" | "suspended";
+
+export type AccessGateResult =
+  | "access allowed"
+  | "device not registered"
+  | "device suspended/revoked"
+  | "no active shift"
+  | "site mismatch";
+
+export interface DeviceTrustState {
+  deviceId: string;
+  deviceName: string;
+  siteAssignment: string;
+  deviceStatus: DeviceTrustStatus;
+  trustMechanism: string;
+}
+
+export interface ShiftAccessState {
+  operatorRole: string;
+  assignedSite: string;
+  shiftStatus: ShiftAccessStatus;
+  clockIn: string;
+  clockOut: string;
+}
+
 export interface OperatorSessionSummary {
   parkingSessionReference: string;
   vehiclePlate: string;
