@@ -214,6 +214,65 @@ input {
   padding: 10px 12px;
 }
 
+.prerequisiteGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.prerequisiteGrid div {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+}
+
+.workflowSteps {
+  display: grid;
+  gap: 10px;
+}
+
+.workflowStep {
+  align-items: start;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 14px;
+}
+
+.workflowStep h3 {
+  font-size: 1rem;
+  letter-spacing: 0;
+  margin: 0 0 6px;
+}
+
+.workflowStep p {
+  color: #394957;
+  margin: 0;
+}
+
+.stepNumber {
+  align-items: center;
+  background: #2d4658;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  font-weight: 700;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.workflowDetails {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .layoutGrid {
   display: grid;
   gap: 16px;
@@ -374,11 +433,26 @@ dd {
   .accessGrid {
     grid-template-columns: 1fr;
   }
+
+  .prerequisiteGrid,
+  .workflowDetails {
+    grid-template-columns: 1fr;
+  }
+
+  .workflowStep {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .workflowStep .moduleStatus {
+    grid-column: 2;
+  }
 }
 
 @media (min-width: 761px) and (max-width: 1080px) {
   .moduleOverview,
-  .accessGrid {
+  .accessGrid,
+  .prerequisiteGrid,
+  .workflowDetails {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

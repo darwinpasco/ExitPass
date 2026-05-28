@@ -54,6 +54,14 @@ export interface ShiftAccessState {
   clockOut: string;
 }
 
+export type WorkflowStepState = "ready" | "mock only" | "later slice" | "blocked";
+
+export interface StatutoryDiscountWorkflowStep {
+  title: string;
+  state: WorkflowStepState;
+  description: string;
+}
+
 export interface OperatorSessionSummary {
   parkingSessionReference: string;
   vehiclePlate: string;
