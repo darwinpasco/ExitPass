@@ -6,6 +6,7 @@ References:
 - ExitPass Operator Console BRD v1.0
 - ExitPass v1.2 baseline constraints
 - Operator Console frontend module shell in `src/Services/OperatorConsoleUi`
+- Operator Console schema extension design in `docs/operator-console/operator-console-schema-extension-design.md`
 
 This document freezes the proposed backend-facing contract before implementation. It is a design slice only and does not introduce runtime behavior, database changes, API contract files, or service code.
 
