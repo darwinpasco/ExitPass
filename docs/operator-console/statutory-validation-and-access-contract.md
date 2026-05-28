@@ -36,6 +36,29 @@ Access evaluation is the backend gate used before controlled Operator Console ac
 
 ExitPass evaluates operational access even though shift schedule data is imported from HR/Timekeeping. The access evaluator must map the ExitPass operator user to an HR/Timekeeping identity before accepting imported shift context.
 
+### Timing Decision
+
+Access evaluation timing is locked for Operator Console controlled workflows:
+
+- Run access evaluation at workflow start, before entering a controlled workflow such as statutory discount validation, shift takeover, evidence capture, supervisor override, or reporting/export.
+- Run access evaluation again before every controlled action that mutates state, captures or views sensitive evidence, submits a decision, requests or approves takeover, revokes shift access, performs supervisor/compliance action, or exports reports.
+
+Controlled actions include:
+
+- start statutory validation workflow
+- submit statutory approval or rejection
+- capture evidence
+- view stored evidence
+- request shift takeover
+- approve or reject shift takeover
+- revoke shift
+- supervisor override
+- report export
+
+The access evaluation response is authoritative only at the time of the evaluated action. It must not be cached or reused as a long-lived permission grant because user status, role assignment, device status, site assignment, shift status, takeover state, or revocation state can change while an operator remains inside a workflow.
+
+Evaluation frequency is separate from persistence. The backend must persist denied evaluations and controlled-action evaluations, but must not persist harmless navigation, page loads, tab switches, or read-only module browsing.
+
 ### Proposed Endpoint
 
 `POST /v1/operator-console/access/evaluate`
@@ -219,7 +242,7 @@ The MVP approval model is one-step operator approval. The recommended MVP contra
 
 `POST /v1/operator-console/statutory-discounts/validations`
 
-Creates or reuses a pending validation workflow for a resolved session after access evaluation passes.
+Creates or reuses a pending validation workflow for a resolved session after a workflow-start access evaluation passes.
 
 Request DTO:
 
@@ -253,7 +276,7 @@ Response DTO:
 
 `POST /v1/operator-console/statutory-discounts/validations/{validationId}/decision`
 
-Submits a mock-reviewed decision for approval or rejection. The endpoint must be idempotent by `idempotencyKey`.
+Submits a mock-reviewed decision for approval or rejection after a fresh controlled-action access evaluation passes. The endpoint must be idempotent by `idempotencyKey`.
 
 Request DTO:
 
@@ -546,7 +569,7 @@ The Operator Console must not create or mutate `core.payment_attempts`, `core.pa
 
 Audit events are required for:
 
-- access evaluation attempts, allowed and denied
+- persisted access evaluation attempts, including denied evaluations and controlled-action evaluations
 - session lookup attempts and outcomes
 - shift revocation events that affect Operator Console access
 - shift takeover request, approval, rejection, and use
@@ -628,6 +651,4 @@ Recommended status mappings:
 
 ## Open Questions
 
-- Should access evaluation be called once per workflow start or before every controlled action?
-- What controlled schema shape should be introduced for HR/Timekeeping identity mapping, imported shifts, shift revocation, and shift takeover?
-- What controlled schema shape should be introduced for Operator Console browser key binding and access evaluation persistence?
+- Final executable migration approval for HR/Timekeeping identity mapping, imported shifts, shift revocation, shift takeover, browser key binding, and access evaluation persistence.
