@@ -101,6 +101,10 @@ CREATE TYPE discounts.entitlement_fingerprint_status_enum AS ENUM (
 -- - Shift takeover reason codes
 -- - Device binding source and revocation/lost/suspension reason codes
 -- - Fingerprint algorithm, metadata-level, and duplicate-detection scope codes
+-- - OPERATOR_CONSOLE_DUPLICATE_DETECTION_SCOPE controlled-code family,
+--   initially including SAME_SESSION_ONLY, SAME_SITE_ACTIVE_DAY,
+--   SAME_SITE_GROUP_ACTIVE_DAY, GLOBAL_ACTIVE_DAY, and
+--   CONFIGURED_POLICY_WINDOW
 
 -- ---------------------------------------------------------------------------
 -- HR/Timekeeping identity mapping
@@ -178,7 +182,10 @@ CREATE TABLE operator_console.operator_shifts (
   scheduled_start_at timestamptz NOT NULL,
   scheduled_end_at timestamptz NOT NULL,
   source_imported_at timestamptz NOT NULL,
-  source_status varchar(64),
+  import_status_code varchar(64) NOT NULL,
+  source_system_code varchar(64) NOT NULL,
+  source_status_code varchar(96),
+  source_status_description text,
   operational_status operator_console.operator_shift_operational_status_enum NOT NULL,
   active_from timestamptz,
   active_to timestamptz,
@@ -241,7 +248,10 @@ CREATE TABLE operator_console.operator_shift_versions (
   external_shift_id_hash char(64) NOT NULL,
   source_payload_hash char(64),
   source_payload_ref varchar(256),
-  source_status varchar(64),
+  import_status_code varchar(64) NOT NULL,
+  source_system_code varchar(64) NOT NULL,
+  source_status_code varchar(96),
+  source_status_description text,
   scheduled_start_at timestamptz NOT NULL,
   scheduled_end_at timestamptz NOT NULL,
   site_id uuid,
@@ -462,6 +472,62 @@ ON operator_console.operator_device_bindings (site_id, device_status, trust_leve
 CREATE INDEX ix_operator_device_bindings__last_seen
 ON operator_console.operator_device_bindings (last_seen_at DESC);
 
+CREATE TABLE operator_console.operator_device_assignment_history (
+  operator_device_assignment_history_id uuid DEFAULT gen_random_uuid() NOT NULL,
+  operator_device_binding_id uuid NOT NULL,
+  site_group_id uuid NOT NULL,
+  site_id uuid NOT NULL,
+  assignment_status_code varchar(64) NOT NULL,
+  assignment_source_code varchar(64) NOT NULL,
+  assignment_reason_code varchar(64),
+  assigned_at timestamptz NOT NULL,
+  assigned_by_user_id uuid,
+  assigned_by_service_identity_id uuid,
+  effective_from timestamptz NOT NULL,
+  effective_to timestamptz,
+  ended_at timestamptz,
+  ended_by_user_id uuid,
+  ended_by_service_identity_id uuid,
+  end_reason_code varchar(64),
+  correlation_id uuid,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  created_by_user_id uuid,
+  created_by_service_identity_id uuid,
+  CONSTRAINT pk_operator_device_assignment_history PRIMARY KEY (operator_device_assignment_history_id),
+  CONSTRAINT fk_operator_device_assignment_history__binding_id FOREIGN KEY (operator_device_binding_id)
+    REFERENCES operator_console.operator_device_bindings(operator_device_binding_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__site_group_id FOREIGN KEY (site_group_id)
+    REFERENCES sites.site_groups(site_group_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__site_id FOREIGN KEY (site_id)
+    REFERENCES sites.sites(site_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__assigned_by_user_id FOREIGN KEY (assigned_by_user_id)
+    REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__assigned_by_service_identity_id FOREIGN KEY (assigned_by_service_identity_id)
+    REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__ended_by_user_id FOREIGN KEY (ended_by_user_id)
+    REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__ended_by_service_identity_id FOREIGN KEY (ended_by_service_identity_id)
+    REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__created_by_user_id FOREIGN KEY (created_by_user_id)
+    REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_device_assignment_history__created_by_service_identity_id FOREIGN KEY (created_by_service_identity_id)
+    REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT ck_operator_device_assignment_history__effective_window CHECK (effective_to IS NULL OR effective_to > effective_from)
+);
+
+COMMENT ON TABLE operator_console.operator_device_assignment_history IS
+  'REVIEW ONLY proposal: reconstructable Operator Console device/site assignment history for authorization audit.';
+
+CREATE INDEX ix_operator_device_assignment_history__binding_time
+ON operator_console.operator_device_assignment_history (operator_device_binding_id, effective_from DESC);
+
+CREATE INDEX ix_operator_device_assignment_history__site_time
+ON operator_console.operator_device_assignment_history (site_id, effective_from DESC, effective_to);
+
+CREATE INDEX ix_operator_device_assignment_history__active_binding_site
+ON operator_console.operator_device_assignment_history (operator_device_binding_id, site_id, effective_from, effective_to)
+WHERE effective_to IS NULL;
+
 -- ---------------------------------------------------------------------------
 -- Operator access evaluation evidence
 -- ---------------------------------------------------------------------------
@@ -471,7 +537,6 @@ CREATE TABLE operator_console.operator_access_evaluations (
   correlation_id uuid,
   requested_action varchar(96) NOT NULL,
   evaluation_status operator_console.access_evaluation_status_enum NOT NULL,
-  denial_reason_codes text[] DEFAULT ARRAY[]::text[] NOT NULL,
   operator_user_id uuid NOT NULL,
   hr_identity_mapping_id uuid,
   operator_device_binding_id uuid,
@@ -511,7 +576,10 @@ CREATE TABLE operator_console.operator_access_evaluations (
 );
 
 COMMENT ON TABLE operator_console.operator_access_evaluations IS
-  'REVIEW ONLY proposal: persisted access evaluation evidence for denied and controlled Operator Console actions.';
+  'REVIEW ONLY proposal: persisted access evaluation evidence for denied access and controlled Operator Console actions only.';
+
+COMMENT ON COLUMN operator_console.operator_access_evaluations.requested_action IS
+  'Controlled action code. MVP persistence is limited to denied access, statutory workflow start, statutory decision submission, evidence capture/view, supervisor override attempts, shift takeover requests/approvals, and device trust failures; harmless reads/navigation are not persisted.';
 
 CREATE INDEX ix_operator_access_evaluations__operator_time
 ON operator_console.operator_access_evaluations (operator_user_id, evaluated_at DESC);
@@ -528,6 +596,42 @@ ON operator_console.operator_access_evaluations (operator_shift_id, evaluated_at
 CREATE INDEX ix_operator_access_evaluations__denied
 ON operator_console.operator_access_evaluations (evaluated_at DESC, requested_action)
 WHERE evaluation_status = 'DENIED';
+
+CREATE TABLE operator_console.operator_access_evaluation_reasons (
+  operator_access_evaluation_reason_id uuid DEFAULT gen_random_uuid() NOT NULL,
+  operator_access_evaluation_id uuid NOT NULL,
+  reason_code varchar(96) NOT NULL,
+  reason_message text,
+  reason_source varchar(96),
+  source_entity_type varchar(64),
+  source_entity_id uuid,
+  evaluated_fact_path varchar(256),
+  display_order integer DEFAULT 0 NOT NULL,
+  created_at timestamptz DEFAULT now() NOT NULL,
+  created_by_user_id uuid,
+  created_by_service_identity_id uuid,
+  CONSTRAINT pk_operator_access_evaluation_reasons PRIMARY KEY (operator_access_evaluation_reason_id),
+  CONSTRAINT fk_operator_access_evaluation_reasons__evaluation_id FOREIGN KEY (operator_access_evaluation_id)
+    REFERENCES operator_console.operator_access_evaluations(operator_access_evaluation_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_access_evaluation_reasons__created_by_user_id FOREIGN KEY (created_by_user_id)
+    REFERENCES identity.users(user_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT fk_operator_access_evaluation_reasons__created_by_service_identity_id FOREIGN KEY (created_by_service_identity_id)
+    REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE,
+  CONSTRAINT ck_operator_access_evaluation_reasons__display_order_nonnegative CHECK (display_order >= 0)
+);
+
+COMMENT ON TABLE operator_console.operator_access_evaluation_reasons IS
+  'REVIEW ONLY proposal: normalized controlled reason rows for denied or controlled-action access evaluations, with source context for audit and reporting.';
+
+CREATE INDEX ix_operator_access_evaluation_reasons__evaluation_order
+ON operator_console.operator_access_evaluation_reasons (operator_access_evaluation_id, display_order);
+
+CREATE INDEX ix_operator_access_evaluation_reasons__reason_time
+ON operator_console.operator_access_evaluation_reasons (reason_code, created_at DESC);
+
+CREATE INDEX ix_operator_access_evaluation_reasons__source
+ON operator_console.operator_access_evaluation_reasons (reason_source, source_entity_type, source_entity_id)
+WHERE reason_source IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Statutory entitlement fingerprint storage

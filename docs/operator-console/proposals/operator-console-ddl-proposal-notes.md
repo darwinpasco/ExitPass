@@ -17,6 +17,7 @@ The proposal adds a future `operator_console` schema for:
 - shift revocation
 - controlled shift takeover
 - operator browser/device binding
+- operator browser/device site assignment history
 - operator access evaluation evidence
 
 It also proposes `discounts.statutory_entitlement_fingerprints` for backend-generated entitlement duplicate-detection fingerprints.
@@ -25,18 +26,18 @@ It also proposes `discounts.statutory_entitlement_fingerprints` for backend-gene
 
 - `operator_console.hr_identity_mappings` uses `identity.users(user_id)` as the ExitPass user anchor and stores only hashed/masked HR identifiers.
 - `operator_console.operator_shifts` stores current operational shift state, while `operator_console.operator_shift_versions` stores immutable import/version history.
+- HR/Timekeeping status is modeled in two layers: ExitPass-controlled `import_status_code` plus raw source/provider fields (`source_system_code`, `source_status_code`, and `source_status_description`). Provider-specific HR statuses are not proposed as PostgreSQL enums.
 - `operator_console.shift_revocations` and `operator_console.shift_takeovers` are auditable workflow tables with required reason codes and actor references.
 - `operator_console.operator_device_bindings` is separate from `gates.gate_devices`; it models Operator Console browser/device trust and optional managed-device mTLS identity.
-- `operator_console.operator_access_evaluations` persists denied and controlled-action evaluations with correlation, user, device, shift, site, and target fields.
+- `operator_console.operator_device_assignment_history` captures reconstructable device/site assignment history because site assignment affects authorization.
+- `operator_console.operator_access_evaluations` persists only denied and controlled-action evaluations for MVP, with correlation, user, device, shift, site, and target fields. It does not persist every page load, tab switch, harmless read, or navigation event.
+- `operator_console.operator_access_evaluation_reasons` normalizes access evaluation reason rows with controlled reason codes, message/source context, and indexes for audit/reporting.
 - `discounts.statutory_entitlement_fingerprints` stores fingerprint hashes and salt/key references only, not raw statutory ID data or secret material.
+- `duplicate_detection_scope` remains a controlled-code/reference-data value, not a hard PostgreSQL enum. The initial recommended code family is `OPERATOR_CONSOLE_DUPLICATE_DETECTION_SCOPE`, with initial values `SAME_SESSION_ONLY`, `SAME_SITE_ACTIVE_DAY`, `SAME_SITE_GROUP_ACTIVE_DAY`, `GLOBAL_ACTIVE_DAY`, and `CONFIGURED_POLICY_WINDOW`.
 
 ## Unresolved Review Questions
 
-- Should access denial reasons remain as `text[]`, or should the approved migration use a child table for normalization and indexed reason-code search?
-- Should HR/Timekeeping source status be a provider-normalized text field, a controlled code set, or provider-specific enums?
-- Should Operator Console device/site assignment history be captured in a separate assignment history table in the first migration?
-- Should entitlement fingerprint duplicate detection scope be an enum, controlled code table, or varchar controlled by reference data?
-- Should `operator_access_evaluations` persist every read-only evaluation or only denied and controlled-action evaluations?
+- Evidence storage ownership remains open: Audit/Event, Central PMS, a dedicated Evidence service, or another controlled service boundary.
 
 ## Non-Payment Boundary
 
