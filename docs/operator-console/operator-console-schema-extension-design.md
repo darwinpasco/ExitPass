@@ -123,7 +123,10 @@ Proposed fields:
 | `scheduled_start_at` | Imported scheduled start. |
 | `scheduled_end_at` | Imported scheduled end. |
 | `source_imported_at` | Timestamp of latest import. |
-| `source_status` | Raw or normalized source status. |
+| `import_status_code` | ExitPass-controlled normalized import status. |
+| `source_system_code` | Raw source/provider system code for reporting and traceability. |
+| `source_status_code` | Raw provider status code from HR/Timekeeping. |
+| `source_status_description` | Raw provider status description, if supplied. |
 | `operational_status` | ExitPass access status. |
 | `active_from` | Operational access start, usually scheduled start or override. |
 | `active_to` | Operational access end, usually scheduled end or override. |
@@ -148,7 +151,10 @@ Proposed fields:
 | `external_shift_id_hash` | Hash of source shift ID. |
 | `source_payload_hash` | Hash of normalized imported payload. |
 | `source_payload_ref` | Controlled reference to retained import payload, if any. |
-| `source_status` | Imported status. |
+| `import_status_code` | ExitPass-controlled normalized import status at import time. |
+| `source_system_code` | Raw source/provider system code at import time. |
+| `source_status_code` | Raw provider status code at import time. |
+| `source_status_description` | Raw provider status description at import time, if supplied. |
 | `scheduled_start_at` | Imported scheduled start. |
 | `scheduled_end_at` | Imported scheduled end. |
 | `site_id` | Site from import or mapping. |
@@ -170,7 +176,7 @@ Proposed `operator_console.operator_shift_operational_status_enum`:
 - `CANCELLED`
 - `IMPORT_CONFLICT`
 
-Source HR statuses should be preserved separately as provider-normalized text or a provider-specific controlled code. ExitPass should not assume HR provider status vocabulary is stable across providers.
+Source HR statuses use two layers: ExitPass-controlled normalized import status plus raw source/provider status fields. ExitPass should not model every HR provider status as a PostgreSQL enum because provider vocabularies are not stable across providers.
 
 ### Access Semantics
 
@@ -318,20 +324,23 @@ Do not reuse `gates.gate_devices` for Operator Console browser bindings. Gate de
 
 ### Site Assignment
 
-Use `operator_device_bindings.site_id` for Operator Console access checks. If a later implementation needs assignment history, add `operator_console.operator_device_binding_assignments` rather than overloading `sites.device_assignments`.
+Use `operator_device_bindings.site_id` for current Operator Console access checks and include `operator_console.operator_device_assignment_history` in the first migration proposal. Device/site assignment affects authorization and must be reconstructable for audit. Do not overload `sites.device_assignments`.
 
 ## Operator Access Evaluation Evidence
 
 ### Persistence Recommendation
 
-Persist access evaluations for:
+For MVP, persist access evaluations only for:
 
-- all denied access attempts
-- all controlled action evaluations
-- all statutory validation start/decision evaluations
-- all shift takeover/revocation actions
+- denied access
+- statutory workflow start
+- statutory decision submission
+- evidence capture/view
+- supervisor override attempts
+- shift takeover requests/approvals
+- device trust failures
 
-Low-risk read-only page loads may be response-only unless policy requires a complete access ledger.
+Do not persist every page load, tab switch, harmless read, or purely navigational event.
 
 ### Proposed Table
 
@@ -345,7 +354,6 @@ Proposed fields:
 | `correlation_id` | Cross-service trace. |
 | `requested_action` | Controlled action code. |
 | `evaluation_status` | Proposed enum. |
-| `denial_reason_codes` | Controlled reason codes; array or child table. |
 | `operator_user_id` | FK to `identity.users`. |
 | `hr_timekeeping_identity_mapping_id` | FK to HR mapping. |
 | `operator_device_binding_id` | FK to device binding. |
@@ -365,9 +373,9 @@ Proposed `operator_console.access_evaluation_status_enum`:
 - `ALLOWED`
 - `DENIED`
 
-### Denial Reason Strategy
+### Access Evaluation Reason Strategy
 
-Use controlled reason codes, not DDL enum values at first, so new denial reasons can be governed without frequent enum migrations. If array storage is not desired, use child table `operator_console.operator_access_evaluation_denial_reasons`.
+Use normalized child rows in `operator_console.operator_access_evaluation_reasons`, not `text[]` storage. Reason rows should support controlled reason codes, message/source context, auditability, and reporting without frequent enum migrations.
 
 Initial controlled reason codes:
 
@@ -418,7 +426,7 @@ Proposed fields:
 | `fingerprint_algorithm_version` | Algorithm version. |
 | `salt_reference` | Reference to salt/pepper material, never the secret. |
 | `source_metadata_level` | Controlled code for fields used. |
-| `duplicate_detection_scope` | Site, site group, global, or policy scope. |
+| `duplicate_detection_scope` | Controlled-code/reference-data value, not a hard PostgreSQL enum. Initial recommended code family: `OPERATOR_CONSOLE_DUPLICATE_DETECTION_SCOPE`. |
 | `matched_existing_fingerprint_id` | Optional self-reference for duplicate detection. |
 | `fingerprint_status` | Proposed enum. |
 | `generated_at` | Generation timestamp. |
@@ -445,6 +453,14 @@ Recommended indexes:
 - Partial index for active fingerprints only if the selected database pattern supports it.
 
 Do not store raw statutory ID numbers, birth dates, or unmasked identity values in the fingerprint table. Store only hashes, algorithm metadata, and secret references.
+
+Initial duplicate detection scope values may include:
+
+- `SAME_SESSION_ONLY`
+- `SAME_SITE_ACTIVE_DAY`
+- `SAME_SITE_GROUP_ACTIVE_DAY`
+- `GLOBAL_ACTIVE_DAY`
+- `CONFIGURED_POLICY_WINDOW`
 
 ## Evidence Storage Ownership and Retention
 
