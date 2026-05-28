@@ -328,16 +328,39 @@ Use `operator_device_bindings.site_id` for current Operator Console access check
 
 ## Operator Access Evaluation Evidence
 
+### Timing Decision
+
+Access evaluation must run at workflow start before entering a controlled workflow such as statutory discount validation, shift takeover, evidence capture, supervisor override, or reporting/export.
+
+Access evaluation must also run again before every controlled action that mutates state, captures or views sensitive evidence, submits a decision, requests or approves takeover, revokes shift access, performs supervisor/compliance action, or exports reports.
+
+Controlled actions include:
+
+- start statutory validation workflow
+- submit statutory approval or rejection
+- capture evidence
+- view stored evidence
+- request shift takeover
+- approve or reject shift takeover
+- revoke shift
+- supervisor override
+- report export
+
+The access evaluation response is authoritative only at the time of the evaluated action. It must not be cached or reused as a long-lived permission grant because user status, role assignment, device status, site assignment, shift status, takeover state, or revocation state can change while an operator remains inside a workflow.
+
 ### Persistence Recommendation
 
-For MVP, persist access evaluations only for:
+Evaluation frequency is separate from persistence. For MVP, persist access evaluations only for:
 
 - denied access
-- statutory workflow start
-- statutory decision submission
-- evidence capture/view
+- controlled workflow start
+- statutory approval/rejection submission
+- evidence capture
+- stored evidence view
 - supervisor override attempts
-- shift takeover requests/approvals
+- shift takeover requests/approvals/rejections
+- shift revocation
+- report export
 - device trust failures
 
 Do not persist every page load, tab switch, harmless read, or purely navigational event.

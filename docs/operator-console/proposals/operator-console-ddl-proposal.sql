@@ -579,7 +579,7 @@ COMMENT ON TABLE operator_console.operator_access_evaluations IS
   'REVIEW ONLY proposal: persisted access evaluation evidence for denied access and controlled Operator Console actions only.';
 
 COMMENT ON COLUMN operator_console.operator_access_evaluations.requested_action IS
-  'Controlled action code. MVP persistence is limited to denied access, statutory workflow start, statutory decision submission, evidence capture/view, supervisor override attempts, shift takeover requests/approvals, and device trust failures; harmless reads/navigation are not persisted.';
+  'Controlled action code. Access evaluation runs at workflow start and before every controlled action, but MVP persistence remains limited to denied access and controlled-action evaluations such as statutory workflow start, statutory decision submission, evidence capture/view, supervisor override, shift takeover request/approval/rejection, shift revocation, report export, and device trust failures; harmless reads/navigation are not persisted.';
 
 CREATE INDEX ix_operator_access_evaluations__operator_time
 ON operator_console.operator_access_evaluations (operator_user_id, evaluated_at DESC);
