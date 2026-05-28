@@ -161,6 +161,59 @@ input {
   text-transform: uppercase;
 }
 
+.deviceShiftPanel {
+  display: grid;
+  gap: 18px;
+}
+
+.placeholderCopy {
+  color: #394957;
+  margin: 0;
+}
+
+.accessGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.accessBlock {
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.accessBlockHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.accessBlockHeader h3 {
+  font-size: 1rem;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.stateList {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.stateList li {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 6px;
+  color: #394957;
+  padding: 10px 12px;
+}
+
 .layoutGrid {
   display: grid;
   gap: 16px;
@@ -317,10 +370,15 @@ dd {
   .moduleOverview {
     grid-template-columns: 1fr;
   }
+
+  .accessGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (min-width: 761px) and (max-width: 1080px) {
-  .moduleOverview {
+  .moduleOverview,
+  .accessGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

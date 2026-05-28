@@ -1,8 +1,13 @@
 import { createOperatorConsoleApiClient, type OperatorConsoleApiClient } from "./apiClient";
 import { FormEvent, useMemo, useState } from "react";
 import type {
+  AccessGateResult,
+  DeviceTrustState,
+  DeviceTrustStatus,
   OperatorConsoleModule,
   OperatorSessionSummary,
+  ShiftAccessState,
+  ShiftAccessStatus,
   SessionLookupStatus,
   StatutoryDiscountReview
 } from "./types";
@@ -31,6 +36,34 @@ const validationStatuses = [
   "rejected",
   "expired"
 ];
+
+const deviceTrustStatuses: DeviceTrustStatus[] = ["pending", "active", "suspended", "revoked", "lost"];
+
+const shiftAccessStatuses: ShiftAccessStatus[] = ["scheduled", "active", "ended", "suspended"];
+
+const accessGateResults: AccessGateResult[] = [
+  "access allowed",
+  "device not registered",
+  "device suspended/revoked",
+  "no active shift",
+  "site mismatch"
+];
+
+const mockDeviceTrustState: DeviceTrustState = {
+  deviceId: "Device ID placeholder",
+  deviceName: "Operator kiosk placeholder",
+  siteAssignment: "Assigned site placeholder",
+  deviceStatus: "pending",
+  trustMechanism: "mTLS certificate or browser key binding placeholder"
+};
+
+const mockShiftAccessState: ShiftAccessState = {
+  operatorRole: "Operator role placeholder",
+  assignedSite: "Assigned site placeholder",
+  shiftStatus: "scheduled",
+  clockIn: "Clock-in placeholder",
+  clockOut: "Clock-out placeholder"
+};
 
 const operatorConsoleModules: OperatorConsoleModule[] = [
   {
@@ -154,6 +187,98 @@ export function App({ apiClient }: AppProps) {
                 <span className="moduleStatus">{module.status}</span>
               </article>
             ))}
+          </section>
+
+          <section className="panel deviceShiftPanel" aria-labelledby="device-shift-access-title">
+            <div className="panelHeader">
+              <p className="eyebrow">Read-only placeholder</p>
+              <h2 id="device-shift-access-title">Registered Device and Shift Access</h2>
+            </div>
+
+            <p className="placeholderCopy">
+              Device trust, active shift validation, and site assignment are represented as mock read-only states.
+              Backend identity, device, and shift validation will be wired in a later slice.
+            </p>
+
+            <div className="accessGrid">
+              <section className="accessBlock" aria-labelledby="device-trust-title">
+                <div className="accessBlockHeader">
+                  <h3 id="device-trust-title">Device trust state</h3>
+                  <span className="statusPill">{mockDeviceTrustState.deviceStatus}</span>
+                </div>
+
+                <dl className="summaryList">
+                  <div>
+                    <dt>Device ID</dt>
+                    <dd>{mockDeviceTrustState.deviceId}</dd>
+                  </div>
+                  <div>
+                    <dt>Device name</dt>
+                    <dd>{mockDeviceTrustState.deviceName}</dd>
+                  </div>
+                  <div>
+                    <dt>Site assignment</dt>
+                    <dd>{mockDeviceTrustState.siteAssignment}</dd>
+                  </div>
+                  <div>
+                    <dt>Device status values</dt>
+                    <dd>{deviceTrustStatuses.join(", ")}</dd>
+                  </div>
+                  <div>
+                    <dt>Trust mechanism</dt>
+                    <dd>{mockDeviceTrustState.trustMechanism}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section className="accessBlock" aria-labelledby="shift-state-title">
+                <div className="accessBlockHeader">
+                  <h3 id="shift-state-title">Shift state</h3>
+                  <span className="statusPill">{mockShiftAccessState.shiftStatus}</span>
+                </div>
+
+                <dl className="summaryList">
+                  <div>
+                    <dt>Operator role</dt>
+                    <dd>{mockShiftAccessState.operatorRole}</dd>
+                  </div>
+                  <div>
+                    <dt>Assigned site</dt>
+                    <dd>{mockShiftAccessState.assignedSite}</dd>
+                  </div>
+                  <div>
+                    <dt>Shift status values</dt>
+                    <dd>{shiftAccessStatuses.join(", ")}</dd>
+                  </div>
+                  <div>
+                    <dt>Clock-in</dt>
+                    <dd>{mockShiftAccessState.clockIn}</dd>
+                  </div>
+                  <div>
+                    <dt>Clock-out</dt>
+                    <dd>{mockShiftAccessState.clockOut}</dd>
+                  </div>
+                </dl>
+              </section>
+
+              <section className="accessBlock" aria-labelledby="access-gate-title">
+                <div className="accessBlockHeader">
+                  <h3 id="access-gate-title">Access gate result states</h3>
+                  <span className="statusPill">mock only</span>
+                </div>
+
+                <ul className="stateList">
+                  {accessGateResults.map((result) => (
+                    <li key={result}>{result}</li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+
+            <p className="notice">
+              This placeholder does not perform login, device enrollment, certificate handling, browser key
+              generation, shift mutation, or backend validation.
+            </p>
           </section>
 
           <section className="layoutGrid" aria-label="Session Lookup and Statutory Discount Validation workspace">
