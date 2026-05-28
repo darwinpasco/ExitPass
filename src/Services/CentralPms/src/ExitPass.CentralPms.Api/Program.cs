@@ -116,6 +116,7 @@ app.MapMopsTransactionEndpoints();
 app.MapReconciliationRunItemEndpoints();
 app.MapReconciliationExceptionLifecycleEndpoints();
 app.MapReconciliationEvaluationEndpoints();
+app.MapOperatorConsoleAccessEvaluationEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -195,6 +196,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationRunItems")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationExceptionLifecycle")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationEvaluation")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessEvaluation")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
                 .AddSource("ExitPass.CentralPms.Api.EventRecovery")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
