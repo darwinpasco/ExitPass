@@ -19,6 +19,14 @@ export type SessionLookupStatus =
   | "not found"
   | "ambiguous session";
 
+export type OperatorConsoleModuleStatus = "available" | "first module" | "planned";
+
+export interface OperatorConsoleModule {
+  name: string;
+  status: OperatorConsoleModuleStatus;
+  description: string;
+}
+
 export interface OperatorSessionSummary {
   parkingSessionReference: string;
   vehiclePlate: string;

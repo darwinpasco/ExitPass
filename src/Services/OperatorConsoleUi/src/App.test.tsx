@@ -23,6 +23,8 @@ describe("ExitPass Operator Console UI", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/operator-facing console for exitpass site workflows/i)).toBeInTheDocument();
     expect(screen.getByText(/statutory discount validation is the first module/i)).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: /operator console modules/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /navigation/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /session search/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/ticket number/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/plate number/i)).toBeInTheDocument();
@@ -35,11 +37,26 @@ describe("ExitPass Operator Console UI", () => {
     expect(screen.getAllByText(/payment status/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/payment status will appear here as read-only context/i)).toBeInTheDocument();
     expect(screen.getByText(/payable-basis status/i)).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /statutory discount validation/i })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: /statutory discount validation/i }).length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/senior citizen/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^pwd$/i)).toBeInTheDocument();
     expect(screen.getByText("not searched")).toBeInTheDocument();
     expect(screen.getByText(/enter a ticket number or plate number/i)).toBeInTheDocument();
+  });
+
+  it("OperatorConsole_WhenRendered_ShowsPlatformModulePlaceholders", () => {
+    render(<App />);
+
+    expect(screen.getAllByText("Session Lookup").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Statutory Discount Validation").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Registered Device and Shift Access").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Supervisor Review and Overrides").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Audit and Reporting").length).toBeGreaterThan(0);
+    expect(screen.getByText(/find parking sessions by ticket or plate/i)).toBeInTheDocument();
+    expect(screen.getByText(/initial module for senior citizen and pwd validation review/i)).toBeInTheDocument();
+    expect(screen.getByText(/device registration and shift-based operator access/i)).toBeInTheDocument();
+    expect(screen.getByText(/supervised review paths and override workflows/i)).toBeInTheDocument();
+    expect(screen.getByText(/operational audit trails and reporting views/i)).toBeInTheDocument();
   });
 
   it("OperatorConsole_IsSeparateFromWebPay", () => {
@@ -57,6 +74,17 @@ describe("ExitPass Operator Console UI", () => {
     expect(screen.queryByLabelText(/coupon/i)).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/coupon/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply coupon/i })).not.toBeInTheDocument();
+  });
+
+  it("OperatorConsole_DoesNotExposePaymentExitOrGateControls", () => {
+    render(<App />);
+
+    expect(screen.queryByRole("button", { name: /pay/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /refund/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /mark paid/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /authorize exit/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /open gate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /gate/i })).not.toBeInTheDocument();
   });
 
   it("OperatorConsole_WhenRendered_DoesNotCallCouponPaymentOrExitApis", () => {
