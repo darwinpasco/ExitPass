@@ -1,6 +1,6 @@
 # ExitPass Operator Console Statutory Validation and Access Contract
 
-Status: design proposal for ExitPass v1.2
+Status: decision-locked design proposal for ExitPass v1.2
 
 References:
 - ExitPass Operator Console BRD v1.0
@@ -8,6 +8,19 @@ References:
 - Operator Console frontend module shell in `src/Services/OperatorConsoleUi`
 
 This document freezes the proposed backend-facing contract before implementation. It is a design slice only and does not introduce runtime behavior, database changes, API contract files, or service code.
+
+## Settled Product Decisions
+
+- HR/Timekeeping is the source of imported shift schedule and roster data.
+- Operators must still be registered as ExitPass users, and ExitPass user IDs must map to HR/Timekeeping identities.
+- Imported shifts provide the time source, but ExitPass remains the operational access authority for controlled Operator Console actions.
+- Shift revocation and controlled shift takeover are Operator Console workflows and must be audited.
+- The device registry model supports both mTLS and browser key binding.
+- MVP device enforcement may use browser key binding first for Operator Console browser/device binding. mTLS should be enforced for managed site devices once certificate issuance, renewal, and revocation are operationalized at the API gateway or reverse proxy layer.
+- Statutory Discount Validation MVP uses one-step operator approval.
+- Supervisor review and override are later scope and should be added by policy.
+- Image capture is site-configurable. Structured ID metadata plus backend-generated entitlement fingerprinting is the default minimum evidence path. Cropped ID image evidence is required only when enabled by site policy or regulation.
+- The non-payment boundary remains unchanged.
 
 ## Scope
 
@@ -18,6 +31,8 @@ Payment collection is out of scope. The Operator Console must not accept, proces
 ## Access Evaluation
 
 Access evaluation is the backend gate used before controlled Operator Console actions, including statutory discount validation decisions.
+
+ExitPass evaluates operational access even though shift schedule data is imported from HR/Timekeeping. The access evaluator must map the ExitPass operator user to an HR/Timekeeping identity before accepting imported shift context.
 
 ### Proposed Endpoint
 
@@ -32,6 +47,7 @@ This endpoint evaluates the caller, device, shift, and site context. It does not
   "correlationId": "corr_01HZ...",
   "requestedAction": "statutory_discount.approve",
   "operatorUserId": "usr_123",
+  "hrTimekeepingIdentityId": "hr_456",
   "operatorRole": "cashier",
   "deviceId": "dev_123",
   "siteId": "site_001",
@@ -52,6 +68,7 @@ This endpoint evaluates the caller, device, shift, and site context. It does not
   "denialReasons": [],
   "user": {
     "operatorUserId": "usr_123",
+    "hrTimekeepingIdentityId": "hr_456",
     "role": "cashier",
     "roleAllowed": true
   },
@@ -59,7 +76,8 @@ This endpoint evaluates the caller, device, shift, and site context. It does not
     "deviceId": "dev_123",
     "deviceName": "North Exit Kiosk 02",
     "status": "active",
-    "trustMechanism": "mtls_certificate",
+    "trustMechanisms": ["browser_key_binding", "mtls_certificate"],
+    "enforcementPhase": "browser_key_binding",
     "trusted": true
   },
   "siteAssignment": {
@@ -70,9 +88,17 @@ This endpoint evaluates the caller, device, shift, and site context. It does not
   },
   "shift": {
     "shiftId": "shift_123",
+    "source": "hr_timekeeping_import",
+    "hrTimekeepingShiftId": "hrshift_789",
     "status": "active",
     "siteId": "site_001",
-    "activeAt": "2026-05-28T02:00:00Z"
+    "activeAt": "2026-05-28T02:00:00Z",
+    "revoked": false,
+    "takeover": {
+      "active": false,
+      "takeoverId": null,
+      "originalOperatorUserId": null
+    }
   },
   "audit": {
     "logged": true,
@@ -99,11 +125,32 @@ This endpoint evaluates the caller, device, shift, and site context. It does not
 - `SHIFT_NOT_FOUND`
 - `SHIFT_NOT_ACTIVE`
 - `SHIFT_SUSPENDED`
+- `SHIFT_REVOKED`
+- `SHIFT_TAKEOVER_NOT_APPROVED`
 - `SESSION_NOT_PROVIDED`
 - `SESSION_SITE_MISMATCH`
 - `ACTION_NOT_SUPPORTED`
 
 Denied responses must include one or more denial reason codes and must still write an audit event.
+
+### Shift Source and Takeover Rules
+
+HR/Timekeeping is the source of imported shift schedule data. ExitPass owns the operational access decision. Imported shift records must be associated with an ExitPass user through an HR/Timekeeping identity mapping before they can authorize actions.
+
+Shifts may be revoked by policy or imported state. Revoked shifts must deny controlled actions even if their scheduled time window would otherwise be active.
+
+A user may take over another user's shift only through a controlled Operator Console takeover workflow. Takeover approval must create an auditable takeover record linking the original operator, takeover operator, shift, site, approver where applicable, reason code, and timestamps. Access evaluation must deny takeover use unless that controlled workflow has approved the takeover.
+
+### Device Trust Model
+
+The device registry model supports both browser key binding and mTLS certificate trust.
+
+For managed operator devices, the target architecture should use both when operationally feasible. MVP enforcement may phase this:
+
+- browser key binding first for Operator Console browser/device binding
+- mTLS later at the API gateway or reverse proxy layer once certificate issuance, renewal, and revocation operations are ready
+
+This contract does not implement certificate issuance, browser key generation, or gateway enforcement.
 
 ## Session Lookup
 
@@ -164,7 +211,7 @@ For `ambiguous`, the response should include a bounded `matches` array with non-
 
 ## Statutory Discount Validation Lifecycle
 
-The module may be implemented as either a multi-step lifecycle or a single submit decision flow. The recommended MVP contract is a start endpoint plus an idempotent decision endpoint. This keeps the audit trail explicit while avoiding premature workflow complexity.
+The MVP approval model is one-step operator approval. The recommended MVP contract is a start endpoint plus an idempotent decision endpoint. This keeps the audit trail explicit while avoiding premature workflow complexity.
 
 ### Start Validation
 
@@ -258,7 +305,7 @@ Response DTO:
 
 ### Optional Review Endpoints
 
-If policy requires supervisor review, add these later:
+Supervisor-reviewable approval and override are later scope. If policy requires supervisor review in a later slice, add these endpoints:
 
 - `POST /v1/operator-console/statutory-discounts/validations/{validationId}/submit-review`
 - `POST /v1/operator-console/statutory-discounts/validations/{validationId}/supervisor-decision`
@@ -288,6 +335,8 @@ Before implementation, confirm the actual database enum/check constraint values 
 
 Evidence storage is backend-owned and must not be invented by the frontend. The validation decision accepts evidence references only after an evidence service or storage contract exists.
 
+Image capture is configurable by site. The default minimum evidence path is structured ID metadata plus a backend-generated entitlement fingerprint. Cropped ID image evidence is required only when enabled by site policy or regulation.
+
 Evidence references should include:
 
 - evidence reference ID
@@ -296,6 +345,7 @@ Evidence references should include:
 - storage classification
 - hash or integrity token if available
 - capture timestamp
+- site policy requirement indicator
 
 No raw image bytes should be included in the decision endpoint.
 
@@ -321,6 +371,8 @@ Audit events are required for:
 
 - access evaluation attempts, allowed and denied
 - session lookup attempts and outcomes
+- shift revocation events that affect Operator Console access
+- shift takeover request, approval, rejection, and use
 - statutory validation start
 - evidence reference association
 - discount type selection
@@ -335,6 +387,7 @@ Required audit fields:
 - correlation ID
 - audit event ID
 - operator user ID
+- HR/Timekeeping identity ID
 - operator role
 - session ID
 - parking session reference where available
@@ -342,6 +395,8 @@ Required audit fields:
 - site ID
 - site group ID where available
 - shift ID
+- HR/Timekeeping shift ID
+- shift takeover ID where applicable
 - access evaluation ID
 - evidence level
 - evidence reference IDs
@@ -394,10 +449,6 @@ Recommended status mappings:
 
 ## Open Questions
 
-- Are operator shift records native ExitPass records or imported from an external roster/timekeeping source?
-- Does MVP device trust use mTLS, browser key binding, or both?
-- Is statutory approval always one-step, or can site policy require supervisor review before approval is applied?
-- Is image capture mandatory per site policy, or optional by configuration?
 - Which existing v1.2 DDL status values should be reused exactly for statutory validation storage?
 - Which service owns evidence storage and retention policy?
 - Should access evaluation be called once per workflow start or before every controlled action?
