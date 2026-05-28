@@ -417,7 +417,7 @@ public sealed class WebPayPaymentIntentHandlerTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasProviderSession_ReturnsResumeHandoff()
     {
-        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
         fixture.CentralPms.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -524,7 +524,7 @@ public sealed class WebPayPaymentIntentHandlerTests
     [Fact]
     public async Task WebPayParkingSessionResolve_WhenCentralPmsReturnsSummaryFields_DoesNotCreatePaymentAttemptOrHandoff()
     {
-        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
         fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
             new CentralPmsResolvedParking(
                 ParkingSessionId,
@@ -577,7 +577,7 @@ public sealed class WebPayPaymentIntentHandlerTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasNoProviderSession_RecoversAndCreatesFreshHandoff()
     {
-        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
         fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -608,7 +608,7 @@ public sealed class WebPayPaymentIntentHandlerTests
     public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasBlankCheckoutUrl_RecoversAndDoesNotDuplicateProviderSessions(
         string? checkoutUrl)
     {
-        var fixture = CreateFixture("QRPH", "PAYMONGO", "AUB");
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
         fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,

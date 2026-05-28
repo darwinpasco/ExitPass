@@ -113,7 +113,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     public async Task WebPayPaymentIntent_WhenAllowedMethodRoutesToPayMongo_SendsCheckoutSessionProviderAndSelectedMethod(
         string paymentMethod)
     {
-        var state = new WebPayEndpointState(paymentMethod, "PAYMONGO", "AUB");
+        var state = new WebPayEndpointState(paymentMethod, "PAYMONGO", null);
         using var client = CreateClient(state);
 
         using var response = await client.PostAsJsonAsync(Route, DefaultRequest(paymentMethod));
@@ -215,7 +215,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasCheckoutUrl_ReturnsResumePaymentUrl()
     {
-        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         state.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -260,7 +260,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayPaymentIntent_WhenActivePaymentAttemptIsOrphan_RecoversAndReturnsFreshHandoff()
     {
-        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         state.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -294,7 +294,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     [Fact]
     public async Task WebPayParkingSessionResolve_WhenSessionResolved_ReturnsSummaryWithoutCreatingPaymentAttempt()
     {
-        var state = new WebPayEndpointState("QRPH", "PAYMONGO", "AUB");
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
         state.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(new CentralPmsResolvedParking(
             Guid.Parse("44444444-4444-4444-4444-444444444444"),
             Guid.Parse("55555555-5555-5555-5555-555555555555"),

@@ -40,10 +40,10 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
     }
 
     /// <summary>
-    /// Verifies that the local/testing QRPh override patch remains idempotent and leaves other methods unchanged.
+    /// Verifies that the local/testing override patch keeps every current WebPay method PayMongo-only.
     /// </summary>
     [Fact]
-    public async Task ResolveRoute_WhenQrphPayMongoOverridePatchIsApplied_RoutesQrphToPayMongoAndLeavesOtherMethodsUnchanged()
+    public async Task ResolveRoute_WhenPayMongoOverridePatchIsApplied_RoutesCurrentWebPayMethodsToPayMongoOnly()
     {
         await EnsureRoutingPolicySchemaAsync();
         await ApplyPatchAsync("ExitPass_QrphPayMongoRoutingOverride_v1.2.sql");
@@ -68,8 +68,8 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
         Assert.Null(maya.FallbackProviderCode);
 
         Assert.True(card.IsRouted);
-        Assert.Equal(ProviderCode.Aub, card.SelectedProviderCode);
-        Assert.Equal(ProviderCode.PayMongo, card.FallbackProviderCode);
+        Assert.Equal(ProviderCode.PayMongo, card.SelectedProviderCode);
+        Assert.Null(card.FallbackProviderCode);
     }
 
     /// <summary>
@@ -85,7 +85,8 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
             siteId,
             PaymentMethodCode.QrPh,
             primaryProviderCode: ProviderCode.PayMongo,
-            fallbackProviderCode: ProviderCode.Aub);
+            fallbackProviderCode: null,
+            fallbackProviderEnabled: false);
 
         try
         {
@@ -97,7 +98,7 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
 
             Assert.True(result.IsRouted);
             Assert.Equal(ProviderCode.PayMongo, result.SelectedProviderCode);
-            Assert.Equal(ProviderCode.Aub, result.FallbackProviderCode);
+            Assert.Null(result.FallbackProviderCode);
             Assert.Equal(ProviderRoutingReason.PrimaryProviderSelected, result.RoutingReason);
         }
         finally
@@ -107,10 +108,10 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
     }
 
     /// <summary>
-    /// Verifies that a disabled primary provider selects the configured fallback provider from the database.
+    /// Verifies that a disabled primary provider does not fall back for current PayMongo-only WebPay methods.
     /// </summary>
     [Fact]
-    public async Task ResolveRoute_WhenPrimaryDisabled_ReturnsFallbackProvider()
+    public async Task ResolveRoute_WhenPrimaryDisabledForCurrentWebPayMethod_ReturnsNoRoute()
     {
         await EnsureRoutingPolicySchemaAsync();
         var siteId = Guid.NewGuid();
@@ -118,9 +119,10 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
         await InsertSiteOverrideAsync(
             siteId,
             PaymentMethodCode.Card,
-            primaryProviderCode: ProviderCode.Aub,
-            fallbackProviderCode: ProviderCode.PayMongo,
-            primaryProviderEnabled: false);
+            primaryProviderCode: ProviderCode.PayMongo,
+            fallbackProviderCode: null,
+            primaryProviderEnabled: false,
+            fallbackProviderEnabled: false);
 
         try
         {
@@ -130,9 +132,9 @@ public sealed class PaymentProviderRoutingPolicyResolverIntegrationTests
                 CreateRequest(PaymentMethodCode.Card, siteId: siteId),
                 CancellationToken.None);
 
-            Assert.True(result.IsRouted);
-            Assert.Equal(ProviderCode.PayMongo, result.SelectedProviderCode);
-            Assert.Equal(ProviderRoutingReason.FallbackProviderSelectedPrimaryDisabled, result.RoutingReason);
+            Assert.False(result.IsRouted);
+            Assert.Null(result.SelectedProviderCode);
+            Assert.Equal(ProviderRoutingReason.NoRoute, result.ErrorCode);
         }
         finally
         {

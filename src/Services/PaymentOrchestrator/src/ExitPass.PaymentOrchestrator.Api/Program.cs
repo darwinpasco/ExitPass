@@ -11,7 +11,6 @@ using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers;
-using ExitPass.PaymentOrchestrator.Infrastructure.Providers.Aub;
 using ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 using ExitPass.PaymentOrchestrator.Infrastructure.Routing;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
@@ -242,20 +241,12 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     });
 
     services.AddHttpClient<PayMongoClient>();
-    services.AddHttpClient<AubClient>();
-    services.AddSingleton<IAubRequestSigner, AubDeferredRequestSigner>();
-
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
     services.AddScoped<IProviderWebhookEventRepository, ProviderWebhookEventRepository>();
     services.AddScoped<IPaymentProviderRoutingPolicyResolver, PaymentProviderRoutingPolicyResolver>();
 
-    services.AddScoped<AubPaymentAdapter>();
     services.AddScoped<PayMongoCheckoutAdapter>();
     services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
-    services.AddSingleton(new PaymentProviderAdapterRegistration(
-        ProviderCode: "AUB",
-        ProviderProduct: "AUB_CARD_CASHIER",
-        CreateAdapter: static serviceProvider => serviceProvider.GetRequiredService<AubPaymentAdapter>()));
     services.AddSingleton(new PaymentProviderAdapterRegistration(
         ProviderCode: "PAYMONGO",
         ProviderProduct: "PAYMONGO_CHECKOUT_SESSION",
@@ -268,9 +259,6 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
             static options => options.Validate().Count == 0,
             "Payments:Providers:PayMongo contains invalid production settings.")
         .ValidateOnStart();
-
-    services.AddOptions<AubOptions>()
-        .Bind(configuration.GetSection(AubOptions.SectionName));
 }
 
 static void ValidateCriticalConfiguration(IConfiguration configuration)
