@@ -619,13 +619,11 @@ WHERE statutory_discount_validation_id IN (
     WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'
       AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
       AND validation_channel = 'OPERATOR_ASSISTED'
-      AND validation_status IN ('REQUESTED', 'PENDING_OPERATOR_REVIEW')
 );
 
 DELETE FROM discounts.statutory_discount_validations
 WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'
   AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
-  AND validation_channel = 'OPERATOR_ASSISTED'
-  AND validation_status IN ('REQUESTED', 'PENDING_OPERATOR_REVIEW');
+  AND validation_channel = 'OPERATOR_ASSISTED';
 
 COMMIT;
