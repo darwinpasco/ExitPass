@@ -204,6 +204,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
                 .AddSource("ExitPass.CentralPms.Api.EventRecovery")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
@@ -374,6 +375,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDecisionWriter>(_ =>
         new OperatorConsoleStatutoryDiscountDecisionWriter(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDecisionService, OperatorConsoleStatutoryDiscountDecisionService>();
+    builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>(_ =>
+        new OperatorConsoleStatutoryDiscountApplyPayableBasisWriter(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountApplyPayableBasisService, OperatorConsoleStatutoryDiscountApplyPayableBasisService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
