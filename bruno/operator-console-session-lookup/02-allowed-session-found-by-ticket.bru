@@ -1,0 +1,43 @@
+meta {
+  name: 02 Allowed session found by ticket reference
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/sessions/lookup
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "parkingSessionId": null,
+    "ticketReference": "{{ticketReference_allowed}}",
+    "plateNumber": null,
+    "lookupMode": "TICKET_REFERENCE",
+    "idempotencyKey": "manual-session-lookup-by-ticket-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("returns persisted ALLOWED access and ticket-matched session details", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.accessDecision).to.equal("ALLOWED");
+    expect(res.body.accessPersisted).to.equal(true);
+    expect(res.body.accessEvaluationId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    expect(res.body.sessionFound).to.equal(true);
+    expect(res.body.ticketReference).to.equal(bru.getEnvVar("ticketReference_allowed"));
+  });
+}

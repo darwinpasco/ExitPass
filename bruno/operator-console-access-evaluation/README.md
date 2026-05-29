@@ -81,7 +81,7 @@ Stable fixture IDs:
 | `operatorShiftId_allowed` | `77000000-0000-0000-0000-000000000050` | Active shift for the allowed operator |
 | `operatorShiftId_inactiveHrMapping` | `77000000-0000-0000-0000-000000000051` | Active shift tied to suspended HR mapping user |
 | `operatorShiftId_inactive` | `77000000-0000-0000-0000-000000000052` | Ended shift for no-active-shift case |
-| `parkingSessionId_allowed` | `77000000-0000-0000-0000-000000000090` | Synthetic target entity ID only; no parking session row is seeded |
+| `parkingSessionId_allowed` | `77000000-0000-0000-0000-000000000090` | Active parking session fixture for session lookup; used as a target entity ID by access evaluation |
 
 Correlation and idempotency guidance:
 

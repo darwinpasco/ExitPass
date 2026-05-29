@@ -96,6 +96,77 @@ SET site_group_id = EXCLUDED.site_group_id,
     effective_to = EXCLUDED.effective_to,
     updated_at = now();
 
+INSERT INTO identity.service_identities (
+    service_identity_id,
+    service_identity_code,
+    service_identity_name,
+    identity_type,
+    identity_status,
+    owning_service_name,
+    credential_type,
+    effective_from,
+    effective_to
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000003',
+    'MANUAL_TEST_OPERATOR_ACCESS_FIXTURE_SERVICE',
+    'Manual Test Operator Access Fixture Service',
+    'INTERNAL_SERVICE',
+    'ACTIVE',
+    'Central PMS Manual Fixtures',
+    'NONE',
+    '2020-01-01T00:00:00Z',
+    '2035-01-01T00:00:00Z'
+)
+ON CONFLICT (service_identity_id) DO UPDATE
+SET service_identity_code = EXCLUDED.service_identity_code,
+    service_identity_name = EXCLUDED.service_identity_name,
+    identity_type = EXCLUDED.identity_type,
+    identity_status = EXCLUDED.identity_status,
+    owning_service_name = EXCLUDED.owning_service_name,
+    credential_type = EXCLUDED.credential_type,
+    effective_from = EXCLUDED.effective_from,
+    effective_to = EXCLUDED.effective_to,
+    updated_at = now();
+
+INSERT INTO integration.vendor_systems (
+    vendor_system_id,
+    vendor_code,
+    vendor_name,
+    vendor_system_type,
+    vendor_system_status,
+    environment_code,
+    owner_team,
+    effective_from,
+    effective_to,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000004',
+    'MANUAL_TEST_OPERATOR_ACCESS_VENDOR_PMS',
+    'Manual Test Operator Access Vendor PMS',
+    'VENDOR_PMS',
+    'ACTIVE',
+    'LOCAL',
+    'Central PMS Manual Fixtures',
+    '2020-01-01T00:00:00Z',
+    '2035-01-01T00:00:00Z',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT (vendor_system_id) DO UPDATE
+SET vendor_code = EXCLUDED.vendor_code,
+    vendor_name = EXCLUDED.vendor_name,
+    vendor_system_type = EXCLUDED.vendor_system_type,
+    vendor_system_status = EXCLUDED.vendor_system_status,
+    environment_code = EXCLUDED.environment_code,
+    owner_team = EXCLUDED.owner_team,
+    effective_from = EXCLUDED.effective_from,
+    effective_to = EXCLUDED.effective_to,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
 INSERT INTO identity.users (
     user_id,
     username,
@@ -489,6 +560,56 @@ SET hr_provider_code = EXCLUDED.hr_provider_code,
     revocation_reason_code = EXCLUDED.revocation_reason_code,
     current_takeover_id = EXCLUDED.current_takeover_id,
     correlation_id = EXCLUDED.correlation_id,
+    updated_at = now();
+
+INSERT INTO core.parking_sessions (
+    parking_session_id,
+    site_group_id,
+    site_id,
+    vendor_system_id,
+    vendor_session_ref,
+    plate_number_hash,
+    plate_number_masked,
+    ticket_number_hash,
+    ticket_number_masked,
+    entry_at,
+    vendor_session_status,
+    session_status,
+    correlation_id,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000090',
+    '77000000-0000-0000-0000-000000000001',
+    '77000000-0000-0000-0000-000000000002',
+    '77000000-0000-0000-0000-000000000004',
+    'MANUAL-SESSION-LOOKUP-001',
+    'db0f3cc6d7f064c0472ee745c6afdce3c097959263e75784f9f8df5fe2e07ecf',
+    'ABC-1234',
+    'af56738409b6803992ba87c54bf00fc2b2c29de870fbae5fadaac3c6f242db08',
+    'MANUAL-SESSION-LOOKUP-001',
+    '2026-05-29T00:00:00Z',
+    'ACTIVE',
+    'ACTIVE',
+    '77000000-0000-0000-0000-0000000000f0',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT (parking_session_id) DO UPDATE
+SET site_group_id = EXCLUDED.site_group_id,
+    site_id = EXCLUDED.site_id,
+    vendor_system_id = EXCLUDED.vendor_system_id,
+    vendor_session_ref = EXCLUDED.vendor_session_ref,
+    plate_number_hash = EXCLUDED.plate_number_hash,
+    plate_number_masked = EXCLUDED.plate_number_masked,
+    ticket_number_hash = EXCLUDED.ticket_number_hash,
+    ticket_number_masked = EXCLUDED.ticket_number_masked,
+    entry_at = EXCLUDED.entry_at,
+    vendor_session_status = EXCLUDED.vendor_session_status,
+    session_status = EXCLUDED.session_status,
+    correlation_id = EXCLUDED.correlation_id,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
 COMMIT;
