@@ -357,6 +357,7 @@ static void ConfigureApplicationServices(
         new GateDeviceIdentityValidator(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationReadRepository>(_ =>
         new OperatorConsoleAccessEvaluationReadRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleAccessEvaluationService, OperatorConsoleAccessEvaluationService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();

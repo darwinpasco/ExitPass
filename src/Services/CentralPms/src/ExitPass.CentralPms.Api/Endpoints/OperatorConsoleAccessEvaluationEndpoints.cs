@@ -1,19 +1,17 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
 
 /// <summary>
-/// Operator Console access evaluation endpoint skeleton.
-///
-/// This placeholder is intentionally fail-closed and must not be treated as production access logic.
-/// The database-backed role, device, shift, takeover, site, and evidence-access checks are a later slice.
+/// Operator Console access evaluation endpoint.
 ///
 /// ExitPass v1.2 Invariants Enforced:
-/// - This skeleton never creates or mutates PaymentAttempt, PaymentConfirmation, ExitAuthorization,
+/// - This endpoint never creates or mutates PaymentAttempt, PaymentConfirmation, ExitAuthorization,
 ///   provider outcome, gate consume, coupon application, settlement truth, or payment finality.
-/// - This skeleton does not persist access evaluations.
+/// - This endpoint does not persist access evaluations.
 /// </summary>
 public static class OperatorConsoleAccessEvaluationEndpoints
 {
@@ -34,9 +32,10 @@ public static class OperatorConsoleAccessEvaluationEndpoints
         return app;
     }
 
-    private static IResult EvaluateAsync(
+    private static async Task<IResult> EvaluateAsync(
         OperatorConsoleAccessEvaluationRequest request,
         HttpRequest httpRequest,
+        IOperatorConsoleAccessEvaluationService service,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP EvaluateOperatorConsoleAccess", ActivityKind.Server);
@@ -47,39 +46,57 @@ public static class OperatorConsoleAccessEvaluationEndpoints
         activity?.SetTag("correlation_id", request.CorrelationId);
         activity?.SetTag("workflow_code", request.WorkflowCode);
         activity?.SetTag("controlled_action_code", request.ControlledActionCode);
-        activity?.SetTag("access_evaluation_decision", "NOT_IMPLEMENTED");
+
+        var result = await service.EvaluateAsync(
+            new OperatorConsoleAccessEvaluationCommand(
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.OperatorShiftId,
+                request.WorkflowCode,
+                request.ControlledActionCode,
+                request.ParkingSessionId,
+                request.EvidenceAccessIntent,
+                request.IdempotencyKey,
+                request.CorrelationId),
+            httpRequest.HttpContext.RequestAborted);
+
+        activity?.SetTag("access_evaluation_decision", result.Decision);
+        activity?.SetTag("access_evaluation_allowed", result.Allowed);
         activity?.SetStatus(ActivityStatusCode.Ok);
 
         logger.LogInformation(
-            "Operator Console access evaluation skeleton denied request. workflow_code={WorkflowCode} controlled_action_code={ControlledActionCode}",
+            "Operator Console access evaluated. workflow_code={WorkflowCode} controlled_action_code={ControlledActionCode} decision={Decision} allowed={Allowed}",
             request.WorkflowCode,
-            request.ControlledActionCode);
+            request.ControlledActionCode,
+            result.Decision,
+            result.Allowed);
 
-        // Fail closed until the database-backed access evaluator is implemented. This response is a route/DTO
-        // skeleton only and must not be interpreted as production authorization logic.
-        var response = new OperatorConsoleAccessEvaluationResponse(
-            EvaluationId: Guid.Empty,
-            Allowed: false,
-            Decision: "NOT_IMPLEMENTED",
-            DenialReasons: new[] { "ACCESS_EVALUATION_NOT_IMPLEMENTED" },
-            EffectiveRole: null,
-            DeviceTrust: new OperatorConsoleDeviceTrustDto(
-                request.OperatorDeviceBindingId,
-                "NOT_EVALUATED",
-                "UNKNOWN",
-                Trusted: false),
-            ShiftContext: new OperatorConsoleShiftContextDto(
-                request.OperatorShiftId,
-                "NOT_EVALUATED",
-                Active: false),
-            SiteContext: new OperatorConsoleSiteContextDto(
-                request.SiteId,
-                request.SiteGroupId,
-                Assigned: false),
-            EvaluatedAt: DateTimeOffset.UnixEpoch,
-            Persisted: false,
-            CorrelationId: request.CorrelationId);
-
-        return Results.Ok(response);
+        return Results.Ok(ToContract(result));
     }
+
+    private static OperatorConsoleAccessEvaluationResponse ToContract(OperatorConsoleAccessEvaluationResult result) =>
+        new(
+            result.EvaluationId,
+            result.Allowed,
+            result.Decision,
+            result.DenialReasons,
+            result.EffectiveRole,
+            new OperatorConsoleDeviceTrustDto(
+                result.DeviceTrust.OperatorDeviceBindingId,
+                result.DeviceTrust.Status,
+                result.DeviceTrust.TrustLevel,
+                result.DeviceTrust.Trusted),
+            new OperatorConsoleShiftContextDto(
+                result.ShiftContext.OperatorShiftId,
+                result.ShiftContext.Status,
+                result.ShiftContext.Active),
+            new OperatorConsoleSiteContextDto(
+                result.SiteContext.SiteId,
+                result.SiteContext.SiteGroupId,
+                result.SiteContext.Assigned),
+            result.EvaluatedAt,
+            result.Persisted,
+            result.CorrelationId);
 }
