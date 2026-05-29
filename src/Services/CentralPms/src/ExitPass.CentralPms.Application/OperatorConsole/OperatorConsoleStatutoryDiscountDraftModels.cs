@@ -42,6 +42,7 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResult(
     string? EntitlementType,
     string? ValidationStatus,
     bool EvidenceCaptureRequired,
+    bool ReusedExistingDraft,
     string? IneligibilityReason,
     string? ErrorCode,
     Guid CorrelationId);
@@ -63,4 +64,31 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
 public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceResult(
     Guid DraftId,
     string ValidationStatus,
-    bool Persisted);
+    bool Persisted,
+    bool ReusedExistingDraft);
+
+/// <summary>
+/// Raised when an existing statutory discount validation blocks a new draft but is not reusable as an active draft.
+/// </summary>
+public sealed class OperatorConsoleStatutoryDiscountDraftAlreadyExistsException : InvalidOperationException
+{
+    /// <summary>
+    /// Creates a duplicate statutory discount draft exception.
+    /// </summary>
+    public OperatorConsoleStatutoryDiscountDraftAlreadyExistsException(Guid parkingSessionId, string entitlementType)
+        : base("An active statutory discount validation already exists for the parking session and entitlement type.")
+    {
+        ParkingSessionId = parkingSessionId;
+        EntitlementType = entitlementType;
+    }
+
+    /// <summary>
+    /// Parking session blocked by an existing statutory discount validation.
+    /// </summary>
+    public Guid ParkingSessionId { get; }
+
+    /// <summary>
+    /// Entitlement type blocked by an existing statutory discount validation.
+    /// </summary>
+    public string EntitlementType { get; }
+}

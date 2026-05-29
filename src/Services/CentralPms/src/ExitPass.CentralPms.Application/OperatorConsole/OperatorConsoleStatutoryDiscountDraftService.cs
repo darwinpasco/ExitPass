@@ -122,6 +122,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             entitlementType,
             draft.ValidationStatus,
             command.EvidenceCaptureRequested,
+            draft.ReusedExistingDraft,
             IneligibilityReason: null,
             ErrorCode: null,
             persistedEvaluation.CorrelationId);
@@ -143,6 +144,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             Normalize(command.EntitlementType),
             ValidationStatus: null,
             command.EvidenceCaptureRequested,
+            ReusedExistingDraft: false,
             IneligibilityReason: "ACCESS_DENIED",
             ErrorCode: null,
             persistedEvaluation.CorrelationId);
@@ -165,6 +167,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             Normalize(command.EntitlementType),
             ValidationStatus: null,
             command.EvidenceCaptureRequested,
+            ReusedExistingDraft: false,
             ineligibilityReason,
             errorCode,
             persistedEvaluation.CorrelationId);

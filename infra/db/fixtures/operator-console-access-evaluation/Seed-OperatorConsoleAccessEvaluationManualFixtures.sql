@@ -612,4 +612,10 @@ SET site_group_id = EXCLUDED.site_group_id,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
+DELETE FROM discounts.statutory_discount_validations
+WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'
+  AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
+  AND validation_channel = 'OPERATOR_ASSISTED'
+  AND validation_status IN ('REQUESTED', 'PENDING_OPERATOR_REVIEW');
+
 COMMIT;

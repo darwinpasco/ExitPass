@@ -108,6 +108,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DRAFT_REQUEST", ex.Message, request.CorrelationId));
         }
+        catch (OperatorConsoleStatutoryDiscountDraftAlreadyExistsException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.Conflict(BuildError("STATUTORY_DISCOUNT_DRAFT_ALREADY_EXISTS", ex.Message, request.CorrelationId));
+        }
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
@@ -146,6 +151,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.EntitlementType,
             result.ValidationStatus,
             result.EvidenceCaptureRequired,
+            result.ReusedExistingDraft,
             result.IneligibilityReason,
             result.ErrorCode,
             result.CorrelationId);
