@@ -539,3 +539,95 @@ Integration tests:
 - Rounding mode for VAT removal and 20% statutory discount computation.
 - Whether coupon stacking with statutory discount is allowed in v1.2 MVP or must fail closed.
 - Whether payable-basis application publishes an outbox/integration event.
+
+## DB Support Decision From #187
+
+Patch path:
+
+- `infra/db/patches/ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql`
+
+Validation script:
+
+- `infra/db/patches/validation/Validate_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql`
+
+Final DB support decision:
+
+- Use a dedicated discounts-owned application table: `discounts.statutory_discount_payable_basis_applications`.
+- Leave `core.tariff_snapshots` unchanged in this DB-support slice.
+- Store VAT, VAT-exclusive, statutory discount, gross, and final payable audit components in minor units on the application table.
+- Link the original tariff snapshot through `original_tariff_snapshot_id`.
+- Link the future superseding statutory-adjusted tariff snapshot through `applied_tariff_snapshot_id`.
+- Keep `discounts.statutory_discount_validations.validation_status = APPROVED` as the review decision status. Applied payable-basis state is represented by the application row and applied snapshot linkage, not by adding a new validation status.
+
+Added enum types:
+
+- `discounts.statutory_discount_payable_application_status_enum`
+  - `REQUESTED`
+  - `APPLIED`
+  - `FAILED`
+  - `CANCELLED`
+- `discounts.statutory_discount_payable_application_channel_enum`
+  - `OPERATOR_CONSOLE`
+  - `OPERATOR_ASSISTED`
+  - `SYSTEM`
+
+Added table:
+
+- `discounts.statutory_discount_payable_basis_applications`
+
+Important columns:
+
+- `statutory_discount_payable_basis_application_id`
+- `statutory_discount_validation_id`
+- `parking_session_id`
+- `original_tariff_snapshot_id`
+- `applied_tariff_snapshot_id`
+- `application_status`
+- `application_channel`
+- `gross_amount_minor_units`
+- `vat_amount_minor_units`
+- `vat_exclusive_amount_minor_units`
+- `statutory_discount_amount_minor_units`
+- `final_payable_amount_minor_units`
+- `currency_code`
+- `computation_basis_json`
+- `rounding_mode`
+- `applied_at`
+- `applied_by_user_id`
+- `applied_by_service_identity_id`
+- `idempotency_key`
+- `correlation_id`
+- standard created/updated attribution and `row_version`
+
+Added uniqueness and lookup indexes:
+
+- `ux_sd_pba__validation_active`
+- `ux_sd_pba__session_active`
+- `ux_sd_pba__applied_tariff_snapshot`
+- `ux_sd_pba__idempotency_key`
+- `ix_sd_pba__parking_session`
+- `ix_sd_pba__original_tariff_snapshot`
+- `ix_sd_pba__status`
+- `ix_sd_pba__correlation_id`
+
+Added trigger enforcement:
+
+- Function: `discounts.enforce_statutory_discount_payable_basis_application`
+- Trigger: `trg_sd_pba__enforce`
+
+The trigger enforces these DB-level conditions for `APPLIED` rows:
+
+- referenced statutory discount validation exists and belongs to the same parking session;
+- validation status is `APPROVED`;
+- evidence-required validations must have `evidence_captured = true`;
+- original tariff snapshot belongs to the same parking session;
+- applied tariff snapshot exists, belongs to the same parking session, is `ACTIVE`, has a positive statutory discount amount, and references the same validation;
+- no payment attempt exists for the parking session.
+
+Known remaining implementation steps:
+
+- Implement a backend apply-payable-basis service/endpoint that creates the superseding tariff snapshot and application row transactionally.
+- Decide whether the future implementation should be a database routine, application writer transaction, or both.
+- Add tests for concurrent application, idempotent replay, and payment-attempt blocking.
+- Decide whether to add a future unique index on `core.tariff_snapshots.statutory_discount_validation_id` where non-null. #187 enforces applied snapshot uniqueness through the application table instead.
+- Decide whether payable-basis application emits an outbox/audit event in a later slice.
