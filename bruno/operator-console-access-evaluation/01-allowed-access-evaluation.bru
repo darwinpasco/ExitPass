@@ -1,0 +1,42 @@
+meta {
+  name: 01 Allowed access evaluation
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/access/evaluate
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "workflowCode": "STATUTORY_DISCOUNT_VALIDATION",
+    "controlledActionCode": "START_WORKFLOW",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "evidenceAccessIntent": null,
+    "idempotencyKey": "manual-allowed-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("returns persisted ALLOWED response", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.allowed).to.equal(true);
+    expect(res.body.decision).to.equal("ALLOWED");
+    expect(res.body.persisted).to.equal(true);
+    expect(res.body.evaluationId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    expect(res.body.denialReasons).to.be.an("array").that.is.empty;
+  });
+}
