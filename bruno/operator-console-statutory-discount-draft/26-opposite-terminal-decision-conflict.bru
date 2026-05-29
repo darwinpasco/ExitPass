@@ -1,0 +1,38 @@
+meta {
+  name: 26 Opposite terminal decision conflict
+  type: http
+  seq: 26
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/{{draftId_approve}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "decision": "REJECT",
+    "decisionReasonCode": "OPPOSITE_DECISION",
+    "decisionNotes": "Manual smoke test opposite terminal conflict",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-statutory-decision-opposite-conflict-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("opposite terminal decision returns conflict", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("STATUTORY_DISCOUNT_DRAFT_ALREADY_DECIDED");
+  });
+}

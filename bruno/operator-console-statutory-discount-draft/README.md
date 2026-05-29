@@ -1,11 +1,12 @@
 # Operator Console Statutory Discount Draft Manual Smoke Tests
 
-Purpose: repeatable manual/API smoke testing for the Central PMS Operator Console statutory discount validation draft endpoint.
+Purpose: repeatable manual/API smoke testing for the Central PMS Operator Console statutory discount validation draft and review decision endpoints.
 
 Endpoint:
 
 ```http
 POST /v1/ops/operator-console/statutory-discounts/draft
+POST /v1/ops/operator-console/statutory-discounts/{draftId}/decision
 ```
 
 This collection covers access-gated draft creation, duplicate replay behavior, and metadata-only evidence reference creation. It does not approve statutory discounts, apply a discount, mutate payable basis, upload evidence, store raw evidence, create entitlement fingerprints, create payments, or mutate gate/session/payment state.
@@ -14,6 +15,7 @@ This collection covers access-gated draft creation, duplicate replay behavior, a
 
 - #180 statutory discount draft endpoint is present.
 - #182 duplicate-safe draft behavior is present.
+- #184 statutory discount decision endpoint is present.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -102,6 +104,105 @@ Suggested manual flow:
 5. Reset fixtures, run `01 Valid Senior Citizen draft` again, then POST `decision = REJECT` with `decisionReasonCode`.
 
 Approval is fail-closed when `evidence_required = true` and `evidence_captured = false`; use `REJECT` for metadata-only evidence drafts until a future evidence capture/upload slice exists.
+
+## Decision Test Workflow
+
+The decision requests use Bruno environment variables for draft IDs:
+
+- `draftId_approve`
+- `draftId_reject`
+- `draftId_evidenceRequired`
+
+Requests `14`, `16`, and `12` set those variables with `bru.setEnvVar(...)` when Bruno scripting is available. If your Bruno client does not persist variables from scripts, copy the `draftId` from the create-draft response into the matching environment variable manually.
+
+Run the local fixture seed before each independent decision workflow. The seed resets only known Operator Console statutory discount validation fixture rows for the manual parking session and does not create payment, gate, coupon, provider, reconciliation, or payable-basis records.
+
+Recommended decision run order:
+
+1. Reset fixtures.
+2. Run `14 Create draft for approve decision`.
+3. Run `15 Approve draft decision`.
+4. Run `24 Approve replay`.
+5. Run `26 Opposite terminal decision conflict`.
+6. Reset fixtures.
+7. Run `16 Create draft for reject decision`.
+8. Run `17 Reject draft decision`.
+9. Run `25 Reject replay`.
+10. Reset fixtures.
+11. Run `12 Valid Senior Citizen draft with evidence metadata`.
+12. Run `27 Evidence required approve blocked`.
+13. Run `28 Evidence required reject allowed`.
+
+Validation and denied-access cases can be run any time after `draftId_approve` or `draftId_reject` has been set:
+
+- `18 Access denied prevents decision`
+- `19 Missing decision`
+- `20 Unsupported decision`
+- `21 Reviewer attestation false`
+- `22 Reject without reason`
+- `23 Decision draft not found`
+
+## Decision Expected Outcomes
+
+Approve draft with evidence not required:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `accessDecision = ALLOWED`
+- `accessPersisted = true`
+- `decisionAccepted = true`
+- `decisionPersisted = true`
+- `previousValidationStatus = REQUESTED` or `PENDING_OPERATOR_REVIEW`
+- `currentValidationStatus = APPROVED`
+- `decision = APPROVE`
+- `decisionChanged = true`
+- `alreadyDecided = false`
+
+Reject draft:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `decisionAccepted = true`
+- `decisionPersisted = true`
+- `currentValidationStatus = REJECTED`
+- `decision = REJECT`
+- `decisionChanged = true`
+- `alreadyDecided = false`
+
+Access denied prevents decision:
+
+- HTTP `200`
+- `accessAllowed = false`
+- `accessDecision = DENIED`
+- `accessPersisted = true`
+- `decisionAccepted = false`
+- `decisionPersisted = false`
+- draft status remains unchanged
+
+Validation failures:
+
+- Missing decision: HTTP `400`, `errorCode = INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_REQUEST`
+- Unsupported decision: HTTP `400`, `errorCode = INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_REQUEST`
+- `reviewerAttestation = false`: HTTP `400`, `errorCode = INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_REQUEST`
+- Reject without reason: HTTP `400`, `errorCode = INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_REQUEST`
+
+Draft not found:
+
+- HTTP `404`
+- `accessAllowed = true`
+- `decisionAccepted = false`
+- `errorCode = DRAFT_NOT_FOUND`
+
+Replay and conflict behavior:
+
+- Approve replay: HTTP `200`, `alreadyDecided = true`, `decisionChanged = false`
+- Reject replay: HTTP `200`, `alreadyDecided = true`, `decisionChanged = false`
+- Opposite terminal decision: HTTP `409`, `errorCode = STATUTORY_DISCOUNT_DRAFT_ALREADY_DECIDED`
+
+Evidence-required behavior:
+
+- Approve when `evidence_required = true` and `evidence_captured = false`: HTTP `200`, `decisionAccepted = false`, `errorCode = EVIDENCE_REQUIRED_NOT_CAPTURED`, status remains `REQUESTED`
+- Reject when `evidence_required = true`: HTTP `200`, `currentValidationStatus = REJECTED`, `decisionPersisted = true`
 
 ## Read-Only Database Verification
 
@@ -200,6 +301,51 @@ WHERE statutory_discount_validation_id = '<draftId-from-response>'::uuid;
 ```
 
 For approved decisions, expect `validation_status = APPROVED`. For rejected decisions, expect `validation_status = REJECTED` and `decision_reason_code` populated.
+
+Verify the access evaluation row returned as `accessEvaluationId`:
+
+```sql
+SELECT
+    operator_access_evaluation_id,
+    correlation_id,
+    evaluation_status,
+    requested_action,
+    workflow_code,
+    target_entity_type,
+    target_entity_id
+FROM operator_console.operator_access_evaluations
+WHERE operator_access_evaluation_id = '<accessEvaluationId-from-response>'::uuid;
+```
+
+Verify no payment, gate, coupon, provider, or reconciliation records were created for the fixture parking session:
+
+```sql
+SELECT
+    (SELECT COUNT(*) FROM core.payment_attempts
+      WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS payment_attempt_count,
+    (SELECT COUNT(*)
+       FROM core.payment_confirmations pc
+       JOIN core.payment_attempts pa ON pa.payment_attempt_id = pc.payment_attempt_id
+      WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS payment_confirmation_count,
+    (SELECT COUNT(*) FROM core.exit_authorizations
+      WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS exit_authorization_count,
+    (SELECT COUNT(*)
+       FROM gates.gate_authorization_consumptions gac
+       JOIN core.exit_authorizations ea ON ea.exit_authorization_id = gac.exit_authorization_id
+      WHERE ea.parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS gate_consumption_count,
+    (SELECT COUNT(*) FROM coupons.coupon_applications
+      WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS coupon_application_count,
+    (SELECT COUNT(*)
+       FROM payments.provider_outcomes po
+       JOIN core.payment_attempts pa ON pa.payment_attempt_id = po.payment_attempt_id
+      WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS provider_outcome_count,
+    (SELECT COUNT(*)
+       FROM reconciliation.reconciliation_items ri
+       JOIN core.payment_attempts pa ON pa.payment_attempt_id = ri.payment_attempt_id
+      WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000090'::uuid) AS reconciliation_item_count;
+```
+
+Expected result for all counts is `0` when the local fixture seed has not been combined with payment-flow fixtures for the same parking session.
 
 ## Scope Boundary
 

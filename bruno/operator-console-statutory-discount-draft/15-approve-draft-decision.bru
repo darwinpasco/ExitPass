@@ -1,0 +1,47 @@
+meta {
+  name: 15 Approve draft decision
+  type: http
+  seq: 15
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/{{draftId_approve}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "decision": "APPROVE",
+    "decisionReasonCode": null,
+    "decisionNotes": "Manual smoke test approval decision",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-statutory-decision-approve-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("approves requested draft", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.accessDecision).to.equal("ALLOWED");
+    expect(res.body.accessPersisted).to.equal(true);
+    expect(res.body.decisionAccepted).to.equal(true);
+    expect(res.body.decisionPersisted).to.equal(true);
+    expect(["REQUESTED", "PENDING_OPERATOR_REVIEW"]).to.include(res.body.previousValidationStatus);
+    expect(res.body.currentValidationStatus).to.equal("APPROVED");
+    expect(res.body.decision).to.equal("APPROVE");
+    expect(res.body.decisionChanged).to.equal(true);
+    expect(res.body.alreadyDecided).to.equal(false);
+  });
+}

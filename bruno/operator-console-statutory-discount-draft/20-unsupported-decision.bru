@@ -1,0 +1,38 @@
+meta {
+  name: 20 Unsupported decision
+  type: http
+  seq: 20
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/{{draftId_approve}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "decision": "ESCALATE",
+    "decisionReasonCode": null,
+    "decisionNotes": "Manual smoke test unsupported decision",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-statutory-decision-unsupported-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("unsupported decision is rejected", function () {
+    expect(res.status).to.equal(400);
+    expect(res.body.errorCode).to.equal("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_REQUEST");
+  });
+}
