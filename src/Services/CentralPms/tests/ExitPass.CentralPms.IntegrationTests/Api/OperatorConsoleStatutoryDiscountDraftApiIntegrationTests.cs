@@ -3,10 +3,13 @@ using System.Net.Http.Json;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Npgsql;
+using NpgsqlTypes;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -106,6 +109,46 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         body.DraftId.Should().Be(DraftId);
         body.ValidationStatus.Should().Be("REQUESTED");
         body.EntitlementType.Should().Be("SENIOR_CITIZEN");
+        body.ReusedExistingDraft.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies replaying the same valid draft request reuses the active draft instead of returning a generic failure.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenEquivalentActiveDraftAlreadyExists_ReusesExistingDraft()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var request = ManualFixtureRequest();
+
+        using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var first = await firstResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        first.Should().NotBeNull();
+        first!.DraftAccepted.Should().BeTrue();
+        first.DraftPersisted.Should().BeTrue();
+        first.ReusedExistingDraft.Should().BeFalse();
+
+        using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var second = await secondResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        second.Should().NotBeNull();
+        second!.DraftAccepted.Should().BeTrue();
+        second.DraftPersisted.Should().BeTrue();
+        second.ReusedExistingDraft.Should().BeTrue();
+        second.DraftId.Should().Be(first.DraftId);
+        second.ValidationStatus.Should().Be("REQUESTED");
+
+        var activeDraftCount = await CountActiveDraftsAsync(request.ParkingSessionId, request.EntitlementType);
+        activeDraftCount.Should().Be(1);
     }
 
     /// <summary>
@@ -181,6 +224,30 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "operator-console-statutory-discount-draft-api-test",
             CorrelationId);
 
+    private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest() =>
+        new(
+            Guid.Parse("77000000-0000-0000-0000-000000000010"),
+            Guid.Parse("77000000-0000-0000-0000-000000000030"),
+            Guid.Parse("77000000-0000-0000-0000-000000000002"),
+            Guid.Parse("77000000-0000-0000-0000-000000000001"),
+            Guid.Parse("77000000-0000-0000-0000-000000000050"),
+            Guid.Parse("77000000-0000-0000-0000-000000000090"),
+            "MANUAL-SESSION-LOOKUP-001",
+            PlateNumber: null,
+            "SENIOR_CITIZEN",
+            "SENIOR_CITIZEN_ID",
+            "OSCA",
+            ExpiryDate: null,
+            "1234",
+            EntitlementFingerprint: null,
+            EvidenceCaptureRequested: false,
+            EvidenceAccessIntent: null,
+            OperatorAttestation: true,
+            AttestationNotes: "Integration replay test draft only.",
+            ReasonCode: "INTEGRATION_DUPLICATE_REPLAY",
+            "operator-console-statutory-discount-draft-replay-test",
+            Guid.NewGuid());
+
     private static OperatorConsoleStatutoryDiscountDraftResult DeniedResult() =>
         new(
             EvaluationId,
@@ -195,6 +262,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "SENIOR_CITIZEN",
             ValidationStatus: null,
             EvidenceCaptureRequired: true,
+            ReusedExistingDraft: false,
             IneligibilityReason: "ACCESS_DENIED",
             ErrorCode: null,
             CorrelationId);
@@ -213,6 +281,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "SENIOR_CITIZEN",
             "REQUESTED",
             EvidenceCaptureRequired: true,
+            ReusedExistingDraft: false,
             IneligibilityReason: null,
             ErrorCode: null,
             CorrelationId);
@@ -231,6 +300,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "SENIOR_CITIZEN",
             ValidationStatus: null,
             EvidenceCaptureRequired: true,
+            ReusedExistingDraft: false,
             IneligibilityReason: "SESSION_NOT_FOUND",
             ErrorCode: "SESSION_NOT_FOUND",
             CorrelationId);
@@ -259,5 +329,86 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
             return Task.FromResult(_result);
         }
+    }
+
+    private static async Task SeedManualFixtureAsync()
+    {
+        var sql = ReadRepoFile(
+            "infra",
+            "db",
+            "fixtures",
+            "operator-console-access-evaluation",
+            "Seed-OperatorConsoleAccessEvaluationManualFixtures.sql");
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 60
+        };
+
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<int> CountActiveDraftsAsync(Guid parkingSessionId, string entitlementType)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM discounts.statutory_discount_validations
+            WHERE parking_session_id = @parking_session_id
+              AND entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
+              AND validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
+              AND validation_status IN (
+                    'REQUESTED'::discounts.statutory_discount_validations_status_enum,
+                    'PENDING_OPERATOR_REVIEW'::discounts.statutory_discount_validations_status_enum
+              );
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = entitlementType;
+
+        var count = await command.ExecuteScalarAsync();
+        return Convert.ToInt32(count);
+    }
+
+    private static async Task<NpgsqlConnection> OpenConnectionAsync()
+    {
+        var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        return connection;
+    }
+
+    private static async Task<bool> CanOpenDatabaseAsync()
+    {
+        try
+        {
+            await using var connection = await OpenConnectionAsync();
+            return true;
+        }
+        catch (NpgsqlException)
+        {
+            return false;
+        }
+    }
+
+    private static string ReadRepoFile(params string[] pathParts)
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (current is not null)
+        {
+            var candidateParts = new[] { current.FullName }.Concat(pathParts).ToArray();
+            var candidate = Path.Combine(candidateParts);
+
+            if (File.Exists(candidate))
+            {
+                return File.ReadAllText(candidate);
+            }
+
+            current = current.Parent;
+        }
+
+        throw new FileNotFoundException($"{Path.Combine(pathParts)} was not found from the test output path.");
     }
 }

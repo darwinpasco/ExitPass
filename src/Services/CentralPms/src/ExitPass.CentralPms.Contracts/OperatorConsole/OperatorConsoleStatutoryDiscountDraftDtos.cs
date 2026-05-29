@@ -42,6 +42,7 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResponse(
     string? EntitlementType,
     string? ValidationStatus,
     bool EvidenceCaptureRequired,
+    bool ReusedExistingDraft,
     string? IneligibilityReason,
     string? ErrorCode,
     Guid CorrelationId);

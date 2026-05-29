@@ -38,15 +38,87 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
 
         try
         {
+            var existing = await FindReusableDraftAsync(connection, transaction, command, cancellationToken);
+            if (existing is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return existing with { ReusedExistingDraft = true };
+            }
+
             var result = await InsertDraftAsync(connection, transaction, command, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return result;
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return await ResolveUniqueViolationAsync(command, cancellationToken);
         }
         catch
         {
             await transaction.RollbackAsync(cancellationToken);
             throw;
         }
+    }
+
+    private async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> ResolveUniqueViolationAsync(
+        OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var existing = await FindReusableDraftAsync(connection, transaction: null, command, cancellationToken);
+        if (existing is not null)
+        {
+            return existing with { ReusedExistingDraft = true };
+        }
+
+        throw new OperatorConsoleStatutoryDiscountDraftAlreadyExistsException(
+            command.ParkingSessionId,
+            command.EntitlementType);
+    }
+
+    private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult?> FindReusableDraftAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                statutory_discount_validation_id,
+                validation_status::text AS validation_status
+            FROM discounts.statutory_discount_validations
+            WHERE parking_session_id = @parking_session_id
+              AND entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
+              AND validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
+              AND validation_status IN (
+                    'REQUESTED'::discounts.statutory_discount_validations_status_enum,
+                    'PENDING_OPERATOR_REVIEW'::discounts.statutory_discount_validations_status_enum
+              )
+              AND evidence_captured = false
+              AND applied_policy_reference_id IS NULL
+              AND validated_at IS NULL
+            ORDER BY requested_at DESC, statutory_discount_validation_id DESC
+            LIMIT 1;
+            """;
+
+        await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
+        npgsqlCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = command.ParkingSessionId;
+        npgsqlCommand.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = command.EntitlementType;
+
+        await using var reader = await npgsqlCommand.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            Persisted: true,
+            ReusedExistingDraft: true);
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> InsertDraftAsync(
@@ -105,7 +177,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         return new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
             reader.GetGuid(0),
             reader.GetString(1),
-            Persisted: true);
+            Persisted: true,
+            ReusedExistingDraft: false);
     }
 
     private static object DbValue(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;

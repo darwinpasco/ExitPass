@@ -58,7 +58,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
 
         var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
         writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
-            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(DraftId, "REQUESTED", Persisted: true));
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false));
 
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
@@ -71,6 +75,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.DraftId.Should().Be(DraftId);
         result.ValidationStatus.Should().Be("REQUESTED");
         result.EntitlementType.Should().Be("SENIOR_CITIZEN");
+        result.ReusedExistingDraft.Should().BeFalse();
 
         await writer.Received(1).PersistAsync(
             Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
@@ -80,6 +85,37 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 request.RequestedByUserId == UserId &&
                 request.CorrelationId == CorrelationId),
             Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies duplicate active drafts return the existing draft deterministically.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenEquivalentDraftExists_ReturnsReusedDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: true));
+
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.AccessPersisted.Should().BeTrue();
+        result.DraftAccepted.Should().BeTrue();
+        result.DraftPersisted.Should().BeTrue();
+        result.DraftId.Should().Be(DraftId);
+        result.ValidationStatus.Should().Be("REQUESTED");
+        result.ReusedExistingDraft.Should().BeTrue();
     }
 
     /// <summary>
