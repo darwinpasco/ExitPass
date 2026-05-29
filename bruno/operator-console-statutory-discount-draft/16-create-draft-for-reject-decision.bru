@@ -1,0 +1,53 @@
+meta {
+  name: 16 Create draft for reject decision
+  type: http
+  seq: 16
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/draft
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "ticketReference": "{{ticketReference_allowed}}",
+    "plateNumber": null,
+    "entitlementType": "PWD",
+    "idDocumentType": "PWD_ID",
+    "issuingAuthority": "NCDA",
+    "expiryDate": null,
+    "maskedIdReference": "{{pwdMaskedIdReference}}",
+    "entitlementFingerprint": null,
+    "evidenceCaptureRequested": false,
+    "evidenceAccessIntent": null,
+    "operatorAttestation": true,
+    "attestationNotes": "Manual smoke test rejection draft",
+    "reasonCode": "MANUAL_TEST_DECISION_REJECT",
+    "idempotencyKey": "manual-statutory-decision-reject-draft-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("creates requested draft for rejection decision", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.draftAccepted).to.equal(true);
+    expect(res.body.draftPersisted).to.equal(true);
+    expect(res.body.validationStatus).to.equal("REQUESTED");
+    expect(res.body.entitlementType).to.equal("PWD");
+    bru.setEnvVar("draftId_reject", res.body.draftId);
+  });
+}
