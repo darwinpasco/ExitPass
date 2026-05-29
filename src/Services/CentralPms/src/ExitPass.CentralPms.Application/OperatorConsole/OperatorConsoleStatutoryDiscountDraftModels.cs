@@ -42,6 +42,9 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResult(
     string? EntitlementType,
     string? ValidationStatus,
     bool EvidenceCaptureRequired,
+    bool EvidenceRequired,
+    bool EvidenceReferenceCreated,
+    Guid? EvidenceReferenceId,
     bool ReusedExistingDraft,
     string? IneligibilityReason,
     string? ErrorCode,
@@ -65,7 +68,10 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceResult(
     Guid DraftId,
     string ValidationStatus,
     bool Persisted,
-    bool ReusedExistingDraft);
+    bool ReusedExistingDraft,
+    bool EvidenceRequired,
+    bool EvidenceReferenceCreated,
+    Guid? EvidenceReferenceId);
 
 /// <summary>
 /// Raised when an existing statutory discount validation blocks a new draft but is not reusable as an active draft.

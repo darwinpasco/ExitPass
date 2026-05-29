@@ -18,6 +18,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     private static readonly Guid ShiftId = Guid.Parse("47000000-0000-0000-0000-000000000006");
     private static readonly Guid ParkingSessionId = Guid.Parse("47000000-0000-0000-0000-000000000007");
     private static readonly Guid DraftId = Guid.Parse("47000000-0000-0000-0000-000000000008");
+    private static readonly Guid EvidenceReferenceId = Guid.Parse("47000000-0000-0000-0000-000000000011");
     private static readonly Guid CorrelationId = Guid.Parse("47000000-0000-0000-0000-000000000009");
 
     /// <summary>
@@ -62,7 +63,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 DraftId,
                 "REQUESTED",
                 Persisted: true,
-                ReusedExistingDraft: false));
+                ReusedExistingDraft: false,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: true,
+                EvidenceReferenceId));
 
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
@@ -75,6 +79,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.DraftId.Should().Be(DraftId);
         result.ValidationStatus.Should().Be("REQUESTED");
         result.EntitlementType.Should().Be("SENIOR_CITIZEN");
+        result.EvidenceCaptureRequired.Should().BeTrue();
+        result.EvidenceRequired.Should().BeTrue();
+        result.EvidenceReferenceCreated.Should().BeTrue();
+        result.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         result.ReusedExistingDraft.Should().BeFalse();
 
         await writer.Received(1).PersistAsync(
@@ -103,7 +111,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 DraftId,
                 "REQUESTED",
                 Persisted: true,
-                ReusedExistingDraft: true));
+                ReusedExistingDraft: true,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: false,
+                EvidenceReferenceId));
 
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
@@ -115,7 +126,47 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.DraftPersisted.Should().BeTrue();
         result.DraftId.Should().Be(DraftId);
         result.ValidationStatus.Should().Be("REQUESTED");
+        result.EvidenceRequired.Should().BeTrue();
+        result.EvidenceReferenceCreated.Should().BeFalse();
+        result.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         result.ReusedExistingDraft.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies evidence metadata is not requested when the draft request does not ask for capture.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenEvidenceNotRequested_ReturnsNoEvidenceReference()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false,
+                EvidenceRequired: false,
+                EvidenceReferenceCreated: false,
+                EvidenceReferenceId: null));
+
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+
+        var result = await sut.DraftAsync(Command(evidenceCaptureRequested: false), CancellationToken.None);
+
+        result.DraftAccepted.Should().BeTrue();
+        result.EvidenceCaptureRequired.Should().BeFalse();
+        result.EvidenceRequired.Should().BeFalse();
+        result.EvidenceReferenceCreated.Should().BeFalse();
+        result.EvidenceReferenceId.Should().BeNull();
+
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
+                request.EvidenceRequired == false),
+            Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -251,7 +302,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         Guid? parkingSessionId = null,
         string entitlementType = "SENIOR_CITIZEN",
         string maskedIdReference = "****1234",
-        bool operatorAttestation = true) =>
+        bool operatorAttestation = true,
+        bool evidenceCaptureRequested = true) =>
         new(
             UserId,
             DeviceBindingId,
@@ -267,7 +319,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             ExpiryDate: null,
             maskedIdReference,
             EntitlementFingerprint: null,
-            EvidenceCaptureRequested: true,
+            EvidenceCaptureRequested: evidenceCaptureRequested,
             EvidenceAccessIntent: "SUPERVISOR_REVIEW",
             operatorAttestation,
             AttestationNotes: "Manual API test attestation.",
