@@ -108,7 +108,8 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
             SiteContext: ToSiteContext(context),
             EvaluatedAt: evaluatedAt,
             Persisted: false,
-            CorrelationId: command.CorrelationId);
+            CorrelationId: command.CorrelationId,
+            PersistenceContext: ToPersistenceContext(command, context, workflowCode, actionCode));
     }
 
     private static void EvaluateHrIdentityMapping(
@@ -294,6 +295,24 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
                 IsActive(assignment.AssignmentStatusCode) &&
                 !assignment.EndedAt.HasValue);
     }
+
+    private static OperatorConsoleAccessEvaluationPersistenceContext ToPersistenceContext(
+        OperatorConsoleAccessEvaluationCommand command,
+        OperatorConsoleAccessEvaluationReadContext context,
+        string workflowCode,
+        string actionCode) =>
+        new(
+            command.UserId,
+            context.HrIdentityMapping?.HrIdentityMappingId,
+            context.DeviceBinding?.OperatorDeviceBindingId,
+            context.ActiveShift?.OperatorShiftId,
+            context.ActiveShiftTakeover?.ShiftTakeoverId,
+            context.DeviceAssignment?.SiteGroupId ?? context.DeviceBinding?.SiteGroupId ?? context.ActiveShift?.SiteGroupId ?? command.SiteGroupId,
+            context.DeviceAssignment?.SiteId ?? context.DeviceBinding?.SiteId ?? context.ActiveShift?.SiteId ?? command.SiteId,
+            actionCode,
+            workflowCode,
+            command.ParkingSessionId.HasValue ? "PARKING_SESSION" : null,
+            command.ParkingSessionId);
 
     private static void Validate(OperatorConsoleAccessEvaluationCommand command)
     {

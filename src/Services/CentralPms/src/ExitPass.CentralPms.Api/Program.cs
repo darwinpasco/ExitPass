@@ -358,6 +358,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationReadRepository>(_ =>
         new OperatorConsoleAccessEvaluationReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationService, OperatorConsoleAccessEvaluationService>();
+    builder.Services.AddScoped<IOperatorConsoleAccessEvaluationWriter>(_ =>
+        new OperatorConsoleAccessEvaluationWriter(mainDatabaseConnectionString));
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();

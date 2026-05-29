@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using OpenTelemetry.Trace;
 
@@ -36,6 +37,7 @@ public static class OperatorConsoleAccessEvaluationEndpoints
         OperatorConsoleAccessEvaluationRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleAccessEvaluationService service,
+        IOperatorConsoleAccessEvaluationWriter writer,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP EvaluateOperatorConsoleAccess", ActivityKind.Server);
@@ -47,34 +49,68 @@ public static class OperatorConsoleAccessEvaluationEndpoints
         activity?.SetTag("workflow_code", request.WorkflowCode);
         activity?.SetTag("controlled_action_code", request.ControlledActionCode);
 
-        var result = await service.EvaluateAsync(
-            new OperatorConsoleAccessEvaluationCommand(
-                request.UserId,
-                request.OperatorDeviceBindingId,
-                request.SiteId,
-                request.SiteGroupId,
-                request.OperatorShiftId,
+        try
+        {
+            var result = await service.EvaluateAsync(
+                new OperatorConsoleAccessEvaluationCommand(
+                    request.UserId,
+                    request.OperatorDeviceBindingId,
+                    request.SiteId,
+                    request.SiteGroupId,
+                    request.OperatorShiftId,
+                    request.WorkflowCode,
+                    request.ControlledActionCode,
+                    request.ParkingSessionId,
+                    request.EvidenceAccessIntent,
+                    request.IdempotencyKey,
+                    request.CorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            var persistedResult = await writer.PersistAsync(result, httpRequest.HttpContext.RequestAborted);
+
+            activity?.SetTag("access_evaluation_decision", persistedResult.Decision);
+            activity?.SetTag("access_evaluation_allowed", persistedResult.Allowed);
+            activity?.SetTag("access_evaluation_persisted", persistedResult.Persisted);
+            activity?.SetTag("operator_access_evaluation_id", persistedResult.EvaluationId);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            logger.LogInformation(
+                "Operator Console access evaluated and persisted. evaluation_id={EvaluationId} workflow_code={WorkflowCode} controlled_action_code={ControlledActionCode} decision={Decision} allowed={Allowed}",
+                persistedResult.EvaluationId,
                 request.WorkflowCode,
                 request.ControlledActionCode,
-                request.ParkingSessionId,
-                request.EvidenceAccessIntent,
-                request.IdempotencyKey,
-                request.CorrelationId),
-            httpRequest.HttpContext.RequestAborted);
+                persistedResult.Decision,
+                persistedResult.Allowed);
 
-        activity?.SetTag("access_evaluation_decision", result.Decision);
-        activity?.SetTag("access_evaluation_allowed", result.Allowed);
-        activity?.SetStatus(ActivityStatusCode.Ok);
-
-        logger.LogInformation(
-            "Operator Console access evaluated. workflow_code={WorkflowCode} controlled_action_code={ControlledActionCode} decision={Decision} allowed={Allowed}",
-            request.WorkflowCode,
-            request.ControlledActionCode,
-            result.Decision,
-            result.Allowed);
-
-        return Results.Ok(ToContract(result));
+            return Results.Ok(ToContract(persistedResult));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_ACCESS_EVALUATION_REQUEST", ex.Message, request.CorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console access evaluation persistence failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_ACCESS_EVALUATION_PERSISTENCE_FAILED",
+                    "The Operator Console access evaluation could not be persisted.",
+                    request.CorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
+
+    private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId) =>
+        new()
+        {
+            ErrorCode = errorCode,
+            Message = message,
+            CorrelationId = correlationId,
+            Retryable = false
+        };
 
     private static OperatorConsoleAccessEvaluationResponse ToContract(OperatorConsoleAccessEvaluationResult result) =>
         new(
