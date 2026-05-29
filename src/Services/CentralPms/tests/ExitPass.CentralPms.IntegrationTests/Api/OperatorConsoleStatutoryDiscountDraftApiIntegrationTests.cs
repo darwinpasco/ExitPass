@@ -29,6 +29,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     private static readonly Guid ParkingSessionId = Guid.Parse("48000000-0000-0000-0000-000000000007");
     private static readonly Guid DraftId = Guid.Parse("48000000-0000-0000-0000-000000000008");
     private static readonly Guid CorrelationId = Guid.Parse("48000000-0000-0000-0000-000000000009");
+    private static readonly Guid EvidenceReferenceId = Guid.Parse("48000000-0000-0000-0000-000000000011");
 
     /// <summary>
     /// Verifies the documented Operator Console statutory discount draft route exists.
@@ -109,6 +110,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         body.DraftId.Should().Be(DraftId);
         body.ValidationStatus.Should().Be("REQUESTED");
         body.EntitlementType.Should().Be("SENIOR_CITIZEN");
+        body.EvidenceRequired.Should().BeTrue();
+        body.EvidenceReferenceCreated.Should().BeTrue();
+        body.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         body.ReusedExistingDraft.Should().BeFalse();
     }
 
@@ -149,6 +153,59 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         var activeDraftCount = await CountActiveDraftsAsync(request.ParkingSessionId, request.EntitlementType);
         activeDraftCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies evidence-requested drafts persist one metadata-only evidence reference and replay reuses it.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenEvidenceRequested_PersistsMetadataOnlyEvidenceReferenceAndReplayDoesNotDuplicate()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var request = ManualFixtureRequest(evidenceCaptureRequested: true);
+
+        using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
+        firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var first = await firstResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        first.Should().NotBeNull();
+        first!.DraftAccepted.Should().BeTrue();
+        first.DraftPersisted.Should().BeTrue();
+        first.EvidenceRequired.Should().BeTrue();
+        first.EvidenceReferenceCreated.Should().BeTrue();
+        first.EvidenceReferenceId.Should().NotBeNull();
+
+        var firstEvidence = await ReadEvidenceReferenceAsync(first.DraftId!.Value, "SENIOR_CITIZEN_ID");
+        firstEvidence.Should().NotBeNull();
+        firstEvidence!.EvidenceReferenceId.Should().Be(first.EvidenceReferenceId!.Value);
+        firstEvidence.EvidenceStorageType.Should().Be("EXTERNAL_REFERENCE");
+        firstEvidence.EvidenceStorageRef.Should().BeNull();
+        firstEvidence.EvidenceHash.Should().BeNull();
+        firstEvidence.EvidenceCaptureStatus.Should().Be("REFERENCED");
+        firstEvidence.AccessClassification.Should().Be("RESTRICTED");
+        firstEvidence.RedactionStatus.Should().Be("NOT_REDACTED");
+        firstEvidence.EvidenceCaptured.Should().BeFalse();
+
+        using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
+        secondResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var second = await secondResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        second.Should().NotBeNull();
+        second!.DraftAccepted.Should().BeTrue();
+        second.ReusedExistingDraft.Should().BeTrue();
+        second.DraftId.Should().Be(first.DraftId);
+        second.EvidenceRequired.Should().BeTrue();
+        second.EvidenceReferenceCreated.Should().BeFalse();
+        second.EvidenceReferenceId.Should().Be(first.EvidenceReferenceId);
+
+        var evidenceReferenceCount = await CountEvidenceReferencesAsync(first.DraftId!.Value, "SENIOR_CITIZEN_ID");
+        evidenceReferenceCount.Should().Be(1);
     }
 
     /// <summary>
@@ -224,7 +281,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "operator-console-statutory-discount-draft-api-test",
             CorrelationId);
 
-    private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest() =>
+    private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest(bool evidenceCaptureRequested = false) =>
         new(
             Guid.Parse("77000000-0000-0000-0000-000000000010"),
             Guid.Parse("77000000-0000-0000-0000-000000000030"),
@@ -240,7 +297,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             ExpiryDate: null,
             "1234",
             EntitlementFingerprint: null,
-            EvidenceCaptureRequested: false,
+            EvidenceCaptureRequested: evidenceCaptureRequested,
             EvidenceAccessIntent: null,
             OperatorAttestation: true,
             AttestationNotes: "Integration replay test draft only.",
@@ -262,6 +319,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "SENIOR_CITIZEN",
             ValidationStatus: null,
             EvidenceCaptureRequired: true,
+            EvidenceRequired: false,
+            EvidenceReferenceCreated: false,
+            EvidenceReferenceId: null,
             ReusedExistingDraft: false,
             IneligibilityReason: "ACCESS_DENIED",
             ErrorCode: null,
@@ -281,6 +341,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "SENIOR_CITIZEN",
             "REQUESTED",
             EvidenceCaptureRequired: true,
+            EvidenceRequired: true,
+            EvidenceReferenceCreated: true,
+            EvidenceReferenceId,
             ReusedExistingDraft: false,
             IneligibilityReason: null,
             ErrorCode: null,
@@ -300,6 +363,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "SENIOR_CITIZEN",
             ValidationStatus: null,
             EvidenceCaptureRequired: true,
+            EvidenceRequired: false,
+            EvidenceReferenceCreated: false,
+            EvidenceReferenceId: null,
             ReusedExistingDraft: false,
             IneligibilityReason: "SESSION_NOT_FOUND",
             ErrorCode: "SESSION_NOT_FOUND",
@@ -372,6 +438,69 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         return Convert.ToInt32(count);
     }
 
+    private static async Task<int> CountEvidenceReferencesAsync(Guid draftId, string evidenceType)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM discounts.discount_evidence_references
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id
+              AND evidence_type = @evidence_type::discounts.discount_evidence_type_enum
+              AND purged_at IS NULL;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = draftId;
+        command.Parameters.Add("evidence_type", NpgsqlDbType.Text).Value = evidenceType;
+
+        var count = await command.ExecuteScalarAsync();
+        return Convert.ToInt32(count);
+    }
+
+    private static async Task<EvidenceReferenceRow?> ReadEvidenceReferenceAsync(Guid draftId, string evidenceType)
+    {
+        const string sql = """
+            SELECT
+                der.discount_evidence_reference_id,
+                der.evidence_storage_type::text,
+                der.evidence_storage_ref,
+                der.evidence_hash,
+                der.evidence_capture_status::text,
+                der.access_classification::text,
+                der.redaction_status::text,
+                sdv.evidence_captured
+            FROM discounts.discount_evidence_references der
+            JOIN discounts.statutory_discount_validations sdv
+              ON sdv.statutory_discount_validation_id = der.statutory_discount_validation_id
+            WHERE der.statutory_discount_validation_id = @statutory_discount_validation_id
+              AND der.evidence_type = @evidence_type::discounts.discount_evidence_type_enum
+              AND der.purged_at IS NULL
+            ORDER BY der.created_at DESC, der.discount_evidence_reference_id DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = draftId;
+        command.Parameters.Add("evidence_type", NpgsqlDbType.Text).Value = evidenceType;
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new EvidenceReferenceRow(
+            reader.GetGuid(0),
+            reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.GetBoolean(7));
+    }
+
     private static async Task<NpgsqlConnection> OpenConnectionAsync()
     {
         var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
@@ -411,4 +540,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         throw new FileNotFoundException($"{Path.Combine(pathParts)} was not found from the test output path.");
     }
+
+    private sealed record EvidenceReferenceRow(
+        Guid EvidenceReferenceId,
+        string EvidenceStorageType,
+        string? EvidenceStorageRef,
+        string? EvidenceHash,
+        string EvidenceCaptureStatus,
+        string AccessClassification,
+        string RedactionStatus,
+        bool EvidenceCaptured);
 }

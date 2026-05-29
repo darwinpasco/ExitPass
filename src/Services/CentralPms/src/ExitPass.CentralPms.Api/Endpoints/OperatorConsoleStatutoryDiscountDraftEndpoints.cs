@@ -11,7 +11,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 ///
 /// ExitPass v1.2 Invariants Enforced:
 /// - This endpoint persists Operator Console access evaluation evidence before draft creation.
-/// - This endpoint may persist a privacy-minimized statutory discount validation draft only.
+/// - This endpoint may persist a privacy-minimized statutory discount validation draft and metadata-only evidence reference.
 /// - This endpoint never applies statutory discounts or mutates PaymentAttempt, PaymentConfirmation,
 ///   ExitAuthorization, provider outcome, gate consume, coupon application, payable basis, settlement truth,
 ///   reconciliation records, or payment finality.
@@ -37,7 +37,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithSummary("Draft Operator Console statutory discount validation")
-            .WithDescription("Validates and drafts a privacy-minimized statutory discount validation request after evaluating and persisting Operator Console access. This endpoint does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+            .WithDescription("Validates and drafts a privacy-minimized statutory discount validation request after evaluating and persisting Operator Console access. When evidence is requested, this endpoint may persist metadata-only evidence reference records without image upload or raw evidence storage. This endpoint does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
         return app;
     }
@@ -151,6 +151,9 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.EntitlementType,
             result.ValidationStatus,
             result.EvidenceCaptureRequired,
+            result.EvidenceRequired,
+            result.EvidenceReferenceCreated,
+            result.EvidenceReferenceId,
             result.ReusedExistingDraft,
             result.IneligibilityReason,
             result.ErrorCode,

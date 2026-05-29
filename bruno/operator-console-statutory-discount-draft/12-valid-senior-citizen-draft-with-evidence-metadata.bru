@@ -1,0 +1,57 @@
+meta {
+  name: 12 Valid Senior Citizen draft with evidence metadata
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/draft
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "ticketReference": "{{ticketReference_allowed}}",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "{{seniorMaskedIdReference}}",
+    "entitlementFingerprint": null,
+    "evidenceCaptureRequested": true,
+    "evidenceAccessIntent": "SUPERVISOR_REVIEW",
+    "operatorAttestation": true,
+    "attestationNotes": "Manual smoke test metadata-only evidence draft",
+    "reasonCode": "MANUAL_TEST_DRAFT_EVIDENCE_METADATA",
+    "idempotencyKey": "manual-statutory-draft-senior-evidence-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("returns persisted draft with metadata-only evidence reference", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.accessDecision).to.equal("ALLOWED");
+    expect(res.body.accessPersisted).to.equal(true);
+    expect(res.body.draftAccepted).to.equal(true);
+    expect(res.body.draftPersisted).to.equal(true);
+    expect(res.body.draftId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    expect(res.body.validationStatus).to.equal("REQUESTED");
+    expect(res.body.entitlementType).to.equal("SENIOR_CITIZEN");
+    expect(res.body.evidenceRequired).to.equal(true);
+    expect(res.body.evidenceReferenceId).to.not.equal(null);
+  });
+}
