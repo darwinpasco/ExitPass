@@ -10,9 +10,9 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// Operator Console access evaluation endpoint.
 ///
 /// ExitPass v1.2 Invariants Enforced:
+/// - This endpoint persists Operator Console access evaluation evidence only.
 /// - This endpoint never creates or mutates PaymentAttempt, PaymentConfirmation, ExitAuthorization,
-///   provider outcome, gate consume, coupon application, settlement truth, or payment finality.
-/// - This endpoint does not persist access evaluations.
+///   provider outcome, gate consume, coupon application, settlement truth, reconciliation records, or payment finality.
 /// </summary>
 public static class OperatorConsoleAccessEvaluationEndpoints
 {
@@ -28,7 +28,13 @@ public static class OperatorConsoleAccessEvaluationEndpoints
 
         group.MapPost("/access/evaluate", EvaluateAsync)
             .WithName("EvaluateOperatorConsoleAccess")
-            .Produces<OperatorConsoleAccessEvaluationResponse>(StatusCodes.Status200OK);
+            .WithTags("OperatorConsole")
+            .Accepts<OperatorConsoleAccessEvaluationRequest>("application/json")
+            .Produces<OperatorConsoleAccessEvaluationResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("Evaluate Operator Console access")
+            .WithDescription("Evaluates and persists whether an Operator Console user may perform a controlled action. This endpoint persists access evaluation evidence only and does not mutate payment, gate, coupon, provider, settlement, or reconciliation state.");
 
         return app;
     }
