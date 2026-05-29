@@ -17,6 +17,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// <summary>
 /// Verifies the Operator Console statutory discount draft API route and response mapping.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 {
     private const string Endpoint = "/v1/ops/operator-console/statutory-discounts/draft";
@@ -399,6 +400,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
     private static async Task SeedManualFixtureAsync()
     {
+        await ClearPayableBasisApplyStateAsync();
+
         var sql = ReadRepoFile(
             "infra",
             "db",
@@ -412,6 +415,36 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             CommandTimeout = 60
         };
 
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task ClearPayableBasisApplyStateAsync()
+    {
+        const string sql = """
+            BEGIN;
+            SET CONSTRAINTS ALL DEFERRED;
+
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
+            UPDATE discounts.statutory_discount_validations
+               SET tariff_snapshot_id = NULL
+             WHERE parking_session_id = @parking_session_id;
+
+            UPDATE core.tariff_snapshots
+               SET superseded_by_tariff_snapshot_id = NULL,
+                   statutory_discount_validation_id = NULL
+             WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.tariff_snapshots
+            WHERE parking_session_id = @parking_session_id;
+
+            COMMIT;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = Guid.Parse("77000000-0000-0000-0000-000000000090");
         await command.ExecuteNonQueryAsync();
     }
 
