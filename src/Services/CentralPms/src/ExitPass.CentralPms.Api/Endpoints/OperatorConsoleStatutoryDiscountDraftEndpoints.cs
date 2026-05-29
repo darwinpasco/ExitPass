@@ -12,6 +12,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// ExitPass v1.2 Invariants Enforced:
 /// - This endpoint persists Operator Console access evaluation evidence before draft creation.
 /// - This endpoint may persist a privacy-minimized statutory discount validation draft and metadata-only evidence reference.
+/// - This endpoint may persist a review decision status transition on an existing validation draft.
 /// - This endpoint never applies statutory discounts or mutates PaymentAttempt, PaymentConfirmation,
 ///   ExitAuthorization, provider outcome, gate consume, coupon application, payable basis, settlement truth,
 ///   reconciliation records, or payment finality.
@@ -19,6 +20,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 {
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
+    private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
 
     /// <summary>
     /// Maps Operator Console statutory discount draft endpoints.
@@ -38,6 +40,18 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithSummary("Draft Operator Console statutory discount validation")
             .WithDescription("Validates and drafts a privacy-minimized statutory discount validation request after evaluating and persisting Operator Console access. When evidence is requested, this endpoint may persist metadata-only evidence reference records without image upload or raw evidence storage. This endpoint does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+
+        group.MapPost("/statutory-discounts/{draftId:guid}/decision", DecideAsync)
+            .WithName("DecideOperatorConsoleStatutoryDiscount")
+            .WithTags("OperatorConsole")
+            .Accepts<OperatorConsoleStatutoryDiscountDecisionRequest>("application/json")
+            .Produces<OperatorConsoleStatutoryDiscountDecisionResponse>(StatusCodes.Status200OK)
+            .Produces<OperatorConsoleStatutoryDiscountDecisionResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("Decide Operator Console statutory discount validation")
+            .WithDescription("Approves or rejects an existing Operator Console statutory discount validation draft after evaluating and persisting Operator Console access. This endpoint only transitions validation decision status and does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
         return app;
     }
@@ -136,6 +150,83 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             Retryable = false
         };
 
+    private static async Task<IResult> DecideAsync(
+        Guid draftId,
+        OperatorConsoleStatutoryDiscountDecisionRequest request,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountDecisionService service,
+        ILoggerFactory loggerFactory)
+    {
+        using var activity = DecisionActivitySource.StartActivity("HTTP DecideOperatorConsoleStatutoryDiscount", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", request.CorrelationId);
+        activity?.SetTag("statutory_discount_validation_id", draftId);
+        activity?.SetTag("decision", request.Decision);
+
+        try
+        {
+            var result = await service.DecideAsync(
+                new OperatorConsoleStatutoryDiscountDecisionCommand(
+                    draftId,
+                    request.UserId,
+                    request.OperatorDeviceBindingId,
+                    request.SiteId,
+                    request.SiteGroupId,
+                    request.OperatorShiftId,
+                    request.Decision,
+                    request.DecisionReasonCode,
+                    request.DecisionNotes,
+                    request.ReviewerAttestation,
+                    request.IdempotencyKey,
+                    request.CorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
+            activity?.SetTag("access_evaluation_allowed", result.AccessAllowed);
+            activity?.SetTag("access_evaluation_persisted", result.AccessPersisted);
+            activity?.SetTag("decision_accepted", result.DecisionAccepted);
+            activity?.SetTag("decision_persisted", result.DecisionPersisted);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            logger.LogInformation(
+                "Operator Console statutory discount decision completed. evaluation_id={EvaluationId} access_allowed={AccessAllowed} decision_accepted={DecisionAccepted} decision_persisted={DecisionPersisted}",
+                result.AccessEvaluationId,
+                result.AccessAllowed,
+                result.DecisionAccepted,
+                result.DecisionPersisted);
+
+            var response = ToContract(result);
+            return result.AccessAllowed && result.ErrorCode == "DRAFT_NOT_FOUND"
+                ? Results.NotFound(response)
+                : Results.Ok(response);
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_REQUEST", ex.Message, request.CorrelationId));
+        }
+        catch (OperatorConsoleStatutoryDiscountDecisionConflictException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.Conflict(BuildError("STATUTORY_DISCOUNT_DRAFT_ALREADY_DECIDED", ex.Message, request.CorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console statutory discount decision failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_STATUTORY_DISCOUNT_DECISION_FAILED",
+                    "The Operator Console statutory discount decision could not be completed.",
+                    request.CorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
     private static OperatorConsoleStatutoryDiscountDraftResponse ToContract(
         OperatorConsoleStatutoryDiscountDraftResult result) =>
         new(
@@ -155,6 +246,29 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.EvidenceReferenceCreated,
             result.EvidenceReferenceId,
             result.ReusedExistingDraft,
+            result.IneligibilityReason,
+            result.ErrorCode,
+            result.CorrelationId);
+
+    private static OperatorConsoleStatutoryDiscountDecisionResponse ToContract(
+        OperatorConsoleStatutoryDiscountDecisionResult result) =>
+        new(
+            result.AccessEvaluationId,
+            result.AccessAllowed,
+            result.AccessDecision,
+            result.AccessDenialReasons,
+            result.AccessPersisted,
+            result.DecisionAccepted,
+            result.DecisionPersisted,
+            result.DraftId,
+            result.ParkingSessionId,
+            result.EntitlementType,
+            result.PreviousValidationStatus,
+            result.CurrentValidationStatus,
+            result.Decision,
+            result.DecisionReasonCode,
+            result.AlreadyDecided,
+            result.DecisionChanged,
             result.IneligibilityReason,
             result.ErrorCode,
             result.CorrelationId);

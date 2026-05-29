@@ -35,7 +35,7 @@ Run against the local development database:
 docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/stdin < infra\db\fixtures\operator-console-access-evaluation\Seed-OperatorConsoleAccessEvaluationManualFixtures.sql
 ```
 
-The script is idempotent. For repeatable statutory discount draft manual tests, it resets only `REQUESTED` and `PENDING_OPERATOR_REVIEW` Operator Assisted statutory discount validation drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, or approved statutory discount records.
+The script is idempotent. For repeatable statutory discount draft and decision manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, or applied statutory discount records.
 
 ## Evidence Metadata Behavior
 
@@ -82,6 +82,26 @@ Expected replay behavior:
 - `entitlementType = SENIOR_CITIZEN`
 - `reusedExistingDraft = true`
 - no second active draft row is created
+
+## Review Decision Endpoint
+
+Endpoint:
+
+```http
+POST /v1/ops/operator-console/statutory-discounts/{draftId}/decision
+```
+
+This endpoint approves or rejects an existing Operator Console statutory discount validation draft after access evaluation. It only transitions the validation record status; it does not apply the discount, mutate payable basis, calculate a discount amount, remove VAT, create payment attempts, issue exit authorizations, call providers, call gates, create coupons, or create reconciliation records.
+
+Suggested manual flow:
+
+1. Run `01 Valid Senior Citizen draft`.
+2. Copy `draftId` from the response.
+3. POST the decision endpoint with `decision = APPROVE`, `reviewerAttestation = true`, and the same allowed operator access context.
+4. Rerun the same approval request and expect deterministic replay with `alreadyDecided = true` and `decisionChanged = false`.
+5. Reset fixtures, run `01 Valid Senior Citizen draft` again, then POST `decision = REJECT` with `decisionReasonCode`.
+
+Approval is fail-closed when `evidence_required = true` and `evidence_captured = false`; use `REJECT` for metadata-only evidence drafts until a future evidence capture/upload slice exists.
 
 ## Read-Only Database Verification
 
@@ -164,6 +184,22 @@ WHERE statutory_discount_validation_id = '<draftId-from-response>'::uuid
 ```
 
 Expected result is `1` after running request `12` and then request `13`.
+
+Verify the decision endpoint status transition:
+
+```sql
+SELECT
+    statutory_discount_validation_id,
+    validation_status,
+    decision_reason_code,
+    validated_at,
+    validated_by_user_id,
+    correlation_id
+FROM discounts.statutory_discount_validations
+WHERE statutory_discount_validation_id = '<draftId-from-response>'::uuid;
+```
+
+For approved decisions, expect `validation_status = APPROVED`. For rejected decisions, expect `validation_status = REJECTED` and `decision_reason_code` populated.
 
 ## Scope Boundary
 
