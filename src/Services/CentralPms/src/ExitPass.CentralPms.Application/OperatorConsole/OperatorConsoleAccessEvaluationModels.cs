@@ -30,7 +30,8 @@ public sealed record OperatorConsoleAccessEvaluationResult(
     OperatorConsoleSiteContextResult SiteContext,
     DateTimeOffset EvaluatedAt,
     bool Persisted,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    OperatorConsoleAccessEvaluationPersistenceContext PersistenceContext);
 
 /// <summary>
 /// Device trust result for access evaluation.
@@ -56,3 +57,19 @@ public sealed record OperatorConsoleSiteContextResult(
     Guid? SiteId,
     Guid? SiteGroupId,
     bool Assigned);
+
+/// <summary>
+/// Persistence-only context captured with an Operator Console access evaluation.
+/// </summary>
+public sealed record OperatorConsoleAccessEvaluationPersistenceContext(
+    Guid OperatorUserId,
+    Guid? HrIdentityMappingId,
+    Guid? OperatorDeviceBindingId,
+    Guid? OperatorShiftId,
+    Guid? ShiftTakeoverId,
+    Guid? SiteGroupId,
+    Guid? SiteId,
+    string RequestedAction,
+    string WorkflowCode,
+    string? TargetEntityType,
+    Guid? TargetEntityId);

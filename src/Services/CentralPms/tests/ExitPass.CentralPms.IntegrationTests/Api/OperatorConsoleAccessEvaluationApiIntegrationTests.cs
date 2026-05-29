@@ -20,7 +20,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// Verifies the Operator Console access evaluation route.
 ///
 /// ExitPass v1.2 Invariants Enforced:
-/// - The evaluator remains read-only and does not persist access evaluations.
+/// - Persistence is delegated to the Operator Console evaluation writer.
 /// - The evaluator does not create payment attempts, issue or consume exit authorizations,
 ///   record provider outcomes, record payment confirmations, or validate gate devices.
 /// </summary>
@@ -73,7 +73,7 @@ public sealed class OperatorConsoleAccessEvaluationApiIntegrationTests
 
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleAccessEvaluationResponse>();
         body.Should().NotBeNull();
-        body!.EvaluationId.Should().Be(Guid.Empty);
+        body!.EvaluationId.Should().Be(FakePersistingWriter.EvaluationId);
         body.Allowed.Should().BeTrue();
         body.Decision.Should().Be("ALLOWED");
         body.DenialReasons.Should().BeEmpty();
@@ -89,7 +89,7 @@ public sealed class OperatorConsoleAccessEvaluationApiIntegrationTests
         body.SiteContext.SiteGroupId.Should().Be(SiteGroupId);
         body.SiteContext.Assigned.Should().BeTrue();
         body.EvaluatedAt.Should().Be(EvaluatedAt);
-        body.Persisted.Should().BeFalse();
+        body.Persisted.Should().BeTrue();
         body.CorrelationId.Should().Be(CorrelationId);
 
         boundaryTracker.TotalCalls.Should().Be(0);
@@ -146,6 +146,7 @@ public sealed class OperatorConsoleAccessEvaluationApiIntegrationTests
                 services.RemoveAll<IConsumeExitAuthorizationUseCase>();
                 services.RemoveAll<IGateDeviceIdentityValidator>();
                 services.RemoveAll<IOperatorConsoleAccessEvaluationReadRepository>();
+                services.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
                 services.RemoveAll<ISystemClock>();
 
                 services.AddSingleton<ICreateOrReusePaymentAttemptUseCase>(boundaryTracker);
@@ -156,7 +157,22 @@ public sealed class OperatorConsoleAccessEvaluationApiIntegrationTests
                 services.AddSingleton<IConsumeExitAuthorizationUseCase>(boundaryTracker);
                 services.AddSingleton<IGateDeviceIdentityValidator>(boundaryTracker);
                 services.AddSingleton<IOperatorConsoleAccessEvaluationReadRepository>(new ValidOperatorConsoleReadRepository());
+                services.AddSingleton<IOperatorConsoleAccessEvaluationWriter>(new FakePersistingWriter());
                 services.AddSingleton<ISystemClock>(new FixedClock(EvaluatedAt));
+            });
+    }
+
+    private sealed class FakePersistingWriter : IOperatorConsoleAccessEvaluationWriter
+    {
+        public static readonly Guid EvaluationId = Guid.Parse("41000000-0000-0000-0000-000000000010");
+
+        public Task<OperatorConsoleAccessEvaluationResult> PersistAsync(
+            OperatorConsoleAccessEvaluationResult result,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
             });
     }
 
