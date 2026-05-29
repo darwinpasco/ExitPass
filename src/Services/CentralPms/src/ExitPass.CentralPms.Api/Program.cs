@@ -119,6 +119,7 @@ app.MapReconciliationRunItemEndpoints();
 app.MapReconciliationExceptionLifecycleEndpoints();
 app.MapReconciliationEvaluationEndpoints();
 app.MapOperatorConsoleAccessEvaluationEndpoints();
+app.MapOperatorConsoleSessionLookupEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -199,6 +200,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationExceptionLifecycle")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationEvaluation")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessEvaluation")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
                 .AddSource("ExitPass.CentralPms.Api.EventRecovery")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
@@ -360,6 +362,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationService, OperatorConsoleAccessEvaluationService>();
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationWriter>(_ =>
         new OperatorConsoleAccessEvaluationWriter(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
+        new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
