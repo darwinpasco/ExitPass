@@ -1,0 +1,8 @@
+{
+  "version": "1",
+  "name": "ExitPass Operator Console Access Evaluation",
+  "type": "collection",
+  "ignore": [
+    "README.md"
+  ]
+}

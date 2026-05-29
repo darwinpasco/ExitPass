@@ -1,0 +1,41 @@
+meta {
+  name: 09 Evidence view action
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/access/evaluate
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "workflowCode": "STATUTORY_DISCOUNT_VALIDATION",
+    "controlledActionCode": "VIEW_EVIDENCE",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "evidenceAccessIntent": "SUPERVISOR_REVIEW",
+    "idempotencyKey": "manual-view-evidence-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("returns deterministic persisted access evaluation", function () {
+    expect(res.status).to.equal(200);
+    expect(["ALLOWED", "DENIED"]).to.include(res.body.decision);
+    expect(res.body.allowed).to.equal(res.body.decision === "ALLOWED");
+    expect(res.body.persisted).to.equal(true);
+    expect(res.body.evaluationId).to.not.equal("00000000-0000-0000-0000-000000000000");
+  });
+}
