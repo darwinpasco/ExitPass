@@ -167,6 +167,60 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                 throw new TariffSnapshotNotFoundException(command.TariffSnapshotId);
             }
 
+            if (tariffSnapshot.ParkingSessionId != command.ParkingSessionId)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Tariff snapshot session mismatch");
+                activity?.SetTag("rejection_reason", "TARIFF_SNAPSHOT_SESSION_MISMATCH");
+
+                _logger.LogWarning(
+                    "Payment attempt creation rejected because tariff snapshot belongs to a different parking session.");
+
+                throw new TariffSnapshotNotEligibleException(
+                    command.TariffSnapshotId,
+                    tariffSnapshot.SnapshotStatus,
+                    tariffSnapshot.ExpiresAt,
+                    tariffSnapshot.ConsumedByPaymentAttemptId);
+            }
+
+            var effectiveAppliedTariffSnapshot = await _tariffSnapshotReadRepository.GetEffectiveAppliedTariffSnapshotAsync(
+                command.ParkingSessionId,
+                cancellationToken);
+
+            if (effectiveAppliedTariffSnapshot is { IsValid: false })
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Effective payable basis invalid");
+                activity?.SetTag("rejection_reason", effectiveAppliedTariffSnapshot.InvalidReasonCode ?? "EFFECTIVE_PAYABLE_BASIS_INVALID");
+                activity?.SetTag("statutory_discount_application_id", effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId);
+
+                _logger.LogWarning(
+                    "Payment attempt creation rejected because the effective applied payable basis is invalid. reason_code={ReasonCode}",
+                    effectiveAppliedTariffSnapshot.InvalidReasonCode);
+
+                throw new EffectivePayableBasisInvalidException(
+                    command.ParkingSessionId,
+                    effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId,
+                    effectiveAppliedTariffSnapshot.InvalidReasonCode);
+            }
+
+            if (effectiveAppliedTariffSnapshot is { AppliedTariffSnapshotId: { } appliedTariffSnapshotId } &&
+                appliedTariffSnapshotId != command.TariffSnapshotId)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Stale tariff snapshot");
+                activity?.SetTag("rejection_reason", "STALE_TARIFF_SNAPSHOT");
+                activity?.SetTag("effective_tariff_snapshot_id", appliedTariffSnapshotId);
+                activity?.SetTag("statutory_discount_application_id", effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId);
+
+                _logger.LogWarning(
+                    "Payment attempt creation rejected because submitted tariff snapshot is stale. effective_tariff_snapshot_id={EffectiveTariffSnapshotId}",
+                    appliedTariffSnapshotId);
+
+                throw new StaleTariffSnapshotException(
+                    command.TariffSnapshotId,
+                    appliedTariffSnapshotId,
+                    command.ParkingSessionId,
+                    effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId);
+            }
+
             var provider = PaymentProvider.FromCode(command.PaymentProviderCode);
 
             _paymentAttemptCreationPolicy.ValidateRequest(new CreateOrReusePaymentAttemptPolicyInput
@@ -394,6 +448,8 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
         return ex is ParkingSessionNotFoundException
             or TariffSnapshotNotFoundException
             or TariffSnapshotNotEligibleException
+            or StaleTariffSnapshotException
+            or EffectivePayableBasisInvalidException
             or ActivePaymentAttemptAlreadyExistsException
             or IdempotencyConflictException
             or InvalidOperationException;

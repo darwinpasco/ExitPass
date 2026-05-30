@@ -368,6 +368,92 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     }
 
     /// <summary>
+    /// Verifies that payment creation rejects a submitted original snapshot after an APPLIED statutory discount exists.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_stale_tariff_snapshot_when_applied_payable_basis_requires_different_snapshot()
+    {
+        var fixture = CreateFixture();
+        var appliedTariffSnapshotId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        var applicationId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot());
+
+        fixture.TariffSnapshotReadRepository
+            .GetEffectiveAppliedTariffSnapshotAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(new EffectiveTariffSnapshotResolution
+            {
+                ParkingSessionId = ParkingSessionId,
+                StatutoryDiscountApplicationId = applicationId,
+                OriginalTariffSnapshotId = TariffSnapshotId,
+                AppliedTariffSnapshotId = appliedTariffSnapshotId,
+                IsValid = true
+            });
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-stale"), CancellationToken.None);
+
+        var assertion = await act.Should().ThrowAsync<StaleTariffSnapshotException>();
+        assertion.Which.SubmittedTariffSnapshotId.Should().Be(TariffSnapshotId);
+        assertion.Which.EffectiveTariffSnapshotId.Should().Be(appliedTariffSnapshotId);
+        assertion.Which.StatutoryDiscountApplicationId.Should().Be(applicationId);
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies that payment creation fails closed when APPLIED payable-basis state is invalid.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_effective_payable_basis_invalid_when_applied_snapshot_is_invalid()
+    {
+        var fixture = CreateFixture();
+        var applicationId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot());
+
+        fixture.TariffSnapshotReadRepository
+            .GetEffectiveAppliedTariffSnapshotAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(new EffectiveTariffSnapshotResolution
+            {
+                ParkingSessionId = ParkingSessionId,
+                StatutoryDiscountApplicationId = applicationId,
+                OriginalTariffSnapshotId = TariffSnapshotId,
+                AppliedTariffSnapshotId = null,
+                IsValid = false,
+                InvalidReasonCode = "APPLIED_TARIFF_SNAPSHOT_MISSING"
+            });
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-invalid-effective"), CancellationToken.None);
+
+        var assertion = await act.Should().ThrowAsync<EffectivePayableBasisInvalidException>();
+        assertion.Which.ParkingSessionId.Should().Be(ParkingSessionId);
+        assertion.Which.StatutoryDiscountApplicationId.Should().Be(applicationId);
+        assertion.Which.ReasonCode.Should().Be("APPLIED_TARIFF_SNAPSHOT_MISSING");
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Verifies that a non-eligible parking session is rejected before DB-backed create-or-reuse execution.
     /// </summary>
     [Fact]

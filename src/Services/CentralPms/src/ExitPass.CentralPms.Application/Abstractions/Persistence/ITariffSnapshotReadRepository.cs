@@ -14,4 +14,18 @@ public interface ITariffSnapshotReadRepository
     /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
     /// <returns>The tariff snapshot, or <see langword="null"/> when it is unknown to Central PMS.</returns>
     Task<TariffSnapshot?> GetByIdAsync(Guid tariffSnapshotId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Resolves the effective payable-basis tariff snapshot for a parking session when a statutory discount
+    /// payable-basis application has already reached APPLIED.
+    /// </summary>
+    /// <param name="parkingSessionId">Parking session whose effective payable basis should be checked.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns>
+    /// The APPLIED statutory-discount payable basis when present; otherwise <see langword="null"/> when no
+    /// statutory-discount applied basis exists for the session.
+    /// </returns>
+    Task<EffectiveTariffSnapshotResolution?> GetEffectiveAppliedTariffSnapshotAsync(
+        Guid parkingSessionId,
+        CancellationToken cancellationToken);
 }

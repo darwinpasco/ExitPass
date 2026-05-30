@@ -179,6 +179,95 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                 : reader.GetGuid(reader.GetOrdinal("consumed_by_payment_attempt_id")));
     }
 
+    /// <inheritdoc />
+    public async Task<EffectiveTariffSnapshotResolution?> GetEffectiveAppliedTariffSnapshotAsync(
+        Guid parkingSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            /*
+             * #204 payment initiation alignment:
+             * - an APPLIED statutory discount payable-basis application makes the applied ACTIVE tariff snapshot
+             *   the effective payable basis for payment attempt creation.
+             * - invalid APPLIED application state fails closed; payment must not silently fall back to the
+             *   original SUPERSEDED tariff snapshot.
+             */
+            WITH applied_applications AS (
+                SELECT
+                    app.statutory_discount_payable_basis_application_id,
+                    app.parking_session_id,
+                    app.original_tariff_snapshot_id,
+                    app.applied_tariff_snapshot_id,
+                    app.statutory_discount_validation_id,
+                    app.applied_at,
+                    app.updated_at,
+                    COUNT(*) OVER () AS applied_count
+                FROM discounts.statutory_discount_payable_basis_applications AS app
+                WHERE app.parking_session_id = @parking_session_id
+                  AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+            )
+            SELECT
+                app.statutory_discount_payable_basis_application_id,
+                app.parking_session_id,
+                app.original_tariff_snapshot_id,
+                app.applied_tariff_snapshot_id,
+                app.applied_count,
+                applied_ts.tariff_snapshot_id IS NOT NULL AS applied_snapshot_valid,
+                CASE
+                    WHEN app.applied_count > 1 THEN 'MULTIPLE_APPLIED_APPLICATIONS'
+                    WHEN app.applied_tariff_snapshot_id IS NULL THEN 'APPLIED_TARIFF_SNAPSHOT_MISSING'
+                    WHEN applied_ts.tariff_snapshot_id IS NULL THEN 'APPLIED_TARIFF_SNAPSHOT_INVALID'
+                    ELSE NULL
+                END AS invalid_reason_code
+            FROM applied_applications AS app
+            LEFT JOIN core.tariff_snapshots AS applied_ts
+                ON applied_ts.tariff_snapshot_id = app.applied_tariff_snapshot_id
+               AND applied_ts.parking_session_id = app.parking_session_id
+               AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+               AND applied_ts.statutory_discount_validation_id = app.statutory_discount_validation_id
+            ORDER BY app.applied_at DESC NULLS LAST, app.updated_at DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+
+        await using var reader = await command.ExecuteReaderAsync(
+            CommandBehavior.SingleRow,
+            cancellationToken);
+
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var invalidReasonOrdinal = reader.GetOrdinal("invalid_reason_code");
+        var invalidReasonCode = reader.IsDBNull(invalidReasonOrdinal)
+            ? null
+            : reader.GetString(invalidReasonOrdinal);
+
+        return new EffectiveTariffSnapshotResolution
+        {
+            ParkingSessionId = reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            StatutoryDiscountApplicationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
+            OriginalTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("original_tariff_snapshot_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),
+            AppliedTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("applied_tariff_snapshot_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("applied_tariff_snapshot_id")),
+            IsValid = invalidReasonCode is null && reader.GetBoolean(reader.GetOrdinal("applied_snapshot_valid")),
+            InvalidReasonCode = invalidReasonCode
+        };
+    }
+
     /// <summary>
     /// Maps the compatibility source type projected from the v1.2 tariff snapshot amounts.
     ///
