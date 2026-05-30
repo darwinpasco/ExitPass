@@ -591,17 +591,78 @@ After implementation, Bruno/manual coverage should include:
 
 ## Recommended Implementation Sequence
 
-1. `#191` Add DB support for statutory discount applied tariff snapshot lifecycle.
-2. `#192` Implement `APPLIED` tariff snapshot transition in the existing apply-payable-basis endpoint.
-3. `#193` Add Bruno/manual coverage for the `APPLIED` snapshot lifecycle.
-4. `#194` Update WebPay/session summary effective payable-basis read model, if inspection shows it does not already resolve the active applied snapshot.
-5. `#195` Align payment attempt payable-basis guardrails and stale-tariff rejection tests, if needed.
+1. `#199` Add DB support for final `APPLIED` statutory discount tariff snapshot lifecycle.
+2. `#200` Implement `APPLIED` tariff snapshot transition in the existing apply-payable-basis endpoint.
+3. `#201` Add Bruno/manual coverage for the `APPLIED` snapshot lifecycle.
+4. `#202` Update WebPay/session summary effective payable-basis read model, if inspection shows it does not already resolve the active applied snapshot.
+5. `#203` Align payment attempt payable-basis guardrails and stale-tariff rejection tests, if needed.
+
+## DB Support Decision From #199
+
+Patch path:
+
+- `infra/db/patches/ExitPass_StatutoryDiscountAppliedTariffSnapshotLifecycle_v1.2.sql`
+
+Validation script:
+
+- `infra/db/patches/validation/Validate_StatutoryDiscountAppliedTariffSnapshotLifecycle_v1.2.sql`
+
+Final DB support decision:
+
+- Keep `core.tariff_snapshots` schema unchanged.
+- Use the existing `superseded_by_tariff_snapshot_id`, `snapshot_status`, `statutory_discount_validation_id`, and amount fields.
+- Add the final lifecycle transition as a database routine:
+  - `discounts.apply_statutory_discount_payable_basis(p_statutory_discount_payable_basis_application_id uuid, p_actor_user_id uuid, p_correlation_id uuid)`
+- The routine transitions one `REQUESTED` application to `APPLIED` by:
+  - locking the application, validation, parking session, and original tariff snapshot;
+  - blocking non-approved validations;
+  - blocking evidence-required validations without captured evidence;
+  - blocking inactive sessions;
+  - blocking non-active, consumed, expired, or already-superseded original snapshots;
+  - blocking any existing payment attempt for the session/original snapshot;
+  - transitioning the original snapshot from `ACTIVE` to `SUPERSEDED`;
+  - preserving the original snapshot amount fields;
+  - inserting one new statutory-discount-adjusted `ACTIVE` tariff snapshot;
+  - linking the application to the new applied snapshot;
+  - setting `application_status = APPLIED` and `applied_at`;
+  - linking the validation to the applied snapshot and copied applied amount fields.
+
+Added guardrails:
+
+- `ux_tariff_snapshots__statutory_discount_validation_applied`
+  - unique `core.tariff_snapshots(statutory_discount_validation_id)` where `statutory_discount_validation_id IS NOT NULL`
+  - prevents duplicate statutory-discount-adjusted snapshots for one validation.
+- `ck_tariff_snapshots__statutory_discount_link_has_discount`
+  - requires a tariff snapshot linked to a statutory discount validation to carry a positive statutory discount amount.
+
+Existing guardrails reused:
+
+- `ux_tariff_snapshots__active_by_session`
+  - keeps one active tariff snapshot per parking session.
+- `ux_sd_pba__validation_active`
+  - keeps one active/requested application per statutory discount validation.
+- `ux_sd_pba__session_active`
+  - keeps one active/requested statutory discount payable-basis application per parking session.
+- `ux_sd_pba__applied_tariff_snapshot`
+  - prevents reuse of one applied tariff snapshot by multiple application rows.
+- `ck_sd_pba__applied_fields`
+  - requires `APPLIED` applications to have `applied_tariff_snapshot_id` and `applied_at`.
+- `ck_sd_pba__distinct_snapshots`
+  - prevents original and applied tariff snapshots from being the same row.
+- `trg_sd_pba__enforce`
+  - keeps APPLIED application rows tied to approved validations, matching sessions, captured evidence when required, active applied snapshots, positive statutory discount amounts, and no payment attempts.
+
+Known limitations:
+
+- The routine is DB support only. No C# endpoint/service code invokes it yet.
+- The routine does not create payment attempts or payment provider state.
+- The routine does not create coupon/reconciliation/gate/vendor/AUB state.
+- The routine uses existing tariff snapshot amount fields; no new VAT component fields were added.
+- Failure outcomes are returned by the routine as deterministic `outcome_code`/`failure_code` values for future service mapping.
 
 ## Open Decisions
 
-- Whether original tariff snapshot lifecycle status transition from `ACTIVE` to `SUPERSEDED` is accepted as preserving immutability, with amount fields remaining immutable.
-- Whether to enforce unique `core.tariff_snapshots.statutory_discount_validation_id` where non-null.
-- Whether the final implementation should live in a dedicated database routine, an application writer transaction, or both.
+- Whether the future C# implementation should call the DB routine directly or keep equivalent transaction logic in the application writer with the DB routine reserved for validation/admin use.
 - Whether WebPay/vendor re-resolution may retire an applied statutory snapshot, or must fail/reuse it.
 - Whether payment attempt creation should reject a stale base snapshot with a more specific `TARIFF_SNAPSHOT_SUPERSEDED` outcome.
 - Whether any existing terminal payment attempt should permanently block apply or a separate requote/refund design will exist.
