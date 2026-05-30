@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using NpgsqlTypes;
+using System.Text.Json;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -31,6 +32,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     private static readonly Guid FixtureServiceIdentityId = Guid.Parse("77000000-0000-0000-0000-000000000003");
     private static readonly Guid FixtureJurisdictionId = Guid.Parse("77000000-0000-0000-0000-000000000211");
     private static readonly Guid NoEvidencePolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000101");
+    private static readonly Guid MissingPolicyContextValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000195");
+    private static readonly Guid InvalidPolicySnapshotValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000196");
+    private static readonly Guid UnsupportedFreeDurationValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000197");
 
     /// <summary>
     /// Verifies the documented Operator Console apply-payable-basis route exists.
@@ -112,9 +116,23 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         applied.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
         applied.FinalPayableAmountMinorUnits.Should().Be(8929);
         applied.CurrencyCode.Should().Be("PHP");
+        applied.StatutoryDiscountPolicyId.Should().Be(NoEvidencePolicyId);
+        applied.ResolvedJurisdictionId.Should().Be(FixtureJurisdictionId);
+        applied.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+        applied.PolicyCode.Should().Be("INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY");
+        applied.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
+        applied.OrdinanceReference.Should().Be("INTEGRATION-NO-EVIDENCE-195");
+        applied.PolicySnapshotUsed.Should().BeTrue();
 
         var rowCount = await CountApplicationsAsync(draft.DraftId.Value);
         rowCount.Should().Be(1);
+        var computationBasis = await ReadApplicationComputationBasisAsync(draft.DraftId.Value);
+        computationBasis.GetProperty("policyContext").GetProperty("policyCode").GetString()
+            .Should().Be("INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY");
+        computationBasis.GetProperty("policyContext").GetProperty("benefitType").GetString()
+            .Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
+        computationBasis.GetProperty("policyContext").GetProperty("ordinanceReference").GetString()
+            .Should().Be("INTEGRATION-NO-EVIDENCE-195");
         var originalSnapshot = await ReadTariffSnapshotAsync(FixtureOriginalTariffSnapshotId);
         originalSnapshot.Status.Should().Be("ACTIVE");
         originalSnapshot.GrossAmount.Should().Be(125.00m);
@@ -133,6 +151,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         replay.AlreadyApplied.Should().BeFalse();
         replay.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId);
         replay.AppliedTariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
+        replay.PolicySnapshotUsed.Should().BeTrue();
+        replay.PolicyCode.Should().Be(applied.PolicyCode);
         (await CountApplicationsAsync(draft.DraftId.Value)).Should().Be(1);
 
         var afterBoundaryCount = await CountPaymentBoundaryRecordsAsync(FixtureParkingSessionId);
@@ -171,6 +191,108 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         body.ApplicationPersisted.Should().BeFalse();
         body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_NOT_APPROVED");
         (await CountApplicationsAsync(draft.DraftId.Value)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies approved validations without persisted policy context fail deterministically.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenPolicyContextMissing_ReturnsDeterministicError()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+        await InsertApprovedValidationAsync(MissingPolicyContextValidationId, policyId: null, snapshotJson: null);
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(MissingPolicyContextValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ApplicationPersisted.Should().BeFalse();
+        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_CONTEXT_MISSING");
+        body.PolicySnapshotUsed.Should().BeFalse();
+        (await CountApplicationsAsync(MissingPolicyContextValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies invalid persisted policy snapshot content fails deterministically.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenPolicySnapshotInvalid_ReturnsDeterministicError()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+        await InsertApprovedValidationAsync(InvalidPolicySnapshotValidationId, NoEvidencePolicyId, "{}");
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(InvalidPolicySnapshotValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
+        (await CountApplicationsAsync(InvalidPolicySnapshotValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies local free-duration policies are not processed through generic VAT-exempt computation.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenPolicyBenefitFreeDuration_ReturnsUnsupportedBenefit()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+        await InsertApprovedValidationAsync(
+            UnsupportedFreeDurationValidationId,
+            Guid.Parse("77000000-0000-0000-0000-000000000261"),
+            FreeDurationPolicySnapshot());
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(UnsupportedFreeDurationValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ErrorCode.Should().Be("POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
+        body.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+        (await CountApplicationsAsync(UnsupportedFreeDurationValidationId)).Should().Be(0);
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftResponse> CreateDraftAsync(HttpClient client)
@@ -542,6 +664,115 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = validationId;
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
+
+    private static async Task<JsonElement> ReadApplicationComputationBasisAsync(Guid validationId)
+    {
+        const string sql = """
+            SELECT computation_basis_json
+            FROM discounts.statutory_discount_payable_basis_applications
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = validationId;
+
+        var json = (string?)await command.ExecuteScalarAsync();
+        json.Should().NotBeNull();
+        return JsonDocument.Parse(json!).RootElement.Clone();
+    }
+
+    private static async Task InsertApprovedValidationAsync(Guid validationId, Guid? policyId, string? snapshotJson)
+    {
+        const string sql = """
+            INSERT INTO discounts.statutory_discount_validations (
+                statutory_discount_validation_id,
+                parking_session_id,
+                tariff_snapshot_id,
+                entitlement_type,
+                policy_resolution_basis,
+                local_ordinance_applied,
+                national_law_fallback_applied,
+                validation_channel,
+                validation_status,
+                currency_code,
+                evidence_required,
+                evidence_captured,
+                requested_at,
+                validated_at,
+                validated_by_user_id,
+                requested_by_user_id,
+                correlation_id,
+                created_by_user_id,
+                updated_by_user_id,
+                statutory_discount_policy_id,
+                resolved_jurisdiction_id,
+                resolved_policy_snapshot_json
+            )
+            VALUES (
+                @validation_id,
+                @parking_session_id,
+                @tariff_snapshot_id,
+                'SENIOR_CITIZEN',
+                'LOCAL_ORDINANCE_APPLIED',
+                true,
+                false,
+                'OPERATOR_ASSISTED',
+                'APPROVED',
+                'PHP',
+                false,
+                false,
+                now(),
+                now(),
+                @user_id,
+                @user_id,
+                @correlation_id,
+                @user_id,
+                @user_id,
+                @policy_id,
+                @jurisdiction_id,
+                @snapshot_json::jsonb
+            );
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = FixtureParkingSessionId;
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = FixtureOriginalTariffSnapshotId;
+        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = FixtureUserId;
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
+        command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = policyId.HasValue ? policyId.Value : DBNull.Value;
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = policyId.HasValue ? FixtureJurisdictionId : DBNull.Value;
+        command.Parameters.Add("snapshot_json", NpgsqlDbType.Jsonb).Value = snapshotJson is null ? DBNull.Value : snapshotJson;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static string FreeDurationPolicySnapshot() =>
+        JsonSerializer.Serialize(new
+        {
+            statutoryDiscountPolicyId = "77000000-0000-0000-0000-000000000261",
+            policyCode = "MANUAL_TEST_QC_VERIFIED_LOCAL_POLICY",
+            policyName = "Manual Test Verified Local Senior Citizen Policy",
+            entitlementType = "SENIOR_CITIZEN",
+            policyResolutionBasis = "LOCAL_ORDINANCE_APPLIED",
+            policyLevel = "LOCAL_ORDINANCE",
+            policyType = "LOCAL_ORDINANCE",
+            legalBasisReference = "Manual verified local ordinance fixture for policy resolution smoke testing.",
+            ordinanceReference = "MANUAL-QC-ORD-193",
+            nationalLawReference = (string?)null,
+            verificationStatus = "VERIFIED_OFFICIAL",
+            benefitType = "FREE_DURATION",
+            freeDurationMinutes = 120,
+            initialRateExempt = false,
+            fullFeeExempt = false,
+            freePeriodApplication = "BEFORE_DISCOUNT_COMPUTATION",
+            succeedingHoursDiscountRule = "REGULAR_RATE",
+            discountBaseScope = "CHARGEABLE_PORTION_ONLY",
+            stackingPolicy = "NO_STACKING_ON_FREE_PERIOD",
+            legalBasisPriority = "LOCAL_ORDINANCE_FIRST",
+            requiresEvidence = false
+        });
 
     private static async Task<(string Status, decimal GrossAmount, decimal StatutoryDiscountAmount, decimal NetAmount)> ReadTariffSnapshotAsync(Guid tariffSnapshotId)
     {

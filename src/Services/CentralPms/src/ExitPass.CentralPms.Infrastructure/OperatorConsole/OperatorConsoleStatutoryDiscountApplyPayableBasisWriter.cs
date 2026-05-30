@@ -103,6 +103,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 return NotAccepted(validation, "PAYMENT_ATTEMPT_ALREADY_EXISTS", "PAYMENT_ATTEMPT_ALREADY_EXISTS");
             }
 
+            var policy = ValidateAndReadPolicySnapshot(validation);
+            if (!policy.Valid)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return NotAccepted(validation, policy.IneligibilityReason!, policy.ErrorCode!);
+            }
+
             var computed = ComputeAmounts(originalSnapshot);
             var applicationId = Guid.NewGuid();
 
@@ -115,6 +122,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 applicationId,
                 appliedTariffSnapshotId: null,
                 computed,
+                policy.Policy!,
                 cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
@@ -181,7 +189,11 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 validation_channel::text,
                 evidence_required,
                 evidence_captured,
-                currency_code
+                currency_code,
+                statutory_discount_policy_id,
+                resolved_jurisdiction_id,
+                policy_resolution_basis::text,
+                resolved_policy_snapshot_json
             FROM discounts.statutory_discount_validations
             WHERE statutory_discount_validation_id = @statutory_discount_validation_id
             FOR UPDATE;
@@ -205,7 +217,11 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             reader.GetString(5),
             reader.GetBoolean(6),
             reader.GetBoolean(7),
-            reader.IsDBNull(8) ? null : reader.GetString(8));
+            reader.IsDBNull(8) ? null : reader.GetString(8),
+            reader.IsDBNull(9) ? null : reader.GetGuid(9),
+            reader.IsDBNull(10) ? null : reader.GetGuid(10),
+            reader.GetString(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12));
     }
 
     private static async Task<ParkingSessionRow?> ReadParkingSessionForUpdateAsync(
@@ -348,7 +364,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 vat_exclusive_amount_minor_units,
                 statutory_discount_amount_minor_units,
                 final_payable_amount_minor_units,
-                currency_code
+                currency_code,
+                computation_basis_json
             FROM discounts.statutory_discount_payable_basis_applications
             WHERE statutory_discount_validation_id = @statutory_discount_validation_id
                OR parking_session_id = @parking_session_id
@@ -369,6 +386,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
 
         var status = reader.GetString(5);
         var accepted = status is ApplicationStatusApplied or ApplicationStatusRequested;
+        var policy = ReadPolicySummaryFromComputationBasis(reader.GetString(12));
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult(
             ApplicationAccepted: accepted,
             ApplicationPersisted: true,
@@ -385,6 +403,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             reader.GetInt64(9),
             reader.GetInt64(10),
             reader.GetString(11),
+            policy.StatutoryDiscountPolicyId,
+            policy.ResolvedJurisdictionId,
+            policy.PolicyResolutionBasis,
+            policy.PolicyCode,
+            policy.BenefitType,
+            policy.NationalLawReference,
+            policy.OrdinanceReference,
+            policy.PolicySnapshotUsed,
             IneligibilityReason: accepted ? null : "PAYABLE_BASIS_APPLICATION_IN_PROGRESS",
             ErrorCode: null);
     }
@@ -398,6 +424,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         Guid applicationId,
         Guid? appliedTariffSnapshotId,
         ComputedPayableBasis computed,
+        PolicySnapshotContext policy,
         CancellationToken cancellationToken)
     {
         const string sql = """
@@ -466,7 +493,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         npgsqlCommand.Parameters.Add("statutory_discount_amount_minor_units", NpgsqlDbType.Bigint).Value = computed.StatutoryDiscountAmountMinorUnits;
         npgsqlCommand.Parameters.Add("final_payable_amount_minor_units", NpgsqlDbType.Bigint).Value = computed.FinalPayableAmountMinorUnits;
         npgsqlCommand.Parameters.Add("currency_code", NpgsqlDbType.Varchar).Value = originalSnapshot.CurrencyCode;
-        npgsqlCommand.Parameters.Add("computation_basis_json", NpgsqlDbType.Jsonb).Value = BuildComputationBasisJson(originalSnapshot);
+        npgsqlCommand.Parameters.Add("computation_basis_json", NpgsqlDbType.Jsonb).Value = BuildComputationBasisJson(originalSnapshot, policy);
         npgsqlCommand.Parameters.Add("rounding_mode", NpgsqlDbType.Varchar).Value = RoundingMode;
         npgsqlCommand.Parameters.Add("applied_by_user_id", NpgsqlDbType.Uuid).Value = command.AppliedByUserId;
         npgsqlCommand.Parameters.Add("idempotency_key", NpgsqlDbType.Varchar).Value = command.IdempotencyKey;
@@ -496,6 +523,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             computed.StatutoryDiscountAmountMinorUnits,
             computed.FinalPayableAmountMinorUnits,
             originalSnapshot.CurrencyCode,
+            policy.StatutoryDiscountPolicyId,
+            policy.ResolvedJurisdictionId,
+            policy.PolicyResolutionBasis,
+            policy.PolicyCode,
+            policy.BenefitType,
+            policy.NationalLawReference,
+            policy.OrdinanceReference,
+            PolicySnapshotUsed: true,
             IneligibilityReason: null,
             ErrorCode: null);
     }
@@ -575,7 +610,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             originalSnapshot.CurrencyCode);
     }
 
-    private static string BuildComputationBasisJson(TariffSnapshotRow originalSnapshot) =>
+    private static string BuildComputationBasisJson(TariffSnapshotRow originalSnapshot, PolicySnapshotContext policy) =>
         JsonSerializer.Serialize(new
         {
             basis = "GROSS_INCLUSIVE_OF_VAT",
@@ -583,8 +618,179 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             vatRate = VatRate,
             statutoryDiscountRate = StatutoryDiscountRate,
             formula = "final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)",
-            roundingMode = RoundingMode
+            roundingMode = RoundingMode,
+            policyContext = new
+            {
+                statutoryDiscountPolicyId = policy.StatutoryDiscountPolicyId,
+                resolvedJurisdictionId = policy.ResolvedJurisdictionId,
+                policyResolutionBasis = policy.PolicyResolutionBasis,
+                policyCode = policy.PolicyCode,
+                policyName = policy.PolicyName,
+                legalBasisReference = policy.LegalBasisReference,
+                ordinanceReference = policy.OrdinanceReference,
+                nationalLawReference = policy.NationalLawReference,
+                benefitType = policy.BenefitType,
+                freeDurationMinutes = policy.FreeDurationMinutes,
+                initialRateExempt = policy.InitialRateExempt,
+                fullFeeExempt = policy.FullFeeExempt,
+                freePeriodApplication = policy.FreePeriodApplication,
+                succeedingHoursDiscountRule = policy.SucceedingHoursDiscountRule,
+                discountBaseScope = policy.DiscountBaseScope,
+                stackingPolicy = policy.StackingPolicy,
+                legalBasisPriority = policy.LegalBasisPriority,
+                requiresEvidence = policy.RequiresEvidence,
+                snapshotHash = policy.SnapshotHash
+            }
         });
+
+    private static (bool Valid, PolicySnapshotContext? Policy, string? IneligibilityReason, string? ErrorCode)
+        ValidateAndReadPolicySnapshot(ValidationRow validation)
+    {
+        if (!validation.StatutoryDiscountPolicyId.HasValue ||
+            string.IsNullOrWhiteSpace(validation.PolicyResolutionBasis) ||
+            string.IsNullOrWhiteSpace(validation.ResolvedPolicySnapshotJson))
+        {
+            return (false, null, "STATUTORY_DISCOUNT_POLICY_CONTEXT_MISSING", "STATUTORY_DISCOUNT_POLICY_CONTEXT_MISSING");
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(validation.ResolvedPolicySnapshotJson);
+            var root = document.RootElement;
+            var policyCode = RequiredString(root, "policyCode");
+            var benefitType = RequiredString(root, "benefitType");
+            var policyResolutionBasis = RequiredString(root, "policyResolutionBasis");
+            var succeedingHoursDiscountRule = RequiredString(root, "succeedingHoursDiscountRule");
+            var discountBaseScope = RequiredString(root, "discountBaseScope");
+            var stackingPolicy = RequiredString(root, "stackingPolicy");
+            var legalBasisPriority = RequiredString(root, "legalBasisPriority");
+            var requiresEvidence = RequiredBoolean(root, "requiresEvidence");
+
+            if (!string.Equals(benefitType, "STATUTORY_DISCOUNT_VAT_EXEMPT", StringComparison.Ordinal))
+            {
+                return (
+                    false,
+                    null,
+                    "POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION",
+                    "POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION");
+            }
+
+            return (
+                true,
+                new PolicySnapshotContext(
+                    validation.StatutoryDiscountPolicyId.Value,
+                    validation.ResolvedJurisdictionId,
+                    policyResolutionBasis,
+                    policyCode,
+                    OptionalString(root, "policyName"),
+                    OptionalString(root, "legalBasisReference"),
+                    OptionalString(root, "ordinanceReference"),
+                    OptionalString(root, "nationalLawReference"),
+                    benefitType,
+                    OptionalInt(root, "freeDurationMinutes"),
+                    OptionalBool(root, "initialRateExempt") ?? false,
+                    OptionalBool(root, "fullFeeExempt") ?? false,
+                    OptionalString(root, "freePeriodApplication"),
+                    succeedingHoursDiscountRule,
+                    discountBaseScope,
+                    stackingPolicy,
+                    legalBasisPriority,
+                    requiresEvidence,
+                    SnapshotHash: null),
+                null,
+                null);
+        }
+        catch (JsonException)
+        {
+            return (false, null, "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID", "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
+        }
+        catch (InvalidOperationException)
+        {
+            return (false, null, "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID", "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
+        }
+    }
+
+    private static PolicySummary ReadPolicySummaryFromComputationBasis(string computationBasisJson)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(computationBasisJson);
+            if (!document.RootElement.TryGetProperty("policyContext", out var policyContext) ||
+                policyContext.ValueKind != JsonValueKind.Object)
+            {
+                return PolicySummary.Empty;
+            }
+
+            return new PolicySummary(
+                OptionalGuid(policyContext, "statutoryDiscountPolicyId"),
+                OptionalGuid(policyContext, "resolvedJurisdictionId"),
+                OptionalString(policyContext, "policyResolutionBasis"),
+                OptionalString(policyContext, "policyCode"),
+                OptionalString(policyContext, "benefitType"),
+                OptionalString(policyContext, "nationalLawReference"),
+                OptionalString(policyContext, "ordinanceReference"),
+                PolicySnapshotUsed: true);
+        }
+        catch (JsonException)
+        {
+            return PolicySummary.Empty;
+        }
+    }
+
+    private static string RequiredString(JsonElement element, string propertyName)
+    {
+        var value = OptionalString(element, propertyName);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"{propertyName} is required.");
+        }
+
+        return value;
+    }
+
+    private static bool RequiredBoolean(JsonElement element, string propertyName) =>
+        OptionalBool(element, propertyName) ?? throw new InvalidOperationException($"{propertyName} is required.");
+
+    private static string? OptionalString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+    }
+
+    private static bool? OptionalBool(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
+    private static int? OptionalInt(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return value.TryGetInt32(out var result) ? result : null;
+    }
+
+    private static Guid? OptionalGuid(JsonElement element, string propertyName)
+    {
+        var value = OptionalString(element, propertyName);
+        return Guid.TryParse(value, out var result) ? result : null;
+    }
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult NotAccepted(
         ValidationRow validation,
@@ -606,6 +812,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             StatutoryDiscountAmountMinorUnits: null,
             FinalPayableAmountMinorUnits: null,
             validation.CurrencyCode,
+            validation.StatutoryDiscountPolicyId,
+            validation.ResolvedJurisdictionId,
+            validation.PolicyResolutionBasis,
+            PolicyCode: null,
+            BenefitType: null,
+            NationalLawReference: null,
+            OrdinanceReference: null,
+            PolicySnapshotUsed: false,
             ineligibilityReason,
             errorCode);
 
@@ -629,6 +843,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             StatutoryDiscountAmountMinorUnits: null,
             FinalPayableAmountMinorUnits: null,
             CurrencyCode: null,
+            StatutoryDiscountPolicyId: null,
+            ResolvedJurisdictionId: null,
+            PolicyResolutionBasis: null,
+            PolicyCode: null,
+            BenefitType: null,
+            NationalLawReference: null,
+            OrdinanceReference: null,
+            PolicySnapshotUsed: false,
             ineligibilityReason,
             errorCode);
 
@@ -650,7 +872,11 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         string ValidationChannel,
         bool EvidenceRequired,
         bool EvidenceCaptured,
-        string? CurrencyCode);
+        string? CurrencyCode,
+        Guid? StatutoryDiscountPolicyId,
+        Guid? ResolvedJurisdictionId,
+        string? PolicyResolutionBasis,
+        string? ResolvedPolicySnapshotJson);
 
     private sealed record ParkingSessionRow(Guid ParkingSessionId, string SessionStatus);
 
@@ -676,4 +902,46 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         long StatutoryDiscountAmountMinorUnits,
         long FinalPayableAmountMinorUnits,
         string CurrencyCode);
+
+    private sealed record PolicySnapshotContext(
+        Guid StatutoryDiscountPolicyId,
+        Guid? ResolvedJurisdictionId,
+        string PolicyResolutionBasis,
+        string PolicyCode,
+        string? PolicyName,
+        string? LegalBasisReference,
+        string? OrdinanceReference,
+        string? NationalLawReference,
+        string BenefitType,
+        int? FreeDurationMinutes,
+        bool InitialRateExempt,
+        bool FullFeeExempt,
+        string? FreePeriodApplication,
+        string SucceedingHoursDiscountRule,
+        string DiscountBaseScope,
+        string StackingPolicy,
+        string LegalBasisPriority,
+        bool RequiresEvidence,
+        string? SnapshotHash);
+
+    private sealed record PolicySummary(
+        Guid? StatutoryDiscountPolicyId,
+        Guid? ResolvedJurisdictionId,
+        string? PolicyResolutionBasis,
+        string? PolicyCode,
+        string? BenefitType,
+        string? NationalLawReference,
+        string? OrdinanceReference,
+        bool PolicySnapshotUsed)
+    {
+        public static PolicySummary Empty { get; } = new(
+            StatutoryDiscountPolicyId: null,
+            ResolvedJurisdictionId: null,
+            PolicyResolutionBasis: null,
+            PolicyCode: null,
+            BenefitType: null,
+            NationalLawReference: null,
+            OrdinanceReference: null,
+            PolicySnapshotUsed: false);
+    }
 }

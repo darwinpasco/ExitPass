@@ -66,6 +66,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         result.VatExclusiveAmountMinorUnits.Should().Be(11161);
         result.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
         result.FinalPayableAmountMinorUnits.Should().Be(8929);
+        result.PolicySnapshotUsed.Should().BeTrue();
+        result.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
 
         await writer.Received(1).ApplyAsync(
             Arg.Is<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(request =>
@@ -159,6 +161,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             StatutoryDiscountAmountMinorUnits: 2232,
             FinalPayableAmountMinorUnits: 8929,
             CurrencyCode: "PHP",
+            StatutoryDiscountPolicyId: Guid.Parse("4b000000-0000-0000-0000-00000000000e"),
+            ResolvedJurisdictionId: Guid.Parse("4b000000-0000-0000-0000-00000000000f"),
+            PolicyResolutionBasis: "NATIONAL_LAW_FALLBACK",
+            PolicyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+            BenefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+            NationalLawReference: "RA 9994",
+            OrdinanceReference: null,
+            PolicySnapshotUsed: true,
             IneligibilityReason: null,
             ErrorCode: null);
 
