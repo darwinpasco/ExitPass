@@ -657,6 +657,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         {
             using var document = JsonDocument.Parse(validation.ResolvedPolicySnapshotJson);
             var root = document.RootElement;
+            var snapshotPolicyId = RequiredGuid(root, "statutoryDiscountPolicyId");
             var policyCode = RequiredString(root, "policyCode");
             var benefitType = RequiredString(root, "benefitType");
             var policyResolutionBasis = RequiredString(root, "policyResolutionBasis");
@@ -665,6 +666,11 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             var stackingPolicy = RequiredString(root, "stackingPolicy");
             var legalBasisPriority = RequiredString(root, "legalBasisPriority");
             var requiresEvidence = RequiredBoolean(root, "requiresEvidence");
+
+            if (snapshotPolicyId != validation.StatutoryDiscountPolicyId.Value)
+            {
+                return (false, null, "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID", "STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
+            }
 
             if (!string.Equals(benefitType, "STATUTORY_DISCOUNT_VAT_EXEMPT", StringComparison.Ordinal))
             {
@@ -678,7 +684,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             return (
                 true,
                 new PolicySnapshotContext(
-                    validation.StatutoryDiscountPolicyId.Value,
+                    snapshotPolicyId,
                     validation.ResolvedJurisdictionId,
                     policyResolutionBasis,
                     policyCode,
@@ -750,6 +756,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
 
     private static bool RequiredBoolean(JsonElement element, string propertyName) =>
         OptionalBool(element, propertyName) ?? throw new InvalidOperationException($"{propertyName} is required.");
+
+    private static Guid RequiredGuid(JsonElement element, string propertyName) =>
+        OptionalGuid(element, propertyName) ?? throw new InvalidOperationException($"{propertyName} is required.");
 
     private static string? OptionalString(JsonElement element, string propertyName)
     {

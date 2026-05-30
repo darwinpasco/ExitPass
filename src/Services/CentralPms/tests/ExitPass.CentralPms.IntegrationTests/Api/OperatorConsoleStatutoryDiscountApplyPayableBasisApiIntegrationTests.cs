@@ -35,6 +35,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     private static readonly Guid MissingPolicyContextValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000195");
     private static readonly Guid InvalidPolicySnapshotValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000196");
     private static readonly Guid UnsupportedFreeDurationValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000197");
+    private static readonly Guid InvalidPolicyIdSnapshotValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000198");
+    private static readonly Guid MismatchedPolicyIdSnapshotValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000199");
 
     /// <summary>
     /// Verifies the documented Operator Console apply-payable-basis route exists.
@@ -257,6 +259,77 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         body!.ApplicationAccepted.Should().BeFalse();
         body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
         (await CountApplicationsAsync(InvalidPolicySnapshotValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies a non-Guid statutoryDiscountPolicyId inside the persisted snapshot fails deterministically.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenPolicySnapshotPolicyIdInvalid_ReturnsDeterministicError()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+        await InsertApprovedValidationAsync(
+            InvalidPolicyIdSnapshotValidationId,
+            NoEvidencePolicyId,
+            VatExemptPolicySnapshot("not-a-guid"));
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(InvalidPolicyIdSnapshotValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
+        (await CountApplicationsAsync(InvalidPolicyIdSnapshotValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies a snapshot policy ID that differs from the validation policy ID fails before application insert.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenPolicySnapshotPolicyIdMismatchesValidation_ReturnsDeterministicError()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+        await InsertApprovedValidationAsync(
+            MismatchedPolicyIdSnapshotValidationId,
+            NoEvidencePolicyId,
+            VatExemptPolicySnapshot("6f000000-0000-0000-0000-000000000102"));
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(MismatchedPolicyIdSnapshotValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ApplicationPersisted.Should().BeFalse();
+        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID");
+        (await CountApplicationsAsync(MismatchedPolicyIdSnapshotValidationId)).Should().Be(0);
     }
 
     /// <summary>
@@ -767,6 +840,32 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             initialRateExempt = false,
             fullFeeExempt = false,
             freePeriodApplication = "BEFORE_DISCOUNT_COMPUTATION",
+            succeedingHoursDiscountRule = "REGULAR_RATE",
+            discountBaseScope = "CHARGEABLE_PORTION_ONLY",
+            stackingPolicy = "NO_STACKING_ON_FREE_PERIOD",
+            legalBasisPriority = "LOCAL_ORDINANCE_FIRST",
+            requiresEvidence = false
+        });
+
+    private static string VatExemptPolicySnapshot(string statutoryDiscountPolicyId) =>
+        JsonSerializer.Serialize(new
+        {
+            statutoryDiscountPolicyId,
+            policyCode = "INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY",
+            policyName = "Integration Operator Console No Evidence Policy",
+            entitlementType = "SENIOR_CITIZEN",
+            policyResolutionBasis = "LOCAL_ORDINANCE_APPLIED",
+            policyLevel = "LOCAL_ORDINANCE",
+            policyType = "LOCAL_ORDINANCE",
+            legalBasisReference = (string?)null,
+            ordinanceReference = "INTEGRATION-NO-EVIDENCE-195",
+            nationalLawReference = (string?)null,
+            verificationStatus = "VERIFIED_OFFICIAL",
+            benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
+            freeDurationMinutes = (int?)null,
+            initialRateExempt = false,
+            fullFeeExempt = false,
+            freePeriodApplication = "NOT_APPLICABLE",
             succeedingHoursDiscountRule = "REGULAR_RATE",
             discountBaseScope = "CHARGEABLE_PORTION_ONLY",
             stackingPolicy = "NO_STACKING_ON_FREE_PERIOD",
