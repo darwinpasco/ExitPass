@@ -11,7 +11,7 @@ POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-b
 POST /v1/ops/operator-console/statutory-discounts/resolve-policy
 ```
 
-This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #188 payable-basis application records, and #193 read-only statutory discount policy resolution. It does not implement final `APPLIED` superseding tariff snapshot lifecycle, create payment attempts, confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
+This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, and #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior. It does not create payment attempts except for the explicit payment-attempt-blocked fixture case, confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
 
 ## Preconditions
 
@@ -23,6 +23,8 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #193 statutory discount policy resolution endpoint is present.
 - #195 statutory discount draft policy snapshot persistence is present.
 - #197 apply-payable-basis uses persisted statutory discount policy snapshots.
+- #199 final APPLIED statutory discount tariff snapshot lifecycle DB routine is applied.
+- #200 apply-payable-basis calls `discounts.apply_statutory_discount_payable_basis`.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -326,7 +328,7 @@ Endpoint:
 POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis
 ```
 
-This endpoint evaluates and persists Operator Console access first, then attempts to create a statutory discount payable-basis application record for an approved validation. Current #188 behavior stores the computed audit components in `discounts.statutory_discount_payable_basis_applications` with `application_status = REQUESTED`. It does not create a final `APPLIED` superseding tariff snapshot and does not mutate the original tariff snapshot.
+This endpoint evaluates and persists Operator Console access first, then applies an approved statutory discount payable basis. Current #200 behavior stores computed audit components in `discounts.statutory_discount_payable_basis_applications`, calls `discounts.apply_statutory_discount_payable_basis`, transitions the application to `APPLIED`, supersedes the original tariff snapshot, and creates one statutory-discount-adjusted active tariff snapshot. It still does not create payment attempts, confirm payments, call providers, call gates, create coupons, wire UI, or create reconciliation state.
 
 Apply workflow:
 
@@ -356,9 +358,9 @@ Expected first apply behavior:
 - `statutoryDiscountValidationId = applyValidationId`
 - `parkingSessionId = 77000000-0000-0000-0000-000000000090`
 - `originalTariffSnapshotId = 77000000-0000-0000-0000-000000000091`
-- `applicationStatus = REQUESTED`
+- `applicationStatus = APPLIED`
 - `alreadyApplied = false`
-- `appliedTariffSnapshotId = null`
+- `appliedTariffSnapshotId` is populated
 - `grossAmountMinorUnits = 12500`
 - `vatAmountMinorUnits = 1339`
 - `vatExclusiveAmountMinorUnits = 11161`
@@ -372,9 +374,11 @@ Expected replay behavior:
 - `applicationAccepted = true`
 - `applicationPersisted = true`
 - same `payableBasisApplicationId`
-- `applicationStatus = REQUESTED`
-- `alreadyApplied = false` while #188 has not implemented final `APPLIED` lifecycle
+- `applicationStatus = APPLIED`
+- `alreadyApplied = true`
+- same `appliedTariffSnapshotId`
 - no duplicate application row
+- no duplicate applied tariff snapshot
 
 Apply failure behavior:
 
@@ -425,7 +429,7 @@ Apply persisted-policy fixture IDs:
 - `validationId_mismatchedPolicySnapshot = 77000000-0000-0000-0000-000000000310`
 - `validationId_freeDurationPolicy = 77000000-0000-0000-0000-000000000311`
 
-Expected #197 behavior:
+Expected #197/#200 behavior:
 
 - Apply uses `resolved_policy_snapshot_json` stored on the validation.
 - `policySnapshotUsed = true` for accepted apply results.
@@ -433,10 +437,12 @@ Expected #197 behavior:
 - `FREE_DURATION` and `INITIAL_RATE_EXEMPTION` are blocked for now.
 - `computation_basis_json.policyContext` is persisted on accepted application rows.
 - Replay preserves the existing `computation_basis_json.policyContext`.
-- `application_status = REQUESTED`.
-- `applied_tariff_snapshot_id IS NULL`.
-- No final `APPLIED` tariff snapshot lifecycle is created.
-- The original tariff snapshot remains unchanged.
+- Starting with #200, successful apply calls `discounts.apply_statutory_discount_payable_basis`.
+- `application_status = APPLIED`.
+- `applied_tariff_snapshot_id IS NOT NULL`.
+- The original tariff snapshot transitions from `ACTIVE` to `SUPERSEDED`.
+- The original tariff amount fields remain unchanged.
+- A new statutory-discount-adjusted tariff snapshot is `ACTIVE`.
 - No payment attempt, provider call, gate record, coupon application, reconciliation item, AUB behavior, or UI wiring is created.
 
 Expected RA 9994 apply:
@@ -450,8 +456,8 @@ Expected RA 9994 apply:
 - `policyCode = PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK`
 - `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
 - `nationalLawReference = RA 9994`
-- `applicationStatus = REQUESTED`
-- `appliedTariffSnapshotId = null`
+- `applicationStatus = APPLIED`
+- `appliedTariffSnapshotId` is populated
 
 Expected RA 10754 apply:
 
@@ -464,8 +470,8 @@ Expected RA 10754 apply:
 - `policyCode = PH_RA10754_PWD_NATIONAL_FALLBACK`
 - `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
 - `nationalLawReference = RA 10754`
-- `applicationStatus = REQUESTED`
-- `appliedTariffSnapshotId = null`
+- `applicationStatus = APPLIED`
+- `appliedTariffSnapshotId` is populated
 
 Expected replay behavior:
 
@@ -474,7 +480,8 @@ Expected replay behavior:
 - same policy context fields
 - no duplicate application row
 - no policy re-resolution
-- no applied tariff snapshot
+- same applied tariff snapshot
+- no duplicate applied tariff snapshot
 
 Expected blocked behavior:
 
@@ -483,6 +490,119 @@ Expected blocked behavior:
 - Mismatched policy snapshot identity: HTTP `200`, `errorCode = STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID`, no application row.
 - Unsupported `FREE_DURATION` benefit: HTTP `200`, `errorCode = POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION`, no generic VAT-exempt computation, no application row.
 - Access denied: HTTP `200`, `accessAllowed = false`, `applicationAccepted = false`, `applicationPersisted = false`, no application row.
+
+## Final APPLIED Apply Payable-Basis Lifecycle
+
+Endpoint:
+
+```http
+POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis
+```
+
+Starting with #200, the apply endpoint calls the #199 database routine:
+
+```sql
+discounts.apply_statutory_discount_payable_basis(uuid, uuid, uuid)
+```
+
+The routine finalizes a persisted payable-basis application by changing the original active tariff snapshot to `SUPERSEDED`, creating one statutory-discount-adjusted `ACTIVE` tariff snapshot, linking the application to that new snapshot, and setting `application_status = APPLIED`.
+
+Preconditions:
+
+- #199 DB routine is applied.
+- #200 runtime integration is present.
+- Central PMS is running.
+- Local PostgreSQL is available.
+- The fixture seed has been applied.
+- Approved validations have persisted VAT-exempt policy context.
+
+Manual workflow:
+
+1. Reset fixtures.
+2. Run `65 Create draft for RA9994 applied lifecycle`.
+3. Run `66 Approve RA9994 applied lifecycle draft`.
+4. Run `67 Apply payable basis RA9994 applied lifecycle`.
+5. Run `71 Apply payable basis applied lifecycle replay`.
+6. Reset fixtures.
+7. Run `68 Create draft for RA10754 applied lifecycle`.
+8. Run `69 Approve RA10754 applied lifecycle draft`.
+9. Run `70 Apply payable basis RA10754 applied lifecycle`.
+10. Reset fixtures.
+11. Run `72 Apply payable basis requested application completes to applied`.
+12. Reset fixtures.
+13. Run `73 Apply payable basis payment attempt blocks applied lifecycle`.
+14. Reset fixtures.
+15. Run `74 Apply payable basis free duration still blocked`.
+16. Run `75 Apply payable basis access denied applied lifecycle`.
+
+Final APPLIED lifecycle fixture IDs:
+
+- `appliedLifecycleValidationId_ra9994 = 77000000-0000-0000-0000-000000000306`
+- `appliedLifecycleValidationId_ra10754 = 77000000-0000-0000-0000-000000000307`
+- `validationId_requestedApplication = 77000000-0000-0000-0000-000000000312`
+- `validationId_paymentAttemptBlocked = 77000000-0000-0000-0000-000000000313`
+- `validationId_freeDurationPolicy = 77000000-0000-0000-0000-000000000311`
+
+Expected successful APPLIED behavior:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `applicationAccepted = true`
+- `applicationPersisted = true`
+- `applicationStatus = APPLIED`
+- `appliedTariffSnapshotId` is populated
+- `policySnapshotUsed = true`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `alreadyApplied = false` on first successful apply
+- original tariff snapshot is `SUPERSEDED`
+- applied tariff snapshot is `ACTIVE`
+- no payment attempt is created by successful apply
+
+Expected replay behavior:
+
+- HTTP `200`
+- `applicationStatus = APPLIED`
+- same `payableBasisApplicationId`
+- same `appliedTariffSnapshotId`
+- `alreadyApplied = true`
+- no duplicate application row
+- no duplicate applied tariff snapshot
+- policy context is preserved
+
+Expected REQUESTED-completion behavior:
+
+- The seeded `validationId_requestedApplication` has an existing `REQUESTED` application with `applied_tariff_snapshot_id IS NULL`.
+- Apply completes it to `APPLIED`.
+- `appliedTariffSnapshotId` is populated.
+- The original snapshot becomes `SUPERSEDED`.
+- The applied snapshot is `ACTIVE`.
+
+Expected payment-attempt guardrail behavior:
+
+- HTTP `200`
+- `applicationAccepted = false`
+- `applicationPersisted = false`
+- `errorCode = PAYMENT_ATTEMPT_ALREADY_EXISTS`
+- original tariff snapshot remains `ACTIVE`
+- application remains not `APPLIED`
+- no applied tariff snapshot is created
+
+Expected unsupported/free-duration behavior:
+
+- HTTP `200`
+- `applicationAccepted = false`
+- `errorCode = POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION`
+- no generic VAT-exempt computation is applied
+- no applied tariff snapshot is created
+
+Expected access-denied behavior:
+
+- HTTP `200`
+- `accessAllowed = false`
+- `accessPersisted = true`
+- `applicationAccepted = false`
+- `applicationPersisted = false`
+- no tariff snapshot transition is attempted
 
 ## Policy Resolution Endpoint
 
@@ -902,18 +1022,88 @@ FROM discounts.statutory_discount_payable_basis_applications
 WHERE statutory_discount_payable_basis_application_id = '<payableBasisApplicationId-from-response>'::uuid;
 ```
 
-Expected #188 values:
+Expected #200 successful APPLIED values:
 
-- `application_status = REQUESTED`
+- `application_status = APPLIED`
 - `application_channel = OPERATOR_CONSOLE`
-- `applied_tariff_snapshot_id IS NULL`
-- `applied_at IS NULL`
+- `applied_tariff_snapshot_id IS NOT NULL`
+- `applied_at IS NOT NULL`
 - `gross_amount_minor_units = 12500`
 - `vat_amount_minor_units = 1339`
 - `vat_exclusive_amount_minor_units = 11161`
 - `statutory_discount_amount_minor_units = 2232`
 - `final_payable_amount_minor_units = 8929`
 - `currency_code = PHP`
+
+Verify final APPLIED tariff snapshot lifecycle state:
+
+```sql
+SELECT
+    app.statutory_discount_payable_basis_application_id,
+    app.statutory_discount_validation_id,
+    app.application_status,
+    app.original_tariff_snapshot_id,
+    original.snapshot_status AS original_snapshot_status,
+    original.gross_amount AS original_gross_amount,
+    original.statutory_discount_amount AS original_discount_amount,
+    original.coupon_discount_amount AS original_coupon_amount,
+    original.net_amount AS original_net_amount,
+    app.applied_tariff_snapshot_id,
+    applied.snapshot_status AS applied_snapshot_status,
+    applied.gross_amount AS applied_gross_amount,
+    applied.statutory_discount_amount AS applied_discount_amount,
+    applied.coupon_discount_amount AS applied_coupon_amount,
+    applied.net_amount AS applied_net_amount,
+    applied.statutory_discount_validation_id AS applied_snapshot_validation_id
+FROM discounts.statutory_discount_payable_basis_applications app
+JOIN core.tariff_snapshots original
+  ON original.tariff_snapshot_id = app.original_tariff_snapshot_id
+LEFT JOIN core.tariff_snapshots applied
+  ON applied.tariff_snapshot_id = app.applied_tariff_snapshot_id
+WHERE app.statutory_discount_validation_id = '<validationId>'::uuid;
+```
+
+Expected after successful #200 apply:
+
+- `application_status = APPLIED`
+- `applied_tariff_snapshot_id IS NOT NULL`
+- `original_snapshot_status = SUPERSEDED`
+- original amount fields remain `gross_amount = 125.00`, `statutory_discount_amount = 0`, `coupon_discount_amount = 0`, `net_amount = 125.00`
+- `applied_snapshot_status = ACTIVE`
+- `applied_discount_amount = 22.32`
+- `applied_net_amount = 89.29`
+- `applied_snapshot_validation_id = <validationId>`
+
+Verify no duplicate applied tariff snapshots exist after replay:
+
+```sql
+SELECT COUNT(*) AS applied_tariff_snapshot_count
+FROM core.tariff_snapshots
+WHERE statutory_discount_validation_id = '<validationId>'::uuid;
+```
+
+Expected result is `1`.
+
+Verify the payment-attempt guardrail case leaves the application and original snapshot unfinalized:
+
+```sql
+SELECT
+    app.application_status,
+    app.applied_tariff_snapshot_id,
+    ts.snapshot_status AS original_snapshot_status,
+    ts.gross_amount,
+    ts.statutory_discount_amount,
+    ts.net_amount,
+    (SELECT COUNT(*) FROM core.payment_attempts
+      WHERE parking_session_id = app.parking_session_id
+         OR tariff_snapshot_id = app.original_tariff_snapshot_id) AS payment_attempt_count
+FROM discounts.statutory_discount_payable_basis_applications app
+JOIN core.tariff_snapshots ts
+  ON ts.tariff_snapshot_id = app.original_tariff_snapshot_id
+WHERE app.statutory_discount_validation_id = '77000000-0000-0000-0000-000000000313'::uuid;
+```
+
+Expected result: `application_status = REQUESTED`, `applied_tariff_snapshot_id IS NULL`, `original_snapshot_status = ACTIVE`, and `payment_attempt_count > 0`.
 
 Verify the persisted policy context inside `computation_basis_json`:
 
@@ -987,11 +1177,13 @@ WHERE statutory_discount_validation_id IN (
     '77000000-0000-0000-0000-000000000308'::uuid,
     '77000000-0000-0000-0000-000000000309'::uuid,
     '77000000-0000-0000-0000-000000000310'::uuid,
-    '77000000-0000-0000-0000-000000000311'::uuid
+    '77000000-0000-0000-0000-000000000311'::uuid,
+    '77000000-0000-0000-0000-000000000312'::uuid,
+    '77000000-0000-0000-0000-000000000313'::uuid
 );
 ```
 
-Expected: `306` and `307` are approved national fallback fixtures with captured evidence and valid persisted policy snapshots; `308` lacks policy context; `309` has an invalid snapshot policy ID; `310` has a mismatched snapshot policy ID; `311` is a `FREE_DURATION` local policy fixture.
+Expected: `306` and `307` are approved national fallback fixtures with captured evidence and valid persisted policy snapshots; `308` lacks policy context; `309` has an invalid snapshot policy ID; `310` has a mismatched snapshot policy ID; `311` is a `FREE_DURATION` local policy fixture; `312` is a seeded `REQUESTED` application completion fixture; `313` is a seeded payment-attempt guardrail fixture.
 
 Verify the original tariff snapshot remains unchanged:
 
@@ -1010,7 +1202,7 @@ FROM core.tariff_snapshots
 WHERE tariff_snapshot_id = '77000000-0000-0000-0000-000000000091'::uuid;
 ```
 
-Expected #188 values:
+Expected values after fixture reset and before successful #200 apply:
 
 - `gross_amount = 125.00`
 - `statutory_discount_amount = 0`
@@ -1055,11 +1247,8 @@ Expected result for all counts is `0` when the local fixture seed has not been c
 This manual pack does not test:
 
 - Operator Console UI
-- final `APPLIED` superseding tariff snapshot lifecycle
 - WebPay display
-- payment attempt creation from the requested payable-basis application
-- original tariff snapshot mutation
-- payable-basis finality
+- payment attempt creation by the apply endpoint
 - payment creation or payment finality
 - gate consume
 - coupons
