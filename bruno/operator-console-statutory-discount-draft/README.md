@@ -21,6 +21,7 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #188 statutory discount apply-payable-basis endpoint is present.
 - #192 policy registry database support is applied.
 - #193 statutory discount policy resolution endpoint is present.
+- #195 statutory discount draft policy snapshot persistence is present.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -46,7 +47,7 @@ docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/st
 
 The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
 
-For policy resolution manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, and local policy rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, statutory discount validation, payable-basis application, or final `APPLIED` tariff snapshot records for policy resolution.
+For policy resolution and draft policy snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, and parking-session rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows for repeatable replay tests. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, payable-basis application, or final `APPLIED` tariff snapshot records for policy resolution or draft policy snapshot testing.
 
 ## Evidence Metadata Behavior
 
@@ -93,6 +94,109 @@ Expected replay behavior:
 - `entitlementType = SENIOR_CITIZEN`
 - `reusedExistingDraft = true`
 - no second active draft row is created
+
+## Draft Policy Snapshot Persistence
+
+Endpoint:
+
+```http
+POST /v1/ops/operator-console/statutory-discounts/draft
+```
+
+Starting with #195, draft creation resolves statutory discount policy server-side and persists the resolved policy context on the statutory discount validation row. The frontend is not authoritative for policy selection.
+
+Persisted columns:
+
+- `discounts.statutory_discount_validations.statutory_discount_policy_id`
+- `discounts.statutory_discount_validations.resolved_jurisdiction_id`
+- `discounts.statutory_discount_validations.resolved_policy_snapshot_json`
+- `discounts.statutory_discount_validations.policy_resolution_basis`
+
+Manual workflow:
+
+1. Reset fixtures.
+2. Run `45 Create draft Senior national fallback policy snapshot`.
+3. Run `46 Create draft PWD national fallback policy snapshot`.
+4. Run `47 Create draft verified local policy snapshot`.
+5. Run `48 Create draft policy snapshot replay`.
+6. Run `49 Create draft unverified local policy blocked`.
+7. Run `50 Create draft missing site jurisdiction blocked`.
+8. Run `51 Create draft access denied policy resolution`.
+9. Run `52 Create draft evidence required policy`.
+
+Draft policy snapshot fixture IDs:
+
+- `draftPolicySnapshotSeniorId = 77000000-0000-0000-0000-000000000301`
+- `draftPolicySnapshotPwdId = 77000000-0000-0000-0000-000000000302`
+- `draftPolicySnapshotVerifiedLocalId = 77000000-0000-0000-0000-000000000303`
+- `draftPolicySnapshotUnverifiedLocalId = 77000000-0000-0000-0000-000000000304`
+- `draftPolicySnapshotMissingJurisdictionId = 77000000-0000-0000-0000-000000000305`
+
+Expected Senior Citizen national fallback draft:
+
+- HTTP `200`
+- `draftAccepted = true`
+- `draftPersisted = true`
+- `statutoryDiscountPolicyId` is present
+- `resolvedJurisdictionId` is present
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `policyCode = PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK`
+- `nationalLawReference = RA 9994`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `freeDurationMinutes = null`
+- `policySnapshot.nationalLawReference = RA 9994`
+- `policySnapshot.initialRateExempt = false`
+- `policySnapshot.fullFeeExempt = false`
+
+Expected PWD national fallback draft:
+
+- HTTP `200`
+- `draftAccepted = true`
+- `draftPersisted = true`
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `policyCode = PH_RA10754_PWD_NATIONAL_FALLBACK`
+- `nationalLawReference = RA 10754`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `freeDurationMinutes = null`
+- `policySnapshot.nationalLawReference = RA 10754`
+- no automatic free parking or free duration
+
+Expected verified local policy draft:
+
+- HTTP `200`
+- `draftAccepted = true`
+- `draftPersisted = true`
+- `policyResolutionBasis = LOCAL_ORDINANCE_APPLIED`
+- `policyCode = MANUAL_TEST_QC_VERIFIED_LOCAL_POLICY`
+- `ordinanceReference = MANUAL-QC-ORD-193`
+- `nationalLawReference = null`
+- `benefitType = FREE_DURATION`
+- `freeDurationMinutes = 120`
+- `succeedingHoursDiscountRule = REGULAR_RATE`
+- `discountBaseScope = CHARGEABLE_PORTION_ONLY`
+- `stackingPolicy = NO_STACKING_ON_FREE_PERIOD`
+
+Expected duplicate replay behavior:
+
+- HTTP `200`
+- same `draftId` as request `47`
+- `reusedExistingDraft = true`
+- same key policy context fields
+- stored policy snapshot is not overwritten
+- no duplicate active draft row
+
+Expected blocked behavior:
+
+- Unverified local policy: HTTP `200`, `draftAccepted = false`, `errorCode = STATUTORY_DISCOUNT_POLICY_UNVERIFIED`, no validation row.
+- Missing jurisdiction: HTTP `200`, `draftAccepted = false`, `errorCode = SITE_JURISDICTION_NOT_CONFIGURED`, no validation row.
+- Access denied: HTTP `200`, `accessAllowed = false`, `draftAccepted = false`, no policy details returned, no validation row.
+
+Expected evidence-required policy behavior:
+
+- HTTP `200`
+- `evidenceRequired = true`
+- `policySnapshot.requiresEvidence = true`
+- no evidence image upload occurs in this slice
 
 ## Review Decision Endpoint
 
@@ -417,12 +521,77 @@ SELECT
     entitlement_type,
     validation_status,
     validation_channel,
+    statutory_discount_policy_id,
+    resolved_jurisdiction_id,
+    policy_resolution_basis,
+    resolved_policy_snapshot_json,
     evidence_required,
     evidence_captured,
     correlation_id
 FROM discounts.statutory_discount_validations
 WHERE statutory_discount_validation_id = '<draftId-from-response>'::uuid;
 ```
+
+Verify the stored draft policy context by `draftId`:
+
+```sql
+SELECT
+    sdv.statutory_discount_validation_id,
+    sdv.parking_session_id,
+    sdv.entitlement_type,
+    sdv.statutory_discount_policy_id,
+    p.policy_code,
+    sdv.resolved_jurisdiction_id,
+    j.city_municipality_name,
+    sdv.policy_resolution_basis,
+    sdv.resolved_policy_snapshot_json ->> 'policyCode' AS snapshot_policy_code,
+    sdv.resolved_policy_snapshot_json ->> 'nationalLawReference' AS snapshot_national_law_reference,
+    sdv.resolved_policy_snapshot_json ->> 'ordinanceReference' AS snapshot_ordinance_reference,
+    sdv.resolved_policy_snapshot_json ->> 'benefitType' AS snapshot_benefit_type,
+    sdv.resolved_policy_snapshot_json ->> 'freeDurationMinutes' AS snapshot_free_duration_minutes,
+    sdv.resolved_policy_snapshot_json ->> 'requiresEvidence' AS snapshot_requires_evidence
+FROM discounts.statutory_discount_validations sdv
+LEFT JOIN discounts.statutory_discount_policy_registry p
+  ON p.statutory_discount_policy_id = sdv.statutory_discount_policy_id
+LEFT JOIN sites.jurisdictions j
+  ON j.jurisdiction_id = sdv.resolved_jurisdiction_id
+WHERE sdv.statutory_discount_validation_id = '<draftId-from-response>'::uuid;
+```
+
+Verify no duplicate active draft rows exist for draft policy snapshot replay:
+
+```sql
+SELECT
+    parking_session_id,
+    entitlement_type,
+    validation_channel,
+    validation_status,
+    COUNT(*) AS active_draft_count
+FROM discounts.statutory_discount_validations
+WHERE parking_session_id = '77000000-0000-0000-0000-000000000303'::uuid
+  AND entitlement_type = 'SENIOR_CITIZEN'
+  AND validation_channel = 'OPERATOR_ASSISTED'
+  AND validation_status IN ('REQUESTED', 'PENDING_OPERATOR_REVIEW')
+GROUP BY parking_session_id, entitlement_type, validation_channel, validation_status;
+```
+
+Expected result is one active draft for the verified-local replay fixture.
+
+Verify blocked draft policy snapshot requests did not create validation rows:
+
+```sql
+SELECT
+    parking_session_id,
+    COUNT(*) AS validation_count
+FROM discounts.statutory_discount_validations
+WHERE parking_session_id IN (
+    '77000000-0000-0000-0000-000000000304'::uuid,
+    '77000000-0000-0000-0000-000000000305'::uuid
+)
+GROUP BY parking_session_id;
+```
+
+Expected result is no rows after requests `49` and `50`.
 
 Verify only one active Operator Assisted Senior Citizen draft exists for the fixture session after replay:
 
@@ -715,7 +884,6 @@ Expected result for all counts is `0` when the local fixture seed has not been c
 This manual pack does not test:
 
 - Operator Console UI
-- policy snapshot persistence into statutory discount drafts
 - final `APPLIED` superseding tariff snapshot lifecycle
 - WebPay display
 - payment attempt creation from the requested payable-basis application
