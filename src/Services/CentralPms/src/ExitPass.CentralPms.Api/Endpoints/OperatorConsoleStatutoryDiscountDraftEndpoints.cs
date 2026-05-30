@@ -13,7 +13,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// - This endpoint persists Operator Console access evaluation evidence before draft creation.
 /// - This endpoint may persist a privacy-minimized statutory discount validation draft and metadata-only evidence reference.
 /// - This endpoint may persist a review decision status transition on an existing validation draft.
-/// - This endpoint may apply an approved statutory discount validation to payable basis by creating a superseding tariff snapshot and immutable application record.
+/// - This endpoint may apply an approved statutory discount validation to payable basis by creating immutable application evidence.
 /// - This endpoint never mutates PaymentAttempt, PaymentConfirmation,
 ///   ExitAuthorization, provider outcome, gate consume, coupon application, settlement truth,
 ///   reconciliation records, or payment finality.
@@ -65,7 +65,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithSummary("Apply Operator Console statutory discount payable basis")
-            .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint creates statutory discount payable-basis application evidence and a superseding tariff snapshot only; it does not create payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
+            .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint uses the policy snapshot persisted on the validation and creates statutory discount payable-basis application evidence only; it does not create final APPLIED tariff snapshots, payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
 
         return app;
     }
@@ -393,6 +393,14 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.StatutoryDiscountAmountMinorUnits,
             result.FinalPayableAmountMinorUnits,
             result.CurrencyCode,
+            result.StatutoryDiscountPolicyId,
+            result.ResolvedJurisdictionId,
+            result.PolicyResolutionBasis,
+            result.PolicyCode,
+            result.BenefitType,
+            result.NationalLawReference,
+            result.OrdinanceReference,
+            result.PolicySnapshotUsed,
             result.IneligibilityReason,
             result.ErrorCode,
             result.CorrelationId);
