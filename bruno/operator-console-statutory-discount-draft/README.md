@@ -11,7 +11,7 @@ POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-b
 POST /v1/ops/operator-console/statutory-discounts/resolve-policy
 ```
 
-This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, and #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior. It does not create payment attempts except for the explicit payment-attempt-blocked fixture case, confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
+This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, and #205 payment-attempt creation against the effective APPLIED tariff snapshot. It does not confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
 
 ## Preconditions
 
@@ -25,6 +25,7 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #197 apply-payable-basis uses persisted statutory discount policy snapshots.
 - #199 final APPLIED statutory discount tariff snapshot lifecycle DB routine is applied.
 - #200 apply-payable-basis calls `discounts.apply_statutory_discount_payable_basis`.
+- #204 payment-attempt creation validates the effective APPLIED tariff snapshot.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -50,7 +51,7 @@ docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/st
 
 The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
 
-For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, payable-basis application, or final `APPLIED` tariff snapshot records for policy resolution, draft policy snapshot, or apply persisted-policy-snapshot testing.
+For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets payment-attempt rows for the synthetic #205 payment sessions `306`, `307`, `308`, `314`, `315`, and `316` so payment-attempt smoke tests can be rerun after reseeding. It does not delete access evaluation evidence and does not create gate, coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, or payment-attempt effective-tariff testing.
 
 ## Evidence Metadata Behavior
 
@@ -693,6 +694,110 @@ Invalid APPLIED application guardrail:
 - The current database constraints make that broken state intentionally difficult to construct through ordinary fixture data, so this manual pack documents the guardrail and relies on code/integration coverage for direct broken-state setup.
 - The expected behavior is deterministic failure, not stale original amount display.
 
+## Payment Attempt Effective Applied Tariff Snapshot
+
+Endpoints:
+
+```http
+POST /v1/vendor-parking/resolve
+POST /v1/public/payment-attempts
+```
+
+Starting with #204, payment-attempt creation validates the same effective payable basis returned by WebPay/vendor parking resolution. If an `APPLIED` statutory discount payable-basis application exists, the applied statutory-discount tariff snapshot is the only valid payable basis for a new payment attempt. The original `SUPERSEDED` tariff snapshot is rejected. If no `APPLIED` statutory discount exists, the current active base tariff behavior is preserved.
+
+Preconditions:
+
+- #204 is merged.
+- Central PMS is running.
+- Local PostgreSQL is available.
+- The fixture seed has been applied.
+- #199 and #200 APPLIED lifecycle support is available.
+- The #204 replay patch is present so idempotent replay can reuse an attempt after the applied tariff snapshot has been consumed.
+
+Manual workflow:
+
+1. Reset fixtures.
+2. Run `85 Vendor resolve no-discount for payment attempt`.
+3. Run `86 Create payment attempt no-discount active tariff`.
+4. Reset fixtures before continuing, because request `86` consumes the no-discount tariff snapshot.
+5. Run `87 Vendor resolve APPLIED basis for payment attempt`.
+6. Run `88 Create payment attempt effective applied tariff`.
+7. Run `90 Verify vendor resolve and payment attempt effective basis match`.
+8. Run `91 Create payment attempt effective applied tariff replay`.
+9. Run `89 Create payment attempt stale original tariff rejected`.
+10. Run `92 Create payment attempt superseded tariff rejected`.
+11. Run `93 Create payment attempt session mismatch rejected`.
+
+Request `87` captures `effectiveTariffSnapshotId` / `appliedTariffSnapshotId` into `paymentTariffSnapshotId_appliedEffective`, which is the exact variable submitted by request `88`. The local environment also carries the same fixture value as a non-zero fallback for single-request inspection, but the documented workflow should still run `87` before `88`.
+
+Payment-attempt fixture values:
+
+- no-discount parking session: `paymentParkingSessionId_noDiscount = 77000000-0000-0000-0000-000000000308`
+- no-discount active tariff snapshot: `paymentTariffSnapshotId_noDiscountActive = 77000000-0000-0000-0000-000000000398`
+- APPLIED payment session: `paymentParkingSessionId_applied = 77000000-0000-0000-0000-000000000316`
+- APPLIED original/superseded snapshot: `paymentTariffSnapshotId_originalSuperseded = 77000000-0000-0000-0000-000000000406`
+- APPLIED effective snapshot fallback: `paymentTariffSnapshotId_appliedEffective = 77000000-0000-0000-0000-000000000506`
+- stale-rejection APPLIED session: `paymentParkingSessionId_staleRejected = 77000000-0000-0000-0000-000000000314`
+- stale-rejection original/superseded snapshot: `paymentTariffSnapshotId_originalSuperseded_stale = 77000000-0000-0000-0000-000000000404`
+- superseded-only rejection session: `paymentParkingSessionId_supersededRejected = 77000000-0000-0000-0000-000000000315`
+- superseded-only tariff snapshot: `paymentTariffSnapshotId_supersededRejected = 77000000-0000-0000-0000-000000000405`
+- session-mismatch tariff snapshot: `paymentTariffSnapshotId_otherSession = 77000000-0000-0000-0000-000000000504`
+- no-discount amount: `paymentAmountMinorUnits_noDiscount = 12500`
+- applied statutory discount amount: `paymentAmountMinorUnits_appliedEffective = 8929`
+- payment method used by these smoke requests: `paymentMethodGcash = GCASH`
+
+Expected no-discount payment behavior:
+
+- request `85` returns HTTP `200`
+- `statutoryDiscountApplied = false`
+- `effectiveTariffSnapshotId = 77000000-0000-0000-0000-000000000398`
+- `netPayableMinorUnits = 12500`
+- request `86` returns HTTP `201` on first run or HTTP `200` on idempotent replay
+- `paymentAttemptId` is populated
+- `paymentProvider = GCASH`
+- the payment attempt is persisted against tariff snapshot `77000000-0000-0000-0000-000000000398`
+- provider routing behavior remains unchanged; AUB is not selected or invoked
+
+Expected APPLIED statutory discount payment behavior:
+
+- request `87` returns HTTP `200`
+- `statutoryDiscountApplied = true`
+- `effectiveTariffSnapshotId = appliedTariffSnapshotId`
+- `originalTariffSnapshotId = 77000000-0000-0000-0000-000000000406`
+- `netPayableMinorUnits = 8929`
+- request `88` returns HTTP `201` on first run or HTTP `200` on replay
+- the payment attempt is persisted against the applied tariff snapshot, not the original `SUPERSEDED` snapshot
+- persisted amount is `89.29 PHP`
+- original `SUPERSEDED` tariff snapshot is not used as the payable basis
+- PayMongo-only routing behavior remains unchanged for WebPay rails; AUB remains out of scope
+
+Expected payment replay behavior:
+
+- requests `90` and `91` return HTTP `200`
+- `wasReused = true`
+- same `paymentAttemptId` as request `88`
+- no duplicate payment-attempt row is created
+- replay succeeds even after the applied tariff snapshot was consumed by the first payment attempt
+
+Expected stale/superseded rejection behavior:
+
+- request `89` returns HTTP `409`
+- `errorCode = STALE_TARIFF_SNAPSHOT`
+- `details.submitted_tariff_snapshot_id = 77000000-0000-0000-0000-000000000404`
+- `details.effective_tariff_snapshot_id` is populated
+- no payment-attempt row is created for the stale request
+- request `92` returns HTTP `409` with `STALE_TARIFF_SNAPSHOT` or `TARIFF_SNAPSHOT_INVALID`
+- request `93` returns HTTP `409`
+- `errorCode = TARIFF_SNAPSHOT_INVALID`
+- no session-mismatched payment attempt is created
+Request `93` uses the clean superseded-only session `315` with the APPLIED fixture tariff snapshot `504`; it does not reuse the no-discount session after request `86`, because request `86` intentionally creates an active payment attempt for that no-discount session.
+
+Provider boundary:
+
+- These smoke requests use `GCASH` as the public payment method.
+- They do not confirm payment, call PayMongo, call AUB, create provider outcomes, issue exit authorization, call gates, create coupons, or create reconciliation records.
+- QRPH/GCash/Maya/card provider routing remains governed by existing payment rails; this manual slice only verifies tariff snapshot selection and stale snapshot rejection.
+
 ## Policy Resolution Endpoint
 
 Endpoint:
@@ -1262,6 +1367,96 @@ GROUP BY statutory_discount_validation_id;
 
 Expected result is one applied tariff snapshot per validation after replay.
 
+Verify payment attempts created by #205 effective-tariff requests:
+
+```sql
+SELECT
+    pa.payment_attempt_id,
+    pa.parking_session_id,
+    ps.ticket_number_masked,
+    pa.tariff_snapshot_id,
+    ts.snapshot_status,
+    pa.idempotency_key,
+    pa.amount,
+    pa.currency_code,
+    pa.attempt_status,
+    pr.provider_code,
+    pr.rail_code
+FROM core.payment_attempts pa
+JOIN core.parking_sessions ps
+  ON ps.parking_session_id = pa.parking_session_id
+JOIN core.tariff_snapshots ts
+  ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
+LEFT JOIN payments.payment_rails pr
+  ON pr.payment_rail_id = pa.payment_rail_id
+WHERE pa.parking_session_id IN (
+    '77000000-0000-0000-0000-000000000316'::uuid,
+    '77000000-0000-0000-0000-000000000308'::uuid
+)
+ORDER BY pa.created_at DESC;
+```
+
+Expected after requests `86` and `88`: one payment-attempt row for the no-discount fixture and one row for the APPLIED RA 9994 fixture. The no-discount row uses tariff snapshot `77000000-0000-0000-0000-000000000398` and amount `125.00`. The APPLIED row uses the applied tariff snapshot captured by request `87` and amount `89.29`.
+
+Verify no payment-attempt row was created for stale original tariff submissions:
+
+```sql
+SELECT COUNT(*) AS stale_payment_attempt_count
+FROM core.payment_attempts
+WHERE parking_session_id IN (
+    '77000000-0000-0000-0000-000000000314'::uuid,
+    '77000000-0000-0000-0000-000000000315'::uuid,
+    '77000000-0000-0000-0000-000000000308'::uuid
+)
+  AND idempotency_key IN (
+      'manual-payment-stale-original-rejected',
+      'manual-payment-superseded-rejected',
+      'manual-payment-session-mismatch-rejected'
+  );
+```
+
+Expected result after requests `89`, `92`, and `93` is `0`.
+
+Verify payment attempt replay did not create a duplicate row:
+
+```sql
+SELECT
+    idempotency_key,
+    COUNT(*) AS payment_attempt_count,
+    MIN(payment_attempt_id) AS payment_attempt_id,
+    MIN(tariff_snapshot_id) AS tariff_snapshot_id,
+    MIN(amount) AS amount
+FROM core.payment_attempts
+WHERE idempotency_key = 'manual-payment-applied-effective'
+GROUP BY idempotency_key;
+```
+
+Expected result after requests `88`, `90`, and `91`: `payment_attempt_count = 1`, the tariff snapshot is the APPLIED tariff snapshot, and `amount = 89.29`.
+
+Verify the original/applied tariff lifecycle after #205 payment creation:
+
+```sql
+SELECT
+    original.tariff_snapshot_id AS original_tariff_snapshot_id,
+    original.snapshot_status AS original_status,
+    original.net_amount AS original_net_amount,
+    applied.tariff_snapshot_id AS applied_tariff_snapshot_id,
+    applied.snapshot_status AS applied_status,
+    applied.net_amount AS applied_net_amount,
+    pa.payment_attempt_id,
+    pa.amount AS payment_amount
+FROM discounts.statutory_discount_payable_basis_applications app
+JOIN core.tariff_snapshots original
+  ON original.tariff_snapshot_id = app.original_tariff_snapshot_id
+JOIN core.tariff_snapshots applied
+  ON applied.tariff_snapshot_id = app.applied_tariff_snapshot_id
+LEFT JOIN core.payment_attempts pa
+  ON pa.tariff_snapshot_id = app.applied_tariff_snapshot_id
+WHERE app.statutory_discount_validation_id = '77000000-0000-0000-0000-000000000316'::uuid;
+```
+
+Expected after request `88`: original snapshot is `SUPERSEDED`, applied snapshot is `CONSUMED`, the original net amount remains `125.00`, the applied net amount remains `89.29`, and the payment amount is `89.29`.
+
 Verify the payment-attempt guardrail case leaves the application and original snapshot unfinalized:
 
 ```sql
@@ -1361,7 +1556,7 @@ WHERE statutory_discount_validation_id IN (
 );
 ```
 
-Expected: `306` and `307` are approved national fallback fixtures with captured evidence and valid persisted policy snapshots; `308` lacks policy context; `309` has an invalid snapshot policy ID; `310` has a mismatched snapshot policy ID; `311` is a `FREE_DURATION` local policy fixture; `312` is a seeded `REQUESTED` application completion fixture; `313` is a seeded payment-attempt guardrail fixture.
+Expected: `306` and `307` are approved national fallback fixtures with captured evidence and valid persisted policy snapshots; `308` lacks policy context; `309` has an invalid snapshot policy ID; `310` has a mismatched snapshot policy ID; `311` is a `FREE_DURATION` local policy fixture; `312` is a seeded `REQUESTED` application completion fixture; `313` is a seeded payment-attempt guardrail fixture; `314`, `315`, and `316` are #205 payment-attempt effective-tariff fixtures.
 
 Verify the original tariff snapshot remains unchanged:
 
@@ -1427,7 +1622,8 @@ This manual pack does not test:
 - Operator Console UI
 - WebPay display
 - payment attempt creation by the apply endpoint
-- payment creation or payment finality
+- payment confirmation/finality
+- provider handoff execution or provider callbacks
 - gate consume
 - coupons
 - evidence upload

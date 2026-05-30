@@ -1,0 +1,47 @@
+meta {
+  name: 87 Vendor resolve APPLIED basis for payment attempt
+  type: http
+  seq: 87
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_applied}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("vendor resolve returns applied tariff as effective payable basis", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.lookupOutcome).to.equal("resolved");
+    expect(res.body.statutoryDiscountApplied).to.equal(true);
+    expect(res.body.effectiveTariffSnapshotId).to.equal(res.body.appliedTariffSnapshotId);
+    expect(res.body.tariffSnapshotId).to.equal(res.body.appliedTariffSnapshotId);
+    expect(res.body.originalTariffSnapshotId).to.equal(bru.getEnvVar("paymentTariffSnapshotId_originalSuperseded"));
+    expect(res.body.netPayableMinorUnits).to.equal(Number(bru.getEnvVar("paymentAmountMinorUnits_appliedEffective")));
+    expect(res.body.currency).to.equal(bru.getEnvVar("paymentCurrencyCode"));
+    expect(res.body.benefitType).to.equal("STATUTORY_DISCOUNT_VAT_EXEMPT");
+    expect(res.body.paymentStatus).to.equal("Not Started");
+    const effectiveTariffSnapshotId = res.body.effectiveTariffSnapshotId || res.body.appliedTariffSnapshotId || res.body.tariffSnapshotId;
+    expect(effectiveTariffSnapshotId).to.not.equal(null);
+    expect(effectiveTariffSnapshotId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    bru.setEnvVar("paymentParkingSessionId_applied", res.body.parkingSessionId);
+    bru.setEnvVar("paymentTariffSnapshotId_appliedEffective", effectiveTariffSnapshotId);
+    bru.setEnvVar("paymentTariffSnapshotId_originalSuperseded", res.body.originalTariffSnapshotId);
+  });
+}

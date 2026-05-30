@@ -1,6 +1,7 @@
 vars {
   centralPmsBaseUrl: http://127.0.0.1:56065
   vendorParkingBaseUrl: http://127.0.0.1:56065
+  paymentAttemptsBaseUrl: http://127.0.0.1:56065
   vendorSystemId_manual: 77000000-0000-0000-0000-000000000004
   userId_allowed: 77000000-0000-0000-0000-000000000010
   userId_inactiveHrMapping: 77000000-0000-0000-0000-000000000011
@@ -13,14 +14,14 @@ vars {
   parkingSessionId_notFound: 77000000-0000-0000-0000-000000000099
   ticketReference_allowed: MANUAL-SESSION-LOOKUP-001
   vendorResolveTicketReference_noDiscount: MANUAL-APPLY-MISSING-POLICY-CONTEXT
-  vendorResolveTicketReference_applied: MANUAL-APPLY-POLICY-RA9994
+  vendorResolveTicketReference_applied: MANUAL-PAYMENT-APPLIED-EFFECTIVE
   vendorResolveTicketReference_ra9994: MANUAL-APPLY-POLICY-RA9994
   vendorResolveTicketReference_ra10754: MANUAL-APPLY-POLICY-RA10754
   vendorResolveParkingSessionId_noDiscount: 77000000-0000-0000-0000-000000000308
   vendorResolveOriginalTariffSnapshotId_noDiscount: 77000000-0000-0000-0000-000000000398
-  vendorResolveParkingSessionId_applied: 77000000-0000-0000-0000-000000000306
-  vendorResolveOriginalTariffSnapshotId: 77000000-0000-0000-0000-000000000396
-  vendorResolveAppliedTariffSnapshotId: 00000000-0000-0000-0000-000000000000
+  vendorResolveParkingSessionId_applied: 77000000-0000-0000-0000-000000000316
+  vendorResolveOriginalTariffSnapshotId: 77000000-0000-0000-0000-000000000406
+  vendorResolveAppliedTariffSnapshotId: 77000000-0000-0000-0000-000000000506
   vendorResolveValidationId: 77000000-0000-0000-0000-000000000306
   vendorResolveApplicationId: 00000000-0000-0000-0000-000000000000
   vendorResolveDraftId: 00000000-0000-0000-0000-000000000000
@@ -76,6 +77,31 @@ vars {
   appliedLifecycleAppliedTariffSnapshotId_ra10754: 00000000-0000-0000-0000-000000000000
   validationId_requestedApplication: 77000000-0000-0000-0000-000000000312
   validationId_paymentAttemptBlocked: 77000000-0000-0000-0000-000000000313
+  paymentParkingSessionId_noDiscount: 77000000-0000-0000-0000-000000000308
+  paymentParkingSessionId_applied: 77000000-0000-0000-0000-000000000316
+  paymentParkingSessionId_staleRejected: 77000000-0000-0000-0000-000000000314
+  paymentParkingSessionId_supersededRejected: 77000000-0000-0000-0000-000000000315
+  paymentTariffSnapshotId_noDiscountActive: 77000000-0000-0000-0000-000000000398
+  paymentTariffSnapshotId_appliedEffective: 77000000-0000-0000-0000-000000000506
+  paymentTariffSnapshotId_originalSuperseded: 77000000-0000-0000-0000-000000000406
+  paymentTariffSnapshotId_originalSuperseded_stale: 77000000-0000-0000-0000-000000000404
+  paymentTariffSnapshotId_supersededRejected: 77000000-0000-0000-0000-000000000405
+  paymentTariffSnapshotId_otherSession: 77000000-0000-0000-0000-000000000504
+  paymentAttemptId_noDiscount: 00000000-0000-0000-0000-000000000000
+  paymentAttemptId_appliedEffective: 00000000-0000-0000-0000-000000000000
+  paymentAmountMinorUnits_noDiscount: 12500
+  paymentAmountMinorUnits_appliedEffective: 8929
+  paymentCurrencyCode: PHP
+  paymentMethodQrph: PAYMONGO_CHECKOUT_SESSION
+  paymentMethodGcash: GCASH
+  paymentMethodMaya: MAYA
+  paymentMethodCard: CARD
+  paymentIdempotencyKey_noDiscount: manual-payment-no-discount-active
+  paymentIdempotencyKey_valid: manual-payment-applied-effective
+  paymentIdempotencyKey_replay: manual-payment-applied-effective
+  paymentIdempotencyKey_staleRejected: manual-payment-stale-original-rejected
+  paymentIdempotencyKey_sessionMismatch: manual-payment-session-mismatch-rejected
+  paymentIdempotencyKey_supersededRejected: manual-payment-superseded-rejected
   seniorEntitlementType: SENIOR_CITIZEN
   pwdEntitlementType: PWD
   unsupportedEntitlementType: OTHER_STATUTORY

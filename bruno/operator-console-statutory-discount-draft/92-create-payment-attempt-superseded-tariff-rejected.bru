@@ -1,0 +1,32 @@
+meta {
+  name: 92 Create payment attempt superseded tariff rejected
+  type: http
+  seq: 92
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentIdempotencyKey_supersededRejected}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{paymentParkingSessionId_supersededRejected}}",
+    "tariffSnapshotId": "{{paymentTariffSnapshotId_supersededRejected}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("superseded original tariff is rejected for a new payment attempt", function () {
+    expect(res.status).to.equal(409);
+    expect(["STALE_TARIFF_SNAPSHOT", "TARIFF_SNAPSHOT_INVALID"]).to.include(res.body.errorCode);
+  });
+}

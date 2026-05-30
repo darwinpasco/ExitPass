@@ -1,0 +1,36 @@
+meta {
+  name: 88 Create payment attempt effective applied tariff
+  type: http
+  seq: 88
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentIdempotencyKey_valid}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{paymentParkingSessionId_applied}}",
+    "tariffSnapshotId": "{{paymentTariffSnapshotId_appliedEffective}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("payment attempt succeeds using effective APPLIED tariff snapshot", function () {
+    expect(bru.getEnvVar("paymentTariffSnapshotId_appliedEffective")).to.not.equal("00000000-0000-0000-0000-000000000000");
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.paymentAttemptId).to.not.equal(null);
+    expect(res.body.paymentProvider).to.equal(bru.getEnvVar("paymentMethodGcash"));
+    expect(res.body.providerHandoff).to.not.equal(null);
+    bru.setEnvVar("paymentAttemptId_appliedEffective", res.body.paymentAttemptId);
+  });
+}

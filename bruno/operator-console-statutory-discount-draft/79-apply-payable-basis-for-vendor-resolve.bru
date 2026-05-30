@@ -41,6 +41,9 @@ tests {
     bru.setEnvVar("vendorResolveApplicationId", res.body.payableBasisApplicationId);
     bru.setEnvVar("vendorResolveOriginalTariffSnapshotId", res.body.originalTariffSnapshotId);
     bru.setEnvVar("vendorResolveAppliedTariffSnapshotId", res.body.appliedTariffSnapshotId);
+    bru.setEnvVar("paymentParkingSessionId_applied", res.body.parkingSessionId);
+    bru.setEnvVar("paymentTariffSnapshotId_originalSuperseded", res.body.originalTariffSnapshotId);
+    bru.setEnvVar("paymentTariffSnapshotId_appliedEffective", res.body.appliedTariffSnapshotId);
     bru.setEnvVar("appliedLifecycleApplicationId_ra9994", res.body.payableBasisApplicationId);
     bru.setEnvVar("appliedLifecycleAppliedTariffSnapshotId_ra9994", res.body.appliedTariffSnapshotId);
   });

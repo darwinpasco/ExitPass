@@ -1,0 +1,35 @@
+meta {
+  name: 86 Create payment attempt no-discount active tariff
+  type: http
+  seq: 86
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentIdempotencyKey_noDiscount}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{paymentParkingSessionId_noDiscount}}",
+    "tariffSnapshotId": "{{paymentTariffSnapshotId_noDiscountActive}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("payment attempt succeeds for no-discount active tariff", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.paymentAttemptId).to.not.equal(null);
+    expect(res.body.paymentProvider).to.equal(bru.getEnvVar("paymentMethodGcash"));
+    expect(res.body.providerHandoff).to.not.equal(null);
+    bru.setEnvVar("paymentAttemptId_noDiscount", res.body.paymentAttemptId);
+  });
+}

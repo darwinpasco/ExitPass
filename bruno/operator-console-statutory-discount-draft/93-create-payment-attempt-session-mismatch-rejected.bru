@@ -1,0 +1,32 @@
+meta {
+  name: 93 Create payment attempt session mismatch rejected
+  type: http
+  seq: 93
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentIdempotencyKey_sessionMismatch}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{paymentParkingSessionId_supersededRejected}}",
+    "tariffSnapshotId": "{{paymentTariffSnapshotId_otherSession}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("payment attempt rejects tariff snapshot from another parking session", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("TARIFF_SNAPSHOT_INVALID");
+  });
+}
