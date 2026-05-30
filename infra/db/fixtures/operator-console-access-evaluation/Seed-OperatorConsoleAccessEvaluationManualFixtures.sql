@@ -627,6 +627,11 @@ SET country_code = EXCLUDED.country_code,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
+UPDATE sites.sites
+SET jurisdiction_id = '77000000-0000-0000-0000-000000000211',
+    updated_at = now()
+WHERE site_id = '77000000-0000-0000-0000-000000000002';
+
 INSERT INTO sites.sites (
     site_id,
     site_group_id,

@@ -1,6 +1,8 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Domain.Common;
 using FluentAssertions;
 using NSubstitute;
+using System.Text.Json;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.Application;
@@ -20,6 +22,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     private static readonly Guid DraftId = Guid.Parse("47000000-0000-0000-0000-000000000008");
     private static readonly Guid EvidenceReferenceId = Guid.Parse("47000000-0000-0000-0000-000000000011");
     private static readonly Guid CorrelationId = Guid.Parse("47000000-0000-0000-0000-000000000009");
+    private static readonly Guid PolicyId = Guid.Parse("47000000-0000-0000-0000-000000000012");
+    private static readonly Guid JurisdictionId = Guid.Parse("47000000-0000-0000-0000-000000000013");
 
     /// <summary>
     /// Verifies access denial is persisted and prevents draft creation.
@@ -66,7 +70,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 ReusedExistingDraft: false,
                 EvidenceRequired: true,
                 EvidenceReferenceCreated: true,
-                EvidenceReferenceId));
+                EvidenceReferenceId,
+                Policy()));
 
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
@@ -84,6 +89,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.EvidenceReferenceCreated.Should().BeTrue();
         result.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         result.ReusedExistingDraft.Should().BeFalse();
+        result.Policy.Should().NotBeNull();
+        result.Policy!.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
 
         await writer.Received(1).PersistAsync(
             Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
@@ -91,7 +98,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 request.EntitlementType == "SENIOR_CITIZEN" &&
                 request.EvidenceRequired &&
                 request.RequestedByUserId == UserId &&
-                request.CorrelationId == CorrelationId),
+                request.CorrelationId == CorrelationId &&
+                request.Policy.StatutoryDiscountPolicyId == PolicyId),
             Arg.Any<CancellationToken>());
     }
 
@@ -114,7 +122,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 ReusedExistingDraft: true,
                 EvidenceRequired: true,
                 EvidenceReferenceCreated: false,
-                EvidenceReferenceId));
+                EvidenceReferenceId,
+                Policy()));
 
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
@@ -130,6 +139,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         result.EvidenceReferenceCreated.Should().BeFalse();
         result.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         result.ReusedExistingDraft.Should().BeTrue();
+        result.Policy.Should().NotBeNull();
     }
 
     /// <summary>
@@ -151,7 +161,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 ReusedExistingDraft: false,
                 EvidenceRequired: false,
                 EvidenceReferenceCreated: false,
-                EvidenceReferenceId: null));
+                EvidenceReferenceId: null,
+                Policy()));
 
         var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
 
@@ -166,6 +177,54 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         await writer.Received(1).PersistAsync(
             Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
                 request.EvidenceRequired == false),
+            Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies policy-required evidence marks the draft evidence-required even when capture was not requested.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenResolvedPolicyRequiresEvidence_PersistsEvidenceRequired()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: true,
+                Policy(requiresEvidence: true),
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                IneligibilityReason: null,
+                ErrorCode: null));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: true,
+                EvidenceReferenceId,
+                Policy(requiresEvidence: true)));
+
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer, policyRepository);
+
+        var result = await sut.DraftAsync(Command(evidenceCaptureRequested: false), CancellationToken.None);
+
+        result.EvidenceCaptureRequired.Should().BeFalse();
+        result.EvidenceRequired.Should().BeTrue();
+        result.Policy!.RequiresEvidence.Should().BeTrue();
+
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(request =>
+                request.EvidenceRequired &&
+                request.Policy.RequiresEvidence),
             Arg.Any<CancellationToken>());
     }
 
@@ -275,10 +334,45 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
     }
 
+    /// <summary>
+    /// Verifies unresolved policy blocks draft creation after access and session checks.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenPolicyNotResolved_DoesNotCreateDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: false,
+                Policy: null,
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                "SITE_JURISDICTION_NOT_CONFIGURED",
+                "SITE_JURISDICTION_NOT_CONFIGURED"));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer, policyRepository);
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.DraftAccepted.Should().BeFalse();
+        result.DraftPersisted.Should().BeFalse();
+        result.ErrorCode.Should().Be("SITE_JURISDICTION_NOT_CONFIGURED");
+        result.Policy.Should().BeNull();
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
+    }
+
     private static OperatorConsoleStatutoryDiscountDraftService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
         IOperatorConsoleSessionLookupReadRepository? sessionRepository = null,
-        IOperatorConsoleStatutoryDiscountDraftWriter? draftWriter = null)
+        IOperatorConsoleStatutoryDiscountDraftWriter? draftWriter = null,
+        IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository? policyRepository = null)
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -290,12 +384,29 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
 
         sessionRepository ??= Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
         draftWriter ??= Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        if (policyRepository is null)
+        {
+            policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+            policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+                .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                    Resolved: true,
+                    Policy(requiresEvidence: false),
+                    SiteId,
+                    SiteGroupId,
+                    JurisdictionId,
+                    IneligibilityReason: null,
+                    ErrorCode: null));
+        }
+        var clock = Substitute.For<ISystemClock>();
+        clock.UtcNow.Returns(DateTimeOffset.Parse("2026-05-29T08:00:00Z"));
 
         return new OperatorConsoleStatutoryDiscountDraftService(
             accessService,
             accessWriter,
             sessionRepository,
-            draftWriter);
+            policyRepository,
+            draftWriter,
+            clock);
     }
 
     private static OperatorConsoleStatutoryDiscountDraftCommand Command(
@@ -369,4 +480,47 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             PaymentStatus: null,
             DiscountStatus: "NOT_APPLIED",
             ExitAuthorizationStatus: null);
+
+    private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy(bool requiresEvidence = true) =>
+        new(
+            PolicyId,
+            JurisdictionId,
+            SiteId,
+            SiteGroupId,
+            "SENIOR_CITIZEN",
+            "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+            "RA 9994 Senior Citizen National Fallback",
+            "NATIONAL_LAW_FALLBACK",
+            "NATIONAL_LAW",
+            "LEGAL_REFERENCE",
+            "Expanded Senior Citizens Act of 2010",
+            null,
+            "RA 9994",
+            "VERIFIED_OFFICIAL",
+            "NON_RESIDENT_ALLOWED",
+            "STATUTORY_DISCOUNT_VAT_EXEMPT",
+            null,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            "NOT_APPLICABLE",
+            "APPLY_NATIONAL_STATUTORY_DISCOUNT",
+            "CHARGEABLE_PORTION_ONLY",
+            "NO_STACKING_ON_FREE_PERIOD",
+            "NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY",
+            true,
+            requiresEvidence,
+            DateOnly.Parse("2026-01-01"),
+            null,
+            "Unit test policy.",
+            JsonSerializer.SerializeToElement(new
+            {
+                policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+                nationalLawReference = "RA 9994",
+                benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
+                freeDurationMinutes = (int?)null
+            }));
 }

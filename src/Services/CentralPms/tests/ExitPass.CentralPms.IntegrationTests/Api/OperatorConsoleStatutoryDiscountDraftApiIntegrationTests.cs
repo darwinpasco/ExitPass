@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using NpgsqlTypes;
+using System.Text.Json;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -31,6 +32,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     private static readonly Guid DraftId = Guid.Parse("48000000-0000-0000-0000-000000000008");
     private static readonly Guid CorrelationId = Guid.Parse("48000000-0000-0000-0000-000000000009");
     private static readonly Guid EvidenceReferenceId = Guid.Parse("48000000-0000-0000-0000-000000000011");
+    private static readonly Guid ManualFixtureSiteId = Guid.Parse("77000000-0000-0000-0000-000000000002");
+    private static readonly Guid ManualFixtureParkingSessionId = Guid.Parse("77000000-0000-0000-0000-000000000090");
+    private static readonly Guid DraftPolicyJurisdictionId = Guid.Parse("6f000000-0000-0000-0000-000000000001");
+    private static readonly Guid DraftVerifiedLocalPolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000002");
+    private static readonly Guid DraftUnverifiedLocalPolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000003");
 
     /// <summary>
     /// Verifies the documented Operator Console statutory discount draft route exists.
@@ -115,6 +121,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         body.EvidenceReferenceCreated.Should().BeTrue();
         body.EvidenceReferenceId.Should().Be(EvidenceReferenceId);
         body.ReusedExistingDraft.Should().BeFalse();
+        body.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
+        body.NationalLawReference.Should().Be("RA 9994");
     }
 
     /// <summary>
@@ -210,6 +218,186 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
     }
 
     /// <summary>
+    /// Verifies Senior Citizen draft creation persists the RA 9994 national fallback policy context.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenSeniorFallbackResolved_PersistsRa9994PolicyContext()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await PrepareDraftPolicyFixtureAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        body.Should().NotBeNull();
+        body!.DraftAccepted.Should().BeTrue();
+        body.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        body.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
+        body.NationalLawReference.Should().Be("RA 9994");
+        body.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
+        body.FreeDurationMinutes.Should().BeNull();
+
+        var stored = await ReadDraftPolicyContextAsync(body.DraftId!.Value);
+        stored.Should().NotBeNull();
+        stored!.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
+        stored.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        stored.Snapshot.GetProperty("nationalLawReference").GetString().Should().Be("RA 9994");
+        stored.Snapshot.GetProperty("benefitType").GetString().Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
+        stored.Snapshot.GetProperty("freeDurationMinutes").ValueKind.Should().Be(JsonValueKind.Null);
+    }
+
+    /// <summary>
+    /// Verifies PWD draft creation persists the RA 10754 national fallback policy context.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenPwdFallbackResolved_PersistsRa10754PolicyContext()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await PrepareDraftPolicyFixtureAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(entitlementType: "PWD", evidenceCaptureRequested: false));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        body.Should().NotBeNull();
+        body!.DraftAccepted.Should().BeTrue();
+        body.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        body.PolicyCode.Should().Be("PH_RA10754_PWD_NATIONAL_FALLBACK");
+        body.NationalLawReference.Should().Be("RA 10754");
+        body.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
+        body.FreeDurationMinutes.Should().BeNull();
+
+        var stored = await ReadDraftPolicyContextAsync(body.DraftId!.Value);
+        stored.Should().NotBeNull();
+        stored!.Snapshot.GetProperty("nationalLawReference").GetString().Should().Be("RA 10754");
+    }
+
+    /// <summary>
+    /// Verifies verified local policies are persisted on drafts before national fallback.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenVerifiedLocalPolicyExists_PersistsLocalPolicyContext()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await PrepareDraftPolicyFixtureAsync();
+        await InsertDraftVerifiedLocalPolicyAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        body.Should().NotBeNull();
+        body!.DraftAccepted.Should().BeTrue();
+        body.StatutoryDiscountPolicyId.Should().Be(DraftVerifiedLocalPolicyId);
+        body.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+        body.PolicyCode.Should().Be("INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY");
+        body.OrdinanceReference.Should().Be("INTEGRATION-DRAFT-ORD-195");
+        body.NationalLawReference.Should().BeNull();
+        body.FreeDurationMinutes.Should().Be(90);
+
+        var stored = await ReadDraftPolicyContextAsync(body.DraftId!.Value);
+        stored.Should().NotBeNull();
+        stored!.PolicyId.Should().Be(DraftVerifiedLocalPolicyId);
+        stored.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+        stored.Snapshot.GetProperty("ordinanceReference").GetString().Should().Be("INTEGRATION-DRAFT-ORD-195");
+    }
+
+    /// <summary>
+    /// Verifies unverified local policy blocks draft creation and writes no validation row.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenUnverifiedLocalPolicyExists_DoesNotCreateDraft()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await PrepareDraftPolicyFixtureAsync();
+        await InsertDraftUnverifiedLocalPolicyAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        body.Should().NotBeNull();
+        body!.DraftAccepted.Should().BeFalse();
+        body.DraftPersisted.Should().BeFalse();
+        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_UNVERIFIED");
+        body.DraftId.Should().BeNull();
+
+        var activeDraftCount = await CountActiveDraftsAsync(ManualFixtureParkingSessionId, "SENIOR_CITIZEN");
+        activeDraftCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies duplicate replay returns the original stored policy snapshot without overwriting it.
+    /// </summary>
+    [Fact]
+    public async Task Draft_WhenDuplicateReplay_PreservesStoredPolicySnapshot()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await PrepareDraftPolicyFixtureAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var request = ManualFixtureRequest(evidenceCaptureRequested: false);
+
+        using var firstResponse = await client.PostAsJsonAsync(Endpoint, request);
+        var first = await firstResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        first.Should().NotBeNull();
+        var firstStored = await ReadDraftPolicyContextAsync(first!.DraftId!.Value);
+
+        using var secondResponse = await client.PostAsJsonAsync(Endpoint, request);
+        var second = await secondResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+        second.Should().NotBeNull();
+        second!.ReusedExistingDraft.Should().BeTrue();
+        second.DraftId.Should().Be(first.DraftId);
+
+        var secondStored = await ReadDraftPolicyContextAsync(second.DraftId!.Value);
+        secondStored.Should().NotBeNull();
+        secondStored!.Snapshot.GetRawText().Should().Be(firstStored!.Snapshot.GetRawText());
+        second.PolicySnapshot!.Value.GetProperty("resolvedAt").GetString()
+            .Should().Be(firstStored.Snapshot.GetProperty("resolvedAt").GetString());
+        second.PolicySnapshot!.Value.GetProperty("policyCode").GetString()
+            .Should().Be(firstStored.Snapshot.GetProperty("policyCode").GetString());
+    }
+
+    /// <summary>
     /// Verifies session-not-found maps to 404 without draft persistence.
     /// </summary>
     [Fact]
@@ -282,7 +470,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             "operator-console-statutory-discount-draft-api-test",
             CorrelationId);
 
-    private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest(bool evidenceCaptureRequested = false) =>
+    private static OperatorConsoleStatutoryDiscountDraftRequest ManualFixtureRequest(
+        bool evidenceCaptureRequested = false,
+        string entitlementType = "SENIOR_CITIZEN") =>
         new(
             Guid.Parse("77000000-0000-0000-0000-000000000010"),
             Guid.Parse("77000000-0000-0000-0000-000000000030"),
@@ -292,11 +482,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             Guid.Parse("77000000-0000-0000-0000-000000000090"),
             "MANUAL-SESSION-LOOKUP-001",
             PlateNumber: null,
-            "SENIOR_CITIZEN",
-            "SENIOR_CITIZEN_ID",
-            "OSCA",
+            entitlementType,
+            entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
+            entitlementType == "PWD" ? "NCDA" : "OSCA",
             ExpiryDate: null,
-            "1234",
+            entitlementType == "PWD" ? "PWD4" : "1234",
             EntitlementFingerprint: null,
             EvidenceCaptureRequested: evidenceCaptureRequested,
             EvidenceAccessIntent: null,
@@ -324,6 +514,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: null,
             ReusedExistingDraft: false,
+            Policy: null,
             IneligibilityReason: "ACCESS_DENIED",
             ErrorCode: null,
             CorrelationId);
@@ -346,6 +537,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             EvidenceReferenceCreated: true,
             EvidenceReferenceId,
             ReusedExistingDraft: false,
+            Policy(),
             IneligibilityReason: null,
             ErrorCode: null,
             CorrelationId);
@@ -368,6 +560,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: null,
             ReusedExistingDraft: false,
+            Policy: null,
             IneligibilityReason: "SESSION_NOT_FOUND",
             ErrorCode: "SESSION_NOT_FOUND",
             CorrelationId);
@@ -416,6 +609,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         };
 
         await command.ExecuteNonQueryAsync();
+        await PrepareDraftPolicyFixtureAsync();
     }
 
     private static async Task ClearPayableBasisApplyStateAsync()
@@ -448,6 +642,207 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task PrepareDraftPolicyFixtureAsync()
+    {
+        const string sql = """
+            BEGIN;
+            SET CONSTRAINTS ALL DEFERRED;
+
+            DELETE FROM discounts.statutory_discount_policy_registry
+            WHERE policy_code IN (
+                'INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY',
+                'INTEGRATION_DRAFT_UNVERIFIED_LOCAL_POLICY'
+            );
+
+            INSERT INTO sites.jurisdictions (
+                jurisdiction_id,
+                country_code,
+                province_name,
+                city_municipality_name,
+                psgc_code,
+                lgu_code,
+                jurisdiction_type,
+                jurisdiction_status,
+                source_reference
+            )
+            VALUES (
+                @jurisdiction_id,
+                'PH',
+                'Integration Province',
+                'Integration Draft City',
+                '888888888',
+                'PH-INT-DRAFT-195',
+                'CITY_MUNICIPALITY',
+                'ACTIVE',
+                'Integration draft policy snapshot jurisdiction'
+            )
+            ON CONFLICT (jurisdiction_id) DO UPDATE
+            SET jurisdiction_status = EXCLUDED.jurisdiction_status,
+                updated_at = now();
+
+            UPDATE sites.sites
+               SET jurisdiction_id = @jurisdiction_id,
+                   updated_at = now()
+             WHERE site_id = @site_id;
+
+            COMMIT;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = DraftPolicyJurisdictionId;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = ManualFixtureSiteId;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertDraftVerifiedLocalPolicyAsync()
+    {
+        const string sql = """
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_id,
+                jurisdiction_id,
+                policy_code,
+                policy_name,
+                entitlement_type,
+                policy_resolution_basis,
+                policy_level,
+                policy_type,
+                ordinance_reference,
+                verification_status,
+                beneficiary_residency_scope,
+                benefit_type,
+                free_duration_minutes,
+                initial_rate_exempt_flag,
+                full_fee_exempt_flag,
+                free_period_application,
+                succeeding_hours_discount_rule,
+                discount_base_scope,
+                stacking_policy,
+                legal_basis_priority,
+                requires_operator_validation,
+                requires_evidence,
+                effective_from,
+                policy_status,
+                source_reference,
+                reviewed_at,
+                policy_snapshot_json
+            )
+            VALUES (
+                @policy_id,
+                @jurisdiction_id,
+                'INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY',
+                'Integration Draft Verified Local Policy',
+                'SENIOR_CITIZEN',
+                'LOCAL_ORDINANCE_APPLIED',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
+                'INTEGRATION-DRAFT-ORD-195',
+                'VERIFIED_OFFICIAL',
+                'NON_RESIDENT_ALLOWED',
+                'FREE_DURATION',
+                90,
+                false,
+                false,
+                'BEFORE_DISCOUNT_COMPUTATION',
+                'REGULAR_RATE',
+                'CHARGEABLE_PORTION_ONLY',
+                'NO_STACKING_ON_FREE_PERIOD',
+                'LOCAL_ORDINANCE_FIRST',
+                true,
+                true,
+                DATE '2026-01-01',
+                'ACTIVE',
+                'Integration test verified local draft policy.',
+                now(),
+                '{}'::jsonb
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET jurisdiction_id = EXCLUDED.jurisdiction_id,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                updated_at = now();
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = DraftVerifiedLocalPolicyId;
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = DraftPolicyJurisdictionId;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertDraftUnverifiedLocalPolicyAsync()
+    {
+        const string sql = """
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_id,
+                jurisdiction_id,
+                policy_code,
+                policy_name,
+                entitlement_type,
+                policy_resolution_basis,
+                policy_level,
+                policy_type,
+                ordinance_reference,
+                verification_status,
+                beneficiary_residency_scope,
+                benefit_type,
+                free_duration_minutes,
+                initial_rate_exempt_flag,
+                full_fee_exempt_flag,
+                free_period_application,
+                succeeding_hours_discount_rule,
+                discount_base_scope,
+                stacking_policy,
+                legal_basis_priority,
+                requires_operator_validation,
+                requires_evidence,
+                effective_from,
+                policy_status,
+                source_reference,
+                policy_snapshot_json
+            )
+            VALUES (
+                @policy_id,
+                @jurisdiction_id,
+                'INTEGRATION_DRAFT_UNVERIFIED_LOCAL_POLICY',
+                'Integration Draft Unverified Local Policy',
+                'SENIOR_CITIZEN',
+                'LOCAL_ORDINANCE_APPLIED',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
+                'INTEGRATION-DRAFT-UNVERIFIED-195',
+                'LEAD_UNVERIFIED',
+                'UNVERIFIED',
+                'FREE_DURATION',
+                60,
+                false,
+                false,
+                'BEFORE_DISCOUNT_COMPUTATION',
+                'REGULAR_RATE',
+                'CHARGEABLE_PORTION_ONLY',
+                'NO_STACKING_ON_FREE_PERIOD',
+                'LOCAL_ORDINANCE_FIRST',
+                true,
+                true,
+                DATE '2026-01-01',
+                'DRAFT',
+                'Integration test unverified local draft policy.',
+                '{}'::jsonb
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET jurisdiction_id = EXCLUDED.jurisdiction_id,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                updated_at = now();
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = DraftUnverifiedLocalPolicyId;
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = DraftPolicyJurisdictionId;
+        await command.ExecuteNonQueryAsync();
+    }
+
     private static async Task<int> CountActiveDraftsAsync(Guid parkingSessionId, string entitlementType)
     {
         const string sql = """
@@ -469,6 +864,39 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
 
         var count = await command.ExecuteScalarAsync();
         return Convert.ToInt32(count);
+    }
+
+    private static async Task<DraftPolicyContextRow?> ReadDraftPolicyContextAsync(Guid draftId)
+    {
+        const string sql = """
+            SELECT
+                sdv.statutory_discount_policy_id,
+                p.policy_code,
+                sdv.resolved_jurisdiction_id,
+                sdv.policy_resolution_basis::text,
+                sdv.resolved_policy_snapshot_json
+            FROM discounts.statutory_discount_validations sdv
+            LEFT JOIN discounts.statutory_discount_policy_registry p
+              ON p.statutory_discount_policy_id = sdv.statutory_discount_policy_id
+            WHERE sdv.statutory_discount_validation_id = @draft_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("draft_id", NpgsqlDbType.Uuid).Value = draftId;
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new DraftPolicyContextRow(
+            reader.IsDBNull(0) ? null : reader.GetGuid(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetGuid(2),
+            reader.GetString(3),
+            JsonDocument.Parse(reader.GetString(4)).RootElement.Clone());
     }
 
     private static async Task<int> CountEvidenceReferencesAsync(Guid draftId, string evidenceType)
@@ -583,4 +1011,54 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         string AccessClassification,
         string RedactionStatus,
         bool EvidenceCaptured);
+
+    private sealed record DraftPolicyContextRow(
+        Guid? PolicyId,
+        string? PolicyCode,
+        Guid? JurisdictionId,
+        string PolicyResolutionBasis,
+        JsonElement Snapshot);
+
+    private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy() =>
+        new(
+            Guid.Parse("48000000-0000-0000-0000-000000000012"),
+            Guid.Parse("48000000-0000-0000-0000-000000000013"),
+            SiteId,
+            SiteGroupId,
+            "SENIOR_CITIZEN",
+            "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+            "RA 9994 Senior Citizen National Fallback",
+            "NATIONAL_LAW_FALLBACK",
+            "NATIONAL_LAW",
+            "LEGAL_REFERENCE",
+            "Expanded Senior Citizens Act of 2010",
+            null,
+            "RA 9994",
+            "VERIFIED_OFFICIAL",
+            "NON_RESIDENT_ALLOWED",
+            "STATUTORY_DISCOUNT_VAT_EXEMPT",
+            null,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            "NOT_APPLICABLE",
+            "APPLY_NATIONAL_STATUTORY_DISCOUNT",
+            "CHARGEABLE_PORTION_ONLY",
+            "NO_STACKING_ON_FREE_PERIOD",
+            "NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY",
+            true,
+            true,
+            DateOnly.Parse("2026-01-01"),
+            null,
+            "Integration test policy.",
+            JsonSerializer.SerializeToElement(new
+            {
+                policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+                nationalLawReference = "RA 9994",
+                benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
+                freeDurationMinutes = (int?)null
+            }));
 }

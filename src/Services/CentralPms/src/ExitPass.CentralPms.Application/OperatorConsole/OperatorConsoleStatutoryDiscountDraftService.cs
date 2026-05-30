@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using ExitPass.CentralPms.Domain.Common;
 
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
@@ -26,7 +27,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
     private readonly IOperatorConsoleAccessEvaluationService _accessEvaluationService;
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;
     private readonly IOperatorConsoleSessionLookupReadRepository _sessionRepository;
+    private readonly IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository _policyRepository;
     private readonly IOperatorConsoleStatutoryDiscountDraftWriter _draftWriter;
+    private readonly ISystemClock _clock;
 
     /// <summary>
     /// Creates an Operator Console statutory discount validation draft service.
@@ -35,12 +38,16 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         IOperatorConsoleSessionLookupReadRepository sessionRepository,
-        IOperatorConsoleStatutoryDiscountDraftWriter draftWriter)
+        IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository policyRepository,
+        IOperatorConsoleStatutoryDiscountDraftWriter draftWriter,
+        ISystemClock clock)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _sessionRepository = sessionRepository ?? throw new ArgumentNullException(nameof(sessionRepository));
+        _policyRepository = policyRepository ?? throw new ArgumentNullException(nameof(policyRepository));
         _draftWriter = draftWriter ?? throw new ArgumentNullException(nameof(draftWriter));
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
     /// <inheritdoc />
@@ -99,14 +106,34 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 "SESSION_NOT_ELIGIBLE_FOR_OPERATOR_WORKFLOW");
         }
 
+        var policyResolution = await _policyRepository.ResolveAsync(
+            new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
+                session.SiteId,
+                command.SiteGroupId ?? session.SiteGroupId,
+                entitlementType,
+                DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime)),
+            cancellationToken);
+
+        if (!policyResolution.Resolved || policyResolution.Policy is null)
+        {
+            return NotAcceptedResult(
+                command,
+                persistedEvaluation,
+                policyResolution.IneligibilityReason ?? "STATUTORY_DISCOUNT_POLICY_NOT_RESOLVED",
+                policyResolution.ErrorCode ?? "STATUTORY_DISCOUNT_POLICY_NOT_RESOLVED");
+        }
+
+        var evidenceRequired = command.EvidenceCaptureRequested || policyResolution.Policy.RequiresEvidence;
+
         var draft = await _draftWriter.PersistAsync(
             new OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
                 command.ParkingSessionId,
                 entitlementType,
-                command.EvidenceCaptureRequested,
+                evidenceRequired,
                 NormalizeOptional(command.ReasonCode),
                 command.UserId,
-                command.CorrelationId),
+                command.CorrelationId,
+                policyResolution.Policy),
             cancellationToken);
 
         return new OperatorConsoleStatutoryDiscountDraftResult(
@@ -126,6 +153,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             draft.EvidenceReferenceCreated,
             draft.EvidenceReferenceId,
             draft.ReusedExistingDraft,
+            draft.Policy,
             IneligibilityReason: null,
             ErrorCode: null,
             persistedEvaluation.CorrelationId);
@@ -151,6 +179,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: null,
             ReusedExistingDraft: false,
+            Policy: null,
             IneligibilityReason: "ACCESS_DENIED",
             ErrorCode: null,
             persistedEvaluation.CorrelationId);
@@ -177,6 +206,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: null,
             ReusedExistingDraft: false,
+            Policy: null,
             ineligibilityReason,
             errorCode,
             persistedEvaluation.CorrelationId);

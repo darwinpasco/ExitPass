@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Application.OperatorConsole;
 using Npgsql;
 using NpgsqlTypes;
+using System.Text.Json;
 
 namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 
@@ -99,21 +100,60 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
     {
         const string sql = """
             SELECT
-                statutory_discount_validation_id,
-                validation_status::text AS validation_status,
-                evidence_required
-            FROM discounts.statutory_discount_validations
-            WHERE parking_session_id = @parking_session_id
-              AND entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
-              AND validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
-              AND validation_status IN (
+                sdv.statutory_discount_validation_id,
+                sdv.validation_status::text AS validation_status,
+                sdv.evidence_required,
+                p.statutory_discount_policy_id,
+                sdv.resolved_jurisdiction_id,
+                sdv.parking_session_id,
+                ps.site_id,
+                ps.site_group_id,
+                p.policy_code,
+                p.policy_name,
+                sdv.entitlement_type::text,
+                sdv.policy_resolution_basis::text,
+                p.policy_level::text,
+                p.policy_type::text,
+                p.legal_basis_reference,
+                p.ordinance_reference,
+                p.national_law_reference,
+                p.verification_status::text,
+                p.beneficiary_residency_scope::text,
+                p.benefit_type::text,
+                p.free_duration_minutes,
+                p.initial_rate_exempt_flag,
+                p.full_fee_exempt_flag,
+                p.overnight_excluded_flag,
+                p.valet_excluded_flag,
+                p.standalone_parking_excluded_flag,
+                p.driver_or_passenger_required_flag,
+                p.free_period_application::text,
+                p.succeeding_hours_discount_rule::text,
+                p.discount_base_scope::text,
+                p.stacking_policy::text,
+                p.legal_basis_priority::text,
+                p.requires_operator_validation,
+                p.requires_evidence,
+                p.effective_from,
+                p.effective_to,
+                p.source_reference,
+                sdv.resolved_policy_snapshot_json
+            FROM discounts.statutory_discount_validations AS sdv
+            JOIN core.parking_sessions AS ps
+              ON ps.parking_session_id = sdv.parking_session_id
+            LEFT JOIN discounts.statutory_discount_policy_registry AS p
+              ON p.statutory_discount_policy_id = sdv.statutory_discount_policy_id
+            WHERE sdv.parking_session_id = @parking_session_id
+              AND sdv.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
+              AND sdv.validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
+              AND sdv.validation_status IN (
                     'REQUESTED'::discounts.statutory_discount_validations_status_enum,
                     'PENDING_OPERATOR_REVIEW'::discounts.statutory_discount_validations_status_enum
               )
-              AND evidence_captured = false
-              AND applied_policy_reference_id IS NULL
-              AND validated_at IS NULL
-            ORDER BY requested_at DESC, statutory_discount_validation_id DESC
+              AND sdv.evidence_captured = false
+              AND sdv.applied_policy_reference_id IS NULL
+              AND sdv.validated_at IS NULL
+            ORDER BY sdv.requested_at DESC, sdv.statutory_discount_validation_id DESC
             LIMIT 1;
             """;
 
@@ -134,7 +174,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             ReusedExistingDraft: true,
             EvidenceRequired: reader.GetBoolean(2),
             EvidenceReferenceCreated: false,
-            EvidenceReferenceId: null);
+            EvidenceReferenceId: null,
+            Policy: ReadPolicy(reader, startOrdinal: 3));
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> InsertDraftAsync(
@@ -153,6 +194,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 evidence_required,
                 evidence_captured,
                 decision_reason_code,
+                statutory_discount_policy_id,
+                resolved_jurisdiction_id,
+                resolved_policy_snapshot_json,
                 requested_at,
                 requested_by_user_id,
                 correlation_id,
@@ -161,12 +205,15 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             VALUES (
                 @parking_session_id,
                 @entitlement_type::discounts.statutory_entitlement_type_enum,
-                'SYSTEM_DEFAULT'::discounts.policy_resolution_basis_enum,
+                @policy_resolution_basis::discounts.policy_resolution_basis_enum,
                 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum,
                 'REQUESTED'::discounts.statutory_discount_validations_status_enum,
                 @evidence_required,
                 false,
                 @decision_reason_code,
+                @statutory_discount_policy_id,
+                @resolved_jurisdiction_id,
+                @resolved_policy_snapshot_json::jsonb,
                 now(),
                 @requested_by_user_id,
                 @correlation_id,
@@ -178,8 +225,12 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
         npgsqlCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = command.ParkingSessionId;
         npgsqlCommand.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = command.EntitlementType;
+        npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("decision_reason_code", NpgsqlDbType.Varchar).Value = DbValue(command.ReasonCode);
+        npgsqlCommand.Parameters.Add("statutory_discount_policy_id", NpgsqlDbType.Uuid).Value = command.Policy.StatutoryDiscountPolicyId;
+        npgsqlCommand.Parameters.Add("resolved_jurisdiction_id", NpgsqlDbType.Uuid).Value = DbValue(command.Policy.JurisdictionId);
+        npgsqlCommand.Parameters.Add("resolved_policy_snapshot_json", NpgsqlDbType.Jsonb).Value = command.Policy.PolicySnapshot.GetRawText();
         npgsqlCommand.Parameters.Add("requested_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
         npgsqlCommand.Parameters.Add("created_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
@@ -197,7 +248,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             ReusedExistingDraft: false,
             EvidenceRequired: command.EvidenceRequired,
             EvidenceReferenceCreated: false,
-            EvidenceReferenceId: null);
+            EvidenceReferenceId: null,
+            Policy: command.Policy);
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> EnsureEvidenceMetadataAsync(
@@ -380,4 +432,59 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             : "SENIOR_CITIZEN_ID";
 
     private static object DbValue(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
+
+    private static object DbValue(Guid? value) => value.HasValue ? value.Value : DBNull.Value;
+
+    private static OperatorConsoleResolvedStatutoryDiscountPolicy? ReadPolicy(
+        NpgsqlDataReader reader,
+        int startOrdinal)
+    {
+        if (reader.IsDBNull(startOrdinal))
+        {
+            return null;
+        }
+
+        var rawSnapshot = reader.IsDBNull(startOrdinal + 34)
+            ? "{}"
+            : reader.GetString(startOrdinal + 34);
+
+        return new OperatorConsoleResolvedStatutoryDiscountPolicy(
+            reader.GetGuid(startOrdinal),
+            reader.IsDBNull(startOrdinal + 1) ? null : reader.GetGuid(startOrdinal + 1),
+            reader.GetGuid(startOrdinal + 3),
+            reader.GetGuid(startOrdinal + 4),
+            reader.GetString(startOrdinal + 7),
+            reader.GetString(startOrdinal + 5),
+            reader.GetString(startOrdinal + 6),
+            reader.GetString(startOrdinal + 8),
+            reader.GetString(startOrdinal + 9),
+            reader.GetString(startOrdinal + 10),
+            GetNullableString(reader, startOrdinal + 11),
+            GetNullableString(reader, startOrdinal + 12),
+            GetNullableString(reader, startOrdinal + 13),
+            reader.GetString(startOrdinal + 14),
+            reader.GetString(startOrdinal + 15),
+            reader.GetString(startOrdinal + 16),
+            reader.IsDBNull(startOrdinal + 17) ? null : reader.GetInt32(startOrdinal + 17),
+            reader.GetBoolean(startOrdinal + 18),
+            reader.GetBoolean(startOrdinal + 19),
+            reader.GetBoolean(startOrdinal + 20),
+            reader.GetBoolean(startOrdinal + 21),
+            reader.GetBoolean(startOrdinal + 22),
+            reader.GetBoolean(startOrdinal + 23),
+            reader.GetString(startOrdinal + 24),
+            reader.GetString(startOrdinal + 25),
+            reader.GetString(startOrdinal + 26),
+            reader.GetString(startOrdinal + 27),
+            reader.GetString(startOrdinal + 28),
+            reader.GetBoolean(startOrdinal + 29),
+            reader.GetBoolean(startOrdinal + 30),
+            reader.GetFieldValue<DateOnly>(startOrdinal + 31),
+            reader.IsDBNull(startOrdinal + 32) ? null : reader.GetFieldValue<DateOnly>(startOrdinal + 32),
+            GetNullableString(reader, startOrdinal + 33),
+            JsonDocument.Parse(rawSnapshot).RootElement.Clone());
+    }
+
+    private static string? GetNullableString(NpgsqlDataReader reader, int ordinal) =>
+        reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 }
