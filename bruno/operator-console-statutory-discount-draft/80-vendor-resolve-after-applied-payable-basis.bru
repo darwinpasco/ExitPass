@@ -1,0 +1,45 @@
+meta {
+  name: 80 Vendor resolve after applied payable basis
+  type: http
+  seq: 80
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_applied}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("vendor resolve returns effective APPLIED payable basis", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.lookupOutcome).to.equal("resolved");
+    expect(res.body.parkingSessionId).to.equal(bru.getEnvVar("vendorResolveParkingSessionId_applied"));
+    expect(res.body.statutoryDiscountApplied).to.equal(true);
+    expect(res.body.statutoryDiscountValidationId).to.equal(bru.getEnvVar("vendorResolveValidationId"));
+    expect(res.body.statutoryDiscountApplicationId).to.equal(bru.getEnvVar("vendorResolveApplicationId"));
+    expect(res.body.originalTariffSnapshotId).to.equal(bru.getEnvVar("vendorResolveOriginalTariffSnapshotId"));
+    expect(res.body.appliedTariffSnapshotId).to.equal(bru.getEnvVar("vendorResolveAppliedTariffSnapshotId"));
+    expect(res.body.effectiveTariffSnapshotId).to.equal(res.body.appliedTariffSnapshotId);
+    expect(res.body.tariffSnapshotId).to.equal(res.body.appliedTariffSnapshotId);
+    expect(res.body.netPayableMinorUnits).to.equal(8929);
+    expect(res.body.policyResolutionBasis).to.equal("NATIONAL_LAW_FALLBACK");
+    expect(res.body.benefitType).to.equal("STATUTORY_DISCOUNT_VAT_EXEMPT");
+    expect(res.body.paymentStatus).to.equal("Not Started");
+  });
+}

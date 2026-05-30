@@ -1,5 +1,7 @@
 vars {
   centralPmsBaseUrl: http://127.0.0.1:56065
+  vendorParkingBaseUrl: http://127.0.0.1:56065
+  vendorSystemId_manual: 77000000-0000-0000-0000-000000000004
   userId_allowed: 77000000-0000-0000-0000-000000000010
   userId_inactiveHrMapping: 77000000-0000-0000-0000-000000000011
   operatorDeviceBindingId_allowed: 77000000-0000-0000-0000-000000000030
@@ -10,6 +12,18 @@ vars {
   parkingSessionId_allowed: 77000000-0000-0000-0000-000000000090
   parkingSessionId_notFound: 77000000-0000-0000-0000-000000000099
   ticketReference_allowed: MANUAL-SESSION-LOOKUP-001
+  vendorResolveTicketReference_noDiscount: MANUAL-APPLY-MISSING-POLICY-CONTEXT
+  vendorResolveTicketReference_applied: MANUAL-APPLY-POLICY-RA9994
+  vendorResolveTicketReference_ra9994: MANUAL-APPLY-POLICY-RA9994
+  vendorResolveTicketReference_ra10754: MANUAL-APPLY-POLICY-RA10754
+  vendorResolveParkingSessionId_noDiscount: 77000000-0000-0000-0000-000000000308
+  vendorResolveOriginalTariffSnapshotId_noDiscount: 77000000-0000-0000-0000-000000000398
+  vendorResolveParkingSessionId_applied: 77000000-0000-0000-0000-000000000306
+  vendorResolveOriginalTariffSnapshotId: 77000000-0000-0000-0000-000000000396
+  vendorResolveAppliedTariffSnapshotId: 00000000-0000-0000-0000-000000000000
+  vendorResolveValidationId: 77000000-0000-0000-0000-000000000306
+  vendorResolveApplicationId: 00000000-0000-0000-0000-000000000000
+  vendorResolveDraftId: 00000000-0000-0000-0000-000000000000
   seniorMaskedIdReference: 1234
   pwdMaskedIdReference: PWD4
   draftId_approve: 00000000-0000-0000-0000-000000000000

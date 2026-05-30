@@ -1,0 +1,40 @@
+meta {
+  name: 76 Vendor resolve before statutory discount apply
+  type: http
+  seq: 76
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_noDiscount}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("vendor resolve preserves no-discount active payable basis", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.lookupOutcome).to.equal("resolved");
+    expect(res.body.parkingSessionId).to.equal(bru.getEnvVar("vendorResolveParkingSessionId_noDiscount"));
+    expect(res.body.tariffSnapshotId).to.equal(bru.getEnvVar("vendorResolveOriginalTariffSnapshotId_noDiscount"));
+    expect(res.body.effectiveTariffSnapshotId == null || res.body.effectiveTariffSnapshotId === res.body.tariffSnapshotId).to.equal(true);
+    expect(res.body.statutoryDiscountApplied == null || res.body.statutoryDiscountApplied === false).to.equal(true);
+    expect(res.body.appliedTariffSnapshotId == null).to.equal(true);
+    expect(res.body.netPayableMinorUnits).to.equal(12500);
+    expect(res.body.paymentStatus).to.equal("Not Started");
+  });
+}
