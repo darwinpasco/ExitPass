@@ -612,6 +612,9 @@ SET site_group_id = EXCLUDED.site_group_id,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
+DELETE FROM discounts.statutory_discount_payable_basis_applications
+WHERE parking_session_id = '77000000-0000-0000-0000-000000000090';
+
 DELETE FROM discounts.discount_evidence_references
 WHERE statutory_discount_validation_id IN (
     SELECT statutory_discount_validation_id
@@ -621,9 +624,78 @@ WHERE statutory_discount_validation_id IN (
       AND validation_channel = 'OPERATOR_ASSISTED'
 );
 
+UPDATE discounts.statutory_discount_validations
+SET tariff_snapshot_id = NULL
+WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'
+  AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
+  AND validation_channel = 'OPERATOR_ASSISTED';
+
 DELETE FROM discounts.statutory_discount_validations
 WHERE parking_session_id = '77000000-0000-0000-0000-000000000090'
   AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
   AND validation_channel = 'OPERATOR_ASSISTED';
+
+UPDATE core.tariff_snapshots
+SET superseded_by_tariff_snapshot_id = NULL,
+    statutory_discount_validation_id = NULL,
+    updated_at = now()
+WHERE tariff_snapshot_id = '77000000-0000-0000-0000-000000000091';
+
+INSERT INTO core.tariff_snapshots (
+    tariff_snapshot_id,
+    parking_session_id,
+    vendor_system_id,
+    vendor_tariff_ref,
+    tariff_version_reference,
+    currency_code,
+    gross_amount,
+    statutory_discount_amount,
+    coupon_discount_amount,
+    net_amount,
+    snapshot_status,
+    calculated_at,
+    expires_at,
+    correlation_id,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000091',
+    '77000000-0000-0000-0000-000000000090',
+    '77000000-0000-0000-0000-000000000004',
+    'MANUAL-OPERATOR-CONSOLE-APPLY-PAYABLE-BASIS',
+    'MANUAL-APPLY-V1',
+    'PHP',
+    125.00,
+    0,
+    0,
+    125.00,
+    'ACTIVE',
+    now(),
+    now() + interval '1 hour',
+    '77000000-0000-0000-0000-0000000000f1',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT (tariff_snapshot_id) DO UPDATE
+SET parking_session_id = EXCLUDED.parking_session_id,
+    vendor_system_id = EXCLUDED.vendor_system_id,
+    vendor_tariff_ref = EXCLUDED.vendor_tariff_ref,
+    tariff_version_reference = EXCLUDED.tariff_version_reference,
+    currency_code = EXCLUDED.currency_code,
+    gross_amount = EXCLUDED.gross_amount,
+    statutory_discount_amount = EXCLUDED.statutory_discount_amount,
+    coupon_discount_amount = EXCLUDED.coupon_discount_amount,
+    net_amount = EXCLUDED.net_amount,
+    statutory_discount_validation_id = NULL,
+    coupon_application_id = NULL,
+    snapshot_status = EXCLUDED.snapshot_status,
+    calculated_at = EXCLUDED.calculated_at,
+    expires_at = EXCLUDED.expires_at,
+    consumed_at = NULL,
+    correlation_id = EXCLUDED.correlation_id,
+    superseded_by_tariff_snapshot_id = NULL,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
 
 COMMIT;
