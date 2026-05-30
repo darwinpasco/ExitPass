@@ -59,8 +59,16 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             var existing = await FindExistingApplicationAsync(connection, transaction, validation.ValidationId, validation.ParkingSessionId, cancellationToken);
             if (existing is not null)
             {
+                var finalized = await FinalizeApplicationAsync(
+                    connection,
+                    transaction,
+                    validation,
+                    existing.PayableBasisApplicationId!.Value,
+                    command.AppliedByUserId,
+                    command.CorrelationId,
+                    cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return existing with { AlreadyApplied = existing.ApplicationStatus == ApplicationStatusApplied };
+                return finalized;
             }
 
             var ineligible = ValidateEligibility(validation);
@@ -125,8 +133,23 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 policy.Policy!,
                 cancellationToken);
 
+            var finalizedApplication = await FinalizeApplicationAsync(
+                connection,
+                transaction,
+                validation,
+                application.PayableBasisApplicationId!.Value,
+                command.AppliedByUserId,
+                command.CorrelationId,
+                cancellationToken);
+
+            if (!finalizedApplication.ApplicationAccepted)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return finalizedApplication;
+            }
+
             await transaction.CommitAsync(cancellationToken);
-            return application;
+            return finalizedApplication;
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
         {
@@ -154,14 +177,115 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
             var existing = await FindExistingApplicationAsync(connection, transaction, validation.ValidationId, validation.ParkingSessionId, cancellationToken);
             if (existing is not null)
             {
+                var finalized = await FinalizeApplicationAsync(
+                    connection,
+                    transaction,
+                    validation,
+                    existing.PayableBasisApplicationId!.Value,
+                    command.AppliedByUserId,
+                    command.CorrelationId,
+                    cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                return existing with { AlreadyApplied = existing.ApplicationStatus == ApplicationStatusApplied };
+                return finalized;
             }
         }
 
         await transaction.RollbackAsync(cancellationToken);
         return NotAccepted(command.ValidationId, "PAYABLE_BASIS_APPLICATION_FAILED", "PAYABLE_BASIS_APPLICATION_FAILED");
     }
+
+    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult> FinalizeApplicationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        ValidationRow validation,
+        Guid applicationId,
+        Guid actorUserId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var routineResult = await ApplyStatutoryDiscountPayableBasisRoutineAsync(
+            connection,
+            transaction,
+            applicationId,
+            actorUserId,
+            correlationId,
+            cancellationToken);
+
+        if (!routineResult.Succeeded)
+        {
+            var errorCode = MapRoutineFailureCode(routineResult.FailureCode ?? routineResult.OutcomeCode);
+            return NotAccepted(validation, errorCode, errorCode);
+        }
+
+        var finalized = await FindExistingApplicationAsync(connection, transaction, validation.ValidationId, validation.ParkingSessionId, cancellationToken);
+        if (finalized is null)
+        {
+            return NotAccepted(validation, "PAYABLE_BASIS_APPLICATION_FAILED", "PAYABLE_BASIS_APPLICATION_FAILED");
+        }
+
+        return finalized with { AlreadyApplied = routineResult.AlreadyApplied };
+    }
+
+    private static async Task<AppliedLifecycleRoutineResult> ApplyStatutoryDiscountPayableBasisRoutineAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid applicationId,
+        Guid actorUserId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                statutory_discount_payable_basis_application_id,
+                statutory_discount_validation_id,
+                parking_session_id,
+                original_tariff_snapshot_id,
+                applied_tariff_snapshot_id,
+                application_status,
+                previous_tariff_snapshot_status,
+                applied_tariff_snapshot_status,
+                final_payable_amount_minor_units,
+                currency_code,
+                already_applied,
+                outcome_code,
+                failure_code
+            FROM discounts.apply_statutory_discount_payable_basis(
+                @statutory_discount_payable_basis_application_id,
+                @actor_user_id,
+                @correlation_id
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("statutory_discount_payable_basis_application_id", NpgsqlDbType.Uuid).Value = applicationId;
+        command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = actorUserId;
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return AppliedLifecycleRoutineResult.Failed("PAYABLE_BASIS_APPLICATION_FAILED");
+        }
+
+        var outcomeCode = reader.IsDBNull(11) ? null : reader.GetString(11);
+        var failureCode = reader.IsDBNull(12) ? null : reader.GetString(12);
+        var succeeded = failureCode is null && outcomeCode is ("APPLIED" or "ALREADY_APPLIED");
+
+        return new AppliedLifecycleRoutineResult(
+            Succeeded: succeeded,
+            AlreadyApplied: reader.GetBoolean(10),
+            OutcomeCode: outcomeCode,
+            FailureCode: failureCode);
+    }
+
+    private static string MapRoutineFailureCode(string? routineCode) =>
+        routineCode switch
+        {
+            "TARIFF_SNAPSHOT_NOT_ELIGIBLE" => "TARIFF_SNAPSHOT_INVALID",
+            "PAYABLE_BASIS_APPLICATION_NOT_REQUESTED" => "PAYABLE_BASIS_APPLICATION_FAILED",
+            null or "" => "PAYABLE_BASIS_APPLICATION_FAILED",
+            _ => routineCode
+        };
 
     private static async Task DeferForeignKeysAsync(
         NpgsqlConnection connection,
@@ -911,6 +1035,16 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         long StatutoryDiscountAmountMinorUnits,
         long FinalPayableAmountMinorUnits,
         string CurrencyCode);
+
+    private sealed record AppliedLifecycleRoutineResult(
+        bool Succeeded,
+        bool AlreadyApplied,
+        string? OutcomeCode,
+        string? FailureCode)
+    {
+        public static AppliedLifecycleRoutineResult Failed(string failureCode) =>
+            new(Succeeded: false, AlreadyApplied: false, OutcomeCode: failureCode, FailureCode: failureCode);
+    }
 
     private sealed record PolicySnapshotContext(
         Guid StatutoryDiscountPolicyId,
