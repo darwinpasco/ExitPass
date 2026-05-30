@@ -309,6 +309,7 @@ static void ConfigureApplicationServices(
 
     builder.Services.AddScoped<IParkingSessionReadRepository, ParkingSessionReadRepository>();
     builder.Services.AddScoped<ITariffSnapshotReadRepository, TariffSnapshotReadRepository>();
+    builder.Services.AddScoped<IPaymentAttemptReplayReadRepository, PaymentAttemptReplayReadRepository>();
 
     builder.Services.AddScoped<IPaymentAttemptDbRoutineGateway>(_ =>
         new PaymentAttemptDbRoutineGateway(mainDatabaseConnectionString));

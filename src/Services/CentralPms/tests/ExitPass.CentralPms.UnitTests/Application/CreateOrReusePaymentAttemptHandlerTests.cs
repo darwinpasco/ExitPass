@@ -41,6 +41,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
 {
     private static readonly Guid ParkingSessionId = Guid.Parse("11111111-1111-1111-1111-111111111111");
     private static readonly Guid TariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    private static readonly Guid AlternateTariffSnapshotId = Guid.Parse("22222222-2222-2222-2222-222222222223");
     private static readonly Guid PaymentAttemptId = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly Guid CorrelationId = Guid.Parse("44444444-4444-4444-4444-444444444444");
     private static readonly DateTimeOffset Now = new(2026, 3, 31, 5, 0, 0, TimeSpan.Zero);
@@ -454,6 +455,145 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     }
 
     /// <summary>
+    /// Verifies idempotent replay can reuse an existing attempt before a consumed applied snapshot is rejected.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_reuses_matching_idempotency_before_invalid_effective_basis_rejection()
+    {
+        var fixture = CreateFixture();
+        var applicationId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot(TariffSnapshotStatus.Consumed));
+
+        fixture.PaymentAttemptReplayReadRepository
+            .GetByIdempotencyKeyAsync("idem-replay-consumed", Arg.Any<CancellationToken>())
+            .Returns(CreateReplayRecord());
+
+        fixture.TariffSnapshotReadRepository
+            .GetEffectiveAppliedTariffSnapshotAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(new EffectiveTariffSnapshotResolution
+            {
+                ParkingSessionId = ParkingSessionId,
+                StatutoryDiscountApplicationId = applicationId,
+                OriginalTariffSnapshotId = AlternateTariffSnapshotId,
+                AppliedTariffSnapshotId = TariffSnapshotId,
+                IsValid = false,
+                InvalidReasonCode = "APPLIED_TARIFF_SNAPSHOT_INVALID"
+            });
+
+        fixture.PaymentAttemptDbRoutineGateway
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new CreateOrReusePaymentAttemptDbResult
+            {
+                PaymentAttemptId = PaymentAttemptId,
+                ParkingSessionId = ParkingSessionId,
+                TariffSnapshotId = TariffSnapshotId,
+                AttemptStatus = "REQUESTED",
+                PaymentProviderCode = "GCASH",
+                WasReused = true,
+                OutcomeCode = "REUSED_BY_IDEMPOTENCY_KEY",
+                GrossAmountSnapshot = 100m,
+                StatutoryDiscountSnapshot = 0m,
+                CouponDiscountSnapshot = 0m,
+                NetAmountDueSnapshot = 100m,
+                CurrencyCode = "PHP",
+                TariffVersionReference = "TVR-001",
+                IdempotencyKey = "idem-replay-consumed"
+            });
+
+        fixture.ProviderHandoffFactory
+            .CreatePlaceholder(Arg.Any<PaymentProvider>(), PaymentAttemptId)
+            .Returns(new ProviderHandoffResult
+            {
+                Type = "REDIRECT",
+                Url = "/payments/gcash/33333333-3333-3333-3333-333333333333",
+                ExpiresAt = Now.AddMinutes(15)
+            });
+
+        var sut = fixture.CreateSut();
+
+        var result = await sut.ExecuteAsync(CreateCommand("idem-replay-consumed"), CancellationToken.None);
+
+        result.PaymentAttemptId.Should().Be(PaymentAttemptId);
+        result.WasReused.Should().BeTrue();
+
+        await fixture.TariffSnapshotReadRepository
+            .DidNotReceive()
+            .GetEffectiveAppliedTariffSnapshotAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies same idempotency key with a different tariff snapshot is rejected before DB reuse.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_idempotency_conflict_when_replay_tariff_snapshot_differs()
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot(TariffSnapshotStatus.Consumed));
+
+        fixture.PaymentAttemptReplayReadRepository
+            .GetByIdempotencyKeyAsync("idem-mismatch-tariff", Arg.Any<CancellationToken>())
+            .Returns(CreateReplayRecord(idempotencyKey: "idem-mismatch-tariff", tariffSnapshotId: AlternateTariffSnapshotId));
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-mismatch-tariff"), CancellationToken.None);
+
+        await act.Should().ThrowAsync<IdempotencyConflictException>();
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
+    /// Verifies same idempotency key with a different payment provider is rejected before DB reuse.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_idempotency_conflict_when_replay_payment_provider_differs()
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot(TariffSnapshotStatus.Consumed));
+
+        fixture.PaymentAttemptReplayReadRepository
+            .GetByIdempotencyKeyAsync("idem-mismatch-provider", Arg.Any<CancellationToken>())
+            .Returns(CreateReplayRecord(
+                idempotencyKey: "idem-mismatch-provider",
+                railCode: "MAYA",
+                providerCode: "OTHER_PROVIDER"));
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-mismatch-provider"), CancellationToken.None);
+
+        await act.Should().ThrowAsync<IdempotencyConflictException>();
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Verifies that a non-eligible parking session is rejected before DB-backed create-or-reuse execution.
     /// </summary>
     [Fact]
@@ -593,7 +733,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     /// Creates a canonical rehydrated tariff snapshot for tests.
     /// </summary>
     /// <returns>A rehydrated <see cref="TariffSnapshot"/> instance.</returns>
-    private static TariffSnapshot CreateTariffSnapshot()
+    private static TariffSnapshot CreateTariffSnapshot(TariffSnapshotStatus snapshotStatus = TariffSnapshotStatus.Active)
     {
         return TariffSnapshot.Rehydrate(
             tariffSnapshotId: TariffSnapshotId,
@@ -609,9 +749,31 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             policyVersionReference: null,
             calculatedAt: Now,
             expiresAt: Now.AddMinutes(30),
-            snapshotStatus: TariffSnapshotStatus.Active,
+            snapshotStatus: snapshotStatus,
             supersedesTariffSnapshotId: null,
             consumedByPaymentAttemptId: null);
+    }
+
+    private static PaymentAttemptReplayRecord CreateReplayRecord(
+        Guid? parkingSessionId = null,
+        Guid? tariffSnapshotId = null,
+        string railCode = "GCASH",
+        string providerCode = "PAYMONGO",
+        decimal amount = 100m,
+        string currencyCode = "PHP",
+        string idempotencyKey = "idem-replay-consumed")
+    {
+        return new PaymentAttemptReplayRecord
+        {
+            PaymentAttemptId = PaymentAttemptId,
+            ParkingSessionId = parkingSessionId ?? ParkingSessionId,
+            TariffSnapshotId = tariffSnapshotId ?? TariffSnapshotId,
+            IdempotencyKey = idempotencyKey,
+            RailCode = railCode,
+            ProviderCode = providerCode,
+            Amount = amount,
+            CurrencyCode = currencyCode
+        };
     }
 
     /// <summary>
@@ -626,6 +788,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
         return new Fixture(
             Substitute.For<IParkingSessionReadRepository>(),
             Substitute.For<ITariffSnapshotReadRepository>(),
+            Substitute.For<IPaymentAttemptReplayReadRepository>(),
             Substitute.For<IPaymentAttemptDbRoutineGateway>(),
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             Substitute.For<IProviderHandoffFactory>(),
@@ -689,6 +852,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     /// </summary>
     /// <param name="ParkingSessionReadRepository">Parking session repository substitute.</param>
     /// <param name="TariffSnapshotReadRepository">Tariff snapshot repository substitute.</param>
+    /// <param name="PaymentAttemptReplayReadRepository">Payment-attempt replay repository substitute.</param>
     /// <param name="PaymentAttemptDbRoutineGateway">Payment attempt DB routine gateway substitute.</param>
     /// <param name="PaymentAttemptCreationPolicy">Payment attempt creation policy substitute.</param>
     /// <param name="ProviderHandoffFactory">Provider handoff factory substitute.</param>
@@ -698,6 +862,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     private sealed record Fixture(
         IParkingSessionReadRepository ParkingSessionReadRepository,
         ITariffSnapshotReadRepository TariffSnapshotReadRepository,
+        IPaymentAttemptReplayReadRepository PaymentAttemptReplayReadRepository,
         IPaymentAttemptDbRoutineGateway PaymentAttemptDbRoutineGateway,
         IPaymentAttemptCreationPolicy PaymentAttemptCreationPolicy,
         IProviderHandoffFactory ProviderHandoffFactory,
@@ -714,6 +879,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             return new CreateOrReusePaymentAttemptHandler(
                 ParkingSessionReadRepository,
                 TariffSnapshotReadRepository,
+                PaymentAttemptReplayReadRepository,
                 PaymentAttemptDbRoutineGateway,
                 PaymentAttemptCreationPolicy,
                 ProviderHandoffFactory,
