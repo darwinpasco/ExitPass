@@ -1,5 +1,7 @@
 namespace ExitPass.CentralPms.Contracts.OperatorConsole;
 
+using System.Text.Json;
+
 /// <summary>
 /// Request body for drafting a statutory discount validation through the Operator Console.
 /// </summary>
@@ -46,6 +48,21 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResponse(
     bool EvidenceReferenceCreated,
     Guid? EvidenceReferenceId,
     bool ReusedExistingDraft,
+    Guid? StatutoryDiscountPolicyId,
+    Guid? ResolvedJurisdictionId,
+    string? PolicyResolutionBasis,
+    string? PolicyCode,
+    string? PolicyName,
+    string? LegalBasisReference,
+    string? OrdinanceReference,
+    string? NationalLawReference,
+    string? VerificationStatus,
+    string? BenefitType,
+    int? FreeDurationMinutes,
+    string? SucceedingHoursDiscountRule,
+    string? DiscountBaseScope,
+    string? StackingPolicy,
+    JsonElement? PolicySnapshot,
     string? IneligibilityReason,
     string? ErrorCode,
     Guid CorrelationId);

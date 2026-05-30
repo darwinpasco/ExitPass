@@ -46,6 +46,7 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResult(
     bool EvidenceReferenceCreated,
     Guid? EvidenceReferenceId,
     bool ReusedExistingDraft,
+    OperatorConsoleResolvedStatutoryDiscountPolicy? Policy,
     string? IneligibilityReason,
     string? ErrorCode,
     Guid CorrelationId);
@@ -59,7 +60,8 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
     bool EvidenceRequired,
     string? ReasonCode,
     Guid RequestedByUserId,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    OperatorConsoleResolvedStatutoryDiscountPolicy Policy);
 
 /// <summary>
 /// Persistence result for a statutory discount validation draft row.
@@ -71,7 +73,8 @@ public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceResult(
     bool ReusedExistingDraft,
     bool EvidenceRequired,
     bool EvidenceReferenceCreated,
-    Guid? EvidenceReferenceId);
+    Guid? EvidenceReferenceId,
+    OperatorConsoleResolvedStatutoryDiscountPolicy? Policy);
 
 /// <summary>
 /// Raised when an existing statutory discount validation blocks a new draft but is not reusable as an active draft.
