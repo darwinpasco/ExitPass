@@ -1,0 +1,47 @@
+meta {
+  name: 79 Apply pre-approved payable basis for vendor resolve
+  type: http
+  seq: 79
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/{{appliedLifecycleValidationId_ra9994}}/apply-payable-basis
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{policyResolutionOperatorDeviceBindingId_nationalFallback}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{policyResolutionOperatorShiftId_nationalFallback}}",
+    "originalTariffSnapshotId": null,
+    "idempotencyKey": "manual-vendor-resolve-preapproved-applied-basis-apply-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("applies pre-approved RA9994 payable basis to APPLIED for vendor resolve", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.applicationAccepted).to.equal(true);
+    expect(res.body.applicationPersisted).to.equal(true);
+    expect(res.body.applicationStatus).to.equal("APPLIED");
+    expect(res.body.appliedTariffSnapshotId).to.not.equal(null);
+    expect(res.body.policySnapshotUsed).to.equal(true);
+    expect(res.body.benefitType).to.equal("STATUTORY_DISCOUNT_VAT_EXEMPT");
+    bru.setEnvVar("vendorResolveValidationId", res.body.statutoryDiscountValidationId);
+    bru.setEnvVar("vendorResolveApplicationId", res.body.payableBasisApplicationId);
+    bru.setEnvVar("vendorResolveOriginalTariffSnapshotId", res.body.originalTariffSnapshotId);
+    bru.setEnvVar("vendorResolveAppliedTariffSnapshotId", res.body.appliedTariffSnapshotId);
+    bru.setEnvVar("appliedLifecycleApplicationId_ra9994", res.body.payableBasisApplicationId);
+    bru.setEnvVar("appliedLifecycleAppliedTariffSnapshotId_ra9994", res.body.appliedTariffSnapshotId);
+  });
+}

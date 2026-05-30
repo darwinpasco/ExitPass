@@ -1,0 +1,45 @@
+meta {
+  name: 82 Vendor resolve RA10754 applied payable basis
+  type: http
+  seq: 82
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_ra10754}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("RA10754 vendor resolve is deterministic before or after APPLIED lifecycle", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentStatus).to.equal("Not Started");
+
+    if (res.body.statutoryDiscountApplied) {
+      expect(res.body.statutoryDiscountValidationId).to.equal(bru.getEnvVar("appliedLifecycleValidationId_ra10754"));
+      expect(res.body.appliedTariffSnapshotId).to.not.equal(null);
+      expect(res.body.effectiveTariffSnapshotId).to.equal(res.body.appliedTariffSnapshotId);
+      expect(res.body.netPayableMinorUnits).to.equal(8929);
+      expect(res.body.policyResolutionBasis).to.equal("NATIONAL_LAW_FALLBACK");
+      expect(res.body.benefitType).to.equal("STATUTORY_DISCOUNT_VAT_EXEMPT");
+    } else {
+      expect(res.body.effectiveTariffSnapshotId).to.not.equal(null);
+      expect(res.body.netPayableMinorUnits).to.equal(12500);
+    }
+  });
+}

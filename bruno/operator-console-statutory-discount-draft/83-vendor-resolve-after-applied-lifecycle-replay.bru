@@ -1,0 +1,37 @@
+meta {
+  name: 83 Vendor resolve after applied lifecycle replay
+  type: http
+  seq: 83
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_ra9994}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("vendor resolve remains stable after APPLIED replay", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.statutoryDiscountApplied).to.equal(true);
+    expect(res.body.appliedTariffSnapshotId).to.equal(bru.getEnvVar("appliedLifecycleAppliedTariffSnapshotId_ra9994"));
+    expect(res.body.effectiveTariffSnapshotId).to.equal(bru.getEnvVar("appliedLifecycleAppliedTariffSnapshotId_ra9994"));
+    expect(res.body.netPayableMinorUnits).to.equal(8929);
+    expect(res.body.paymentStatus).to.equal("Not Started");
+  });
+}

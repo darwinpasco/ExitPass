@@ -1,0 +1,35 @@
+meta {
+  name: 84 Vendor resolve no payment attempt created
+  type: http
+  seq: 84
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_ra9994}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("vendor resolve is read-only and does not start payment", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.statutoryDiscountApplied).to.equal(true);
+    expect(res.body.netPayableMinorUnits).to.equal(8929);
+    expect(res.body.paymentStatus).to.equal("Not Started");
+  });
+}

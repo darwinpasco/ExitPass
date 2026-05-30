@@ -1,0 +1,39 @@
+meta {
+  name: 78 Verify vendor resolve applied basis fixture
+  type: http
+  seq: 78
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_ra9994}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("seeded RA9994 fixture is ready before apply", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.lookupOutcome).to.equal("resolved");
+    expect(res.body.parkingSessionId).to.equal(bru.getEnvVar("vendorResolveParkingSessionId_applied"));
+    expect(res.body.tariffSnapshotId).to.equal(bru.getEnvVar("vendorResolveOriginalTariffSnapshotId"));
+    expect(res.body.effectiveTariffSnapshotId == null || res.body.effectiveTariffSnapshotId === res.body.tariffSnapshotId).to.equal(true);
+    expect(res.body.statutoryDiscountApplied == null || res.body.statutoryDiscountApplied === false).to.equal(true);
+    expect(res.body.netPayableMinorUnits).to.equal(12500);
+    expect(res.body.paymentStatus).to.equal("Not Started");
+  });
+}

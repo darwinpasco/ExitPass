@@ -604,6 +604,95 @@ Expected access-denied behavior:
 - `applicationPersisted = false`
 - no tariff snapshot transition is attempted
 
+## WebPay Vendor Parking Effective Payable Basis
+
+Endpoint:
+
+```http
+POST /v1/vendor-parking/resolve
+```
+
+Starting with #202, the WebPay-facing vendor parking resolution/session summary read path returns the effective payable basis. If an `APPLIED` statutory discount payable-basis application exists and points to a valid active applied tariff snapshot, `netPayableMinorUnits` and `tariffSnapshotId` come from the applied snapshot. If no `APPLIED` statutory discount exists, the endpoint preserves existing behavior and returns the current active base tariff snapshot. Vendor parking resolution remains read-only and does not create payment attempts.
+
+Preconditions:
+
+- #202 is merged.
+- Central PMS is running.
+- Local PostgreSQL is available.
+- The fixture seed has been applied.
+- #199 and #200 APPLIED lifecycle support is available.
+
+Manual workflow:
+
+1. Reset fixtures.
+2. Run `76 Vendor resolve before statutory discount apply`.
+3. Run `77 Create standalone draft for vendor resolve coverage`.
+4. Run `78 Verify vendor resolve applied basis fixture`.
+5. Run `79 Apply pre-approved payable basis for vendor resolve`.
+6. Run `80 Vendor resolve after applied payable basis`.
+7. Run `81 Vendor resolve RA9994 applied payable basis`.
+8. Reset fixtures.
+9. Run `70 Apply payable basis RA10754 applied lifecycle`.
+10. Run `82 Vendor resolve RA10754 applied payable basis`.
+13. For replay stability, run `71 Apply payable basis applied lifecycle replay`, then run `83 Vendor resolve after applied lifecycle replay`.
+14. Run `84 Vendor resolve no payment attempt created`.
+
+Request `77` is a standalone draft smoke test that proves draft creation still returns a VAT-exempt RA 9994 policy snapshot for the national-fallback fixture. The WebPay effective-payable-basis path uses the seeded `MANUAL-APPLY-POLICY-RA9994` validation because it includes a stable original tariff snapshot for final APPLIED lifecycle verification. That fixture is already `APPROVED` after the local seed is applied; request `78` verifies the seeded session is still on the original active tariff snapshot before request `79` applies it. Do not run an approval request against `77000000-0000-0000-0000-000000000306`; after fixture reset it is already approved, and after an apply replay it may already be APPLIED.
+
+For RA 10754, the seeded `77000000-0000-0000-0000-000000000307` fixture is also already approved after reset. Run request `70` directly to apply it before request `82` when validating the APPLIED PWD path. Request `82` remains deterministic if it is run before request `70`; in that case it confirms the original active payable basis is still returned and no payment attempt is created.
+
+Vendor resolve fixture values:
+
+- `vendorSystemId_manual = 77000000-0000-0000-0000-000000000004`
+- `vendorResolveTicketReference_noDiscount = MANUAL-APPLY-MISSING-POLICY-CONTEXT`
+- `vendorResolveTicketReference_ra9994 = MANUAL-APPLY-POLICY-RA9994`
+- `vendorResolveTicketReference_ra10754 = MANUAL-APPLY-POLICY-RA10754`
+- no-APPLIED-discount base snapshot: `vendorResolveOriginalTariffSnapshotId_noDiscount = 77000000-0000-0000-0000-000000000398`
+- RA 9994 original snapshot: `77000000-0000-0000-0000-000000000396`
+- RA 10754 original snapshot: `77000000-0000-0000-0000-000000000397`
+
+Expected no-discount vendor resolve behavior:
+
+- HTTP `200`
+- `lookupOutcome = resolved`
+- `statutoryDiscountApplied = false` or the optional field is absent
+- `tariffSnapshotId = 77000000-0000-0000-0000-000000000398`
+- `effectiveTariffSnapshotId` is absent or equals `tariffSnapshotId`
+- `netPayableMinorUnits = 12500`
+- `paymentStatus = Not Started`
+- no payment attempt is created
+
+Expected vendor resolve after APPLIED behavior:
+
+- HTTP `200`
+- `lookupOutcome = resolved`
+- `statutoryDiscountApplied = true`
+- `statutoryDiscountValidationId` is populated
+- `statutoryDiscountApplicationId` is populated
+- `originalTariffSnapshotId` is populated
+- `appliedTariffSnapshotId` is populated
+- `effectiveTariffSnapshotId = appliedTariffSnapshotId`
+- `tariffSnapshotId = appliedTariffSnapshotId`
+- `netPayableMinorUnits = 8929`
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- original `SUPERSEDED` amount is not returned as amount due
+- no payment attempt is created
+
+Expected replay behavior:
+
+- vendor resolve returns the same `appliedTariffSnapshotId`
+- `effectiveTariffSnapshotId` remains the same applied snapshot
+- `netPayableMinorUnits` remains `8929`
+- no duplicate applied tariff snapshot exists
+- no payment attempt is created
+
+Invalid APPLIED application guardrail:
+
+- #202 is expected to fail closed if an `APPLIED` application exists without a valid active applied tariff snapshot.
+- The current database constraints make that broken state intentionally difficult to construct through ordinary fixture data, so this manual pack documents the guardrail and relies on code/integration coverage for direct broken-state setup.
+- The expected behavior is deterministic failure, not stale original amount display.
+
 ## Policy Resolution Endpoint
 
 Endpoint:
@@ -1083,6 +1172,95 @@ WHERE statutory_discount_validation_id = '<validationId>'::uuid;
 ```
 
 Expected result is `1`.
+
+Verify the WebPay/vendor parking effective payable basis for an APPLIED statutory discount:
+
+```sql
+SELECT
+    ps.parking_session_id,
+    ps.ticket_number_masked,
+    app.statutory_discount_payable_basis_application_id,
+    app.statutory_discount_validation_id,
+    app.application_status,
+    app.original_tariff_snapshot_id,
+    original.snapshot_status AS original_snapshot_status,
+    original.net_amount AS original_net_amount,
+    app.applied_tariff_snapshot_id,
+    applied.snapshot_status AS applied_snapshot_status,
+    applied.net_amount AS applied_net_amount,
+    app.final_payable_amount_minor_units,
+    applied.statutory_discount_validation_id AS applied_snapshot_validation_id
+FROM core.parking_sessions ps
+JOIN discounts.statutory_discount_payable_basis_applications app
+  ON app.parking_session_id = ps.parking_session_id
+JOIN core.tariff_snapshots original
+  ON original.tariff_snapshot_id = app.original_tariff_snapshot_id
+JOIN core.tariff_snapshots applied
+  ON applied.tariff_snapshot_id = app.applied_tariff_snapshot_id
+WHERE ps.ticket_number_masked IN (
+    'MANUAL-APPLY-POLICY-RA9994',
+    'MANUAL-APPLY-POLICY-RA10754'
+)
+  AND app.application_status = 'APPLIED';
+```
+
+Expected after requests `79` or `70`: `original_snapshot_status = SUPERSEDED`, `applied_snapshot_status = ACTIVE`, `applied_net_amount = 89.29`, and `final_payable_amount_minor_units = 8929`.
+
+Verify no-discount vendor resolve fixture still has only the active base tariff snapshot:
+
+```sql
+SELECT
+    ps.parking_session_id,
+    ps.ticket_number_masked,
+    ts.tariff_snapshot_id,
+    ts.snapshot_status,
+    ts.net_amount,
+    ts.statutory_discount_validation_id
+FROM core.parking_sessions ps
+JOIN core.tariff_snapshots ts
+  ON ts.parking_session_id = ps.parking_session_id
+WHERE ps.parking_session_id = '77000000-0000-0000-0000-000000000308'::uuid
+ORDER BY ts.created_at DESC;
+```
+
+Expected after fixture reset and before apply: active snapshot `77000000-0000-0000-0000-000000000398`, `snapshot_status = ACTIVE`, `net_amount = 125.00`, and no `APPLIED` payable-basis application for the session.
+
+Verify vendor parking resolution did not create payment attempts:
+
+```sql
+SELECT
+    ps.parking_session_id,
+    ps.ticket_number_masked,
+    COUNT(pa.payment_attempt_id) AS payment_attempt_count
+FROM core.parking_sessions ps
+LEFT JOIN core.payment_attempts pa
+  ON pa.parking_session_id = ps.parking_session_id
+WHERE ps.parking_session_id IN (
+    '77000000-0000-0000-0000-000000000308'::uuid,
+    '77000000-0000-0000-0000-000000000306'::uuid,
+    '77000000-0000-0000-0000-000000000307'::uuid
+)
+GROUP BY ps.parking_session_id, ps.ticket_number_masked
+ORDER BY ps.parking_session_id;
+```
+
+Expected result is `payment_attempt_count = 0` for all three sessions when only vendor resolve and apply-payable-basis smoke requests have been run.
+
+Verify no duplicate APPLIED tariff snapshots exist for WebPay vendor resolve fixtures:
+
+```sql
+SELECT
+    statutory_discount_validation_id,
+    COUNT(*) AS applied_snapshot_count
+FROM core.tariff_snapshots
+WHERE statutory_discount_validation_id IN (
+    '77000000-0000-0000-0000-000000000306'::uuid,
+    '77000000-0000-0000-0000-000000000307'::uuid
+)
+GROUP BY statutory_discount_validation_id;
+```
+
+Expected result is one applied tariff snapshot per validation after replay.
 
 Verify the payment-attempt guardrail case leaves the application and original snapshot unfinalized:
 
