@@ -526,6 +526,61 @@ Future DB patch items:
 - policy snapshot storage or reference from `discounts.statutory_discount_validations`;
 - compatibility migration from current broad development fallback/local seed rows to entitlement-specific production rows.
 
+## DB Support Decision From #192
+
+`infra/db/patches/ExitPass_StatutoryDiscountPolicyRegistrySchema_v1.2.sql` adds the first database support layer for this design. The patch keeps existing `discounts.discount_policy_references` intact for compatibility and introduces a dedicated governed policy registry for future resolver use.
+
+Added jurisdiction support:
+
+- `sites.jurisdictions`
+- `sites.sites.jurisdiction_id`
+- `sites.jurisdiction_type_enum`
+- `sites.jurisdiction_status_enum`
+
+Added policy registry support:
+
+- `discounts.statutory_discount_policy_registry`
+- `discounts.policy_verification_status_enum`
+- `discounts.beneficiary_residency_scope_enum`
+- `discounts.parking_benefit_type_enum`
+- `discounts.free_period_application_enum`
+- `discounts.succeeding_hours_discount_rule_enum`
+- `discounts.discount_base_scope_enum`
+- `discounts.discount_stacking_policy_enum`
+- `discounts.legal_basis_priority_enum`
+
+Added validation linkage support:
+
+- `discounts.statutory_discount_validations.statutory_discount_policy_id`
+- `discounts.statutory_discount_validations.resolved_jurisdiction_id`
+- `discounts.statutory_discount_validations.resolved_policy_snapshot_json`
+
+Key constraints and indexes:
+
+- `ux_jurisdictions__national_active` enforces one active national jurisdiction per country.
+- `ux_sd_policy_registry__policy_code` enforces stable unique policy codes.
+- `ux_sd_policy_registry__national_fallback_active` enforces one active national fallback policy per entitlement type.
+- `ux_sd_policy_registry__active_verified_scope` prevents multiple active verified policies for the same jurisdiction, entitlement, resolution basis, and policy level.
+- `ck_sd_policy_registry__national_fallback_entitlement_law` maps Senior Citizen fallback to `RA 9994` and PWD fallback to `RA 10754`.
+- `ck_sd_policy_registry__national_fallback_no_free_parking` prevents national fallback rows from carrying free parking, free duration, initial-rate exemption, or full-fee exemption behavior.
+- `ck_sd_policy_registry__local_ordinance` requires local ordinance policies to have both a jurisdiction and ordinance reference.
+- `ck_sd_policy_registry__unverified_not_active` prevents `LEAD_UNVERIFIED` and `PROPOSED` rows from being active production policy rows.
+
+Seed rows:
+
+- `PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK`
+- `PH_RA10754_PWD_NATIONAL_FALLBACK`
+
+Both seed rows use `NATIONAL_LAW_FALLBACK`, `VERIFIED_OFFICIAL`, and `STATUTORY_DISCOUNT_VAT_EXEMPT`. Both explicitly keep `free_duration_minutes = NULL`, `initial_rate_exempt_flag = false`, and `full_fee_exempt_flag = false`. These rows are mandatory national fallbacks, not free-parking policies.
+
+Remaining implementation steps:
+
+- seed verified local ordinance rows only after official LGU ordinance text or LGU publication is reviewed;
+- implement the policy resolution read-only endpoint;
+- integrate resolved policy references and snapshots into draft creation;
+- update payable-basis application to consume the resolved policy snapshot;
+- add Bruno/manual coverage for jurisdiction policy resolution.
+
 ## Required Future Tests
 
 Unit tests:
