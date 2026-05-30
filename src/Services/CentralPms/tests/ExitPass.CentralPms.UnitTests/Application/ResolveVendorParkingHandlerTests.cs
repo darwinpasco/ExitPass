@@ -377,6 +377,7 @@ public sealed class ResolveVendorParkingHandlerTests
         return new CreateOrReusePaymentAttemptHandler(
             new InMemoryParkingSessionReadRepository(resolved.ParkingSession!),
             new InMemoryTariffSnapshotReadRepository(resolved.TariffSnapshot!),
+            Substitute.For<IPaymentAttemptReplayReadRepository>(),
             gateway,
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             providerHandoffFactory,

@@ -364,6 +364,139 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies idempotent replay for an APPLIED tariff snapshot still reuses after the first attempt consumes it.
+    /// </summary>
+    [Fact]
+    public async Task CreateOrReusePaymentAttemptHandler_WhenAppliedSnapshotConsumedAndIdempotencyMatches_ReusesAttempt()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000020");
+        var ticketReference = UniqueLookup("PAY-APPLIED-REPLAY");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+        var idempotencyKey = $"idem-pay-applied-replay-{Guid.NewGuid():N}";
+
+        var initial = await ResolveAsync(client, request);
+        var applied = await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
+        var resolved = await ResolveAsync(client, request);
+
+        using var firstPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolved,
+            idempotencyKey,
+            correlationId);
+
+        using var replayPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolved,
+            idempotencyKey,
+            correlationId);
+
+        var firstRaw = await firstPaymentResponse.Content.ReadAsStringAsync();
+        var replayRaw = await replayPaymentResponse.Content.ReadAsStringAsync();
+        firstPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, firstRaw);
+        replayPaymentResponse.StatusCode.Should().Be(HttpStatusCode.OK, replayRaw);
+
+        var firstPayment = await firstPaymentResponse.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+        var replayPayment = await replayPaymentResponse.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+        firstPayment.Should().NotBeNull();
+        replayPayment.Should().NotBeNull();
+        replayPayment!.PaymentAttemptId.Should().Be(firstPayment!.PaymentAttemptId);
+        replayPayment.WasReused.Should().BeTrue();
+
+        var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        paymentAttempts.Should().Be(1);
+
+        var persisted = await ReadPaymentAttemptAsync(firstPayment.PaymentAttemptId);
+        persisted.Should().NotBeNull();
+        persisted!.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
+        persisted.Amount.Should().Be(71.43m);
+
+        var tariffState = await ReadTariffStateAsync(initial.TariffSnapshotId, applied.AppliedTariffSnapshotId);
+        tariffState.AppliedStatus.Should().Be("CONSUMED");
+    }
+
+    /// <summary>
+    /// Verifies same idempotency key cannot be replayed with a different submitted tariff snapshot.
+    /// </summary>
+    [Fact]
+    public async Task CreateOrReusePaymentAttemptHandler_WhenAppliedReplayUsesDifferentTariffSnapshot_RejectsIdempotencyConflict()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000021");
+        var ticketReference = UniqueLookup("PAY-APPLIED-IDEM-TARIFF");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+        var idempotencyKey = $"idem-pay-applied-conflict-tariff-{Guid.NewGuid():N}";
+
+        var initial = await ResolveAsync(client, request);
+        await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
+        var resolved = await ResolveAsync(client, request);
+
+        using var firstPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolved,
+            idempotencyKey,
+            correlationId);
+
+        using var conflictResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey,
+            correlationId);
+
+        var firstRaw = await firstPaymentResponse.Content.ReadAsStringAsync();
+        var conflictRaw = await conflictResponse.Content.ReadAsStringAsync();
+        firstPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, firstRaw);
+        conflictResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, conflictRaw);
+
+        var error = await conflictResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        error.Should().NotBeNull();
+        error!.ErrorCode.Should().Be("IDEMPOTENCY_CONFLICT");
+
+        var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        paymentAttempts.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Verifies a consumed applied snapshot remains rejected when there is no matching idempotent attempt.
+    /// </summary>
+    [Fact]
+    public async Task CreateOrReusePaymentAttemptHandler_WhenAppliedSnapshotConsumedWithoutMatchingReplay_RejectsEffectiveBasis()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000023");
+        var ticketReference = UniqueLookup("PAY-APPLIED-CONSUMED-NEW");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
+        var resolved = await ResolveAsync(client, request);
+
+        using var firstPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolved,
+            idempotencyKey: $"idem-pay-applied-first-{Guid.NewGuid():N}",
+            correlationId);
+
+        using var newPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolved,
+            idempotencyKey: $"idem-pay-applied-new-{Guid.NewGuid():N}",
+            correlationId);
+
+        var firstRaw = await firstPaymentResponse.Content.ReadAsStringAsync();
+        var newRaw = await newPaymentResponse.Content.ReadAsStringAsync();
+        firstPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, firstRaw);
+        newPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, newRaw);
+
+        var error = await newPaymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        error.Should().NotBeNull();
+        error!.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
+
+        var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        paymentAttempts.Should().Be(1);
+    }
+
+    /// <summary>
     /// Verifies payment creation rejects stale original tariff snapshots after a statutory discount is APPLIED.
     /// </summary>
     [Fact]
@@ -553,7 +686,8 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         HttpClient client,
         ResolveVendorParkingResponse resolved,
         string idempotencyKey,
-        Guid correlationId)
+        Guid correlationId,
+        string paymentProvider = "GCASH")
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/public/payment-attempts")
         {
@@ -561,7 +695,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
             {
                 ParkingSessionId = resolved.ParkingSessionId,
                 TariffSnapshotId = resolved.TariffSnapshotId,
-                PaymentProvider = "GCASH"
+                PaymentProvider = paymentProvider
             })
         };
 

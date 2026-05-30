@@ -47,6 +47,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
     private readonly IParkingSessionReadRepository _parkingSessionReadRepository;
     private readonly ITariffSnapshotReadRepository _tariffSnapshotReadRepository;
+    private readonly IPaymentAttemptReplayReadRepository _paymentAttemptReplayReadRepository;
     private readonly IPaymentAttemptDbRoutineGateway _paymentAttemptDbRoutineGateway;
     private readonly IPaymentAttemptCreationPolicy _paymentAttemptCreationPolicy;
     private readonly IProviderHandoffFactory _providerHandoffFactory;
@@ -60,6 +61,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     /// </summary>
     /// <param name="parkingSessionReadRepository">Repository used to retrieve parking sessions.</param>
     /// <param name="tariffSnapshotReadRepository">Repository used to retrieve tariff snapshots.</param>
+    /// <param name="paymentAttemptReplayReadRepository">Repository used to validate existing idempotent payment attempts before eligibility rejection.</param>
     /// <param name="paymentAttemptDbRoutineGateway">Gateway used to invoke the authoritative DB-backed create-or-reuse routine.</param>
     /// <param name="paymentAttemptCreationPolicy">Policy used to validate the create-or-reuse request.</param>
     /// <param name="providerHandoffFactory">Factory used to create provider handoff payloads.</param>
@@ -70,6 +72,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     public CreateOrReusePaymentAttemptHandler(
         IParkingSessionReadRepository parkingSessionReadRepository,
         ITariffSnapshotReadRepository tariffSnapshotReadRepository,
+        IPaymentAttemptReplayReadRepository paymentAttemptReplayReadRepository,
         IPaymentAttemptDbRoutineGateway paymentAttemptDbRoutineGateway,
         IPaymentAttemptCreationPolicy paymentAttemptCreationPolicy,
         IProviderHandoffFactory providerHandoffFactory,
@@ -80,6 +83,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
     {
         _parkingSessionReadRepository = parkingSessionReadRepository;
         _tariffSnapshotReadRepository = tariffSnapshotReadRepository;
+        _paymentAttemptReplayReadRepository = paymentAttemptReplayReadRepository;
         _paymentAttemptDbRoutineGateway = paymentAttemptDbRoutineGateway;
         _paymentAttemptCreationPolicy = paymentAttemptCreationPolicy;
         _providerHandoffFactory = providerHandoffFactory;
@@ -182,6 +186,45 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                     tariffSnapshot.ConsumedByPaymentAttemptId);
             }
 
+            var provider = PaymentProvider.FromCode(command.PaymentProviderCode);
+
+            _paymentAttemptCreationPolicy.ValidateRequest(new CreateOrReusePaymentAttemptPolicyInput
+            {
+                ParkingSessionId = command.ParkingSessionId,
+                TariffSnapshotId = command.TariffSnapshotId,
+                PaymentProvider = provider,
+                IdempotencyKey = command.IdempotencyKey
+            });
+
+            var replayRecord = await _paymentAttemptReplayReadRepository.GetByIdempotencyKeyAsync(
+                command.IdempotencyKey,
+                cancellationToken);
+
+            if (replayRecord is not null)
+            {
+                if (!IsSemanticReplayMatch(replayRecord, command, provider, tariffSnapshot))
+                {
+                    activity?.SetStatus(ActivityStatusCode.Error, "Idempotency semantic conflict");
+                    activity?.SetTag("rejection_reason", "IDEMPOTENCY_CONFLICT");
+                    activity?.SetTag("existing_payment_attempt_id", replayRecord.PaymentAttemptId);
+
+                    _logger.LogWarning(
+                        "Payment attempt idempotent replay rejected because the request does not match the existing attempt. payment_attempt_id={PaymentAttemptId}",
+                        replayRecord.PaymentAttemptId);
+
+                    throw new IdempotencyConflictException(command.IdempotencyKey);
+                }
+
+                activity?.SetTag("idempotent_replay_prevalidated", true);
+                activity?.SetTag("existing_payment_attempt_id", replayRecord.PaymentAttemptId);
+
+                _logger.LogInformation(
+                    "Payment attempt idempotent replay matched existing attempt before tariff effective-basis eligibility checks. payment_attempt_id={PaymentAttemptId}",
+                    replayRecord.PaymentAttemptId);
+
+                return await InvokeCreateOrReuseRoutineAsync(command, provider, activity, cancellationToken);
+            }
+
             var effectiveAppliedTariffSnapshot = await _tariffSnapshotReadRepository.GetEffectiveAppliedTariffSnapshotAsync(
                 command.ParkingSessionId,
                 cancellationToken);
@@ -221,88 +264,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                     effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId);
             }
 
-            var provider = PaymentProvider.FromCode(command.PaymentProviderCode);
-
-            _paymentAttemptCreationPolicy.ValidateRequest(new CreateOrReusePaymentAttemptPolicyInput
-            {
-                ParkingSessionId = command.ParkingSessionId,
-                TariffSnapshotId = command.TariffSnapshotId,
-                PaymentProvider = provider,
-                IdempotencyKey = command.IdempotencyKey
-            });
-
-            var dbRequest = new CreateOrReusePaymentAttemptDbRequest
-            {
-                ParkingSessionId = command.ParkingSessionId,
-                TariffSnapshotId = command.TariffSnapshotId,
-                PaymentProviderCode = command.PaymentProviderCode,
-                IdempotencyKey = command.IdempotencyKey,
-                RequestedBy = command.RequestedBy,
-                CorrelationId = command.CorrelationId,
-                RequestedAt = _systemClock.UtcNow
-            };
-
-            _logger.LogInformation("Invoking authoritative DB-backed create-or-reuse payment attempt routine.");
-
-            var dbStart = _systemClock.UtcNow;
-
-            var dbResult = await _paymentAttemptDbRoutineGateway.CreateOrReusePaymentAttemptAsync(
-                dbRequest,
-                cancellationToken);
-
-            var dbDuration = _systemClock.UtcNow - dbStart;
-
-            activity?.SetTag("db_outcome_code", dbResult.OutcomeCode);
-            activity?.SetTag("outcome", ResolveOperationalOutcome(dbResult.OutcomeCode, dbResult.WasReused));
-            activity?.SetTag("payment_attempt_id", dbResult.PaymentAttemptId);
-            activity?.SetTag("attempt_status", dbResult.AttemptStatus);
-            activity?.SetTag("was_reused", dbResult.WasReused);
-            activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
-
-            _logger.LogInformation(
-                "Authoritative DB routine completed with outcome code {OutcomeCode}.",
-                dbResult.OutcomeCode);
-
-            ThrowForRejectedOutcome(dbResult, command.TariffSnapshotId);
-
-            var result = new CreateOrReusePaymentAttemptResult
-            {
-                PaymentAttemptId = dbResult.PaymentAttemptId,
-                ParkingSessionId = dbResult.ParkingSessionId,
-                TariffSnapshotId = dbResult.TariffSnapshotId,
-                AttemptStatus = dbResult.AttemptStatus,
-                PaymentProviderCode = dbResult.PaymentProviderCode,
-                WasReused = dbResult.WasReused,
-                ProviderHandoff = _providerHandoffFactory.CreatePlaceholder(provider, dbResult.PaymentAttemptId)
-            };
-
-            activity?.SetStatus(ActivityStatusCode.Ok);
-            activity?.SetTag("payment_attempt_id", result.PaymentAttemptId);
-            activity?.SetTag("attempt_status", result.AttemptStatus);
-            activity?.SetTag("provider_handoff_channel", result.ProviderHandoff.Type);
-
-            _metrics.PaymentAttemptCreated(result.PaymentProviderCode);
-
-            if (result.WasReused)
-            {
-                _logger.LogInformation(
-                    "Payment attempt was reused successfully. payment_attempt_id={PaymentAttemptId} attempt_status={AttemptStatus}",
-                    result.PaymentAttemptId,
-                    result.AttemptStatus);
-            }
-            else
-            {
-                _logger.LogInformation(
-                    "Payment attempt was created successfully. payment_attempt_id={PaymentAttemptId} attempt_status={AttemptStatus}",
-                    result.PaymentAttemptId,
-                    result.AttemptStatus);
-            }
-
-            await _eventPublisher.PublishAsync(
-                CreatePaymentAttemptEventEnvelope(result, dbResult, command.CorrelationId),
-                cancellationToken);
-
-            return result;
+            return await InvokeCreateOrReuseRoutineAsync(command, provider, activity, cancellationToken);
         }
         catch (Exception ex) when (IsExpectedBusinessRejection(ex))
         {
@@ -333,6 +295,139 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
             throw;
         }
+    }
+
+    private async Task<CreateOrReusePaymentAttemptResult> InvokeCreateOrReuseRoutineAsync(
+        CreateOrReusePaymentAttemptCommand command,
+        PaymentProvider provider,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        var dbRequest = new CreateOrReusePaymentAttemptDbRequest
+        {
+            ParkingSessionId = command.ParkingSessionId,
+            TariffSnapshotId = command.TariffSnapshotId,
+            PaymentProviderCode = command.PaymentProviderCode,
+            IdempotencyKey = command.IdempotencyKey,
+            RequestedBy = command.RequestedBy,
+            CorrelationId = command.CorrelationId,
+            RequestedAt = _systemClock.UtcNow
+        };
+
+        _logger.LogInformation("Invoking authoritative DB-backed create-or-reuse payment attempt routine.");
+
+        var dbStart = _systemClock.UtcNow;
+
+        var dbResult = await _paymentAttemptDbRoutineGateway.CreateOrReusePaymentAttemptAsync(
+            dbRequest,
+            cancellationToken);
+
+        var dbDuration = _systemClock.UtcNow - dbStart;
+
+        activity?.SetTag("db_outcome_code", dbResult.OutcomeCode);
+        activity?.SetTag("outcome", ResolveOperationalOutcome(dbResult.OutcomeCode, dbResult.WasReused));
+        activity?.SetTag("payment_attempt_id", dbResult.PaymentAttemptId);
+        activity?.SetTag("attempt_status", dbResult.AttemptStatus);
+        activity?.SetTag("was_reused", dbResult.WasReused);
+        activity?.SetTag("db.duration_ms", dbDuration.TotalMilliseconds);
+
+        _logger.LogInformation(
+            "Authoritative DB routine completed with outcome code {OutcomeCode}.",
+            dbResult.OutcomeCode);
+
+        ThrowForRejectedOutcome(dbResult, command.TariffSnapshotId);
+
+        var result = new CreateOrReusePaymentAttemptResult
+        {
+            PaymentAttemptId = dbResult.PaymentAttemptId,
+            ParkingSessionId = dbResult.ParkingSessionId,
+            TariffSnapshotId = dbResult.TariffSnapshotId,
+            AttemptStatus = dbResult.AttemptStatus,
+            PaymentProviderCode = dbResult.PaymentProviderCode,
+            WasReused = dbResult.WasReused,
+            ProviderHandoff = _providerHandoffFactory.CreatePlaceholder(provider, dbResult.PaymentAttemptId)
+        };
+
+        activity?.SetStatus(ActivityStatusCode.Ok);
+        activity?.SetTag("payment_attempt_id", result.PaymentAttemptId);
+        activity?.SetTag("attempt_status", result.AttemptStatus);
+        activity?.SetTag("provider_handoff_channel", result.ProviderHandoff.Type);
+
+        _metrics.PaymentAttemptCreated(result.PaymentProviderCode);
+
+        if (result.WasReused)
+        {
+            _logger.LogInformation(
+                "Payment attempt was reused successfully. payment_attempt_id={PaymentAttemptId} attempt_status={AttemptStatus}",
+                result.PaymentAttemptId,
+                result.AttemptStatus);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Payment attempt was created successfully. payment_attempt_id={PaymentAttemptId} attempt_status={AttemptStatus}",
+                result.PaymentAttemptId,
+                result.AttemptStatus);
+        }
+
+        await _eventPublisher.PublishAsync(
+            CreatePaymentAttemptEventEnvelope(result, dbResult, command.CorrelationId),
+            cancellationToken);
+
+        return result;
+    }
+
+    private static bool IsSemanticReplayMatch(
+        PaymentAttemptReplayRecord replayRecord,
+        CreateOrReusePaymentAttemptCommand command,
+        PaymentProvider provider,
+        TariffSnapshot tariffSnapshot)
+    {
+        return replayRecord.ParkingSessionId == command.ParkingSessionId
+            && replayRecord.TariffSnapshotId == command.TariffSnapshotId
+            && string.Equals(replayRecord.IdempotencyKey, command.IdempotencyKey, StringComparison.Ordinal)
+            && PaymentProviderMatches(replayRecord, provider)
+            && replayRecord.Amount == tariffSnapshot.NetPayable
+            && string.Equals(
+                replayRecord.CurrencyCode.Trim(),
+                tariffSnapshot.CurrencyCode.Trim(),
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool PaymentProviderMatches(
+        PaymentAttemptReplayRecord replayRecord,
+        PaymentProvider provider)
+    {
+        if (string.Equals(replayRecord.RailCode, provider.Code, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(replayRecord.ProviderCode, provider.Code, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        /*
+         * The current payment_attempts schema stores payment_rail_id, not the caller's WebPay method code.
+         * Some seeded rails resolve GCASH/MAYA/CARD through generic provider rows such as PAYMONGO.
+         * Treat those generic PayMongo rows as non-discriminating for replay; if a future schema stores the
+         * submitted method directly, the explicit rail/provider comparison above will enforce it.
+         */
+        return IsPayMongoBackedRail(replayRecord);
+    }
+
+    private static bool IsPayMongoBackedRail(PaymentAttemptReplayRecord replayRecord)
+    {
+        return string.Equals(replayRecord.ProviderCode, "PAYMONGO", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(replayRecord.ProviderCode, "MOCK", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(replayRecord.ProviderCode, "MOCK_PAYMENT_PROVIDER", StringComparison.OrdinalIgnoreCase)
+            || StartsWithIgnoreCase(replayRecord.RailCode, "PAYMONGO_")
+            || StartsWithIgnoreCase(replayRecord.RailCode, "WEBPAY_")
+            || StartsWithIgnoreCase(replayRecord.RailCode, "MOCK_")
+            || string.Equals(replayRecord.RailCode, "QRPH_TEST", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(replayRecord.RailCode, "HOSTED_CHECKOUT_TEST", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool StartsWithIgnoreCase(string? value, string prefix)
+    {
+        return value is not null && value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -293,6 +293,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
     {
         var parkingRepository = Substitute.For<IParkingSessionReadRepository>();
         var tariffRepository = Substitute.For<ITariffSnapshotReadRepository>();
+        var replayRepository = Substitute.For<IPaymentAttemptReplayReadRepository>();
         var gateway = Substitute.For<IPaymentAttemptDbRoutineGateway>();
         var handoffFactory = Substitute.For<IProviderHandoffFactory>();
         var clock = Substitute.For<ISystemClock>();
@@ -356,6 +357,7 @@ public sealed class PaymentToExitOperationalEvidenceTests
         var sut = new CreateOrReusePaymentAttemptHandler(
             parkingRepository,
             tariffRepository,
+            replayRepository,
             gateway,
             Substitute.For<IPaymentAttemptCreationPolicy>(),
             handoffFactory,
