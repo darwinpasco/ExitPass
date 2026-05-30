@@ -1518,6 +1518,40 @@ VALUES
         '77000000-0000-0000-0000-0000000003cb',
         '77000000-0000-0000-0000-000000000003',
         '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000001',
+        '77000000-0000-0000-0000-000000000201',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-APPLIED-LIFECYCLE-REQUESTED-APPLICATION',
+        '7700000000000000000000000000031277000000000000000000000000000312',
+        'APS-312',
+        '7700000000000000000000000000031277000000000000000000000000001312',
+        'MANUAL-APPLIED-LIFECYCLE-REQUESTED-APPLICATION',
+        '2026-05-29T00:00:00Z',
+        'ACTIVE',
+        'ACTIVE',
+        '77000000-0000-0000-0000-0000000003cc',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000001',
+        '77000000-0000-0000-0000-000000000201',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-APPLIED-LIFECYCLE-PAYMENT-ATTEMPT-BLOCKED',
+        '7700000000000000000000000000031377000000000000000000000000000313',
+        'APS-313',
+        '7700000000000000000000000000031377000000000000000000000000001313',
+        'MANUAL-APPLIED-LIFECYCLE-PAYMENT-ATTEMPT-BLOCKED',
+        '2026-05-29T00:00:00Z',
+        'ACTIVE',
+        'ACTIVE',
+        '77000000-0000-0000-0000-0000000003cd',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
     )
 ON CONFLICT (parking_session_id) DO UPDATE
 SET site_group_id = EXCLUDED.site_group_id,
@@ -1535,6 +1569,12 @@ SET site_group_id = EXCLUDED.site_group_id,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
+DELETE FROM core.payment_attempts
+WHERE parking_session_id IN (
+    '77000000-0000-0000-0000-000000000312',
+    '77000000-0000-0000-0000-000000000313'
+);
+
 DELETE FROM discounts.statutory_discount_payable_basis_applications
 WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000090',
@@ -1548,7 +1588,9 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000308',
     '77000000-0000-0000-0000-000000000309',
     '77000000-0000-0000-0000-000000000310',
-    '77000000-0000-0000-0000-000000000311'
+    '77000000-0000-0000-0000-000000000311',
+    '77000000-0000-0000-0000-000000000312',
+    '77000000-0000-0000-0000-000000000313'
 );
 
 DELETE FROM discounts.discount_evidence_references
@@ -1567,7 +1609,9 @@ WHERE statutory_discount_validation_id IN (
         '77000000-0000-0000-0000-000000000308',
         '77000000-0000-0000-0000-000000000309',
         '77000000-0000-0000-0000-000000000310',
-        '77000000-0000-0000-0000-000000000311'
+        '77000000-0000-0000-0000-000000000311',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000313'
     )
       AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
       AND validation_channel = 'OPERATOR_ASSISTED'
@@ -1587,7 +1631,9 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000308',
     '77000000-0000-0000-0000-000000000309',
     '77000000-0000-0000-0000-000000000310',
-    '77000000-0000-0000-0000-000000000311'
+'77000000-0000-0000-0000-000000000311',
+'77000000-0000-0000-0000-000000000312',
+'77000000-0000-0000-0000-000000000313'
 )
   AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
   AND validation_channel = 'OPERATOR_ASSISTED';
@@ -1605,7 +1651,9 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000308',
     '77000000-0000-0000-0000-000000000309',
     '77000000-0000-0000-0000-000000000310',
-    '77000000-0000-0000-0000-000000000311'
+    '77000000-0000-0000-0000-000000000311',
+    '77000000-0000-0000-0000-000000000312',
+    '77000000-0000-0000-0000-000000000313'
 )
   AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
   AND validation_channel = 'OPERATOR_ASSISTED';
@@ -1797,6 +1845,42 @@ VALUES
         now(),
         now() + interval '1 hour',
         '77000000-0000-0000-0000-0000000003db',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000402',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-APPLIED-LIFECYCLE-REQUESTED-APPLICATION',
+        'MANUAL-APPLIED-LIFECYCLE-V1',
+        'PHP',
+        125.00,
+        0,
+        0,
+        125.00,
+        'ACTIVE',
+        now(),
+        now() + interval '1 hour',
+        '77000000-0000-0000-0000-0000000003dc',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000403',
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-APPLIED-LIFECYCLE-PAYMENT-ATTEMPT-BLOCKED',
+        'MANUAL-APPLIED-LIFECYCLE-V1',
+        'PHP',
+        125.00,
+        0,
+        0,
+        125.00,
+        'ACTIVE',
+        now(),
+        now() + interval '1 hour',
+        '77000000-0000-0000-0000-0000000003dd',
         '77000000-0000-0000-0000-000000000003',
         '77000000-0000-0000-0000-000000000003'
     )
@@ -2075,6 +2159,282 @@ VALUES
             'legalBasisPriority', 'LOCAL_ORDINANCE_FIRST',
             'requiresEvidence', false
         )
+    ),
+    (
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000402',
+        'SENIOR_CITIZEN',
+        'NATIONAL_LAW_FALLBACK',
+        false,
+        true,
+        'OPERATOR_ASSISTED',
+        'APPROVED',
+        'PHP',
+        true,
+        true,
+        now(),
+        now(),
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-0000000003ec',
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-000000000010',
+        (SELECT statutory_discount_policy_id FROM discounts.statutory_discount_policy_registry WHERE policy_code = 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK'),
+        '77000000-0000-0000-0000-000000000211',
+        jsonb_build_object(
+            'statutoryDiscountPolicyId', (SELECT statutory_discount_policy_id::text FROM discounts.statutory_discount_policy_registry WHERE policy_code = 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK'),
+            'policyCode', 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+            'policyName', 'RA 9994 Senior Citizen National Fallback',
+            'entitlementType', 'SENIOR_CITIZEN',
+            'policyResolutionBasis', 'NATIONAL_LAW_FALLBACK',
+            'policyLevel', 'NATIONAL_LAW',
+            'policyType', 'LEGAL_REFERENCE',
+            'legalBasisReference', 'RA 9994 national fallback requested-application lifecycle fixture',
+            'ordinanceReference', null,
+            'nationalLawReference', 'RA 9994',
+            'verificationStatus', 'VERIFIED_OFFICIAL',
+            'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+            'freeDurationMinutes', null,
+            'initialRateExempt', false,
+            'fullFeeExempt', false,
+            'freePeriodApplication', 'NOT_APPLICABLE',
+            'succeedingHoursDiscountRule', 'REGULAR_RATE',
+            'discountBaseScope', 'CHARGEABLE_PORTION_ONLY',
+            'stackingPolicy', 'NO_STACKING_ON_FREE_PERIOD',
+            'legalBasisPriority', 'NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY',
+            'requiresEvidence', true
+        )
+    ),
+    (
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000403',
+        'SENIOR_CITIZEN',
+        'NATIONAL_LAW_FALLBACK',
+        false,
+        true,
+        'OPERATOR_ASSISTED',
+        'APPROVED',
+        'PHP',
+        true,
+        true,
+        now(),
+        now(),
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-0000000003ed',
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-000000000010',
+        (SELECT statutory_discount_policy_id FROM discounts.statutory_discount_policy_registry WHERE policy_code = 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK'),
+        '77000000-0000-0000-0000-000000000211',
+        jsonb_build_object(
+            'statutoryDiscountPolicyId', (SELECT statutory_discount_policy_id::text FROM discounts.statutory_discount_policy_registry WHERE policy_code = 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK'),
+            'policyCode', 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+            'policyName', 'RA 9994 Senior Citizen National Fallback',
+            'entitlementType', 'SENIOR_CITIZEN',
+            'policyResolutionBasis', 'NATIONAL_LAW_FALLBACK',
+            'policyLevel', 'NATIONAL_LAW',
+            'policyType', 'LEGAL_REFERENCE',
+            'legalBasisReference', 'RA 9994 national fallback payment-attempt guardrail fixture',
+            'ordinanceReference', null,
+            'nationalLawReference', 'RA 9994',
+            'verificationStatus', 'VERIFIED_OFFICIAL',
+            'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+            'freeDurationMinutes', null,
+            'initialRateExempt', false,
+            'fullFeeExempt', false,
+            'freePeriodApplication', 'NOT_APPLICABLE',
+            'succeedingHoursDiscountRule', 'REGULAR_RATE',
+            'discountBaseScope', 'CHARGEABLE_PORTION_ONLY',
+            'stackingPolicy', 'NO_STACKING_ON_FREE_PERIOD',
+            'legalBasisPriority', 'NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY',
+            'requiresEvidence', true
+        )
     );
+
+INSERT INTO discounts.statutory_discount_payable_basis_applications (
+    statutory_discount_payable_basis_application_id,
+    statutory_discount_validation_id,
+    parking_session_id,
+    original_tariff_snapshot_id,
+    applied_tariff_snapshot_id,
+    application_status,
+    application_channel,
+    gross_amount_minor_units,
+    vat_amount_minor_units,
+    vat_exclusive_amount_minor_units,
+    statutory_discount_amount_minor_units,
+    final_payable_amount_minor_units,
+    currency_code,
+    computation_basis_json,
+    rounding_mode,
+    applied_at,
+    applied_by_user_id,
+    idempotency_key,
+    correlation_id,
+    created_by_user_id,
+    updated_by_user_id
+)
+VALUES
+    (
+        '77000000-0000-0000-0000-000000000412',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000402',
+        NULL,
+        'REQUESTED',
+        'OPERATOR_CONSOLE',
+        12500,
+        1339,
+        11161,
+        2232,
+        8929,
+        'PHP',
+        jsonb_build_object(
+            'basis', 'GROSS_INCLUSIVE_OF_VAT',
+            'sourceTariffSnapshotId', '77000000-0000-0000-0000-000000000402',
+            'vatRate', 0.12,
+            'statutoryDiscountRate', 0.20,
+            'formula', 'final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)',
+            'roundingMode', 'HALF_AWAY_FROM_ZERO',
+            'policyContext', jsonb_build_object(
+                'statutoryDiscountPolicyId', (SELECT statutory_discount_policy_id::text FROM discounts.statutory_discount_policy_registry WHERE policy_code = 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK'),
+                'resolvedJurisdictionId', '77000000-0000-0000-0000-000000000211',
+                'policyResolutionBasis', 'NATIONAL_LAW_FALLBACK',
+                'policyCode', 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'nationalLawReference', 'RA 9994',
+                'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                'freeDurationMinutes', null,
+                'succeedingHoursDiscountRule', 'REGULAR_RATE',
+                'discountBaseScope', 'CHARGEABLE_PORTION_ONLY',
+                'stackingPolicy', 'NO_STACKING_ON_FREE_PERIOD',
+                'legalBasisPriority', 'NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY',
+                'requiresEvidence', true
+            )
+        ),
+        'HALF_AWAY_FROM_ZERO',
+        NULL,
+        NULL,
+        'manual-applied-lifecycle-requested-application',
+        '77000000-0000-0000-0000-0000000004ec',
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-000000000010'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000413',
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000403',
+        NULL,
+        'REQUESTED',
+        'OPERATOR_CONSOLE',
+        12500,
+        1339,
+        11161,
+        2232,
+        8929,
+        'PHP',
+        jsonb_build_object(
+            'basis', 'GROSS_INCLUSIVE_OF_VAT',
+            'sourceTariffSnapshotId', '77000000-0000-0000-0000-000000000403',
+            'vatRate', 0.12,
+            'statutoryDiscountRate', 0.20,
+            'formula', 'final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)',
+            'roundingMode', 'HALF_AWAY_FROM_ZERO',
+            'policyContext', jsonb_build_object(
+                'statutoryDiscountPolicyId', (SELECT statutory_discount_policy_id::text FROM discounts.statutory_discount_policy_registry WHERE policy_code = 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK'),
+                'resolvedJurisdictionId', '77000000-0000-0000-0000-000000000211',
+                'policyResolutionBasis', 'NATIONAL_LAW_FALLBACK',
+                'policyCode', 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'nationalLawReference', 'RA 9994',
+                'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                'freeDurationMinutes', null,
+                'succeedingHoursDiscountRule', 'REGULAR_RATE',
+                'discountBaseScope', 'CHARGEABLE_PORTION_ONLY',
+                'stackingPolicy', 'NO_STACKING_ON_FREE_PERIOD',
+                'legalBasisPriority', 'NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY',
+                'requiresEvidence', true
+            )
+        ),
+        'HALF_AWAY_FROM_ZERO',
+        NULL,
+        NULL,
+        'manual-applied-lifecycle-payment-attempt-blocked',
+        '77000000-0000-0000-0000-0000000004ed',
+        '77000000-0000-0000-0000-000000000010',
+        '77000000-0000-0000-0000-000000000010'
+    )
+ON CONFLICT (statutory_discount_payable_basis_application_id) DO UPDATE
+SET statutory_discount_validation_id = EXCLUDED.statutory_discount_validation_id,
+    parking_session_id = EXCLUDED.parking_session_id,
+    original_tariff_snapshot_id = EXCLUDED.original_tariff_snapshot_id,
+    applied_tariff_snapshot_id = NULL,
+    application_status = EXCLUDED.application_status,
+    application_channel = EXCLUDED.application_channel,
+    gross_amount_minor_units = EXCLUDED.gross_amount_minor_units,
+    vat_amount_minor_units = EXCLUDED.vat_amount_minor_units,
+    vat_exclusive_amount_minor_units = EXCLUDED.vat_exclusive_amount_minor_units,
+    statutory_discount_amount_minor_units = EXCLUDED.statutory_discount_amount_minor_units,
+    final_payable_amount_minor_units = EXCLUDED.final_payable_amount_minor_units,
+    currency_code = EXCLUDED.currency_code,
+    computation_basis_json = EXCLUDED.computation_basis_json,
+    rounding_mode = EXCLUDED.rounding_mode,
+    applied_at = NULL,
+    applied_by_user_id = NULL,
+    idempotency_key = EXCLUDED.idempotency_key,
+    correlation_id = EXCLUDED.correlation_id,
+    updated_by_user_id = EXCLUDED.updated_by_user_id,
+    updated_at = now();
+
+INSERT INTO core.payment_attempts (
+    payment_attempt_id,
+    parking_session_id,
+    tariff_snapshot_id,
+    idempotency_key,
+    payment_rail_id,
+    currency_code,
+    amount,
+    attempt_status,
+    requested_at,
+    expires_at,
+    finalized_at,
+    failure_reason_code,
+    correlation_id,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000513',
+    '77000000-0000-0000-0000-000000000313',
+    '77000000-0000-0000-0000-000000000403',
+    'manual-applied-lifecycle-payment-attempt-blocked',
+    NULL,
+    'PHP',
+    125.00,
+    'REQUESTED',
+    now(),
+    now() + interval '15 minutes',
+    NULL,
+    NULL,
+    '77000000-0000-0000-0000-0000000005ed',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT (payment_attempt_id) DO UPDATE
+SET parking_session_id = EXCLUDED.parking_session_id,
+    tariff_snapshot_id = EXCLUDED.tariff_snapshot_id,
+    idempotency_key = EXCLUDED.idempotency_key,
+    payment_rail_id = NULL,
+    currency_code = EXCLUDED.currency_code,
+    amount = EXCLUDED.amount,
+    attempt_status = EXCLUDED.attempt_status,
+    requested_at = EXCLUDED.requested_at,
+    expires_at = EXCLUDED.expires_at,
+    finalized_at = NULL,
+    failure_reason_code = NULL,
+    correlation_id = EXCLUDED.correlation_id,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
 
 COMMIT;
