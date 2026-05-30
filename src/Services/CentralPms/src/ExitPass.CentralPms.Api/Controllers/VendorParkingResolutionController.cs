@@ -157,6 +157,14 @@ public sealed class VendorParkingResolutionController : ControllerBase
             FeeValidUntil = result.TariffSnapshot.ExpiresAt,
             ParkingStatus = result.ParkingSession.SessionStatus.ToString(),
             PaymentStatus = result.PaymentStatus ?? "Not Started",
+            StatutoryDiscountApplied = result.EffectivePayableBasis?.StatutoryDiscountApplied ?? false,
+            StatutoryDiscountValidationId = result.EffectivePayableBasis?.StatutoryDiscountValidationId,
+            StatutoryDiscountApplicationId = result.EffectivePayableBasis?.StatutoryDiscountApplicationId,
+            OriginalTariffSnapshotId = result.EffectivePayableBasis?.OriginalTariffSnapshotId,
+            EffectiveTariffSnapshotId = result.EffectivePayableBasis?.EffectiveTariffSnapshotId ?? result.TariffSnapshot.TariffSnapshotId,
+            AppliedTariffSnapshotId = result.EffectivePayableBasis?.AppliedTariffSnapshotId,
+            PolicyResolutionBasis = result.EffectivePayableBasis?.PolicyResolutionBasis,
+            BenefitType = result.EffectivePayableBasis?.BenefitType,
             VendorSystemId = result.VendorSystemId ?? validRequest.VendorSystemId,
             CorrelationId = result.CorrelationId
         });

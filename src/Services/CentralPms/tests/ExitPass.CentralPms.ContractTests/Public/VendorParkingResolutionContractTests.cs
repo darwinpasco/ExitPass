@@ -64,6 +64,14 @@ public sealed class VendorParkingResolutionContractTests
             FeeValidUntil = new DateTimeOffset(2026, 5, 19, 15, 59, 59, TimeSpan.Zero),
             ParkingStatus = "PaymentRequired",
             PaymentStatus = "Not Started",
+            StatutoryDiscountApplied = true,
+            StatutoryDiscountValidationId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+            StatutoryDiscountApplicationId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            OriginalTariffSnapshotId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            EffectiveTariffSnapshotId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            AppliedTariffSnapshotId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            PolicyResolutionBasis = "NATIONAL_LAW_FALLBACK",
+            BenefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
             VendorSystemId = "FAKE-PMS",
             CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         };
@@ -89,6 +97,14 @@ public sealed class VendorParkingResolutionContractTests
         root.GetProperty("feeValidUntil").GetString().Should().NotStartWith("2030-04-01");
         root.TryGetProperty("parkingStatus", out _).Should().BeTrue();
         root.TryGetProperty("paymentStatus", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountApplied", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountValidationId", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountApplicationId", out _).Should().BeTrue();
+        root.TryGetProperty("originalTariffSnapshotId", out _).Should().BeTrue();
+        root.TryGetProperty("effectiveTariffSnapshotId", out _).Should().BeTrue();
+        root.TryGetProperty("appliedTariffSnapshotId", out _).Should().BeTrue();
+        root.TryGetProperty("policyResolutionBasis", out _).Should().BeTrue();
+        root.TryGetProperty("benefitType", out _).Should().BeTrue();
         root.TryGetProperty("vendorSystemId", out _).Should().BeTrue();
         root.TryGetProperty("correlationId", out _).Should().BeTrue();
     }
