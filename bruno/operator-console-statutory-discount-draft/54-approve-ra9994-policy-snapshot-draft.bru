@@ -1,0 +1,42 @@
+meta {
+  name: 54 Approve RA9994 policy snapshot draft
+  type: http
+  seq: 54
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/{{policySnapshotApplyValidationId_ra9994}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{policyResolutionOperatorDeviceBindingId_nationalFallback}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{policyResolutionOperatorShiftId_nationalFallback}}",
+    "decision": "APPROVE",
+    "decisionReasonCode": null,
+    "decisionNotes": "Manual smoke test approval/replay for seeded RA9994 apply validation",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-apply-policy-ra9994-approve-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("seeded RA9994 apply validation is approved or approve replay is deterministic", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.decisionAccepted).to.equal(true);
+    expect(res.body.decisionPersisted).to.equal(true);
+    expect(res.body.currentValidationStatus).to.equal("APPROVED");
+    expect(res.body.draftId).to.equal(bru.getEnvVar("policySnapshotApplyValidationId_ra9994"));
+  });
+}

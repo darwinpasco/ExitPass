@@ -22,6 +22,7 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #192 policy registry database support is applied.
 - #193 statutory discount policy resolution endpoint is present.
 - #195 statutory discount draft policy snapshot persistence is present.
+- #197 apply-payable-basis uses persisted statutory discount policy snapshots.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -47,7 +48,7 @@ docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/st
 
 The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
 
-For policy resolution and draft policy snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, and parking-session rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows for repeatable replay tests. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, payable-basis application, or final `APPLIED` tariff snapshot records for policy resolution or draft policy snapshot testing.
+For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, payable-basis application, or final `APPLIED` tariff snapshot records for policy resolution, draft policy snapshot, or apply persisted-policy-snapshot testing.
 
 ## Evidence Metadata Behavior
 
@@ -381,6 +382,107 @@ Apply failure behavior:
 - Validation not found: HTTP `404`, `errorCode = STATUTORY_DISCOUNT_VALIDATION_NOT_FOUND`, no application row.
 - Validation not approved: HTTP `200`, `errorCode = STATUTORY_DISCOUNT_NOT_APPROVED`, no application row.
 - Evidence required but not captured: approval is blocked by the decision endpoint; apply therefore cannot proceed to payable-basis application for that draft.
+
+## Apply Payable-Basis Persisted Policy Snapshot
+
+Endpoint:
+
+```http
+POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis
+```
+
+Starting with #197, apply-payable-basis uses the policy context persisted on `discounts.statutory_discount_validations` at draft creation time. It does not re-resolve the current policy registry as authoritative during apply. The persisted snapshot must contain a valid `statutoryDiscountPolicyId` that matches `statutory_discount_validations.statutory_discount_policy_id`.
+
+Preconditions:
+
+- #197 is merged.
+- Central PMS is running.
+- Local PostgreSQL is available.
+- The fixture seed has been applied.
+- Approved validation fixtures have persisted policy context.
+
+Manual workflow:
+
+1. Reset fixtures.
+2. Run `53 Create draft for RA9994 policy snapshot apply` to verify draft-time RA 9994 policy snapshot shape.
+3. Run `54 Approve RA9994 policy snapshot draft`. This request targets the seeded approved RA 9994 apply fixture; it is deterministic approve replay when already approved.
+4. Run `55 Apply payable basis RA9994 policy snapshot`.
+5. Run `59 Apply payable basis policy snapshot replay`.
+6. Reset fixtures.
+7. Run `56 Create draft for RA10754 policy snapshot apply` to verify draft-time RA 10754 policy snapshot shape.
+8. Run `57 Approve RA10754 policy snapshot draft`. This request targets the seeded approved RA 10754 apply fixture; it is deterministic approve replay when already approved.
+9. Run `58 Apply payable basis RA10754 policy snapshot`.
+10. Run blocked cases `60` through `64`.
+
+The national fallback policy rows currently require evidence. Because no evidence upload/capture endpoint exists yet, requests `54` and `57` use synthetic approved validations with `evidence_captured = true` so apply-payable-basis can be smoke-tested without changing runtime behavior.
+
+Apply persisted-policy fixture IDs:
+
+- `policySnapshotApplyValidationId_ra9994 = 77000000-0000-0000-0000-000000000306`
+- `policySnapshotApplyValidationId_ra10754 = 77000000-0000-0000-0000-000000000307`
+- `validationId_missingPolicyContext = 77000000-0000-0000-0000-000000000308`
+- `validationId_invalidPolicySnapshot = 77000000-0000-0000-0000-000000000309`
+- `validationId_mismatchedPolicySnapshot = 77000000-0000-0000-0000-000000000310`
+- `validationId_freeDurationPolicy = 77000000-0000-0000-0000-000000000311`
+
+Expected #197 behavior:
+
+- Apply uses `resolved_policy_snapshot_json` stored on the validation.
+- `policySnapshotUsed = true` for accepted apply results.
+- `STATUTORY_DISCOUNT_VAT_EXEMPT` is supported.
+- `FREE_DURATION` and `INITIAL_RATE_EXEMPTION` are blocked for now.
+- `computation_basis_json.policyContext` is persisted on accepted application rows.
+- Replay preserves the existing `computation_basis_json.policyContext`.
+- `application_status = REQUESTED`.
+- `applied_tariff_snapshot_id IS NULL`.
+- No final `APPLIED` tariff snapshot lifecycle is created.
+- The original tariff snapshot remains unchanged.
+- No payment attempt, provider call, gate record, coupon application, reconciliation item, AUB behavior, or UI wiring is created.
+
+Expected RA 9994 apply:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `applicationAccepted = true`
+- `applicationPersisted = true`
+- `policySnapshotUsed = true`
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `policyCode = PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `nationalLawReference = RA 9994`
+- `applicationStatus = REQUESTED`
+- `appliedTariffSnapshotId = null`
+
+Expected RA 10754 apply:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `applicationAccepted = true`
+- `applicationPersisted = true`
+- `policySnapshotUsed = true`
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `policyCode = PH_RA10754_PWD_NATIONAL_FALLBACK`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `nationalLawReference = RA 10754`
+- `applicationStatus = REQUESTED`
+- `appliedTariffSnapshotId = null`
+
+Expected replay behavior:
+
+- HTTP `200`
+- same `payableBasisApplicationId`
+- same policy context fields
+- no duplicate application row
+- no policy re-resolution
+- no applied tariff snapshot
+
+Expected blocked behavior:
+
+- Missing policy context: HTTP `200`, `errorCode = STATUTORY_DISCOUNT_POLICY_CONTEXT_MISSING`, no application row.
+- Invalid policy snapshot identity: HTTP `200`, `errorCode = STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID`, no application row.
+- Mismatched policy snapshot identity: HTTP `200`, `errorCode = STATUTORY_DISCOUNT_POLICY_SNAPSHOT_INVALID`, no application row.
+- Unsupported `FREE_DURATION` benefit: HTTP `200`, `errorCode = POLICY_BENEFIT_TYPE_NOT_SUPPORTED_FOR_PAYABLE_APPLICATION`, no generic VAT-exempt computation, no application row.
+- Access denied: HTTP `200`, `accessAllowed = false`, `applicationAccepted = false`, `applicationPersisted = false`, no application row.
 
 ## Policy Resolution Endpoint
 
@@ -791,6 +893,7 @@ SELECT
     statutory_discount_amount_minor_units,
     final_payable_amount_minor_units,
     currency_code,
+    computation_basis_json,
     rounding_mode,
     applied_at,
     idempotency_key,
@@ -812,6 +915,24 @@ Expected #188 values:
 - `final_payable_amount_minor_units = 8929`
 - `currency_code = PHP`
 
+Verify the persisted policy context inside `computation_basis_json`:
+
+```sql
+SELECT
+    statutory_discount_validation_id,
+    computation_basis_json -> 'policyContext' AS policy_context,
+    computation_basis_json -> 'policyContext' ->> 'statutoryDiscountPolicyId' AS policy_id,
+    computation_basis_json -> 'policyContext' ->> 'policyCode' AS policy_code,
+    computation_basis_json -> 'policyContext' ->> 'policyResolutionBasis' AS policy_resolution_basis,
+    computation_basis_json -> 'policyContext' ->> 'benefitType' AS benefit_type,
+    computation_basis_json -> 'policyContext' ->> 'nationalLawReference' AS national_law_reference,
+    computation_basis_json -> 'policyContext' ->> 'ordinanceReference' AS ordinance_reference
+FROM discounts.statutory_discount_payable_basis_applications
+WHERE statutory_discount_validation_id = '<validationId>'::uuid;
+```
+
+Expected: policy context is present and matches the validation's persisted policy snapshot. For RA 9994, expect `national_law_reference = RA 9994`; for RA 10754, expect `national_law_reference = RA 10754`.
+
 Verify no duplicate payable-basis application rows exist for a validation after replay:
 
 ```sql
@@ -821,6 +942,56 @@ WHERE statutory_discount_validation_id = '<applyValidationId>'::uuid;
 ```
 
 Expected result is `1`.
+
+Verify blocked persisted-policy apply fixtures did not create application rows:
+
+```sql
+SELECT
+    statutory_discount_validation_id,
+    COUNT(*) AS payable_basis_application_count
+FROM discounts.statutory_discount_payable_basis_applications
+WHERE statutory_discount_validation_id IN (
+    '77000000-0000-0000-0000-000000000308'::uuid,
+    '77000000-0000-0000-0000-000000000309'::uuid,
+    '77000000-0000-0000-0000-000000000310'::uuid,
+    '77000000-0000-0000-0000-000000000311'::uuid
+)
+GROUP BY statutory_discount_validation_id;
+```
+
+Expected result is no rows after requests `60` through `63`.
+
+Verify apply persisted-policy validation fixtures:
+
+```sql
+SELECT
+    statutory_discount_validation_id,
+    parking_session_id,
+    tariff_snapshot_id,
+    entitlement_type,
+    validation_status,
+    evidence_required,
+    evidence_captured,
+    statutory_discount_policy_id,
+    resolved_jurisdiction_id,
+    policy_resolution_basis,
+    resolved_policy_snapshot_json ->> 'statutoryDiscountPolicyId' AS snapshot_policy_id,
+    resolved_policy_snapshot_json ->> 'policyCode' AS snapshot_policy_code,
+    resolved_policy_snapshot_json ->> 'benefitType' AS snapshot_benefit_type,
+    resolved_policy_snapshot_json ->> 'nationalLawReference' AS snapshot_national_law_reference,
+    resolved_policy_snapshot_json ->> 'ordinanceReference' AS snapshot_ordinance_reference
+FROM discounts.statutory_discount_validations
+WHERE statutory_discount_validation_id IN (
+    '77000000-0000-0000-0000-000000000306'::uuid,
+    '77000000-0000-0000-0000-000000000307'::uuid,
+    '77000000-0000-0000-0000-000000000308'::uuid,
+    '77000000-0000-0000-0000-000000000309'::uuid,
+    '77000000-0000-0000-0000-000000000310'::uuid,
+    '77000000-0000-0000-0000-000000000311'::uuid
+);
+```
+
+Expected: `306` and `307` are approved national fallback fixtures with captured evidence and valid persisted policy snapshots; `308` lacks policy context; `309` has an invalid snapshot policy ID; `310` has a mismatched snapshot policy ID; `311` is a `FREE_DURATION` local policy fixture.
 
 Verify the original tariff snapshot remains unchanged:
 

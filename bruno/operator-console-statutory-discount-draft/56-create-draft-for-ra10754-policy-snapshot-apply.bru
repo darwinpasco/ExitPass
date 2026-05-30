@@ -1,0 +1,54 @@
+meta {
+  name: 56 Create draft for RA10754 policy snapshot apply
+  type: http
+  seq: 56
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/draft
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{policyResolutionOperatorDeviceBindingId_nationalFallback}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{policyResolutionOperatorShiftId_nationalFallback}}",
+    "parkingSessionId": "{{draftPolicySnapshotPwdId}}",
+    "ticketReference": "MANUAL-DRAFT-POLICY-PWD-FALLBACK",
+    "plateNumber": null,
+    "entitlementType": "{{pwdEntitlementType}}",
+    "idDocumentType": "PWD_ID",
+    "issuingAuthority": "PDAO",
+    "expiryDate": null,
+    "maskedIdReference": "{{pwdMaskedIdReference}}",
+    "entitlementFingerprint": null,
+    "evidenceCaptureRequested": false,
+    "evidenceAccessIntent": null,
+    "operatorAttestation": true,
+    "attestationNotes": "Manual smoke test create draft before RA10754 persisted snapshot apply coverage",
+    "reasonCode": "MANUAL_TEST_APPLY_POLICY_SNAPSHOT",
+    "idempotencyKey": "manual-apply-policy-ra10754-draft-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("creates PWD draft with RA 10754 policy snapshot", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.draftAccepted).to.equal(true);
+    expect(res.body.draftPersisted).to.equal(true);
+    expect(res.body.policySnapshot).to.not.equal(null);
+    expect(res.body.benefitType).to.equal("STATUTORY_DISCOUNT_VAT_EXEMPT");
+    expect(res.body.nationalLawReference).to.equal("RA 10754");
+    bru.setEnvVar("policySnapshotApplyDraftId_ra10754", res.body.draftId);
+  });
+}
