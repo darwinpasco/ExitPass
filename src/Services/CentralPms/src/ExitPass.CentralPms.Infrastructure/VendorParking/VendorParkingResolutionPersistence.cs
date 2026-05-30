@@ -2,6 +2,7 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
 using Npgsql;
@@ -91,6 +92,17 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
 
         if (existingTariff is null && parkingSessionWasReused)
         {
+            if (await HasAppliedPayableBasisApplicationAsync(
+                connection,
+                transaction,
+                parkingSession.ParkingSessionId,
+                cancellationToken))
+            {
+                throw new VendorParkingResolutionPersistenceException(
+                    "EFFECTIVE_PAYABLE_BASIS_INVALID",
+                    $"Parking session '{parkingSession.ParkingSessionId}' has an APPLIED statutory discount payable-basis application without a valid active applied tariff snapshot.");
+            }
+
             existingTariff = await FindLatestExistingTariffAsync(
                 connection,
                 transaction,
@@ -126,6 +138,12 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             resolvedSiteGroupId,
             resolvedSiteId,
             cancellationToken);
+        var effectivePayableBasis = await LoadEffectivePayableBasisSummaryAsync(
+            connection,
+            transaction,
+            parkingSession.ParkingSessionId,
+            tariffSnapshot.TariffSnapshotId,
+            cancellationToken);
         var resolvedVendorSystemId = await LoadParkingSessionVendorSystemIdAsync(
             connection,
             transaction,
@@ -143,7 +161,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             VendorSystemId = resolvedVendorSystemId.ToString(),
             SiteGroupName = operationalSummary.SiteGroupName,
             SiteName = operationalSummary.SiteName,
-            PaymentStatus = operationalSummary.PaymentStatus
+            PaymentStatus = operationalSummary.PaymentStatus,
+            EffectivePayableBasis = effectivePayableBasis
         };
     }
 
@@ -610,13 +629,16 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             return null;
         }
 
+        var statutoryDiscountAmount = reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount"));
+        var couponDiscountAmount = reader.GetDecimal(reader.GetOrdinal("coupon_discount_amount"));
+
         return TariffSnapshot.Rehydrate(
             reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
             reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-            TariffSnapshotSourceType.Base,
+            ResolveTariffSnapshotSourceType(statutoryDiscountAmount, couponDiscountAmount),
             reader.GetDecimal(reader.GetOrdinal("gross_amount")),
-            reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount")),
-            reader.GetDecimal(reader.GetOrdinal("coupon_discount_amount")),
+            statutoryDiscountAmount,
+            couponDiscountAmount,
             reader.GetDecimal(reader.GetOrdinal("net_amount")),
             reader.GetString(reader.GetOrdinal("currency_code")),
             reader.GetDecimal(reader.GetOrdinal("gross_amount")),
@@ -664,13 +686,16 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             return null;
         }
 
+        var statutoryDiscountAmount = reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount"));
+        var couponDiscountAmount = reader.GetDecimal(reader.GetOrdinal("coupon_discount_amount"));
+
         return TariffSnapshot.Rehydrate(
             reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
             reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-            TariffSnapshotSourceType.Base,
+            ResolveTariffSnapshotSourceType(statutoryDiscountAmount, couponDiscountAmount),
             reader.GetDecimal(reader.GetOrdinal("gross_amount")),
-            reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount")),
-            reader.GetDecimal(reader.GetOrdinal("coupon_discount_amount")),
+            statutoryDiscountAmount,
+            couponDiscountAmount,
             reader.GetDecimal(reader.GetOrdinal("net_amount")),
             reader.GetString(reader.GetOrdinal("currency_code")),
             reader.GetDecimal(reader.GetOrdinal("gross_amount")),
@@ -757,6 +782,85 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             reader.IsDBNull(reader.GetOrdinal("site_group_name")) ? null : reader.GetString(reader.GetOrdinal("site_group_name")),
             reader.IsDBNull(reader.GetOrdinal("site_name")) ? null : reader.GetString(reader.GetOrdinal("site_name")),
             MapPaymentStatus(attemptStatus));
+    }
+
+    private static async Task<bool> HasAppliedPayableBasisApplicationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM discounts.statutory_discount_payable_basis_applications AS app
+                WHERE app.parking_session_id = @parking_session_id
+                  AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is bool exists && exists;
+    }
+
+    private static async Task<EffectivePayableBasisSummary?> LoadEffectivePayableBasisSummaryAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid parkingSessionId,
+        Guid effectiveTariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                app.statutory_discount_payable_basis_application_id,
+                app.statutory_discount_validation_id,
+                app.original_tariff_snapshot_id,
+                app.applied_tariff_snapshot_id,
+                sdv.policy_resolution_basis::text AS policy_resolution_basis,
+                app.computation_basis_json #>> '{policyContext,benefitType}' AS benefit_type
+            FROM discounts.statutory_discount_payable_basis_applications AS app
+            INNER JOIN discounts.statutory_discount_validations AS sdv
+                ON sdv.statutory_discount_validation_id = app.statutory_discount_validation_id
+            INNER JOIN core.tariff_snapshots AS applied_ts
+                ON applied_ts.tariff_snapshot_id = app.applied_tariff_snapshot_id
+               AND applied_ts.parking_session_id = app.parking_session_id
+               AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+               AND applied_ts.statutory_discount_validation_id = app.statutory_discount_validation_id
+            WHERE app.parking_session_id = @parking_session_id
+              AND app.applied_tariff_snapshot_id = @effective_tariff_snapshot_id
+              AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+            ORDER BY app.applied_at DESC, app.updated_at DESC
+            LIMIT 1;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("effective_tariff_snapshot_id", NpgsqlDbType.Uuid).Value = effectiveTariffSnapshotId;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new EffectivePayableBasisSummary
+        {
+            StatutoryDiscountApplied = true,
+            StatutoryDiscountApplicationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
+            StatutoryDiscountValidationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_validation_id")),
+            OriginalTariffSnapshotId = reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),
+            EffectiveTariffSnapshotId = effectiveTariffSnapshotId,
+            AppliedTariffSnapshotId = reader.GetGuid(reader.GetOrdinal("applied_tariff_snapshot_id")),
+            PolicyResolutionBasis = reader.IsDBNull(reader.GetOrdinal("policy_resolution_basis"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("policy_resolution_basis")),
+            BenefitType = reader.IsDBNull(reader.GetOrdinal("benefit_type"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("benefit_type"))
+        };
     }
 
     private static async Task<Guid> LoadParkingSessionVendorSystemIdAsync(
@@ -926,6 +1030,20 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
     private static bool IsSeededWebPayReference(string? value)
     {
         return value?.Trim().StartsWith("WEBPAY-", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
+    private static TariffSnapshotSourceType ResolveTariffSnapshotSourceType(
+        decimal statutoryDiscountAmount,
+        decimal couponDiscountAmount)
+    {
+        if (couponDiscountAmount > 0m)
+        {
+            return TariffSnapshotSourceType.CouponAdjusted;
+        }
+
+        return statutoryDiscountAmount > 0m
+            ? TariffSnapshotSourceType.StatutoryAdjusted
+            : TariffSnapshotSourceType.Base;
     }
 
     private static string MapPaymentStatus(string? value)

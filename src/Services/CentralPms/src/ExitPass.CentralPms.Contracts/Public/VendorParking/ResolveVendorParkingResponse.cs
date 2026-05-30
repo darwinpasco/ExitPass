@@ -91,6 +91,46 @@ public sealed class ResolveVendorParkingResponse
     public string PaymentStatus { get; set; } = string.Empty;
 
     /// <summary>
+    /// Indicates whether the payable basis displayed by WebPay includes an applied statutory discount.
+    /// </summary>
+    public bool StatutoryDiscountApplied { get; set; }
+
+    /// <summary>
+    /// Statutory discount validation linked to the effective payable basis, when applicable.
+    /// </summary>
+    public Guid? StatutoryDiscountValidationId { get; set; }
+
+    /// <summary>
+    /// Statutory discount payable-basis application linked to the effective payable basis, when applicable.
+    /// </summary>
+    public Guid? StatutoryDiscountApplicationId { get; set; }
+
+    /// <summary>
+    /// Original tariff snapshot superseded by the applied statutory discount snapshot, when applicable.
+    /// </summary>
+    public Guid? OriginalTariffSnapshotId { get; set; }
+
+    /// <summary>
+    /// Effective tariff snapshot used as the payable amount basis.
+    /// </summary>
+    public Guid? EffectiveTariffSnapshotId { get; set; }
+
+    /// <summary>
+    /// Applied statutory-discount-adjusted tariff snapshot, when applicable.
+    /// </summary>
+    public Guid? AppliedTariffSnapshotId { get; set; }
+
+    /// <summary>
+    /// Policy resolution basis captured with the statutory discount validation, when applicable.
+    /// </summary>
+    public string? PolicyResolutionBasis { get; set; }
+
+    /// <summary>
+    /// Benefit type captured in the applied payable-basis computation policy context, when applicable.
+    /// </summary>
+    public string? BenefitType { get; set; }
+
+    /// <summary>
     /// Provider-neutral vendor system identifier used for the lookup.
     /// </summary>
     public string VendorSystemId { get; set; } = string.Empty;

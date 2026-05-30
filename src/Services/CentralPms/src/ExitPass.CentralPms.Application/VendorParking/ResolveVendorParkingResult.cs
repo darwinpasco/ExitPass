@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
 
@@ -16,6 +17,7 @@ namespace ExitPass.CentralPms.Application.VendorParking;
 /// <param name="SiteGroupName">Business-friendly site group name resolved from canonical site data.</param>
 /// <param name="SiteName">Business-friendly site name resolved from canonical site data.</param>
 /// <param name="PaymentStatus">Current payment status display value derived from authoritative payment attempts.</param>
+/// <param name="EffectivePayableBasis">Applied statutory discount payable-basis summary when present.</param>
 public sealed record ResolveVendorParkingResult(
     ResolveVendorParkingOutcome Outcome,
     ParkingSession? ParkingSession,
@@ -26,7 +28,8 @@ public sealed record ResolveVendorParkingResult(
     string? VendorSystemId,
     string? SiteGroupName,
     string? SiteName,
-    string? PaymentStatus)
+    string? PaymentStatus,
+    EffectivePayableBasisSummary? EffectivePayableBasis)
 {
     /// <summary>
     /// Creates a successful vendor parking resolution result.
@@ -38,6 +41,7 @@ public sealed record ResolveVendorParkingResult(
     /// <param name="siteGroupName">Business-friendly site group name resolved from canonical site data.</param>
     /// <param name="siteName">Business-friendly site name resolved from canonical site data.</param>
     /// <param name="paymentStatus">Current payment status display value derived from authoritative payment attempts.</param>
+    /// <param name="effectivePayableBasis">Applied statutory discount payable-basis summary when present.</param>
     /// <returns>A successful resolution result.</returns>
     public static ResolveVendorParkingResult Resolved(
         ParkingSession parkingSession,
@@ -46,7 +50,8 @@ public sealed record ResolveVendorParkingResult(
         string vendorSystemId,
         string? siteGroupName,
         string? siteName,
-        string paymentStatus)
+        string paymentStatus,
+        EffectivePayableBasisSummary? effectivePayableBasis)
     {
         return new ResolveVendorParkingResult(
             ResolveVendorParkingOutcome.Resolved,
@@ -58,7 +63,8 @@ public sealed record ResolveVendorParkingResult(
             vendorSystemId,
             siteGroupName,
             siteName,
-            paymentStatus);
+            paymentStatus,
+            effectivePayableBasis);
     }
 
     /// <summary>
@@ -77,6 +83,6 @@ public sealed record ResolveVendorParkingResult(
         Guid correlationId,
         string? vendorSystemId = null)
     {
-        return new ResolveVendorParkingResult(outcome, null, null, errorCode, retryable, correlationId, vendorSystemId, null, null, null);
+        return new ResolveVendorParkingResult(outcome, null, null, errorCode, retryable, correlationId, vendorSystemId, null, null, null, null);
     }
 }

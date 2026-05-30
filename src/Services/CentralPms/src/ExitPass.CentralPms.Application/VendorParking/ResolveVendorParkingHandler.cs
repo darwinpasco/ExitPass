@@ -174,15 +174,29 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             null,
             null);
 
-        var persisted = await _persistence.PersistAsync(
-            new PersistVendorParkingResolutionRequest
-            {
-                ParkingSession = centralSession,
-                TariffSnapshot = tariffSnapshot,
-                RequestedVendorSystemId = ParseOptionalGuid(command.VendorSystemId),
-                CorrelationId = sessionResponse.CorrelationId
-            },
-            cancellationToken);
+        PersistVendorParkingResolutionResult persisted;
+        try
+        {
+            persisted = await _persistence.PersistAsync(
+                new PersistVendorParkingResolutionRequest
+                {
+                    ParkingSession = centralSession,
+                    TariffSnapshot = tariffSnapshot,
+                    RequestedVendorSystemId = ParseOptionalGuid(command.VendorSystemId),
+                    CorrelationId = sessionResponse.CorrelationId
+                },
+                cancellationToken);
+        }
+        catch (VendorParkingResolutionPersistenceException ex)
+        {
+            return CompleteFailure(
+                activity,
+                ResolveVendorParkingOutcome.MalformedVendorResponse,
+                ex.ErrorCode,
+                retryable: false,
+                sessionResponse.CorrelationId,
+                session.VendorProviderCode);
+        }
 
         activity?.SetTag("vendor_system_id", session.VendorProviderCode);
         activity?.SetTag("parking_session_id", persisted.ParkingSession.ParkingSessionId);
@@ -216,7 +230,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
                     VendorSystemId = persisted.VendorSystemId,
                     LookupReferenceType = ResolveIdentifierType(command).ToLowerInvariant(),
                     LookupOutcome = ResolveVendorParkingOutcome.Resolved.ToString(),
-                    NetPayableMinorUnits = validQuote.AmountMinor,
+                    NetPayableMinorUnits = ToMinorUnits(persisted.TariffSnapshot.NetPayable),
                     Currency = persisted.TariffSnapshot.CurrencyCode,
                     TariffExpiresAt = persisted.TariffSnapshot.ExpiresAt
                 }
@@ -230,7 +244,8 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             persisted.VendorSystemId,
             persisted.SiteGroupName,
             persisted.SiteName,
-            persisted.PaymentStatus);
+            persisted.PaymentStatus,
+            persisted.EffectivePayableBasis);
     }
 
     private ResolveVendorParkingResult CompleteFailure(
@@ -307,5 +322,10 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     private static string? Normalize(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static long ToMinorUnits(decimal amount)
+    {
+        return decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
     }
 }
