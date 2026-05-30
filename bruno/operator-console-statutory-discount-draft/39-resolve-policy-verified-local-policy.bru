@@ -1,0 +1,48 @@
+meta {
+  name: 39 Resolve policy verified local policy
+  type: http
+  seq: 39
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/resolve-policy
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{policyResolutionOperatorDeviceBindingId_verifiedLocal}}",
+    "siteId": "{{policyResolutionSiteId_verifiedLocal}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{policyResolutionOperatorShiftId_verifiedLocal}}",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "entitlementType": "{{seniorEntitlementType}}",
+    "idempotencyKey": "manual-policy-resolution-verified-local-{{$guid}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("resolves verified local policy before national fallback", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.accessPersisted).to.equal(true);
+    expect(res.body.policyResolved).to.equal(true);
+    expect(res.body.policyCode).to.equal("MANUAL_TEST_QC_VERIFIED_LOCAL_POLICY");
+    expect(res.body.policyResolutionBasis).to.equal("LOCAL_ORDINANCE_APPLIED");
+    expect(res.body.ordinanceReference).to.equal("MANUAL-QC-ORD-193");
+    expect(res.body.nationalLawReference).to.equal(null);
+    expect(res.body.verificationStatus).to.equal("VERIFIED_OFFICIAL");
+    expect(res.body.benefitType).to.equal("FREE_DURATION");
+    expect(res.body.freeDurationMinutes).to.equal(120);
+    expect(res.body.succeedingHoursDiscountRule).to.equal("REGULAR_RATE");
+    expect(res.body.discountBaseScope).to.equal("CHARGEABLE_PORTION_ONLY");
+    expect(res.body.stackingPolicy).to.equal("NO_STACKING_ON_FREE_PERIOD");
+  });
+}

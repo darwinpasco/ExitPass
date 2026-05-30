@@ -1,6 +1,6 @@
 # Operator Console Statutory Discount Draft Manual Smoke Tests
 
-Purpose: repeatable manual/API smoke testing for the Central PMS Operator Console statutory discount validation draft, review decision, and apply-payable-basis endpoints.
+Purpose: repeatable manual/API smoke testing for the Central PMS Operator Console statutory discount validation draft, review decision, apply-payable-basis, and policy resolution endpoints.
 
 Endpoint:
 
@@ -8,9 +8,10 @@ Endpoint:
 POST /v1/ops/operator-console/statutory-discounts/draft
 POST /v1/ops/operator-console/statutory-discounts/{draftId}/decision
 POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis
+POST /v1/ops/operator-console/statutory-discounts/resolve-policy
 ```
 
-This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, and #188 payable-basis application records. It does not implement final `APPLIED` superseding tariff snapshot lifecycle, create payment attempts, confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
+This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #188 payable-basis application records, and #193 read-only statutory discount policy resolution. It does not implement final `APPLIED` superseding tariff snapshot lifecycle, create payment attempts, confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
 
 ## Preconditions
 
@@ -18,6 +19,8 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #182 duplicate-safe draft behavior is present.
 - #184 statutory discount decision endpoint is present.
 - #188 statutory discount apply-payable-basis endpoint is present.
+- #192 policy registry database support is applied.
+- #193 statutory discount policy resolution endpoint is present.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -41,7 +44,9 @@ Run against the local development database:
 docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/stdin < infra\db\fixtures\operator-console-access-evaluation\Seed-OperatorConsoleAccessEvaluationManualFixtures.sql
 ```
 
-The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`. It does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, or final `APPLIED` tariff snapshot records.
+The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
+
+For policy resolution manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, and local policy rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script does not delete access evaluation evidence and does not create payment, gate, coupon, provider, reconciliation, fingerprint, statutory discount validation, payable-basis application, or final `APPLIED` tariff snapshot records for policy resolution.
 
 ## Evidence Metadata Behavior
 
@@ -273,6 +278,134 @@ Apply failure behavior:
 - Validation not approved: HTTP `200`, `errorCode = STATUTORY_DISCOUNT_NOT_APPROVED`, no application row.
 - Evidence required but not captured: approval is blocked by the decision endpoint; apply therefore cannot proceed to payable-basis application for that draft.
 
+## Policy Resolution Endpoint
+
+Endpoint:
+
+```http
+POST /v1/ops/operator-console/statutory-discounts/resolve-policy
+```
+
+This endpoint performs and persists Operator Console access evaluation first, then resolves the statutory discount policy for a site jurisdiction and entitlement type. It is read-only except for access evaluation persistence. It does not create drafts, approve or reject discounts, apply discounts, mutate tariff snapshots, mutate payable basis, create payment attempts, call providers, call gates, create coupons, or create reconciliation records.
+
+Policy resolution workflow:
+
+1. Run the local fixture seed after #192 DB support is applied.
+2. Run `37 Resolve policy Senior national fallback`.
+3. Run `38 Resolve policy PWD national fallback`.
+4. Run `39 Resolve policy verified local policy`.
+5. Run `40 Resolve policy unverified local policy blocked`.
+6. Run `41 Resolve policy missing site jurisdiction`.
+7. Run `42 Resolve policy unsupported entitlement`.
+8. Run `43 Resolve policy access denied`.
+9. Run `44 Resolve policy site group mismatch`.
+
+Expected policy resolution behavior:
+
+- Access evaluation runs first and is persisted.
+- Verified local policy resolves before national fallback.
+- Senior Citizen fallback resolves to `RA 9994`.
+- PWD fallback resolves to `RA 10754`.
+- National fallback does not grant free parking or free duration.
+- Unverified/proposed local policy rows do not auto-resolve.
+- Missing site jurisdiction fails closed.
+- Access-denied requests do not return policy details.
+- Site group mismatch is denied by access evaluation before policy resolution, so no policy details are returned.
+
+Policy resolution fixture IDs:
+
+- `policyResolutionSiteId_nationalFallback = 77000000-0000-0000-0000-000000000201`
+- `policyResolutionSiteId_verifiedLocal = 77000000-0000-0000-0000-000000000202`
+- `policyResolutionSiteId_unverifiedLocal = 77000000-0000-0000-0000-000000000203`
+- `policyResolutionSiteId_missingJurisdiction = 77000000-0000-0000-0000-000000000204`
+- `policyResolutionVerifiedLocalPolicyId = 77000000-0000-0000-0000-000000000261`
+- `policyResolutionUnverifiedLocalPolicyId = 77000000-0000-0000-0000-000000000262`
+
+Expected Senior Citizen national fallback:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `policyResolved = true`
+- `policyCode = PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK`
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `entitlementType = SENIOR_CITIZEN`
+- `nationalLawReference = RA 9994`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `freeDurationMinutes = null`
+- `initialRateExempt = false`
+- `fullFeeExempt = false`
+- `policySnapshot` exists
+
+Expected PWD national fallback:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `policyResolved = true`
+- `policyCode = PH_RA10754_PWD_NATIONAL_FALLBACK`
+- `policyResolutionBasis = NATIONAL_LAW_FALLBACK`
+- `entitlementType = PWD`
+- `nationalLawReference = RA 10754`
+- `benefitType = STATUTORY_DISCOUNT_VAT_EXEMPT`
+- `freeDurationMinutes = null`
+- `initialRateExempt = false`
+- `fullFeeExempt = false`
+- `policySnapshot` exists
+
+Expected verified local policy:
+
+- HTTP `200`
+- `policyResolved = true`
+- `policyCode = MANUAL_TEST_QC_VERIFIED_LOCAL_POLICY`
+- `policyResolutionBasis = LOCAL_ORDINANCE_APPLIED`
+- `ordinanceReference = MANUAL-QC-ORD-193`
+- `nationalLawReference = null`
+- `verificationStatus = VERIFIED_OFFICIAL`
+- `benefitType = FREE_DURATION`
+- `freeDurationMinutes = 120`
+- `succeedingHoursDiscountRule = REGULAR_RATE`
+- `discountBaseScope = CHARGEABLE_PORTION_ONLY`
+- `stackingPolicy = NO_STACKING_ON_FREE_PERIOD`
+
+Expected unverified local policy:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `policyResolved = false`
+- `errorCode = STATUTORY_DISCOUNT_POLICY_UNVERIFIED`
+- no policy details are returned
+
+Expected missing jurisdiction:
+
+- HTTP `200`
+- `accessAllowed = true`
+- `policyResolved = false`
+- `errorCode = SITE_JURISDICTION_NOT_CONFIGURED`
+- no policy details are returned
+
+Expected unsupported entitlement:
+
+- HTTP `400`
+- `errorCode = INVALID_OPERATOR_CONSOLE_POLICY_RESOLUTION_REQUEST`
+- no access evaluation or policy resolution is attempted
+
+Expected access denied:
+
+- HTTP `200`
+- `accessAllowed = false`
+- `accessDecision = DENIED`
+- `accessPersisted = true`
+- `policyResolved = false`
+- no policy details are returned
+
+Expected site group mismatch:
+
+- HTTP `200`
+- `accessAllowed = false`
+- `accessDecision = DENIED`
+- `accessPersisted = true`
+- `policyResolved = false`
+- no policy details are returned
+
 ## Read-Only Database Verification
 
 Verify the statutory discount validation draft returned as `draftId`:
@@ -386,6 +519,92 @@ FROM operator_console.operator_access_evaluations
 WHERE operator_access_evaluation_id = '<accessEvaluationId-from-response>'::uuid;
 ```
 
+Verify national fallback policy rows and that they do not grant free parking:
+
+```sql
+SELECT
+    policy_code,
+    entitlement_type,
+    policy_resolution_basis,
+    national_law_reference,
+    benefit_type,
+    free_duration_minutes,
+    initial_rate_exempt_flag,
+    full_fee_exempt_flag,
+    succeeding_hours_discount_rule,
+    discount_base_scope,
+    stacking_policy
+FROM discounts.statutory_discount_policy_registry
+WHERE policy_code IN (
+    'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+    'PH_RA10754_PWD_NATIONAL_FALLBACK'
+);
+```
+
+Expected: both rows have `benefit_type = STATUTORY_DISCOUNT_VAT_EXEMPT`, `free_duration_minutes IS NULL`, `initial_rate_exempt_flag = false`, and `full_fee_exempt_flag = false`.
+
+Verify local policy resolution fixture rows:
+
+```sql
+SELECT
+    statutory_discount_policy_id,
+    jurisdiction_id,
+    policy_code,
+    entitlement_type,
+    policy_resolution_basis,
+    ordinance_reference,
+    verification_status,
+    benefit_type,
+    free_duration_minutes,
+    succeeding_hours_discount_rule,
+    discount_base_scope,
+    stacking_policy,
+    policy_status
+FROM discounts.statutory_discount_policy_registry
+WHERE policy_code IN (
+    'MANUAL_TEST_QC_VERIFIED_LOCAL_POLICY',
+    'MANUAL_TEST_UNVERIFIED_LOCAL_POLICY'
+);
+```
+
+Verify site jurisdiction mappings used by policy resolution:
+
+```sql
+SELECT
+    site_id,
+    site_code,
+    jurisdiction_id
+FROM sites.sites
+WHERE site_id IN (
+    '77000000-0000-0000-0000-000000000201'::uuid,
+    '77000000-0000-0000-0000-000000000202'::uuid,
+    '77000000-0000-0000-0000-000000000203'::uuid,
+    '77000000-0000-0000-0000-000000000204'::uuid
+);
+```
+
+Expected: the first three sites have `jurisdiction_id`; the missing-jurisdiction fixture site has `jurisdiction_id IS NULL`.
+
+Verify resolve-policy did not create statutory discount validations:
+
+```sql
+SELECT COUNT(*) AS statutory_discount_validation_count
+FROM discounts.statutory_discount_validations
+WHERE correlation_id = '<correlationId-from-response>'::uuid;
+```
+
+Expected result is `0`.
+
+Verify resolve-policy did not create payable-basis application rows:
+
+```sql
+SELECT COUNT(*) AS payable_basis_application_count
+FROM discounts.statutory_discount_payable_basis_applications
+WHERE correlation_id = '<correlationId-from-response>'::uuid;
+```
+
+Expected result is `0`.
+
 Verify the payable-basis application row returned as `payableBasisApplicationId`:
 
 ```sql
@@ -496,6 +715,7 @@ Expected result for all counts is `0` when the local fixture seed has not been c
 This manual pack does not test:
 
 - Operator Console UI
+- policy snapshot persistence into statutory discount drafts
 - final `APPLIED` superseding tariff snapshot lifecycle
 - WebPay display
 - payment attempt creation from the requested payable-basis application
