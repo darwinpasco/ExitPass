@@ -207,6 +207,41 @@ public sealed class PaymentAttemptsController : ControllerBase
             _logger.LogWarning(ex, "CreatePaymentAttempt failed because tariff snapshot was not eligible.");
             return Conflict(BuildError("TARIFF_SNAPSHOT_INVALID", ex.Message, correlationIdRaw));
         }
+        catch (StaleTariffSnapshotException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+
+            _logger.LogWarning(ex, "CreatePaymentAttempt failed because the submitted tariff snapshot is stale.");
+            return Conflict(BuildError(
+                "STALE_TARIFF_SNAPSHOT",
+                ex.Message,
+                correlationIdRaw,
+                new Dictionary<string, object?>
+                {
+                    ["parking_session_id"] = ex.ParkingSessionId,
+                    ["submitted_tariff_snapshot_id"] = ex.SubmittedTariffSnapshotId,
+                    ["effective_tariff_snapshot_id"] = ex.EffectiveTariffSnapshotId,
+                    ["statutory_discount_application_id"] = ex.StatutoryDiscountApplicationId
+                }));
+        }
+        catch (EffectivePayableBasisInvalidException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+
+            _logger.LogWarning(ex, "CreatePaymentAttempt failed because the effective payable basis is invalid.");
+            return Conflict(BuildError(
+                "EFFECTIVE_PAYABLE_BASIS_INVALID",
+                ex.Message,
+                correlationIdRaw,
+                new Dictionary<string, object?>
+                {
+                    ["parking_session_id"] = ex.ParkingSessionId,
+                    ["statutory_discount_application_id"] = ex.StatutoryDiscountApplicationId,
+                    ["reason_code"] = ex.ReasonCode
+                }));
+        }
         catch (ActivePaymentAttemptAlreadyExistsException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);

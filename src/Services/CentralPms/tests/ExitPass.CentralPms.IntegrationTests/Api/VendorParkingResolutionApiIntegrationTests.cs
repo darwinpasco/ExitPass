@@ -324,6 +324,78 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies payment creation consumes the same applied tariff snapshot returned by WebPay session summary.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_WhenStatutoryDiscountApplied_UsesEffectiveAppliedTariffSnapshot()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000017");
+        var ticketReference = UniqueLookup("PAY-APPLIED");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        var applied = await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
+        var resolved = await ResolveAsync(client, request);
+
+        using var paymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolved,
+            idempotencyKey: $"idem-pay-applied-{Guid.NewGuid():N}",
+            correlationId);
+
+        var paymentRaw = await paymentResponse.Content.ReadAsStringAsync();
+        paymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, paymentRaw);
+
+        var payment = await paymentResponse.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+        payment.Should().NotBeNull();
+        payment!.PaymentProvider.Should().Be("GCASH");
+        payment.WasReused.Should().BeFalse();
+
+        var persisted = await ReadPaymentAttemptAsync(payment.PaymentAttemptId);
+        persisted.Should().NotBeNull();
+        persisted!.ParkingSessionId.Should().Be(initial.ParkingSessionId);
+        persisted.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
+        persisted.Amount.Should().Be(71.43m);
+
+        var tariffState = await ReadTariffStateAsync(initial.TariffSnapshotId, applied.AppliedTariffSnapshotId);
+        tariffState.OriginalStatus.Should().Be("SUPERSEDED");
+        tariffState.AppliedStatus.Should().Be("CONSUMED");
+    }
+
+    /// <summary>
+    /// Verifies payment creation rejects stale original tariff snapshots after a statutory discount is APPLIED.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_WhenStatutoryDiscountAppliedAndOriginalSnapshotSubmitted_RejectsStaleSnapshot()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000018");
+        var ticketReference = UniqueLookup("PAY-STALE");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        await CreateAppliedPayableBasisFixtureAsync(initial, correlationId);
+        var beforePaymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+
+        using var paymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey: $"idem-pay-stale-{Guid.NewGuid():N}",
+            correlationId);
+
+        var paymentRaw = await paymentResponse.Content.ReadAsStringAsync();
+        paymentResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, paymentRaw);
+
+        var error = await paymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        error.Should().NotBeNull();
+        error!.ErrorCode.Should().Be("STALE_TARIFF_SNAPSHOT");
+
+        var afterPaymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
+        afterPaymentAttempts.Should().Be(beforePaymentAttempts);
+    }
+
+    /// <summary>
     /// Verifies a plate-resolved vendor session persists IDs that the normal CreatePaymentAttempt API can read.
     /// </summary>
     [Fact]
@@ -795,6 +867,36 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
             reader.GetDecimal(reader.GetOrdinal("applied_net_amount")));
     }
 
+    private static async Task<PaymentAttemptState?> ReadPaymentAttemptAsync(Guid paymentAttemptId)
+    {
+        const string sql = """
+            SELECT
+                parking_session_id,
+                tariff_snapshot_id,
+                amount
+            FROM core.payment_attempts
+            WHERE payment_attempt_id = @payment_attempt_id
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new PaymentAttemptState(
+            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            reader.GetDecimal(reader.GetOrdinal("amount")));
+    }
+
     private sealed record AppliedPayableBasisFixture(
         Guid ValidationId,
         Guid ApplicationId,
@@ -806,4 +908,9 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         decimal OriginalNetAmount,
         string AppliedStatus,
         decimal AppliedNetAmount);
+
+    private sealed record PaymentAttemptState(
+        Guid ParkingSessionId,
+        Guid TariffSnapshotId,
+        decimal Amount);
 }

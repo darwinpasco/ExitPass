@@ -607,6 +607,13 @@ public sealed class ResolveVendorParkingHandlerTests
             _snapshots.TryGetValue(tariffSnapshotId, out var snapshot);
             return Task.FromResult(snapshot);
         }
+
+        public Task<EffectiveTariffSnapshotResolution?> GetEffectiveAppliedTariffSnapshotAsync(
+            Guid parkingSessionId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult<EffectiveTariffSnapshotResolution?>(null);
+        }
     }
 
     private sealed class RecordingIntegrationEventPublisher : IIntegrationEventPublisher
