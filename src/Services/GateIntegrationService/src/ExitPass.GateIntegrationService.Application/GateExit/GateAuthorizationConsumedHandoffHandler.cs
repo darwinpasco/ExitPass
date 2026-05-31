@@ -115,8 +115,27 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
 
         if (!gateCommand.CanInvokeAdapter)
         {
+            var resultCode = gateCommand.Command.CommandStatus switch
+            {
+                GateCommandStatus.Succeeded => "GATE_AUTHORIZATION_CONSUMED_COMMAND_ALREADY_SUCCEEDED",
+                GateCommandStatus.TerminalFailure => "GATE_AUTHORIZATION_CONSUMED_COMMAND_TERMINAL_FAILURE",
+                GateCommandStatus.Failed => "GATE_AUTHORIZATION_CONSUMED_COMMAND_FAILED",
+                GateCommandStatus.Retryable => "GATE_AUTHORIZATION_CONSUMED_COMMAND_RETRY_NOT_READY",
+                _ => "GATE_AUTHORIZATION_CONSUMED_COMMAND_IN_PROGRESS"
+            };
+            if (gateCommand.Command.CommandStatus is GateCommandStatus.TerminalFailure or GateCommandStatus.Failed)
+            {
+                await _recorder.RecordFailedAsync(
+                    command.Handoff,
+                    resultCode,
+                    gateCommand.Command.LastFailureReason
+                        ?? gateCommand.Command.FailureReason
+                        ?? "Gate command cannot be retried by policy.",
+                    cancellationToken);
+            }
+
             activity?.SetStatus(ActivityStatusCode.Ok);
-            activity?.SetTag("result_code", "GATE_AUTHORIZATION_CONSUMED_COMMAND_IN_PROGRESS");
+            activity?.SetTag("result_code", resultCode);
             activity?.SetTag("adapter_invoked", false);
             activity?.SetTag("already_processed", false);
 
@@ -125,7 +144,7 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
                 processing.Record.ExitAuthorizationId,
                 processing.Record.GateAuthorizationConsumptionId,
                 processing.Record.TariffSnapshotId,
-                "GATE_AUTHORIZATION_CONSUMED_COMMAND_IN_PROGRESS",
+                resultCode,
                 AdapterInvoked: false,
                 AlreadyProcessed: false,
                 processing.Record.ProcessedAtUtc);

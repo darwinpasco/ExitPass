@@ -13,6 +13,7 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
 {
     private const string CommandType = "GateAuthorizationConsumed";
     private readonly string _connectionString;
+    private readonly GateCommandRetryPolicy _retryPolicy = GateCommandRetryPolicy.Default;
 
     /// <summary>
     /// Creates a durable command lifecycle recorder using the configured main database.
@@ -52,11 +53,18 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
                 vendor_system_id,
                 command_status,
                 attempt_count,
+                max_attempts,
+                retry_policy_code,
                 requested_at,
+                last_attempted_at,
                 started_at,
                 completed_at,
+                next_attempt_at,
+                terminal_failure_at,
                 failure_code,
                 failure_reason,
+                last_failure_code,
+                last_failure_reason,
                 correlation_id,
                 created_at,
                 updated_at
@@ -78,8 +86,15 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
                 @vendor_system_id,
                 'IN_PROGRESS',
                 1,
+                @max_attempts,
+                @retry_policy_code,
                 @now,
                 @now,
+                @now,
+                NULL,
+                NULL,
+                NULL,
+                NULL,
                 NULL,
                 NULL,
                 NULL,
@@ -91,36 +106,82 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
             SET
                 command_status = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
                         THEN 'IN_PROGRESS'
+                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
+                        THEN 'TERMINAL_FAILURE'
                     ELSE gates.gate_commands.command_status
                 END,
                 attempt_count = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                        THEN gates.gate_commands.attempt_count + 1
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
+                        THEN LEAST(gates.gate_commands.attempt_count + 1, gates.gate_commands.max_attempts)
                     ELSE gates.gate_commands.attempt_count
+                END,
+                last_attempted_at = CASE
+                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
+                        THEN @now
+                    ELSE gates.gate_commands.last_attempted_at
                 END,
                 started_at = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
                         THEN @now
                     ELSE gates.gate_commands.started_at
                 END,
                 completed_at = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
                         THEN NULL
+                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
+                        THEN COALESCE(gates.gate_commands.completed_at, @now)
                     ELSE gates.gate_commands.completed_at
+                END,
+                next_attempt_at = CASE
+                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
+                        THEN NULL
+                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
+                        THEN NULL
+                    ELSE gates.gate_commands.next_attempt_at
+                END,
+                terminal_failure_at = CASE
+                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
+                        THEN COALESCE(gates.gate_commands.terminal_failure_at, @now)
+                    ELSE gates.gate_commands.terminal_failure_at
                 END,
                 failure_code = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
                         THEN NULL
                     ELSE gates.gate_commands.failure_code
                 END,
                 failure_reason = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
                         THEN NULL
                     ELSE gates.gate_commands.failure_reason
                 END,
                 updated_at = CASE
                     WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
+                         AND (
+                             gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
+                             AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
+                             OR gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
+                         )
                         THEN @now
                     ELSE gates.gate_commands.updated_at
                 END
@@ -140,11 +201,18 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
                 vendor_system_id,
                 command_status,
                 attempt_count,
+                max_attempts,
+                retry_policy_code,
                 requested_at,
+                last_attempted_at,
                 started_at,
                 completed_at,
+                next_attempt_at,
+                terminal_failure_at,
                 failure_code,
                 failure_reason,
+                last_failure_code,
+                last_failure_reason,
                 correlation_id,
                 (xmax = 0) AS inserted;
             """;
@@ -187,8 +255,12 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
             SET
                 command_status = 'SUCCEEDED',
                 completed_at = @completed_at,
+                next_attempt_at = NULL,
+                terminal_failure_at = NULL,
                 failure_code = NULL,
                 failure_reason = NULL,
+                last_failure_code = NULL,
+                last_failure_reason = NULL,
                 updated_at = @completed_at
             WHERE command_id = @command_id;
             """;
@@ -217,10 +289,24 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
         const string sql = """
             UPDATE gates.gate_commands
             SET
-                command_status = @command_status,
+                command_status = CASE
+                    WHEN @retryable AND attempt_count >= max_attempts THEN 'TERMINAL_FAILURE'
+                    WHEN @retryable THEN 'RETRYABLE'
+                    ELSE 'FAILED'
+                END,
                 completed_at = @completed_at,
+                next_attempt_at = CASE
+                    WHEN @retryable AND attempt_count < max_attempts THEN @next_attempt_at
+                    ELSE NULL
+                END,
+                terminal_failure_at = CASE
+                    WHEN @retryable AND attempt_count >= max_attempts THEN @completed_at
+                    ELSE terminal_failure_at
+                END,
                 failure_code = @failure_code,
                 failure_reason = @failure_reason,
+                last_failure_code = @failure_code,
+                last_failure_reason = @failure_reason,
                 updated_at = @completed_at
             WHERE command_id = @command_id;
             """;
@@ -233,8 +319,10 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
             CommandTimeout = 30
         };
         command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = commandId;
-        command.Parameters.Add("command_status", NpgsqlDbType.Varchar).Value = retryable ? "RETRYABLE" : "FAILED";
-        command.Parameters.Add("completed_at", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.UtcNow;
+        var completedAtUtc = DateTimeOffset.UtcNow;
+        command.Parameters.Add("retryable", NpgsqlDbType.Boolean).Value = retryable;
+        command.Parameters.Add("completed_at", NpgsqlDbType.TimestampTz).Value = completedAtUtc;
+        command.Parameters.Add("next_attempt_at", NpgsqlDbType.TimestampTz).Value = completedAtUtc.Add(_retryPolicy.RetryDelay);
         command.Parameters.Add("failure_code", NpgsqlDbType.Varchar).Value = failureCode;
         command.Parameters.Add("failure_reason", NpgsqlDbType.Text).Value = failureReason;
 
@@ -262,6 +350,8 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.SiteId);
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.VendorSystemId);
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = handoff.CorrelationId;
+        command.Parameters.Add("max_attempts", NpgsqlDbType.Integer).Value = GateCommandRetryPolicy.Default.MaxAttempts;
+        command.Parameters.Add("retry_policy_code", NpgsqlDbType.Varchar).Value = GateCommandRetryPolicy.Default.PolicyCode;
         command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = now;
     }
 
@@ -283,11 +373,18 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
             ReadNullableGuid(reader, "vendor_system_id"),
             ParseStatus(reader.GetString(reader.GetOrdinal("command_status"))),
             reader.GetInt32(reader.GetOrdinal("attempt_count")),
+            reader.GetInt32(reader.GetOrdinal("max_attempts")),
+            reader.GetString(reader.GetOrdinal("retry_policy_code")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_attempted_at")),
             ReadNullableDateTimeOffset(reader, "started_at"),
             ReadNullableDateTimeOffset(reader, "completed_at"),
+            ReadNullableDateTimeOffset(reader, "next_attempt_at"),
+            ReadNullableDateTimeOffset(reader, "terminal_failure_at"),
             ReadNullableString(reader, "failure_code"),
             ReadNullableString(reader, "failure_reason"),
+            ReadNullableString(reader, "last_failure_code"),
+            ReadNullableString(reader, "last_failure_reason"),
             reader.GetGuid(reader.GetOrdinal("correlation_id")));
     }
 

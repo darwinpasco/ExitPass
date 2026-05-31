@@ -9,6 +9,7 @@ namespace ExitPass.GateIntegrationService.Infrastructure.GateExit;
 public sealed class InMemoryGateCommandLifecycleRecorder : IGateCommandLifecycleRecorder
 {
     private readonly ConcurrentDictionary<Guid, GateCommandLifecycleRecord> _commands = new();
+    private readonly GateCommandRetryPolicy _retryPolicy = GateCommandRetryPolicy.Default;
 
     /// <summary>
     /// Gets captured command lifecycle records.
@@ -40,11 +41,18 @@ public sealed class InMemoryGateCommandLifecycleRecorder : IGateCommandLifecycle
             handoff.VendorSystemId,
             GateCommandStatus.InProgress,
             AttemptCount: 1,
+            _retryPolicy.MaxAttempts,
+            _retryPolicy.PolicyCode,
             RequestedAtUtc: now,
+            LastAttemptedAtUtc: now,
             StartedAtUtc: now,
             CompletedAtUtc: null,
+            NextAttemptAtUtc: null,
+            TerminalFailureAtUtc: null,
             FailureCode: null,
             FailureReason: null,
+            LastFailureCode: null,
+            LastFailureReason: null,
             handoff.CorrelationId);
 
         var existing = _commands.GetOrAdd(processingKey, requested);
@@ -53,19 +61,34 @@ public sealed class InMemoryGateCommandLifecycleRecorder : IGateCommandLifecycle
             return Task.FromResult(new GateCommandLifecycleStart(requested, Created: true, CanInvokeAdapter: true));
         }
 
-        if (existing.CommandStatus == GateCommandStatus.Retryable || existing.CommandStatus == GateCommandStatus.Failed)
+        if (CanRetry(existing, now))
         {
             var retry = existing with
             {
                 CommandStatus = GateCommandStatus.InProgress,
                 AttemptCount = existing.AttemptCount + 1,
+                LastAttemptedAtUtc = now,
                 StartedAtUtc = now,
                 CompletedAtUtc = null,
+                NextAttemptAtUtc = null,
                 FailureCode = null,
                 FailureReason = null
             };
             _commands[processingKey] = retry;
             return Task.FromResult(new GateCommandLifecycleStart(retry, Created: false, CanInvokeAdapter: true));
+        }
+
+        if (existing.CommandStatus is GateCommandStatus.Retryable or GateCommandStatus.Failed
+            && !_retryPolicy.HasAttemptsRemaining(existing.AttemptCount))
+        {
+            var terminal = existing with
+            {
+                CommandStatus = GateCommandStatus.TerminalFailure,
+                TerminalFailureAtUtc = existing.TerminalFailureAtUtc ?? now,
+                CompletedAtUtc = existing.CompletedAtUtc ?? now
+            };
+            _commands[processingKey] = terminal;
+            return Task.FromResult(new GateCommandLifecycleStart(terminal, Created: false, CanInvokeAdapter: false));
         }
 
         return Task.FromResult(new GateCommandLifecycleStart(existing, Created: false, CanInvokeAdapter: false));
@@ -81,8 +104,12 @@ public sealed class InMemoryGateCommandLifecycleRecorder : IGateCommandLifecycle
         {
             CommandStatus = GateCommandStatus.Succeeded,
             CompletedAtUtc = completedAtUtc,
+            NextAttemptAtUtc = null,
+            TerminalFailureAtUtc = null,
             FailureCode = null,
-            FailureReason = null
+            FailureReason = null,
+            LastFailureCode = null,
+            LastFailureReason = null
         });
         return Task.CompletedTask;
     }
@@ -95,12 +122,21 @@ public sealed class InMemoryGateCommandLifecycleRecorder : IGateCommandLifecycle
         bool retryable,
         CancellationToken cancellationToken)
     {
+        var completedAtUtc = DateTimeOffset.UtcNow;
         Update(commandId, command => command with
         {
-            CommandStatus = retryable ? GateCommandStatus.Retryable : GateCommandStatus.Failed,
-            CompletedAtUtc = DateTimeOffset.UtcNow,
+            CommandStatus = ResolveFailureStatus(command, retryable),
+            CompletedAtUtc = completedAtUtc,
+            NextAttemptAtUtc = ResolveFailureStatus(command, retryable) == GateCommandStatus.Retryable
+                ? completedAtUtc.Add(_retryPolicy.RetryDelay)
+                : null,
+            TerminalFailureAtUtc = ResolveFailureStatus(command, retryable) == GateCommandStatus.TerminalFailure
+                ? completedAtUtc
+                : null,
             FailureCode = failureCode,
-            FailureReason = failureReason
+            FailureReason = failureReason,
+            LastFailureCode = failureCode,
+            LastFailureReason = failureReason
         });
         return Task.CompletedTask;
     }
@@ -115,6 +151,23 @@ public sealed class InMemoryGateCommandLifecycleRecorder : IGateCommandLifecycle
                 return;
             }
         }
+    }
+
+    private bool CanRetry(GateCommandLifecycleRecord command, DateTimeOffset now) =>
+        command.CommandStatus is GateCommandStatus.Retryable or GateCommandStatus.Failed
+        && _retryPolicy.HasAttemptsRemaining(command.AttemptCount)
+        && (!command.NextAttemptAtUtc.HasValue || command.NextAttemptAtUtc.Value <= now);
+
+    private GateCommandStatus ResolveFailureStatus(GateCommandLifecycleRecord command, bool retryable)
+    {
+        if (!retryable)
+        {
+            return GateCommandStatus.Failed;
+        }
+
+        return _retryPolicy.HasAttemptsRemaining(command.AttemptCount)
+            ? GateCommandStatus.Retryable
+            : GateCommandStatus.TerminalFailure;
     }
 
     private static Guid ResolveProcessingKey(GateAuthorizationConsumedHandoff handoff) =>

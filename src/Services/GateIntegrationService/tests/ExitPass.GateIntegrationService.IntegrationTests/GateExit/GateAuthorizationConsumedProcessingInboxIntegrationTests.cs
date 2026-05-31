@@ -67,10 +67,14 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.NotNull(command);
         Assert.Equal("SUCCEEDED", command!.Status);
         Assert.Equal(1, command.AttemptCount);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, command.MaxAttempts);
+        Assert.Equal(GateCommandRetryPolicy.Default.PolicyCode, command.RetryPolicyCode);
         Assert.Equal(AppliedTariffSnapshotId, command.TariffSnapshotId);
         Assert.Equal(GateAuthorizationConsumptionId, command.GateAuthorizationConsumptionId);
         Assert.NotNull(command.StartedAt);
         Assert.NotNull(command.CompletedAt);
+        Assert.Null(command.NextAttemptAt);
+        Assert.Null(command.TerminalFailureAt);
         Assert.Null(command.FailureCode);
     }
 
@@ -138,7 +142,11 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.NotNull(failedCommand);
         Assert.Equal("RETRYABLE", failedCommand!.Status);
         Assert.Equal(1, failedCommand.AttemptCount);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, failedCommand.MaxAttempts);
         Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", failedCommand.FailureCode);
+        Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", failedCommand.LastFailureCode);
+        Assert.NotNull(failedCommand.NextAttemptAt);
+        Assert.Null(failedCommand.TerminalFailureAt);
 
         adapter.Failure = null;
         var retry = await handler.HandleAsync(new ProcessGateAuthorizationConsumedCommand(handoff), CancellationToken.None);
@@ -155,7 +163,48 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.Equal(failedCommand.CommandId, processedCommand!.CommandId);
         Assert.Equal("SUCCEEDED", processedCommand.Status);
         Assert.Equal(2, processedCommand.AttemptCount);
+        Assert.Equal(AppliedTariffSnapshotId, processedCommand.TariffSnapshotId);
+        Assert.Null(processedCommand.NextAttemptAt);
+        Assert.Null(processedCommand.TerminalFailureAt);
         Assert.Null(processedCommand.FailureCode);
+    }
+
+    [Fact]
+    public async Task AdapterFailure_WhenRetriesAreExhausted_PersistsTerminalFailureAndBlocksFurtherAdapterInvocation()
+    {
+        var adapter = new CapturingAdapter
+        {
+            Failure = new InvalidOperationException("no-op adapter failed")
+        };
+        var handler = CreateHandler(adapter);
+        var handoff = CreateHandoff(Guid.Parse("c1000000-0000-0000-0000-000000000006"), AppliedTariffSnapshotId);
+
+        for (var attempt = 1; attempt <= GateCommandRetryPolicy.Default.MaxAttempts; attempt++)
+        {
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                handler.HandleAsync(new ProcessGateAuthorizationConsumedCommand(handoff), CancellationToken.None));
+            Assert.Equal("no-op adapter failed", ex.Message);
+        }
+
+        var terminal = await ReadCommandRowAsync(handoff.EventId);
+        Assert.NotNull(terminal);
+        Assert.Equal("TERMINAL_FAILURE", terminal!.Status);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, terminal.AttemptCount);
+        Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", terminal.LastFailureCode);
+        Assert.NotNull(terminal.TerminalFailureAt);
+        Assert.Null(terminal.NextAttemptAt);
+        Assert.Equal(AppliedTariffSnapshotId, terminal.TariffSnapshotId);
+
+        adapter.Failure = null;
+        var duplicate = await handler.HandleAsync(new ProcessGateAuthorizationConsumedCommand(handoff), CancellationToken.None);
+
+        Assert.Equal("GATE_AUTHORIZATION_CONSUMED_COMMAND_TERMINAL_FAILURE", duplicate.ResultCode);
+        Assert.False(duplicate.AdapterInvoked);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, adapter.CallCount);
+        var afterDuplicate = await ReadCommandRowAsync(handoff.EventId);
+        Assert.NotNull(afterDuplicate);
+        Assert.Equal(terminal.CommandId, afterDuplicate!.CommandId);
+        Assert.Equal("TERMINAL_FAILURE", afterDuplicate.Status);
     }
 
     [Fact]
@@ -244,7 +293,8 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
             Guid.Parse("c1000000-0000-0000-0000-000000000002"),
             Guid.Parse("c1000000-0000-0000-0000-000000000003"),
             Guid.Parse("c1000000-0000-0000-0000-000000000004"),
-            Guid.Parse("c1000000-0000-0000-0000-000000000005")
+            Guid.Parse("c1000000-0000-0000-0000-000000000005"),
+            Guid.Parse("c1000000-0000-0000-0000-000000000006")
         };
         await using var commandDelete = new NpgsqlCommand(commandSql, connection);
         commandDelete.Parameters.Add("processing_keys", NpgsqlDbType.Array | NpgsqlDbType.Uuid).Value = processingKeys;
@@ -319,9 +369,15 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
                 tariff_snapshot_id,
                 command_status,
                 attempt_count,
+                max_attempts,
+                retry_policy_code,
+                last_attempted_at,
                 started_at,
                 completed_at,
-                failure_code
+                next_attempt_at,
+                terminal_failure_at,
+                failure_code,
+                last_failure_code
             FROM gates.gate_commands
             WHERE source_processing_id = @source_processing_id
               AND command_type = 'GateAuthorizationConsumed'
@@ -345,15 +401,27 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
             reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
             reader.GetString(reader.GetOrdinal("command_status")),
             reader.GetInt32(reader.GetOrdinal("attempt_count")),
+            reader.GetInt32(reader.GetOrdinal("max_attempts")),
+            reader.GetString(reader.GetOrdinal("retry_policy_code")),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_attempted_at")),
             reader.IsDBNull(reader.GetOrdinal("started_at"))
                 ? null
                 : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("started_at")),
             reader.IsDBNull(reader.GetOrdinal("completed_at"))
                 ? null
                 : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("completed_at")),
+            reader.IsDBNull(reader.GetOrdinal("next_attempt_at"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("next_attempt_at")),
+            reader.IsDBNull(reader.GetOrdinal("terminal_failure_at"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("terminal_failure_at")),
             reader.IsDBNull(reader.GetOrdinal("failure_code"))
                 ? null
-                : reader.GetString(reader.GetOrdinal("failure_code")));
+                : reader.GetString(reader.GetOrdinal("failure_code")),
+            reader.IsDBNull(reader.GetOrdinal("last_failure_code"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("last_failure_code")));
     }
 
     private sealed record CommandRow(
@@ -362,9 +430,15 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Guid TariffSnapshotId,
         string Status,
         int AttemptCount,
+        int MaxAttempts,
+        string RetryPolicyCode,
+        DateTimeOffset LastAttemptedAt,
         DateTimeOffset? StartedAt,
         DateTimeOffset? CompletedAt,
-        string? FailureCode);
+        DateTimeOffset? NextAttemptAt,
+        DateTimeOffset? TerminalFailureAt,
+        string? FailureCode,
+        string? LastFailureCode);
 
     private sealed class CapturingAdapter : IConsumedAuthorizationGateActionAdapter
     {

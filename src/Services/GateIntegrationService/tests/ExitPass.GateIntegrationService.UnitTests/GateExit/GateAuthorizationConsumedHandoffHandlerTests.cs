@@ -186,6 +186,95 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         var command = Assert.Single(fixture.CommandRecorder.Commands);
         Assert.Equal(GateCommandStatus.Retryable, command.CommandStatus);
         Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", command.FailureCode);
+        Assert.Equal(1, command.AttemptCount);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, command.MaxAttempts);
+        Assert.NotNull(command.NextAttemptAtUtc);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenRetryableCommandSucceeds_ReusesCommandAndPreservesAppliedSnapshot()
+    {
+        var fixture = new Fixture
+        {
+            AdapterFailure = new InvalidOperationException("adapter failed")
+        };
+        var handoff = CreateHandoff(AppliedTariffSnapshotId);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Sut.HandleAsync(
+                new ProcessGateAuthorizationConsumedCommand(handoff),
+                CancellationToken.None));
+        var failedCommand = Assert.Single(fixture.CommandRecorder.Commands);
+
+        fixture.AdapterFailure = null;
+        var result = await fixture.Sut.HandleAsync(
+            new ProcessGateAuthorizationConsumedCommand(handoff),
+            CancellationToken.None);
+
+        Assert.Equal("GATE_AUTHORIZATION_CONSUMED_PROCESSED", result.ResultCode);
+        Assert.True(result.AdapterInvoked);
+        Assert.Equal(2, fixture.Adapter.CallCount);
+        var command = Assert.Single(fixture.CommandRecorder.Commands);
+        Assert.Equal(failedCommand.CommandId, command.CommandId);
+        Assert.Equal(GateCommandStatus.Succeeded, command.CommandStatus);
+        Assert.Equal(2, command.AttemptCount);
+        Assert.Equal(AppliedTariffSnapshotId, command.TariffSnapshotId);
+        Assert.Null(command.NextAttemptAtUtc);
+        Assert.Null(command.FailureCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenRetryAttemptsAreExhausted_TerminalFailurePreventsFurtherAdapterInvocation()
+    {
+        var fixture = new Fixture
+        {
+            AdapterFailure = new InvalidOperationException("adapter failed")
+        };
+        var handoff = CreateHandoff(AppliedTariffSnapshotId);
+
+        for (var attempt = 1; attempt <= GateCommandRetryPolicy.Default.MaxAttempts; attempt++)
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                fixture.Sut.HandleAsync(
+                    new ProcessGateAuthorizationConsumedCommand(handoff),
+                    CancellationToken.None));
+        }
+
+        var terminal = Assert.Single(fixture.CommandRecorder.Commands);
+        Assert.Equal(GateCommandStatus.TerminalFailure, terminal.CommandStatus);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, terminal.AttemptCount);
+        Assert.NotNull(terminal.TerminalFailureAtUtc);
+        Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", terminal.LastFailureCode);
+
+        fixture.AdapterFailure = null;
+        var duplicate = await fixture.Sut.HandleAsync(
+            new ProcessGateAuthorizationConsumedCommand(handoff),
+            CancellationToken.None);
+
+        Assert.Equal("GATE_AUTHORIZATION_CONSUMED_COMMAND_TERMINAL_FAILURE", duplicate.ResultCode);
+        Assert.False(duplicate.AdapterInvoked);
+        Assert.Equal(GateCommandRetryPolicy.Default.MaxAttempts, fixture.Adapter.CallCount);
+        var afterDuplicate = Assert.Single(fixture.CommandRecorder.Commands);
+        Assert.Equal(terminal.CommandId, afterDuplicate.CommandId);
+        Assert.Equal(GateCommandStatus.TerminalFailure, afterDuplicate.CommandStatus);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenCommandIsAlreadyInProgress_DoesNotInvokeAdapter()
+    {
+        var fixture = new Fixture();
+        var handoff = CreateHandoff(AppliedTariffSnapshotId);
+        var command = await fixture.CommandRecorder.BeginCommandAsync(handoff, CancellationToken.None);
+
+        var result = await fixture.Sut.HandleAsync(
+            new ProcessGateAuthorizationConsumedCommand(handoff),
+            CancellationToken.None);
+
+        Assert.True(command.CanInvokeAdapter);
+        Assert.Equal("GATE_AUTHORIZATION_CONSUMED_COMMAND_IN_PROGRESS", result.ResultCode);
+        Assert.False(result.AdapterInvoked);
+        Assert.Equal(0, fixture.Adapter.CallCount);
+        Assert.Single(fixture.CommandRecorder.Commands);
     }
 
     public static IEnumerable<object[]> MissingRequiredFieldCases()
@@ -369,6 +458,7 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
     private sealed class InMemoryCommandRecorder : IGateCommandLifecycleRecorder
     {
         private readonly Dictionary<Guid, GateCommandLifecycleRecord> _commands = new();
+        private readonly GateCommandRetryPolicy _retryPolicy = GateCommandRetryPolicy.Default;
 
         public IReadOnlyCollection<GateCommandLifecycleRecord> Commands => _commands.Values;
 
@@ -379,19 +469,36 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
             var processingKey = handoff.ProcessingKey();
             if (_commands.TryGetValue(processingKey, out var existing))
             {
-                if (existing.CommandStatus is GateCommandStatus.Failed or GateCommandStatus.Retryable)
+                if (existing.CommandStatus is GateCommandStatus.Failed or GateCommandStatus.Retryable
+                    && existing.AttemptCount < existing.MaxAttempts)
                 {
+                    var retryStartedAtUtc = DateTimeOffset.UtcNow;
                     var retry = existing with
                     {
                         CommandStatus = GateCommandStatus.InProgress,
                         AttemptCount = existing.AttemptCount + 1,
-                        StartedAtUtc = DateTimeOffset.UtcNow,
+                        LastAttemptedAtUtc = retryStartedAtUtc,
+                        StartedAtUtc = retryStartedAtUtc,
                         CompletedAtUtc = null,
+                        NextAttemptAtUtc = null,
                         FailureCode = null,
                         FailureReason = null
                     };
                     _commands[processingKey] = retry;
                     return Task.FromResult(new GateCommandLifecycleStart(retry, Created: false, CanInvokeAdapter: true));
+                }
+
+                if (existing.CommandStatus is GateCommandStatus.Failed or GateCommandStatus.Retryable)
+                {
+                    var terminal = existing with
+                    {
+                        CommandStatus = GateCommandStatus.TerminalFailure,
+                        CompletedAtUtc = existing.CompletedAtUtc ?? DateTimeOffset.UtcNow,
+                        NextAttemptAtUtc = null,
+                        TerminalFailureAtUtc = existing.TerminalFailureAtUtc ?? DateTimeOffset.UtcNow
+                    };
+                    _commands[processingKey] = terminal;
+                    return Task.FromResult(new GateCommandLifecycleStart(terminal, Created: false, CanInvokeAdapter: false));
                 }
 
                 return Task.FromResult(new GateCommandLifecycleStart(existing, Created: false, CanInvokeAdapter: false));
@@ -414,11 +521,18 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
                 handoff.VendorSystemId,
                 GateCommandStatus.InProgress,
                 AttemptCount: 1,
+                _retryPolicy.MaxAttempts,
+                _retryPolicy.PolicyCode,
                 RequestedAtUtc: now,
+                LastAttemptedAtUtc: now,
                 StartedAtUtc: now,
                 CompletedAtUtc: null,
+                NextAttemptAtUtc: null,
+                TerminalFailureAtUtc: null,
                 FailureCode: null,
                 FailureReason: null,
+                LastFailureCode: null,
+                LastFailureReason: null,
                 handoff.CorrelationId);
             _commands[processingKey] = command;
             return Task.FromResult(new GateCommandLifecycleStart(command, Created: true, CanInvokeAdapter: true));
@@ -433,8 +547,12 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
             {
                 CommandStatus = GateCommandStatus.Succeeded,
                 CompletedAtUtc = completedAtUtc,
+                NextAttemptAtUtc = null,
+                TerminalFailureAtUtc = null,
                 FailureCode = null,
-                FailureReason = null
+                FailureReason = null,
+                LastFailureCode = null,
+                LastFailureReason = null
             });
             return Task.CompletedTask;
         }
@@ -446,12 +564,28 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
             bool retryable,
             CancellationToken cancellationToken)
         {
+            var current = _commands.Values.Single(command => command.CommandId == commandId);
+            var completedAtUtc = DateTimeOffset.UtcNow;
+            var status = retryable
+                ? current.AttemptCount < current.MaxAttempts
+                    ? GateCommandStatus.Retryable
+                    : GateCommandStatus.TerminalFailure
+                : GateCommandStatus.Failed;
+
             Update(commandId, command => command with
             {
-                CommandStatus = retryable ? GateCommandStatus.Retryable : GateCommandStatus.Failed,
-                CompletedAtUtc = DateTimeOffset.UtcNow,
+                CommandStatus = status,
+                CompletedAtUtc = completedAtUtc,
+                NextAttemptAtUtc = status == GateCommandStatus.Retryable
+                    ? completedAtUtc.Add(_retryPolicy.RetryDelay)
+                    : null,
+                TerminalFailureAtUtc = status == GateCommandStatus.TerminalFailure
+                    ? completedAtUtc
+                    : null,
                 FailureCode = failureCode,
-                FailureReason = failureReason
+                FailureReason = failureReason,
+                LastFailureCode = failureCode,
+                LastFailureReason = failureReason
             });
             return Task.CompletedTask;
         }
