@@ -103,6 +103,8 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
 
+            await ValidateConfirmedPaymentAttemptPayableBasisAsync(connection, request, cancellationToken);
+
             await using var dbCommand = new NpgsqlCommand(sql, connection)
             {
                 CommandTimeout = 30
@@ -144,6 +146,21 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
 
             return result;
         }
+        catch (Exception ex) when (ex is KeyNotFoundException or ExitAuthorizationIssuanceConflictException)
+        {
+            var duration = DateTimeOffset.UtcNow - startedAt;
+
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            activity?.SetTag("db.duration_ms", duration.TotalMilliseconds);
+
+            _logger.LogWarning(
+                ex,
+                "DB IssueExitAuthorization rejected by deterministic business rules. payment_attempt_id={PaymentAttemptId}",
+                request.PaymentAttemptId);
+
+            throw;
+        }
         catch (Exception ex)
         {
             var duration = DateTimeOffset.UtcNow - startedAt;
@@ -158,6 +175,149 @@ public sealed class IssueExitAuthorizationGateway : IIssueExitAuthorizationGatew
                 request.PaymentAttemptId);
 
             throw;
+        }
+    }
+
+    private static async Task ValidateConfirmedPaymentAttemptPayableBasisAsync(
+        NpgsqlConnection connection,
+        IssueExitAuthorizationDbRequest request,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                pa.payment_attempt_id,
+                pa.parking_session_id AS attempt_parking_session_id,
+                pa.tariff_snapshot_id,
+                pa.amount AS attempt_amount,
+                pa.currency_code::text AS attempt_currency_code,
+                pa.attempt_status::text AS attempt_status,
+                pa.finalized_at,
+                ps.session_status::text AS session_status,
+                ts.tariff_snapshot_id AS persisted_tariff_snapshot_id,
+                ts.parking_session_id AS tariff_parking_session_id,
+                ts.net_amount AS tariff_net_amount,
+                ts.currency_code::text AS tariff_currency_code,
+                pc.payment_confirmation_id,
+                pc.confirmed_amount,
+                pc.currency_code::text AS confirmation_currency_code
+            FROM core.payment_attempts AS pa
+            LEFT JOIN core.parking_sessions AS ps
+                ON ps.parking_session_id = pa.parking_session_id
+            LEFT JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
+            LEFT JOIN LATERAL (
+                SELECT
+                    payment_confirmation_id,
+                    confirmed_amount,
+                    currency_code
+                FROM core.payment_confirmations
+                WHERE payment_attempt_id = pa.payment_attempt_id
+                  AND confirmation_status = 'RECORDED'
+                ORDER BY confirmed_at DESC, created_at DESC
+                LIMIT 1
+            ) AS pc ON TRUE
+            WHERE pa.payment_attempt_id = @payment_attempt_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("payment_attempt_id", request.PaymentAttemptId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new KeyNotFoundException($"payment attempt {request.PaymentAttemptId} was not found");
+        }
+
+        var attemptParkingSessionId = reader.GetGuid(reader.GetOrdinal("attempt_parking_session_id"));
+        if (attemptParkingSessionId != request.ParkingSessionId)
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_PARKING_SESSION_MISMATCH",
+                "Payment attempt does not belong to the requested parking session.");
+        }
+
+        var attemptStatus = reader.GetString(reader.GetOrdinal("attempt_status"));
+        if (!string.Equals(attemptStatus, "CONFIRMED", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_NOT_CONFIRMED",
+                "Payment attempt is not confirmed and cannot issue exit authorization.");
+        }
+
+        if (reader.IsDBNull(reader.GetOrdinal("finalized_at")))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_NOT_FINALIZED",
+                "Payment attempt is not finalized and cannot issue exit authorization.");
+        }
+
+        if (reader.IsDBNull(reader.GetOrdinal("persisted_tariff_snapshot_id")))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_TARIFF_SNAPSHOT_MISSING",
+                "Payment attempt does not have a persisted tariff snapshot.");
+        }
+
+        var tariffParkingSessionId = reader.GetGuid(reader.GetOrdinal("tariff_parking_session_id"));
+        if (attemptParkingSessionId != tariffParkingSessionId)
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_TARIFF_SNAPSHOT_MISMATCH",
+                "Payment attempt tariff snapshot belongs to a different parking session.");
+        }
+
+        var sessionStatusOrdinal = reader.GetOrdinal("session_status");
+        if (reader.IsDBNull(sessionStatusOrdinal) ||
+            !string.Equals(reader.GetString(sessionStatusOrdinal), "ACTIVE", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PARKING_SESSION_NOT_ELIGIBLE_FOR_EXIT",
+                "Parking session is not eligible for exit authorization.");
+        }
+
+        var attemptAmount = reader.GetDecimal(reader.GetOrdinal("attempt_amount"));
+        var tariffAmount = reader.GetDecimal(reader.GetOrdinal("tariff_net_amount"));
+        if (attemptAmount != tariffAmount)
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_AMOUNT_MISMATCH",
+                "Payment attempt amount does not match its persisted tariff snapshot payable amount.");
+        }
+
+        var attemptCurrency = reader.GetString(reader.GetOrdinal("attempt_currency_code")).Trim();
+        var tariffCurrency = reader.GetString(reader.GetOrdinal("tariff_currency_code")).Trim();
+        if (!string.Equals(attemptCurrency, tariffCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_CURRENCY_MISMATCH",
+                "Payment attempt currency does not match its persisted tariff snapshot currency.");
+        }
+
+        if (reader.IsDBNull(reader.GetOrdinal("payment_confirmation_id")))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_ATTEMPT_NOT_CONFIRMED",
+                "Payment attempt has no recorded payment confirmation.");
+        }
+
+        var confirmedAmount = reader.GetDecimal(reader.GetOrdinal("confirmed_amount"));
+        if (confirmedAmount != attemptAmount)
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_AMOUNT_MISMATCH",
+                "Payment confirmation amount does not match the payment attempt amount.");
+        }
+
+        var confirmationCurrency = reader.GetString(reader.GetOrdinal("confirmation_currency_code")).Trim();
+        if (!string.Equals(confirmationCurrency, attemptCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ExitAuthorizationIssuanceConflictException(
+                "PAYMENT_CURRENCY_MISMATCH",
+                "Payment confirmation currency does not match the payment attempt currency.");
         }
     }
 }
