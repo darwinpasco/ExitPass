@@ -1620,6 +1620,50 @@ SET site_group_id = EXCLUDED.site_group_id,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
+DELETE FROM gates.gate_authorization_consumptions
+WHERE exit_authorization_id IN (
+    SELECT exit_authorization_id
+    FROM core.exit_authorizations
+    WHERE parking_session_id IN (
+        '77000000-0000-0000-0000-000000000306',
+        '77000000-0000-0000-0000-000000000307',
+        '77000000-0000-0000-0000-000000000308',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000314',
+        '77000000-0000-0000-0000-000000000315',
+        '77000000-0000-0000-0000-000000000316'
+    )
+);
+
+DELETE FROM core.exit_authorizations
+WHERE parking_session_id IN (
+    '77000000-0000-0000-0000-000000000306',
+    '77000000-0000-0000-0000-000000000307',
+    '77000000-0000-0000-0000-000000000308',
+    '77000000-0000-0000-0000-000000000312',
+    '77000000-0000-0000-0000-000000000313',
+    '77000000-0000-0000-0000-000000000314',
+    '77000000-0000-0000-0000-000000000315',
+    '77000000-0000-0000-0000-000000000316'
+);
+
+DELETE FROM core.payment_confirmations
+WHERE payment_attempt_id IN (
+    SELECT payment_attempt_id
+    FROM core.payment_attempts
+    WHERE parking_session_id IN (
+        '77000000-0000-0000-0000-000000000306',
+        '77000000-0000-0000-0000-000000000307',
+        '77000000-0000-0000-0000-000000000308',
+        '77000000-0000-0000-0000-000000000312',
+        '77000000-0000-0000-0000-000000000313',
+        '77000000-0000-0000-0000-000000000314',
+        '77000000-0000-0000-0000-000000000315',
+        '77000000-0000-0000-0000-000000000316'
+    )
+);
+
 DELETE FROM core.payment_attempts
 WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000306',

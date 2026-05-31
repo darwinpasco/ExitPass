@@ -5,6 +5,7 @@ vars {
   internalPaymentConfirmationBaseUrl: http://127.0.0.1:56065
   internalPaymentFinalizationBaseUrl: http://127.0.0.1:56065
   internalPaymentOutcomeBaseUrl: http://127.0.0.1:56065
+  internalExitAuthorizationBaseUrl: http://127.0.0.1:56065
   vendorSystemId_manual: 77000000-0000-0000-0000-000000000004
   userId_allowed: 77000000-0000-0000-0000-000000000010
   userId_inactiveHrMapping: 77000000-0000-0000-0000-000000000011
@@ -129,6 +130,36 @@ vars {
   paymentFinalityPaymentConfirmationId_noDiscount: 00000000-0000-0000-0000-000000000000
   paymentFinalityProviderReferenceNoDiscount: manual-paymongo-finality-no-discount
   paymentFinalityIdempotencyKeyNoDiscount: manual-payment-finality-no-discount
+  exitAuthorizationRequestedByUserId: 77000000-0000-0000-0000-000000000003
+  exitAuthorizationParkingSessionId_applied: 77000000-0000-0000-0000-000000000316
+  exitAuthorizationTariffSnapshotId_appliedEffective: 77000000-0000-0000-0000-000000000506
+  exitAuthorizationOriginalTariffSnapshotId: 77000000-0000-0000-0000-000000000406
+  exitAuthorizationAmountMinorUnits_appliedEffective: 8929
+  exitAuthorizationAmountMajorUnits_appliedEffective: 89.29
+  exitAuthorizationCurrencyCode: PHP
+  exitAuthorizationPaymentAttemptId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationPaymentConfirmationId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationProviderReference: manual-paymongo-exit-auth-applied-effective
+  exitAuthorizationIdempotencyKeyPaymentAttempt: manual-exit-auth-applied-effective-payment-attempt
+  exitAuthorizationIdempotencyKeyConfirmation: manual-exit-auth-applied-effective-confirmation
+  exitAuthorizationIdempotencyKeyFinalization: manual-exit-auth-applied-effective-finalization
+  exitAuthorizationIdempotencyKeyIssue: manual-exit-auth-applied-effective-issue
+  exitAuthorizationIdempotencyKeyIssueReplay: manual-exit-auth-applied-effective-issue-replay
+  exitAuthorizationUnconfirmedPaymentAttemptId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationUnconfirmedIssueIdempotencyKey: manual-exit-auth-unconfirmed-issue
+  exitAuthorizationNoDiscountParkingSessionId: 77000000-0000-0000-0000-000000000308
+  exitAuthorizationNoDiscountTariffSnapshotId: 77000000-0000-0000-0000-000000000398
+  exitAuthorizationNoDiscountAmountMinorUnits: 12500
+  exitAuthorizationNoDiscountAmountMajorUnits: 125.00
+  exitAuthorizationNoDiscountPaymentAttemptId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationNoDiscountPaymentConfirmationId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationNoDiscountId: 00000000-0000-0000-0000-000000000000
+  exitAuthorizationNoDiscountProviderReference: manual-paymongo-exit-auth-no-discount
+  exitAuthorizationNoDiscountIdempotencyKeyPaymentAttempt: manual-exit-auth-no-discount-payment-attempt
+  exitAuthorizationNoDiscountIdempotencyKeyConfirmation: manual-exit-auth-no-discount-confirmation
+  exitAuthorizationNoDiscountIdempotencyKeyFinalization: manual-exit-auth-no-discount-finalization
+  exitAuthorizationNoDiscountIdempotencyKeyIssue: manual-exit-auth-no-discount-issue
   seniorEntitlementType: SENIOR_CITIZEN
   pwdEntitlementType: PWD
   unsupportedEntitlementType: OTHER_STATUTORY

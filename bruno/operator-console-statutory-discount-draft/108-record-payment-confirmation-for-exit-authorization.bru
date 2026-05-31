@@ -1,0 +1,43 @@
+meta {
+  name: 108 Record payment confirmation for exit authorization
+  type: http
+  seq: 108
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationIdempotencyKeyConfirmation}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{exitAuthorizationPaymentAttemptId}}",
+    "providerReference": "{{exitAuthorizationProviderReference}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-exit-auth-applied-effective",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{exitAuthorizationAmountMajorUnits_appliedEffective}},
+    "currencyCode": "{{exitAuthorizationCurrencyCode}}"
+  }
+}
+
+tests {
+  test("confirmation succeeds for the exit authorization APPLIED tariff payment attempt", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentConfirmationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("exitAuthorizationPaymentAttemptId"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("exitAuthorizationProviderReference"));
+    expect(res.body.confirmationStatus).to.equal("RECORDED");
+
+    bru.setEnvVar("exitAuthorizationPaymentConfirmationId", res.body.paymentConfirmationId);
+  });
+}

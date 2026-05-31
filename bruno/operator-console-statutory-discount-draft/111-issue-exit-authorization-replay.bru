@@ -1,0 +1,33 @@
+meta {
+  name: 111 Issue exit authorization replay
+  type: http
+  seq: 111
+}
+
+post {
+  url: {{internalExitAuthorizationBaseUrl}}/v1/internal/payment-attempts/{{exitAuthorizationPaymentAttemptId}}/issue-exit-authorization
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationIdempotencyKeyIssueReplay}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{exitAuthorizationParkingSessionId_applied}}",
+    "requestedByUserId": "{{exitAuthorizationRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("exit authorization replay returns the existing issued authorization", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.exitAuthorizationId).to.equal(bru.getEnvVar("exitAuthorizationId"));
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("exitAuthorizationPaymentAttemptId"));
+    expect(res.body.authorizationStatus).to.equal("ISSUED");
+  });
+}
