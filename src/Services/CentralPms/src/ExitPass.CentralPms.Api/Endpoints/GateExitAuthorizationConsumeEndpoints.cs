@@ -255,6 +255,39 @@ public static class GateExitAuthorizationConsumeEndpoints
                 correlationId,
                 retryable: false));
         }
+        catch (KeyNotFoundException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", "EXIT_AUTHORIZATION_NOT_FOUND");
+
+            logger.LogWarning(ex, "Exit authorization not found.");
+
+            return Results.NotFound(BuildError(
+                "EXIT_AUTHORIZATION_NOT_FOUND",
+                "Exit authorization was not found.",
+                correlationId,
+                retryable: false));
+        }
+        catch (ExitAuthorizationConsumeConflictException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            activity?.SetTag("failure_class", "BUSINESS_REJECTION");
+            activity?.SetTag("error_code", ex.ErrorCode);
+
+            logger.LogWarning(
+                ex,
+                "Exit authorization consume rejected by pre-persistence validation. error_code={ErrorCode}",
+                ex.ErrorCode);
+
+            return Results.Conflict(BuildError(
+                ex.ErrorCode,
+                ex.Message,
+                correlationId,
+                retryable: false));
+        }
         catch (Npgsql.PostgresException ex) when (
             ex.SqlState == "P0001" &&
             ex.MessageText.Contains("is expired", StringComparison.OrdinalIgnoreCase))
