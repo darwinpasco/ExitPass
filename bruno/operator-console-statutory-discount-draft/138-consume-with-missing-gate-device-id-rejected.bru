@@ -1,0 +1,30 @@
+meta {
+  name: 138 Consume with missing gate device id rejected
+  type: http
+  seq: 138
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeWrongGateFixtureExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeMissingGateDeviceCorrelationId}}
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("missing gate device header is rejected before consume persistence", function () {
+    expect(res.status).to.equal(401);
+    expect(res.body.errorCode).to.equal("GATE_DEVICE_IDENTITY_REQUIRED");
+  });
+}

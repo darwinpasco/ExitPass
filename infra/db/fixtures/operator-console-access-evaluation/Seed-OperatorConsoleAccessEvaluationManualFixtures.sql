@@ -167,6 +167,44 @@ SET service_identity_code = EXCLUDED.service_identity_code,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();
 
+INSERT INTO identity.service_identities (
+    service_identity_id,
+    service_identity_code,
+    service_identity_name,
+    identity_type,
+    identity_status,
+    owning_service_name,
+    credential_type,
+    effective_from,
+    effective_to,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000007',
+    'MANUAL_TEST_GATE_CONSUME_WRONG_SITE_DEVICE',
+    'Manual Test Gate Consume Wrong Site Device Identity',
+    'DEVICE',
+    'ACTIVE',
+    'Central PMS Manual Fixtures',
+    'NONE',
+    '2020-01-01T00:00:00Z',
+    '2035-01-01T00:00:00Z',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT (service_identity_id) DO UPDATE
+SET service_identity_code = EXCLUDED.service_identity_code,
+    service_identity_name = EXCLUDED.service_identity_name,
+    identity_type = EXCLUDED.identity_type,
+    identity_status = EXCLUDED.identity_status,
+    owning_service_name = EXCLUDED.owning_service_name,
+    credential_type = EXCLUDED.credential_type,
+    effective_from = EXCLUDED.effective_from,
+    effective_to = EXCLUDED.effective_to,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
 INSERT INTO integration.vendor_systems (
     vendor_system_id,
     vendor_code,
@@ -892,6 +930,137 @@ VALUES (
     'GATE_DEVICE',
     'ACTIVE',
     'MANUAL_TEST_GATE_CONSUME',
+    '2020-01-01T00:00:00Z',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT ON CONSTRAINT pk_device_assignments
+DO UPDATE SET
+    site_id = EXCLUDED.site_id,
+    lane_id = EXCLUDED.lane_id,
+    gate_device_id = EXCLUDED.gate_device_id,
+    service_identity_id = EXCLUDED.service_identity_id,
+    assignment_type = EXCLUDED.assignment_type,
+    assignment_status = EXCLUDED.assignment_status,
+    assignment_reason_code = EXCLUDED.assignment_reason_code,
+    assigned_at = EXCLUDED.assigned_at,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
+INSERT INTO sites.lanes (
+    lane_id,
+    site_id,
+    lane_code,
+    lane_name,
+    lane_description,
+    lane_type,
+    lane_direction,
+    lane_status,
+    display_order,
+    effective_from,
+    effective_to,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000602',
+    '77000000-0000-0000-0000-000000000202',
+    'MANUAL_TEST_WRONG_SITE_EXIT_LANE_01',
+    'Manual Test Wrong Site Exit Lane 01',
+    'Synthetic outbound lane for negative gate consume site-scope smoke tests.',
+    'EXIT',
+    'OUTBOUND',
+    'ACTIVE',
+    1,
+    '2020-01-01T00:00:00Z',
+    '2035-01-01T00:00:00Z',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT (lane_id) DO UPDATE
+SET site_id = EXCLUDED.site_id,
+    lane_code = EXCLUDED.lane_code,
+    lane_name = EXCLUDED.lane_name,
+    lane_description = EXCLUDED.lane_description,
+    lane_type = EXCLUDED.lane_type,
+    lane_direction = EXCLUDED.lane_direction,
+    lane_status = EXCLUDED.lane_status,
+    display_order = EXCLUDED.display_order,
+    effective_from = EXCLUDED.effective_from,
+    effective_to = EXCLUDED.effective_to,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
+INSERT INTO gates.gate_devices (
+    gate_device_id,
+    site_id,
+    lane_id,
+    service_identity_id,
+    device_code,
+    device_name,
+    device_type,
+    vendor_device_ref,
+    serial_number,
+    device_status,
+    installed_at,
+    activated_at,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000702',
+    '77000000-0000-0000-0000-000000000202',
+    '77000000-0000-0000-0000-000000000602',
+    '77000000-0000-0000-0000-000000000007',
+    'MANUAL_TEST_WRONG_SITE_EXIT_GATE_01',
+    'Manual Test Wrong Site Exit Gate 01',
+    'BARRIER_CONTROLLER',
+    'MANUAL-TEST-WRONG-SITE-EXIT-GATE-01',
+    'MANUAL-GATE-CONSUME-WRONG-SITE-SN-01',
+    'ACTIVE',
+    '2020-01-01T00:00:00Z',
+    '2020-01-01T00:00:00Z',
+    '77000000-0000-0000-0000-000000000003',
+    '77000000-0000-0000-0000-000000000003'
+)
+ON CONFLICT ON CONSTRAINT uq_gate_devices__site_device_code
+DO UPDATE SET
+    lane_id = EXCLUDED.lane_id,
+    service_identity_id = EXCLUDED.service_identity_id,
+    device_name = EXCLUDED.device_name,
+    device_type = EXCLUDED.device_type,
+    vendor_device_ref = EXCLUDED.vendor_device_ref,
+    serial_number = EXCLUDED.serial_number,
+    device_status = EXCLUDED.device_status,
+    installed_at = EXCLUDED.installed_at,
+    activated_at = EXCLUDED.activated_at,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
+INSERT INTO sites.device_assignments (
+    device_assignment_id,
+    site_id,
+    lane_id,
+    gate_device_id,
+    service_identity_id,
+    assignment_type,
+    assignment_status,
+    assignment_reason_code,
+    assigned_at,
+    assigned_by_service_identity_id,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES (
+    '77000000-0000-0000-0000-000000000802',
+    '77000000-0000-0000-0000-000000000202',
+    '77000000-0000-0000-0000-000000000602',
+    '77000000-0000-0000-0000-000000000702',
+    '77000000-0000-0000-0000-000000000007',
+    'GATE_DEVICE',
+    'ACTIVE',
+    'MANUAL_TEST_GATE_CONSUME_WRONG_SITE',
     '2020-01-01T00:00:00Z',
     '77000000-0000-0000-0000-000000000003',
     '77000000-0000-0000-0000-000000000003',
@@ -1772,6 +1941,40 @@ VALUES
         '77000000-0000-0000-0000-0000000003d0',
         '77000000-0000-0000-0000-000000000003',
         '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000001',
+        '77000000-0000-0000-0000-000000000201',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-GATE-CONSUME-EXPIRED-AUTH',
+        '7700000000000000000000000000031777000000000000000000000000000317',
+        'GCS-317',
+        '7700000000000000000000000000031777000000000000000000000000001317',
+        'MANUAL-GATE-CONSUME-EXPIRED-AUTH',
+        '2026-05-29T00:00:00Z',
+        'ACTIVE',
+        'ACTIVE',
+        '77000000-0000-0000-0000-0000000003d1',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000318',
+        '77000000-0000-0000-0000-000000000001',
+        '77000000-0000-0000-0000-000000000201',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-GATE-CONSUME-WRONG-GATE',
+        '7700000000000000000000000000031877000000000000000000000000000318',
+        'GCS-318',
+        '7700000000000000000000000000031877000000000000000000000000001318',
+        'MANUAL-GATE-CONSUME-WRONG-GATE',
+        '2026-05-29T00:00:00Z',
+        'ACTIVE',
+        'ACTIVE',
+        '77000000-0000-0000-0000-0000000003d2',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
     )
 ON CONFLICT (parking_session_id) DO UPDATE
 SET site_group_id = EXCLUDED.site_group_id,
@@ -1801,7 +2004,9 @@ WHERE exit_authorization_id IN (
         '77000000-0000-0000-0000-000000000313',
         '77000000-0000-0000-0000-000000000314',
         '77000000-0000-0000-0000-000000000315',
-        '77000000-0000-0000-0000-000000000316'
+        '77000000-0000-0000-0000-000000000316',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000318'
     )
 );
 
@@ -1817,7 +2022,9 @@ WHERE exit_authorization_id IN (
         '77000000-0000-0000-0000-000000000313',
         '77000000-0000-0000-0000-000000000314',
         '77000000-0000-0000-0000-000000000315',
-        '77000000-0000-0000-0000-000000000316'
+        '77000000-0000-0000-0000-000000000316',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000318'
     )
 );
 
@@ -1830,7 +2037,9 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000313',
     '77000000-0000-0000-0000-000000000314',
     '77000000-0000-0000-0000-000000000315',
-    '77000000-0000-0000-0000-000000000316'
+    '77000000-0000-0000-0000-000000000316',
+    '77000000-0000-0000-0000-000000000317',
+    '77000000-0000-0000-0000-000000000318'
 );
 
 DELETE FROM core.payment_confirmations
@@ -1845,7 +2054,9 @@ WHERE payment_attempt_id IN (
         '77000000-0000-0000-0000-000000000313',
         '77000000-0000-0000-0000-000000000314',
         '77000000-0000-0000-0000-000000000315',
-        '77000000-0000-0000-0000-000000000316'
+        '77000000-0000-0000-0000-000000000316',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000318'
     )
 );
 
@@ -1858,7 +2069,9 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000313',
     '77000000-0000-0000-0000-000000000314',
     '77000000-0000-0000-0000-000000000315',
-    '77000000-0000-0000-0000-000000000316'
+    '77000000-0000-0000-0000-000000000316',
+    '77000000-0000-0000-0000-000000000317',
+    '77000000-0000-0000-0000-000000000318'
 );
 
 DELETE FROM discounts.statutory_discount_payable_basis_applications
@@ -1928,7 +2141,9 @@ WHERE parking_session_id IN (
 '77000000-0000-0000-0000-000000000313',
 '77000000-0000-0000-0000-000000000314',
 '77000000-0000-0000-0000-000000000315',
-'77000000-0000-0000-0000-000000000316'
+'77000000-0000-0000-0000-000000000316',
+'77000000-0000-0000-0000-000000000317',
+'77000000-0000-0000-0000-000000000318'
 )
   AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
   AND validation_channel = 'OPERATOR_ASSISTED';
@@ -1951,9 +2166,11 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000311',
     '77000000-0000-0000-0000-000000000312',
     '77000000-0000-0000-0000-000000000313',
-    '77000000-0000-0000-0000-000000000314',
-    '77000000-0000-0000-0000-000000000315',
-    '77000000-0000-0000-0000-000000000316'
+        '77000000-0000-0000-0000-000000000314',
+        '77000000-0000-0000-0000-000000000315',
+        '77000000-0000-0000-0000-000000000316',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000318'
 );
 
 DELETE FROM core.tariff_snapshots
@@ -1972,9 +2189,11 @@ WHERE parking_session_id IN (
     '77000000-0000-0000-0000-000000000311',
     '77000000-0000-0000-0000-000000000312',
     '77000000-0000-0000-0000-000000000313',
-    '77000000-0000-0000-0000-000000000314',
-    '77000000-0000-0000-0000-000000000315',
-    '77000000-0000-0000-0000-000000000316'
+'77000000-0000-0000-0000-000000000314',
+'77000000-0000-0000-0000-000000000315',
+'77000000-0000-0000-0000-000000000316',
+'77000000-0000-0000-0000-000000000317',
+'77000000-0000-0000-0000-000000000318'
 )
   AND statutory_discount_validation_id IN (
     '77000000-0000-0000-0000-000000000306',
@@ -2349,6 +2568,42 @@ VALUES
         now(),
         now() + interval '1 hour',
         '77000000-0000-0000-0000-0000000004e0',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000407',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-GATE-CONSUME-EXPIRED-AUTH',
+        'MANUAL-GATE-CONSUME-NEGATIVE-V1',
+        'PHP',
+        125.00,
+        0,
+        0,
+        125.00,
+        'CONSUMED',
+        now(),
+        now() + interval '1 hour',
+        '77000000-0000-0000-0000-0000000003e1',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000408',
+        '77000000-0000-0000-0000-000000000318',
+        '77000000-0000-0000-0000-000000000004',
+        'MANUAL-GATE-CONSUME-WRONG-GATE',
+        'MANUAL-GATE-CONSUME-NEGATIVE-V1',
+        'PHP',
+        125.00,
+        0,
+        0,
+        125.00,
+        'CONSUMED',
+        now(),
+        now() + interval '1 hour',
+        '77000000-0000-0000-0000-0000000003e2',
         '77000000-0000-0000-0000-000000000003',
         '77000000-0000-0000-0000-000000000003'
     )
@@ -3111,6 +3366,189 @@ SET parking_session_id = EXCLUDED.parking_session_id,
     expires_at = EXCLUDED.expires_at,
     finalized_at = NULL,
     failure_reason_code = NULL,
+    correlation_id = EXCLUDED.correlation_id,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
+INSERT INTO core.payment_attempts (
+    payment_attempt_id,
+    parking_session_id,
+    tariff_snapshot_id,
+    idempotency_key,
+    payment_rail_id,
+    currency_code,
+    amount,
+    attempt_status,
+    requested_at,
+    expires_at,
+    finalized_at,
+    failure_reason_code,
+    correlation_id,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES
+    (
+        '77000000-0000-0000-0000-000000000517',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000407',
+        'manual-gate-consume-expired-auth-payment-attempt',
+        NULL,
+        'PHP',
+        125.00,
+        'CONFIRMED',
+        now() - interval '20 minutes',
+        now() + interval '10 minutes',
+        now() - interval '19 minutes',
+        NULL,
+        '77000000-0000-0000-0000-0000000005f7',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000518',
+        '77000000-0000-0000-0000-000000000318',
+        '77000000-0000-0000-0000-000000000408',
+        'manual-gate-consume-wrong-gate-payment-attempt',
+        NULL,
+        'PHP',
+        125.00,
+        'CONFIRMED',
+        now() - interval '5 minutes',
+        now() + interval '25 minutes',
+        now() - interval '4 minutes',
+        NULL,
+        '77000000-0000-0000-0000-0000000005f8',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    )
+ON CONFLICT (payment_attempt_id) DO UPDATE
+SET parking_session_id = EXCLUDED.parking_session_id,
+    tariff_snapshot_id = EXCLUDED.tariff_snapshot_id,
+    idempotency_key = EXCLUDED.idempotency_key,
+    payment_rail_id = NULL,
+    currency_code = EXCLUDED.currency_code,
+    amount = EXCLUDED.amount,
+    attempt_status = EXCLUDED.attempt_status,
+    requested_at = EXCLUDED.requested_at,
+    expires_at = EXCLUDED.expires_at,
+    finalized_at = EXCLUDED.finalized_at,
+    failure_reason_code = NULL,
+    correlation_id = EXCLUDED.correlation_id,
+    updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+    updated_at = now();
+
+INSERT INTO core.payment_confirmations (
+    payment_confirmation_id,
+    payment_attempt_id,
+    provider_outcome_id,
+    payment_rail_id,
+    provider_transaction_ref,
+    currency_code,
+    confirmed_amount,
+    confirmation_status,
+    verified_at,
+    confirmed_at,
+    correlation_id,
+    created_by_service_identity_id
+)
+VALUES
+    (
+        '77000000-0000-0000-0000-000000000617',
+        '77000000-0000-0000-0000-000000000517',
+        NULL,
+        NULL,
+        'manual-gate-consume-expired-auth-provider-ref',
+        'PHP',
+        125.00,
+        'RECORDED',
+        now() - interval '19 minutes',
+        now() - interval '19 minutes',
+        '77000000-0000-0000-0000-0000000005f7',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000618',
+        '77000000-0000-0000-0000-000000000518',
+        NULL,
+        NULL,
+        'manual-gate-consume-wrong-gate-provider-ref',
+        'PHP',
+        125.00,
+        'RECORDED',
+        now() - interval '4 minutes',
+        now() - interval '4 minutes',
+        '77000000-0000-0000-0000-0000000005f8',
+        '77000000-0000-0000-0000-000000000003'
+    )
+ON CONFLICT (payment_confirmation_id) DO UPDATE
+SET payment_attempt_id = EXCLUDED.payment_attempt_id,
+    provider_outcome_id = NULL,
+    payment_rail_id = NULL,
+    provider_transaction_ref = EXCLUDED.provider_transaction_ref,
+    currency_code = EXCLUDED.currency_code,
+    confirmed_amount = EXCLUDED.confirmed_amount,
+    confirmation_status = EXCLUDED.confirmation_status,
+    verified_at = EXCLUDED.verified_at,
+    confirmed_at = EXCLUDED.confirmed_at,
+    correlation_id = EXCLUDED.correlation_id;
+
+INSERT INTO core.exit_authorizations (
+    exit_authorization_id,
+    parking_session_id,
+    payment_attempt_id,
+    payment_confirmation_id,
+    authorization_token_hash,
+    authorization_status,
+    issued_at,
+    expires_at,
+    invalidated_at,
+    invalidation_reason_code,
+    correlation_id,
+    created_by_service_identity_id,
+    updated_by_service_identity_id
+)
+VALUES
+    (
+        '77000000-0000-0000-0000-000000000717',
+        '77000000-0000-0000-0000-000000000317',
+        '77000000-0000-0000-0000-000000000517',
+        '77000000-0000-0000-0000-000000000617',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        'ISSUED',
+        now() - interval '15 minutes',
+        now() - interval '1 minute',
+        NULL,
+        NULL,
+        '77000000-0000-0000-0000-0000000005f7',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000718',
+        '77000000-0000-0000-0000-000000000318',
+        '77000000-0000-0000-0000-000000000518',
+        '77000000-0000-0000-0000-000000000618',
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        'ISSUED',
+        now() - interval '2 minutes',
+        now() + interval '8 minutes',
+        NULL,
+        NULL,
+        '77000000-0000-0000-0000-0000000005f8',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    )
+ON CONFLICT (exit_authorization_id) DO UPDATE
+SET parking_session_id = EXCLUDED.parking_session_id,
+    payment_attempt_id = EXCLUDED.payment_attempt_id,
+    payment_confirmation_id = EXCLUDED.payment_confirmation_id,
+    authorization_token_hash = EXCLUDED.authorization_token_hash,
+    authorization_status = EXCLUDED.authorization_status,
+    issued_at = EXCLUDED.issued_at,
+    expires_at = EXCLUDED.expires_at,
+    invalidated_at = NULL,
+    invalidation_reason_code = NULL,
     correlation_id = EXCLUDED.correlation_id,
     updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
     updated_at = now();

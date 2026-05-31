@@ -11,7 +11,7 @@ POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-b
 POST /v1/ops/operator-console/statutory-discounts/resolve-policy
 ```
 
-This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, #205 payment-attempt creation against the effective APPLIED tariff snapshot, #207 manual payment-finality coverage for #206, #209 manual exit-authorization coverage for #208, and #211 manual gate-consume coverage for #210. It does not call real payment providers, call real gate hardware, call vendor PMS, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
+This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, #205 payment-attempt creation against the effective APPLIED tariff snapshot, #207 manual payment-finality coverage for #206, #209 manual exit-authorization coverage for #208, #211 manual gate-consume coverage for #210, and #212 negative gate-consume edge coverage. It does not call real payment providers, call real gate hardware, call vendor PMS, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
 
 ## Preconditions
 
@@ -54,7 +54,7 @@ docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/st
 
 The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
 
-For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets gate events, gate authorization consumptions, exit authorizations, payment confirmations, and payment attempts for the synthetic #205/#207/#209/#211 payment sessions `306`, `307`, `308`, `314`, `315`, and `316` so payment-attempt, payment-finality, exit-authorization, and gate-consume smoke tests can be rerun after reseeding. The #211 fixture adds one synthetic outbound lane, one gate device, and one DEVICE service identity for the manual fallback site so the gate consume endpoint can pass local device identity validation without calling real hardware. It does not delete access evaluation evidence and does not create coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, payment-attempt, payment-finality, exit-authorization, or gate-consume effective-tariff testing.
+For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets gate events, gate authorization consumptions, exit authorizations, payment confirmations, and payment attempts for the synthetic #205/#207/#209/#211/#212 payment sessions `306`, `307`, `308`, `314`, `315`, `316`, `317`, and `318` so payment-attempt, payment-finality, exit-authorization, and gate-consume smoke tests can be rerun after reseeding. The #211 fixture adds one synthetic outbound lane, one gate device, and one DEVICE service identity for the manual fallback site so the gate consume endpoint can pass local device identity validation without calling real hardware. The #212 fixture adds one expired issued authorization and one valid issued authorization for wrong-gate/scope rejection checks, plus one wrong-site gate device fixture. It does not delete access evaluation evidence and does not create coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, payment-attempt, payment-finality, exit-authorization, or gate-consume effective-tariff testing.
 
 ## Evidence Metadata Behavior
 
@@ -2138,6 +2138,204 @@ Scope boundary:
 - These requests do not test real PayMongo callback delivery or external provider settlement.
 - These requests do not call AUB, change provider routing, create coupon applications, create reconciliation rows, or render UI.
 - Gate consume response does not include `tariffSnapshotId`; the authoritative paid tariff basis is verified through `core.payment_attempts.tariff_snapshot_id`.
+
+## Gate Consume Negative Edge Cases
+
+Issue #212 extends the manual smoke suite with rejected gate-consume cases. These requests exercise the current #210 endpoint contract and verify deterministic rejection before consume persistence.
+
+Endpoint:
+
+```http
+POST /v1/gate/authorizations/{exitAuthorizationId}/consume
+```
+
+Required headers for normal consume requests:
+
+```http
+X-Correlation-Id: <guid>
+X-Service-Identity-Id: <DEVICE service identity guid>
+X-Gate-Device-Id: <gate device id, code, vendor ref, or serial number>
+Content-Type: application/json
+```
+
+Request body:
+
+```json
+{
+  "requestedByUserId": "<same guid as X-Service-Identity-Id>"
+}
+```
+
+Deterministic rejection codes represented by this manual pack:
+
+- `EXIT_AUTHORIZATION_NOT_FOUND`
+- `EXIT_AUTHORIZATION_EXPIRED`
+- `GATE_DEVICE_FORBIDDEN`
+- `GATE_DEVICE_ASSIGNMENT_FORBIDDEN`
+- `EXIT_AUTHORIZATION_ALREADY_CONSUMED`
+- `INVALID_REQUEST`
+- `SERVICE_IDENTITY_REQUIRED`
+- `GATE_DEVICE_IDENTITY_REQUIRED`
+
+Preconditions:
+
+- #210 is merged.
+- #211 positive gate consume coverage is available.
+- Central PMS is running.
+- Local PostgreSQL is available.
+- The fixture seed has been applied.
+- Synthetic negative fixtures are present:
+  - expired authorization `77000000-0000-0000-0000-000000000717`
+  - valid wrong-gate target authorization `77000000-0000-0000-0000-000000000718`
+  - wrong-site gate device `MANUAL_TEST_WRONG_SITE_EXIT_GATE_01`
+
+### Negative Gate Consume Workflow
+
+Run these requests after a clean fixture reset:
+
+1. `131 Consume invalid exit authorization rejected`
+   - Expected: HTTP `404`, `errorCode = EXIT_AUTHORIZATION_NOT_FOUND`.
+2. `132 Consume expired exit authorization rejected`
+   - Expected: HTTP `409`, `errorCode = EXIT_AUTHORIZATION_EXPIRED`.
+3. `133 Consume wrong gate device rejected`
+   - Expected: HTTP `403`, `errorCode = GATE_DEVICE_FORBIDDEN`.
+4. `134 Consume unauthorized gate device rejected`
+   - Expected: HTTP `403`, `errorCode = GATE_DEVICE_ASSIGNMENT_FORBIDDEN`.
+5. `135 Consume with missing correlation rejected`
+   - Expected: HTTP `400`, `errorCode = INVALID_REQUEST`.
+6. `137 Consume with missing service identity rejected`
+   - Expected: HTTP `401`, `errorCode = SERVICE_IDENTITY_REQUIRED`.
+7. `138 Consume with missing gate device id rejected`
+   - Expected: HTTP `401`, `errorCode = GATE_DEVICE_IDENTITY_REQUIRED`.
+
+Already-consumed rejection uses the positive APPLIED flow:
+
+1. Run requests `117` through `122`.
+2. Run `136 Consume already consumed authorization rejected`.
+
+Expected: HTTP `409`, `errorCode = EXIT_AUTHORIZATION_ALREADY_CONSUMED`, and the APPLIED authorization still has exactly one `CONSUMED` row.
+
+### Negative Gate Consume DB Verification
+
+Verify no consume rows were created for invalid, expired, wrong-device, wrong-site, or missing-header cases:
+
+```sql
+SELECT
+    target.exit_authorization_id,
+    COUNT(gac.gate_authorization_consumption_id) AS consume_row_count
+FROM (
+    VALUES
+        ('77000000-0000-0000-0000-000000000717'::uuid),
+        ('77000000-0000-0000-0000-000000000718'::uuid)
+) AS target(exit_authorization_id)
+LEFT JOIN gates.gate_authorization_consumptions gac
+  ON gac.exit_authorization_id = target.exit_authorization_id
+GROUP BY target.exit_authorization_id
+ORDER BY target.exit_authorization_id;
+```
+
+Expected after requests `132` through `135`, `137`, and `138`: each `consume_row_count` is `0`.
+
+Verify the nonexistent authorization did not accidentally create any consume row:
+
+```sql
+SELECT COUNT(*) AS consume_row_count
+FROM gates.gate_authorization_consumptions
+WHERE exit_authorization_id = '77000000-0000-0000-0000-000000000799'::uuid;
+```
+
+Expected: `0`.
+
+Verify expired authorization remains issued but expired and unconsumed:
+
+```sql
+SELECT
+    ea.exit_authorization_id,
+    ea.authorization_status,
+    ea.expires_at,
+    ea.expires_at <= now() AS is_expired,
+    COUNT(gac.gate_authorization_consumption_id) AS consume_row_count
+FROM core.exit_authorizations ea
+LEFT JOIN gates.gate_authorization_consumptions gac
+  ON gac.exit_authorization_id = ea.exit_authorization_id
+WHERE ea.exit_authorization_id = '77000000-0000-0000-0000-000000000717'::uuid
+GROUP BY ea.exit_authorization_id, ea.authorization_status, ea.expires_at;
+```
+
+Expected: `authorization_status = ISSUED`, `is_expired = true`, and `consume_row_count = 0`.
+
+Verify wrong-site device fixture is active but outside the authorization site:
+
+```sql
+SELECT
+    gd.device_code,
+    gd.site_id AS gate_site_id,
+    ea.parking_session_id,
+    ps.site_id AS authorization_site_id,
+    gd.service_identity_id,
+    da.assignment_status,
+    l.lane_direction,
+    l.lane_status
+FROM gates.gate_devices gd
+JOIN sites.device_assignments da
+  ON da.gate_device_id = gd.gate_device_id
+ AND da.service_identity_id = gd.service_identity_id
+JOIN sites.lanes l
+  ON l.lane_id = gd.lane_id
+CROSS JOIN core.exit_authorizations ea
+JOIN core.parking_sessions ps
+  ON ps.parking_session_id = ea.parking_session_id
+WHERE gd.device_code = 'MANUAL_TEST_WRONG_SITE_EXIT_GATE_01'
+  AND ea.exit_authorization_id = '77000000-0000-0000-0000-000000000718'::uuid;
+```
+
+Expected: both the gate device and lane are active, but `gate_site_id <> authorization_site_id`.
+
+Verify already-consumed replay did not create a duplicate row:
+
+```sql
+SELECT
+    ea.exit_authorization_id,
+    COUNT(*) FILTER (WHERE gac.consume_status = 'CONSUMED') AS consumed_count,
+    COUNT(*) AS total_consume_rows
+FROM core.exit_authorizations ea
+LEFT JOIN gates.gate_authorization_consumptions gac
+  ON gac.exit_authorization_id = ea.exit_authorization_id
+WHERE ea.exit_authorization_id = '<gateConsumeExitAuthorizationId>'::uuid
+GROUP BY ea.exit_authorization_id;
+```
+
+Expected after requests `117` through `122` and `136`: `consumed_count = 1`.
+
+Verify no coupon, reconciliation, or AUB/provider-routing side effects:
+
+```sql
+SELECT
+    (SELECT COUNT(*)
+       FROM coupons.coupon_applications ca
+      WHERE ca.parking_session_id IN (
+          '77000000-0000-0000-0000-000000000317'::uuid,
+          '77000000-0000-0000-0000-000000000318'::uuid
+      )) AS coupon_application_count,
+    (SELECT COUNT(*)
+       FROM reconciliation.reconciliation_items ri
+      WHERE ri.payment_attempt_id IN (
+          '77000000-0000-0000-0000-000000000517'::uuid,
+          '77000000-0000-0000-0000-000000000518'::uuid
+      )) AS reconciliation_item_count,
+    (SELECT COUNT(*)
+       FROM payments.payment_provider_routing_policies prp
+      WHERE prp.provider_code ILIKE '%AUB%') AS aub_routing_policy_count;
+```
+
+Expected: coupon and reconciliation counts are `0`; no AUB routing policy is selected or invoked by these requests.
+
+Scope boundary:
+
+- These requests do not test physical gate hardware movement.
+- These requests do not call HikCentral Professional or any broad vendor PMS API.
+- These requests do not test real PayMongo callback delivery or external provider settlement.
+- These requests do not call AUB, change provider routing, create coupon applications, create reconciliation rows, or render UI.
 
 Verify the payment-attempt guardrail case leaves the application and original snapshot unfinalized:
 
