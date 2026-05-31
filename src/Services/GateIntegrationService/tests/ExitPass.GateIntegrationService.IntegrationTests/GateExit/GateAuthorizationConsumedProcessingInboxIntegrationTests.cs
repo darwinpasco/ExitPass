@@ -62,6 +62,16 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.Equal(AppliedTariffSnapshotId, row.TariffSnapshotId);
         Assert.Equal(GateAuthorizationConsumptionId, row.GateAuthorizationConsumptionId);
         Assert.Null(row.LastFailureCode);
+
+        var command = await ReadCommandRowAsync(EventId);
+        Assert.NotNull(command);
+        Assert.Equal("SUCCEEDED", command!.Status);
+        Assert.Equal(1, command.AttemptCount);
+        Assert.Equal(AppliedTariffSnapshotId, command.TariffSnapshotId);
+        Assert.Equal(GateAuthorizationConsumptionId, command.GateAuthorizationConsumptionId);
+        Assert.NotNull(command.StartedAt);
+        Assert.NotNull(command.CompletedAt);
+        Assert.Null(command.FailureCode);
     }
 
     [Fact]
@@ -81,6 +91,11 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.NotNull(row);
         Assert.Equal(AppliedTariffSnapshotId, row!.TariffSnapshotId);
         Assert.NotEqual(OriginalSupersededTariffSnapshotId, row.TariffSnapshotId);
+
+        var command = await ReadCommandRowAsync(handoff.EventId);
+        Assert.NotNull(command);
+        Assert.Equal(AppliedTariffSnapshotId, command!.TariffSnapshotId);
+        Assert.NotEqual(OriginalSupersededTariffSnapshotId, command.TariffSnapshotId);
     }
 
     [Fact]
@@ -119,6 +134,11 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.Equal("FAILED", failed!.Status);
         Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", failed.LastFailureCode);
         Assert.Null(failed.ProcessedAt);
+        var failedCommand = await ReadCommandRowAsync(handoff.EventId);
+        Assert.NotNull(failedCommand);
+        Assert.Equal("RETRYABLE", failedCommand!.Status);
+        Assert.Equal(1, failedCommand.AttemptCount);
+        Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", failedCommand.FailureCode);
 
         adapter.Failure = null;
         var retry = await handler.HandleAsync(new ProcessGateAuthorizationConsumedCommand(handoff), CancellationToken.None);
@@ -130,6 +150,12 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.Equal("PROCESSED", processed!.Status);
         Assert.Equal(2, processed.AttemptCount);
         Assert.NotNull(processed.ProcessedAt);
+        var processedCommand = await ReadCommandRowAsync(handoff.EventId);
+        Assert.NotNull(processedCommand);
+        Assert.Equal(failedCommand.CommandId, processedCommand!.CommandId);
+        Assert.Equal("SUCCEEDED", processedCommand.Status);
+        Assert.Equal(2, processedCommand.AttemptCount);
+        Assert.Null(processedCommand.FailureCode);
     }
 
     [Fact]
@@ -154,6 +180,8 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         Assert.Equal("FAILED", row!.Status);
         Assert.Equal("GATE_DEVICE_NOT_FOUND", row.LastFailureCode);
         Assert.Null(row.ProcessedAt);
+
+        Assert.Null(await ReadCommandRowAsync(handoff.EventId));
     }
 
     private GateAuthorizationConsumedHandoffHandler CreateHandler(
@@ -162,6 +190,7 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
     {
         return new GateAuthorizationConsumedHandoffHandler(
             adapter,
+            new PostgresGateCommandLifecycleRecorder(BuildConfiguration()),
             new PostgresGateAuthorizationConsumedProcessingRecorder(BuildConfiguration()),
             new StaticScopeValidator(scopeResult ?? GateAuthorizationConsumedScopeValidationResult.Valid()));
     }
@@ -197,6 +226,11 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
 
     private async Task DeleteProcessingRowsAsync()
     {
+        const string commandSql = """
+            DELETE FROM gates.gate_commands
+            WHERE source_processing_id = ANY(@processing_keys);
+            """;
+
         const string sql = """
             DELETE FROM gates.gate_authorization_consumed_processing
             WHERE processing_key = ANY(@processing_keys);
@@ -204,8 +238,7 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("processing_keys", NpgsqlDbType.Array | NpgsqlDbType.Uuid).Value = new[]
+        var processingKeys = new[]
         {
             EventId,
             Guid.Parse("c1000000-0000-0000-0000-000000000002"),
@@ -213,7 +246,13 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
             Guid.Parse("c1000000-0000-0000-0000-000000000004"),
             Guid.Parse("c1000000-0000-0000-0000-000000000005")
         };
-        await command.ExecuteNonQueryAsync();
+        await using var commandDelete = new NpgsqlCommand(commandSql, connection);
+        commandDelete.Parameters.Add("processing_keys", NpgsqlDbType.Array | NpgsqlDbType.Uuid).Value = processingKeys;
+        await commandDelete.ExecuteNonQueryAsync();
+
+        await using var processingDelete = new NpgsqlCommand(sql, connection);
+        processingDelete.Parameters.Add("processing_keys", NpgsqlDbType.Array | NpgsqlDbType.Uuid).Value = processingKeys;
+        await processingDelete.ExecuteNonQueryAsync();
     }
 
     private async Task<ProcessingRow?> ReadProcessingRowAsync(Guid processingKey)
@@ -270,6 +309,62 @@ public sealed class GateAuthorizationConsumedProcessingInboxIntegrationTests : I
         int AttemptCount,
         DateTimeOffset? ProcessedAt,
         string? LastFailureCode);
+
+    private async Task<CommandRow?> ReadCommandRowAsync(Guid sourceProcessingId)
+    {
+        const string sql = """
+            SELECT
+                command_id,
+                gate_authorization_consumption_id,
+                tariff_snapshot_id,
+                command_status,
+                attempt_count,
+                started_at,
+                completed_at,
+                failure_code
+            FROM gates.gate_commands
+            WHERE source_processing_id = @source_processing_id
+              AND command_type = 'GateAuthorizationConsumed'
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("source_processing_id", NpgsqlDbType.Uuid).Value = sourceProcessingId;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow);
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new CommandRow(
+            reader.GetGuid(reader.GetOrdinal("command_id")),
+            reader.GetGuid(reader.GetOrdinal("gate_authorization_consumption_id")),
+            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            reader.GetString(reader.GetOrdinal("command_status")),
+            reader.GetInt32(reader.GetOrdinal("attempt_count")),
+            reader.IsDBNull(reader.GetOrdinal("started_at"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("started_at")),
+            reader.IsDBNull(reader.GetOrdinal("completed_at"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("completed_at")),
+            reader.IsDBNull(reader.GetOrdinal("failure_code"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("failure_code")));
+    }
+
+    private sealed record CommandRow(
+        Guid CommandId,
+        Guid GateAuthorizationConsumptionId,
+        Guid TariffSnapshotId,
+        string Status,
+        int AttemptCount,
+        DateTimeOffset? StartedAt,
+        DateTimeOffset? CompletedAt,
+        string? FailureCode);
 
     private sealed class CapturingAdapter : IConsumedAuthorizationGateActionAdapter
     {

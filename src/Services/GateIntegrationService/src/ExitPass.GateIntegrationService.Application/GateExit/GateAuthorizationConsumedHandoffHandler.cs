@@ -11,6 +11,7 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
         new("ExitPass.GateIntegrationService.Application.GateExit");
 
     private readonly IConsumedAuthorizationGateActionAdapter _adapter;
+    private readonly IGateCommandLifecycleRecorder _commandRecorder;
     private readonly IGateAuthorizationConsumedProcessingRecorder _recorder;
     private readonly IGateAuthorizationConsumedScopeValidator _scopeValidator;
 
@@ -19,10 +20,12 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
     /// </summary>
     public GateAuthorizationConsumedHandoffHandler(
         IConsumedAuthorizationGateActionAdapter adapter,
+        IGateCommandLifecycleRecorder commandRecorder,
         IGateAuthorizationConsumedProcessingRecorder recorder,
         IGateAuthorizationConsumedScopeValidator scopeValidator)
     {
         _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+        _commandRecorder = commandRecorder ?? throw new ArgumentNullException(nameof(commandRecorder));
         _recorder = recorder ?? throw new ArgumentNullException(nameof(recorder));
         _scopeValidator = scopeValidator ?? throw new ArgumentNullException(nameof(scopeValidator));
     }
@@ -105,12 +108,41 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
             throw new GateAuthorizationConsumedHandoffException(scope.ResultCode, scope.Message);
         }
 
+        var gateCommand = await _commandRecorder.BeginCommandAsync(command.Handoff, cancellationToken);
+        activity?.SetTag("gate_command_id", gateCommand.Command.CommandId);
+        activity?.SetTag("gate_command_status", gateCommand.Command.CommandStatus);
+        activity?.SetTag("gate_command_attempt_count", gateCommand.Command.AttemptCount);
+
+        if (!gateCommand.CanInvokeAdapter)
+        {
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("result_code", "GATE_AUTHORIZATION_CONSUMED_COMMAND_IN_PROGRESS");
+            activity?.SetTag("adapter_invoked", false);
+            activity?.SetTag("already_processed", false);
+
+            return new GateAuthorizationConsumedProcessingResult(
+                processing.Record.EventId,
+                processing.Record.ExitAuthorizationId,
+                processing.Record.GateAuthorizationConsumptionId,
+                processing.Record.TariffSnapshotId,
+                "GATE_AUTHORIZATION_CONSUMED_COMMAND_IN_PROGRESS",
+                AdapterInvoked: false,
+                AlreadyProcessed: false,
+                processing.Record.ProcessedAtUtc);
+        }
+
         try
         {
             await _adapter.ProcessConsumedAuthorizationAsync(command.Handoff, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            await _commandRecorder.RecordFailedAsync(
+                gateCommand.Command.CommandId,
+                "GATE_HANDOFF_ADAPTER_FAILED",
+                exception.Message,
+                retryable: true,
+                cancellationToken);
             await _recorder.RecordFailedAsync(
                 command.Handoff,
                 "GATE_HANDOFF_ADAPTER_FAILED",
@@ -120,6 +152,11 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
         }
 
         var processedAtUtc = DateTimeOffset.UtcNow;
+        await _commandRecorder.RecordSucceededAsync(
+            gateCommand.Command.CommandId,
+            processedAtUtc,
+            cancellationToken);
+
         var record = new GateAuthorizationConsumedProcessingRecord(
             command.Handoff.EventId,
             command.Handoff.ExitAuthorizationId,
