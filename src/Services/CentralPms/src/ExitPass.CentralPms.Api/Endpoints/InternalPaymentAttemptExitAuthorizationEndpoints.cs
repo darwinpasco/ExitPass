@@ -134,6 +134,16 @@ public static class InternalPaymentAttemptExitAuthorizationEndpoints
             logger.LogWarning("Payment attempt not found.");
             return Results.NotFound(BuildError("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt was not found.", correlationId));
         }
+        catch (KeyNotFoundException ex)
+        {
+            logger.LogWarning(ex, "Payment attempt not found.");
+            return Results.NotFound(BuildError("PAYMENT_ATTEMPT_NOT_FOUND", "Payment attempt was not found.", correlationId));
+        }
+        catch (ExitAuthorizationIssuanceConflictException ex)
+        {
+            logger.LogWarning(ex, "Issuance rejected by deterministic exit-authorization conflict.");
+            return Results.Conflict(BuildError(ex.ErrorCode, ex.Message, correlationId));
+        }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0001")
         {
             logger.LogWarning("Issuance conflict.");
