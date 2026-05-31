@@ -1,0 +1,32 @@
+meta {
+  name: 128 Finalize no-discount payment attempt for gate consume
+  type: http
+  seq: 128
+}
+
+post {
+  url: {{internalPaymentFinalizationBaseUrl}}/v1/internal/payment-attempts/{{gateConsumeNoDiscountPaymentAttemptId}}/finalize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{gateConsumeNoDiscountIdempotencyKeyFinalization}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "finalAttemptStatus": "CONFIRMED",
+    "requestedBy": "central-pms-manual-smoke"
+  }
+}
+
+tests {
+  test("no-discount payment attempt is finalized as confirmed for gate consume", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("gateConsumeNoDiscountPaymentAttemptId"));
+    expect(res.body.attemptStatus).to.equal("CONFIRMED");
+  });
+}

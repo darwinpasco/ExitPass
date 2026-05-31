@@ -1,0 +1,33 @@
+meta {
+  name: 130 Consume no-discount exit authorization baseline
+  type: http
+  seq: 130
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeNoDiscountExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeNoDiscountCorrelationIdConsume}}
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+  X-Gate-Device-Id: {{gateConsumeGateDeviceId}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("no-discount issued exit authorization can be consumed", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.exitAuthorizationId).to.equal(bru.getEnvVar("gateConsumeNoDiscountExitAuthorizationId"));
+    expect(res.body.authorizationStatus).to.equal("CONSUMED");
+    expect(res.body.consumedAt).to.not.equal(null);
+  });
+}

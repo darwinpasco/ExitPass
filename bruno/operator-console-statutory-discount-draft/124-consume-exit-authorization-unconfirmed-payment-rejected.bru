@@ -1,0 +1,31 @@
+meta {
+  name: 124 Consume exit authorization unconfirmed payment rejected
+  type: http
+  seq: 124
+}
+
+post {
+  url: {{internalExitAuthorizationBaseUrl}}/v1/internal/payment-attempts/{{gateConsumeUnconfirmedPaymentAttemptId}}/issue-exit-authorization
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{gateConsumeUnconfirmedIssueIdempotencyKey}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{gateConsumeUnconfirmedParkingSessionId}}",
+    "requestedByUserId": "{{exitAuthorizationRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("unconfirmed payment cannot issue an exit authorization, so gate consume cannot proceed", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("PAYMENT_ATTEMPT_NOT_CONFIRMED");
+  });
+}

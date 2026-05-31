@@ -1,0 +1,35 @@
+meta {
+  name: 129 Issue no-discount exit authorization for gate consume
+  type: http
+  seq: 129
+}
+
+post {
+  url: {{internalExitAuthorizationBaseUrl}}/v1/internal/payment-attempts/{{gateConsumeNoDiscountPaymentAttemptId}}/issue-exit-authorization
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{gateConsumeNoDiscountIdempotencyKeyIssue}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{gateConsumeNoDiscountParkingSessionId}}",
+    "requestedByUserId": "{{exitAuthorizationRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("no-discount exit authorization is issued from the confirmed payment attempt for gate consume", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.exitAuthorizationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("gateConsumeNoDiscountPaymentAttemptId"));
+    expect(res.body.parkingSessionId).to.equal(bru.getEnvVar("gateConsumeNoDiscountParkingSessionId"));
+    expect(res.body.authorizationStatus).to.equal("ISSUED");
+    bru.setEnvVar("gateConsumeNoDiscountExitAuthorizationId", res.body.exitAuthorizationId);
+  });
+}

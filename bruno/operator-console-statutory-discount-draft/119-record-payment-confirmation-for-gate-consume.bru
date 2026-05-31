@@ -1,0 +1,43 @@
+meta {
+  name: 119 Record payment confirmation for gate consume
+  type: http
+  seq: 119
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{gateConsumeIdempotencyKeyConfirmation}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{gateConsumePaymentAttemptId}}",
+    "providerReference": "{{gateConsumeProviderReference}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-gate-consume-applied-effective",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{gateConsumeAmountMajorUnits_appliedEffective}},
+    "currencyCode": "{{gateConsumeCurrencyCode}}"
+  }
+}
+
+tests {
+  test("confirmation succeeds for the gate consume APPLIED tariff payment attempt", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentConfirmationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("gateConsumePaymentAttemptId"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("gateConsumeProviderReference"));
+    expect(res.body.confirmationStatus).to.equal("RECORDED");
+
+    bru.setEnvVar("gateConsumePaymentConfirmationId", res.body.paymentConfirmationId);
+  });
+}
