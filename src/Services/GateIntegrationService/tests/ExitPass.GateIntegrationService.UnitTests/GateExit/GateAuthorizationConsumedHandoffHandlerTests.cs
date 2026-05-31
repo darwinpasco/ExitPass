@@ -43,6 +43,9 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         var record = Assert.Single(fixture.Recorder.Records);
         Assert.Equal(EventId, record.EventId);
         Assert.Equal(AppliedTariffSnapshotId, record.TariffSnapshotId);
+        var command = Assert.Single(fixture.CommandRecorder.Commands);
+        Assert.Equal(GateCommandStatus.Succeeded, command.CommandStatus);
+        Assert.Equal(AppliedTariffSnapshotId, command.TariffSnapshotId);
     }
 
     [Fact]
@@ -95,6 +98,7 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         Assert.Equal("GATE_AUTHORIZATION_CONSUMED_ALREADY_PROCESSED", second.ResultCode);
         Assert.Equal(1, fixture.Adapter.CallCount);
         Assert.Single(fixture.Recorder.Records);
+        Assert.Single(fixture.CommandRecorder.Commands);
     }
 
     [Theory]
@@ -135,6 +139,7 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         var record = Assert.Single(fixture.Recorder.Records);
         Assert.Equal(GateAuthorizationConsumedProcessingStatus.Failed, record.ProcessingStatus);
         Assert.Equal("GATE_DEVICE_NOT_FOUND", record.LastFailureCode);
+        Assert.Empty(fixture.CommandRecorder.Commands);
     }
 
     [Fact]
@@ -157,6 +162,7 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         var record = Assert.Single(fixture.Recorder.Records);
         Assert.Equal(GateAuthorizationConsumedProcessingStatus.Failed, record.ProcessingStatus);
         Assert.Equal("GATE_SCOPE_MISMATCH", record.LastFailureCode);
+        Assert.Empty(fixture.CommandRecorder.Commands);
     }
 
     [Fact]
@@ -177,6 +183,9 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         Assert.Equal(GateAuthorizationConsumedProcessingStatus.Failed, record.ProcessingStatus);
         Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", record.LastFailureCode);
         Assert.Equal(1, fixture.Adapter.CallCount);
+        var command = Assert.Single(fixture.CommandRecorder.Commands);
+        Assert.Equal(GateCommandStatus.Retryable, command.CommandStatus);
+        Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", command.FailureCode);
     }
 
     public static IEnumerable<object[]> MissingRequiredFieldCases()
@@ -226,6 +235,7 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
             Adapter.CurrentFixture = this;
             Sut = new GateAuthorizationConsumedHandoffHandler(
                 Adapter,
+                CommandRecorder,
                 Recorder,
                 ScopeValidator);
         }
@@ -233,6 +243,8 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         public CapturingAdapter Adapter { get; } = new();
 
         public InMemoryRecorder Recorder { get; } = new();
+
+        public InMemoryCommandRecorder CommandRecorder { get; } = new();
 
         public List<Guid> TariffResolutionRequests { get; } = new();
 
@@ -351,6 +363,103 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
                 LastFailureCode: failureCode,
                 LastFailureReason: failureReason);
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class InMemoryCommandRecorder : IGateCommandLifecycleRecorder
+    {
+        private readonly Dictionary<Guid, GateCommandLifecycleRecord> _commands = new();
+
+        public IReadOnlyCollection<GateCommandLifecycleRecord> Commands => _commands.Values;
+
+        public Task<GateCommandLifecycleStart> BeginCommandAsync(
+            GateAuthorizationConsumedHandoff handoff,
+            CancellationToken cancellationToken)
+        {
+            var processingKey = handoff.ProcessingKey();
+            if (_commands.TryGetValue(processingKey, out var existing))
+            {
+                if (existing.CommandStatus is GateCommandStatus.Failed or GateCommandStatus.Retryable)
+                {
+                    var retry = existing with
+                    {
+                        CommandStatus = GateCommandStatus.InProgress,
+                        AttemptCount = existing.AttemptCount + 1,
+                        StartedAtUtc = DateTimeOffset.UtcNow,
+                        CompletedAtUtc = null,
+                        FailureCode = null,
+                        FailureReason = null
+                    };
+                    _commands[processingKey] = retry;
+                    return Task.FromResult(new GateCommandLifecycleStart(retry, Created: false, CanInvokeAdapter: true));
+                }
+
+                return Task.FromResult(new GateCommandLifecycleStart(existing, Created: false, CanInvokeAdapter: false));
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var command = new GateCommandLifecycleRecord(
+                Guid.NewGuid(),
+                processingKey,
+                handoff.EventId,
+                handoff.ExitAuthorizationId,
+                handoff.GateAuthorizationConsumptionId,
+                handoff.ParkingSessionId,
+                handoff.PaymentAttemptId,
+                handoff.TariffSnapshotId,
+                handoff.GateDeviceId,
+                handoff.GateDeviceIdentifier,
+                handoff.LaneId,
+                handoff.SiteId,
+                handoff.VendorSystemId,
+                GateCommandStatus.InProgress,
+                AttemptCount: 1,
+                RequestedAtUtc: now,
+                StartedAtUtc: now,
+                CompletedAtUtc: null,
+                FailureCode: null,
+                FailureReason: null,
+                handoff.CorrelationId);
+            _commands[processingKey] = command;
+            return Task.FromResult(new GateCommandLifecycleStart(command, Created: true, CanInvokeAdapter: true));
+        }
+
+        public Task RecordSucceededAsync(
+            Guid commandId,
+            DateTimeOffset completedAtUtc,
+            CancellationToken cancellationToken)
+        {
+            Update(commandId, command => command with
+            {
+                CommandStatus = GateCommandStatus.Succeeded,
+                CompletedAtUtc = completedAtUtc,
+                FailureCode = null,
+                FailureReason = null
+            });
+            return Task.CompletedTask;
+        }
+
+        public Task RecordFailedAsync(
+            Guid commandId,
+            string failureCode,
+            string failureReason,
+            bool retryable,
+            CancellationToken cancellationToken)
+        {
+            Update(commandId, command => command with
+            {
+                CommandStatus = retryable ? GateCommandStatus.Retryable : GateCommandStatus.Failed,
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+                FailureCode = failureCode,
+                FailureReason = failureReason
+            });
+            return Task.CompletedTask;
+        }
+
+        private void Update(Guid commandId, Func<GateCommandLifecycleRecord, GateCommandLifecycleRecord> update)
+        {
+            var match = _commands.Single(command => command.Value.CommandId == commandId);
+            _commands[match.Key] = update(match.Value);
         }
     }
 
