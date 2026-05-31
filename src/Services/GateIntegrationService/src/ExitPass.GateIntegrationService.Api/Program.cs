@@ -23,6 +23,7 @@ builder.Services
     .AddCheck("self", () => HealthCheckResult.Healthy("Gate Integration Service is alive."));
 
 builder.Services.AddScoped<IConsumeGateExitAuthorizationUseCase, ConsumeGateExitAuthorizationHandler>();
+builder.Services.AddScoped<IGateAuthorizationConsumedHandoffHandler, GateAuthorizationConsumedHandoffHandler>();
 builder.Services.AddSingleton<GateIntegrationMetrics>();
 builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 {
@@ -35,6 +36,9 @@ builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 });
 builder.Services.AddSingleton<IGateHardwareController, NoOpGateHardwareController>();
 builder.Services.AddSingleton<IGateExitAttemptRecorder, InMemoryGateExitAttemptRecorder>();
+builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter, NoOpConsumedAuthorizationGateActionAdapter>();
+builder.Services.AddSingleton<IGateAuthorizationConsumedProcessingRecorder, InMemoryGateAuthorizationConsumedProcessingRecorder>();
+builder.Services.AddSingleton<IGateAuthorizationConsumedScopeValidator, PassThroughGateAuthorizationConsumedScopeValidator>();
 
 var app = builder.Build();
 
