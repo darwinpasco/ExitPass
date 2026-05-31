@@ -170,6 +170,38 @@ public static class InternalPaymentConfirmationEndpoints
                 message: ex.Message,
                 correlationId: correlationId));
         }
+        catch (KeyNotFoundException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+
+            logger.LogWarning(ex, "HTTP RecordPaymentConfirmation rejected because payment attempt was not found.");
+
+            return Results.NotFound(BuildError(
+                errorCode: "PAYMENT_ATTEMPT_NOT_FOUND",
+                message: "Payment attempt was not found.",
+                correlationId: correlationId,
+                details: new Dictionary<string, object?>
+                {
+                    ["payment_attempt_id"] = body.PaymentAttemptId
+                }));
+        }
+        catch (PaymentConfirmationConflictException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+
+            logger.LogWarning(ex, "HTTP RecordPaymentConfirmation rejected by deterministic payment confirmation conflict.");
+
+            return Results.Conflict(BuildError(
+                errorCode: ex.ErrorCode,
+                message: ex.Message,
+                correlationId: correlationId,
+                details: new Dictionary<string, object?>
+                {
+                    ["payment_attempt_id"] = body.PaymentAttemptId
+                }));
+        }
         catch (Npgsql.PostgresException ex) when (ex.SqlState == "P0002")
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.MessageText);
