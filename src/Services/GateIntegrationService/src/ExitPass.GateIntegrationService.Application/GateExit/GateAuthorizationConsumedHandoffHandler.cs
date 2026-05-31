@@ -54,8 +54,8 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
         activity?.SetTag("vendor_system_id", command.Handoff.VendorSystemId);
         activity?.SetTag("correlation_id", command.Handoff.CorrelationId);
 
-        var existing = await _recorder.GetProcessedAsync(command.Handoff.EventId, cancellationToken);
-        if (existing is not null)
+        var processing = await _recorder.BeginProcessingAsync(command.Handoff, cancellationToken);
+        if (processing.AlreadyProcessed)
         {
             activity?.SetStatus(ActivityStatusCode.Ok);
             activity?.SetTag("result_code", "GATE_AUTHORIZATION_CONSUMED_ALREADY_PROCESSED");
@@ -63,14 +63,32 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
             activity?.SetTag("already_processed", true);
 
             return new GateAuthorizationConsumedProcessingResult(
-                existing.EventId,
-                existing.ExitAuthorizationId,
-                existing.GateAuthorizationConsumptionId,
-                existing.TariffSnapshotId,
+                processing.Record.EventId,
+                processing.Record.ExitAuthorizationId,
+                processing.Record.GateAuthorizationConsumptionId,
+                processing.Record.TariffSnapshotId,
                 "GATE_AUTHORIZATION_CONSUMED_ALREADY_PROCESSED",
                 AdapterInvoked: false,
                 AlreadyProcessed: true,
-                existing.ProcessedAtUtc);
+                processing.Record.ProcessedAtUtc);
+        }
+
+        if (processing.AlreadyInProgress || !processing.CanInvokeAdapter)
+        {
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("result_code", "GATE_AUTHORIZATION_CONSUMED_PROCESSING_IN_PROGRESS");
+            activity?.SetTag("adapter_invoked", false);
+            activity?.SetTag("already_processed", false);
+
+            return new GateAuthorizationConsumedProcessingResult(
+                processing.Record.EventId,
+                processing.Record.ExitAuthorizationId,
+                processing.Record.GateAuthorizationConsumptionId,
+                processing.Record.TariffSnapshotId,
+                "GATE_AUTHORIZATION_CONSUMED_PROCESSING_IN_PROGRESS",
+                AdapterInvoked: false,
+                AlreadyProcessed: false,
+                processing.Record.ProcessedAtUtc);
         }
 
         var scope = await _scopeValidator.ValidateAsync(command.Handoff, cancellationToken);
@@ -79,10 +97,27 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
             activity?.SetStatus(ActivityStatusCode.Error, scope.Message);
             activity?.SetTag("result_code", scope.ResultCode);
             activity?.SetTag("adapter_invoked", false);
+            await _recorder.RecordFailedAsync(
+                command.Handoff,
+                scope.ResultCode,
+                scope.Message,
+                cancellationToken);
             throw new GateAuthorizationConsumedHandoffException(scope.ResultCode, scope.Message);
         }
 
-        await _adapter.ProcessConsumedAuthorizationAsync(command.Handoff, cancellationToken);
+        try
+        {
+            await _adapter.ProcessConsumedAuthorizationAsync(command.Handoff, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            await _recorder.RecordFailedAsync(
+                command.Handoff,
+                "GATE_HANDOFF_ADAPTER_FAILED",
+                exception.Message,
+                cancellationToken);
+            throw;
+        }
 
         var processedAtUtc = DateTimeOffset.UtcNow;
         var record = new GateAuthorizationConsumedProcessingRecord(

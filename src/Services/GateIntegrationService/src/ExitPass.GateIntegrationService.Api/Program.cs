@@ -37,7 +37,7 @@ builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 builder.Services.AddSingleton<IGateHardwareController, NoOpGateHardwareController>();
 builder.Services.AddSingleton<IGateExitAttemptRecorder, InMemoryGateExitAttemptRecorder>();
 builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter, NoOpConsumedAuthorizationGateActionAdapter>();
-builder.Services.AddSingleton<IGateAuthorizationConsumedProcessingRecorder, InMemoryGateAuthorizationConsumedProcessingRecorder>();
+builder.Services.AddScoped<IGateAuthorizationConsumedProcessingRecorder, PostgresGateAuthorizationConsumedProcessingRecorder>();
 builder.Services.AddSingleton<IGateAuthorizationConsumedScopeValidator, PassThroughGateAuthorizationConsumedScopeValidator>();
 
 var app = builder.Build();
