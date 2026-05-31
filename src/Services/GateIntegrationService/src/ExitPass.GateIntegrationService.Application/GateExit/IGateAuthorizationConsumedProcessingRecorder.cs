@@ -6,13 +6,13 @@ namespace ExitPass.GateIntegrationService.Application.GateExit;
 public interface IGateAuthorizationConsumedProcessingRecorder
 {
     /// <summary>
-    /// Gets a previous processing record for the source event, if one exists.
+    /// Starts durable processing or returns the current state for an already-seen handoff.
     /// </summary>
-    /// <param name="eventId">Source event identifier.</param>
+    /// <param name="handoff">Consumed authorization handoff.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>Existing processing record, or <see langword="null"/>.</returns>
-    Task<GateAuthorizationConsumedProcessingRecord?> GetProcessedAsync(
-        Guid eventId,
+    /// <returns>Current processing state.</returns>
+    Task<GateAuthorizationConsumedProcessingStart> BeginProcessingAsync(
+        GateAuthorizationConsumedHandoff handoff,
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -22,5 +22,18 @@ public interface IGateAuthorizationConsumedProcessingRecorder
     /// <param name="cancellationToken">Cancellation token.</param>
     Task RecordProcessedAsync(
         GateAuthorizationConsumedProcessingRecord record,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records a failed processing attempt.
+    /// </summary>
+    /// <param name="handoff">Consumed authorization handoff.</param>
+    /// <param name="failureCode">Deterministic failure code.</param>
+    /// <param name="failureReason">Failure reason.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task RecordFailedAsync(
+        GateAuthorizationConsumedHandoff handoff,
+        string failureCode,
+        string failureReason,
         CancellationToken cancellationToken);
 }

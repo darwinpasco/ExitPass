@@ -28,6 +28,40 @@ public sealed record GateAuthorizationConsumedProcessingResult(
     DateTimeOffset ProcessedAtUtc);
 
 /// <summary>
+/// Durable processing status for consumed authorization handoffs.
+/// </summary>
+public enum GateAuthorizationConsumedProcessingStatus
+{
+    /// <summary>
+    /// Processing has been started and the adapter may be invoked.
+    /// </summary>
+    Processing,
+
+    /// <summary>
+    /// Processing has completed successfully.
+    /// </summary>
+    Processed,
+
+    /// <summary>
+    /// Processing failed before a successful adapter result was recorded.
+    /// </summary>
+    Failed
+}
+
+/// <summary>
+/// Result of opening or reading the durable processing state for a handoff.
+/// </summary>
+/// <param name="Record">Current durable processing record.</param>
+/// <param name="CanInvokeAdapter">Whether this delivery may invoke the gate action adapter.</param>
+/// <param name="AlreadyProcessed">Whether the event was already processed successfully.</param>
+/// <param name="AlreadyInProgress">Whether another delivery has already started processing this event.</param>
+public sealed record GateAuthorizationConsumedProcessingStart(
+    GateAuthorizationConsumedProcessingRecord Record,
+    bool CanInvokeAdapter,
+    bool AlreadyProcessed,
+    bool AlreadyInProgress);
+
+/// <summary>
 /// Persisted or process-local processing record used for idempotency.
 /// </summary>
 /// <param name="EventId">Source event identifier.</param>
@@ -36,13 +70,27 @@ public sealed record GateAuthorizationConsumedProcessingResult(
 /// <param name="TariffSnapshotId">Paid tariff snapshot carried by the handoff.</param>
 /// <param name="ResultCode">Deterministic processing result code.</param>
 /// <param name="ProcessedAtUtc">Processing timestamp.</param>
+/// <param name="ProcessingStatus">Current durable processing status.</param>
+/// <param name="AttemptCount">Number of processing attempts recorded for this handoff.</param>
+/// <param name="LastFailureCode">Last deterministic failure code, if any.</param>
+/// <param name="LastFailureReason">Last failure reason, if any.</param>
 public sealed record GateAuthorizationConsumedProcessingRecord(
     Guid EventId,
     Guid ExitAuthorizationId,
     Guid GateAuthorizationConsumptionId,
     Guid TariffSnapshotId,
     string ResultCode,
-    DateTimeOffset ProcessedAtUtc);
+    DateTimeOffset ProcessedAtUtc,
+    GateAuthorizationConsumedProcessingStatus ProcessingStatus = GateAuthorizationConsumedProcessingStatus.Processed,
+    int AttemptCount = 1,
+    string? LastFailureCode = null,
+    string? LastFailureReason = null)
+{
+    /// <summary>
+    /// Stable durable idempotency key. Falls back to the consumption id when the event id is unavailable.
+    /// </summary>
+    public Guid ProcessingKey => EventId == Guid.Empty ? GateAuthorizationConsumptionId : EventId;
+}
 
 /// <summary>
 /// Result from validating handoff site/lane/device scope.

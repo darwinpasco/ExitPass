@@ -132,7 +132,9 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
 
         Assert.Equal("GATE_DEVICE_NOT_FOUND", ex.ErrorCode);
         Assert.Equal(0, fixture.Adapter.CallCount);
-        Assert.Empty(fixture.Recorder.Records);
+        var record = Assert.Single(fixture.Recorder.Records);
+        Assert.Equal(GateAuthorizationConsumedProcessingStatus.Failed, record.ProcessingStatus);
+        Assert.Equal("GATE_DEVICE_NOT_FOUND", record.LastFailureCode);
     }
 
     [Fact]
@@ -152,7 +154,29 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
 
         Assert.Equal("GATE_SCOPE_MISMATCH", ex.ErrorCode);
         Assert.Equal(0, fixture.Adapter.CallCount);
-        Assert.Empty(fixture.Recorder.Records);
+        var record = Assert.Single(fixture.Recorder.Records);
+        Assert.Equal(GateAuthorizationConsumedProcessingStatus.Failed, record.ProcessingStatus);
+        Assert.Equal("GATE_SCOPE_MISMATCH", record.LastFailureCode);
+    }
+
+    [Fact]
+    public async Task HandleAsync_WhenAdapterFails_RecordsFailureWithoutProcessedState()
+    {
+        var fixture = new Fixture
+        {
+            AdapterFailure = new InvalidOperationException("adapter failed")
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.Sut.HandleAsync(
+                new ProcessGateAuthorizationConsumedCommand(CreateHandoff(AppliedTariffSnapshotId)),
+                CancellationToken.None));
+
+        Assert.Equal("adapter failed", ex.Message);
+        var record = Assert.Single(fixture.Recorder.Records);
+        Assert.Equal(GateAuthorizationConsumedProcessingStatus.Failed, record.ProcessingStatus);
+        Assert.Equal("GATE_HANDOFF_ADAPTER_FAILED", record.LastFailureCode);
+        Assert.Equal(1, fixture.Adapter.CallCount);
     }
 
     public static IEnumerable<object[]> MissingRequiredFieldCases()
@@ -199,6 +223,7 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
     {
         public Fixture()
         {
+            Adapter.CurrentFixture = this;
             Sut = new GateAuthorizationConsumedHandoffHandler(
                 Adapter,
                 Recorder,
@@ -213,6 +238,8 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
 
         public GateAuthorizationConsumedScopeValidationResult ScopeResult { get; set; } =
             GateAuthorizationConsumedScopeValidationResult.Valid();
+
+        public Exception? AdapterFailure { get; set; }
 
         public GateAuthorizationConsumedHandoffHandler Sut { get; }
 
@@ -231,8 +258,15 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
         {
             CallCount++;
             LastHandoff = handoff;
+            if (CurrentFixture?.AdapterFailure is { } failure)
+            {
+                throw failure;
+            }
+
             return Task.CompletedTask;
         }
+
+        public Fixture? CurrentFixture { get; set; }
     }
 
     private sealed class InMemoryRecorder : IGateAuthorizationConsumedProcessingRecorder
@@ -241,19 +275,81 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
 
         public IReadOnlyCollection<GateAuthorizationConsumedProcessingRecord> Records => _records.Values;
 
-        public Task<GateAuthorizationConsumedProcessingRecord?> GetProcessedAsync(
-            Guid eventId,
+        public Task<GateAuthorizationConsumedProcessingStart> BeginProcessingAsync(
+            GateAuthorizationConsumedHandoff handoff,
             CancellationToken cancellationToken)
         {
+            var eventId = handoff.ProcessingKey();
             _records.TryGetValue(eventId, out var record);
-            return Task.FromResult(record);
+            if (record is not null)
+            {
+                if (record.ProcessingStatus == GateAuthorizationConsumedProcessingStatus.Failed)
+                {
+                    var retry = record with
+                    {
+                        ProcessingStatus = GateAuthorizationConsumedProcessingStatus.Processing,
+                        ResultCode = "GATE_AUTHORIZATION_CONSUMED_PROCESSING",
+                        AttemptCount = record.AttemptCount + 1,
+                        LastFailureCode = null,
+                        LastFailureReason = null
+                    };
+                    _records[eventId] = retry;
+                    return Task.FromResult(new GateAuthorizationConsumedProcessingStart(
+                        retry,
+                        CanInvokeAdapter: true,
+                        AlreadyProcessed: false,
+                        AlreadyInProgress: false));
+                }
+
+                var alreadyProcessed = record.ProcessingStatus == GateAuthorizationConsumedProcessingStatus.Processed;
+                return Task.FromResult(new GateAuthorizationConsumedProcessingStart(
+                    record,
+                    CanInvokeAdapter: false,
+                    AlreadyProcessed: alreadyProcessed,
+                    AlreadyInProgress: !alreadyProcessed));
+            }
+
+            record = new GateAuthorizationConsumedProcessingRecord(
+                eventId,
+                handoff.ExitAuthorizationId,
+                handoff.GateAuthorizationConsumptionId,
+                handoff.TariffSnapshotId,
+                "GATE_AUTHORIZATION_CONSUMED_PROCESSING",
+                DateTimeOffset.UtcNow,
+                GateAuthorizationConsumedProcessingStatus.Processing);
+            _records[eventId] = record;
+            return Task.FromResult(new GateAuthorizationConsumedProcessingStart(
+                record,
+                CanInvokeAdapter: true,
+                AlreadyProcessed: false,
+                AlreadyInProgress: false));
         }
 
         public Task RecordProcessedAsync(
             GateAuthorizationConsumedProcessingRecord record,
             CancellationToken cancellationToken)
         {
-            _records.TryAdd(record.EventId, record);
+            _records[record.ProcessingKey] = record;
+            return Task.CompletedTask;
+        }
+
+        public Task RecordFailedAsync(
+            GateAuthorizationConsumedHandoff handoff,
+            string failureCode,
+            string failureReason,
+            CancellationToken cancellationToken)
+        {
+            var eventId = handoff.ProcessingKey();
+            _records[eventId] = new GateAuthorizationConsumedProcessingRecord(
+                eventId,
+                handoff.ExitAuthorizationId,
+                handoff.GateAuthorizationConsumptionId,
+                handoff.TariffSnapshotId,
+                failureCode,
+                DateTimeOffset.UtcNow,
+                GateAuthorizationConsumedProcessingStatus.Failed,
+                LastFailureCode: failureCode,
+                LastFailureReason: failureReason);
             return Task.CompletedTask;
         }
     }
@@ -267,6 +363,12 @@ public sealed class GateAuthorizationConsumedHandoffHandlerTests
             return Task.FromResult(fixture.ScopeResult);
         }
     }
+}
+
+internal static class GateAuthorizationConsumedHandoffTestExtensions
+{
+    public static Guid ProcessingKey(this GateAuthorizationConsumedHandoff handoff) =>
+        handoff.EventId == Guid.Empty ? handoff.GateAuthorizationConsumptionId : handoff.EventId;
 }
 
 #pragma warning restore CS1591
