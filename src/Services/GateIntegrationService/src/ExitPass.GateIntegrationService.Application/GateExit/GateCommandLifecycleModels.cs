@@ -55,11 +55,18 @@ public sealed record GateCommandLifecycleRecord(
     Guid? VendorSystemId,
     GateCommandStatus CommandStatus,
     int AttemptCount,
+    int MaxAttempts,
+    string RetryPolicyCode,
     DateTimeOffset RequestedAtUtc,
+    DateTimeOffset LastAttemptedAtUtc,
     DateTimeOffset? StartedAtUtc,
     DateTimeOffset? CompletedAtUtc,
+    DateTimeOffset? NextAttemptAtUtc,
+    DateTimeOffset? TerminalFailureAtUtc,
     string? FailureCode,
     string? FailureReason,
+    string? LastFailureCode,
+    string? LastFailureReason,
     Guid CorrelationId);
 
 /// <summary>
@@ -69,3 +76,23 @@ public sealed record GateCommandLifecycleStart(
     GateCommandLifecycleRecord Command,
     bool Created,
     bool CanInvokeAdapter);
+
+/// <summary>
+/// Deterministic retry policy for internal gate commands.
+/// </summary>
+public sealed record GateCommandRetryPolicy(
+    string PolicyCode,
+    int MaxAttempts,
+    TimeSpan RetryDelay)
+{
+    /// <summary>
+    /// Default bounded immediate retry policy for vendor-neutral gate commands.
+    /// </summary>
+    public static GateCommandRetryPolicy Default { get; } =
+        new("GATE_COMMAND_RETRY_V1", MaxAttempts: 3, RetryDelay: TimeSpan.Zero);
+
+    /// <summary>
+    /// Determines whether another adapter attempt is allowed after the current attempt count.
+    /// </summary>
+    public bool HasAttemptsRemaining(int attemptCount) => attemptCount < MaxAttempts;
+}
