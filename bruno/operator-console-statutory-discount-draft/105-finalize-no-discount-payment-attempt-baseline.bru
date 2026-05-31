@@ -1,0 +1,32 @@
+meta {
+  name: 105 Finalize no-discount payment attempt baseline
+  type: http
+  seq: 105
+}
+
+post {
+  url: {{internalPaymentFinalizationBaseUrl}}/v1/internal/payment-attempts/{{paymentFinalityPaymentAttemptId_noDiscount}}/finalize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyNoDiscount}}-finalize
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "finalAttemptStatus": "CONFIRMED",
+    "requestedBy": "central-pms-manual-smoke"
+  }
+}
+
+tests {
+  test("no-discount finalization returns the existing confirmed final state", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("paymentFinalityPaymentAttemptId_noDiscount"));
+    expect(res.body.attemptStatus).to.equal("CONFIRMED");
+  });
+}

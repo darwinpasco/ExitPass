@@ -1,0 +1,41 @@
+meta {
+  name: 100 Record payment confirmation replay
+  type: http
+  seq: 100
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyReplay}}-confirmation
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{paymentFinalityPaymentAttemptId}}",
+    "providerReference": "{{paymentFinalityProviderReferenceReplay}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-finality-applied-effective-replay",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{paymentFinalityAmountMajorUnits_appliedEffective}},
+    "currencyCode": "{{paymentFinalityCurrencyCode}}"
+  }
+}
+
+tests {
+  test("confirmation replay returns the existing confirmation state", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("paymentFinalityPaymentAttemptId"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("paymentFinalityProviderReference"));
+    expect(res.body.confirmationStatus).to.equal("RECORDED");
+    expect(res.body.paymentConfirmationId).to.equal(bru.getEnvVar("paymentFinalityPaymentConfirmationId"));
+  });
+}

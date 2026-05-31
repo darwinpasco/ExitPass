@@ -1,0 +1,32 @@
+meta {
+  name: 101 Finalize payment attempt replay
+  type: http
+  seq: 101
+}
+
+post {
+  url: {{internalPaymentFinalizationBaseUrl}}/v1/internal/payment-attempts/{{paymentFinalityPaymentAttemptId}}/finalize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyReplay}}-finalize
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "finalAttemptStatus": "CONFIRMED",
+    "requestedBy": "central-pms-manual-smoke"
+  }
+}
+
+tests {
+  test("finalization replay returns the existing confirmed final state", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("paymentFinalityPaymentAttemptId"));
+    expect(res.body.attemptStatus).to.equal("CONFIRMED");
+  });
+}

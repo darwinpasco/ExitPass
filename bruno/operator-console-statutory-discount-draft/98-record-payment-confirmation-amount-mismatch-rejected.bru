@@ -1,0 +1,38 @@
+meta {
+  name: 98 Record payment confirmation amount mismatch rejected
+  type: http
+  seq: 98
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyAmountMismatch}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{paymentFinalityPaymentAttemptId}}",
+    "providerReference": "{{paymentFinalityProviderReferenceAmountMismatch}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-finality-amount-mismatch",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": 88.29,
+    "currencyCode": "{{paymentFinalityCurrencyCode}}"
+  }
+}
+
+tests {
+  test("confirmation rejects provider amount mismatch deterministically", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("PAYMENT_AMOUNT_MISMATCH");
+  });
+}

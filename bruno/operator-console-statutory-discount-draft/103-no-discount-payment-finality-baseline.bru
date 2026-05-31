@@ -1,0 +1,34 @@
+meta {
+  name: 103 No discount payment finality baseline
+  type: http
+  seq: 103
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyNoDiscount}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{paymentFinalityParkingSessionId_noDiscount}}",
+    "tariffSnapshotId": "{{paymentFinalityTariffSnapshotId_noDiscountActive}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("no-discount payment attempt baseline still uses the active no-discount tariff", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.paymentAttemptId).to.not.equal(null);
+    expect(res.body.paymentProvider).to.equal(bru.getEnvVar("paymentMethodGcash"));
+    bru.setEnvVar("paymentFinalityPaymentAttemptId_noDiscount", res.body.paymentAttemptId);
+  });
+}

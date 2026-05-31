@@ -1,0 +1,32 @@
+meta {
+  name: 97 Finalize payment attempt effective APPLIED tariff
+  type: http
+  seq: 97
+}
+
+post {
+  url: {{internalPaymentFinalizationBaseUrl}}/v1/internal/payment-attempts/{{paymentFinalityPaymentAttemptId}}/finalize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKey}}-finalize
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "finalAttemptStatus": "CONFIRMED",
+    "requestedBy": "central-pms-manual-smoke"
+  }
+}
+
+tests {
+  test("finalization returns the terminal confirmed payment attempt state", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("paymentFinalityPaymentAttemptId"));
+    expect(res.body.attemptStatus).to.equal("CONFIRMED");
+  });
+}

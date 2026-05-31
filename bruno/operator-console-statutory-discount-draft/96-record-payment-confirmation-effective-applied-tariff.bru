@@ -1,0 +1,43 @@
+meta {
+  name: 96 Record payment confirmation effective APPLIED tariff
+  type: http
+  seq: 96
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKey}}-confirmation
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{paymentFinalityPaymentAttemptId}}",
+    "providerReference": "{{paymentFinalityProviderReference}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-finality-applied-effective",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{paymentFinalityAmountMajorUnits_appliedEffective}},
+    "currencyCode": "{{paymentFinalityCurrencyCode}}"
+  }
+}
+
+tests {
+  test("confirmation succeeds against the payment attempt stored APPLIED tariff basis", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentConfirmationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("paymentFinalityPaymentAttemptId"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("paymentFinalityProviderReference"));
+    expect(res.body.providerStatus).to.equal("SUCCESS");
+    expect(res.body.confirmationStatus).to.equal("RECORDED");
+    bru.setEnvVar("paymentFinalityPaymentConfirmationId", res.body.paymentConfirmationId);
+  });
+}
