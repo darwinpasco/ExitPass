@@ -11,7 +11,7 @@ POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-b
 POST /v1/ops/operator-console/statutory-discounts/resolve-policy
 ```
 
-This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, #205 payment-attempt creation against the effective APPLIED tariff snapshot, #207 manual payment-finality coverage for #206, and #209 manual exit-authorization coverage for #208. It does not call real payment providers, consume gates, call vendor PMS, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
+This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, #205 payment-attempt creation against the effective APPLIED tariff snapshot, #207 manual payment-finality coverage for #206, #209 manual exit-authorization coverage for #208, and #211 manual gate-consume coverage for #210. It does not call real payment providers, call real gate hardware, call vendor PMS, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
 
 ## Preconditions
 
@@ -28,6 +28,7 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #204 payment-attempt creation validates the effective APPLIED tariff snapshot.
 - #206 payment confirmation/finality validates against the payment attempt stored tariff snapshot and amount/currency.
 - #208 exit authorization creation validates against the confirmed payment attempt stored tariff snapshot and amount/currency.
+- #210 gate consume validates the issued exit authorization, confirmed/finalized payment attempt, payment confirmation, tariff snapshot, amount/currency, and APPLIED paid tariff linkage before consume persistence.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -53,7 +54,7 @@ docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/st
 
 The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
 
-For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets gate authorization consumptions, exit authorizations, payment confirmations, and payment attempts for the synthetic #205/#207/#209 payment sessions `306`, `307`, `308`, `314`, `315`, and `316` so payment-attempt, payment-finality, and exit-authorization smoke tests can be rerun after reseeding. It does not delete access evaluation evidence and does not create gate, coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, payment-attempt, payment-finality, or exit-authorization effective-tariff testing.
+For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets gate events, gate authorization consumptions, exit authorizations, payment confirmations, and payment attempts for the synthetic #205/#207/#209/#211 payment sessions `306`, `307`, `308`, `314`, `315`, and `316` so payment-attempt, payment-finality, exit-authorization, and gate-consume smoke tests can be rerun after reseeding. The #211 fixture adds one synthetic outbound lane, one gate device, and one DEVICE service identity for the manual fallback site so the gate consume endpoint can pass local device identity validation without calling real hardware. It does not delete access evaluation evidence and does not create coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, payment-attempt, payment-finality, exit-authorization, or gate-consume effective-tariff testing.
 
 ## Evidence Metadata Behavior
 
@@ -1903,6 +1904,241 @@ Scope boundary:
 - These requests do not call AUB, change provider routing, create coupon applications, create reconciliation rows, or render UI.
 - Exit authorization response does not include `tariffSnapshotId`; the authoritative tariff basis is verified through `core.payment_attempts.tariff_snapshot_id`.
 
+## Gate Consume Effective APPLIED Tariff Snapshot
+
+Issue #211 extends the manual smoke suite for #210 gate consume hardening. These requests prove gate consume succeeds only after the chain has produced an `ISSUED` exit authorization from a confirmed/finalized payment attempt whose stored tariff snapshot is the effective paid APPLIED tariff snapshot.
+
+Current endpoints:
+
+```http
+POST /v1/vendor-parking/resolve
+POST /v1/public/payment-attempts
+POST /v1/internal/payments/confirmation
+POST /v1/internal/payment-attempts/{paymentAttemptId}/finalize
+POST /v1/internal/payment-attempts/{paymentAttemptId}/issue-exit-authorization
+POST /v1/gate/authorizations/{exitAuthorizationId}/consume
+```
+
+Gate consume request shape:
+
+```http
+POST /v1/gate/authorizations/{exitAuthorizationId}/consume
+X-Correlation-Id: <guid>
+X-Service-Identity-Id: 77000000-0000-0000-0000-000000000006
+X-Gate-Device-Id: MANUAL_TEST_EXIT_GATE_01
+Content-Type: application/json
+```
+
+```json
+{
+  "requestedByUserId": "77000000-0000-0000-0000-000000000006"
+}
+```
+
+Expected consume response:
+
+```json
+{
+  "exitAuthorizationId": "<issued exit authorization id>",
+  "authorizationStatus": "CONSUMED",
+  "consumedAt": "<timestamp>"
+}
+```
+
+Preconditions:
+
+- #210 is merged.
+- Central PMS is running.
+- Local PostgreSQL is available.
+- The fixture seed has been applied.
+- The APPLIED statutory discount fixture exists for parking session `77000000-0000-0000-0000-000000000316`.
+- The manual gate fixture exists: lane `77000000-0000-0000-0000-000000000601`, device `MANUAL_TEST_EXIT_GATE_01`, and DEVICE service identity `77000000-0000-0000-0000-000000000006`.
+
+### Gate Consume APPLIED Workflow
+
+1. Run `117 Vendor resolve APPLIED basis for gate consume`.
+2. Run `118 Create payment attempt effective APPLIED tariff for gate consume`.
+3. Run `119 Record payment confirmation for gate consume`.
+4. Run `120 Finalize payment attempt for gate consume`.
+5. Run `121 Issue exit authorization for gate consume`.
+6. Run `122 Consume exit authorization effective APPLIED tariff`.
+7. Run `123 Consume exit authorization replay`.
+
+Expected:
+
+- Request `117` returns `statutoryDiscountApplied = true`, `effectiveTariffSnapshotId = appliedTariffSnapshotId`, and payable amount `89.29 PHP`.
+- Request `118` creates or reuses a payment attempt for `77000000-0000-0000-0000-000000000506`.
+- Requests `119` and `120` confirm/finalize the same attempt with amount/currency `89.29 PHP`.
+- Request `121` returns an `ISSUED` exit authorization for the same parking session/payment attempt.
+- Request `122` returns `CONSUMED` and records exactly one `gates.gate_authorization_consumptions` row for that authorization.
+- Request `123` returns deterministic `EXIT_AUTHORIZATION_ALREADY_CONSUMED`; it must not create a duplicate consumed row.
+- The original snapshot `77000000-0000-0000-0000-000000000406` remains `SUPERSEDED` and is not used as the paid basis.
+- The consumed/non-active APPLIED snapshot remains valid for consume because it is the snapshot stored on the confirmed payment attempt.
+
+### Gate Consume Rejections
+
+Run `124 Consume exit authorization unconfirmed payment rejected` after applying the fixture seed. It targets the seeded `REQUESTED` payment attempt `77000000-0000-0000-0000-000000000513`.
+
+Expected: HTTP `409`, `errorCode = PAYMENT_ATTEMPT_NOT_CONFIRMED`, and no exit authorization or gate consumption row is created for the unconfirmed attempt. The public API normally prevents an issued authorization from existing for an unconfirmed payment; #210 also keeps the direct consume guard in runtime tests for inconsistent stored data.
+
+Expired authorization rejection is not represented by a Bruno request in this collection because there is no public manual endpoint to create an expired issued authorization without synthetic inconsistent state. The #210 integration tests cover `EXIT_AUTHORIZATION_EXPIRED`, and the manual DB verification below checks that the normal gate consume workflow does not create expired/denied consume rows.
+
+### No-Discount Gate Consume Baseline
+
+1. Run `126 No-discount gate consume baseline`.
+2. Run `127 Record no-discount payment confirmation for gate consume`.
+3. Run `128 Finalize no-discount payment attempt for gate consume`.
+4. Run `129 Issue no-discount exit authorization for gate consume`.
+5. Run `130 Consume no-discount exit authorization baseline`.
+
+Expected: the no-discount paid tariff snapshot `77000000-0000-0000-0000-000000000398` remains the payment attempt payable basis, amount/currency are `125.00 PHP`, the exit authorization is `ISSUED`, and consume returns `CONSUMED`.
+
+### Gate Consume DB Verification
+
+Verify the APPLIED consumed authorization and paid tariff chain:
+
+```sql
+SELECT
+    ea.exit_authorization_id,
+    ea.authorization_status,
+    ea.parking_session_id,
+    ea.payment_attempt_id,
+    pa.tariff_snapshot_id AS paid_tariff_snapshot_id,
+    pa.amount AS payment_attempt_amount,
+    pa.currency_code AS payment_attempt_currency,
+    pa.attempt_status,
+    pa.finalized_at,
+    pc.payment_confirmation_id,
+    pc.confirmed_amount,
+    pc.currency_code AS confirmation_currency,
+    gac.gate_authorization_consumption_id,
+    gac.consume_status,
+    gac.consumed_at,
+    app.original_tariff_snapshot_id,
+    app.applied_tariff_snapshot_id,
+    original.snapshot_status AS original_snapshot_status,
+    applied.snapshot_status AS applied_snapshot_status,
+    applied.consumed_at AS applied_snapshot_consumed_at
+FROM core.exit_authorizations ea
+JOIN core.payment_attempts pa
+  ON pa.payment_attempt_id = ea.payment_attempt_id
+JOIN core.payment_confirmations pc
+  ON pc.payment_confirmation_id = ea.payment_confirmation_id
+JOIN gates.gate_authorization_consumptions gac
+  ON gac.exit_authorization_id = ea.exit_authorization_id
+LEFT JOIN discounts.statutory_discount_payable_basis_applications app
+  ON app.parking_session_id = ea.parking_session_id
+ AND app.application_status = 'APPLIED'
+LEFT JOIN core.tariff_snapshots original
+  ON original.tariff_snapshot_id = app.original_tariff_snapshot_id
+LEFT JOIN core.tariff_snapshots applied
+  ON applied.tariff_snapshot_id = app.applied_tariff_snapshot_id
+WHERE ea.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+ORDER BY gac.consumed_at DESC;
+```
+
+Expected: `paid_tariff_snapshot_id = applied_tariff_snapshot_id = 77000000-0000-0000-0000-000000000506`, `original_snapshot_status = SUPERSEDED`, `payment_attempt_amount = confirmed_amount = 89.29`, currencies are `PHP`, and `consume_status = CONSUMED`.
+
+Verify replay did not create a duplicate consumed row:
+
+```sql
+SELECT
+    ea.exit_authorization_id,
+    COUNT(*) FILTER (WHERE gac.consume_status = 'CONSUMED') AS consumed_count,
+    COUNT(*) AS total_consume_rows
+FROM core.exit_authorizations ea
+LEFT JOIN gates.gate_authorization_consumptions gac
+  ON gac.exit_authorization_id = ea.exit_authorization_id
+WHERE ea.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+GROUP BY ea.exit_authorization_id
+ORDER BY ea.exit_authorization_id;
+```
+
+Expected: the APPLIED gate-consume authorization has `consumed_count = 1`.
+
+Verify the manual gate device identity and lane scope:
+
+```sql
+SELECT
+    gd.gate_device_id,
+    gd.device_code,
+    gd.site_id,
+    gd.lane_id,
+    gd.service_identity_id,
+    gd.device_status,
+    da.assignment_status,
+    l.lane_direction,
+    l.lane_status,
+    si.identity_type,
+    si.identity_status
+FROM gates.gate_devices gd
+JOIN sites.device_assignments da
+  ON da.gate_device_id = gd.gate_device_id
+ AND da.service_identity_id = gd.service_identity_id
+JOIN sites.lanes l
+  ON l.lane_id = gd.lane_id
+JOIN identity.service_identities si
+  ON si.service_identity_id = gd.service_identity_id
+WHERE gd.device_code = 'MANUAL_TEST_EXIT_GATE_01';
+```
+
+Expected: active DEVICE identity, active gate device, active assignment, and active outbound lane for site `77000000-0000-0000-0000-000000000201`.
+
+Verify unconfirmed rejection did not create exit or consume rows:
+
+```sql
+SELECT
+    pa.payment_attempt_id,
+    pa.attempt_status,
+    pa.finalized_at,
+    COUNT(DISTINCT ea.exit_authorization_id) AS exit_authorization_count,
+    COUNT(DISTINCT gac.gate_authorization_consumption_id) AS gate_consumption_count
+FROM core.payment_attempts pa
+LEFT JOIN core.exit_authorizations ea
+  ON ea.payment_attempt_id = pa.payment_attempt_id
+LEFT JOIN gates.gate_authorization_consumptions gac
+  ON gac.exit_authorization_id = ea.exit_authorization_id
+WHERE pa.payment_attempt_id = '77000000-0000-0000-0000-000000000513'::uuid
+GROUP BY pa.payment_attempt_id, pa.attempt_status, pa.finalized_at;
+```
+
+Expected: `attempt_status = REQUESTED`, `finalized_at IS NULL`, and both counts are `0`.
+
+Verify no coupon, reconciliation, provider-routing, or AUB side effects:
+
+```sql
+SELECT
+    (SELECT COUNT(*)
+       FROM coupons.coupon_applications ca
+      WHERE ca.parking_session_id IN (
+          '77000000-0000-0000-0000-000000000316'::uuid,
+          '77000000-0000-0000-0000-000000000308'::uuid
+      )) AS coupon_application_count,
+    (SELECT COUNT(*)
+       FROM reconciliation.reconciliation_items ri
+      WHERE ri.payment_attempt_id IN (
+          SELECT payment_attempt_id
+          FROM core.payment_attempts
+          WHERE parking_session_id IN (
+              '77000000-0000-0000-0000-000000000316'::uuid,
+              '77000000-0000-0000-0000-000000000308'::uuid
+          )
+      )) AS reconciliation_item_count,
+    (SELECT COUNT(*)
+       FROM payments.payment_provider_routing_policies prp
+      WHERE prp.provider_code ILIKE '%AUB%') AS aub_routing_policy_count;
+```
+
+Expected: coupon and reconciliation counts are `0`; no AUB routing policy is selected or invoked by these requests. Provider routing remains the existing PayMongo-backed payment rail selected at payment-attempt creation.
+
+Scope boundary:
+
+- These requests do not test physical gate hardware movement.
+- These requests do not call HikCentral Professional or any broad vendor PMS API.
+- These requests do not test real PayMongo callback delivery or external provider settlement.
+- These requests do not call AUB, change provider routing, create coupon applications, create reconciliation rows, or render UI.
+- Gate consume response does not include `tariffSnapshotId`; the authoritative paid tariff basis is verified through `core.payment_attempts.tariff_snapshot_id`.
+
 Verify the payment-attempt guardrail case leaves the application and original snapshot unfinalized:
 
 ```sql
@@ -2070,7 +2306,7 @@ This manual pack does not test:
 - payment attempt creation by the apply endpoint
 - payment confirmation/finality
 - provider handoff execution or provider callbacks
-- gate consume
+- physical gate hardware movement
 - coupons
 - evidence upload
 - raw evidence storage

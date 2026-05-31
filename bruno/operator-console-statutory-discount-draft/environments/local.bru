@@ -6,6 +6,7 @@ vars {
   internalPaymentFinalizationBaseUrl: http://127.0.0.1:56065
   internalPaymentOutcomeBaseUrl: http://127.0.0.1:56065
   internalExitAuthorizationBaseUrl: http://127.0.0.1:56065
+  gateConsumeBaseUrl: http://127.0.0.1:56065
   vendorSystemId_manual: 77000000-0000-0000-0000-000000000004
   userId_allowed: 77000000-0000-0000-0000-000000000010
   userId_inactiveHrMapping: 77000000-0000-0000-0000-000000000011
@@ -160,6 +161,41 @@ vars {
   exitAuthorizationNoDiscountIdempotencyKeyConfirmation: manual-exit-auth-no-discount-confirmation
   exitAuthorizationNoDiscountIdempotencyKeyFinalization: manual-exit-auth-no-discount-finalization
   exitAuthorizationNoDiscountIdempotencyKeyIssue: manual-exit-auth-no-discount-issue
+  gateConsumeRequestedByUserId: 77000000-0000-0000-0000-000000000006
+  gateConsumeGateDeviceId: MANUAL_TEST_EXIT_GATE_01
+  gateConsumeLaneId: 77000000-0000-0000-0000-000000000601
+  gateConsumeParkingSessionId_applied: 77000000-0000-0000-0000-000000000316
+  gateConsumeTariffSnapshotId_appliedEffective: 77000000-0000-0000-0000-000000000506
+  gateConsumeOriginalTariffSnapshotId: 77000000-0000-0000-0000-000000000406
+  gateConsumeAmountMinorUnits_appliedEffective: 8929
+  gateConsumeAmountMajorUnits_appliedEffective: 89.29
+  gateConsumeCurrencyCode: PHP
+  gateConsumePaymentAttemptId: 00000000-0000-0000-0000-000000000000
+  gateConsumePaymentConfirmationId: 00000000-0000-0000-0000-000000000000
+  gateConsumeExitAuthorizationId: 00000000-0000-0000-0000-000000000000
+  gateConsumeProviderReference: manual-paymongo-gate-consume-applied-effective
+  gateConsumeIdempotencyKeyPaymentAttempt: manual-gate-consume-applied-effective-payment-attempt
+  gateConsumeIdempotencyKeyConfirmation: manual-gate-consume-applied-effective-confirmation
+  gateConsumeIdempotencyKeyFinalization: manual-gate-consume-applied-effective-finalization
+  gateConsumeIdempotencyKeyIssue: manual-gate-consume-applied-effective-issue
+  gateConsumeCorrelationIdConsume: 77000000-0000-0000-0000-000000000901
+  gateConsumeCorrelationIdConsumeReplay: 77000000-0000-0000-0000-000000000902
+  gateConsumeUnconfirmedParkingSessionId: 77000000-0000-0000-0000-000000000313
+  gateConsumeUnconfirmedPaymentAttemptId: 77000000-0000-0000-0000-000000000513
+  gateConsumeUnconfirmedIssueIdempotencyKey: manual-gate-consume-unconfirmed-issue
+  gateConsumeNoDiscountParkingSessionId: 77000000-0000-0000-0000-000000000308
+  gateConsumeNoDiscountTariffSnapshotId: 77000000-0000-0000-0000-000000000398
+  gateConsumeNoDiscountAmountMinorUnits: 12500
+  gateConsumeNoDiscountAmountMajorUnits: 125.00
+  gateConsumeNoDiscountPaymentAttemptId: 00000000-0000-0000-0000-000000000000
+  gateConsumeNoDiscountPaymentConfirmationId: 00000000-0000-0000-0000-000000000000
+  gateConsumeNoDiscountExitAuthorizationId: 00000000-0000-0000-0000-000000000000
+  gateConsumeNoDiscountProviderReference: manual-paymongo-gate-consume-no-discount
+  gateConsumeNoDiscountIdempotencyKeyPaymentAttempt: manual-gate-consume-no-discount-payment-attempt
+  gateConsumeNoDiscountIdempotencyKeyConfirmation: manual-gate-consume-no-discount-confirmation
+  gateConsumeNoDiscountIdempotencyKeyFinalization: manual-gate-consume-no-discount-finalization
+  gateConsumeNoDiscountIdempotencyKeyIssue: manual-gate-consume-no-discount-issue
+  gateConsumeNoDiscountCorrelationIdConsume: 77000000-0000-0000-0000-000000000903
   seniorEntitlementType: SENIOR_CITIZEN
   pwdEntitlementType: PWD
   unsupportedEntitlementType: OTHER_STATUTORY

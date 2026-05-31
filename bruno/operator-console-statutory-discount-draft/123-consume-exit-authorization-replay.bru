@@ -1,0 +1,31 @@
+meta {
+  name: 123 Consume exit authorization replay
+  type: http
+  seq: 123
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeCorrelationIdConsumeReplay}}
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+  X-Gate-Device-Id: {{gateConsumeGateDeviceId}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("gate consume replay is deterministic and does not create a second consume", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("EXIT_AUTHORIZATION_ALREADY_CONSUMED");
+  });
+}

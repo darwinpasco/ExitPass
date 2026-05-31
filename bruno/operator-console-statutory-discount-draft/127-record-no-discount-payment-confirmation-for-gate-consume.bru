@@ -1,0 +1,41 @@
+meta {
+  name: 127 Record no-discount payment confirmation for gate consume
+  type: http
+  seq: 127
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{gateConsumeNoDiscountIdempotencyKeyConfirmation}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{gateConsumeNoDiscountPaymentAttemptId}}",
+    "providerReference": "{{gateConsumeNoDiscountProviderReference}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-gate-consume-no-discount",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{gateConsumeNoDiscountAmountMajorUnits}},
+    "currencyCode": "{{gateConsumeCurrencyCode}}"
+  }
+}
+
+tests {
+  test("no-discount confirmation succeeds for gate consume", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentConfirmationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("gateConsumeNoDiscountPaymentAttemptId"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("gateConsumeNoDiscountProviderReference"));
+    bru.setEnvVar("gateConsumeNoDiscountPaymentConfirmationId", res.body.paymentConfirmationId);
+  });
+}

@@ -1,0 +1,34 @@
+meta {
+  name: 126 No-discount gate consume baseline
+  type: http
+  seq: 126
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{gateConsumeNoDiscountIdempotencyKeyPaymentAttempt}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{gateConsumeNoDiscountParkingSessionId}}",
+    "tariffSnapshotId": "{{gateConsumeNoDiscountTariffSnapshotId}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("no-discount payment attempt is created or reused for gate consume", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.paymentAttemptId).to.not.equal(null);
+    expect(res.body.paymentProvider).to.equal(bru.getEnvVar("paymentMethodGcash"));
+    bru.setEnvVar("gateConsumeNoDiscountPaymentAttemptId", res.body.paymentAttemptId);
+  });
+}
