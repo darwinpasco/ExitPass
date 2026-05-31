@@ -71,6 +71,8 @@ public sealed class RecordPaymentConfirmationGateway : IRecordPaymentConfirmatio
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync(cancellationToken);
 
+            await ValidateAttemptPayableBasisAsync(connection, command, cancellationToken);
+
             await using var dbCommand = new NpgsqlCommand(sql, connection)
             {
                 CommandTimeout = 30
@@ -127,6 +129,83 @@ public sealed class RecordPaymentConfirmationGateway : IRecordPaymentConfirmatio
             throw new PaymentConfirmationConflictException(
                 "PAYMENT_CONFIRMATION_CONFLICT",
                 message);
+        }
+    }
+
+    private static async Task ValidateAttemptPayableBasisAsync(
+        NpgsqlConnection connection,
+        RecordPaymentConfirmationCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                pa.payment_attempt_id,
+                pa.tariff_snapshot_id,
+                pa.amount AS attempt_amount,
+                pa.currency_code::text AS attempt_currency_code,
+                pa.attempt_status::text AS attempt_status,
+                ts.tariff_snapshot_id AS persisted_tariff_snapshot_id,
+                ts.parking_session_id AS tariff_parking_session_id,
+                ts.net_amount AS tariff_net_amount,
+                ts.currency_code::text AS tariff_currency_code
+            FROM core.payment_attempts AS pa
+            LEFT JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
+            WHERE pa.payment_attempt_id = @payment_attempt_id;
+            """;
+
+        await using var dbCommand = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        dbCommand.Parameters.AddWithValue("payment_attempt_id", command.PaymentAttemptId);
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new KeyNotFoundException($"payment attempt {command.PaymentAttemptId} was not found");
+        }
+
+        if (reader.IsDBNull(reader.GetOrdinal("persisted_tariff_snapshot_id")))
+        {
+            throw new PaymentConfirmationConflictException(
+                "PAYMENT_ATTEMPT_TARIFF_SNAPSHOT_MISSING",
+                $"Payment attempt {command.PaymentAttemptId} does not have a persisted tariff snapshot.");
+        }
+
+        var attemptAmount = reader.GetDecimal(reader.GetOrdinal("attempt_amount"));
+        var attemptCurrency = reader.GetString(reader.GetOrdinal("attempt_currency_code")).Trim();
+        var tariffAmount = reader.GetDecimal(reader.GetOrdinal("tariff_net_amount"));
+        var tariffCurrency = reader.GetString(reader.GetOrdinal("tariff_currency_code")).Trim();
+
+        if (attemptAmount != tariffAmount)
+        {
+            throw new PaymentConfirmationConflictException(
+                "PAYMENT_AMOUNT_MISMATCH",
+                "Payment attempt amount does not match its persisted tariff snapshot payable amount.");
+        }
+
+        if (!string.Equals(attemptCurrency, tariffCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PaymentConfirmationConflictException(
+                "PAYMENT_CURRENCY_MISMATCH",
+                "Payment attempt currency does not match its persisted tariff snapshot currency.");
+        }
+
+        if (command.AmountConfirmed.HasValue && command.AmountConfirmed.Value != attemptAmount)
+        {
+            throw new PaymentConfirmationConflictException(
+                "PAYMENT_AMOUNT_MISMATCH",
+                "Provider confirmed amount does not match the payment attempt amount.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(command.CurrencyCode) &&
+            !string.Equals(command.CurrencyCode.Trim(), attemptCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PaymentConfirmationConflictException(
+                "PAYMENT_CURRENCY_MISMATCH",
+                "Provider confirmed currency does not match the payment attempt currency.");
         }
     }
 }

@@ -1,5 +1,6 @@
 using System.Data;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Payments;
 using Npgsql;
 
 namespace ExitPass.CentralPms.Infrastructure.Payments;
@@ -41,6 +42,8 @@ public sealed class FinalizePaymentAttemptGateway : IFinalizePaymentAttemptGatew
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
+        await ValidateAttemptPayableBasisAsync(connection, request.PaymentAttemptId, cancellationToken);
+
         await using var command = BuildCommand(connection, request);
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
 
@@ -81,5 +84,75 @@ public sealed class FinalizePaymentAttemptGateway : IFinalizePaymentAttemptGatew
         command.Parameters.AddWithValue("p_now", request.RequestedAt);
 
         return command;
+    }
+
+    private static async Task ValidateAttemptPayableBasisAsync(
+        NpgsqlConnection connection,
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                pa.payment_attempt_id,
+                pa.parking_session_id,
+                pa.tariff_snapshot_id,
+                pa.amount AS attempt_amount,
+                pa.currency_code::text AS attempt_currency_code,
+                ts.tariff_snapshot_id AS persisted_tariff_snapshot_id,
+                ts.parking_session_id AS tariff_parking_session_id,
+                ts.net_amount AS tariff_net_amount,
+                ts.currency_code::text AS tariff_currency_code
+            FROM core.payment_attempts AS pa
+            LEFT JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
+            WHERE pa.payment_attempt_id = @payment_attempt_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return;
+        }
+
+        if (reader.IsDBNull(reader.GetOrdinal("persisted_tariff_snapshot_id")))
+        {
+            throw new PaymentFinalityConflictException(
+                "PAYMENT_ATTEMPT_TARIFF_SNAPSHOT_MISSING",
+                $"Payment attempt {paymentAttemptId} does not have a persisted tariff snapshot.");
+        }
+
+        var attemptParkingSessionId = reader.GetGuid(reader.GetOrdinal("parking_session_id"));
+        var tariffParkingSessionId = reader.GetGuid(reader.GetOrdinal("tariff_parking_session_id"));
+        if (attemptParkingSessionId != tariffParkingSessionId)
+        {
+            throw new PaymentFinalityConflictException(
+                "PAYMENT_ATTEMPT_TARIFF_SNAPSHOT_MISMATCH",
+                "Payment attempt tariff snapshot belongs to a different parking session.");
+        }
+
+        var attemptAmount = reader.GetDecimal(reader.GetOrdinal("attempt_amount"));
+        var tariffAmount = reader.GetDecimal(reader.GetOrdinal("tariff_net_amount"));
+        if (attemptAmount != tariffAmount)
+        {
+            throw new PaymentFinalityConflictException(
+                "PAYMENT_AMOUNT_MISMATCH",
+                "Payment attempt amount does not match its persisted tariff snapshot payable amount.");
+        }
+
+        var attemptCurrency = reader.GetString(reader.GetOrdinal("attempt_currency_code")).Trim();
+        var tariffCurrency = reader.GetString(reader.GetOrdinal("tariff_currency_code")).Trim();
+        if (!string.Equals(attemptCurrency, tariffCurrency, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PaymentFinalityConflictException(
+                "PAYMENT_CURRENCY_MISMATCH",
+                "Payment attempt currency does not match its persisted tariff snapshot currency.");
+        }
     }
 }

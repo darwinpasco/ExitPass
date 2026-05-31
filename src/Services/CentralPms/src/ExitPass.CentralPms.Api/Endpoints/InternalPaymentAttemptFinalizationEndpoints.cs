@@ -179,6 +179,20 @@ public static class InternalPaymentAttemptFinalizationEndpoints
                     ["payment_attempt_id"] = paymentAttemptId
                 }));
         }
+        catch (PaymentFinalityConflictException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+
+            return Results.Conflict(BuildError(
+                errorCode: ex.ErrorCode,
+                message: ex.Message,
+                correlationId: correlationId,
+                details: new Dictionary<string, object?>
+                {
+                    ["payment_attempt_id"] = paymentAttemptId
+                }));
+        }
         catch (InvalidOperationException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);

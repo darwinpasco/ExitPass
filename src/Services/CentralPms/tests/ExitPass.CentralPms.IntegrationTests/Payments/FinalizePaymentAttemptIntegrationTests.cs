@@ -1,3 +1,6 @@
+using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using Npgsql;
 using Xunit;
@@ -226,5 +229,131 @@ public sealed class FinalizePaymentAttemptIntegrationTests
         {
             await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
         }
+    }
+
+    [Fact]
+    public async Task FinalizePaymentAttemptGateway_WhenTariffSnapshotWasConsumed_FinalizesAgainstAttemptSnapshot()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(FinalizePaymentAttemptGateway_WhenTariffSnapshotWasConsumed_FinalizesAgainstAttemptSnapshot));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for consumed tariff finality tests");
+
+        try
+        {
+            var created = await CreateAttemptAsync(
+                ConnectionString,
+                context,
+                "idem-finalize-consumed-snapshot",
+                "finalize-test");
+
+            Assert.Equal("CONSUMED", await ReadTariffSnapshotStatusAsync(created.TariffSnapshotId));
+
+            var gateway = new FinalizePaymentAttemptGateway(ConnectionString);
+            var finalized = await gateway.FinalizeAsync(
+                new FinalizePaymentAttemptDbRequest
+                {
+                    PaymentAttemptId = created.PaymentAttemptId,
+                    FinalAttemptStatus = "CONFIRMED",
+                    RequestedBy = "central-pms-finalizer",
+                    CorrelationId = context.CorrelationId,
+                    RequestedAt = DateTimeOffset.UtcNow
+                },
+                CancellationToken.None);
+
+            var row = await GetPaymentAttemptAsync(ConnectionString, created.PaymentAttemptId);
+
+            Assert.Equal(created.PaymentAttemptId, finalized.PaymentAttemptId);
+            Assert.Equal("CONFIRMED", finalized.AttemptStatus);
+            Assert.NotNull(row);
+            Assert.Equal(created.TariffSnapshotId, row!.TariffSnapshotId);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task FinalizePaymentAttemptGateway_WhenAttemptAmountDriftsFromTariffSnapshot_RejectsFinality()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(FinalizePaymentAttemptGateway_WhenAttemptAmountDriftsFromTariffSnapshot_RejectsFinality));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for finality amount drift tests");
+
+        try
+        {
+            var created = await CreateAttemptAsync(
+                ConnectionString,
+                context,
+                "idem-finalize-amount-drift",
+                "finalize-test");
+
+            await ForcePaymentAttemptAmountAsync(created.PaymentAttemptId, 99.99m);
+
+            var gateway = new FinalizePaymentAttemptGateway(ConnectionString);
+            var ex = await Assert.ThrowsAsync<PaymentFinalityConflictException>(() =>
+                gateway.FinalizeAsync(
+                    new FinalizePaymentAttemptDbRequest
+                    {
+                        PaymentAttemptId = created.PaymentAttemptId,
+                        FinalAttemptStatus = "CONFIRMED",
+                        RequestedBy = "central-pms-finalizer",
+                        CorrelationId = context.CorrelationId,
+                        RequestedAt = DateTimeOffset.UtcNow
+                    },
+                    CancellationToken.None));
+
+            var row = await GetPaymentAttemptAsync(ConnectionString, created.PaymentAttemptId);
+
+            Assert.Equal("PAYMENT_AMOUNT_MISMATCH", ex.ErrorCode);
+            Assert.NotNull(row);
+            Assert.Equal("REQUESTED", row!.AttemptStatus);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    private static async Task<string> ReadTariffSnapshotStatusAsync(Guid tariffSnapshotId)
+    {
+        const string sql = """
+            SELECT snapshot_status::text
+            FROM core.tariff_snapshots
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
+
+        return (string)(await command.ExecuteScalarAsync() ?? string.Empty);
+    }
+
+    private static async Task ForcePaymentAttemptAmountAsync(Guid paymentAttemptId, decimal amount)
+    {
+        const string sql = """
+            UPDATE core.payment_attempts
+            SET amount = @amount,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE payment_attempt_id = @payment_attempt_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+        command.Parameters.AddWithValue("amount", amount);
+        await command.ExecuteNonQueryAsync();
     }
 }
