@@ -79,6 +79,17 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             Assert.Equal(authorization.ExitAuthorizationId, body!.ExitAuthorizationId);
             Assert.Equal("CONSUMED", body.AuthorizationStatus);
             Assert.True(body.ConsumedAt > DateTimeOffset.MinValue);
+
+            var handoff = await ReadGateConsumeHandoffStateAsync(
+                authorization.ExitAuthorizationId,
+                context.CorrelationId);
+
+            Assert.Equal(1, handoff.DomainEventCount);
+            Assert.Equal(1, handoff.OutboxEventCount);
+            Assert.Equal(1, handoff.GateEventCount);
+            Assert.Equal(authorization.PaymentAttemptId, handoff.PaymentAttemptId);
+            Assert.Equal(context.TariffSnapshotId, handoff.TariffSnapshotId);
+            Assert.Equal(PaymentTestDataHelper.GateDeviceCode(context), handoff.GateDeviceIdentifier);
         }
         finally
         {
@@ -170,6 +181,17 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             Assert.Equal(1, await CountGateConsumptionsAsync(authorization.ExitAuthorizationId));
             Assert.Equal(0, await CountCouponApplicationsAsync(context.ParkingSessionId));
             Assert.Equal(0, await CountReconciliationItemsAsync(attempt.PaymentAttemptId));
+
+            var handoff = await ReadGateConsumeHandoffStateAsync(
+                authorization.ExitAuthorizationId,
+                context.CorrelationId);
+
+            Assert.Equal(1, handoff.DomainEventCount);
+            Assert.Equal(1, handoff.OutboxEventCount);
+            Assert.Equal(1, handoff.GateEventCount);
+            Assert.Equal(attempt.PaymentAttemptId, handoff.PaymentAttemptId);
+            Assert.Equal(appliedTariffSnapshotId, handoff.TariffSnapshotId);
+            Assert.Equal(PaymentTestDataHelper.GateDeviceCode(context), handoff.GateDeviceIdentifier);
         }
         finally
         {
@@ -217,6 +239,11 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             Assert.NotNull(body);
             Assert.Equal("PAYMENT_AMOUNT_MISMATCH", body!.ErrorCode);
             Assert.Equal(0, await CountGateConsumptionsAsync(authorization.ExitAuthorizationId));
+            Assert.Equal(
+                0,
+                await CountGateAuthorizationConsumedEventsAsync(
+                    authorization.ExitAuthorizationId,
+                    context.CorrelationId));
         }
         finally
         {
@@ -313,6 +340,11 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             Assert.NotNull(body);
             Assert.Equal("EXIT_AUTHORIZATION_NOT_FOUND", body!.ErrorCode);
             Assert.Equal(context.CorrelationId, body.CorrelationId);
+            Assert.Equal(
+                0,
+                await CountGateAuthorizationConsumedEventsAsync(
+                    exitAuthorizationId,
+                    context.CorrelationId));
         }
         finally
         {
@@ -340,16 +372,25 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
                 context,
                 "idem-consume-api-replay");
 
-            await ConsumeAuthorizationDirectAsync(
-                authorization.ExitAuthorizationId,
-                context.RequestedByUserId,
-                context.CorrelationId);
+            using var firstRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/v1/gate/authorizations/{authorization.ExitAuthorizationId}/consume");
+
+            firstRequest.Headers.Add("X-Correlation-Id", context.CorrelationId.ToString());
+            AddGateIdentityHeaders(firstRequest, context);
+            firstRequest.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
+                RequestedByUserId: context.RequestedByUserId));
+
+            using var firstResponse = await _client.SendAsync(firstRequest);
+            Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+
+            var replayCorrelationId = Guid.NewGuid();
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
                 $"/v1/gate/authorizations/{authorization.ExitAuthorizationId}/consume");
 
-            request.Headers.Add("X-Correlation-Id", Guid.NewGuid().ToString());
+            request.Headers.Add("X-Correlation-Id", replayCorrelationId.ToString());
             AddGateIdentityHeaders(request, context);
 
             request.Content = JsonContent.Create(new ConsumeExitAuthorizationRequest(
@@ -363,6 +404,16 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             Assert.NotNull(body);
             Assert.Equal("EXIT_AUTHORIZATION_ALREADY_CONSUMED", body!.ErrorCode);
             Assert.Equal(1, await CountGateConsumptionsAsync(authorization.ExitAuthorizationId));
+            Assert.Equal(
+                1,
+                await CountGateAuthorizationConsumedEventsAsync(
+                    authorization.ExitAuthorizationId,
+                    context.CorrelationId));
+            Assert.Equal(
+                0,
+                await CountGateAuthorizationConsumedEventsAsync(
+                    authorization.ExitAuthorizationId,
+                    replayCorrelationId));
         }
         finally
         {
@@ -410,6 +461,11 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             Assert.NotNull(body);
             Assert.Equal("EXIT_AUTHORIZATION_EXPIRED", body!.ErrorCode);
             Assert.Equal(0, await CountGateConsumptionsAsync(authorization.ExitAuthorizationId));
+            Assert.Equal(
+                0,
+                await CountGateAuthorizationConsumedEventsAsync(
+                    authorization.ExitAuthorizationId,
+                    context.CorrelationId));
         }
         finally
         {
@@ -776,6 +832,103 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         return (int)(await command.ExecuteScalarAsync() ?? 0);
     }
 
+    private static async Task<int> CountGateAuthorizationConsumedEventsAsync(
+        Guid exitAuthorizationId,
+        Guid correlationId)
+    {
+        const string sql = """
+            SELECT COUNT(*)::int
+            FROM events.outbox_events
+            WHERE event_type = 'GateAuthorizationConsumed'
+              AND aggregate_id = @exit_authorization_id
+              AND correlation_id = @correlation_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+
+        return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    private static async Task<GateConsumeHandoffState> ReadGateConsumeHandoffStateAsync(
+        Guid exitAuthorizationId,
+        Guid correlationId)
+    {
+        const string sql = """
+            SELECT
+                (
+                    SELECT COUNT(*)::int
+                    FROM events.domain_events
+                    WHERE event_type = 'GateAuthorizationConsumed'
+                      AND aggregate_id = @exit_authorization_id
+                      AND correlation_id = @correlation_id
+                ) AS domain_event_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM events.outbox_events
+                    WHERE event_type = 'GateAuthorizationConsumed'
+                      AND aggregate_id = @exit_authorization_id
+                      AND correlation_id = @correlation_id
+                ) AS outbox_event_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM gates.gate_events
+                    WHERE event_type = 'AUTHORIZATION_CONSUMED'
+                      AND exit_authorization_id = @exit_authorization_id
+                      AND correlation_id = @correlation_id
+                ) AS gate_event_count,
+                gac.gate_authorization_consumption_id,
+                ea.parking_session_id,
+                ea.payment_attempt_id,
+                pa.tariff_snapshot_id,
+                gac.gate_device_id,
+                gd.device_code AS gate_device_identifier,
+                gac.lane_id,
+                gac.site_id,
+                ps.vendor_system_id
+            FROM gates.gate_authorization_consumptions AS gac
+            JOIN core.exit_authorizations AS ea
+              ON ea.exit_authorization_id = gac.exit_authorization_id
+            JOIN core.parking_sessions AS ps
+              ON ps.parking_session_id = ea.parking_session_id
+            JOIN core.payment_attempts AS pa
+              ON pa.payment_attempt_id = ea.payment_attempt_id
+            LEFT JOIN gates.gate_devices AS gd
+              ON gd.gate_device_id = gac.gate_device_id
+            WHERE gac.exit_authorization_id = @exit_authorization_id
+              AND gac.consume_status = 'CONSUMED'
+              AND gac.correlation_id = @correlation_id
+            ORDER BY gac.consumed_at DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync(), "Expected a persisted gate consumption row for the handoff state.");
+
+        return new GateConsumeHandoffState(
+            DomainEventCount: reader.GetInt32(reader.GetOrdinal("domain_event_count")),
+            OutboxEventCount: reader.GetInt32(reader.GetOrdinal("outbox_event_count")),
+            GateEventCount: reader.GetInt32(reader.GetOrdinal("gate_event_count")),
+            GateAuthorizationConsumptionId: reader.GetGuid(reader.GetOrdinal("gate_authorization_consumption_id")),
+            ParkingSessionId: reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            TariffSnapshotId: reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            GateDeviceId: ReadGuidNullable(reader, "gate_device_id"),
+            GateDeviceIdentifier: ReadStringNullable(reader, "gate_device_identifier"),
+            LaneId: ReadGuidNullable(reader, "lane_id"),
+            SiteId: reader.GetGuid(reader.GetOrdinal("site_id")),
+            VendorSystemId: reader.GetGuid(reader.GetOrdinal("vendor_system_id")));
+    }
+
     private static async Task<int> CountCouponApplicationsAsync(Guid parkingSessionId)
     {
         const string sql = """
@@ -894,6 +1047,22 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         request.Headers.Add("X-Gate-Device-Id", PaymentTestDataHelper.GateDeviceCode(context));
     }
 
+    private static Guid? ReadGuidNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetGuid(ordinal);
+    }
+
+    private static string? ReadStringNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetString(ordinal);
+    }
+
     private sealed record ConsumeExitAuthorizationRequest(
         Guid RequestedByUserId);
 
@@ -917,4 +1086,18 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
         string OriginalStatus,
         Guid OriginalSupersededBy,
         string AppliedStatus);
+
+    private sealed record GateConsumeHandoffState(
+        int DomainEventCount,
+        int OutboxEventCount,
+        int GateEventCount,
+        Guid GateAuthorizationConsumptionId,
+        Guid ParkingSessionId,
+        Guid PaymentAttemptId,
+        Guid TariffSnapshotId,
+        Guid? GateDeviceId,
+        string? GateDeviceIdentifier,
+        Guid? LaneId,
+        Guid SiteId,
+        Guid VendorSystemId);
 }

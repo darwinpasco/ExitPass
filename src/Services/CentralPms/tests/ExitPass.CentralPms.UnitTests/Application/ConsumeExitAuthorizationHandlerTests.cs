@@ -41,6 +41,15 @@ public sealed class ConsumeExitAuthorizationHandlerTests
         _systemClock.UtcNow.Returns(now);
 
         var exitAuthorizationId = Guid.NewGuid();
+        var gateAuthorizationConsumptionId = Guid.NewGuid();
+        var parkingSessionId = Guid.NewGuid();
+        var paymentAttemptId = Guid.NewGuid();
+        var tariffSnapshotId = Guid.NewGuid();
+        var gateDeviceId = Guid.NewGuid();
+        var gateDeviceIdentifier = "GATE-EXIT-01";
+        var laneId = Guid.NewGuid();
+        var siteId = Guid.NewGuid();
+        var vendorSystemId = Guid.NewGuid();
         var requestedByUserId = Guid.NewGuid();
         var correlationId = Guid.NewGuid();
 
@@ -49,12 +58,25 @@ public sealed class ConsumeExitAuthorizationHandlerTests
                     x.ExitAuthorizationId == exitAuthorizationId &&
                     x.RequestedByUserId == requestedByUserId &&
                     x.CorrelationId == correlationId &&
-                    x.RequestedAt == now),
+                    x.RequestedAt == now &&
+                    x.GateDeviceId == gateDeviceId &&
+                    x.GateDeviceIdentifier == gateDeviceIdentifier &&
+                    x.LaneId == laneId &&
+                    x.SiteId == siteId),
                 Arg.Any<CancellationToken>())
             .Returns(new ConsumeExitAuthorizationDbResult(
                 ExitAuthorizationId: exitAuthorizationId,
                 AuthorizationStatus: "CONSUMED",
-                ConsumedAt: now));
+                ConsumedAt: now,
+                GateAuthorizationConsumptionId: gateAuthorizationConsumptionId,
+                ParkingSessionId: parkingSessionId,
+                PaymentAttemptId: paymentAttemptId,
+                TariffSnapshotId: tariffSnapshotId,
+                GateDeviceId: gateDeviceId,
+                GateDeviceIdentifier: gateDeviceIdentifier,
+                LaneId: laneId,
+                SiteId: siteId,
+                VendorSystemId: vendorSystemId));
 
         var sut = CreateSut();
 
@@ -62,7 +84,11 @@ public sealed class ConsumeExitAuthorizationHandlerTests
             new ConsumeExitAuthorizationCommand(
                 ExitAuthorizationId: exitAuthorizationId,
                 RequestedByUserId: requestedByUserId,
-                CorrelationId: correlationId),
+                CorrelationId: correlationId,
+                GateDeviceId: gateDeviceId,
+                GateDeviceIdentifier: gateDeviceIdentifier,
+                LaneId: laneId,
+                SiteId: siteId),
             CancellationToken.None);
 
         Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
@@ -73,7 +99,21 @@ public sealed class ConsumeExitAuthorizationHandlerTests
             Arg.Is<IntegrationEventEnvelope>(x =>
                 x.EventType == IntegrationEventTypes.GateAuthorizationConsumed &&
                 x.AggregateId == exitAuthorizationId.ToString() &&
-                x.CorrelationId == correlationId),
+                x.CorrelationId == correlationId &&
+                PayloadMatches(
+                    x.Payload,
+                    exitAuthorizationId,
+                    gateAuthorizationConsumptionId,
+                    parkingSessionId,
+                    paymentAttemptId,
+                    tariffSnapshotId,
+                    gateDeviceId,
+                    gateDeviceIdentifier,
+                    laneId,
+                    siteId,
+                    vendorSystemId,
+                    now,
+                    correlationId)),
             Arg.Any<CancellationToken>());
     }
 
@@ -110,6 +150,37 @@ public sealed class ConsumeExitAuthorizationHandlerTests
 
         Assert.Equal(exitAuthorizationId, result.ExitAuthorizationId);
         Assert.Equal("CONSUMED", result.AuthorizationStatus);
+    }
+
+    /// <summary>
+    /// Verifies that rejected consume attempts do not emit the gate-integration handoff event.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_WhenGatewayRejectsConsume_DoesNotPublishGateAuthorizationConsumed()
+    {
+        var now = new DateTimeOffset(2026, 4, 2, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+
+        _gateway.ConsumeAsync(Arg.Any<ConsumeExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns<Task<ConsumeExitAuthorizationDbResult>>(_ =>
+                throw new ExitAuthorizationConsumeConflictException(
+                    "EXIT_AUTHORIZATION_ALREADY_CONSUMED",
+                    "Exit authorization has already been consumed."));
+
+        var sut = CreateSut();
+
+        await Assert.ThrowsAsync<ExitAuthorizationConsumeConflictException>(() =>
+            sut.ExecuteAsync(
+                new ConsumeExitAuthorizationCommand(
+                    ExitAuthorizationId: Guid.NewGuid(),
+                    RequestedByUserId: Guid.NewGuid(),
+                    CorrelationId: Guid.NewGuid()),
+                CancellationToken.None));
+
+        await _eventPublisher.DidNotReceive().PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x =>
+                x.EventType == IntegrationEventTypes.GateAuthorizationConsumed),
+            Arg.Any<CancellationToken>());
     }
 
     /// <summary>
@@ -181,5 +252,40 @@ public sealed class ConsumeExitAuthorizationHandlerTests
             _systemClock,
             _metrics,
             NullLogger<ConsumeExitAuthorizationHandler>.Instance);
+    }
+
+    private static bool PayloadMatches(
+        object payloadObject,
+        Guid exitAuthorizationId,
+        Guid gateAuthorizationConsumptionId,
+        Guid parkingSessionId,
+        Guid paymentAttemptId,
+        Guid tariffSnapshotId,
+        Guid gateDeviceId,
+        string gateDeviceIdentifier,
+        Guid laneId,
+        Guid siteId,
+        Guid vendorSystemId,
+        DateTimeOffset consumedAt,
+        Guid correlationId)
+    {
+        if (payloadObject is not GateAuthorizationConsumedPayload payload)
+        {
+            return false;
+        }
+
+        return payload.ExitAuthorizationId == exitAuthorizationId &&
+               payload.GateAuthorizationConsumptionId == gateAuthorizationConsumptionId &&
+               payload.ParkingSessionId == parkingSessionId &&
+               payload.PaymentAttemptId == paymentAttemptId &&
+               payload.TariffSnapshotId == tariffSnapshotId &&
+               payload.GateDeviceId == gateDeviceId &&
+               payload.GateDeviceIdentifier == gateDeviceIdentifier &&
+               payload.LaneId == laneId &&
+               payload.SiteId == siteId &&
+               payload.VendorSystemId == vendorSystemId &&
+               payload.AuthorizationStatus == "CONSUMED" &&
+               payload.ConsumedAtUtc == consumedAt &&
+               payload.CorrelationId == correlationId;
     }
 }
