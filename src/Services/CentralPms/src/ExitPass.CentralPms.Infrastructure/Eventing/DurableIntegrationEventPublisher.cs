@@ -242,10 +242,15 @@ internal sealed class DurableIntegrationEventPublisher : IIntegrationEventPublis
                 gate_event_id,
                 gate_authorization_consumption_id,
                 exit_authorization_id,
+                gate_device_id,
                 site_id,
+                lane_id,
                 event_type,
                 event_status,
                 event_reason_code,
+                event_payload_ref,
+                event_payload_hash,
+                source_event_ref,
                 occurred_at,
                 received_at,
                 correlation_id,
@@ -256,10 +261,15 @@ internal sealed class DurableIntegrationEventPublisher : IIntegrationEventPublis
                 @gate_event_id,
                 gac.gate_authorization_consumption_id,
                 ea.exit_authorization_id,
+                gac.gate_device_id,
                 ps.site_id,
+                gac.lane_id,
                 'AUTHORIZATION_CONSUMED',
                 'SUCCESS',
                 'EXIT_AUTHORIZATION_CONSUMED',
+                @payload_ref,
+                @payload_hash,
+                @source_event_ref,
                 @occurred_at,
                 @received_at,
                 @correlation_id,
@@ -280,6 +290,12 @@ internal sealed class DurableIntegrationEventPublisher : IIntegrationEventPublis
         command.Parameters.AddWithValue("occurred_at", occurredAt);
         command.Parameters.AddWithValue("received_at", DateTimeOffset.UtcNow);
         command.Parameters.AddWithValue("correlation_id", envelope.CorrelationId);
+        command.Parameters.AddWithValue("payload_ref", $"central-pms://integration-events/{envelope.EventId}");
+        command.Parameters.AddWithValue(
+            "payload_hash",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(envelope, JsonOptions))))
+                .ToLowerInvariant());
+        command.Parameters.AddWithValue("source_event_ref", envelope.EventId.ToString());
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

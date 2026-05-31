@@ -103,7 +103,11 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
                     ExitAuthorizationId = command.ExitAuthorizationId,
                     RequestedByUserId = command.RequestedByUserId,
                     CorrelationId = command.CorrelationId,
-                    RequestedAt = _systemClock.UtcNow
+                    RequestedAt = _systemClock.UtcNow,
+                    GateDeviceId = command.GateDeviceId,
+                    GateDeviceIdentifier = command.GateDeviceIdentifier,
+                    LaneId = command.LaneId,
+                    SiteId = command.SiteId
                 },
                 cancellationToken);
 
@@ -278,8 +282,18 @@ public sealed class ConsumeExitAuthorizationHandler : IConsumeExitAuthorizationU
             Payload = new GateAuthorizationConsumedPayload
             {
                 ExitAuthorizationId = dbResult.ExitAuthorizationId,
+                GateAuthorizationConsumptionId = dbResult.GateAuthorizationConsumptionId,
+                ParkingSessionId = dbResult.ParkingSessionId,
+                PaymentAttemptId = dbResult.PaymentAttemptId,
+                TariffSnapshotId = dbResult.TariffSnapshotId,
+                GateDeviceId = dbResult.GateDeviceId,
+                GateDeviceIdentifier = dbResult.GateDeviceIdentifier ?? command.GateDeviceIdentifier,
+                LaneId = dbResult.LaneId,
+                SiteId = dbResult.SiteId,
+                VendorSystemId = dbResult.VendorSystemId,
                 AuthorizationStatus = dbResult.AuthorizationStatus,
-                ConsumedAtUtc = dbResult.ConsumedAt
+                ConsumedAtUtc = dbResult.ConsumedAt,
+                CorrelationId = command.CorrelationId
             }
         };
     }

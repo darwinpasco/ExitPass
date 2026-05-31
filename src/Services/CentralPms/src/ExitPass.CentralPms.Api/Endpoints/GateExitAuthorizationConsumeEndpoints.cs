@@ -209,7 +209,11 @@ public static class GateExitAuthorizationConsumeEndpoints
                 new ConsumeExitAuthorizationCommand(
                     exitAuthorizationId,
                     body.RequestedByUserId,
-                    correlationId),
+                    correlationId,
+                    identityValidation.GateDeviceId,
+                    gateDeviceHeader.ToString(),
+                    identityValidation.LaneId,
+                    identityValidation.SiteId),
                 cancellationToken);
 
             activity?.SetStatus(ActivityStatusCode.Ok);

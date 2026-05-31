@@ -19,4 +19,8 @@ namespace ExitPass.CentralPms.Application.Payments;
 public sealed record ConsumeExitAuthorizationCommand(
     Guid ExitAuthorizationId,
     Guid RequestedByUserId,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? GateDeviceId = null,
+    string? GateDeviceIdentifier = null,
+    Guid? LaneId = null,
+    Guid? SiteId = null);

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Application.Payments;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using NpgsqlTypes;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Infrastructure.Payments;
@@ -62,7 +63,7 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        const string sql = """
+        const string consumeSql = """
             SELECT
                 exit_authorization_id,
                 authorization_status,
@@ -73,6 +74,60 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                 @p_correlation_id,
                 @p_now
             );
+            """;
+
+        const string handoffSql = """
+            WITH target_consumption AS (
+                SELECT gac.gate_authorization_consumption_id
+                FROM gates.gate_authorization_consumptions AS gac
+                WHERE gac.exit_authorization_id = @p_exit_authorization_id
+                  AND gac.consume_status = 'CONSUMED'
+                  AND gac.correlation_id = @p_correlation_id
+                ORDER BY gac.consumed_at DESC NULLS LAST, gac.created_at DESC
+                LIMIT 1
+            ),
+            updated_consumption AS (
+                UPDATE gates.gate_authorization_consumptions AS gac
+                SET
+                    gate_device_id = COALESCE(@p_gate_device_id, gac.gate_device_id),
+                    lane_id = COALESCE(@p_lane_id, gac.lane_id),
+                    site_id = COALESCE(@p_site_id, gac.site_id),
+                    updated_at = @p_now,
+                    updated_by_service_identity_id = @p_requested_by,
+                    row_version = gac.row_version + 1
+                FROM target_consumption AS target
+                WHERE gac.gate_authorization_consumption_id = target.gate_authorization_consumption_id
+                RETURNING
+                    gac.gate_authorization_consumption_id,
+                    gac.exit_authorization_id,
+                    gac.gate_device_id,
+                    gac.site_id,
+                    gac.lane_id,
+                    gac.consume_status::text AS consume_status,
+                    gac.consumed_at
+            )
+            SELECT
+                ea.exit_authorization_id,
+                uc.gate_authorization_consumption_id,
+                ea.parking_session_id,
+                ea.payment_attempt_id,
+                pa.tariff_snapshot_id,
+                uc.gate_device_id,
+                COALESCE(gd.device_code, @p_gate_device_identifier) AS gate_device_identifier,
+                uc.lane_id,
+                uc.site_id,
+                ps.vendor_system_id,
+                uc.consume_status AS authorization_status,
+                uc.consumed_at
+            FROM updated_consumption AS uc
+            JOIN core.exit_authorizations AS ea
+              ON ea.exit_authorization_id = uc.exit_authorization_id
+            JOIN core.parking_sessions AS ps
+              ON ps.parking_session_id = ea.parking_session_id
+            JOIN core.payment_attempts AS pa
+              ON pa.payment_attempt_id = ea.payment_attempt_id
+            LEFT JOIN gates.gate_devices AS gd
+              ON gd.gate_device_id = uc.gate_device_id;
             """;
 
         using var activity = ActivitySource.StartActivity("DB ConsumeExitAuthorization", ActivityKind.Client);
@@ -108,7 +163,7 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                 request,
                 cancellationToken);
 
-            await using var dbCommand = new NpgsqlCommand(sql, connection, transaction)
+            await using var dbCommand = new NpgsqlCommand(consumeSql, connection, transaction)
             {
                 CommandTimeout = 30
             };
@@ -132,6 +187,14 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                     AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
                     ConsumedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at")));
             }
+
+            result = await ReadGateIntegrationHandoffAsync(
+                connection,
+                transaction,
+                handoffSql,
+                request,
+                result,
+                cancellationToken);
 
             await transaction.CommitAsync(cancellationToken);
 
@@ -219,6 +282,69 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
 
             throw;
         }
+    }
+
+    private static async Task<ConsumeExitAuthorizationDbResult> ReadGateIntegrationHandoffAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
+        ConsumeExitAuthorizationDbRequest request,
+        ConsumeExitAuthorizationDbResult fallback,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("p_exit_authorization_id", request.ExitAuthorizationId);
+        command.Parameters.AddWithValue("p_correlation_id", request.CorrelationId);
+        command.Parameters.Add("p_gate_device_id", NpgsqlDbType.Uuid).Value =
+            (object?)request.GateDeviceId ?? DBNull.Value;
+        command.Parameters.Add("p_lane_id", NpgsqlDbType.Uuid).Value =
+            (object?)request.LaneId ?? DBNull.Value;
+        command.Parameters.Add("p_site_id", NpgsqlDbType.Uuid).Value =
+            (object?)request.SiteId ?? DBNull.Value;
+        command.Parameters.Add("p_gate_device_identifier", NpgsqlDbType.Text).Value =
+            (object?)request.GateDeviceIdentifier ?? DBNull.Value;
+        command.Parameters.AddWithValue("p_now", request.RequestedAt);
+        command.Parameters.AddWithValue("p_requested_by", request.RequestedByUserId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return fallback;
+        }
+
+        return new ConsumeExitAuthorizationDbResult(
+            ExitAuthorizationId: reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
+            AuthorizationStatus: reader.GetString(reader.GetOrdinal("authorization_status")),
+            ConsumedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("consumed_at")),
+            GateAuthorizationConsumptionId: ReadGuidNullable(reader, "gate_authorization_consumption_id"),
+            ParkingSessionId: ReadGuidNullable(reader, "parking_session_id"),
+            PaymentAttemptId: ReadGuidNullable(reader, "payment_attempt_id"),
+            TariffSnapshotId: ReadGuidNullable(reader, "tariff_snapshot_id"),
+            GateDeviceId: ReadGuidNullable(reader, "gate_device_id"),
+            GateDeviceIdentifier: ReadStringNullable(reader, "gate_device_identifier"),
+            LaneId: ReadGuidNullable(reader, "lane_id"),
+            SiteId: ReadGuidNullable(reader, "site_id"),
+            VendorSystemId: ReadGuidNullable(reader, "vendor_system_id"));
+    }
+
+    private static Guid? ReadGuidNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetGuid(ordinal);
+    }
+
+    private static string? ReadStringNullable(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal)
+            ? null
+            : reader.GetString(ordinal);
     }
 
     private static async Task ValidateIssuedAuthorizationPaidChainAsync(
