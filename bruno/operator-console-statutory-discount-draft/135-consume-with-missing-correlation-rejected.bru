@@ -1,0 +1,30 @@
+meta {
+  name: 135 Consume with missing correlation rejected
+  type: http
+  seq: 135
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeWrongGateFixtureExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+  X-Gate-Device-Id: {{gateConsumeGateDeviceId}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("missing correlation header is rejected before consume persistence", function () {
+    expect(res.status).to.equal(400);
+    expect(res.body.errorCode).to.equal("INVALID_REQUEST");
+  });
+}

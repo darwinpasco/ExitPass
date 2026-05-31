@@ -1,0 +1,31 @@
+meta {
+  name: 131 Consume invalid exit authorization rejected
+  type: http
+  seq: 131
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeInvalidExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeNegativeCorrelationId}}
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+  X-Gate-Device-Id: {{gateConsumeGateDeviceId}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("unknown exit authorization is rejected before consume persistence", function () {
+    expect(res.status).to.equal(404);
+    expect(res.body.errorCode).to.equal("EXIT_AUTHORIZATION_NOT_FOUND");
+  });
+}

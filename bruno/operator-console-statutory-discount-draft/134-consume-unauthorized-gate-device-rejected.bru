@@ -1,0 +1,31 @@
+meta {
+  name: 134 Consume unauthorized gate device rejected
+  type: http
+  seq: 134
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeWrongGateFixtureExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeUnauthorizedGateCorrelationId}}
+  X-Service-Identity-Id: {{gateConsumeUnauthorizedServiceIdentityId}}
+  X-Gate-Device-Id: {{gateConsumeUnauthorizedGateDeviceIdentifier}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeUnauthorizedServiceIdentityId}}"
+  }
+}
+
+tests {
+  test("gate device assigned to another site is rejected before consume persistence", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.errorCode).to.equal("GATE_DEVICE_ASSIGNMENT_FORBIDDEN");
+  });
+}

@@ -1,0 +1,31 @@
+meta {
+  name: 136 Consume already consumed authorization rejected
+  type: http
+  seq: 136
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeAlreadyConsumedCorrelationId}}
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+  X-Gate-Device-Id: {{gateConsumeGateDeviceId}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("already consumed authorization is rejected without duplicate consume persistence", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("EXIT_AUTHORIZATION_ALREADY_CONSUMED");
+  });
+}

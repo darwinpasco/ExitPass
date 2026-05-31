@@ -1,0 +1,31 @@
+meta {
+  name: 133 Consume wrong gate device rejected
+  type: http
+  seq: 133
+}
+
+post {
+  url: {{gateConsumeBaseUrl}}/v1/gate/authorizations/{{gateConsumeWrongGateFixtureExitAuthorizationId}}/consume
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Correlation-Id: {{gateConsumeWrongGateCorrelationId}}
+  X-Service-Identity-Id: {{gateConsumeRequestedByUserId}}
+  X-Gate-Device-Id: {{gateConsumeWrongGateDeviceIdentifier}}
+}
+
+body:json {
+  {
+    "requestedByUserId": "{{gateConsumeRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("unknown gate device identifier is rejected before consume persistence", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.errorCode).to.equal("GATE_DEVICE_FORBIDDEN");
+  });
+}
