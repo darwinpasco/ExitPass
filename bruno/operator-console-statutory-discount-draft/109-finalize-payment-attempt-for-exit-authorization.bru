@@ -1,0 +1,32 @@
+meta {
+  name: 109 Finalize payment attempt for exit authorization
+  type: http
+  seq: 109
+}
+
+post {
+  url: {{internalPaymentFinalizationBaseUrl}}/v1/internal/payment-attempts/{{exitAuthorizationPaymentAttemptId}}/finalize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationIdempotencyKeyFinalization}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "finalAttemptStatus": "CONFIRMED",
+    "requestedBy": "central-pms-manual-smoke"
+  }
+}
+
+tests {
+  test("payment attempt is finalized as confirmed for exit authorization", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("exitAuthorizationPaymentAttemptId"));
+    expect(res.body.attemptStatus).to.equal("CONFIRMED");
+  });
+}

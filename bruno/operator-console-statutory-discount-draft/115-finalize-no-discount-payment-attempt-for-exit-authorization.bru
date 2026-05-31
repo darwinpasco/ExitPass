@@ -1,0 +1,32 @@
+meta {
+  name: 115 Finalize no-discount payment attempt for exit authorization
+  type: http
+  seq: 115
+}
+
+post {
+  url: {{internalPaymentFinalizationBaseUrl}}/v1/internal/payment-attempts/{{exitAuthorizationNoDiscountPaymentAttemptId}}/finalize
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationNoDiscountIdempotencyKeyFinalization}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "finalAttemptStatus": "CONFIRMED",
+    "requestedBy": "central-pms-manual-smoke"
+  }
+}
+
+tests {
+  test("no-discount payment attempt is finalized as confirmed for exit authorization", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("exitAuthorizationNoDiscountPaymentAttemptId"));
+    expect(res.body.attemptStatus).to.equal("CONFIRMED");
+  });
+}

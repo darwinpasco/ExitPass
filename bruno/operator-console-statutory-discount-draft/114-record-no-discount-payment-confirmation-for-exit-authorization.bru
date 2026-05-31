@@ -1,0 +1,41 @@
+meta {
+  name: 114 Record no-discount payment confirmation for exit authorization
+  type: http
+  seq: 114
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationNoDiscountIdempotencyKeyConfirmation}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{exitAuthorizationNoDiscountPaymentAttemptId}}",
+    "providerReference": "{{exitAuthorizationNoDiscountProviderReference}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-exit-auth-no-discount",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{exitAuthorizationNoDiscountAmountMajorUnits}},
+    "currencyCode": "{{exitAuthorizationCurrencyCode}}"
+  }
+}
+
+tests {
+  test("no-discount confirmation succeeds for exit authorization", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentConfirmationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("exitAuthorizationNoDiscountPaymentAttemptId"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("exitAuthorizationNoDiscountProviderReference"));
+    bru.setEnvVar("exitAuthorizationNoDiscountPaymentConfirmationId", res.body.paymentConfirmationId);
+  });
+}

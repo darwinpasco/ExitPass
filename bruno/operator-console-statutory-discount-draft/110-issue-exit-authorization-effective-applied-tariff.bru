@@ -1,0 +1,38 @@
+meta {
+  name: 110 Issue exit authorization effective APPLIED tariff
+  type: http
+  seq: 110
+}
+
+post {
+  url: {{internalExitAuthorizationBaseUrl}}/v1/internal/payment-attempts/{{exitAuthorizationPaymentAttemptId}}/issue-exit-authorization
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationIdempotencyKeyIssue}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{exitAuthorizationParkingSessionId_applied}}",
+    "requestedByUserId": "{{exitAuthorizationRequestedByUserId}}"
+  }
+}
+
+tests {
+  test("exit authorization is issued from the confirmed APPLIED tariff payment attempt", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.exitAuthorizationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("exitAuthorizationPaymentAttemptId"));
+    expect(res.body.parkingSessionId).to.equal(bru.getEnvVar("exitAuthorizationParkingSessionId_applied"));
+    expect(res.body.authorizationToken).to.not.equal(null);
+    expect(res.body.authorizationStatus).to.equal("ISSUED");
+    expect(res.body.expirationTimestamp).to.not.equal(null);
+
+    bru.setEnvVar("exitAuthorizationId", res.body.exitAuthorizationId);
+  });
+}

@@ -1,0 +1,37 @@
+meta {
+  name: 107 Create payment attempt effective APPLIED tariff for exit authorization
+  type: http
+  seq: 107
+}
+
+post {
+  url: {{paymentAttemptsBaseUrl}}/v1/public/payment-attempts
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{exitAuthorizationIdempotencyKeyPaymentAttempt}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "parkingSessionId": "{{exitAuthorizationParkingSessionId_applied}}",
+    "tariffSnapshotId": "{{exitAuthorizationTariffSnapshotId_appliedEffective}}",
+    "paymentProvider": "{{paymentMethodGcash}}"
+  }
+}
+
+tests {
+  test("payment attempt is created or reused from the APPLIED tariff snapshot for exit authorization", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.paymentAttemptId).to.not.equal(null);
+    expect(res.body.paymentProvider).to.equal(bru.getEnvVar("paymentMethodGcash"));
+    expect(res.body.providerHandoff).to.not.equal(null);
+
+    bru.setEnvVar("exitAuthorizationPaymentAttemptId", res.body.paymentAttemptId);
+    bru.setEnvVar("exitAuthorizationUnconfirmedPaymentAttemptId", res.body.paymentAttemptId);
+  });
+}

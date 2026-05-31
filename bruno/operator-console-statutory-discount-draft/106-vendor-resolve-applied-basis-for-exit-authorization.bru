@@ -1,0 +1,43 @@
+meta {
+  name: 106 Vendor resolve APPLIED basis for exit authorization
+  type: http
+  seq: 106
+}
+
+post {
+  url: {{vendorParkingBaseUrl}}/v1/vendor-parking/resolve
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "siteId": "{{policyResolutionSiteId_nationalFallback}}",
+    "vendorSystemId": "{{vendorSystemId_manual}}",
+    "plateNumber": null,
+    "ticketReference": "{{vendorResolveTicketReference_applied}}",
+    "correlationId": "{{$guid}}"
+  }
+}
+
+tests {
+  test("vendor resolve exposes the APPLIED tariff as the exit authorization payable basis", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.lookupOutcome).to.equal("resolved");
+    expect(res.body.statutoryDiscountApplied).to.equal(true);
+    expect(res.body.effectiveTariffSnapshotId).to.equal(res.body.appliedTariffSnapshotId);
+    expect(res.body.originalTariffSnapshotId).to.equal(bru.getEnvVar("exitAuthorizationOriginalTariffSnapshotId"));
+    expect(res.body.effectiveTariffSnapshotId).to.equal(bru.getEnvVar("exitAuthorizationTariffSnapshotId_appliedEffective"));
+    expect(res.body.netPayableMinorUnits).to.equal(Number(bru.getEnvVar("exitAuthorizationAmountMinorUnits_appliedEffective")));
+    expect(res.body.currency).to.equal(bru.getEnvVar("exitAuthorizationCurrencyCode"));
+
+    bru.setEnvVar("exitAuthorizationParkingSessionId_applied", res.body.parkingSessionId);
+    bru.setEnvVar("exitAuthorizationTariffSnapshotId_appliedEffective", res.body.effectiveTariffSnapshotId);
+    bru.setEnvVar("exitAuthorizationOriginalTariffSnapshotId", res.body.originalTariffSnapshotId);
+  });
+}
