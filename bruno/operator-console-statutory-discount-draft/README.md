@@ -11,7 +11,7 @@ POST /v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-b
 POST /v1/ops/operator-console/statutory-discounts/resolve-policy
 ```
 
-This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, and #205 payment-attempt creation against the effective APPLIED tariff snapshot. It does not confirm payments, call providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
+This collection covers access-gated draft creation, duplicate replay behavior, metadata-only evidence reference creation, review decisions, #193 read-only statutory discount policy resolution, #197 persisted-policy apply behavior, #200 final `APPLIED` statutory discount tariff snapshot lifecycle behavior, #202 WebPay/vendor effective payable-basis reads, #205 payment-attempt creation against the effective APPLIED tariff snapshot, and #207 manual payment-finality coverage for #206. It does not call real payment providers, open gates, create coupons, wire UI, upload evidence, store raw evidence, or create reconciliation state.
 
 ## Preconditions
 
@@ -26,6 +26,7 @@ This collection covers access-gated draft creation, duplicate replay behavior, m
 - #199 final APPLIED statutory discount tariff snapshot lifecycle DB routine is applied.
 - #200 apply-payable-basis calls `discounts.apply_statutory_discount_payable_basis`.
 - #204 payment-attempt creation validates the effective APPLIED tariff snapshot.
+- #206 payment confirmation/finality validates against the payment attempt stored tariff snapshot and amount/currency.
 - Central PMS is running locally or in a reachable environment.
 - The local PostgreSQL database is available.
 - Operator Console access evaluation fixtures are seeded.
@@ -51,7 +52,7 @@ docker exec -i exitpass-postgres psql -U exitpass -d exitpass_v12_dev -f /dev/st
 
 The script is idempotent. For repeatable statutory discount draft, decision, and apply-payable-basis manual tests, it resets Operator Assisted statutory discount validation fixture drafts for the fixture session and `SENIOR_CITIZEN` or `PWD` entitlement types, including terminal review statuses. It also deletes known manual payable-basis application rows for the fixture session and upserts the active original tariff snapshot fixture `77000000-0000-0000-0000-000000000091` with gross/net amount `125.00 PHP`.
 
-For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets payment-attempt rows for the synthetic #205 payment sessions `306`, `307`, `308`, `314`, `315`, and `316` so payment-attempt smoke tests can be rerun after reseeding. It does not delete access evaluation evidence and does not create gate, coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, or payment-attempt effective-tariff testing.
+For policy resolution, draft policy snapshot, and apply persisted-policy-snapshot manual tests, it adds synthetic `MANUAL_TEST_*` jurisdiction, site, device, shift, local policy, parking-session, tariff-snapshot, and approved-validation rows. These rows are smoke-test fixtures only; they are not production LGU ordinance seeds and do not mark real local ordinances as verified. The script resets known synthetic draft policy snapshot validation rows and known synthetic apply validations for repeatable replay tests. It also resets payment-attempt rows for the synthetic #205/#207 payment sessions `306`, `307`, `308`, `314`, `315`, and `316` so payment-attempt and payment-finality smoke tests can be rerun after reseeding. It does not delete access evaluation evidence and does not create gate, coupon, provider outcome, reconciliation, or fingerprint records for policy resolution, draft policy snapshot, apply persisted-policy-snapshot, vendor resolve, payment-attempt, or payment-finality effective-tariff testing.
 
 ## Evidence Metadata Behavior
 
@@ -1456,6 +1457,212 @@ WHERE app.statutory_discount_validation_id = '77000000-0000-0000-0000-0000000003
 ```
 
 Expected after request `88`: original snapshot is `SUPERSEDED`, applied snapshot is `CONSUMED`, the original net amount remains `125.00`, the applied net amount remains `89.29`, and the payment amount is `89.29`.
+
+## Payment Finality Effective APPLIED Tariff Snapshot
+
+Issue #207 extends the manual smoke suite for #206 payment finality. These requests prove confirmation and finalization keep using the tariff snapshot, amount, and currency stored on `core.payment_attempts`; they do not re-resolve the payable basis and they do not drift back to the original superseded tariff snapshot.
+
+Endpoints:
+
+```http
+POST /v1/vendor-parking/resolve
+POST /v1/public/payment-attempts
+POST /v1/internal/payments/confirmation
+POST /v1/internal/payment-attempts/{paymentAttemptId}/finalize
+POST /v1/internal/payments/outcome
+```
+
+The direct confirmation and direct finalization endpoints are the primary #207 manual path. The internal payment outcome endpoint is listed because it exists in the current finality surface, but these smoke requests avoid it so the workflow does not issue exit authorization as a side effect.
+
+Preconditions:
+
+- #206 is merged.
+- Central PMS is running.
+- The local PostgreSQL database is available.
+- The fixture seed above has been applied.
+- APPLIED statutory discount fixture `MANUAL-PAYMENT-APPLIED-EFFECTIVE` exists.
+- Payment attempt creation still accepts the effective APPLIED tariff snapshot and consumes only that stored snapshot.
+
+Manual workflow:
+
+1. Run `94 Vendor resolve APPLIED basis for payment finality`.
+2. Run `95 Create payment attempt effective APPLIED tariff for finality`.
+3. Run `96 Record payment confirmation effective APPLIED tariff`.
+4. Run `97 Finalize payment attempt effective APPLIED tariff`.
+5. Run `100 Record payment confirmation replay`.
+6. Run `101 Finalize payment attempt replay`.
+7. Run the read-only DB verification queries below.
+
+Expected happy-path behavior:
+
+- Request `94` returns `statutoryDiscountApplied = true`.
+- Request `94` returns `effectiveTariffSnapshotId = appliedTariffSnapshotId = 77000000-0000-0000-0000-000000000506`.
+- Request `95` creates or reuses a payment attempt with the effective APPLIED tariff snapshot.
+- Request `96` records confirmation for the payment attempt amount `89.29 PHP`.
+- Request `97` returns `attemptStatus = CONFIRMED`.
+- Requests `100` and `101` return the existing confirmation/final state without duplicate finality rows.
+- The original tariff snapshot `77000000-0000-0000-0000-000000000406` remains `SUPERSEDED`.
+- The applied tariff snapshot may be `CONSUMED` after request `95`; confirmation must still succeed because it is the snapshot stored on the payment attempt.
+
+Negative mismatch workflows:
+
+Run each mismatch case from a clean fixture reset, then run requests `94` and `95` before the mismatch request. Do not run request `96` first for these negative cases, because a valid confirmation intentionally makes the payment attempt terminal and replay-safe.
+
+- Run `98 Record payment confirmation amount mismatch rejected` after `94` and `95`.
+  - Expected: HTTP `409`, `errorCode = PAYMENT_AMOUNT_MISMATCH`, and no confirmation row is created for `manual-paymongo-finality-amount-mismatch`.
+- Run `99 Record payment confirmation currency mismatch rejected` after a fresh fixture reset plus `94` and `95`.
+  - Expected: HTTP `409`, `errorCode = PAYMENT_CURRENCY_MISMATCH`, and no confirmation row is created for `manual-paymongo-finality-currency-mismatch`.
+
+No-discount baseline:
+
+- After a fixture reset, run `103 No discount payment finality baseline`.
+- Run `104 Record no-discount payment confirmation baseline`.
+- Run `105 Finalize no-discount payment attempt baseline`.
+- Expected: the active no-discount tariff snapshot `77000000-0000-0000-0000-000000000398` remains the payment attempt payable basis and amount/currency are `125.00 PHP`.
+
+### Payment Finality DB Verification
+
+Verify the APPLIED finality attempt remains tied to the applied tariff snapshot and amount:
+
+```sql
+SELECT
+    pa.payment_attempt_id,
+    pa.parking_session_id,
+    ps.ticket_number_masked,
+    pa.tariff_snapshot_id AS attempt_tariff_snapshot_id,
+    pa.amount AS attempt_amount,
+    pa.currency_code AS attempt_currency,
+    pa.attempt_status,
+    pa.finalized_at,
+    ts.snapshot_status AS attempt_snapshot_status,
+    ts.net_amount AS attempt_snapshot_net_amount,
+    app.original_tariff_snapshot_id,
+    original.snapshot_status AS original_snapshot_status,
+    app.applied_tariff_snapshot_id
+FROM core.payment_attempts pa
+JOIN core.parking_sessions ps
+  ON ps.parking_session_id = pa.parking_session_id
+JOIN core.tariff_snapshots ts
+  ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
+JOIN discounts.statutory_discount_payable_basis_applications app
+  ON app.applied_tariff_snapshot_id = pa.tariff_snapshot_id
+JOIN core.tariff_snapshots original
+  ON original.tariff_snapshot_id = app.original_tariff_snapshot_id
+WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+ORDER BY pa.created_at DESC;
+```
+
+Expected after requests `94` through `97`: `attempt_tariff_snapshot_id = 77000000-0000-0000-0000-000000000506`, `attempt_amount = 89.29`, `attempt_currency = PHP`, `attempt_status = CONFIRMED`, `finalized_at IS NOT NULL`, `original_snapshot_status = SUPERSEDED`, and `original_tariff_snapshot_id = 77000000-0000-0000-0000-000000000406`.
+
+Verify confirmation amount/currency/provider reference:
+
+```sql
+SELECT
+    pc.payment_confirmation_id,
+    pc.payment_attempt_id,
+    pc.provider_transaction_ref,
+    pc.confirmed_amount,
+    pc.currency_code,
+    pc.confirmation_status,
+    pc.verified_at,
+    pc.confirmed_at
+FROM core.payment_confirmations pc
+JOIN core.payment_attempts pa
+  ON pa.payment_attempt_id = pc.payment_attempt_id
+WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+ORDER BY pc.created_at DESC;
+```
+
+Expected after request `96`: one row with provider reference `manual-paymongo-finality-applied-effective`, `confirmed_amount = 89.29`, `currency_code = PHP`, and `confirmation_status = RECORDED`.
+
+Verify confirmation replay did not create a duplicate row:
+
+```sql
+SELECT
+    pc.payment_attempt_id,
+    pc.provider_transaction_ref,
+    COUNT(*) AS confirmation_count
+FROM core.payment_confirmations pc
+JOIN core.payment_attempts pa
+  ON pa.payment_attempt_id = pc.payment_attempt_id
+WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+GROUP BY pc.payment_attempt_id, pc.provider_transaction_ref;
+```
+
+Expected after requests `96` and `100`: one grouped row for `manual-paymongo-finality-applied-effective` with `confirmation_count = 1`.
+
+Verify amount/currency mismatch requests left no invalid confirmation row:
+
+```sql
+SELECT
+    pc.provider_transaction_ref,
+    COUNT(*) AS invalid_confirmation_count
+FROM core.payment_confirmations pc
+WHERE pc.provider_transaction_ref IN (
+    'manual-paymongo-finality-amount-mismatch',
+    'manual-paymongo-finality-currency-mismatch'
+)
+GROUP BY pc.provider_transaction_ref;
+```
+
+Expected after rejected requests `98` or `99`: no rows.
+
+Verify no provider routing/AUB drift is visible on the APPLIED finality payment attempt:
+
+```sql
+SELECT
+    pa.payment_attempt_id,
+    pr.provider_code,
+    pr.rail_code
+FROM core.payment_attempts pa
+LEFT JOIN payments.payment_rails pr
+  ON pr.payment_rail_id = pa.payment_rail_id
+WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+ORDER BY pa.created_at DESC;
+```
+
+Expected: `provider_code` remains the existing PayMongo provider for the selected `GCASH` path. No AUB rail should appear.
+
+Verify this direct confirmation/finalization workflow did not create gate, coupon, reconciliation, or exit-authorization rows:
+
+```sql
+SELECT
+    (SELECT COUNT(*)
+       FROM core.exit_authorizations ea
+      WHERE ea.payment_attempt_id IN (
+          SELECT payment_attempt_id
+          FROM core.payment_attempts
+          WHERE parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+      )) AS exit_authorization_count,
+    (SELECT COUNT(*)
+       FROM coupons.coupon_applications ca
+      WHERE ca.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid) AS coupon_application_count,
+    (SELECT COUNT(*)
+       FROM reconciliation.reconciliation_items ri
+      WHERE ri.payment_attempt_id IN (
+          SELECT payment_attempt_id
+          FROM core.payment_attempts
+          WHERE parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+      )) AS reconciliation_item_count,
+    (SELECT COUNT(*)
+       FROM gates.gate_authorization_consumptions gac
+      WHERE gac.exit_authorization_id IN (
+          SELECT ea.exit_authorization_id
+          FROM core.exit_authorizations ea
+          JOIN core.payment_attempts pa
+            ON pa.payment_attempt_id = ea.payment_attempt_id
+          WHERE pa.parking_session_id = '77000000-0000-0000-0000-000000000316'::uuid
+      )) AS gate_consumption_count;
+```
+
+Expected for requests `94` through `101`: all counts are `0`. If the broader payment outcome endpoint is used manually instead of direct confirmation/finalization, exit authorization may be created by existing finality behavior and should be evaluated separately.
+
+Scope boundary:
+
+- These requests do not test real PayMongo callback delivery or external provider settlement.
+- These requests do not call AUB, change provider routing, call gate integration, consume exits, create coupons, create reconciliation records, or render UI.
+- These requests do not test WebPay or Operator Console UI layout.
+- The confirmation/finality contracts do not include `tariffSnapshotId`; #207 validates that the stored `payment_attempts.tariff_snapshot_id` is the source of truth.
 
 Verify the payment-attempt guardrail case leaves the application and original snapshot unfinalized:
 

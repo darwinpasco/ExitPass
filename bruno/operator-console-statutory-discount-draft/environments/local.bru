@@ -2,6 +2,9 @@ vars {
   centralPmsBaseUrl: http://127.0.0.1:56065
   vendorParkingBaseUrl: http://127.0.0.1:56065
   paymentAttemptsBaseUrl: http://127.0.0.1:56065
+  internalPaymentConfirmationBaseUrl: http://127.0.0.1:56065
+  internalPaymentFinalizationBaseUrl: http://127.0.0.1:56065
+  internalPaymentOutcomeBaseUrl: http://127.0.0.1:56065
   vendorSystemId_manual: 77000000-0000-0000-0000-000000000004
   userId_allowed: 77000000-0000-0000-0000-000000000010
   userId_inactiveHrMapping: 77000000-0000-0000-0000-000000000011
@@ -102,6 +105,30 @@ vars {
   paymentIdempotencyKey_staleRejected: manual-payment-stale-original-rejected
   paymentIdempotencyKey_sessionMismatch: manual-payment-session-mismatch-rejected
   paymentIdempotencyKey_supersededRejected: manual-payment-superseded-rejected
+  paymentFinalityParkingSessionId_applied: 77000000-0000-0000-0000-000000000316
+  paymentFinalityTariffSnapshotId_appliedEffective: 77000000-0000-0000-0000-000000000506
+  paymentFinalityOriginalTariffSnapshotId: 77000000-0000-0000-0000-000000000406
+  paymentFinalityAmountMinorUnits_appliedEffective: 8929
+  paymentFinalityAmountMajorUnits_appliedEffective: 89.29
+  paymentFinalityCurrencyCode: PHP
+  paymentFinalityPaymentAttemptId: 00000000-0000-0000-0000-000000000000
+  paymentFinalityPaymentConfirmationId: 00000000-0000-0000-0000-000000000000
+  paymentFinalityProviderReference: manual-paymongo-finality-applied-effective
+  paymentFinalityProviderReferenceReplay: manual-paymongo-finality-applied-effective
+  paymentFinalityProviderReferenceAmountMismatch: manual-paymongo-finality-amount-mismatch
+  paymentFinalityProviderReferenceCurrencyMismatch: manual-paymongo-finality-currency-mismatch
+  paymentFinalityIdempotencyKey: manual-payment-finality-applied-effective
+  paymentFinalityIdempotencyKeyReplay: manual-payment-finality-applied-effective-replay
+  paymentFinalityIdempotencyKeyAmountMismatch: manual-payment-finality-amount-mismatch
+  paymentFinalityIdempotencyKeyCurrencyMismatch: manual-payment-finality-currency-mismatch
+  paymentFinalityParkingSessionId_noDiscount: 77000000-0000-0000-0000-000000000308
+  paymentFinalityTariffSnapshotId_noDiscountActive: 77000000-0000-0000-0000-000000000398
+  paymentFinalityAmountMinorUnits_noDiscount: 12500
+  paymentFinalityAmountMajorUnits_noDiscount: 125.00
+  paymentFinalityPaymentAttemptId_noDiscount: 00000000-0000-0000-0000-000000000000
+  paymentFinalityPaymentConfirmationId_noDiscount: 00000000-0000-0000-0000-000000000000
+  paymentFinalityProviderReferenceNoDiscount: manual-paymongo-finality-no-discount
+  paymentFinalityIdempotencyKeyNoDiscount: manual-payment-finality-no-discount
   seniorEntitlementType: SENIOR_CITIZEN
   pwdEntitlementType: PWD
   unsupportedEntitlementType: OTHER_STATUTORY

@@ -1,0 +1,38 @@
+meta {
+  name: 99 Record payment confirmation currency mismatch rejected
+  type: http
+  seq: 99
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyCurrencyMismatch}}
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{paymentFinalityPaymentAttemptId}}",
+    "providerReference": "{{paymentFinalityProviderReferenceCurrencyMismatch}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-finality-currency-mismatch",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{paymentFinalityAmountMajorUnits_appliedEffective}},
+    "currencyCode": "USD"
+  }
+}
+
+tests {
+  test("confirmation rejects provider currency mismatch deterministically", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("PAYMENT_CURRENCY_MISMATCH");
+  });
+}

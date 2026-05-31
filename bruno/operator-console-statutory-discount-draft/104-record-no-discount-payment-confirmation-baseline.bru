@@ -1,0 +1,42 @@
+meta {
+  name: 104 Record no-discount payment confirmation baseline
+  type: http
+  seq: 104
+}
+
+post {
+  url: {{internalPaymentConfirmationBaseUrl}}/v1/internal/payments/confirmation
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{paymentFinalityIdempotencyKeyNoDiscount}}-confirmation
+  X-Correlation-Id: {{$guid}}
+}
+
+body:json {
+  {
+    "paymentAttemptId": "{{paymentFinalityPaymentAttemptId_noDiscount}}",
+    "providerReference": "{{paymentFinalityProviderReferenceNoDiscount}}",
+    "providerStatus": "SUCCESS",
+    "requestedBy": "central-pms-manual-smoke",
+    "rawCallbackReference": "manual-finality-no-discount",
+    "providerSignatureValid": true,
+    "providerPayloadHash": null,
+    "amountConfirmed": {{paymentFinalityAmountMajorUnits_noDiscount}},
+    "currencyCode": "{{paymentFinalityCurrencyCode}}"
+  }
+}
+
+tests {
+  test("no-discount confirmation preserves the active tariff amount and currency", function () {
+    expect(res.status).to.equal(201);
+    expect(res.body.paymentConfirmationId).to.not.equal(null);
+    expect(res.body.paymentAttemptId).to.equal(bru.getEnvVar("paymentFinalityPaymentAttemptId_noDiscount"));
+    expect(res.body.providerReference).to.equal(bru.getEnvVar("paymentFinalityProviderReferenceNoDiscount"));
+    expect(res.body.confirmationStatus).to.equal("RECORDED");
+    bru.setEnvVar("paymentFinalityPaymentConfirmationId_noDiscount", res.body.paymentConfirmationId);
+  });
+}
