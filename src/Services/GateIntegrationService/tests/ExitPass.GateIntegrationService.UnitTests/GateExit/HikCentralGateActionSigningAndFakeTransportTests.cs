@@ -211,7 +211,7 @@ public sealed class HikCentralGateActionSigningAndFakeTransportTests
 
     private static HikCentralConsumedAuthorizationGateActionAdapter CreateAdapter(
         FakeHikCentralGateActionTransport transport) =>
-        new(CreateSigner(), transport);
+        new(CreateSigner(), transport, new InMemoryHikCentralGateActionAuditRecorder());
 
     private static HikCentralRequestSigner CreateSigner() =>
         new(

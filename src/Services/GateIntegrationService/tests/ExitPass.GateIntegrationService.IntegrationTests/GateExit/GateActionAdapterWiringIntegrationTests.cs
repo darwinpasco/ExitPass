@@ -34,6 +34,7 @@ public sealed class GateActionAdapterWiringIntegrationTests
         var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
 
         Assert.IsType<NoOpConsumedAuthorizationGateActionAdapter>(adapter);
+        Assert.Null(scope.ServiceProvider.GetService<IHikCentralGateActionAuditRecorder>());
     }
 
     [Fact]
@@ -56,9 +57,11 @@ public sealed class GateActionAdapterWiringIntegrationTests
         var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
         var transport = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>();
         var options = scope.ServiceProvider.GetRequiredService<HikCentralGateActionOptions>();
+        var auditRecorder = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionAuditRecorder>();
 
         Assert.IsType<HikCentralConsumedAuthorizationGateActionAdapter>(adapter);
         Assert.IsType<FakeHikCentralGateActionTransport>(transport);
+        Assert.IsType<PostgresHikCentralGateActionAuditRecorder>(auditRecorder);
         Assert.Equal("Fake", options.TransportMode);
         Assert.False(string.IsNullOrWhiteSpace(options.AppKey));
         Assert.False(string.IsNullOrWhiteSpace(options.AppSecret));
@@ -72,6 +75,8 @@ public sealed class GateActionAdapterWiringIntegrationTests
         var handler = scope.ServiceProvider.GetRequiredService<IGateAuthorizationConsumedHandoffHandler>();
         var transport = Assert.IsType<FakeHikCentralGateActionTransport>(
             scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>());
+        var auditRecorder = Assert.IsType<InMemoryHikCentralGateActionAuditRecorder>(
+            scope.ServiceProvider.GetRequiredService<IHikCentralGateActionAuditRecorder>());
 
         var result = await handler.HandleAsync(
             new ProcessGateAuthorizationConsumedCommand(CreateHandoff()),
@@ -80,6 +85,7 @@ public sealed class GateActionAdapterWiringIntegrationTests
         Assert.Equal("GATE_AUTHORIZATION_CONSUMED_PROCESSED", result.ResultCode);
         Assert.True(result.AdapterInvoked);
         Assert.Single(transport.Requests);
+        Assert.Single(auditRecorder.Records);
         Assert.Equal(HikCentralRequestSigner.DoorControlPath, transport.Requests.Single().PathAndQuery);
     }
 
@@ -106,9 +112,11 @@ public sealed class GateActionAdapterWiringIntegrationTests
         var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
         var transport = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>();
         var options = scope.ServiceProvider.GetRequiredService<HikCentralGateActionOptions>();
+        var auditRecorder = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionAuditRecorder>();
 
         Assert.IsType<HikCentralConsumedAuthorizationGateActionAdapter>(adapter);
         Assert.IsType<LiveHikCentralGateActionTransport>(transport);
+        Assert.IsType<InMemoryHikCentralGateActionAuditRecorder>(auditRecorder);
         Assert.True(options.LiveTransportEnabled);
         Assert.Equal("Live", options.TransportMode);
     }
@@ -170,18 +178,26 @@ public sealed class GateActionAdapterWiringIntegrationTests
                     {
                         services.RemoveAll<IGateCommandLifecycleRecorder>();
                         services.RemoveAll<IGateAuthorizationConsumedProcessingRecorder>();
+                        services.RemoveAll<IHikCentralGateActionAuditRecorder>();
                         services.AddSingleton<IGateCommandLifecycleRecorder, InMemoryGateCommandLifecycleRecorder>();
                         services.AddSingleton<IGateAuthorizationConsumedProcessingRecorder, InMemoryGateAuthorizationConsumedProcessingRecorder>();
+                        services.AddSingleton<InMemoryHikCentralGateActionAuditRecorder>();
+                        services.AddSingleton<IHikCentralGateActionAuditRecorder>(provider =>
+                            provider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>());
                     }
 
                     if (useFakeLiveHttpClient)
                     {
                         services.RemoveAll<HttpClient>();
+                        services.RemoveAll<IHikCentralGateActionAuditRecorder>();
                         services.AddSingleton(new HttpClient(new NoNetworkHttpMessageHandler())
                         {
                             BaseAddress = new Uri("https://hikcentral.test"),
                             Timeout = Timeout.InfiniteTimeSpan
                         });
+                        services.AddSingleton<InMemoryHikCentralGateActionAuditRecorder>();
+                        services.AddSingleton<IHikCentralGateActionAuditRecorder>(provider =>
+                            provider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>());
                     }
                 });
             }

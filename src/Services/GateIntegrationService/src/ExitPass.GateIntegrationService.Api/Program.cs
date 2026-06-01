@@ -66,6 +66,7 @@ switch (gateActionAdapterMode)
         builder.Services.AddSingleton<FakeHikCentralGateActionTransport>();
         builder.Services.AddSingleton<IHikCentralGateActionTransport>(provider =>
             provider.GetRequiredService<FakeHikCentralGateActionTransport>());
+        builder.Services.AddSingleton<IHikCentralGateActionAuditRecorder, PostgresHikCentralGateActionAuditRecorder>();
         builder.Services.AddSingleton<HikCentralConsumedAuthorizationGateActionAdapter>();
         builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter>(provider =>
             provider.GetRequiredService<HikCentralConsumedAuthorizationGateActionAdapter>());
@@ -98,6 +99,7 @@ switch (gateActionAdapterMode)
         builder.Services.AddSingleton<LiveHikCentralGateActionTransport>();
         builder.Services.AddSingleton<IHikCentralGateActionTransport>(provider =>
             provider.GetRequiredService<LiveHikCentralGateActionTransport>());
+        builder.Services.AddSingleton<IHikCentralGateActionAuditRecorder, PostgresHikCentralGateActionAuditRecorder>();
         builder.Services.AddSingleton<HikCentralConsumedAuthorizationGateActionAdapter>();
         builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter>(provider =>
             provider.GetRequiredService<HikCentralConsumedAuthorizationGateActionAdapter>());

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ExitPass.GateIntegrationService.Application.GateExit.HikCentral;
 
 /// <summary>
@@ -47,6 +49,7 @@ public sealed class ConsumedAuthorizationGateActionAdapterException : Exception
 /// </summary>
 public sealed class HikCentralConsumedAuthorizationGateActionAdapter : IConsumedAuthorizationGateCommandActionAdapter
 {
+    private readonly IHikCentralGateActionAuditRecorder _auditRecorder;
     private readonly HikCentralRequestSigner _signer;
     private readonly IHikCentralGateActionTransport _transport;
 
@@ -55,10 +58,12 @@ public sealed class HikCentralConsumedAuthorizationGateActionAdapter : IConsumed
     /// </summary>
     public HikCentralConsumedAuthorizationGateActionAdapter(
         HikCentralRequestSigner signer,
-        IHikCentralGateActionTransport transport)
+        IHikCentralGateActionTransport transport,
+        IHikCentralGateActionAuditRecorder auditRecorder)
     {
         _signer = signer ?? throw new ArgumentNullException(nameof(signer));
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+        _auditRecorder = auditRecorder ?? throw new ArgumentNullException(nameof(auditRecorder));
     }
 
     /// <summary>
@@ -74,8 +79,21 @@ public sealed class HikCentralConsumedAuthorizationGateActionAdapter : IConsumed
 
         var vendorRequest = HikCentralGateActionRequestFactory.CreateOpenExitBarrierRequest(command, handoff);
         var signedRequest = _signer.SignDoorControlRequest(vendorRequest);
+        var requestedAtUtc = DateTimeOffset.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
         var transportResult = await _transport.SendAsync(signedRequest, cancellationToken);
+        stopwatch.Stop();
+        var respondedAtUtc = DateTimeOffset.UtcNow;
         var response = HikCentralGateActionResultClassifier.Classify(transportResult);
+        var auditRecord = HikCentralGateActionAuditRecordFactory.Create(
+            vendorRequest,
+            signedRequest,
+            transportResult,
+            response,
+            requestedAtUtc,
+            respondedAtUtc,
+            stopwatch.Elapsed);
+        await _auditRecorder.RecordAsync(auditRecord, cancellationToken);
 
         return new HikCentralConsumedAuthorizationGateActionAdapterResult(
             response.Outcome is HikCentralGateActionOutcome.Succeeded,
