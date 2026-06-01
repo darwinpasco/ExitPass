@@ -26,6 +26,9 @@ public sealed class GateActionAdapterWiringIntegrationTests
     private static readonly Guid SiteId = Guid.Parse("f9000000-0000-0000-0000-000000000001");
     private static readonly Guid VendorSystemId = Guid.Parse("fa000000-0000-0000-0000-000000000001");
     private static readonly Guid CorrelationId = Guid.Parse("fb000000-0000-0000-0000-000000000001");
+    private static readonly Guid AllowedSandboxServiceIdentityId = Guid.Parse("fc000000-0000-0000-0000-000000000001");
+    private static readonly Guid UnauthorizedSandboxServiceIdentityId = Guid.Parse("fc000000-0000-0000-0000-000000000002");
+    private const string SandboxValidationKey = "test-sandbox-validation-key";
 
     [Fact]
     public void DefaultConfiguration_ResolvesNoOpAdapter()
@@ -151,9 +154,178 @@ public sealed class GateActionAdapterWiringIntegrationTests
         using var factory = CreateFactory(mode: null);
         using var client = factory.CreateClient();
 
-        var response = await client.PostAsJsonAsync(
-            "/v1/internal/hikcentral/sandbox/validate-gate-action",
-            CreateSandboxRequest());
+        var response = await PostSandboxRequestAsync(client, CreateSandboxRequest());
+
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("CORRELATION_ID_REQUIRED", report.ResultCode);
+        Assert.DoesNotContain("secret", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenAccessControlDisabled_RejectsBeforeHarness()
+    {
+        using var factory = CreateFactory("HikCentralLive", liveEnabled: true, sandboxEnabled: true, includeLiveOptions: true);
+        using var client = factory.CreateClient();
+
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            serviceIdentityId: AllowedSandboxServiceIdentityId,
+            validationKey: SandboxValidationKey);
+
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("HIKCENTRAL_SANDBOX_ACCESS_DISABLED", report.ResultCode);
+        Assert.Null(report.AuditId);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenServiceIdentityMissing_RejectsBeforeTransport()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            sandboxEnabled: true,
+            includeLiveOptions: true,
+            useFakeLiveHttpClient: true,
+            accessEnabled: true);
+        using var client = factory.CreateClient();
+
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            validationKey: SandboxValidationKey);
+        using var scope = factory.Services.CreateScope();
+        var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
+
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("SERVICE_IDENTITY_REQUIRED", report.ResultCode);
+        Assert.Empty(audit.Records);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenServiceIdentityNotAllowed_RejectsBeforeTransport()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            sandboxEnabled: true,
+            includeLiveOptions: true,
+            useFakeLiveHttpClient: true,
+            accessEnabled: true);
+        using var client = factory.CreateClient();
+
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            serviceIdentityId: UnauthorizedSandboxServiceIdentityId,
+            validationKey: SandboxValidationKey);
+        using var scope = factory.Services.CreateScope();
+        var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
+
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("SERVICE_IDENTITY_NOT_ALLOWED", report.ResultCode);
+        Assert.Empty(audit.Records);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenValidationKeyMissing_RejectsBeforeTransport()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            sandboxEnabled: true,
+            includeLiveOptions: true,
+            useFakeLiveHttpClient: true,
+            accessEnabled: true);
+        using var client = factory.CreateClient();
+
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            serviceIdentityId: AllowedSandboxServiceIdentityId);
+        using var scope = factory.Services.CreateScope();
+        var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
+
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("SANDBOX_VALIDATION_KEY_REQUIRED", report.ResultCode);
+        Assert.Empty(audit.Records);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenValidationKeyInvalid_RejectsWithoutReturningKey()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            sandboxEnabled: true,
+            includeLiveOptions: true,
+            useFakeLiveHttpClient: true,
+            accessEnabled: true);
+        using var client = factory.CreateClient();
+        const string InvalidKey = "invalid-sandbox-validation-key";
+
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            serviceIdentityId: AllowedSandboxServiceIdentityId,
+            validationKey: InvalidKey);
+        using var scope = factory.Services.CreateScope();
+        var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
+        var responseBody = await response.Content.ReadAsStringAsync();
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("SANDBOX_VALIDATION_KEY_INVALID", report.ResultCode);
+        Assert.Empty(audit.Records);
+        Assert.DoesNotContain(InvalidKey, responseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenAuthorizedButSandboxDisabled_RejectsWithoutTransport()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            includeLiveOptions: true,
+            useFakeLiveHttpClient: true,
+            accessEnabled: true);
+        using var client = factory.CreateClient();
+
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            serviceIdentityId: AllowedSandboxServiceIdentityId,
+            validationKey: SandboxValidationKey);
+        using var scope = factory.Services.CreateScope();
+        var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
 
         var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
 
@@ -161,7 +333,7 @@ public sealed class GateActionAdapterWiringIntegrationTests
         Assert.NotNull(report);
         Assert.False(report!.Executed);
         Assert.Equal("HIKCENTRAL_SANDBOX_VALIDATION_DISABLED", report.ResultCode);
-        Assert.DoesNotContain("secret", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(audit.Records);
     }
 
     [Fact]
@@ -172,12 +344,16 @@ public sealed class GateActionAdapterWiringIntegrationTests
             liveEnabled: true,
             sandboxEnabled: true,
             includeLiveOptions: true,
-            useSuccessfulLiveHttpClient: true);
+            useSuccessfulLiveHttpClient: true,
+            accessEnabled: true);
         using var client = factory.CreateClient();
 
-        var response = await client.PostAsJsonAsync(
-            "/v1/internal/hikcentral/sandbox/validate-gate-action",
-            CreateSandboxRequest());
+        var response = await PostSandboxRequestAsync(
+            client,
+            CreateSandboxRequest(),
+            includeCorrelationHeader: true,
+            serviceIdentityId: AllowedSandboxServiceIdentityId,
+            validationKey: SandboxValidationKey);
         using var scope = factory.Services.CreateScope();
         var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
         var handler = scope.ServiceProvider.GetRequiredService<SuccessfulHikCentralHttpMessageHandler>();
@@ -203,7 +379,8 @@ public sealed class GateActionAdapterWiringIntegrationTests
         bool sandboxEnabled = false,
         bool includeLiveOptions = false,
         bool useFakeLiveHttpClient = false,
-        bool useSuccessfulLiveHttpClient = false) =>
+        bool useSuccessfulLiveHttpClient = false,
+        bool accessEnabled = false) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("IntegrationTest");
@@ -228,6 +405,17 @@ public sealed class GateActionAdapterWiringIntegrationTests
                 builder.UseSetting("GateIntegrations:HikCentral:AppKey", "test-ak");
                 builder.UseSetting("GateIntegrations:HikCentral:AppSecret", "test-secret");
                 builder.UseSetting("GateIntegrations:HikCentral:RequestTimeoutSeconds", "10");
+            }
+
+            if (accessEnabled)
+            {
+                builder.UseSetting("GateIntegrations:HikCentral:SandboxValidationAccess:Enabled", "true");
+                builder.UseSetting(
+                    "GateIntegrations:HikCentral:SandboxValidationAccess:AllowedServiceIdentityIds:0",
+                    AllowedSandboxServiceIdentityId.ToString());
+                builder.UseSetting(
+                    "GateIntegrations:HikCentral:SandboxValidationAccess:RequiredApiKey",
+                    SandboxValidationKey);
             }
 
             if (useInMemoryLifecycle || useFakeLiveHttpClient || useSuccessfulLiveHttpClient)
@@ -282,6 +470,38 @@ public sealed class GateActionAdapterWiringIntegrationTests
                 });
             }
         });
+
+    private static Task<HttpResponseMessage> PostSandboxRequestAsync(
+        HttpClient client,
+        HikCentralSandboxValidationRequest request,
+        bool includeCorrelationHeader = false,
+        Guid? serviceIdentityId = null,
+        string? validationKey = null)
+    {
+        var message = new HttpRequestMessage(
+            HttpMethod.Post,
+            "/v1/internal/hikcentral/sandbox/validate-gate-action")
+        {
+            Content = JsonContent.Create(request)
+        };
+
+        if (includeCorrelationHeader)
+        {
+            message.Headers.TryAddWithoutValidation("X-Correlation-Id", request.CorrelationId.ToString());
+        }
+
+        if (serviceIdentityId.HasValue)
+        {
+            message.Headers.TryAddWithoutValidation("X-Service-Identity-Id", serviceIdentityId.Value.ToString());
+        }
+
+        if (validationKey is not null)
+        {
+            message.Headers.TryAddWithoutValidation("X-HikCentral-Sandbox-Validation-Key", validationKey);
+        }
+
+        return client.SendAsync(message);
+    }
 
     private static HikCentralSandboxValidationRequest CreateSandboxRequest() =>
         new(

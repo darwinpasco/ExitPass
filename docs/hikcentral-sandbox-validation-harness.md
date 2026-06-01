@@ -31,7 +31,12 @@ Keep committed configuration disabled:
   "GateIntegrations": {
     "HikCentral": {
       "LiveTransportEnabled": false,
-      "SandboxValidationEnabled": false
+      "SandboxValidationEnabled": false,
+      "SandboxValidationAccess": {
+        "Enabled": false,
+        "AllowedServiceIdentityIds": [],
+        "RequiredApiKey": ""
+      }
     }
   }
 }
@@ -43,6 +48,9 @@ For a controlled sandbox run, set these values through environment variables, us
 $env:GateActionAdapter__Mode = "HikCentralLive"
 $env:GateIntegrations__HikCentral__LiveTransportEnabled = "true"
 $env:GateIntegrations__HikCentral__SandboxValidationEnabled = "true"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__Enabled = "true"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__AllowedServiceIdentityIds__0 = "<authorized-service-identity-guid>"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__RequiredApiKey = "<sandbox-validation-access-key>"
 $env:GateIntegrations__HikCentral__BaseUrl = "https://sandbox-hikcentral.example"
 $env:GateIntegrations__HikCentral__AppKey = "<sandbox-app-key>"
 $env:GateIntegrations__HikCentral__AppSecret = "<sandbox-app-secret>"
@@ -59,6 +67,16 @@ Endpoint:
 ```http
 POST /v1/internal/hikcentral/sandbox/validate-gate-action
 ```
+
+Required operational access headers:
+
+```http
+X-Correlation-Id: <new-guid>
+X-Service-Identity-Id: <authorized-service-identity-guid>
+X-HikCentral-Sandbox-Validation-Key: <sandbox-validation-access-key>
+```
+
+The access key is secret material for the validation harness. Do not commit it, log it, or include it in evidence.
 
 Example body:
 

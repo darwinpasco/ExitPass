@@ -12,6 +12,9 @@ post {
 
 headers {
   Content-Type: application/json
+  X-Correlation-Id: {{$guid}}
+  X-Service-Identity-Id: {{sandboxServiceIdentityId}}
+  X-HikCentral-Sandbox-Validation-Key: {{sandboxValidationAccessKey}}
 }
 
 body:json {

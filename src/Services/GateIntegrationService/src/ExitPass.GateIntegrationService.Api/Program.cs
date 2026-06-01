@@ -5,6 +5,7 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using ExitPass.GateIntegrationService.Api.Endpoints;
+using ExitPass.GateIntegrationService.Api.Security;
 using ExitPass.GateIntegrationService.Application.GateExit;
 using ExitPass.GateIntegrationService.Application.GateExit.HikCentral;
 using ExitPass.GateIntegrationService.Infrastructure.CentralPms;
@@ -41,6 +42,13 @@ builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 });
 builder.Services.AddSingleton<IGateHardwareController, NoOpGateHardwareController>();
 builder.Services.AddSingleton<IGateExitAttemptRecorder, InMemoryGateExitAttemptRecorder>();
+builder.Services.AddSingleton(_ =>
+{
+    var options = new HikCentralSandboxValidationAccessOptions();
+    builder.Configuration.GetSection(HikCentralSandboxValidationAccessOptions.SectionName).Bind(options);
+    return options;
+});
+builder.Services.AddSingleton<HikCentralSandboxValidationAccessValidator>();
 switch (gateActionAdapterMode)
 {
     case GateActionAdapterMode.NoOp:
