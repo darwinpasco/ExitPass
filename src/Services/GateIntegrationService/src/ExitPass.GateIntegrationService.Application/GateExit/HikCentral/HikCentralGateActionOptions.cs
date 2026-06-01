@@ -38,6 +38,11 @@ public sealed class HikCentralGateActionOptions
     public bool LiveTransportEnabled { get; set; }
 
     /// <summary>
+    /// Hard gate that must be explicitly enabled before the manual sandbox validation harness can execute.
+    /// </summary>
+    public bool SandboxValidationEnabled { get; set; }
+
+    /// <summary>
     /// Request timeout prepared for a future live transport.
     /// </summary>
     public int RequestTimeoutSeconds { get; set; } = 10;
