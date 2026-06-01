@@ -45,7 +45,7 @@ public sealed class ConsumedAuthorizationGateActionAdapterException : Exception
 /// <summary>
 /// Composes HikCentral request creation, signing, fake transport, and response classification.
 /// </summary>
-public sealed class HikCentralConsumedAuthorizationGateActionAdapter
+public sealed class HikCentralConsumedAuthorizationGateActionAdapter : IConsumedAuthorizationGateCommandActionAdapter
 {
     private readonly HikCentralRequestSigner _signer;
     private readonly IHikCentralGateActionTransport _transport;
@@ -106,6 +106,23 @@ public sealed class HikCentralConsumedAuthorizationGateActionAdapter
             result.ResultCode,
             result.DiagnosticMessage,
             result.Retryable);
+    }
+
+    /// <inheritdoc />
+    public Task ProcessConsumedAuthorizationAsync(
+        GateCommandLifecycleRecord command,
+        GateAuthorizationConsumedHandoff handoff,
+        CancellationToken cancellationToken) =>
+        ProcessCommandOrThrowAsync(command, handoff, cancellationToken);
+
+    /// <inheritdoc />
+    public Task ProcessConsumedAuthorizationAsync(
+        GateAuthorizationConsumedHandoff handoff,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(handoff);
+        throw new InvalidOperationException(
+            "HikCentral gate action adapter requires the active gate command lifecycle record.");
     }
 
     private static string ResolveResultCode(HikCentralGateActionResponse response) =>

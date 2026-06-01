@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using ExitPass.GateIntegrationService.Api.Endpoints;
 using ExitPass.GateIntegrationService.Application.GateExit;
+using ExitPass.GateIntegrationService.Application.GateExit.HikCentral;
 using ExitPass.GateIntegrationService.Infrastructure.CentralPms;
 using ExitPass.GateIntegrationService.Infrastructure.GateExit;
 using ExitPass.GateIntegrationService.Infrastructure.GateHardware;
@@ -25,6 +26,10 @@ builder.Services
 builder.Services.AddScoped<IConsumeGateExitAuthorizationUseCase, ConsumeGateExitAuthorizationHandler>();
 builder.Services.AddScoped<IGateAuthorizationConsumedHandoffHandler, GateAuthorizationConsumedHandoffHandler>();
 builder.Services.AddSingleton<GateIntegrationMetrics>();
+var gateActionAdapterOptions = new GateActionAdapterOptions();
+builder.Configuration.GetSection(GateActionAdapterOptions.SectionName).Bind(gateActionAdapterOptions);
+var gateActionAdapterMode = gateActionAdapterOptions.ResolveMode();
+
 builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 {
     var baseUrl = builder.Configuration["Integrations:CentralPms:BaseUrl"] ?? "http://localhost:8080";
@@ -36,7 +41,41 @@ builder.Services.AddScoped<ICentralPmsExitAuthorizationClient>(_ =>
 });
 builder.Services.AddSingleton<IGateHardwareController, NoOpGateHardwareController>();
 builder.Services.AddSingleton<IGateExitAttemptRecorder, InMemoryGateExitAttemptRecorder>();
-builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter, NoOpConsumedAuthorizationGateActionAdapter>();
+switch (gateActionAdapterMode)
+{
+    case GateActionAdapterMode.NoOp:
+        builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter, NoOpConsumedAuthorizationGateActionAdapter>();
+        break;
+    case GateActionAdapterMode.HikCentralFake:
+        builder.Services.AddSingleton(_ =>
+        {
+            var options = new HikCentralGateActionOptions();
+            builder.Configuration.GetSection(HikCentralGateActionOptions.SectionName).Bind(options);
+            options.AppKey = string.IsNullOrWhiteSpace(options.AppKey)
+                ? "exitpass-fake-hikcentral-app-key"
+                : options.AppKey;
+            options.AppSecret = string.IsNullOrWhiteSpace(options.AppSecret)
+                ? "exitpass-fake-hikcentral-app-secret"
+                : options.AppSecret;
+            options.TransportMode = "Fake";
+            return options;
+        });
+        builder.Services.AddSingleton<IHikCentralClock, SystemHikCentralClock>();
+        builder.Services.AddSingleton<IHikCentralNonceProvider, GuidHikCentralNonceProvider>();
+        builder.Services.AddSingleton<HikCentralRequestSigner>();
+        builder.Services.AddSingleton<FakeHikCentralGateActionTransport>();
+        builder.Services.AddSingleton<IHikCentralGateActionTransport>(provider =>
+            provider.GetRequiredService<FakeHikCentralGateActionTransport>());
+        builder.Services.AddSingleton<HikCentralConsumedAuthorizationGateActionAdapter>();
+        builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter>(provider =>
+            provider.GetRequiredService<HikCentralConsumedAuthorizationGateActionAdapter>());
+        break;
+    case GateActionAdapterMode.HikCentralLive:
+        throw new InvalidOperationException(
+            "HikCentral live gate action adapter is not implemented. Use NoOp or HikCentralFake.");
+    default:
+        throw new InvalidOperationException($"Unsupported gate action adapter mode '{gateActionAdapterMode}'.");
+}
 builder.Services.AddScoped<IGateCommandLifecycleRecorder, PostgresGateCommandLifecycleRecorder>();
 builder.Services.AddScoped<IGateAuthorizationConsumedProcessingRecorder, PostgresGateAuthorizationConsumedProcessingRecorder>();
 builder.Services.AddSingleton<IGateAuthorizationConsumedScopeValidator, PassThroughGateAuthorizationConsumedScopeValidator>();
