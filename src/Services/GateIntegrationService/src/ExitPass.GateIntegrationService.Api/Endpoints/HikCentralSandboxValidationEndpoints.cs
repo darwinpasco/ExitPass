@@ -1,4 +1,5 @@
 using ExitPass.GateIntegrationService.Application.GateExit.HikCentral;
+using ExitPass.GateIntegrationService.Api.Security;
 
 namespace ExitPass.GateIntegrationService.Api.Endpoints;
 
@@ -19,6 +20,8 @@ public static class HikCentralSandboxValidationEndpoints
             .WithName("ValidateHikCentralSandboxGateAction")
             .Produces<HikCentralSandboxValidationReport>(StatusCodes.Status200OK)
             .Produces<HikCentralSandboxValidationReport>(StatusCodes.Status400BadRequest)
+            .Produces<HikCentralSandboxValidationReport>(StatusCodes.Status401Unauthorized)
+            .Produces<HikCentralSandboxValidationReport>(StatusCodes.Status403Forbidden)
             .Produces<HikCentralSandboxValidationReport>(StatusCodes.Status409Conflict);
 
         return app;
@@ -26,9 +29,19 @@ public static class HikCentralSandboxValidationEndpoints
 
     private static async Task<IResult> HandleAsync(
         HikCentralSandboxValidationRequest request,
+        HttpRequest httpRequest,
+        HikCentralSandboxValidationAccessValidator accessValidator,
         IHikCentralSandboxValidationHarness harness,
         CancellationToken cancellationToken)
     {
+        var accessDecision = accessValidator.Validate(httpRequest, request);
+        if (!accessDecision.IsAllowed)
+        {
+            return Results.Json(
+                accessDecision.DenialReport,
+                statusCode: accessDecision.StatusCode);
+        }
+
         var report = await harness.ValidateGateActionAsync(request, cancellationToken);
         if (report.Executed)
         {

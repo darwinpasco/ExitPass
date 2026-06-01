@@ -42,7 +42,12 @@ Committed defaults must stay disabled:
     "HikCentral": {
       "TransportMode": "Fake",
       "LiveTransportEnabled": false,
-      "SandboxValidationEnabled": false
+      "SandboxValidationEnabled": false,
+      "SandboxValidationAccess": {
+        "Enabled": false,
+        "AllowedServiceIdentityIds": [],
+        "RequiredApiKey": ""
+      }
     }
   }
 }
@@ -55,6 +60,9 @@ $env:GateActionAdapter__Mode = "HikCentralLive"
 $env:GateIntegrations__HikCentral__TransportMode = "Live"
 $env:GateIntegrations__HikCentral__LiveTransportEnabled = "true"
 $env:GateIntegrations__HikCentral__SandboxValidationEnabled = "true"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__Enabled = "true"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__AllowedServiceIdentityIds__0 = "<authorized-service-identity-guid>"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__RequiredApiKey = "<sandbox-validation-access-key>"
 $env:GateIntegrations__HikCentral__BaseUrl = "https://<hikcentral-sandbox-host>"
 $env:GateIntegrations__HikCentral__AppKey = "<sandbox-app-key>"
 $env:GateIntegrations__HikCentral__AppSecret = "<sandbox-app-secret>"
@@ -67,8 +75,10 @@ Do not commit these values. Do not paste real values into tickets, PRs, screensh
 ## Secret Handling
 
 - Store `AppKey` and `AppSecret` only in the local process environment, user secrets, or an approved secret store.
+- Store `GateIntegrations:HikCentral:SandboxValidationAccess:RequiredApiKey` only in the local process environment, user secrets, or an approved secret store.
 - Do not capture raw `X-Ca-Signature`.
 - Do not capture raw secret-bearing headers.
+- Do not capture the `X-HikCentral-Sandbox-Validation-Key` value.
 - Do not capture full request or response bodies.
 - Capture only sanitized report fields and safe audit metadata.
 - Before sharing evidence, search it for `AppSecret`, app key, `X-Ca-Signature`, `X-Ca-Key`, and any raw header block.
@@ -80,6 +90,16 @@ Endpoint:
 ```http
 POST /v1/internal/hikcentral/sandbox/validate-gate-action
 ```
+
+Required headers:
+
+```http
+X-Correlation-Id: <new-guid>
+X-Service-Identity-Id: <authorized-service-identity-guid>
+X-HikCentral-Sandbox-Validation-Key: <sandbox-validation-access-key>
+```
+
+The service identity must appear in `GateIntegrations:HikCentral:SandboxValidationAccess:AllowedServiceIdentityIds`. The validation key is a secret and must not be logged, screenshotted, pasted into evidence, or committed.
 
 Request body:
 
@@ -107,6 +127,9 @@ The #223 harness only allows `controlType = Open` and `controlDirection = Exit`.
    - `GateActionAdapter:Mode = HikCentralLive`
    - `GateIntegrations:HikCentral:LiveTransportEnabled = true`
    - `GateIntegrations:HikCentral:SandboxValidationEnabled = true`
+   - `GateIntegrations:HikCentral:SandboxValidationAccess:Enabled = true`
+   - one authorized service identity is configured
+   - the sandbox validation access key is supplied from secrets/environment
    - `GateIntegrations:HikCentral:BaseUrl` points to sandbox/test only
 6. Send exactly one validation request.
 7. Record the returned `validationAttemptId`, `correlationId`, `auditId`, timestamp, outcome, and vendor response code/message.
@@ -155,6 +178,12 @@ The harness returns deterministic operator-safe reports for common failure modes
 
 | Condition | Expected report |
 | --- | --- |
+| Missing/invalid `X-Correlation-Id` | HTTP `400`, `resultCode = CORRELATION_ID_REQUIRED` |
+| Sandbox validation access disabled/misconfigured | HTTP `401`, `resultCode = HIKCENTRAL_SANDBOX_ACCESS_DISABLED` |
+| Missing/invalid `X-Service-Identity-Id` | HTTP `401`, `resultCode = SERVICE_IDENTITY_REQUIRED` |
+| Service identity not allowlisted | HTTP `403`, `resultCode = SERVICE_IDENTITY_NOT_ALLOWED` |
+| Missing validation access key | HTTP `401`, `resultCode = SANDBOX_VALIDATION_KEY_REQUIRED` |
+| Invalid validation access key | HTTP `401`, `resultCode = SANDBOX_VALIDATION_KEY_INVALID` |
 | `SandboxValidationEnabled = false` | `executed = false`, `resultCode = HIKCENTRAL_SANDBOX_VALIDATION_DISABLED` |
 | `GateActionAdapter:Mode != HikCentralLive` | `executed = false`, `resultCode = HIKCENTRAL_SANDBOX_VALIDATION_REQUIRES_LIVE_MODE` |
 | Missing/invalid live options | `executed = false`, `resultCode = HIKCENTRAL_SANDBOX_VALIDATION_CONFIG_INVALID` |
@@ -204,6 +233,7 @@ Do not capture:
 - Raw `X-Ca-Signature`.
 - Raw `X-Ca-Key` if the key is treated as sensitive in the target environment.
 - Full signed headers.
+- `X-HikCentral-Sandbox-Validation-Key`.
 - Raw request body sent to HikCentral.
 - Raw response body from HikCentral.
 - Any production door/gate identifiers.
@@ -215,7 +245,9 @@ Immediately after the test:
 ```powershell
 $env:GateIntegrations__HikCentral__SandboxValidationEnabled = "false"
 $env:GateIntegrations__HikCentral__LiveTransportEnabled = "false"
+$env:GateIntegrations__HikCentral__SandboxValidationAccess__Enabled = "false"
 $env:GateActionAdapter__Mode = "NoOp"
+Remove-Item Env:\\GateIntegrations__HikCentral__SandboxValidationAccess__RequiredApiKey -ErrorAction SilentlyContinue
 Remove-Item Env:\\GateIntegrations__HikCentral__AppSecret -ErrorAction SilentlyContinue
 Remove-Item Env:\\GateIntegrations__HikCentral__AppKey -ErrorAction SilentlyContinue
 Remove-Item Env:\\GateIntegrations__HikCentral__BaseUrl -ErrorAction SilentlyContinue
@@ -236,6 +268,7 @@ Controls:
 - Send one request at a time.
 - Verify the audit row before any repeat attempt.
 - Disable the harness immediately after validation.
+- Treat endpoint access control as an application-level control. It does not replace network allowlisting or mTLS in shared environments.
 
 ## References
 
