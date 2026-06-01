@@ -71,8 +71,37 @@ switch (gateActionAdapterMode)
             provider.GetRequiredService<HikCentralConsumedAuthorizationGateActionAdapter>());
         break;
     case GateActionAdapterMode.HikCentralLive:
-        throw new InvalidOperationException(
-            "HikCentral live gate action adapter is not implemented. Use NoOp or HikCentralFake.");
+        var liveOptions = new HikCentralGateActionOptions();
+        builder.Configuration.GetSection(HikCentralGateActionOptions.SectionName).Bind(liveOptions);
+        liveOptions.TransportMode = "Live";
+
+        var liveValidationErrors = liveOptions.ValidateForLiveTransport();
+        if (liveValidationErrors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"HikCentral live gate action adapter configuration is invalid: {string.Join(",", liveValidationErrors)}.");
+        }
+
+        builder.Services.AddSingleton(liveOptions);
+        builder.Services.AddSingleton(provider =>
+        {
+            var options = provider.GetRequiredService<HikCentralGateActionOptions>();
+            return new HttpClient
+            {
+                BaseAddress = new Uri(options.BaseUrl!, UriKind.Absolute),
+                Timeout = Timeout.InfiniteTimeSpan
+            };
+        });
+        builder.Services.AddSingleton<IHikCentralClock, SystemHikCentralClock>();
+        builder.Services.AddSingleton<IHikCentralNonceProvider, GuidHikCentralNonceProvider>();
+        builder.Services.AddSingleton<HikCentralRequestSigner>();
+        builder.Services.AddSingleton<LiveHikCentralGateActionTransport>();
+        builder.Services.AddSingleton<IHikCentralGateActionTransport>(provider =>
+            provider.GetRequiredService<LiveHikCentralGateActionTransport>());
+        builder.Services.AddSingleton<HikCentralConsumedAuthorizationGateActionAdapter>();
+        builder.Services.AddSingleton<IConsumedAuthorizationGateActionAdapter>(provider =>
+            provider.GetRequiredService<HikCentralConsumedAuthorizationGateActionAdapter>());
+        break;
     default:
         throw new InvalidOperationException($"Unsupported gate action adapter mode '{gateActionAdapterMode}'.");
 }
