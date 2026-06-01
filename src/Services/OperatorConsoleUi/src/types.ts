@@ -1,84 +1,69 @@
-export type EntitlementType = "Senior Citizen" | "PWD";
+export type EntitlementType = "Senior Citizen" | "PWD" | "Unsupported";
 
-export type StatutoryDiscountValidationStatus =
-  | "no request"
-  | "pending operator review"
-  | "approved"
-  | "rejected"
-  | "expired";
+export type DraftStatus =
+  | "Pending Review"
+  | "Approved"
+  | "Rejected"
+  | "Blocked"
+  | "Expired";
 
-export interface SessionSearchCriteria {
-  ticketNumber: string;
-  plateNumber: string;
-}
+export type PolicyContextKind =
+  | "national-fallback"
+  | "verified-local"
+  | "blocked-unverified-local"
+  | "unsupported-entitlement"
+  | "missing-site-jurisdiction";
 
-export type SessionLookupStatus =
-  | "not searched"
-  | "searching"
-  | "session found"
-  | "not found"
-  | "ambiguous session";
-
-export type OperatorConsoleModuleStatus = "available" | "first module" | "planned";
-
-export interface OperatorConsoleModule {
-  name: string;
-  status: OperatorConsoleModuleStatus;
-  description: string;
-}
-
-export type DeviceTrustStatus = "pending" | "active" | "suspended" | "revoked" | "lost";
-
-export type ShiftAccessStatus = "scheduled" | "active" | "ended" | "suspended";
-
-export type AccessGateResult =
-  | "access allowed"
-  | "device not registered"
-  | "device suspended/revoked"
-  | "no active shift"
-  | "site mismatch";
-
-export interface DeviceTrustState {
-  deviceId: string;
-  deviceName: string;
-  siteAssignment: string;
-  deviceStatus: DeviceTrustStatus;
-  trustMechanism: string;
-}
-
-export interface ShiftAccessState {
-  operatorRole: string;
-  assignedSite: string;
-  shiftStatus: ShiftAccessStatus;
-  clockIn: string;
-  clockOut: string;
-}
-
-export type WorkflowStepState = "ready" | "mock only" | "later slice" | "blocked";
-
-export interface StatutoryDiscountWorkflowStep {
+export interface StatutoryDiscountPolicyContext {
+  kind: PolicyContextKind;
   title: string;
-  state: WorkflowStepState;
-  description: string;
+  operatorSummary: string;
+  policyResolutionBasis: string;
+  policyCode?: string;
+  policyName?: string;
+  legalBasisReference?: string;
+  ordinanceReference?: string;
+  nationalLawReference?: string;
+  verificationStatus?: string;
+  benefitType?: string;
+  evidenceRequired: boolean;
+  ineligibilityReason?: string;
 }
 
-export interface OperatorSessionSummary {
-  parkingSessionReference: string;
-  vehiclePlate: string;
-  entryTime: string;
-  currentFee: string;
-  paymentStatus: string;
-  payableBasisStatus: string;
-  siteDisplayName: string;
-}
-
-export type SessionLookupResult =
-  | { status: "session found"; session: OperatorSessionSummary }
-  | { status: "not found" }
-  | { status: "ambiguous session"; matches: number };
-
-export interface StatutoryDiscountReview {
+export interface StatutoryDiscountQueueItem {
+  draftId: string;
+  parkingSessionId: string;
+  ticketReference: string;
+  plateNumber: string;
+  siteName: string;
   entitlementType: EntitlementType;
-  validationStatus: StatutoryDiscountValidationStatus;
-  operatorInstruction: string;
+  status: DraftStatus;
+  requestedAt: string;
+  requestedBy: string;
+  policyContext: StatutoryDiscountPolicyContext;
+}
+
+export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem {
+  laneName: string;
+  parkingStartedAt: string;
+  originalTariffAmount: string;
+  payableBasisPreview: string;
+  currentPaymentStatus: string;
+  maskedIdReference: string;
+  issuingAuthority: string;
+  auditActivity: string[];
+}
+
+export type LoadState<T> =
+  | { status: "idle" | "loading" }
+  | { status: "loaded"; data: T }
+  | { status: "empty" }
+  | { status: "not-found" }
+  | { status: "access-denied"; message: string }
+  | { status: "error"; message: string };
+
+export interface OperatorConsoleApiError {
+  status: "access-denied" | "not-found" | "error";
+  message: string;
+  errorCode?: string;
 }
