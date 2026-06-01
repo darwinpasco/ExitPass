@@ -40,47 +40,47 @@ public sealed class GateActionAdapterWiringIntegrationTests
     public void ExplicitNoOpMode_ResolvesNoOpAdapter()
     {
         using var factory = CreateFactory("NoOp");
-            using var scope = factory.Services.CreateScope();
+        using var scope = factory.Services.CreateScope();
 
-            var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
+        var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
 
-            Assert.IsType<NoOpConsumedAuthorizationGateActionAdapter>(adapter);
+        Assert.IsType<NoOpConsumedAuthorizationGateActionAdapter>(adapter);
     }
 
     [Fact]
     public void HikCentralFakeMode_ResolvesFakeAdapterAndTransport()
     {
         using var factory = CreateFactory("HikCentralFake");
-            using var scope = factory.Services.CreateScope();
+        using var scope = factory.Services.CreateScope();
 
-            var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
-            var transport = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>();
-            var options = scope.ServiceProvider.GetRequiredService<HikCentralGateActionOptions>();
+        var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
+        var transport = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>();
+        var options = scope.ServiceProvider.GetRequiredService<HikCentralGateActionOptions>();
 
-            Assert.IsType<HikCentralConsumedAuthorizationGateActionAdapter>(adapter);
-            Assert.IsType<FakeHikCentralGateActionTransport>(transport);
-            Assert.Equal("Fake", options.TransportMode);
-            Assert.False(string.IsNullOrWhiteSpace(options.AppKey));
-            Assert.False(string.IsNullOrWhiteSpace(options.AppSecret));
+        Assert.IsType<HikCentralConsumedAuthorizationGateActionAdapter>(adapter);
+        Assert.IsType<FakeHikCentralGateActionTransport>(transport);
+        Assert.Equal("Fake", options.TransportMode);
+        Assert.False(string.IsNullOrWhiteSpace(options.AppKey));
+        Assert.False(string.IsNullOrWhiteSpace(options.AppSecret));
     }
 
     [Fact]
     public async Task HikCentralFakeMode_ProcessesValidHandoffThroughHandlerWithFakeTransport()
     {
         using var factory = CreateFactory("HikCentralFake", useInMemoryLifecycle: true);
-            using var scope = factory.Services.CreateScope();
-            var handler = scope.ServiceProvider.GetRequiredService<IGateAuthorizationConsumedHandoffHandler>();
-            var transport = Assert.IsType<FakeHikCentralGateActionTransport>(
-                scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>());
+        using var scope = factory.Services.CreateScope();
+        var handler = scope.ServiceProvider.GetRequiredService<IGateAuthorizationConsumedHandoffHandler>();
+        var transport = Assert.IsType<FakeHikCentralGateActionTransport>(
+            scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>());
 
-            var result = await handler.HandleAsync(
-                new ProcessGateAuthorizationConsumedCommand(CreateHandoff()),
-                CancellationToken.None);
+        var result = await handler.HandleAsync(
+            new ProcessGateAuthorizationConsumedCommand(CreateHandoff()),
+            CancellationToken.None);
 
-            Assert.Equal("GATE_AUTHORIZATION_CONSUMED_PROCESSED", result.ResultCode);
-            Assert.True(result.AdapterInvoked);
-            Assert.Single(transport.Requests);
-            Assert.Equal(HikCentralRequestSigner.DoorControlPath, transport.Requests.Single().PathAndQuery);
+        Assert.Equal("GATE_AUTHORIZATION_CONSUMED_PROCESSED", result.ResultCode);
+        Assert.True(result.AdapterInvoked);
+        Assert.Single(transport.Requests);
+        Assert.Equal(HikCentralRequestSigner.DoorControlPath, transport.Requests.Single().PathAndQuery);
     }
 
     [Fact]
@@ -90,7 +90,39 @@ public sealed class GateActionAdapterWiringIntegrationTests
 
         var exception = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
 
-        Assert.Contains("HikCentral live gate action adapter is not implemented", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("HIKCENTRAL_LIVE_TRANSPORT_DISABLED", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HikCentralLiveMode_WithHardGateAndValidOptions_RegistersLiveTransport()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            includeLiveOptions: true,
+            useFakeLiveHttpClient: true);
+        using var scope = factory.Services.CreateScope();
+
+        var adapter = scope.ServiceProvider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>();
+        var transport = scope.ServiceProvider.GetRequiredService<IHikCentralGateActionTransport>();
+        var options = scope.ServiceProvider.GetRequiredService<HikCentralGateActionOptions>();
+
+        Assert.IsType<HikCentralConsumedAuthorizationGateActionAdapter>(adapter);
+        Assert.IsType<LiveHikCentralGateActionTransport>(transport);
+        Assert.True(options.LiveTransportEnabled);
+        Assert.Equal("Live", options.TransportMode);
+    }
+
+    [Fact]
+    public void HikCentralLiveMode_WithHardGateAndMissingOptions_IsRejectedAtStartup()
+    {
+        using var factory = CreateFactory("HikCentralLive", liveEnabled: true);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+
+        Assert.Contains("HIKCENTRAL_BASE_URL_INVALID", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("HIKCENTRAL_APP_KEY_REQUIRED", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("HIKCENTRAL_APP_SECRET_REQUIRED", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -105,7 +137,10 @@ public sealed class GateActionAdapterWiringIntegrationTests
 
     private static WebApplicationFactory<Program> CreateFactory(
         string? mode = null,
-        bool useInMemoryLifecycle = false) =>
+        bool useInMemoryLifecycle = false,
+        bool liveEnabled = false,
+        bool includeLiveOptions = false,
+        bool useFakeLiveHttpClient = false) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("IntegrationTest");
@@ -114,14 +149,40 @@ public sealed class GateActionAdapterWiringIntegrationTests
                 builder.UseSetting("GateActionAdapter:Mode", mode);
             }
 
-            if (useInMemoryLifecycle)
+            if (liveEnabled)
+            {
+                builder.UseSetting("GateIntegrations:HikCentral:LiveTransportEnabled", "true");
+            }
+
+            if (includeLiveOptions)
+            {
+                builder.UseSetting("GateIntegrations:HikCentral:BaseUrl", "https://hikcentral.test");
+                builder.UseSetting("GateIntegrations:HikCentral:AppKey", "test-ak");
+                builder.UseSetting("GateIntegrations:HikCentral:AppSecret", "test-secret");
+                builder.UseSetting("GateIntegrations:HikCentral:RequestTimeoutSeconds", "10");
+            }
+
+            if (useInMemoryLifecycle || useFakeLiveHttpClient)
             {
                 builder.ConfigureServices(services =>
                 {
-                    services.RemoveAll<IGateCommandLifecycleRecorder>();
-                    services.RemoveAll<IGateAuthorizationConsumedProcessingRecorder>();
-                    services.AddSingleton<IGateCommandLifecycleRecorder, InMemoryGateCommandLifecycleRecorder>();
-                    services.AddSingleton<IGateAuthorizationConsumedProcessingRecorder, InMemoryGateAuthorizationConsumedProcessingRecorder>();
+                    if (useInMemoryLifecycle)
+                    {
+                        services.RemoveAll<IGateCommandLifecycleRecorder>();
+                        services.RemoveAll<IGateAuthorizationConsumedProcessingRecorder>();
+                        services.AddSingleton<IGateCommandLifecycleRecorder, InMemoryGateCommandLifecycleRecorder>();
+                        services.AddSingleton<IGateAuthorizationConsumedProcessingRecorder, InMemoryGateAuthorizationConsumedProcessingRecorder>();
+                    }
+
+                    if (useFakeLiveHttpClient)
+                    {
+                        services.RemoveAll<HttpClient>();
+                        services.AddSingleton(new HttpClient(new NoNetworkHttpMessageHandler())
+                        {
+                            BaseAddress = new Uri("https://hikcentral.test"),
+                            Timeout = Timeout.InfiniteTimeSpan
+                        });
+                    }
                 });
             }
         });
@@ -142,6 +203,16 @@ public sealed class GateActionAdapterWiringIntegrationTests
             VendorSystemId,
             ConsumedAtUtc: DateTimeOffset.Parse("2026-05-31T08:00:00Z"),
             CorrelationId);
+
+    private sealed class NoNetworkHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException("The test live HikCentral HTTP client must not be invoked.");
+        }
+    }
 }
 
 #pragma warning restore CS1591
