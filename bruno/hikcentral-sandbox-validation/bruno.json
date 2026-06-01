@@ -1,0 +1,8 @@
+{
+  "version": "1",
+  "name": "ExitPass HikCentral Sandbox Validation",
+  "type": "collection",
+  "ignore": [
+    "README.md"
+  ]
+}
