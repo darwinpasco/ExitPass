@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
+  createHttpOperatorConsoleApiClient,
   createMockOperatorConsoleApiClient,
   mapApiError,
   type OperatorConsoleApiClient
@@ -36,7 +37,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
             resolveQueue = resolve;
           })
       ),
-      getStatutoryDiscountDraft: vi.fn()
+      getStatutoryDiscountDraft: vi.fn(),
+      submitStatutoryDiscountDecision: vi.fn()
     };
 
     const { rerender } = render(
@@ -96,7 +98,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("heading", { name: "Verified local policy" })).toBeInTheDocument();
     expect(screen.getByText("QC Ordinance 2026-04")).toBeInTheDocument();
     expect(screen.getByText("RA 10754")).toBeInTheDocument();
-    expect(screen.getByText(/evidence required before decision/i)).toBeInTheDocument();
+    expect(screen.getByText(/approval is blocked until the required evidence upload workflow is available/i)).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_RendersBlockedUnverifiedLocalPolicyState", async () => {
@@ -113,18 +115,66 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0);
   });
 
-  it("StatutoryDiscountDetail_RendersDisabledDecisionControls", async () => {
+  it("StatutoryDiscountDetail_ApproveActionCallsDecisionEndpointAndRefreshes", async () => {
+    const onDecision = vi.fn();
     render(
       <App
-        apiClient={createMockOperatorConsoleApiClient()}
+        apiClient={createMockOperatorConsoleApiClient({ onDecision })}
         initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
       />
     );
 
     expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftId: firstDraftId,
+        decision: "APPROVE"
+      })
+    );
+  });
+
+  it("StatutoryDiscountDetail_RejectRequiresReasonBeforeCallingDecisionEndpoint", async () => {
+    const onDecision = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onDecision })}
+        initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(screen.getByText("Reject requires a reason code.")).toBeInTheDocument();
+    expect(onDecision).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText(/reject reason code/i), "ID_NOT_VALID");
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+
+    expect(await screen.findByText("Decision rejected.")).toBeInTheDocument();
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftId: firstDraftId,
+        decision: "REJECT",
+        reasonCode: "ID_NOT_VALID"
+      })
+    );
+  });
+
+  it("StatutoryDiscountDetail_ShowsEvidencePlaceholderAndBlocksApprovalWhenEvidenceRequired", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath={`/operator-console/statutory-discounts/${verifiedLocalDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Evidence upload placeholder" })).toBeInTheDocument();
+    expect(screen.getByText(/evidence upload and capture are intentionally pending/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
-    expect(screen.getByText(/dedicated decision workflow and evidence UX slice/i)).toBeInTheDocument();
+    expect(screen.getByText(/approval is blocked until the required evidence upload workflow is available/i)).toBeInTheDocument();
   });
 
   it("OperatorConsoleApi_MapsBackendErrorsIntoUiErrors", () => {
@@ -138,6 +188,62 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       status: "error",
       message: "Operator Console statutory discount data could not be loaded."
     });
+  });
+
+  it("OperatorConsoleApi_LoadsQueueAndDetailThroughFetch", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        items: [
+          {
+            draftId: firstDraftId,
+            parkingSessionId: "25000000-0000-0000-0000-000000000001",
+            ticketReference: "REAL-QUEUE-001",
+            plateNumber: "ABC 1234",
+            siteId: "77000000-0000-0000-0000-000000000002",
+            siteName: "Terminal Parking",
+            entitlementType: "SENIOR_CITIZEN",
+            validationStatus: "REQUESTED",
+            evidenceRequired: false,
+            policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
+            policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+            requestedAt: "2026-06-01T08:15:00+08:00"
+          }
+        ]
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        draftId: firstDraftId,
+        parkingSessionId: "25000000-0000-0000-0000-000000000001",
+        ticketReference: "REAL-QUEUE-001",
+        plateNumber: "ABC 1234",
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        siteName: "Terminal Parking",
+        entitlementType: "SENIOR_CITIZEN",
+        validationStatus: "REQUESTED",
+        evidenceRequired: false,
+        evidenceCaptured: false,
+        requestedAt: "2026-06-01T08:15:00+08:00",
+        policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
+        policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+        nationalLawReference: "RA 9994",
+        activity: ["Draft requested."]
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const queue = await client.listStatutoryDiscountDrafts();
+    const detail = await client.getStatutoryDiscountDraft(firstDraftId);
+
+    expect(queue[0].ticketReference).toBe("REAL-QUEUE-001");
+    expect(detail.policyContext.nationalLawReference).toBe("RA 9994");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/ops/operator-console/statutory-discounts/drafts?correlationId="),
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1/ops/operator-console/statutory-discounts/drafts/${firstDraftId}?correlationId=`),
+      expect.any(Object)
+    );
   });
 
   it("OperatorConsole_DoesNotExposeOutOfScopeControls", async () => {
@@ -157,3 +263,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/public\/coupons/i);
   });
 });
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" }
+  });
+}
