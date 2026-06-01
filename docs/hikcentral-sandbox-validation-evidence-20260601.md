@@ -1,11 +1,11 @@
 # HikCentral Sandbox Validation Evidence - 2026-06-01
 
-This evidence record covers GitHub issues #226, #226B, and #226C. It is intentionally sanitized and contains no HikCentral credentials, validation keys, raw signatures, raw request bodies, raw response bodies, or secret-bearing headers.
+This evidence record covers GitHub issues #226, #226B, #226C, and #226D. It is intentionally sanitized and contains no HikCentral credentials, validation keys, raw signatures, raw request bodies, raw response bodies, or secret-bearing headers.
 
 ## Status
 
 * Result: BLOCKED / NOT EXECUTED.
-* Branch: `feature/hikcentral-sandbox-live-execution-evidence`.
+* Branch: `feature/hikcentral-sandbox-live-execution-confirmed`.
 * Date/time: 2026-06-01, local workspace session.
 * Live HikCentral call made: No.
 * Physical gate/door/barrier action attempted: No.
@@ -13,11 +13,11 @@ This evidence record covers GitHub issues #226, #226B, and #226C. It is intentio
 * Audit row produced: No, because no vendor request was attempted.
 * Runtime defaults changed: No.
 * Code changes made: No.
-* Latest execution attempt: #226C pre-run gate on 2026-06-01.
+* Latest execution attempt: #226D pre-run gate on 2026-06-01.
 
 ## Blocker
 
-The controlled manual validation could not be executed because the required external sandbox configuration and safety confirmations were not present in the local session. Per the hard-stop rules, no access-control negative checks, service startup, positive validation request, SQL audit query, or live HikCentral call was attempted.
+The controlled manual validation could not be executed because the required external sandbox configuration and operator-confirmed safety prerequisites were not present in the local session. Per the hard-stop rules, no access-control negative checks, service startup, positive validation request, SQL audit query, or live HikCentral call was attempted.
 
 Missing external prerequisites:
 
