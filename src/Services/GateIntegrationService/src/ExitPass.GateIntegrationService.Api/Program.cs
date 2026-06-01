@@ -109,6 +109,17 @@ switch (gateActionAdapterMode)
 }
 builder.Services.AddScoped<IGateCommandLifecycleRecorder, PostgresGateCommandLifecycleRecorder>();
 builder.Services.AddScoped<IGateAuthorizationConsumedProcessingRecorder, PostgresGateAuthorizationConsumedProcessingRecorder>();
+builder.Services.AddScoped<IHikCentralSandboxValidationCommandRecorder, PostgresHikCentralSandboxValidationCommandRecorder>();
+builder.Services.AddScoped<IHikCentralSandboxValidationHarness>(provider =>
+{
+    var options = new HikCentralGateActionOptions();
+    builder.Configuration.GetSection(HikCentralGateActionOptions.SectionName).Bind(options);
+    return new HikCentralSandboxValidationHarness(
+        gateActionAdapterMode,
+        options,
+        provider.GetRequiredService<IConsumedAuthorizationGateActionAdapter>(),
+        provider.GetRequiredService<IHikCentralSandboxValidationCommandRecorder>());
+});
 builder.Services.AddSingleton<IGateAuthorizationConsumedScopeValidator, PassThroughGateAuthorizationConsumedScopeValidator>();
 
 var app = builder.Build();
@@ -128,6 +139,7 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapGateExitAuthorizationEndpoints();
+app.MapHikCentralSandboxValidationEndpoints();
 
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {

@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http.Json;
 using ExitPass.GateIntegrationService.Application.GateExit;
 using ExitPass.GateIntegrationService.Application.GateExit.HikCentral;
 using ExitPass.GateIntegrationService.Infrastructure.GateExit;
@@ -143,12 +145,65 @@ public sealed class GateActionAdapterWiringIntegrationTests
         Assert.Contains("Unsupported gate action adapter mode", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenDefaultDisabled_RejectsWithoutAudit()
+    {
+        using var factory = CreateFactory(mode: null);
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/v1/internal/hikcentral/sandbox/validate-gate-action",
+            CreateSandboxRequest());
+
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.False(report!.Executed);
+        Assert.Equal("HIKCENTRAL_SANDBOX_VALIDATION_DISABLED", report.ResultCode);
+        Assert.DoesNotContain("secret", await response.Content.ReadAsStringAsync(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task HikCentralSandboxEndpoint_WhenExplicitlyEnabled_UsesLiveTransportAndWritesAudit()
+    {
+        using var factory = CreateFactory(
+            "HikCentralLive",
+            liveEnabled: true,
+            sandboxEnabled: true,
+            includeLiveOptions: true,
+            useSuccessfulLiveHttpClient: true);
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/v1/internal/hikcentral/sandbox/validate-gate-action",
+            CreateSandboxRequest());
+        using var scope = factory.Services.CreateScope();
+        var audit = scope.ServiceProvider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>();
+        var handler = scope.ServiceProvider.GetRequiredService<SuccessfulHikCentralHttpMessageHandler>();
+        var report = await response.Content.ReadFromJsonAsync<HikCentralSandboxValidationReport>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(report);
+        Assert.True(report!.Executed);
+        Assert.True(report.Succeeded);
+        Assert.Equal("HIKCENTRAL_GATE_ACTION_SUCCEEDED", report.ResultCode);
+        Assert.Equal(1, handler.SendCount);
+        Assert.Equal(HikCentralRequestSigner.DoorControlPath, handler.PathAndQuery);
+        var record = Assert.Single(audit.Records);
+        Assert.Equal(report.AuditId, record.AuditId);
+        Assert.Equal(report.CorrelationId, record.RequestCorrelationId);
+        Assert.DoesNotContain("test-secret", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
     private static WebApplicationFactory<Program> CreateFactory(
         string? mode = null,
         bool useInMemoryLifecycle = false,
         bool liveEnabled = false,
+        bool sandboxEnabled = false,
         bool includeLiveOptions = false,
-        bool useFakeLiveHttpClient = false) =>
+        bool useFakeLiveHttpClient = false,
+        bool useSuccessfulLiveHttpClient = false) =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseEnvironment("IntegrationTest");
@@ -162,6 +217,11 @@ public sealed class GateActionAdapterWiringIntegrationTests
                 builder.UseSetting("GateIntegrations:HikCentral:LiveTransportEnabled", "true");
             }
 
+            if (sandboxEnabled)
+            {
+                builder.UseSetting("GateIntegrations:HikCentral:SandboxValidationEnabled", "true");
+            }
+
             if (includeLiveOptions)
             {
                 builder.UseSetting("GateIntegrations:HikCentral:BaseUrl", "https://hikcentral.test");
@@ -170,7 +230,7 @@ public sealed class GateActionAdapterWiringIntegrationTests
                 builder.UseSetting("GateIntegrations:HikCentral:RequestTimeoutSeconds", "10");
             }
 
-            if (useInMemoryLifecycle || useFakeLiveHttpClient)
+            if (useInMemoryLifecycle || useFakeLiveHttpClient || useSuccessfulLiveHttpClient)
             {
                 builder.ConfigureServices(services =>
                 {
@@ -190,6 +250,7 @@ public sealed class GateActionAdapterWiringIntegrationTests
                     {
                         services.RemoveAll<HttpClient>();
                         services.RemoveAll<IHikCentralGateActionAuditRecorder>();
+                        services.RemoveAll<IHikCentralSandboxValidationCommandRecorder>();
                         services.AddSingleton(new HttpClient(new NoNetworkHttpMessageHandler())
                         {
                             BaseAddress = new Uri("https://hikcentral.test"),
@@ -198,10 +259,39 @@ public sealed class GateActionAdapterWiringIntegrationTests
                         services.AddSingleton<InMemoryHikCentralGateActionAuditRecorder>();
                         services.AddSingleton<IHikCentralGateActionAuditRecorder>(provider =>
                             provider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>());
+                        services.AddSingleton<IHikCentralSandboxValidationCommandRecorder, InMemoryHikCentralSandboxValidationCommandRecorder>();
+                    }
+
+                    if (useSuccessfulLiveHttpClient)
+                    {
+                        services.RemoveAll<HttpClient>();
+                        services.RemoveAll<IHikCentralGateActionAuditRecorder>();
+                        services.RemoveAll<IHikCentralSandboxValidationCommandRecorder>();
+                        services.AddSingleton<SuccessfulHikCentralHttpMessageHandler>();
+                        services.AddSingleton(provider => new HttpClient(
+                            provider.GetRequiredService<SuccessfulHikCentralHttpMessageHandler>())
+                        {
+                            BaseAddress = new Uri("https://hikcentral.test"),
+                            Timeout = Timeout.InfiniteTimeSpan
+                        });
+                        services.AddSingleton<InMemoryHikCentralGateActionAuditRecorder>();
+                        services.AddSingleton<IHikCentralGateActionAuditRecorder>(provider =>
+                            provider.GetRequiredService<InMemoryHikCentralGateActionAuditRecorder>());
+                        services.AddSingleton<IHikCentralSandboxValidationCommandRecorder, InMemoryHikCentralSandboxValidationCommandRecorder>();
                     }
                 });
             }
         });
+
+    private static HikCentralSandboxValidationRequest CreateSandboxRequest() =>
+        new(
+            "sandbox-door-01",
+            HikCentralDoorControlType.Open,
+            HikCentralDoorControlDirection.Exit,
+            "Controlled integration test validation",
+            "integration-test",
+            CorrelationId,
+            ConfirmLiveAction: true);
 
     private static GateAuthorizationConsumedHandoff CreateHandoff() =>
         new(
@@ -227,6 +317,41 @@ public sealed class GateActionAdapterWiringIntegrationTests
             CancellationToken cancellationToken)
         {
             throw new InvalidOperationException("The test live HikCentral HTTP client must not be invoked.");
+        }
+    }
+
+    private sealed class SuccessfulHikCentralHttpMessageHandler : HttpMessageHandler
+    {
+        public int SendCount { get; private set; }
+
+        public string? PathAndQuery { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            SendCount++;
+            PathAndQuery = request.RequestUri?.PathAndQuery;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new
+                {
+                    code = "0",
+                    msg = "Success",
+                    data = new[]
+                    {
+                        new[]
+                        {
+                            new
+                            {
+                                doorIndexCode = "sandbox-door-01",
+                                controlResultCode = 0,
+                                controlResultDesc = "Success"
+                            }
+                        }
+                    }
+                })
+            });
         }
     }
 }

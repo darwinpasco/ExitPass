@@ -13,7 +13,9 @@ public sealed record HikCentralConsumedAuthorizationGateActionAdapterResult(
     string DiagnosticMessage,
     HikCentralGateActionRequest VendorRequest,
     HikCentralSignedRequest SignedRequest,
-    HikCentralGateActionResponse VendorResponse);
+    HikCentralGateActionResponse VendorResponse,
+    HikCentralGateActionTransportResult TransportResult,
+    Guid? AuditId = null);
 
 /// <summary>
 /// Exception form usable by the current command lifecycle, which records adapter exceptions as failures.
@@ -103,7 +105,9 @@ public sealed class HikCentralConsumedAuthorizationGateActionAdapter : IConsumed
             response.DiagnosticMessage,
             vendorRequest,
             signedRequest,
-            response);
+            response,
+            transportResult,
+            auditRecord.AuditId);
     }
 
     /// <summary>
