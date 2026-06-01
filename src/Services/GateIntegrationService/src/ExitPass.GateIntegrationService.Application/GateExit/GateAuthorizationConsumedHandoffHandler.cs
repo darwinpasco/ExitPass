@@ -153,7 +153,17 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
 
         try
         {
-            await _adapter.ProcessConsumedAuthorizationAsync(command.Handoff, cancellationToken);
+            if (_adapter is IConsumedAuthorizationGateCommandActionAdapter commandAdapter)
+            {
+                await commandAdapter.ProcessConsumedAuthorizationAsync(
+                    gateCommand.Command,
+                    command.Handoff,
+                    cancellationToken);
+            }
+            else
+            {
+                await _adapter.ProcessConsumedAuthorizationAsync(command.Handoff, cancellationToken);
+            }
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
