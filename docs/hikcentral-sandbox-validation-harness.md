@@ -1,5 +1,7 @@
 # HikCentral Sandbox Validation Harness
 
+For the operator runbook, manual request pack, evidence checklist, and audit SQL, see [hikcentral-sandbox-validation-runbook.md](hikcentral-sandbox-validation-runbook.md).
+
 This harness is for controlled manual validation of HikCentral Professional OpenAPI door control from the Gate Integration Service. It is disabled by default and must not be enabled in production/default runtime configuration.
 
 ## What It Does

@@ -1,0 +1,43 @@
+meta {
+  name: 03 Sandbox validation request template
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{gateIntegrationBaseUrl}}/v1/internal/hikcentral/sandbox/validate-gate-action
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "doorIndexCode": "{{sandboxDoorIndexCode}}",
+    "controlType": "Open",
+    "controlDirection": "Exit",
+    "validationReason": "{{sandboxValidationReason}}",
+    "requestedBy": "{{sandboxRequestedBy}}",
+    "correlationId": "{{$guid}}",
+    "confirmLiveAction": true
+  }
+}
+
+tests {
+  test("response is operator-safe", function () {
+    const text = JSON.stringify(res.body);
+    expect(text).to.not.include("AppSecret");
+    expect(text).to.not.include("X-Ca-Signature");
+  });
+
+  test("actual execution reports an audit id", function () {
+    if (res.status === 200) {
+      expect(res.body.executed).to.equal(true);
+      expect(res.body.auditId).to.not.equal(null);
+      expect(res.body.correlationId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    }
+  });
+}
