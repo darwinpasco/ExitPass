@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.GateIntegrationService.Application.GateExit.HikCentral;
 
 namespace ExitPass.GateIntegrationService.Application.GateExit;
 
@@ -156,15 +157,21 @@ public sealed class GateAuthorizationConsumedHandoffHandler : IGateAuthorization
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            var failureCode = exception is ConsumedAuthorizationGateActionAdapterException adapterException
+                ? adapterException.ResultCode
+                : "GATE_HANDOFF_ADAPTER_FAILED";
+            var retryable = exception is not ConsumedAuthorizationGateActionAdapterException typedException
+                || typedException.Retryable;
+
             await _commandRecorder.RecordFailedAsync(
                 gateCommand.Command.CommandId,
-                "GATE_HANDOFF_ADAPTER_FAILED",
+                failureCode,
                 exception.Message,
-                retryable: true,
+                retryable,
                 cancellationToken);
             await _recorder.RecordFailedAsync(
                 command.Handoff,
-                "GATE_HANDOFF_ADAPTER_FAILED",
+                failureCode,
                 exception.Message,
                 cancellationToken);
             throw;

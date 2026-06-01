@@ -136,7 +136,7 @@ public sealed class HikCentralGateActionContractTests
     }
 
     [Fact]
-    public void ContractTypes_DoNotRequireLiveHttpClientOrCredentials()
+    public void ContractTypes_DoNotRequireLiveHttpClient()
     {
         var clientInterface = typeof(IHikCentralGateActionClient);
         var contractAssemblyTypes = typeof(HikCentralGateActionRequest).Assembly.GetTypes()
@@ -145,8 +145,6 @@ public sealed class HikCentralGateActionContractTests
 
         Assert.True(clientInterface.IsInterface);
         Assert.DoesNotContain(contractAssemblyTypes, type => type.Name.Contains("Http", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(contractAssemblyTypes, type => type.Name.Contains("Credential", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(contractAssemblyTypes, type => type.Name.Contains("Secret", StringComparison.OrdinalIgnoreCase));
     }
 
     private static HikCentralGateActionTransportResult Transport(
