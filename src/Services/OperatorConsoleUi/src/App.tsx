@@ -80,7 +80,7 @@ export function App({ apiClient, initialPath }: AppProps) {
 
           <div className="statusStack">
             <span className="statusPill">Local shell</span>
-            <span className="statusPill">Mock queue adapter</span>
+            <span className="statusPill">Live read model</span>
           </div>
         </aside>
 
@@ -126,6 +126,7 @@ function StatutoryDiscountQueuePage({
   navigate: (path: string) => void;
 }) {
   const [queueState, setQueueState] = useState<LoadState<StatutoryDiscountQueueItem[]>>({ status: "loading" });
+  const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -156,7 +157,7 @@ function StatutoryDiscountQueuePage({
     return () => {
       active = false;
     };
-  }, [client]);
+  }, [client, refreshToken]);
 
   return (
     <>
@@ -165,16 +166,18 @@ function StatutoryDiscountQueuePage({
           <p className="eyebrow">Statutory Discount Validation</p>
           <h2>Work queue</h2>
           <p>
-            Review Senior Citizen and PWD statutory discount drafts with policy context before a decision workflow is
-            wired.
+            Review Senior Citizen and PWD statutory discount drafts with stored policy context and decision state.
           </p>
         </div>
+        <button type="button" onClick={() => setRefreshToken((value) => value + 1)}>
+          Refresh
+        </button>
       </section>
 
       <section className="panel" aria-labelledby="queue-title">
         <div className="panelHeader">
           <h3 id="queue-title">Validation drafts</h3>
-          <span className="statusPill">Temporary mock data</span>
+          <span className="statusPill">Live read model</span>
         </div>
 
         {queueState.status === "loading" && <StateMessage title="Loading queue" message="Retrieving drafts." />}
@@ -246,10 +249,11 @@ function StatutoryDiscountDetailPage({
   navigate: (path: string) => void;
 }) {
   const [detailState, setDetailState] = useState<LoadState<StatutoryDiscountDraftDetail>>({ status: "loading" });
+  const [refreshToken, setRefreshToken] = useState(0);
 
   useEffect(() => {
     let active = true;
-    setDetailState({ status: "loading" });
+    setDetailState((current) => (current.status === "loaded" ? current : { status: "loading" }));
 
     client
       .getStatutoryDiscountDraft(draftId)
@@ -276,7 +280,7 @@ function StatutoryDiscountDetailPage({
     return () => {
       active = false;
     };
-  }, [client, draftId]);
+  }, [client, draftId, refreshToken]);
 
   return (
     <>
@@ -288,12 +292,67 @@ function StatutoryDiscountDetailPage({
       {detailState.status === "not-found" && <StateMessage title="Draft not found" message="The requested draft was not found." />}
       {detailState.status === "access-denied" && <StateMessage title="Access denied" message={detailState.message} />}
       {detailState.status === "error" && <StateMessage title="Unable to load draft" message={detailState.message} />}
-      {detailState.status === "loaded" && <DraftDetail detail={detailState.data} />}
+      {detailState.status === "loaded" && (
+        <DraftDetail
+          detail={detailState.data}
+          client={client}
+          refreshDetail={() => setRefreshToken((value) => value + 1)}
+        />
+      )}
     </>
   );
 }
 
-function DraftDetail({ detail }: { detail: StatutoryDiscountDraftDetail }) {
+function DraftDetail({
+  detail,
+  client,
+  refreshDetail
+}: {
+  detail: StatutoryDiscountDraftDetail;
+  client: OperatorConsoleApiClient;
+  refreshDetail: () => void;
+}) {
+  const [rejectReason, setRejectReason] = useState("");
+  const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [submittingDecision, setSubmittingDecision] = useState<"APPROVE" | "REJECT" | null>(null);
+  const approveBlockedByEvidence = detail.policyContext.evidenceRequired && !detail.evidenceCaptured;
+  const decisionable = detail.status === "Requested" || detail.status === "Pending Review";
+
+  async function submitDecision(decision: "APPROVE" | "REJECT") {
+    setDecisionMessage(null);
+    setDecisionError(null);
+
+    if (decision === "REJECT" && rejectReason.trim().length === 0) {
+      setDecisionError("Reject requires a reason code.");
+      return;
+    }
+
+    setSubmittingDecision(decision);
+    try {
+      const result = await client.submitStatutoryDiscountDecision({
+        draftId: detail.draftId,
+        siteId: detail.siteId,
+        siteGroupId: detail.siteGroupId,
+        decision,
+        reasonCode: decision === "REJECT" ? rejectReason : undefined,
+        notes: decision === "REJECT" ? "Rejected from Operator Console UI." : "Approved from Operator Console UI."
+      });
+
+      if (!result.accepted) {
+        setDecisionError(result.message);
+        return;
+      }
+
+      setDecisionMessage(result.message);
+      refreshDetail();
+    } catch (error) {
+      setDecisionError(mapApiError(error).message);
+    } finally {
+      setSubmittingDecision(null);
+    }
+  }
+
   return (
     <>
       <section className="pageTitle">
@@ -350,7 +409,8 @@ function DraftDetail({ detail }: { detail: StatutoryDiscountDraftDetail }) {
               ["Entitlement type", detail.entitlementType],
               ["Masked ID reference", detail.maskedIdReference],
               ["Issuing authority", detail.issuingAuthority],
-              ["Evidence required", detail.policyContext.evidenceRequired ? "Yes" : "No"]
+              ["Evidence required", detail.policyContext.evidenceRequired ? "Yes" : "No"],
+              ["Evidence captured", detail.evidenceCaptured ? "Yes" : "No"]
             ]}
           />
         </section>
@@ -361,20 +421,49 @@ function DraftDetail({ detail }: { detail: StatutoryDiscountDraftDetail }) {
       <section className="panel" aria-labelledby="decision-title">
         <div className="panelHeader">
           <h3 id="decision-title">Decision actions</h3>
-          <span className="statusPill">Wiring pending</span>
+          <span className="statusPill">{decisionable ? "Ready" : "Read-only status"}</span>
+        </div>
+        {approveBlockedByEvidence && (
+          <p className="notice">Approval is blocked until the required evidence upload workflow is available.</p>
+        )}
+        {decisionMessage && <p className="successMessage">{decisionMessage}</p>}
+        {decisionError && <p className="errorMessage">{decisionError}</p>}
+        <label className="reasonField">
+          Reject reason code
+          <input
+            type="text"
+            value={rejectReason}
+            placeholder="ID_NOT_VALID"
+            onChange={(event) => setRejectReason(event.target.value)}
+          />
+        </label>
+        <div className="actionBar">
+          <button
+            type="button"
+            disabled={!decisionable || approveBlockedByEvidence || submittingDecision !== null}
+            onClick={() => void submitDecision("APPROVE")}
+          >
+            {submittingDecision === "APPROVE" ? "Approving" : "Approve"}
+          </button>
+          <button
+            type="button"
+            disabled={!decisionable || submittingDecision !== null}
+            onClick={() => void submitDecision("REJECT")}
+          >
+            {submittingDecision === "REJECT" ? "Rejecting" : "Reject"}
+          </button>
+        </div>
+      </section>
+
+      <section className="panel" aria-labelledby="evidence-title">
+        <div className="panelHeader">
+          <h3 id="evidence-title">Evidence upload placeholder</h3>
+          <span className="statusPill">{detail.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
         </div>
         <p className="placeholderCopy">
-          Approve and reject endpoints exist, but this foundation slice keeps decision controls disabled until the
-          dedicated decision workflow and evidence UX slice.
+          Evidence upload and capture are intentionally pending. This page only shows the stored evidence-required and
+          evidence-captured flags.
         </p>
-        <div className="actionBar">
-          <button type="button" disabled>
-            Approve
-          </button>
-          <button type="button" disabled>
-            Reject
-          </button>
-        </div>
       </section>
 
       <section className="panel" aria-labelledby="activity-title">

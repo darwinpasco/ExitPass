@@ -21,6 +21,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 {
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
+    private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
     private static readonly ActivitySource ApplyPayableBasisActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis");
 
@@ -31,6 +32,25 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
     {
         var group = app.MapGroup("/v1/ops/operator-console")
             .WithTags("OperatorConsole");
+
+        group.MapGet("/statutory-discounts/drafts", ListDraftsAsync)
+            .WithName("ListOperatorConsoleStatutoryDiscountDrafts")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleStatutoryDiscountDraftQueueResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("List Operator Console statutory discount validation drafts")
+            .WithDescription("Returns a read-only queue of Operator Console statutory discount validation drafts from stored validation, policy, tariff, and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+
+        group.MapGet("/statutory-discounts/drafts/{draftId:guid}", GetDraftAsync)
+            .WithName("GetOperatorConsoleStatutoryDiscountDraft")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleStatutoryDiscountDraftDetailResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("Get Operator Console statutory discount validation draft detail")
+            .WithDescription("Returns read-only detail for one Operator Console statutory discount validation draft using the stored policy snapshot and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
         group.MapPost("/statutory-discounts/draft", DraftAsync)
             .WithName("DraftOperatorConsoleStatutoryDiscount")
@@ -68,6 +88,119 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint uses the policy snapshot persisted on the validation and creates statutory discount payable-basis application evidence only; it does not create final APPLIED tariff snapshots, payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
 
         return app;
+    }
+
+    private static async Task<IResult> ListDraftsAsync(
+        string? status,
+        string? entitlementType,
+        Guid? siteId,
+        DateTimeOffset? createdFrom,
+        DateTimeOffset? createdTo,
+        int? page,
+        int? pageSize,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountReadService service,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = ReadActivitySource.StartActivity("HTTP ListOperatorConsoleStatutoryDiscountDrafts", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", effectiveCorrelationId);
+        activity?.SetTag("status", status);
+        activity?.SetTag("entitlement_type", entitlementType);
+
+        try
+        {
+            var result = await service.ListDraftsAsync(
+                new OperatorConsoleStatutoryDiscountDraftQueueQuery(
+                    status,
+                    entitlementType,
+                    siteId,
+                    createdFrom,
+                    createdTo,
+                    page.GetValueOrDefault(1),
+                    pageSize.GetValueOrDefault(25),
+                    effectiveCorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            activity?.SetTag("draft_count", result.Items.Count);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console statutory discount queue read failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_FAILED",
+                    "The Operator Console statutory discount queue could not be loaded.",
+                    effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static async Task<IResult> GetDraftAsync(
+        Guid draftId,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountReadService service,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = ReadActivitySource.StartActivity("HTTP GetOperatorConsoleStatutoryDiscountDraft", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", effectiveCorrelationId);
+        activity?.SetTag("statutory_discount_validation_id", draftId);
+
+        try
+        {
+            var result = await service.GetDraftAsync(
+                new OperatorConsoleStatutoryDiscountDraftDetailQuery(draftId, effectiveCorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            if (result is null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.NotFound(BuildError(
+                    "STATUTORY_DISCOUNT_DRAFT_NOT_FOUND",
+                    "The Operator Console statutory discount draft was not found.",
+                    effectiveCorrelationId));
+            }
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console statutory discount detail read failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_FAILED",
+                    "The Operator Console statutory discount detail could not be loaded.",
+                    effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     private static async Task<IResult> DraftAsync(
@@ -163,6 +296,77 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             CorrelationId = correlationId,
             Retryable = false
         };
+
+    private static OperatorConsoleStatutoryDiscountDraftQueueResponse ToContract(
+        OperatorConsoleStatutoryDiscountDraftQueueResult result) =>
+        new(
+            result.Items.Select(item => new OperatorConsoleStatutoryDiscountDraftQueueItem(
+                item.DraftId,
+                item.ParkingSessionId,
+                item.TicketReference,
+                item.PlateNumber,
+                item.SiteId,
+                item.SiteName,
+                item.EntitlementType,
+                item.ValidationStatus,
+                item.EvidenceRequired,
+                item.PolicyResolutionBasis,
+                item.PolicyCode,
+                item.PolicyName,
+                item.OriginalAmountMinorUnits,
+                item.PayableAmountMinorUnits,
+                item.CurrencyCode,
+                item.RequestedAt,
+                item.RequestedByUserId,
+                item.BlockedReason)).ToArray(),
+            result.Page,
+            result.PageSize,
+            result.HasMore,
+            result.CorrelationId);
+
+    private static OperatorConsoleStatutoryDiscountDraftDetailResponse ToContract(
+        OperatorConsoleStatutoryDiscountDraftDetailResult result) =>
+        new(
+            result.DraftId,
+            result.ParkingSessionId,
+            result.TicketReference,
+            result.PlateNumber,
+            result.SiteId,
+            result.SiteName,
+            result.SiteGroupId,
+            result.EntitlementType,
+            result.ValidationStatus,
+            result.EvidenceRequired,
+            result.EvidenceCaptured,
+            result.RequestedAt,
+            result.ValidatedAt,
+            result.RequestedByUserId,
+            result.ValidatedByUserId,
+            result.DecisionReasonCode,
+            result.FailureReasonCode,
+            result.PolicyResolutionBasis,
+            result.StatutoryDiscountPolicyId,
+            result.ResolvedJurisdictionId,
+            result.PolicyCode,
+            result.PolicyName,
+            result.LegalBasisReference,
+            result.OrdinanceReference,
+            result.NationalLawReference,
+            result.VerificationStatus,
+            result.BenefitType,
+            result.FreeDurationMinutes,
+            result.SucceedingHoursDiscountRule,
+            result.DiscountBaseScope,
+            result.StackingPolicy,
+            result.PolicySnapshot,
+            result.OriginalTariffSnapshotId,
+            result.PayableBasisApplicationId,
+            result.PayableBasisApplicationStatus,
+            result.OriginalAmountMinorUnits,
+            result.StatutoryDiscountAmountMinorUnits,
+            result.PayableAmountMinorUnits,
+            result.CurrencyCode,
+            result.Activity);
 
     private static async Task<IResult> DecideAsync(
         Guid draftId,

@@ -204,6 +204,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessEvaluation")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountPolicyResolution")
@@ -375,6 +376,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDraftWriter>(_ =>
         new OperatorConsoleStatutoryDiscountDraftWriter(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDraftService, OperatorConsoleStatutoryDiscountDraftService>();
+    builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountReadRepository>(_ =>
+        new OperatorConsoleStatutoryDiscountReadRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountReadService, OperatorConsoleStatutoryDiscountReadService>();
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDecisionWriter>(_ =>
         new OperatorConsoleStatutoryDiscountDecisionWriter(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDecisionService, OperatorConsoleStatutoryDiscountDecisionService>();

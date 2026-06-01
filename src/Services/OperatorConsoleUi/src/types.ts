@@ -2,6 +2,7 @@ export type EntitlementType = "Senior Citizen" | "PWD" | "Unsupported";
 
 export type DraftStatus =
   | "Pending Review"
+  | "Requested"
   | "Approved"
   | "Rejected"
   | "Blocked"
@@ -35,12 +36,17 @@ export interface StatutoryDiscountQueueItem {
   parkingSessionId: string;
   ticketReference: string;
   plateNumber: string;
+  siteId: string;
+  siteGroupId?: string;
   siteName: string;
   entitlementType: EntitlementType;
   status: DraftStatus;
   requestedAt: string;
   requestedBy: string;
   policyContext: StatutoryDiscountPolicyContext;
+  originalAmountMinorUnits?: number;
+  payableAmountMinorUnits?: number;
+  currencyCode?: string;
 }
 
 export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem {
@@ -51,6 +57,9 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   currentPaymentStatus: string;
   maskedIdReference: string;
   issuingAuthority: string;
+  evidenceCaptured: boolean;
+  statutoryDiscountAmountMinorUnits?: number;
+  payableBasisApplicationStatus?: string;
   auditActivity: string[];
 }
 
@@ -66,4 +75,21 @@ export interface OperatorConsoleApiError {
   status: "access-denied" | "not-found" | "error";
   message: string;
   errorCode?: string;
+}
+
+export interface StatutoryDiscountDecisionInput {
+  draftId: string;
+  siteId?: string;
+  siteGroupId?: string;
+  decision: "APPROVE" | "REJECT";
+  reasonCode?: string;
+  notes?: string;
+}
+
+export interface StatutoryDiscountDecisionResult {
+  accepted: boolean;
+  persisted: boolean;
+  currentStatus?: DraftStatus;
+  errorCode?: string;
+  message: string;
 }
