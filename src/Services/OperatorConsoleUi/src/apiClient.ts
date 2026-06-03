@@ -74,10 +74,19 @@ interface DecisionResponse {
   errorCode?: string | null;
 }
 
-const defaultOperatorContext = {
-  userId: import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID ?? "77000000-0000-0000-0000-000000000010",
-  operatorDeviceBindingId: import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID ?? null,
-  operatorShiftId: import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID ?? null
+export interface OperatorConsoleOperatorContext {
+  userId: string;
+  operatorDeviceBindingId: string;
+  operatorShiftId: string;
+}
+
+const defaultOperatorContext: OperatorConsoleOperatorContext = {
+  userId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID, "77000000-0000-0000-0000-000000000010"),
+  operatorDeviceBindingId: localFallback(
+    import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID,
+    "77000000-0000-0000-0000-000000000011"
+  ),
+  operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000012")
 };
 
 export function createOperatorConsoleApiClient(): OperatorConsoleApiClient {
@@ -94,7 +103,7 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       const correlationId = newCorrelationId();
       const response = await fetch(
         `${baseUrl}/v1/ops/operator-console/statutory-discounts/drafts?correlationId=${correlationId}`,
-        { headers: { "X-Correlation-Id": correlationId } }
+        { headers: operatorConsoleHeaders(correlationId) }
       );
       const body = await parseResponse<QueueResponse>(response);
       return body.items.map(toQueueItem);
@@ -104,7 +113,7 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       const correlationId = newCorrelationId();
       const response = await fetch(
         `${baseUrl}/v1/ops/operator-console/statutory-discounts/drafts/${encodeURIComponent(draftId)}?correlationId=${correlationId}`,
-        { headers: { "X-Correlation-Id": correlationId } }
+        { headers: operatorConsoleHeaders(correlationId) }
       );
       return toDraftDetail(await parseResponse<DetailDto>(response));
     },
@@ -115,10 +124,7 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         `${baseUrl}/v1/ops/operator-console/statutory-discounts/${encodeURIComponent(input.draftId)}/decision`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Correlation-Id": correlationId
-          },
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
           body: JSON.stringify({
             userId: defaultOperatorContext.userId,
             operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
@@ -144,6 +150,20 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       };
     }
   };
+}
+
+function operatorConsoleHeaders(correlationId: string, options: { json?: boolean } = {}) {
+  return {
+    ...(options.json ? { "Content-Type": "application/json" } : {}),
+    "X-Correlation-Id": correlationId,
+    "X-Operator-User-Id": defaultOperatorContext.userId,
+    "X-Operator-Device-Binding-Id": defaultOperatorContext.operatorDeviceBindingId,
+    "X-Operator-Shift-Id": defaultOperatorContext.operatorShiftId
+  };
+}
+
+function localFallback(value: string | undefined, fallback: string) {
+  return value && value.trim().length > 0 ? value : fallback;
 }
 
 export function createMockOperatorConsoleApiClient(
