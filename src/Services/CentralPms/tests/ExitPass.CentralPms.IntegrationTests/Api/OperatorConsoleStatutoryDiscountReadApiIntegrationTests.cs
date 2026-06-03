@@ -73,6 +73,37 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     }
 
     [Fact]
+    public async Task QueuePreflight_FromOperatorConsoleLocalOrigin_ReturnsCorsHeaders()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Options, QueueEndpoint);
+        request.Headers.Add("Origin", "http://localhost:5178");
+        request.Headers.Add("Access-Control-Request-Method", HttpMethod.Get.Method);
+        request.Headers.Add(
+            "Access-Control-Request-Headers",
+            "Content-Type, X-Correlation-Id, X-Operator-User-Id, X-Operator-Device-Binding-Id, X-Operator-Shift-Id");
+
+        using var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        response.Headers.GetValues("Access-Control-Allow-Origin")
+            .Should().ContainSingle().Which.Should().Be("http://localhost:5178");
+
+        var allowedMethods = SplitHeaderValues(response, "Access-Control-Allow-Methods");
+        allowedMethods.Should().Contain(HttpMethod.Get.Method);
+        allowedMethods.Should().Contain(HttpMethod.Post.Method);
+        allowedMethods.Should().Contain(HttpMethod.Options.Method);
+
+        var allowedHeaders = SplitHeaderValues(response, "Access-Control-Allow-Headers");
+        allowedHeaders.Should().Contain(header => string.Equals(header, "Content-Type", StringComparison.OrdinalIgnoreCase));
+        allowedHeaders.Should().Contain(header => string.Equals(header, "X-Correlation-Id", StringComparison.OrdinalIgnoreCase));
+        allowedHeaders.Should().Contain(header => string.Equals(header, "X-Operator-User-Id", StringComparison.OrdinalIgnoreCase));
+        allowedHeaders.Should().Contain(header => string.Equals(header, "X-Operator-Device-Binding-Id", StringComparison.OrdinalIgnoreCase));
+        allowedHeaders.Should().Contain(header => string.Equals(header, "X-Operator-Shift-Id", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Queue_WhenDraftsExist_ReturnsReadModelEnvelope()
     {
         using var factory = CreateFactory(detail: Detail());
@@ -151,6 +182,15 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountReadService>(
                     new FakeReadService(detail, emptyQueue));
             });
+
+    private static string[] SplitHeaderValues(HttpResponseMessage response, string headerName)
+    {
+        response.Headers.TryGetValues(headerName, out var values).Should().BeTrue();
+
+        return values!
+            .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToArray();
+    }
 
     private static OperatorConsoleStatutoryDiscountDraftDetailResult Detail() =>
         new(

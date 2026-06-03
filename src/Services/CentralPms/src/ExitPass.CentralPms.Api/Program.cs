@@ -55,6 +55,7 @@ using Prometheus;
 var builder = WebApplication.CreateBuilder(args);
 
 const string ServiceName = "ExitPass.CentralPms.Api";
+const string OperatorConsoleLocalCorsPolicyName = "OperatorConsoleLocalDevelopmentCors";
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -72,6 +73,7 @@ ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
 ConfigureInternalSecurity(builder);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
+ConfigureOperatorConsoleLocalCors(builder);
 
 var app = builder.Build();
 
@@ -87,6 +89,11 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Secur
 app.Use(CorrelationMiddleware);
 
 app.UseRouting();
+if (IsLocalDevelopment(app.Environment))
+{
+    app.UseCors(OperatorConsoleLocalCorsPolicyName);
+}
+
 app.UseMiddleware<InternalMtlsMiddleware>();
 app.UseMiddleware<CentralPmsRbacMiddleware>();
 app.UseAuthorization();
@@ -392,6 +399,50 @@ static void ConfigureApplicationServices(
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
 }
+
+static void ConfigureOperatorConsoleLocalCors(WebApplicationBuilder builder)
+{
+    if (!IsLocalDevelopment(builder.Environment))
+    {
+        return;
+    }
+
+    var section = builder.Configuration.GetSection("OperatorConsole:LocalCors");
+    var allowedOrigins = section.GetSection("AllowedOrigins").Get<string[]>() ??
+        [
+            "http://localhost:5178",
+            "http://127.0.0.1:5178"
+        ];
+    var allowedMethods = section.GetSection("AllowedMethods").Get<string[]>() ??
+        [
+            HttpMethods.Get,
+            HttpMethods.Post,
+            HttpMethods.Options
+        ];
+    var allowedHeaders = section.GetSection("AllowedHeaders").Get<string[]>() ??
+        [
+            "Content-Type",
+            "X-Correlation-Id",
+            "X-Operator-User-Id",
+            "X-Operator-Device-Binding-Id",
+            "X-Operator-Shift-Id"
+        ];
+
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy(OperatorConsoleLocalCorsPolicyName, policy =>
+        {
+            policy
+                .WithOrigins(allowedOrigins)
+                .WithMethods(allowedMethods)
+                .WithHeaders(allowedHeaders);
+        });
+    });
+}
+
+static bool IsLocalDevelopment(IHostEnvironment environment) =>
+    environment.IsDevelopment() ||
+    string.Equals(environment.EnvironmentName, "SecureDevelopment", StringComparison.OrdinalIgnoreCase);
 
 static async Task CorrelationMiddleware(HttpContext context, Func<Task> next)
 {
