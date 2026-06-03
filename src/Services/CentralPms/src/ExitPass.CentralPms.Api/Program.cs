@@ -392,6 +392,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>(_ =>
         new OperatorConsoleStatutoryDiscountApplyPayableBasisWriter(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountApplyPayableBasisService, OperatorConsoleStatutoryDiscountApplyPayableBasisService>();
+    builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountEvidenceRepository>(_ =>
+        new OperatorConsoleStatutoryDiscountEvidenceRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountEvidenceService, OperatorConsoleStatutoryDiscountEvidenceService>();
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>(_ =>
         new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionService, OperatorConsoleStatutoryDiscountPolicyResolutionService>();

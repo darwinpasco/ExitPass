@@ -46,6 +46,9 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.entitlement_type::text,
                 sdv.validation_status::text,
                 sdv.evidence_required,
+                sdv.evidence_captured AS evidence_required_satisfied,
+                COALESCE(evidence_summary.evidence_count, 0)::int AS evidence_count,
+                evidence_summary.latest_evidence_status,
                 sdv.policy_resolution_basis::text,
                 p.policy_code,
                 p.policy_name,
@@ -81,6 +84,14 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 ORDER BY created_at DESC, statutory_discount_payable_basis_application_id DESC
                 LIMIT 1
             ) AS latest_application ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*)::int AS evidence_count,
+                    (ARRAY_AGG(evidence_capture_status::text ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_status
+                FROM discounts.discount_evidence_references
+                WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND purged_at IS NULL
+            ) AS evidence_summary ON TRUE
             WHERE sdv.validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
               AND (@status IS NULL OR sdv.validation_status = @status::discounts.statutory_discount_validations_status_enum)
               AND (@entitlement_type IS NULL OR sdv.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum)
@@ -141,6 +152,9 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.validation_status::text,
                 sdv.evidence_required,
                 sdv.evidence_captured,
+                sdv.evidence_captured AS evidence_required_satisfied,
+                COALESCE(evidence_summary.evidence_count, 0)::int AS evidence_count,
+                evidence_summary.latest_evidence_status,
                 sdv.requested_at,
                 sdv.validated_at,
                 sdv.requested_by_user_id,
@@ -203,6 +217,14 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 ORDER BY created_at DESC, statutory_discount_payable_basis_application_id DESC
                 LIMIT 1
             ) AS latest_application ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*)::int AS evidence_count,
+                    (ARRAY_AGG(evidence_capture_status::text ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_status
+                FROM discounts.discount_evidence_references
+                WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND purged_at IS NULL
+            ) AS evidence_summary ON TRUE
             WHERE sdv.statutory_discount_validation_id = @draft_id
               AND sdv.validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
             LIMIT 1;
@@ -248,6 +270,9 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             reader.GetString("entitlement_type"),
             reader.GetString("validation_status"),
             reader.GetBoolean(reader.GetOrdinal("evidence_required")),
+            reader.GetBoolean(reader.GetOrdinal("evidence_required_satisfied")),
+            reader.GetInt32(reader.GetOrdinal("evidence_count")),
+            GetNullableString(reader, "latest_evidence_status"),
             GetNullableString(reader, "policy_resolution_basis"),
             GetNullableString(reader, "policy_code"),
             GetNullableString(reader, "policy_name"),
@@ -263,6 +288,9 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
         var status = reader.GetString("validation_status");
         var evidenceRequired = reader.GetBoolean(reader.GetOrdinal("evidence_required"));
         var evidenceCaptured = reader.GetBoolean(reader.GetOrdinal("evidence_captured"));
+        var evidenceRequiredSatisfied = reader.GetBoolean(reader.GetOrdinal("evidence_required_satisfied"));
+        var evidenceCount = reader.GetInt32(reader.GetOrdinal("evidence_count"));
+        var latestEvidenceStatus = GetNullableString(reader, "latest_evidence_status");
         var requestedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at"));
         var validatedAt = GetNullableDateTimeOffset(reader, "validated_at");
         var applicationStatus = GetNullableString(reader, "application_status");
@@ -279,6 +307,12 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             status,
             evidenceRequired,
             evidenceCaptured,
+            evidenceRequiredSatisfied,
+            evidenceCount,
+            latestEvidenceStatus,
+            OperatorConsoleStatutoryDiscountEvidenceService.RequiredEvidenceTypes(
+                GetNullableString(reader, "entitlement_type") ?? string.Empty,
+                evidenceRequired),
             requestedAt,
             validatedAt,
             GetNullableGuid(reader, "requested_by_user_id"),

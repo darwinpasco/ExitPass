@@ -44,6 +44,9 @@ export interface StatutoryDiscountQueueItem {
   requestedAt: string;
   requestedBy: string;
   policyContext: StatutoryDiscountPolicyContext;
+  evidenceRequiredSatisfied: boolean;
+  evidenceCount: number;
+  latestEvidenceStatus?: string;
   originalAmountMinorUnits?: number;
   payableAmountMinorUnits?: number;
   currencyCode?: string;
@@ -58,6 +61,10 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   maskedIdReference: string;
   issuingAuthority: string;
   evidenceCaptured: boolean;
+  evidenceRequiredSatisfied: boolean;
+  evidenceCount: number;
+  latestEvidenceStatus?: string;
+  requiredEvidenceTypes: string[];
   statutoryDiscountAmountMinorUnits?: number;
   payableBasisApplicationStatus?: string;
   auditActivity: string[];
@@ -91,5 +98,57 @@ export interface StatutoryDiscountDecisionResult {
   persisted: boolean;
   currentStatus?: DraftStatus;
   errorCode?: string;
+  message: string;
+}
+
+export type EvidenceType = "SENIOR_CITIZEN_ID" | "PWD_ID" | "OTHER_SUPPORTING_DOCUMENT";
+
+export type EvidenceCaptureMethod = "UPLOAD" | "MANUAL_REFERENCE" | "OPERATOR_CONFIRMED";
+
+export interface StatutoryDiscountEvidenceItem {
+  evidenceId: string;
+  draftId: string;
+  evidenceType: EvidenceType | string;
+  captureMethod: EvidenceCaptureMethod | string;
+  storageReference?: string;
+  capturedByUserId?: string;
+  capturedAt: string;
+  redactionStatus: string;
+  verificationStatus: string;
+  correlationId?: string;
+}
+
+export interface StatutoryDiscountEvidenceList {
+  draftId: string;
+  evidenceRequired: boolean;
+  evidenceRequiredSatisfied: boolean;
+  requiredEvidenceTypes: string[];
+  evidenceCount: number;
+  latestEvidenceStatus?: string;
+  items: StatutoryDiscountEvidenceItem[];
+}
+
+export interface StatutoryDiscountEvidenceCaptureInput {
+  draftId: string;
+  siteId?: string;
+  siteGroupId?: string;
+  evidenceType: EvidenceType;
+  captureMethod: EvidenceCaptureMethod;
+  fileName?: string;
+  contentType?: string;
+  sizeBytes?: number;
+  referenceNumber?: string;
+  notes?: string;
+  operatorConfirmation: boolean;
+}
+
+export interface StatutoryDiscountEvidenceCaptureResult {
+  evidenceId: string;
+  draftId: string;
+  evidenceType: string;
+  captureMethod: string;
+  verificationStatus: string;
+  evidenceRequiredSatisfied: boolean;
+  currentDraftStatus: DraftStatus;
   message: string;
 }
