@@ -244,6 +244,47 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       expect.stringContaining(`/v1/ops/operator-console/statutory-discounts/drafts/${firstDraftId}?correlationId=`),
       expect.any(Object)
     );
+    expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
+    expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+  });
+
+  it("OperatorConsoleApi_SubmitsDecisionThroughFetchWithOperatorHeadersAndIdempotencyKey", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      accessAllowed: true,
+      accessDecision: "ALLOW",
+      accessDenialReasons: [],
+      decisionAccepted: true,
+      decisionPersisted: true,
+      currentValidationStatus: "APPROVED"
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.submitStatutoryDiscountDecision({
+      draftId: firstDraftId,
+      siteId: "77000000-0000-0000-0000-000000000002",
+      siteGroupId: "77000000-0000-0000-0000-000000000001",
+      decision: "APPROVE"
+    });
+
+    expect(result.currentStatus).toBe("Approved");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1/ops/operator-console/statutory-discounts/${firstDraftId}/decision`),
+      expect.objectContaining({ method: "POST" })
+    );
+
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expectOperatorContextHeaders(requestOptions?.headers);
+    expect(requestOptions?.headers).toEqual(expect.objectContaining({ "Content-Type": "application/json" }));
+
+    const requestBody = JSON.parse(requestOptions?.body as string);
+    expect(requestBody).toEqual(expect.objectContaining({
+      userId: "77000000-0000-0000-0000-000000000010",
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000011",
+      operatorShiftId: "77000000-0000-0000-0000-000000000012",
+      decision: "APPROVE"
+    }));
+    expect(requestBody.idempotencyKey).toMatch(`operator-console-ui-approve-${firstDraftId}-`);
   });
 
   it("OperatorConsole_DoesNotExposeOutOfScopeControls", async () => {
@@ -269,4 +310,13 @@ function jsonResponse(body: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" }
   });
+}
+
+function expectOperatorContextHeaders(headers: unknown) {
+  expect(headers).toEqual(expect.objectContaining({
+    "X-Correlation-Id": expect.any(String),
+    "X-Operator-User-Id": "77000000-0000-0000-0000-000000000010",
+    "X-Operator-Device-Binding-Id": "77000000-0000-0000-0000-000000000011",
+    "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000012"
+  }));
 }
