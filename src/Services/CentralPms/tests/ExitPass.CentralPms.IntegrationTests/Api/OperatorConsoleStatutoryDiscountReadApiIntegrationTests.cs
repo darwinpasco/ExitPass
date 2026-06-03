@@ -72,13 +72,21 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
         swaggerJson.Should().Contain("GetOperatorConsoleStatutoryDiscountDraft");
     }
 
-    [Fact]
-    public async Task QueuePreflight_FromOperatorConsoleLocalOrigin_ReturnsCorsHeaders()
+    [Theory]
+    [InlineData("http://localhost:5173")]
+    [InlineData("http://127.0.0.1:5173")]
+    [InlineData("http://localhost:5174")]
+    [InlineData("http://127.0.0.1:5174")]
+    [InlineData("http://localhost:5175")]
+    [InlineData("http://127.0.0.1:5175")]
+    [InlineData("http://localhost:5178")]
+    [InlineData("http://127.0.0.1:5178")]
+    public async Task QueuePreflight_FromOperatorConsoleLocalOrigin_ReturnsCorsHeaders(string origin)
     {
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Options, QueueEndpoint);
-        request.Headers.Add("Origin", "http://localhost:5178");
+        request.Headers.Add("Origin", origin);
         request.Headers.Add("Access-Control-Request-Method", HttpMethod.Get.Method);
         request.Headers.Add(
             "Access-Control-Request-Headers",
@@ -88,7 +96,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
 
         response.StatusCode.Should().Be(HttpStatusCode.NoContent);
         response.Headers.GetValues("Access-Control-Allow-Origin")
-            .Should().ContainSingle().Which.Should().Be("http://localhost:5178");
+            .Should().ContainSingle().Which.Should().Be(origin);
 
         var allowedMethods = SplitHeaderValues(response, "Access-Control-Allow-Methods");
         allowedMethods.Should().Contain(HttpMethod.Get.Method);
