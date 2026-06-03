@@ -5,6 +5,10 @@ import type {
   StatutoryDiscountDecisionInput,
   StatutoryDiscountDecisionResult,
   StatutoryDiscountDraftDetail,
+  StatutoryDiscountEvidenceCaptureInput,
+  StatutoryDiscountEvidenceCaptureResult,
+  StatutoryDiscountEvidenceItem,
+  StatutoryDiscountEvidenceList,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem
 } from "./types";
@@ -12,6 +16,8 @@ import type {
 export interface OperatorConsoleApiClient {
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
+  listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
+  captureStatutoryDiscountEvidence(input: StatutoryDiscountEvidenceCaptureInput): Promise<StatutoryDiscountEvidenceCaptureResult>;
   submitStatutoryDiscountDecision(input: StatutoryDiscountDecisionInput): Promise<StatutoryDiscountDecisionResult>;
 }
 
@@ -29,6 +35,9 @@ interface QueueItemDto {
   entitlementType: string;
   validationStatus: string;
   evidenceRequired: boolean;
+  evidenceRequiredSatisfied?: boolean | null;
+  evidenceCount?: number | null;
+  latestEvidenceStatus?: string | null;
   policyResolutionBasis?: string | null;
   policyCode?: string | null;
   policyName?: string | null;
@@ -43,6 +52,7 @@ interface QueueItemDto {
 interface DetailDto extends QueueItemDto {
   siteGroupId: string;
   evidenceCaptured: boolean;
+  requiredEvidenceTypes?: string[] | null;
   validatedAt?: string | null;
   validatedByUserId?: string | null;
   decisionReasonCode?: string | null;
@@ -71,6 +81,41 @@ interface DecisionResponse {
   decisionPersisted: boolean;
   currentValidationStatus?: string | null;
   ineligibilityReason?: string | null;
+  errorCode?: string | null;
+}
+
+interface EvidenceListDto {
+  draftId: string;
+  evidenceRequired: boolean;
+  evidenceRequiredSatisfied: boolean;
+  requiredEvidenceTypes: string[];
+  evidenceCount: number;
+  latestEvidenceStatus?: string | null;
+  items: EvidenceItemDto[];
+}
+
+interface EvidenceItemDto {
+  evidenceId: string;
+  draftId: string;
+  evidenceType: string;
+  captureMethod: string;
+  storageReference?: string | null;
+  capturedByUserId?: string | null;
+  capturedAt: string;
+  redactionStatus: string;
+  verificationStatus: string;
+  correlationId?: string | null;
+}
+
+interface EvidenceCaptureResponseDto {
+  evidenceId: string;
+  draftId: string;
+  evidenceType: string;
+  captureMethod: string;
+  verificationStatus: string;
+  evidenceRequiredSatisfied: boolean;
+  currentDraftStatus: string;
+  accessAllowed: boolean;
   errorCode?: string | null;
 }
 
@@ -116,6 +161,55 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         { headers: operatorConsoleHeaders(correlationId) }
       );
       return toDraftDetail(await parseResponse<DetailDto>(response));
+    },
+
+    async listStatutoryDiscountEvidence(draftId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/${encodeURIComponent(draftId)}/evidence?correlationId=${correlationId}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+      return toEvidenceList(await parseResponse<EvidenceListDto>(response));
+    },
+
+    async captureStatutoryDiscountEvidence(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/${encodeURIComponent(input.draftId)}/evidence`,
+        {
+          method: "POST",
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
+          body: JSON.stringify({
+            userId: defaultOperatorContext.userId,
+            operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
+            siteId: input.siteId ?? null,
+            siteGroupId: input.siteGroupId ?? null,
+            operatorShiftId: defaultOperatorContext.operatorShiftId,
+            evidenceType: input.evidenceType,
+            captureMethod: input.captureMethod,
+            fileName: input.fileName ?? null,
+            contentType: input.contentType ?? null,
+            sizeBytes: input.sizeBytes ?? null,
+            storageReference: null,
+            referenceNumber: input.referenceNumber ?? null,
+            notes: input.notes ?? null,
+            operatorConfirmation: input.operatorConfirmation,
+            idempotencyKey: `operator-console-ui-evidence-${input.draftId}-${correlationId}`,
+            correlationId
+          })
+        }
+      );
+      const body = await parseResponse<EvidenceCaptureResponseDto>(response);
+      return {
+        evidenceId: body.evidenceId,
+        draftId: body.draftId,
+        evidenceType: body.evidenceType,
+        captureMethod: body.captureMethod,
+        verificationStatus: body.verificationStatus,
+        evidenceRequiredSatisfied: body.evidenceRequiredSatisfied,
+        currentDraftStatus: mapStatus(body.currentDraftStatus),
+        message: body.accessAllowed ? "Evidence metadata captured." : body.errorCode ?? "Evidence capture was not allowed."
+      };
     },
 
     async submitStatutoryDiscountDecision(input) {
@@ -172,11 +266,14 @@ export function createMockOperatorConsoleApiClient(
     listError?: OperatorConsoleApiError;
     detailError?: OperatorConsoleApiError;
     decisionError?: OperatorConsoleApiError;
+    evidenceError?: OperatorConsoleApiError;
     empty?: boolean;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
+    onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
   } = {}
 ): OperatorConsoleApiClient {
-  const drafts = options.drafts ?? mockDrafts;
+  const drafts = (options.drafts ?? mockDrafts).map((draft) => ({ ...draft }));
+  const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   return {
     async listStatutoryDiscountDrafts() {
       await delay();
@@ -203,6 +300,73 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return draft;
+    },
+
+    async listStatutoryDiscountEvidence(draftId) {
+      await delay();
+      if (options.evidenceError) {
+        throw options.evidenceError;
+      }
+
+      const draft = drafts.find((item) => item.draftId === draftId);
+      if (!draft) {
+        throw {
+          status: "not-found",
+          message: "Statutory discount draft was not found.",
+          errorCode: "DRAFT_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      const items = evidence.get(draftId) ?? [];
+      return {
+        draftId,
+        evidenceRequired: draft.policyContext.evidenceRequired,
+        evidenceRequiredSatisfied: draft.evidenceRequiredSatisfied,
+        requiredEvidenceTypes: draft.requiredEvidenceTypes,
+        evidenceCount: items.length,
+        latestEvidenceStatus: items[0]?.verificationStatus,
+        items
+      };
+    },
+
+    async captureStatutoryDiscountEvidence(input) {
+      await delay();
+      if (options.evidenceError) {
+        throw options.evidenceError;
+      }
+
+      options.onEvidenceCapture?.(input);
+      const item: StatutoryDiscountEvidenceItem = {
+        evidenceId: `mock-evidence-${Date.now()}`,
+        draftId: input.draftId,
+        evidenceType: input.evidenceType,
+        captureMethod: input.captureMethod,
+        storageReference: input.captureMethod === "MANUAL_REFERENCE" ? "manual-reference:****1234" : "operator-confirmed",
+        capturedByUserId: defaultOperatorContext.userId,
+        capturedAt: new Date().toISOString(),
+        redactionStatus: "NOT_REDACTED",
+        verificationStatus: "CAPTURED"
+      };
+      evidence.set(input.draftId, [item, ...(evidence.get(input.draftId) ?? [])]);
+
+      const draft = drafts.find((item) => item.draftId === input.draftId);
+      if (draft) {
+        draft.evidenceCaptured = true;
+        draft.evidenceRequiredSatisfied = true;
+        draft.evidenceCount = evidence.get(input.draftId)?.length ?? 1;
+        draft.latestEvidenceStatus = "CAPTURED";
+      }
+
+      return {
+        evidenceId: item.evidenceId,
+        draftId: input.draftId,
+        evidenceType: input.evidenceType,
+        captureMethod: input.captureMethod,
+        verificationStatus: "CAPTURED",
+        evidenceRequiredSatisfied: true,
+        currentDraftStatus: draft?.status ?? "Requested",
+        message: "Evidence metadata captured."
+      };
     },
 
     async submitStatutoryDiscountDecision(input) {
@@ -261,6 +425,9 @@ function toQueueItem(item: QueueItemDto): StatutoryDiscountQueueItem {
     requestedAt: item.requestedAt,
     requestedBy: item.requestedByUserId ?? "Unknown operator",
     policyContext,
+    evidenceRequiredSatisfied: item.evidenceRequiredSatisfied ?? false,
+    evidenceCount: item.evidenceCount ?? 0,
+    latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
     originalAmountMinorUnits: item.originalAmountMinorUnits ?? undefined,
     payableAmountMinorUnits: item.payableAmountMinorUnits ?? undefined,
     currencyCode: item.currencyCode ?? undefined
@@ -280,9 +447,40 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     maskedIdReference: "Evidence metadata only",
     issuingAuthority: "Not available",
     evidenceCaptured: item.evidenceCaptured,
+    evidenceRequiredSatisfied: item.evidenceRequiredSatisfied ?? item.evidenceCaptured,
+    evidenceCount: item.evidenceCount ?? 0,
+    latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
+    requiredEvidenceTypes: item.requiredEvidenceTypes ?? [],
     statutoryDiscountAmountMinorUnits: item.statutoryDiscountAmountMinorUnits ?? undefined,
     payableBasisApplicationStatus: item.payableBasisApplicationStatus ?? undefined,
     auditActivity: item.activity.length > 0 ? item.activity : ["No activity history is available yet."]
+  };
+}
+
+function toEvidenceList(dto: EvidenceListDto): StatutoryDiscountEvidenceList {
+  return {
+    draftId: dto.draftId,
+    evidenceRequired: dto.evidenceRequired,
+    evidenceRequiredSatisfied: dto.evidenceRequiredSatisfied,
+    requiredEvidenceTypes: dto.requiredEvidenceTypes,
+    evidenceCount: dto.evidenceCount,
+    latestEvidenceStatus: dto.latestEvidenceStatus ?? undefined,
+    items: dto.items.map(toEvidenceItem)
+  };
+}
+
+function toEvidenceItem(dto: EvidenceItemDto): StatutoryDiscountEvidenceItem {
+  return {
+    evidenceId: dto.evidenceId,
+    draftId: dto.draftId,
+    evidenceType: dto.evidenceType,
+    captureMethod: dto.captureMethod,
+    storageReference: dto.storageReference ?? undefined,
+    capturedByUserId: dto.capturedByUserId ?? undefined,
+    capturedAt: dto.capturedAt,
+    redactionStatus: dto.redactionStatus,
+    verificationStatus: dto.verificationStatus,
+    correlationId: dto.correlationId ?? undefined
   };
 }
 
@@ -418,6 +616,9 @@ function toQueueFromDetail(draft: StatutoryDiscountDraftDetail): StatutoryDiscou
     requestedAt: draft.requestedAt,
     requestedBy: draft.requestedBy,
     policyContext: draft.policyContext,
+    evidenceRequiredSatisfied: draft.evidenceRequiredSatisfied,
+    evidenceCount: draft.evidenceCount,
+    latestEvidenceStatus: draft.latestEvidenceStatus,
     originalAmountMinorUnits: draft.originalAmountMinorUnits,
     payableAmountMinorUnits: draft.payableAmountMinorUnits,
     currencyCode: draft.currencyCode
@@ -510,6 +711,10 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     maskedIdReference: "Evidence metadata only",
     issuingAuthority: "OSCA",
     evidenceCaptured: false,
+    evidenceRequiredSatisfied: false,
+    evidenceCount: 0,
+    latestEvidenceStatus: undefined,
+    requiredEvidenceTypes: [],
     originalAmountMinorUnits: 18000,
     payableAmountMinorUnits: 14400,
     currencyCode: "PHP",
@@ -536,6 +741,10 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     maskedIdReference: "Evidence metadata only",
     issuingAuthority: "PDAO",
     evidenceCaptured: false,
+    evidenceRequiredSatisfied: false,
+    evidenceCount: 0,
+    latestEvidenceStatus: undefined,
+    requiredEvidenceTypes: ["PWD_ID"],
     originalAmountMinorUnits: 22000,
     currencyCode: "PHP",
     policyContext: pwdLocalPolicy,
@@ -561,6 +770,10 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     maskedIdReference: "Evidence metadata only",
     issuingAuthority: "OSCA",
     evidenceCaptured: false,
+    evidenceRequiredSatisfied: false,
+    evidenceCount: 0,
+    latestEvidenceStatus: undefined,
+    requiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
     originalAmountMinorUnits: 9000,
     currencyCode: "PHP",
     policyContext: blockedLocalPolicy,

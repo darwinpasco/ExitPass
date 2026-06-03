@@ -40,13 +40,20 @@ button:disabled {
   cursor: not-allowed;
 }
 
-input {
+input,
+select,
+textarea {
   border: 1px solid #c7d1d9;
   border-radius: 6px;
   color: #1b252f;
   font: inherit;
   min-height: 40px;
   padding: 8px 10px;
+}
+
+textarea {
+  min-height: 78px;
+  resize: vertical;
 }
 
 code {
@@ -378,6 +385,59 @@ dd {
   padding-left: 18px;
 }
 
+.evidenceLayout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+}
+
+.evidenceList {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.evidenceList li {
+  border: 1px solid #e2e9ee;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.evidenceList span {
+  color: #5b6a76;
+}
+
+.evidenceForm {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.evidenceForm label {
+  color: #465969;
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 7px;
+}
+
+.checkboxField {
+  align-items: center;
+  display: flex !important;
+  gap: 8px !important;
+}
+
+.checkboxField input {
+  min-height: auto;
+}
+
 @media (max-width: 860px) {
   .appShell {
     padding: 18px;
@@ -386,7 +446,8 @@ dd {
   .appHeader,
   .pageTitle,
   .platformShell,
-  .detailGrid {
+  .detailGrid,
+  .evidenceLayout {
     display: grid;
     grid-template-columns: 1fr;
   }

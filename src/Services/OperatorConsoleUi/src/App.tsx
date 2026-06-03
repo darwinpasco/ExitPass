@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { createOperatorConsoleApiClient, mapApiError, type OperatorConsoleApiClient } from "./apiClient";
 import type {
   LoadState,
   PolicyContextKind,
   StatutoryDiscountDraftDetail,
+  StatutoryDiscountEvidenceList,
+  EvidenceCaptureMethod,
+  EvidenceType,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem
 } from "./types";
@@ -194,6 +197,7 @@ function StatutoryDiscountQueuePage({
                   <th>Site</th>
                   <th>Entitlement</th>
                   <th>Policy basis</th>
+                  <th>Evidence</th>
                   <th>Status</th>
                   <th>Requested</th>
                   <th>Action</th>
@@ -212,6 +216,10 @@ function StatutoryDiscountQueuePage({
                     <td>{item.siteName}</td>
                     <td>{item.entitlementType}</td>
                     <td>{policyBasisLabel(item.policyContext.kind)}</td>
+                    <td>
+                      <span>{item.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
+                      <span>{item.evidenceRequiredSatisfied ? "Satisfied" : `${item.evidenceCount} captured`}</span>
+                    </td>
                     <td>
                       <span className={`statusPill ${statusClass(item.status)}`}>{item.status}</span>
                     </td>
@@ -316,7 +324,7 @@ function DraftDetail({
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState<"APPROVE" | "REJECT" | null>(null);
-  const approveBlockedByEvidence = detail.policyContext.evidenceRequired && !detail.evidenceCaptured;
+  const approveBlockedByEvidence = detail.policyContext.evidenceRequired && !detail.evidenceRequiredSatisfied;
   const decisionable = detail.status === "Requested" || detail.status === "Pending Review";
 
   async function submitDecision(decision: "APPROVE" | "REJECT") {
@@ -410,7 +418,10 @@ function DraftDetail({
               ["Masked ID reference", detail.maskedIdReference],
               ["Issuing authority", detail.issuingAuthority],
               ["Evidence required", detail.policyContext.evidenceRequired ? "Yes" : "No"],
-              ["Evidence captured", detail.evidenceCaptured ? "Yes" : "No"]
+              ["Evidence captured", detail.evidenceCaptured ? "Yes" : "No"],
+              ["Evidence satisfied", detail.evidenceRequiredSatisfied ? "Yes" : "No"],
+              ["Evidence count", String(detail.evidenceCount)],
+              ["Latest evidence status", detail.latestEvidenceStatus ?? "None"]
             ]}
           />
         </section>
@@ -424,7 +435,7 @@ function DraftDetail({
           <span className="statusPill">{decisionable ? "Ready" : "Read-only status"}</span>
         </div>
         {approveBlockedByEvidence && (
-          <p className="notice">Approval is blocked until the required evidence upload workflow is available.</p>
+          <p className="notice">Approval is blocked until required evidence is captured.</p>
         )}
         {decisionMessage && <p className="successMessage">{decisionMessage}</p>}
         {decisionError && <p className="errorMessage">{decisionError}</p>}
@@ -455,16 +466,7 @@ function DraftDetail({
         </div>
       </section>
 
-      <section className="panel" aria-labelledby="evidence-title">
-        <div className="panelHeader">
-          <h3 id="evidence-title">Evidence upload placeholder</h3>
-          <span className="statusPill">{detail.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
-        </div>
-        <p className="placeholderCopy">
-          Evidence upload and capture are intentionally pending. This page only shows the stored evidence-required and
-          evidence-captured flags.
-        </p>
-      </section>
+      <EvidencePanel detail={detail} client={client} refreshDetail={refreshDetail} />
 
       <section className="panel" aria-labelledby="activity-title">
         <div className="panelHeader">
@@ -477,6 +479,216 @@ function DraftDetail({
         </ul>
       </section>
     </>
+  );
+}
+
+function EvidencePanel({
+  detail,
+  client,
+  refreshDetail
+}: {
+  detail: StatutoryDiscountDraftDetail;
+  client: OperatorConsoleApiClient;
+  refreshDetail: () => void;
+}) {
+  const [evidenceState, setEvidenceState] = useState<LoadState<StatutoryDiscountEvidenceList>>({ status: "loading" });
+  const [evidenceType, setEvidenceType] = useState<EvidenceType>(
+    (detail.requiredEvidenceTypes[0] as EvidenceType | undefined) ?? "SENIOR_CITIZEN_ID"
+  );
+  const [captureMethod, setCaptureMethod] = useState<EvidenceCaptureMethod>("OPERATOR_CONFIRMED");
+  const [fileName, setFileName] = useState("");
+  const [contentType, setContentType] = useState("image/jpeg");
+  const [sizeBytes, setSizeBytes] = useState("");
+  const [referenceNumber, setReferenceNumber] = useState("");
+  const [notes, setNotes] = useState("");
+  const [operatorConfirmation, setOperatorConfirmation] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formMessage, setFormMessage] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    setEvidenceState((current) => (current.status === "loaded" ? current : { status: "loading" }));
+
+    client
+      .listStatutoryDiscountEvidence(detail.draftId)
+      .then((evidence) => {
+        if (active) {
+          setEvidenceState({ status: "loaded", data: evidence });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setEvidenceState({ status: "error", message: mapApiError(error).message });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, detail.draftId, refreshToken]);
+
+  async function submitEvidence(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError(null);
+    setFormMessage(null);
+
+    if (!operatorConfirmation) {
+      setFormError("Operator confirmation is required.");
+      return;
+    }
+
+    if (captureMethod === "UPLOAD" && (!fileName.trim() || !contentType.trim() || Number(sizeBytes) <= 0)) {
+      setFormError("Upload metadata requires file name, content type, and size.");
+      return;
+    }
+
+    if (captureMethod === "MANUAL_REFERENCE" && !referenceNumber.trim()) {
+      setFormError("Manual reference capture requires a reference value.");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const result = await client.captureStatutoryDiscountEvidence({
+        draftId: detail.draftId,
+        siteId: detail.siteId,
+        siteGroupId: detail.siteGroupId,
+        evidenceType,
+        captureMethod,
+        fileName: captureMethod === "UPLOAD" ? fileName : undefined,
+        contentType: captureMethod === "UPLOAD" ? contentType : undefined,
+        sizeBytes: captureMethod === "UPLOAD" ? Number(sizeBytes) : undefined,
+        referenceNumber: captureMethod === "MANUAL_REFERENCE" ? referenceNumber : undefined,
+        notes: notes.trim() || undefined,
+        operatorConfirmation
+      });
+
+      setReferenceNumber("");
+      setNotes("");
+      setOperatorConfirmation(false);
+      setFormMessage(result.message);
+      setRefreshToken((value) => value + 1);
+      refreshDetail();
+    } catch (error) {
+      setFormError(mapApiError(error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const evidenceLoaded = evidenceState.status === "loaded" ? evidenceState.data : null;
+  const requiredSatisfied = evidenceLoaded?.evidenceRequiredSatisfied ?? detail.evidenceRequiredSatisfied;
+
+  return (
+    <section className="panel" aria-labelledby="evidence-title">
+      <div className="panelHeader">
+        <h3 id="evidence-title">Evidence</h3>
+        <span className="statusPill">{detail.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
+      </div>
+
+      {detail.policyContext.evidenceRequired && !requiredSatisfied && (
+        <p className="notice">Approval is blocked until required evidence is captured.</p>
+      )}
+      {requiredSatisfied && <p className="successMessage">Required evidence is captured.</p>}
+
+      {evidenceState.status === "loading" && <StateMessage title="Loading evidence" message="Retrieving evidence metadata." />}
+      {evidenceState.status === "error" && <StateMessage title="Unable to load evidence" message={evidenceState.message} />}
+      {evidenceLoaded && (
+        <div className="evidenceLayout">
+          <div>
+            <DescriptionList
+              items={[
+                ["Evidence satisfied", evidenceLoaded.evidenceRequiredSatisfied ? "Yes" : "No"],
+                ["Required types", evidenceLoaded.requiredEvidenceTypes.join(", ") || "None"],
+                ["Evidence count", String(evidenceLoaded.evidenceCount)],
+                ["Latest status", evidenceLoaded.latestEvidenceStatus ?? "None"]
+              ]}
+            />
+
+            {evidenceLoaded.items.length === 0 ? (
+              <p className="placeholderCopy">No evidence metadata has been captured for this draft.</p>
+            ) : (
+              <ul className="evidenceList">
+                {evidenceLoaded.items.map((item) => (
+                  <li key={item.evidenceId}>
+                    <strong>{item.evidenceType}</strong>
+                    <span>{item.captureMethod} / {item.verificationStatus}</span>
+                    <span>{formatDateTime(item.capturedAt)}</span>
+                    <span>{item.capturedByUserId ?? "Unknown operator"}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <form className="evidenceForm" onSubmit={(event) => void submitEvidence(event)}>
+            <label>
+              Evidence type
+              <select value={evidenceType} onChange={(event) => setEvidenceType(event.target.value as EvidenceType)}>
+                <option value="SENIOR_CITIZEN_ID">Senior Citizen ID</option>
+                <option value="PWD_ID">PWD ID</option>
+                <option value="OTHER_SUPPORTING_DOCUMENT">Other supporting document</option>
+              </select>
+            </label>
+
+            <label>
+              Capture method
+              <select value={captureMethod} onChange={(event) => setCaptureMethod(event.target.value as EvidenceCaptureMethod)}>
+                <option value="OPERATOR_CONFIRMED">Operator confirmed</option>
+                <option value="MANUAL_REFERENCE">Manual reference</option>
+                <option value="UPLOAD">Upload metadata</option>
+              </select>
+            </label>
+
+            {captureMethod === "UPLOAD" && (
+              <>
+                <label>
+                  File name
+                  <input value={fileName} onChange={(event) => setFileName(event.target.value)} />
+                </label>
+                <label>
+                  Content type
+                  <input value={contentType} onChange={(event) => setContentType(event.target.value)} />
+                </label>
+                <label>
+                  Size bytes
+                  <input inputMode="numeric" value={sizeBytes} onChange={(event) => setSizeBytes(event.target.value)} />
+                </label>
+              </>
+            )}
+
+            {captureMethod === "MANUAL_REFERENCE" && (
+              <label>
+                Manual reference
+                <input value={referenceNumber} onChange={(event) => setReferenceNumber(event.target.value)} />
+              </label>
+            )}
+
+            <label>
+              Notes
+              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
+            </label>
+
+            <label className="checkboxField">
+              <input
+                type="checkbox"
+                checked={operatorConfirmation}
+                onChange={(event) => setOperatorConfirmation(event.target.checked)}
+              />
+              Operator confirms evidence was reviewed
+            </label>
+
+            {formMessage && <p className="successMessage">{formMessage}</p>}
+            {formError && <p className="errorMessage">{formError}</p>}
+            <button type="submit" disabled={submitting}>
+              {submitting ? "Capturing" : "Capture evidence"}
+            </button>
+          </form>
+        </div>
+      )}
+    </section>
   );
 }
 

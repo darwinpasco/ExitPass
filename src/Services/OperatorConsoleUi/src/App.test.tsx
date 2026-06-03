@@ -38,6 +38,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
           })
       ),
       getStatutoryDiscountDraft: vi.fn(),
+      listStatutoryDiscountEvidence: vi.fn(),
+      captureStatutoryDiscountEvidence: vi.fn(),
       submitStatutoryDiscountDecision: vi.fn()
     };
 
@@ -98,7 +100,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("heading", { name: "Verified local policy" })).toBeInTheDocument();
     expect(screen.getByText("QC Ordinance 2026-04")).toBeInTheDocument();
     expect(screen.getByText("RA 10754")).toBeInTheDocument();
-    expect(screen.getByText(/approval is blocked until the required evidence upload workflow is available/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
   });
 
   it("StatutoryDiscountDetail_RendersBlockedUnverifiedLocalPolicyState", async () => {
@@ -163,7 +165,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
   });
 
-  it("StatutoryDiscountDetail_ShowsEvidencePlaceholderAndBlocksApprovalWhenEvidenceRequired", async () => {
+  it("StatutoryDiscountDetail_ShowsEvidencePanelAndBlocksApprovalWhenEvidenceRequired", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient()}
@@ -171,10 +173,38 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Evidence upload placeholder" })).toBeInTheDocument();
-    expect(screen.getByText(/evidence upload and capture are intentionally pending/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Evidence" })).toBeInTheDocument();
+    expect(await screen.findByText(/no evidence metadata has been captured/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getByText(/approval is blocked until the required evidence upload workflow is available/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
+  });
+
+  it("StatutoryDiscountDetail_CapturesEvidenceAndEnablesApprovalAfterRefresh", async () => {
+    const onEvidenceCapture = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onEvidenceCapture })}
+        initialPath={`/operator-console/statutory-discounts/${verifiedLocalDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Evidence" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+
+    await userEvent.click(await screen.findByLabelText(/operator confirms evidence was reviewed/i));
+    await userEvent.click(await screen.findByRole("button", { name: "Capture evidence" }));
+
+    expect(await screen.findByText("Evidence metadata captured.")).toBeInTheDocument();
+    expect(await screen.findByText("Required evidence is captured.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(onEvidenceCapture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftId: verifiedLocalDraftId,
+        evidenceType: "PWD_ID",
+        captureMethod: "OPERATOR_CONFIRMED",
+        operatorConfirmation: true
+      })
+    );
   });
 
   it("OperatorConsoleApi_MapsBackendErrorsIntoUiErrors", () => {
@@ -204,6 +234,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
             entitlementType: "SENIOR_CITIZEN",
             validationStatus: "REQUESTED",
             evidenceRequired: false,
+            evidenceRequiredSatisfied: false,
+            evidenceCount: 0,
             policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
             policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
             requestedAt: "2026-06-01T08:15:00+08:00"
@@ -222,6 +254,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         validationStatus: "REQUESTED",
         evidenceRequired: false,
         evidenceCaptured: false,
+        evidenceRequiredSatisfied: false,
+        evidenceCount: 0,
+        requiredEvidenceTypes: [],
         requestedAt: "2026-06-01T08:15:00+08:00",
         policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
         policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
@@ -246,6 +281,63 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
     expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
     expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+  });
+
+  it("OperatorConsoleApi_EvidenceEndpointsUseOperatorHeaders", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        draftId: firstDraftId,
+        evidenceRequired: true,
+        evidenceRequiredSatisfied: false,
+        requiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
+        evidenceCount: 0,
+        latestEvidenceStatus: null,
+        items: []
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        evidenceId: "66000000-0000-0000-0000-000000000001",
+        draftId: firstDraftId,
+        evidenceType: "SENIOR_CITIZEN_ID",
+        captureMethod: "OPERATOR_CONFIRMED",
+        verificationStatus: "CAPTURED",
+        evidenceRequiredSatisfied: true,
+        currentDraftStatus: "REQUESTED",
+        accessAllowed: true
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const list = await client.listStatutoryDiscountEvidence(firstDraftId);
+    const capture = await client.captureStatutoryDiscountEvidence({
+      draftId: firstDraftId,
+      siteId: "77000000-0000-0000-0000-000000000002",
+      siteGroupId: "77000000-0000-0000-0000-000000000001",
+      evidenceType: "SENIOR_CITIZEN_ID",
+      captureMethod: "OPERATOR_CONFIRMED",
+      operatorConfirmation: true
+    });
+
+    expect(list.requiredEvidenceTypes).toContain("SENIOR_CITIZEN_ID");
+    expect(capture.evidenceRequiredSatisfied).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1/ops/operator-console/statutory-discounts/${firstDraftId}/evidence?correlationId=`),
+      expect.any(Object)
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/v1/ops/operator-console/statutory-discounts/${firstDraftId}/evidence`),
+      expect.objectContaining({ method: "POST" })
+    );
+    expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
+    expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
+    expect(requestBody).toEqual(expect.objectContaining({
+      userId: "77000000-0000-0000-0000-000000000010",
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000011",
+      operatorShiftId: "77000000-0000-0000-0000-000000000012",
+      evidenceType: "SENIOR_CITIZEN_ID",
+      captureMethod: "OPERATOR_CONFIRMED"
+    }));
   });
 
   it("OperatorConsoleApi_SubmitsDecisionThroughFetchWithOperatorHeadersAndIdempotencyKey", async () => {

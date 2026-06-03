@@ -24,6 +24,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
     private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
     private static readonly ActivitySource ApplyPayableBasisActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis");
+    private static readonly ActivitySource EvidenceActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountEvidence");
 
     /// <summary>
     /// Maps Operator Console statutory discount draft endpoints.
@@ -74,6 +75,27 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithSummary("Decide Operator Console statutory discount validation")
             .WithDescription("Approves or rejects an existing Operator Console statutory discount validation draft after evaluating and persisting Operator Console access. This endpoint only transitions validation decision status and does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
+
+        group.MapPost("/statutory-discounts/{draftId:guid}/evidence", CaptureEvidenceAsync)
+            .WithName("CaptureOperatorConsoleStatutoryDiscountEvidence")
+            .WithTags("OperatorConsole")
+            .Accepts<OperatorConsoleStatutoryDiscountEvidenceCaptureRequest>("application/json")
+            .Produces<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(StatusCodes.Status200OK)
+            .Produces<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("Capture Operator Console statutory discount evidence metadata")
+            .WithDescription("Captures metadata-only statutory discount evidence for an existing Operator Console validation draft. This endpoint stores no raw evidence bytes, performs no OCR or automated ID verification, and only updates evidence metadata and evidence satisfaction state.");
+
+        group.MapGet("/statutory-discounts/{draftId:guid}/evidence", ListEvidenceAsync)
+            .WithName("ListOperatorConsoleStatutoryDiscountEvidence")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleStatutoryDiscountEvidenceListResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("List Operator Console statutory discount evidence metadata")
+            .WithDescription("Lists metadata-only statutory discount evidence records for an Operator Console validation draft. This endpoint does not return raw evidence, OCR data, raw ID numbers, or document verification results.");
 
         group.MapPost("/statutory-discounts/{validationId:guid}/apply-payable-basis", ApplyPayableBasisAsync)
             .WithName("ApplyOperatorConsoleStatutoryDiscountPayableBasis")
@@ -310,6 +332,9 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.EntitlementType,
                 item.ValidationStatus,
                 item.EvidenceRequired,
+                item.EvidenceRequiredSatisfied,
+                item.EvidenceCount,
+                item.LatestEvidenceStatus,
                 item.PolicyResolutionBasis,
                 item.PolicyCode,
                 item.PolicyName,
@@ -338,6 +363,10 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.ValidationStatus,
             result.EvidenceRequired,
             result.EvidenceCaptured,
+            result.EvidenceRequiredSatisfied,
+            result.EvidenceCount,
+            result.LatestEvidenceStatus,
+            result.RequiredEvidenceTypes,
             result.RequestedAt,
             result.ValidatedAt,
             result.RequestedByUserId,
@@ -505,6 +534,212 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.IneligibilityReason,
             result.ErrorCode,
             result.CorrelationId);
+
+    private static async Task<IResult> CaptureEvidenceAsync(
+        Guid draftId,
+        OperatorConsoleStatutoryDiscountEvidenceCaptureRequest request,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountEvidenceService service,
+        ILoggerFactory loggerFactory)
+    {
+        using var activity = EvidenceActivitySource.StartActivity("HTTP CaptureOperatorConsoleStatutoryDiscountEvidence", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", request.CorrelationId);
+        activity?.SetTag("statutory_discount_validation_id", draftId);
+        activity?.SetTag("evidence_type", request.EvidenceType);
+        activity?.SetTag("capture_method", request.CaptureMethod);
+
+        try
+        {
+            var result = await service.CaptureAsync(
+                new OperatorConsoleStatutoryDiscountEvidenceCaptureCommand(
+                    draftId,
+                    request.UserId,
+                    request.OperatorDeviceBindingId,
+                    request.SiteId,
+                    request.SiteGroupId,
+                    request.OperatorShiftId,
+                    request.EvidenceType,
+                    request.CaptureMethod,
+                    request.FileName,
+                    request.ContentType,
+                    request.SizeBytes,
+                    request.StorageReference,
+                    request.ReferenceNumber,
+                    request.Notes,
+                    request.OperatorConfirmation,
+                    request.IdempotencyKey,
+                    request.CorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            if (result is null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.NotFound(BuildError(
+                    "STATUTORY_DISCOUNT_DRAFT_NOT_FOUND",
+                    "The Operator Console statutory discount draft was not found.",
+                    request.CorrelationId));
+            }
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_EVIDENCE_REQUEST", ex.Message, request.CorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console statutory discount evidence capture failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_STATUTORY_DISCOUNT_EVIDENCE_CAPTURE_FAILED",
+                    "The Operator Console statutory discount evidence metadata could not be captured.",
+                    request.CorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static async Task<IResult> ListEvidenceAsync(
+        Guid draftId,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountEvidenceService service,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = EvidenceActivitySource.StartActivity("HTTP ListOperatorConsoleStatutoryDiscountEvidence", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", effectiveCorrelationId);
+        activity?.SetTag("statutory_discount_validation_id", draftId);
+
+        try
+        {
+            var userId = ReadRequiredHeaderGuid(httpRequest, "X-Operator-User-Id");
+            var deviceBindingId = ReadOptionalHeaderGuid(httpRequest, "X-Operator-Device-Binding-Id");
+            var shiftId = ReadOptionalHeaderGuid(httpRequest, "X-Operator-Shift-Id");
+
+            var result = await service.ListAsync(
+                new OperatorConsoleStatutoryDiscountEvidenceListQuery(
+                    draftId,
+                    userId,
+                    deviceBindingId,
+                    SiteId: null,
+                    SiteGroupId: null,
+                    shiftId,
+                    effectiveCorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            if (result is null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.NotFound(BuildError(
+                    "STATUTORY_DISCOUNT_DRAFT_NOT_FOUND",
+                    "The Operator Console statutory discount draft was not found.",
+                    effectiveCorrelationId));
+            }
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_EVIDENCE_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console statutory discount evidence list failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_STATUTORY_DISCOUNT_EVIDENCE_LIST_FAILED",
+                    "The Operator Console statutory discount evidence metadata could not be loaded.",
+                    effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static OperatorConsoleStatutoryDiscountEvidenceCaptureResponse ToContract(
+        OperatorConsoleStatutoryDiscountEvidenceCaptureResult result) =>
+        new(
+            result.EvidenceId,
+            result.DraftId,
+            result.EvidenceType,
+            result.CaptureMethod,
+            result.FileName,
+            result.ContentType,
+            result.SizeBytes,
+            result.StorageReference,
+            result.ReferenceNumberMasked,
+            result.CapturedByUserId,
+            result.CapturedAt,
+            result.RedactionStatus,
+            result.VerificationStatus,
+            result.EvidenceRequiredSatisfied,
+            result.CurrentDraftStatus,
+            result.AccessAllowed,
+            result.ErrorCode,
+            result.CorrelationId);
+
+    private static OperatorConsoleStatutoryDiscountEvidenceListResponse ToContract(
+        OperatorConsoleStatutoryDiscountEvidenceListResult result) =>
+        new(
+            result.DraftId,
+            result.EvidenceRequired,
+            result.EvidenceRequiredSatisfied,
+            result.RequiredEvidenceTypes,
+            result.EvidenceCount,
+            result.LatestEvidenceStatus,
+            result.Items.Select(item => new OperatorConsoleStatutoryDiscountEvidenceItem(
+                item.EvidenceId,
+                item.DraftId,
+                item.EvidenceType,
+                item.CaptureMethod,
+                item.StorageReference,
+                item.CapturedByUserId,
+                item.CapturedAt,
+                item.RedactionStatus,
+                item.VerificationStatus,
+                item.CorrelationId)).ToArray(),
+            result.CorrelationId);
+
+    private static Guid ReadRequiredHeaderGuid(HttpRequest request, string headerName)
+    {
+        var value = request.Headers[headerName].FirstOrDefault();
+        if (Guid.TryParse(value, out var parsed) && parsed != Guid.Empty)
+        {
+            return parsed;
+        }
+
+        throw new ArgumentException($"{headerName} header is required.", headerName);
+    }
+
+    private static Guid? ReadOptionalHeaderGuid(HttpRequest request, string headerName)
+    {
+        var value = request.Headers[headerName].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (Guid.TryParse(value, out var parsed) && parsed != Guid.Empty)
+        {
+            return parsed;
+        }
+
+        throw new ArgumentException($"{headerName} header must be a valid GUID.", headerName);
+    }
 
     private static async Task<IResult> ApplyPayableBasisAsync(
         Guid validationId,
