@@ -20,7 +20,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 {
-    private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
+    private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
     private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
@@ -82,7 +82,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithTags("OperatorConsole")
             .Accepts<OperatorConsoleStatutoryDiscountEvidenceCaptureRequest>("application/json")
             .Produces<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(StatusCodes.Status200OK)
-            .Produces<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithSummary("Capture Operator Console statutory discount evidence metadata")
@@ -108,7 +108,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithSummary("Apply Operator Console statutory discount payable basis")
-            .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint uses the policy snapshot persisted on the validation and creates statutory discount payable-basis application evidence only; it does not create final APPLIED tariff snapshots, payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
+            .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint uses the policy snapshot persisted on the validation and may create an applied tariff snapshot plus statutory discount payable-basis application evidence; it does not create payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
 
         return app;
     }

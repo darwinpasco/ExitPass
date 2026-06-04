@@ -11,7 +11,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public sealed class OperatorConsoleStatutoryDiscountEvidenceService
     : IOperatorConsoleStatutoryDiscountEvidenceService
 {
-    private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
+    private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string CaptureEvidenceActionCode = OperatorConsoleActionCodes.CaptureEvidence;
     private const string ViewEvidenceActionCode = OperatorConsoleActionCodes.ViewEvidence;
 

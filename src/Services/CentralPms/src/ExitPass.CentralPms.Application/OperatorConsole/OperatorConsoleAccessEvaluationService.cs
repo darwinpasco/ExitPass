@@ -13,7 +13,7 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
 {
     private static readonly HashSet<string> SupportedWorkflows = new(StringComparer.Ordinal)
     {
-        "STATUTORY_DISCOUNT_VALIDATION"
+        OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow
     };
 
     private static readonly HashSet<string> SupportedActions = new(StringComparer.Ordinal)

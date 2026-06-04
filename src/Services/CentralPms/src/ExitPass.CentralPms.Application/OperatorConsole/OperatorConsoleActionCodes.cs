@@ -5,6 +5,9 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// </summary>
 public static class OperatorConsoleActionCodes
 {
+    /// <summary>Operator Console statutory discount validation workflow code.</summary>
+    public const string StatutoryDiscountValidationWorkflow = "STATUTORY_DISCOUNT_VALIDATION";
+
     /// <summary>Parking session lookup for Operator Console workflows.</summary>
     public const string SessionLookup = "SESSION_LOOKUP";
 

@@ -14,7 +14,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionService
     : IOperatorConsoleStatutoryDiscountPolicyResolutionService
 {
-    private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
+    private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string ControlledActionCode = OperatorConsoleActionCodes.ViewPolicyResolution;
     private const string SeniorCitizen = "SENIOR_CITIZEN";
     private const string Pwd = "PWD";
