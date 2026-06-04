@@ -14,7 +14,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorConsoleStatutoryDiscountDraftService
 {
     private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
-    private const string ControlledActionCode = "SUBMIT_DECISION";
+    private const string ControlledActionCode = OperatorConsoleActionCodes.CreateStatutoryDiscountDraft;
     private const string ValidationStatus = "REQUESTED";
     private static readonly Regex FullIdentifierPattern = new(@"\d{5,}", RegexOptions.Compiled);
 

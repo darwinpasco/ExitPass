@@ -57,17 +57,26 @@ public static class OperatorConsoleStatutoryDiscountPolicyResolutionEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.ResolveAsync(
                 new OperatorConsoleStatutoryDiscountPolicyResolutionCommand(
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId ?? request.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.ParkingSessionId,
                     request.EntitlementType,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);

@@ -58,19 +58,28 @@ public static class OperatorConsoleSessionLookupEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.LookupAsync(
                 new OperatorConsoleSessionLookupCommand(
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.ParkingSessionId,
                     request.TicketReference,
                     request.PlateNumber,
                     request.LookupMode,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);

@@ -127,7 +127,7 @@ public sealed class OperatorConsoleAccessEvaluationApiIntegrationTests
             SiteGroupId,
             OperatorShiftId,
             "STATUTORY_DISCOUNT_VALIDATION",
-            "START_WORKFLOW",
+            OperatorConsoleActionCodes.SessionLookup,
             ParkingSessionId,
             "VIEW_EVIDENCE",
             "operator-console-access-evaluation-test",

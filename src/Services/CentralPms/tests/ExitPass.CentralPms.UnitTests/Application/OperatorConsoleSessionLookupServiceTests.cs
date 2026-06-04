@@ -211,7 +211,7 @@ public sealed class OperatorConsoleSessionLookupServiceTests
                 ShiftTakeoverId: null,
                 SiteGroupId,
                 SiteId,
-                "START_WORKFLOW",
+                OperatorConsoleActionCodes.SessionLookup,
                 "STATUTORY_DISCOUNT_VALIDATION",
                 "PARKING_SESSION",
                 ParkingSessionId));

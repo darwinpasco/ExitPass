@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
@@ -45,7 +46,7 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
         var persisted = await ReadPersistedEvaluationAsync(body.EvaluationId);
         persisted.Should().NotBeNull();
         persisted!.CorrelationId.Should().Be(context.CorrelationId);
-        persisted.RequestedAction.Should().Be("START_WORKFLOW");
+        persisted.RequestedAction.Should().Be(OperatorConsoleActionCodes.SessionLookup);
         persisted.EvaluationStatus.Should().Be("ALLOWED");
         persisted.OperatorUserId.Should().Be(context.UserId);
         persisted.HrIdentityMappingId.Should().Be(context.HrIdentityMappingId);
@@ -470,7 +471,7 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
                 SiteGroupId,
                 OperatorShiftId,
                 "STATUTORY_DISCOUNT_VALIDATION",
-                "START_WORKFLOW",
+                OperatorConsoleActionCodes.SessionLookup,
                 ParkingSessionId,
                 "VIEW_EVIDENCE",
                 $"op-access-eval-{CorrelationId:N}",

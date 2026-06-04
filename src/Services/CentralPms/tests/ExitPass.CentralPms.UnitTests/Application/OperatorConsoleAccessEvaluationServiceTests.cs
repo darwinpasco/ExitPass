@@ -41,6 +41,25 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
         result.CorrelationId.Should().Be(CorrelationId);
     }
 
+    [Theory]
+    [InlineData(OperatorConsoleActionCodes.SessionLookup)]
+    [InlineData(OperatorConsoleActionCodes.CreateStatutoryDiscountDraft)]
+    [InlineData(OperatorConsoleActionCodes.ViewStatutoryDiscountDraft)]
+    [InlineData(OperatorConsoleActionCodes.DecideStatutoryDiscount)]
+    [InlineData(OperatorConsoleActionCodes.CaptureEvidence)]
+    [InlineData(OperatorConsoleActionCodes.ViewEvidence)]
+    [InlineData(OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis)]
+    [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
+    public async Task EvaluateAsync_WhenActionCodeMappedForOperatorConsole_AllowsAction(string actionCode)
+    {
+        var sut = CreateSut(ValidContext);
+
+        var result = await sut.EvaluateAsync(Command(actionCode: actionCode), CancellationToken.None);
+
+        result.Allowed.Should().BeTrue();
+        result.PersistenceContext.RequestedAction.Should().Be(actionCode);
+    }
+
     /// <summary>
     /// Verifies supported rule failures produce stable denial reason codes.
     /// </summary>
@@ -95,7 +114,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
 
     private static OperatorConsoleAccessEvaluationCommand Command(
         string workflowCode = "STATUTORY_DISCOUNT_VALIDATION",
-        string actionCode = "START_WORKFLOW") =>
+        string actionCode = OperatorConsoleActionCodes.SessionLookup) =>
         new(
             UserId,
             DeviceBindingId,
