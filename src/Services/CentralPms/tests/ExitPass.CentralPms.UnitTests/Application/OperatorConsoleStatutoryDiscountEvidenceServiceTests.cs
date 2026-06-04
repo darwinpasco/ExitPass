@@ -79,6 +79,28 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceServiceTests
         await repository.DidNotReceiveWithAnyArgs().CaptureAsync(default!, default);
     }
 
+    /// <summary>
+    /// Verifies manual reference capture persists only masked reference metadata.
+    /// </summary>
+    [Fact]
+    public async Task CaptureAsync_WhenManualReferenceProvided_MasksReferenceBeforePersistence()
+    {
+        var repository = Repository();
+        repository.CaptureAsync(Arg.Any<OperatorConsoleStatutoryDiscountEvidencePersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(CaptureResult());
+        var sut = CreateSut(AccessResult(allowed: true, []), repository);
+
+        await sut.CaptureAsync(
+            Command(captureMethod: "MANUAL_REFERENCE", referenceNumber: "OSCA-2026-1234567"),
+            CancellationToken.None);
+
+        await repository.Received(1).CaptureAsync(
+            Arg.Is<OperatorConsoleStatutoryDiscountEvidencePersistenceCommand>(command =>
+                command.StorageReference == "manual-reference:****4567" &&
+                command.ReferenceNumberMasked == "****4567"),
+            Arg.Any<CancellationToken>());
+    }
+
     [Fact]
     public async Task CaptureAsync_WhenAccessDenied_DoesNotPersistEvidence()
     {
@@ -154,7 +176,9 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceServiceTests
 
     private static OperatorConsoleStatutoryDiscountEvidenceCaptureCommand Command(
         bool operatorConfirmation = true,
-        string evidenceType = "SENIOR_CITIZEN_ID") =>
+        string evidenceType = "SENIOR_CITIZEN_ID",
+        string captureMethod = "OPERATOR_CONFIRMED",
+        string? referenceNumber = null) =>
         new(
             DraftId,
             UserId,
@@ -163,12 +187,12 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceServiceTests
             SiteGroupId,
             ShiftId,
             evidenceType,
-            "OPERATOR_CONFIRMED",
+            captureMethod,
             FileName: null,
             ContentType: null,
             SizeBytes: null,
             StorageReference: null,
-            ReferenceNumber: null,
+            referenceNumber,
             Notes: null,
             operatorConfirmation,
             "evidence-test",

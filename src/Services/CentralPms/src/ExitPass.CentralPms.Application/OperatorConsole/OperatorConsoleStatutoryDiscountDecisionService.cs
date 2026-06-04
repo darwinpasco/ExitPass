@@ -10,7 +10,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// </summary>
 public sealed class OperatorConsoleStatutoryDiscountDecisionService : IOperatorConsoleStatutoryDiscountDecisionService
 {
-    private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
+    private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string ControlledActionCode = OperatorConsoleActionCodes.DecideStatutoryDiscount;
 
     private readonly IOperatorConsoleAccessEvaluationService _accessEvaluationService;

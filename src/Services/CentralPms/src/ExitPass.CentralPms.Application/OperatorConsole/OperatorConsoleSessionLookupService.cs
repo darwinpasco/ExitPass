@@ -10,7 +10,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// </summary>
 public sealed class OperatorConsoleSessionLookupService : IOperatorConsoleSessionLookupService
 {
-    private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
+    private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string ControlledActionCode = OperatorConsoleActionCodes.SessionLookup;
     private const string LookupModeParkingSessionId = "PARKING_SESSION_ID";
     private const string LookupModeTicketReference = "TICKET_REFERENCE";

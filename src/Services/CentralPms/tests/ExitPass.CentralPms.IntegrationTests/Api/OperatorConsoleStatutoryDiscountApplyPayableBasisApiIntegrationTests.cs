@@ -71,6 +71,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
 
         swaggerJson.Should().Contain("/v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis");
         swaggerJson.Should().Contain("ApplyOperatorConsoleStatutoryDiscountPayableBasis");
+        swaggerJson.Should().Contain("may create an applied tariff snapshot plus statutory discount payable-basis application evidence");
+        swaggerJson.Should().NotContain("does not create final APPLIED tariff snapshots");
         swaggerJson.Should().Contain("OperatorConsole");
     }
 
