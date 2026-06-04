@@ -461,7 +461,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
                 ShiftTakeoverId: null,
                 SiteGroupId,
                 SiteId,
-                "SUBMIT_DECISION",
+                OperatorConsoleActionCodes.CreateStatutoryDiscountDraft,
                 "STATUTORY_DISCOUNT_VALIDATION",
                 "PARKING_SESSION",
                 ParkingSessionId));

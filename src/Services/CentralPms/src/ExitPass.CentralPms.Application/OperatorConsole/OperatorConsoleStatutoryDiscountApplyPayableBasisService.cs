@@ -12,7 +12,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
     : IOperatorConsoleStatutoryDiscountApplyPayableBasisService
 {
     private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
-    private const string ControlledActionCode = "SUBMIT_DECISION";
+    private const string ControlledActionCode = OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis;
 
     private readonly IOperatorConsoleAccessEvaluationService _accessEvaluationService;
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;

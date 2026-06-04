@@ -186,7 +186,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
                 ShiftTakeoverId: null,
                 SiteGroupId,
                 SiteId,
-                "START_WORKFLOW",
+                OperatorConsoleActionCodes.ViewPolicyResolution,
                 "STATUTORY_DISCOUNT_VALIDATION",
                 TargetEntityType: null,
                 TargetEntityId: null));

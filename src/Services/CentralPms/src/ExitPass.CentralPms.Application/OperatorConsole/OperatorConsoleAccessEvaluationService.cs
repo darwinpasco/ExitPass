@@ -18,10 +18,14 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
 
     private static readonly HashSet<string> SupportedActions = new(StringComparer.Ordinal)
     {
-        "START_WORKFLOW",
-        "SUBMIT_DECISION",
-        "CAPTURE_EVIDENCE",
-        "VIEW_EVIDENCE"
+        OperatorConsoleActionCodes.SessionLookup,
+        OperatorConsoleActionCodes.CreateStatutoryDiscountDraft,
+        OperatorConsoleActionCodes.ViewStatutoryDiscountDraft,
+        OperatorConsoleActionCodes.DecideStatutoryDiscount,
+        OperatorConsoleActionCodes.CaptureEvidence,
+        OperatorConsoleActionCodes.ViewEvidence,
+        OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis,
+        OperatorConsoleActionCodes.ViewPolicyResolution
     };
 
     private static readonly HashSet<string> TrustedDeviceLevels = new(StringComparer.Ordinal)

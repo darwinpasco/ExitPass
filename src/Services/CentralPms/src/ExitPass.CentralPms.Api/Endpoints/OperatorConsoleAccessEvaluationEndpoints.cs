@@ -57,19 +57,28 @@ public static class OperatorConsoleAccessEvaluationEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.EvaluateAsync(
                 new OperatorConsoleAccessEvaluationCommand(
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.WorkflowCode,
                     request.ControlledActionCode,
                     request.ParkingSessionId,
                     request.EvidenceAccessIntent,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             var persistedResult = await writer.PersistAsync(result, httpRequest.HttpContext.RequestAborted);

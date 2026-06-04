@@ -20,6 +20,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 {
+    private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
     private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
@@ -123,6 +124,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         Guid? correlationId,
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountReadService service,
+        IOperatorConsoleAccessEvaluationService accessEvaluationService,
+        IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         ILoggerFactory loggerFactory)
     {
         var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
@@ -137,11 +140,28 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
+
+            var access = await EvaluateAndPersistAccessAsync(
+                identity,
+                OperatorConsoleActionCodes.ViewStatutoryDiscountDraft,
+                ParkingSessionId: null,
+                IdempotencyKey: $"operator-console-read-queue-{effectiveCorrelationId}",
+                accessEvaluationService,
+                accessEvaluationWriter,
+                httpRequest);
+
+            if (!access.Allowed)
+            {
+                return AccessDenied(access, effectiveCorrelationId);
+            }
+
             var result = await service.ListDraftsAsync(
                 new OperatorConsoleStatutoryDiscountDraftQueueQuery(
                     status,
                     entitlementType,
-                    siteId,
+                    siteId ?? access.SiteContext.SiteId,
                     createdFrom,
                     createdTo,
                     page.GetValueOrDefault(1),
@@ -177,6 +197,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         Guid? correlationId,
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountReadService service,
+        IOperatorConsoleAccessEvaluationService accessEvaluationService,
+        IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         ILoggerFactory loggerFactory)
     {
         var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
@@ -190,6 +212,9 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
+
             var result = await service.GetDraftAsync(
                 new OperatorConsoleStatutoryDiscountDraftDetailQuery(draftId, effectiveCorrelationId),
                 httpRequest.HttpContext.RequestAborted);
@@ -201,6 +226,24 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     "STATUTORY_DISCOUNT_DRAFT_NOT_FOUND",
                     "The Operator Console statutory discount draft was not found.",
                     effectiveCorrelationId));
+            }
+
+            var access = await EvaluateAndPersistAccessAsync(
+                identity with
+                {
+                    SiteId = result.SiteId,
+                    SiteGroupId = result.SiteGroupId
+                },
+                OperatorConsoleActionCodes.ViewStatutoryDiscountDraft,
+                result.ParkingSessionId,
+                $"operator-console-read-detail-{draftId}-{effectiveCorrelationId}",
+                accessEvaluationService,
+                accessEvaluationWriter,
+                httpRequest);
+
+            if (!access.Allowed)
+            {
+                return AccessDenied(access, effectiveCorrelationId);
             }
 
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -242,13 +285,22 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.DraftAsync(
                 new OperatorConsoleStatutoryDiscountDraftCommand(
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.ParkingSessionId,
                     request.TicketReference,
                     request.PlateNumber,
@@ -264,7 +316,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     request.AttestationNotes,
                     request.ReasonCode,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
@@ -415,20 +467,29 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.DecideAsync(
                 new OperatorConsoleStatutoryDiscountDecisionCommand(
                     draftId,
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.Decision,
                     request.DecisionReasonCode,
                     request.DecisionNotes,
                     request.ReviewerAttestation,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
@@ -554,14 +615,23 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.CaptureAsync(
                 new OperatorConsoleStatutoryDiscountEvidenceCaptureCommand(
                     draftId,
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.EvidenceType,
                     request.CaptureMethod,
                     request.FileName,
@@ -572,7 +642,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                     request.Notes,
                     request.OperatorConfirmation,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             if (result is null)
@@ -624,19 +694,17 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
-            var userId = ReadRequiredHeaderGuid(httpRequest, "X-Operator-User-Id");
-            var deviceBindingId = ReadOptionalHeaderGuid(httpRequest, "X-Operator-Device-Binding-Id");
-            var shiftId = ReadOptionalHeaderGuid(httpRequest, "X-Operator-Shift-Id");
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
 
             var result = await service.ListAsync(
                 new OperatorConsoleStatutoryDiscountEvidenceListQuery(
                     draftId,
-                    userId,
-                    deviceBindingId,
-                    SiteId: null,
-                    SiteGroupId: null,
-                    shiftId,
-                    effectiveCorrelationId),
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             if (result is null)
@@ -714,33 +782,6 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.CorrelationId)).ToArray(),
             result.CorrelationId);
 
-    private static Guid ReadRequiredHeaderGuid(HttpRequest request, string headerName)
-    {
-        var value = request.Headers[headerName].FirstOrDefault();
-        if (Guid.TryParse(value, out var parsed) && parsed != Guid.Empty)
-        {
-            return parsed;
-        }
-
-        throw new ArgumentException($"{headerName} header is required.", headerName);
-    }
-
-    private static Guid? ReadOptionalHeaderGuid(HttpRequest request, string headerName)
-    {
-        var value = request.Headers[headerName].FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        if (Guid.TryParse(value, out var parsed) && parsed != Guid.Empty)
-        {
-            return parsed;
-        }
-
-        throw new ArgumentException($"{headerName} header must be a valid GUID.", headerName);
-    }
-
     private static async Task<IResult> ApplyPayableBasisAsync(
         Guid validationId,
         OperatorConsoleStatutoryDiscountApplyPayableBasisRequest request,
@@ -758,17 +799,26 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
             var result = await service.ApplyAsync(
                 new OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
                     validationId,
-                    request.UserId,
-                    request.OperatorDeviceBindingId,
-                    request.SiteId,
-                    request.SiteGroupId,
-                    request.OperatorShiftId,
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
                     request.OriginalTariffSnapshotId,
                     request.IdempotencyKey,
-                    request.CorrelationId),
+                    identity.CorrelationId),
                 httpRequest.HttpContext.RequestAborted);
 
             activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
@@ -843,4 +893,39 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.IneligibilityReason,
             result.ErrorCode,
             result.CorrelationId);
+
+    private static async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAccessAsync(
+        OperatorConsoleIdentityContext identity,
+        string actionCode,
+        Guid? ParkingSessionId,
+        string IdempotencyKey,
+        IOperatorConsoleAccessEvaluationService accessEvaluationService,
+        IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
+        HttpRequest httpRequest)
+    {
+        var evaluation = await accessEvaluationService.EvaluateAsync(
+            new OperatorConsoleAccessEvaluationCommand(
+                identity.UserId,
+                identity.OperatorDeviceBindingId,
+                identity.SiteId,
+                identity.SiteGroupId,
+                identity.OperatorShiftId,
+                WorkflowCode,
+                actionCode,
+                ParkingSessionId,
+                EvidenceAccessIntent: null,
+                IdempotencyKey,
+                identity.CorrelationId),
+            httpRequest.HttpContext.RequestAborted);
+
+        return await accessEvaluationWriter.PersistAsync(evaluation, httpRequest.HttpContext.RequestAborted);
+    }
+
+    private static IResult AccessDenied(OperatorConsoleAccessEvaluationResult access, Guid correlationId) =>
+        Results.Json(
+            BuildError(
+                "OPERATOR_CONSOLE_ACCESS_DENIED",
+                "Access denied for this Operator Console action.",
+                correlationId),
+            statusCode: StatusCodes.Status403Forbidden);
 }

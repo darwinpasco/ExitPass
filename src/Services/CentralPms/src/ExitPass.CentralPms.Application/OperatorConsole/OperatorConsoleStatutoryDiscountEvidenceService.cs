@@ -12,8 +12,8 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceService
     : IOperatorConsoleStatutoryDiscountEvidenceService
 {
     private const string WorkflowCode = "STATUTORY_DISCOUNT_VALIDATION";
-    private const string CaptureEvidenceActionCode = "CAPTURE_EVIDENCE";
-    private const string ViewEvidenceActionCode = "VIEW_EVIDENCE";
+    private const string CaptureEvidenceActionCode = OperatorConsoleActionCodes.CaptureEvidence;
+    private const string ViewEvidenceActionCode = OperatorConsoleActionCodes.ViewEvidence;
 
     private static readonly HashSet<string> SupportedEvidenceTypes = new(StringComparer.Ordinal)
     {

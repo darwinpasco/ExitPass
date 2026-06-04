@@ -25,6 +25,9 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     private static readonly Guid SiteGroupId = Guid.Parse("8c000000-0000-0000-0000-000000000004");
     private static readonly Guid PolicyId = Guid.Parse("8c000000-0000-0000-0000-000000000005");
     private static readonly Guid CorrelationId = Guid.Parse("8c000000-0000-0000-0000-000000000006");
+    private static readonly Guid UserId = Guid.Parse("8c000000-0000-0000-0000-000000000007");
+    private static readonly Guid DeviceBindingId = Guid.Parse("8c000000-0000-0000-0000-000000000008");
+    private static readonly Guid ShiftId = Guid.Parse("8c000000-0000-0000-0000-000000000009");
 
     [Fact]
     public void QueueEndpointRouteExists()
@@ -116,8 +119,10 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     {
         using var factory = CreateFactory(detail: Detail());
         using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{QueueEndpoint}?correlationId={CorrelationId}");
+        AddOperatorHeaders(request);
 
-        using var response = await client.GetAsync($"{QueueEndpoint}?correlationId={CorrelationId}");
+        using var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftQueueResponse>();
@@ -136,8 +141,10 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     {
         using var factory = CreateFactory(detail: null, emptyQueue: true);
         using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{QueueEndpoint}?correlationId={CorrelationId}");
+        AddOperatorHeaders(request);
 
-        using var response = await client.GetAsync($"{QueueEndpoint}?correlationId={CorrelationId}");
+        using var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftQueueResponse>();
@@ -151,8 +158,10 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     {
         using var factory = CreateFactory(detail: Detail());
         using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{QueueEndpoint}/{DraftId}?correlationId={CorrelationId}");
+        AddOperatorHeaders(request);
 
-        using var response = await client.GetAsync($"{QueueEndpoint}/{DraftId}?correlationId={CorrelationId}");
+        using var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>();
@@ -171,13 +180,30 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     {
         using var factory = CreateFactory(detail: null);
         using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{QueueEndpoint}/{DraftId}?correlationId={CorrelationId}");
+        AddOperatorHeaders(request);
 
-        using var response = await client.GetAsync($"{QueueEndpoint}/{DraftId}?correlationId={CorrelationId}");
+        using var response = await client.SendAsync(request);
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
         body.Should().NotBeNull();
         body!.ErrorCode.Should().Be("STATUTORY_DISCOUNT_DRAFT_NOT_FOUND");
+    }
+
+    [Fact]
+    public async Task Queue_WhenOperatorIdentityMissing_ReturnsBadRequest()
+    {
+        using var factory = CreateFactory(detail: Detail());
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"{QueueEndpoint}?correlationId={CorrelationId}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_READ_REQUEST");
+        body.Message.Should().Contain("Operator user identity is required");
     }
 
     private static CustomWebApplicationFactory CreateFactory(
@@ -189,7 +215,52 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
                 services.RemoveAll<IOperatorConsoleStatutoryDiscountReadService>();
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountReadService>(
                     new FakeReadService(detail, emptyQueue));
+                services.RemoveAll<IOperatorConsoleAccessEvaluationService>();
+                services.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
+                services.AddSingleton(CreateFakeAccessEvaluationService(allowed: true));
+                services.AddSingleton(CreateFakeAccessEvaluationWriter());
             });
+
+    private static void AddOperatorHeaders(HttpRequestMessage request)
+    {
+        request.Headers.Add("X-Operator-User-Id", UserId.ToString());
+        request.Headers.Add("X-Operator-Device-Binding-Id", DeviceBindingId.ToString());
+        request.Headers.Add("X-Operator-Shift-Id", ShiftId.ToString());
+    }
+
+    private static IOperatorConsoleAccessEvaluationService CreateFakeAccessEvaluationService(bool allowed)
+        => new FakeAccessEvaluationService(allowed);
+
+    private static IOperatorConsoleAccessEvaluationWriter CreateFakeAccessEvaluationWriter()
+        => new FakeAccessEvaluationWriter();
+
+    private static OperatorConsoleAccessEvaluationResult AccessResult(
+        OperatorConsoleAccessEvaluationCommand command,
+        bool allowed) =>
+        new(
+            Guid.Empty,
+            allowed,
+            allowed ? "ALLOWED" : "DENIED",
+            allowed ? [] : ["NO_ACTIVE_SHIFT"],
+            allowed ? "OPERATOR" : null,
+            new OperatorConsoleDeviceTrustResult(command.OperatorDeviceBindingId, "ACTIVE", "BROWSER_KEY_AND_MTLS", Trusted: allowed),
+            new OperatorConsoleShiftContextResult(command.OperatorShiftId, "ACTIVE", Active: allowed),
+            new OperatorConsoleSiteContextResult(command.SiteId ?? SiteId, command.SiteGroupId ?? SiteGroupId, Assigned: allowed),
+            DateTimeOffset.Parse("2026-06-03T10:00:00+08:00"),
+            Persisted: false,
+            command.CorrelationId,
+            new OperatorConsoleAccessEvaluationPersistenceContext(
+                command.UserId,
+                HrIdentityMappingId: null,
+                command.OperatorDeviceBindingId,
+                command.OperatorShiftId,
+                ShiftTakeoverId: null,
+                command.SiteGroupId ?? SiteGroupId,
+                command.SiteId ?? SiteId,
+                command.ControlledActionCode,
+                command.WorkflowCode,
+                command.ParkingSessionId.HasValue ? "PARKING_SESSION" : null,
+                command.ParkingSessionId));
 
     private static string[] SplitHeaderValues(HttpResponseMessage response, string headerName)
     {
@@ -302,5 +373,32 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
             OperatorConsoleStatutoryDiscountDraftDetailQuery query,
             CancellationToken cancellationToken) =>
             Task.FromResult(_detail);
+    }
+
+    private sealed class FakeAccessEvaluationService : IOperatorConsoleAccessEvaluationService
+    {
+        private readonly bool _allowed;
+
+        public FakeAccessEvaluationService(bool allowed)
+        {
+            _allowed = allowed;
+        }
+
+        public Task<OperatorConsoleAccessEvaluationResult> EvaluateAsync(
+            OperatorConsoleAccessEvaluationCommand command,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AccessResult(command, _allowed) with { Persisted = false });
+    }
+
+    private sealed class FakeAccessEvaluationWriter : IOperatorConsoleAccessEvaluationWriter
+    {
+        public Task<OperatorConsoleAccessEvaluationResult> PersistAsync(
+            OperatorConsoleAccessEvaluationResult result,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result with
+            {
+                EvaluationId = Guid.Parse("8c000000-0000-0000-0000-000000000010"),
+                Persisted = true
+            });
     }
 }

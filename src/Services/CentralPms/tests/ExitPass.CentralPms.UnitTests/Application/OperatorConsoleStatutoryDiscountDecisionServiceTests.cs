@@ -268,7 +268,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionServiceTests
                 ShiftTakeoverId: null,
                 SiteGroupId,
                 SiteId,
-                "SUBMIT_DECISION",
+                OperatorConsoleActionCodes.DecideStatutoryDiscount,
                 "STATUTORY_DISCOUNT_VALIDATION",
                 TargetEntityType: null,
                 TargetEntityId: null));
