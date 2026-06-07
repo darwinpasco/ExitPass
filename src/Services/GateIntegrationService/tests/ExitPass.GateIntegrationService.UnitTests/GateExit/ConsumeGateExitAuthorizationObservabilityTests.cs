@@ -89,7 +89,13 @@ public sealed class ConsumeGateExitAuthorizationObservabilityTests
                     CorrelationId),
                 CancellationToken.None));
 
-        var activity = Assert.Single(listener.StoppedActivities, x => HasTag(x, "result_code", "INVALID_GATE_CONSUME_REQUEST"));
+        var activity = Assert.Single(
+            listener.StoppedActivities,
+            x => x.DisplayName == "ConsumeGateExitAuthorization"
+                && HasTag(x, "operation", "consume_gate_exit_authorization")
+                && HasTag(x, "result_code", "INVALID_GATE_CONSUME_REQUEST")
+                && HasTag(x, "central_pms_consume_result", "NOT_CALLED")
+                && HasTag(x, "rejection_reason", "GateDeviceId is required. (Parameter 'command')"));
         AssertTag(activity, "correlation_id", CorrelationId);
         AssertTag(activity, "exit_authorization_id", ExitAuthorizationId);
         AssertTag(activity, "service_identity_id", ServiceIdentityId);
