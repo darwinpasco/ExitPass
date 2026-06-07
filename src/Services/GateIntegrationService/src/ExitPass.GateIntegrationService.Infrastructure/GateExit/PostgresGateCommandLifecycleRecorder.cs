@@ -11,7 +11,6 @@ namespace ExitPass.GateIntegrationService.Infrastructure.GateExit;
 /// </summary>
 public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycleRecorder
 {
-    private const string CommandType = "GateAuthorizationConsumed";
     private readonly string _connectionString;
     private readonly GateCommandRetryPolicy _retryPolicy = GateCommandRetryPolicy.Default;
 
@@ -33,215 +32,54 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
         ArgumentNullException.ThrowIfNull(handoff);
 
         var now = DateTimeOffset.UtcNow;
-        var processingKey = ResolveProcessingKey(handoff);
-
-        const string sql = """
-            INSERT INTO gates.gate_commands (
-                command_id,
-                command_type,
-                source_processing_id,
-                source_event_id,
-                exit_authorization_id,
-                gate_authorization_consumption_id,
-                parking_session_id,
-                payment_attempt_id,
-                tariff_snapshot_id,
-                gate_device_id,
-                gate_device_identifier,
-                lane_id,
-                site_id,
-                vendor_system_id,
-                command_status,
-                attempt_count,
-                max_attempts,
-                retry_policy_code,
-                requested_at,
-                last_attempted_at,
-                started_at,
-                completed_at,
-                next_attempt_at,
-                terminal_failure_at,
-                failure_code,
-                failure_reason,
-                last_failure_code,
-                last_failure_reason,
-                correlation_id,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                @command_id,
-                @command_type,
-                @source_processing_id,
-                @source_event_id,
-                @exit_authorization_id,
-                @gate_authorization_consumption_id,
-                @parking_session_id,
-                @payment_attempt_id,
-                @tariff_snapshot_id,
-                @gate_device_id,
-                @gate_device_identifier,
-                @lane_id,
-                @site_id,
-                @vendor_system_id,
-                'IN_PROGRESS',
-                1,
-                @max_attempts,
-                @retry_policy_code,
-                @now,
-                @now,
-                @now,
-                NULL,
-                NULL,
-                NULL,
-                NULL,
-                NULL,
-                NULL,
-                NULL,
-                @correlation_id,
-                @now,
-                @now
-            )
-            ON CONFLICT (source_processing_id, command_type) DO UPDATE
-            SET
-                command_status = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN 'IN_PROGRESS'
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
-                        THEN 'TERMINAL_FAILURE'
-                    ELSE gates.gate_commands.command_status
-                END,
-                attempt_count = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN LEAST(gates.gate_commands.attempt_count + 1, gates.gate_commands.max_attempts)
-                    ELSE gates.gate_commands.attempt_count
-                END,
-                last_attempted_at = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN @now
-                    ELSE gates.gate_commands.last_attempted_at
-                END,
-                started_at = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN @now
-                    ELSE gates.gate_commands.started_at
-                END,
-                completed_at = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN NULL
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
-                        THEN COALESCE(gates.gate_commands.completed_at, @now)
-                    ELSE gates.gate_commands.completed_at
-                END,
-                next_attempt_at = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN NULL
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
-                        THEN NULL
-                    ELSE gates.gate_commands.next_attempt_at
-                END,
-                terminal_failure_at = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
-                        THEN COALESCE(gates.gate_commands.terminal_failure_at, @now)
-                    ELSE gates.gate_commands.terminal_failure_at
-                END,
-                failure_code = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN NULL
-                    ELSE gates.gate_commands.failure_code
-                END,
-                failure_reason = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                         AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                        THEN NULL
-                    ELSE gates.gate_commands.failure_reason
-                END,
-                updated_at = CASE
-                    WHEN gates.gate_commands.command_status IN ('FAILED', 'RETRYABLE')
-                         AND (
-                             gates.gate_commands.attempt_count < gates.gate_commands.max_attempts
-                             AND COALESCE(gates.gate_commands.next_attempt_at, @now) <= @now
-                             OR gates.gate_commands.attempt_count >= gates.gate_commands.max_attempts
-                         )
-                        THEN @now
-                    ELSE gates.gate_commands.updated_at
-                END
-            RETURNING
-                command_id,
-                source_processing_id,
-                source_event_id,
-                exit_authorization_id,
-                gate_authorization_consumption_id,
-                parking_session_id,
-                payment_attempt_id,
-                tariff_snapshot_id,
-                gate_device_id,
-                gate_device_identifier,
-                lane_id,
-                site_id,
-                vendor_system_id,
-                command_status,
-                attempt_count,
-                max_attempts,
-                retry_policy_code,
-                requested_at,
-                last_attempted_at,
-                started_at,
-                completed_at,
-                next_attempt_at,
-                terminal_failure_at,
-                failure_code,
-                failure_reason,
-                last_failure_code,
-                last_failure_reason,
-                correlation_id,
-                (xmax = 0) AS inserted;
-            """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
-        await using var command = new NpgsqlCommand(sql, connection)
+        var state = await ReadConsumptionStateAsync(connection, transaction, handoff, cancellationToken);
+        if (state is null)
         {
-            CommandTimeout = 30
-        };
-
-        AddHandoffParameters(command, handoff, processingKey, now);
-
-        await using var reader = await command.ExecuteReaderAsync(
-            CommandBehavior.SingleRow,
-            cancellationToken);
-
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            throw new InvalidOperationException("Gate command lifecycle state was not returned.");
+            throw new InvalidOperationException(
+                $"Gate authorization consumption '{handoff.GateAuthorizationConsumptionId}' was not found.");
         }
 
-        var record = ReadRecord(reader);
-        var inserted = reader.GetBoolean(reader.GetOrdinal("inserted"));
-        var canInvokeAdapter = record.CommandStatus == GateCommandStatus.InProgress
-            && (inserted || record.AttemptCount > 1);
+        var attemptCount = await CountCommandAttemptsAsync(
+            connection,
+            transaction,
+            handoff.GateAuthorizationConsumptionId,
+            cancellationToken);
+        var status = MapCommandStatus(state, attemptCount);
 
-        return new GateCommandLifecycleStart(record, inserted, canInvokeAdapter);
+        if (status is GateCommandStatus.Succeeded)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new GateCommandLifecycleStart(
+                CreateRecord(state, ResolveExistingCommandId(state), handoff, status, attemptCount, now, null, null),
+                Created: false,
+                CanInvokeAdapter: false);
+        }
+
+        if (status is GateCommandStatus.TerminalFailure)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return new GateCommandLifecycleStart(
+                CreateRecord(state, ResolveExistingCommandId(state), handoff, status, attemptCount, now, null, now),
+                Created: false,
+                CanInvokeAdapter: false);
+        }
+
+        var commandId = Guid.NewGuid();
+        var created = attemptCount == 0;
+        var nextAttempt = attemptCount + 1;
+        await InsertCommandEventAsync(connection, transaction, handoff, commandId, now, cancellationToken);
+        await MarkCommandRequestedAsync(connection, transaction, state, now, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return new GateCommandLifecycleStart(
+            CreateRecord(state, commandId, handoff, GateCommandStatus.InProgress, nextAttempt, now, now, null),
+            Created: created,
+            CanInvokeAdapter: true);
     }
 
     /// <inheritdoc />
@@ -251,23 +89,28 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
         CancellationToken cancellationToken)
     {
         const string sql = """
-            UPDATE gates.gate_commands
+            WITH updated_event AS (
+                UPDATE gates.gate_events
+                SET
+                    event_status = 'SUCCESS',
+                    event_reason_code = 'GATE_COMMAND_SUCCEEDED'
+                WHERE gate_event_id = @command_id
+                RETURNING gate_authorization_consumption_id
+            )
+            UPDATE gates.gate_authorization_consumptions AS gac
             SET
-                command_status = 'SUCCEEDED',
-                completed_at = @completed_at,
-                next_attempt_at = NULL,
-                terminal_failure_at = NULL,
-                failure_code = NULL,
-                failure_reason = NULL,
-                last_failure_code = NULL,
-                last_failure_reason = NULL,
-                updated_at = @completed_at
-            WHERE command_id = @command_id;
+                command_requested = TRUE,
+                command_result_status = 'OPENED',
+                command_result_at = @completed_at,
+                failure_detail = NULL,
+                updated_at = @completed_at,
+                row_version = row_version + 1
+            FROM updated_event
+            WHERE gac.gate_authorization_consumption_id = updated_event.gate_authorization_consumption_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-
         await using var command = new NpgsqlCommand(sql, connection)
         {
             CommandTimeout = 30
@@ -286,119 +129,295 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
         bool retryable,
         CancellationToken cancellationToken)
     {
+        var completedAtUtc = DateTimeOffset.UtcNow;
         const string sql = """
-            UPDATE gates.gate_commands
+            WITH updated_event AS (
+                UPDATE gates.gate_events
+                SET
+                    event_status = CASE
+                        WHEN @retryable THEN 'FAILED'::gates.gate_event_status_enum
+                        ELSE 'ERROR'::gates.gate_event_status_enum
+                    END,
+                    event_reason_code = @failure_code
+                WHERE gate_event_id = @command_id
+                RETURNING gate_authorization_consumption_id
+            )
+            UPDATE gates.gate_authorization_consumptions AS gac
             SET
-                command_status = CASE
-                    WHEN @retryable AND attempt_count >= max_attempts THEN 'TERMINAL_FAILURE'
-                    WHEN @retryable THEN 'RETRYABLE'
-                    ELSE 'FAILED'
-                END,
-                completed_at = @completed_at,
-                next_attempt_at = CASE
-                    WHEN @retryable AND attempt_count < max_attempts THEN @next_attempt_at
-                    ELSE NULL
-                END,
-                terminal_failure_at = CASE
-                    WHEN @retryable AND attempt_count >= max_attempts THEN @completed_at
-                    ELSE terminal_failure_at
-                END,
-                failure_code = @failure_code,
-                failure_reason = @failure_reason,
-                last_failure_code = @failure_code,
-                last_failure_reason = @failure_reason,
-                updated_at = @completed_at
-            WHERE command_id = @command_id;
+                command_requested = TRUE,
+                command_result_status = 'FAILED',
+                command_result_at = @completed_at,
+                failure_detail = @failure_reason,
+                updated_at = @completed_at,
+                row_version = row_version + 1
+            FROM updated_event
+            WHERE gac.gate_authorization_consumption_id = updated_event.gate_authorization_consumption_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-
         await using var command = new NpgsqlCommand(sql, connection)
         {
             CommandTimeout = 30
         };
         command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = commandId;
-        var completedAtUtc = DateTimeOffset.UtcNow;
         command.Parameters.Add("retryable", NpgsqlDbType.Boolean).Value = retryable;
         command.Parameters.Add("completed_at", NpgsqlDbType.TimestampTz).Value = completedAtUtc;
-        command.Parameters.Add("next_attempt_at", NpgsqlDbType.TimestampTz).Value = completedAtUtc.Add(_retryPolicy.RetryDelay);
         command.Parameters.Add("failure_code", NpgsqlDbType.Varchar).Value = failureCode;
         command.Parameters.Add("failure_reason", NpgsqlDbType.Text).Value = failureReason;
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static void AddHandoffParameters(
-        NpgsqlCommand command,
+    private static async Task<ConsumptionState?> ReadConsumptionStateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
         GateAuthorizationConsumedHandoff handoff,
-        Guid processingKey,
-        DateTimeOffset now)
+        CancellationToken cancellationToken)
     {
-        command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
-        command.Parameters.Add("command_type", NpgsqlDbType.Varchar).Value = CommandType;
-        command.Parameters.Add("source_processing_id", NpgsqlDbType.Uuid).Value = processingKey;
-        command.Parameters.Add("source_event_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.EventId == Guid.Empty ? null : handoff.EventId);
-        command.Parameters.Add("exit_authorization_id", NpgsqlDbType.Uuid).Value = handoff.ExitAuthorizationId;
-        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value = handoff.GateAuthorizationConsumptionId;
-        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = handoff.ParkingSessionId;
-        command.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = handoff.PaymentAttemptId;
-        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = handoff.TariffSnapshotId;
-        command.Parameters.Add("gate_device_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.GateDeviceId);
-        command.Parameters.Add("gate_device_identifier", NpgsqlDbType.Varchar).Value = DbValue(handoff.GateDeviceIdentifier);
-        command.Parameters.Add("lane_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.LaneId);
-        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.SiteId);
-        command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.VendorSystemId);
-        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = handoff.CorrelationId;
-        command.Parameters.Add("max_attempts", NpgsqlDbType.Integer).Value = GateCommandRetryPolicy.Default.MaxAttempts;
-        command.Parameters.Add("retry_policy_code", NpgsqlDbType.Varchar).Value = GateCommandRetryPolicy.Default.PolicyCode;
-        command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = now;
-    }
+        const string sql = """
+            SELECT
+                gate_authorization_consumption_id,
+                exit_authorization_id,
+                gate_device_id,
+                site_id,
+                lane_id,
+                command_requested,
+                command_result_status::text AS command_result_status,
+                command_result_at,
+                failure_detail,
+                correlation_id,
+                created_by_service_identity_id
+            FROM gates.gate_authorization_consumptions
+            WHERE gate_authorization_consumption_id = @gate_authorization_consumption_id
+            FOR UPDATE;
+            """;
 
-    private static GateCommandLifecycleRecord ReadRecord(NpgsqlDataReader reader)
-    {
-        return new GateCommandLifecycleRecord(
-            reader.GetGuid(reader.GetOrdinal("command_id")),
-            reader.GetGuid(reader.GetOrdinal("source_processing_id")),
-            ReadNullableGuid(reader, "source_event_id") ?? Guid.Empty,
-            reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
-            reader.GetGuid(reader.GetOrdinal("gate_authorization_consumption_id")),
-            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-            reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
-            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
-            ReadNullableGuid(reader, "gate_device_id"),
-            ReadNullableString(reader, "gate_device_identifier"),
-            ReadNullableGuid(reader, "lane_id"),
-            ReadNullableGuid(reader, "site_id"),
-            ReadNullableGuid(reader, "vendor_system_id"),
-            ParseStatus(reader.GetString(reader.GetOrdinal("command_status"))),
-            reader.GetInt32(reader.GetOrdinal("attempt_count")),
-            reader.GetInt32(reader.GetOrdinal("max_attempts")),
-            reader.GetString(reader.GetOrdinal("retry_policy_code")),
-            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
-            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_attempted_at")),
-            ReadNullableDateTimeOffset(reader, "started_at"),
-            ReadNullableDateTimeOffset(reader, "completed_at"),
-            ReadNullableDateTimeOffset(reader, "next_attempt_at"),
-            ReadNullableDateTimeOffset(reader, "terminal_failure_at"),
-            ReadNullableString(reader, "failure_code"),
-            ReadNullableString(reader, "failure_reason"),
-            ReadNullableString(reader, "last_failure_code"),
-            ReadNullableString(reader, "last_failure_reason"),
-            reader.GetGuid(reader.GetOrdinal("correlation_id")));
-    }
-
-    private static GateCommandStatus ParseStatus(string status) =>
-        status switch
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
         {
-            "REQUESTED" => GateCommandStatus.Requested,
-            "IN_PROGRESS" => GateCommandStatus.InProgress,
-            "SUCCEEDED" => GateCommandStatus.Succeeded,
-            "FAILED" => GateCommandStatus.Failed,
-            "RETRYABLE" => GateCommandStatus.Retryable,
-            "TERMINAL_FAILURE" => GateCommandStatus.TerminalFailure,
-            _ => throw new InvalidOperationException($"Unknown gate command status '{status}'.")
+            CommandTimeout = 30
         };
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            handoff.GateAuthorizationConsumptionId;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new ConsumptionState(
+            reader.GetGuid(reader.GetOrdinal("gate_authorization_consumption_id")),
+            ReadNullableGuid(reader, "exit_authorization_id") ?? handoff.ExitAuthorizationId,
+            ReadNullableGuid(reader, "gate_device_id") ?? handoff.GateDeviceId,
+            reader.GetGuid(reader.GetOrdinal("site_id")),
+            ReadNullableGuid(reader, "lane_id") ?? handoff.LaneId,
+            reader.GetBoolean(reader.GetOrdinal("command_requested")),
+            ReadNullableString(reader, "command_result_status"),
+            ReadNullableDateTimeOffset(reader, "command_result_at"),
+            ReadNullableString(reader, "failure_detail"),
+            ReadNullableGuid(reader, "correlation_id") ?? handoff.CorrelationId,
+            reader.GetGuid(reader.GetOrdinal("created_by_service_identity_id")));
+    }
+
+    private static async Task<int> CountCommandAttemptsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid gateAuthorizationConsumptionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT COUNT(*)::integer
+            FROM gates.gate_events
+            WHERE gate_authorization_consumption_id = @gate_authorization_consumption_id
+              AND event_type = 'GATE_OPEN_COMMAND_REQUESTED';
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
+        {
+            CommandTimeout = 30
+        };
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            gateAuthorizationConsumptionId;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is int value ? value : Convert.ToInt32(result);
+    }
+
+    private static async Task InsertCommandEventAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        GateAuthorizationConsumedHandoff handoff,
+        Guid commandId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO gates.gate_events (
+                gate_event_id,
+                gate_device_id,
+                gate_authorization_consumption_id,
+                exit_authorization_id,
+                site_id,
+                lane_id,
+                event_type,
+                event_status,
+                event_reason_code,
+                event_payload_ref,
+                source_event_ref,
+                occurred_at,
+                received_at,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id
+            )
+            SELECT
+                @gate_event_id,
+                COALESCE(@gate_device_id, gac.gate_device_id),
+                gac.gate_authorization_consumption_id,
+                gac.exit_authorization_id,
+                COALESCE(@site_id, gac.site_id),
+                COALESCE(@lane_id, gac.lane_id),
+                'GATE_OPEN_COMMAND_REQUESTED',
+                'RECORDED',
+                'GATE_COMMAND_REQUESTED',
+                @event_payload_ref,
+                @source_event_ref,
+                @occurred_at,
+                @received_at,
+                @correlation_id,
+                @created_at,
+                gac.created_by_service_identity_id
+            FROM gates.gate_authorization_consumptions AS gac
+            WHERE gac.gate_authorization_consumption_id = @gate_authorization_consumption_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
+        {
+            CommandTimeout = 30
+        };
+        command.Parameters.Add("gate_event_id", NpgsqlDbType.Uuid).Value = commandId;
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            handoff.GateAuthorizationConsumptionId;
+        command.Parameters.Add("gate_device_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.GateDeviceId);
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.SiteId);
+        command.Parameters.Add("lane_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.LaneId);
+        command.Parameters.Add("event_payload_ref", NpgsqlDbType.Varchar).Value =
+            DbValue($"gate-command-retry={GateCommandRetryPolicy.Default.PolicyCode}");
+        command.Parameters.Add("source_event_ref", NpgsqlDbType.Varchar).Value = DbValue(handoff.SourceEventRef);
+        command.Parameters.Add("occurred_at", NpgsqlDbType.TimestampTz).Value = now;
+        command.Parameters.Add("received_at", NpgsqlDbType.TimestampTz).Value = now;
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = handoff.CorrelationId;
+        command.Parameters.Add("created_at", NpgsqlDbType.TimestampTz).Value = now;
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task MarkCommandRequestedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        ConsumptionState state,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE gates.gate_authorization_consumptions
+            SET
+                command_requested = TRUE,
+                command_result_status = 'REQUESTED',
+                command_result_at = @command_result_at,
+                failure_detail = NULL,
+                updated_at = @updated_at,
+                row_version = row_version + 1
+            WHERE gate_authorization_consumption_id = @gate_authorization_consumption_id;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction)
+        {
+            CommandTimeout = 30
+        };
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            state.GateAuthorizationConsumptionId;
+        command.Parameters.Add("command_result_at", NpgsqlDbType.TimestampTz).Value = now;
+        command.Parameters.Add("updated_at", NpgsqlDbType.TimestampTz).Value = now;
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private GateCommandStatus MapCommandStatus(ConsumptionState state, int attemptCount)
+    {
+        if (string.Equals(state.CommandResultStatus, "OPENED", StringComparison.OrdinalIgnoreCase))
+        {
+            return GateCommandStatus.Succeeded;
+        }
+
+        if (string.Equals(state.CommandResultStatus, "FAILED", StringComparison.OrdinalIgnoreCase)
+            && !_retryPolicy.HasAttemptsRemaining(attemptCount))
+        {
+            return GateCommandStatus.TerminalFailure;
+        }
+
+        if (string.Equals(state.CommandResultStatus, "FAILED", StringComparison.OrdinalIgnoreCase))
+        {
+            return GateCommandStatus.Retryable;
+        }
+
+        return GateCommandStatus.Requested;
+    }
+
+    private static GateCommandLifecycleRecord CreateRecord(
+        ConsumptionState state,
+        Guid commandId,
+        GateAuthorizationConsumedHandoff handoff,
+        GateCommandStatus status,
+        int attemptCount,
+        DateTimeOffset now,
+        DateTimeOffset? startedAt,
+        DateTimeOffset? terminalFailureAt)
+    {
+        DateTimeOffset? completedAt = status is GateCommandStatus.Succeeded or GateCommandStatus.Failed or GateCommandStatus.TerminalFailure
+            ? state.CommandResultAt ?? now
+            : null;
+        var failureCode = status is GateCommandStatus.Retryable or GateCommandStatus.Failed or GateCommandStatus.TerminalFailure
+            ? "GATE_HANDOFF_ADAPTER_FAILED"
+            : null;
+
+        return new GateCommandLifecycleRecord(
+            commandId,
+            ResolveProcessingKey(handoff),
+            handoff.EventId,
+            state.ExitAuthorizationId,
+            state.GateAuthorizationConsumptionId,
+            handoff.ParkingSessionId,
+            handoff.PaymentAttemptId,
+            handoff.TariffSnapshotId,
+            state.GateDeviceId,
+            handoff.GateDeviceIdentifier,
+            state.LaneId,
+            state.SiteId,
+            handoff.VendorSystemId,
+            status,
+            Math.Max(1, attemptCount),
+            GateCommandRetryPolicy.Default.MaxAttempts,
+            GateCommandRetryPolicy.Default.PolicyCode,
+            handoff.ConsumedAtUtc,
+            now,
+            startedAt,
+            completedAt,
+            status is GateCommandStatus.Retryable ? now.Add(GateCommandRetryPolicy.Default.RetryDelay) : null,
+            terminalFailureAt,
+            failureCode,
+            failureCode is null ? null : state.FailureDetail,
+            failureCode,
+            failureCode is null ? null : state.FailureDetail,
+            state.CorrelationId);
+    }
+
+    private static Guid ResolveExistingCommandId(ConsumptionState state) =>
+        state.GateAuthorizationConsumptionId;
+
+    private static Guid ResolveProcessingKey(GateAuthorizationConsumedHandoff handoff) =>
+        handoff.EventId == Guid.Empty ? handoff.GateAuthorizationConsumptionId : handoff.EventId;
 
     private static string? ReadNullableString(NpgsqlDataReader reader, string columnName)
     {
@@ -418,12 +437,22 @@ public sealed class PostgresGateCommandLifecycleRecorder : IGateCommandLifecycle
         return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
     }
 
-    private static Guid ResolveProcessingKey(GateAuthorizationConsumedHandoff handoff) =>
-        handoff.EventId == Guid.Empty ? handoff.GateAuthorizationConsumptionId : handoff.EventId;
-
     private static object DbValue(string? value) =>
         string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
 
     private static object DbValue(Guid? value) =>
         value.HasValue && value.Value != Guid.Empty ? value.Value : DBNull.Value;
+
+    private sealed record ConsumptionState(
+        Guid GateAuthorizationConsumptionId,
+        Guid ExitAuthorizationId,
+        Guid? GateDeviceId,
+        Guid SiteId,
+        Guid? LaneId,
+        bool CommandRequested,
+        string? CommandResultStatus,
+        DateTimeOffset? CommandResultAt,
+        string? FailureDetail,
+        Guid CorrelationId,
+        Guid CreatedByServiceIdentityId);
 }
