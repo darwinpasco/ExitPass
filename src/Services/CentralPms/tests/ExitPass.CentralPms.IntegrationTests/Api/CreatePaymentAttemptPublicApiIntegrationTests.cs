@@ -23,21 +23,17 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// - API shape matches the currently published public contract
 /// - Required request headers are present at the HTTP boundary
 /// </summary>
-public sealed class CreatePaymentAttemptPublicApiIntegrationTests
+public sealed class CreatePaymentAttemptPublicApiIntegrationTests : IClassFixture<CustomWebApplicationFactory>
 {
-    private const string PrimaryApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
-    private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
-    private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
+    private readonly CustomWebApplicationFactory _factory;
 
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString();
 
-    private static Uri ApiBaseUri => new(
-        Environment.GetEnvironmentVariable(PrimaryApiBaseUrlEnvVar)
-        ?? Environment.GetEnvironmentVariable(AlternateApiBaseUrlEnvVar)
-        ?? Environment.GetEnvironmentVariable(LegacyApiBaseUrlEnvVar)
-        ?? "http://localhost:8080",
-        UriKind.Absolute);
+    public CreatePaymentAttemptPublicApiIntegrationTests(CustomWebApplicationFactory factory)
+    {
+        _factory = factory;
+    }
 
     /// <summary>
     /// Verifies BRD 9.9 and SDD 6.3 by creating a payment attempt from a seeded active v1.2 session and tariff snapshot.
@@ -194,13 +190,11 @@ public sealed class CreatePaymentAttemptPublicApiIntegrationTests
         }
     }
 
-    private static HttpClient CreateClient()
+    private HttpClient CreateClient()
     {
-        return new HttpClient
-        {
-            BaseAddress = ApiBaseUri,
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+        var client = _factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        return client;
     }
 
     private static async Task<HttpResponseMessage> PostCreatePaymentAttemptAsync(

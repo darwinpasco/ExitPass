@@ -10,6 +10,7 @@
 
     <ItemGroup>
         <PackageReference Include="FluentAssertions" />
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" />
         <PackageReference Include="Npgsql" />
         <PackageReference Include="xunit" />
@@ -31,5 +32,6 @@
     <Compile Include="../ExitPass.CentralPms.IntegrationTests/Shared/PaymentTestContext.cs" Link="Shared/PaymentTestContext.cs" />
     <Compile Include="../ExitPass.CentralPms.IntegrationTests/Shared/PaymentTestDataHelper.cs" Link="Shared/PaymentTestDataHelper.cs" />
     <Compile Include="../ExitPass.CentralPms.IntegrationTests/Shared/PaymentRoutineTestHelper.cs" Link="Shared/PaymentRoutineTestHelper.cs" />
+    <Compile Include="../ExitPass.CentralPms.IntegrationTests/Api/CustomWebApplicationFactory.cs" Link="Api/CustomWebApplicationFactory.cs" />
   </ItemGroup>
 </Project>

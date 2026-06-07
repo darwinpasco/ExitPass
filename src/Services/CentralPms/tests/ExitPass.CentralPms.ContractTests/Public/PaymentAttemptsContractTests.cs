@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Public.PaymentAttempts;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Xunit;
@@ -26,23 +27,17 @@ namespace ExitPass.CentralPms.ContractTests.Public;
 /// - Same idempotency key must deterministically reuse the existing PaymentAttempt.
 /// - Competing idempotency keys for the same active payment context must fail with the v1.2 error envelope.
 /// </summary>
-public sealed class PaymentAttemptsContractTests
+public sealed class PaymentAttemptsContractTests : IClassFixture<CustomWebApplicationFactory>
 {
-    private const string PrimaryApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_API_BASE_URL";
-    private const string AlternateApiBaseUrlEnvVar = "EXITPASS_CENTRAL_PMS_BASE_URL";
-    private const string LegacyApiBaseUrlEnvVar = "CENTRAL_PMS_BASE_URL";
-    private const string ContractApiBaseUrlEnvVar = "EXITPASS_TEST_API_BASE_URL";
+    private readonly CustomWebApplicationFactory _factory;
 
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
-    private static Uri ApiBaseUri => new(
-        Environment.GetEnvironmentVariable(PrimaryApiBaseUrlEnvVar)
-        ?? Environment.GetEnvironmentVariable(AlternateApiBaseUrlEnvVar)
-        ?? Environment.GetEnvironmentVariable(LegacyApiBaseUrlEnvVar)
-        ?? Environment.GetEnvironmentVariable(ContractApiBaseUrlEnvVar)
-        ?? "http://localhost:8080",
-        UriKind.Absolute);
+    public PaymentAttemptsContractTests(CustomWebApplicationFactory factory)
+    {
+        _factory = factory;
+    }
 
     /// <summary>
     /// Verifies BRD 9.9 and SDD 10.2.4 creation response shape for a valid v1.2 payment attempt request.
@@ -183,13 +178,11 @@ public sealed class PaymentAttemptsContractTests
         }
     }
 
-    private static HttpClient CreateClient()
+    private HttpClient CreateClient()
     {
-        return new HttpClient
-        {
-            BaseAddress = ApiBaseUri,
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+        var client = _factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        return client;
     }
 
     private static async Task<HttpResponseMessage> PostCreatePaymentAttemptAsync(
