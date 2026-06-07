@@ -27,6 +27,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
     private static readonly Guid InactiveHrShiftId = Guid.Parse("77000000-0000-0000-0000-000000000051");
     private static readonly Guid FixtureParkingSessionId = Guid.Parse("77000000-0000-0000-0000-000000000090");
     private static readonly Guid PolicyJurisdictionId = Guid.Parse("6e000000-0000-0000-0000-000000000001");
+    private const string PolicyLguCode = "PH-INT-193";
     private static readonly Guid MissingJurisdictionSiteId = Guid.Parse("6e000000-0000-0000-0000-000000000002");
     private static readonly Guid LocalPolicyId = Guid.Parse("6e000000-0000-0000-0000-000000000003");
     private static readonly Guid UnverifiedPolicyId = Guid.Parse("6e000000-0000-0000-0000-000000000004");
@@ -164,8 +165,8 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
         body.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
         body.OrdinanceReference.Should().Be("INTEGRATION-ORD-193");
         body.NationalLawReference.Should().BeNull();
-        body.FreeDurationMinutes.Should().Be(120);
-        body.SucceedingHoursDiscountRule.Should().Be("REGULAR_RATE");
+        body.FreeDurationMinutes.Should().BeNull();
+        body.SucceedingHoursDiscountRule.Should().Be("APPLY_NATIONAL_STATUTORY_DISCOUNT");
     }
 
     /// <summary>
@@ -319,19 +320,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
 
     private static async Task SeedManualFixtureAsync()
     {
-        var sql = ReadRepoFile(
-            "infra",
-            "db",
-            "fixtures",
-            "operator-console-access-evaluation",
-            "Seed-OperatorConsoleAccessEvaluationManualFixtures.sql");
-
-        await using var connection = await OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(sql, connection)
-        {
-            CommandTimeout = 60
-        };
-        await command.ExecuteNonQueryAsync();
+        await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
     }
 
     private static async Task PreparePolicyResolutionFixtureAsync()
@@ -340,49 +329,97 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
             BEGIN;
             SET CONSTRAINTS ALL DEFERRED;
 
-            DELETE FROM discounts.statutory_discount_policy_registry
+            DELETE FROM discounts.discount_policy_references
             WHERE policy_code IN (
+                'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'PH_RA10754_PWD_NATIONAL_FALLBACK',
                 'INTEGRATION_POLICY_RESOLUTION_LOCAL_SC',
                 'INTEGRATION_POLICY_RESOLUTION_UNVERIFIED_SC'
             );
 
-            INSERT INTO sites.jurisdictions (
-                jurisdiction_id,
-                country_code,
-                province_name,
-                city_municipality_name,
-                psgc_code,
-                lgu_code,
-                jurisdiction_type,
-                jurisdiction_status,
-                source_reference
-            )
-            VALUES (
-                @jurisdiction_id,
-                'PH',
-                'Integration Province',
-                'Integration City',
-                '999999999',
-                'PH-INT-193',
-                'CITY_MUNICIPALITY',
-                'ACTIVE',
-                'Integration policy resolution jurisdiction'
-            )
-            ON CONFLICT (jurisdiction_id) DO UPDATE
-            SET jurisdiction_status = EXCLUDED.jurisdiction_status,
-                updated_at = now();
-
             UPDATE sites.sites
-               SET jurisdiction_id = @jurisdiction_id,
+               SET lgu_code = @lgu_code,
                    updated_at = now()
              WHERE site_id = @site_id;
+
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                policy_type,
+                policy_level,
+                entitlement_type,
+                national_law_reference,
+                precedence_rank,
+                policy_version,
+                requires_operator_validation,
+                requires_evidence_capture,
+                policy_status,
+                effective_from
+            )
+            VALUES (
+                '6e000000-0000-0000-0000-000000000101',
+                'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'RA 9994 Senior Citizen National Fallback',
+                'Integration fallback policy.',
+                'LEGAL_REFERENCE',
+                'NATIONAL_LAW',
+                'SENIOR_CITIZEN',
+                'RA 9994',
+                100,
+                'integration-v1',
+                true,
+                true,
+                'ACTIVE',
+                now() - interval '1 day'
+            )
+            ON CONFLICT (policy_code, policy_version) DO UPDATE
+            SET policy_status = EXCLUDED.policy_status,
+                updated_at = now();
+
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                policy_type,
+                policy_level,
+                entitlement_type,
+                national_law_reference,
+                precedence_rank,
+                policy_version,
+                requires_operator_validation,
+                requires_evidence_capture,
+                policy_status,
+                effective_from
+            )
+            VALUES (
+                '6e000000-0000-0000-0000-000000000102',
+                'PH_RA10754_PWD_NATIONAL_FALLBACK',
+                'RA 10754 PWD National Fallback',
+                'Integration fallback policy.',
+                'LEGAL_REFERENCE',
+                'NATIONAL_LAW',
+                'PWD',
+                'RA 10754',
+                100,
+                'integration-v1',
+                true,
+                true,
+                'ACTIVE',
+                now() - interval '1 day'
+            )
+            ON CONFLICT (policy_code, policy_version) DO UPDATE
+            SET policy_status = EXCLUDED.policy_status,
+                updated_at = now();
 
             COMMIT;
             """;
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = PolicyJurisdictionId;
+        command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = PolicyLguCode;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = FixtureSiteId;
         await command.ExecuteNonQueryAsync();
     }
@@ -390,148 +427,100 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
     private static async Task InsertVerifiedLocalPolicyAsync()
     {
         const string sql = """
-            INSERT INTO discounts.statutory_discount_policy_registry (
-                statutory_discount_policy_id,
-                jurisdiction_id,
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
                 policy_code,
                 policy_name,
-                entitlement_type,
-                policy_resolution_basis,
-                policy_level,
+                policy_description,
                 policy_type,
-                ordinance_reference,
-                verification_status,
-                beneficiary_residency_scope,
-                benefit_type,
-                free_duration_minutes,
-                initial_rate_exempt_flag,
-                full_fee_exempt_flag,
-                free_period_application,
-                succeeding_hours_discount_rule,
-                discount_base_scope,
-                stacking_policy,
-                legal_basis_priority,
+                policy_level,
+                entitlement_type,
+                local_ordinance_reference,
+                lgu_code,
+                precedence_rank,
+                policy_version,
                 requires_operator_validation,
-                requires_evidence,
+                requires_evidence_capture,
                 effective_from,
-                policy_status,
-                source_reference,
-                reviewed_at,
-                policy_snapshot_json
+                policy_status
             )
             VALUES (
                 @policy_id,
-                @jurisdiction_id,
                 'INTEGRATION_POLICY_RESOLUTION_LOCAL_SC',
                 'Integration Local Senior Policy',
-                'SENIOR_CITIZEN',
-                'LOCAL_ORDINANCE_APPLIED',
-                'LOCAL_ORDINANCE',
-                'LOCAL_ORDINANCE',
-                'INTEGRATION-ORD-193',
-                'VERIFIED_OFFICIAL',
-                'NON_RESIDENT_ALLOWED',
-                'FREE_DURATION',
-                120,
-                false,
-                false,
-                'BEFORE_DISCOUNT_COMPUTATION',
-                'REGULAR_RATE',
-                'CHARGEABLE_PORTION_ONLY',
-                'NO_STACKING_ON_FREE_PERIOD',
-                'LOCAL_ORDINANCE_FIRST',
-                true,
-                true,
-                DATE '2026-01-01',
-                'ACTIVE',
                 'Integration test verified local policy.',
-                now(),
-                '{}'::jsonb
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
+                'SENIOR_CITIZEN',
+                'INTEGRATION-ORD-193',
+                @lgu_code,
+                10,
+                'integration-v1',
+                true,
+                true,
+                now() - interval '1 day',
+                'ACTIVE'
             )
-            ON CONFLICT (policy_code) DO UPDATE
-            SET jurisdiction_id = EXCLUDED.jurisdiction_id,
+            ON CONFLICT (policy_code, policy_version) DO UPDATE
+            SET lgu_code = EXCLUDED.lgu_code,
                 policy_status = EXCLUDED.policy_status,
-                verification_status = EXCLUDED.verification_status,
                 updated_at = now();
             """;
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = LocalPolicyId;
-        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = PolicyJurisdictionId;
+        command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = PolicyLguCode;
         await command.ExecuteNonQueryAsync();
     }
 
     private static async Task InsertUnverifiedLocalPolicyAsync()
     {
         const string sql = """
-            INSERT INTO discounts.statutory_discount_policy_registry (
-                statutory_discount_policy_id,
-                jurisdiction_id,
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
                 policy_code,
                 policy_name,
-                entitlement_type,
-                policy_resolution_basis,
-                policy_level,
+                policy_description,
                 policy_type,
-                ordinance_reference,
-                verification_status,
-                beneficiary_residency_scope,
-                benefit_type,
-                free_duration_minutes,
-                initial_rate_exempt_flag,
-                full_fee_exempt_flag,
-                free_period_application,
-                succeeding_hours_discount_rule,
-                discount_base_scope,
-                stacking_policy,
-                legal_basis_priority,
+                policy_level,
+                entitlement_type,
+                local_ordinance_reference,
+                lgu_code,
+                precedence_rank,
+                policy_version,
                 requires_operator_validation,
-                requires_evidence,
+                requires_evidence_capture,
                 effective_from,
-                policy_status,
-                source_reference,
-                policy_snapshot_json
+                policy_status
             )
             VALUES (
                 @policy_id,
-                @jurisdiction_id,
                 'INTEGRATION_POLICY_RESOLUTION_UNVERIFIED_SC',
                 'Integration Unverified Senior Policy',
-                'SENIOR_CITIZEN',
-                'LOCAL_ORDINANCE_APPLIED',
-                'LOCAL_ORDINANCE',
-                'LOCAL_ORDINANCE',
-                'INTEGRATION-UNVERIFIED-193',
-                'LEAD_UNVERIFIED',
-                'UNVERIFIED',
-                'FREE_DURATION',
-                60,
-                false,
-                false,
-                'BEFORE_DISCOUNT_COMPUTATION',
-                'REGULAR_RATE',
-                'CHARGEABLE_PORTION_ONLY',
-                'NO_STACKING_ON_FREE_PERIOD',
-                'LOCAL_ORDINANCE_FIRST',
-                true,
-                true,
-                DATE '2026-01-01',
-                'DRAFT',
                 'Integration test unverified local policy.',
-                '{}'::jsonb
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
+                'SENIOR_CITIZEN',
+                'INTEGRATION-UNVERIFIED-193',
+                @lgu_code,
+                10,
+                'integration-v1',
+                true,
+                true,
+                now() - interval '1 day',
+                'DRAFT'
             )
-            ON CONFLICT (policy_code) DO UPDATE
-            SET jurisdiction_id = EXCLUDED.jurisdiction_id,
+            ON CONFLICT (policy_code, policy_version) DO UPDATE
+            SET lgu_code = EXCLUDED.lgu_code,
                 policy_status = EXCLUDED.policy_status,
-                verification_status = EXCLUDED.verification_status,
                 updated_at = now();
             """;
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = UnverifiedPolicyId;
-        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = PolicyJurisdictionId;
+        command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = PolicyLguCode;
         await command.ExecuteNonQueryAsync();
     }
 
@@ -539,7 +528,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
     {
         const string sql = """
             UPDATE sites.sites
-               SET jurisdiction_id = NULL,
+               SET lgu_code = NULL,
                    updated_at = now()
              WHERE site_id = @site_id;
             """;

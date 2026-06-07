@@ -38,6 +38,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
     private static readonly Guid FixtureShiftId = Guid.Parse("77000000-0000-0000-0000-000000000050");
     private static readonly Guid FixtureParkingSessionId = Guid.Parse("77000000-0000-0000-0000-000000000090");
     private static readonly Guid FixtureJurisdictionId = Guid.Parse("77000000-0000-0000-0000-000000000211");
+    private const string FixtureLguCode = "PH-INT-NO-EVIDENCE-195";
     private static readonly Guid NoEvidencePolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000101");
 
     /// <summary>
@@ -368,97 +369,64 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
     private static async Task SeedManualFixtureAsync()
     {
         await ClearPayableBasisApplyStateAsync();
-
-        var sql = ReadRepoFile(
-            "infra",
-            "db",
-            "fixtures",
-            "operator-console-access-evaluation",
-            "Seed-OperatorConsoleAccessEvaluationManualFixtures.sql");
-
-        await using var connection = await OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(sql, connection)
-        {
-            CommandTimeout = 60
-        };
-
-        await command.ExecuteNonQueryAsync();
+        await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
         await InsertNoEvidenceLocalPolicyAsync();
     }
 
     private static async Task InsertNoEvidenceLocalPolicyAsync()
     {
         const string sql = """
-            INSERT INTO discounts.statutory_discount_policy_registry (
-                statutory_discount_policy_id,
-                jurisdiction_id,
+            UPDATE sites.sites
+               SET lgu_code = @lgu_code,
+                   updated_at = now()
+             WHERE site_id = @site_id;
+
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
                 policy_code,
                 policy_name,
-                entitlement_type,
-                policy_resolution_basis,
-                policy_level,
+                policy_description,
                 policy_type,
-                ordinance_reference,
-                verification_status,
-                beneficiary_residency_scope,
-                benefit_type,
-                free_duration_minutes,
-                initial_rate_exempt_flag,
-                full_fee_exempt_flag,
-                free_period_application,
-                succeeding_hours_discount_rule,
-                discount_base_scope,
-                stacking_policy,
-                legal_basis_priority,
+                policy_level,
+                entitlement_type,
+                local_ordinance_reference,
+                lgu_code,
+                precedence_rank,
+                policy_version,
                 requires_operator_validation,
-                requires_evidence,
+                requires_evidence_capture,
                 effective_from,
-                policy_status,
-                source_reference,
-                reviewed_at,
-                policy_snapshot_json
+                policy_status
             )
             VALUES (
                 @policy_id,
-                @jurisdiction_id,
                 'INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY',
                 'Integration Operator Console No Evidence Policy',
+                'Integration test local policy to keep existing decision/apply approval paths evidence-optional.',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
                 'SENIOR_CITIZEN',
-                'LOCAL_ORDINANCE_APPLIED',
-                'LOCAL_ORDINANCE',
-                'LOCAL_ORDINANCE',
                 'INTEGRATION-NO-EVIDENCE-195',
-                'VERIFIED_OFFICIAL',
-                'NON_RESIDENT_ALLOWED',
-                'STATUTORY_DISCOUNT_VAT_EXEMPT',
-                NULL,
-                false,
-                false,
-                'NOT_APPLICABLE',
-                'REGULAR_RATE',
-                'CHARGEABLE_PORTION_ONLY',
-                'NO_STACKING_ON_FREE_PERIOD',
-                'LOCAL_ORDINANCE_FIRST',
+                @lgu_code,
+                10,
+                'integration-v1',
                 true,
                 false,
-                DATE '2026-01-01',
-                'ACTIVE',
-                'Integration test local policy to keep existing decision/apply approval paths evidence-optional.',
-                now(),
-                '{}'::jsonb
+                now() - interval '1 day',
+                'ACTIVE'
             )
-            ON CONFLICT (policy_code) DO UPDATE
-            SET jurisdiction_id = EXCLUDED.jurisdiction_id,
-                requires_evidence = EXCLUDED.requires_evidence,
+            ON CONFLICT (policy_code, policy_version) DO UPDATE
+            SET lgu_code = EXCLUDED.lgu_code,
+                requires_evidence_capture = EXCLUDED.requires_evidence_capture,
                 policy_status = EXCLUDED.policy_status,
-                verification_status = EXCLUDED.verification_status,
                 updated_at = now();
             """;
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = NoEvidencePolicyId;
-        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = FixtureJurisdictionId;
+        command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = FixtureLguCode;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = FixtureSiteId;
         await command.ExecuteNonQueryAsync();
     }
 

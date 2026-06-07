@@ -103,8 +103,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 sdv.statutory_discount_validation_id,
                 sdv.validation_status::text AS validation_status,
                 sdv.evidence_required,
-                p.statutory_discount_policy_id,
-                sdv.resolved_jurisdiction_id,
+                COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id) AS statutory_discount_policy_id,
+                NULL::uuid AS resolved_jurisdiction_id,
                 sdv.parking_session_id,
                 ps.site_id,
                 ps.site_group_id,
@@ -114,35 +114,57 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 sdv.policy_resolution_basis::text,
                 p.policy_level::text,
                 p.policy_type::text,
-                p.legal_basis_reference,
-                p.ordinance_reference,
+                COALESCE(p.local_ordinance_reference, p.national_law_reference) AS legal_basis_reference,
+                p.local_ordinance_reference AS ordinance_reference,
                 p.national_law_reference,
-                p.verification_status::text,
-                p.beneficiary_residency_scope::text,
-                p.benefit_type::text,
-                p.free_duration_minutes,
-                p.initial_rate_exempt_flag,
-                p.full_fee_exempt_flag,
-                p.overnight_excluded_flag,
-                p.valet_excluded_flag,
-                p.standalone_parking_excluded_flag,
-                p.driver_or_passenger_required_flag,
-                p.free_period_application::text,
-                p.succeeding_hours_discount_rule::text,
-                p.discount_base_scope::text,
-                p.stacking_policy::text,
-                p.legal_basis_priority::text,
+                p.policy_status::text AS verification_status,
+                'LOCKED_SCHEMA_POLICY_REFERENCE' AS beneficiary_residency_scope,
+                'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type,
+                NULL::integer AS free_duration_minutes,
+                false AS initial_rate_exempt_flag,
+                false AS full_fee_exempt_flag,
+                false AS overnight_excluded_flag,
+                false AS valet_excluded_flag,
+                false AS standalone_parking_excluded_flag,
+                false AS driver_or_passenger_required_flag,
+                'NOT_APPLICABLE' AS free_period_application,
+                'APPLY_NATIONAL_STATUTORY_DISCOUNT' AS succeeding_hours_discount_rule,
+                'VAT_EXCLUSIVE' AS discount_base_scope,
+                'STATUTORY_FIRST' AS stacking_policy,
+                COALESCE(p.local_ordinance_reference, p.national_law_reference, p.policy_code) AS legal_basis_priority,
                 p.requires_operator_validation,
-                p.requires_evidence,
+                p.requires_evidence_capture,
                 p.effective_from,
                 p.effective_to,
-                p.source_reference,
-                sdv.resolved_policy_snapshot_json
+                p.policy_version AS source_reference,
+                jsonb_build_object(
+                    'statutoryDiscountPolicyId', COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id),
+                    'policyCode', p.policy_code,
+                    'policyName', p.policy_name,
+                    'entitlementType', sdv.entitlement_type::text,
+                    'policyResolutionBasis', sdv.policy_resolution_basis::text,
+                    'policyLevel', p.policy_level::text,
+                    'policyType', p.policy_type::text,
+                    'legalBasisReference', COALESCE(p.local_ordinance_reference, p.national_law_reference),
+                    'ordinanceReference', p.local_ordinance_reference,
+                    'nationalLawReference', p.national_law_reference,
+                    'verificationStatus', p.policy_status::text,
+                    'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                    'freeDurationMinutes', NULL,
+                    'succeedingHoursDiscountRule', 'APPLY_NATIONAL_STATUTORY_DISCOUNT',
+                    'discountBaseScope', 'VAT_EXCLUSIVE',
+                    'stackingPolicy', 'STATUTORY_FIRST',
+                    'requiresEvidence', p.requires_evidence_capture,
+                    'resolvedAt', sdv.requested_at
+                )::text AS resolved_policy_snapshot_json
             FROM discounts.statutory_discount_validations AS sdv
             JOIN core.parking_sessions AS ps
               ON ps.parking_session_id = sdv.parking_session_id
-            LEFT JOIN discounts.statutory_discount_policy_registry AS p
-              ON p.statutory_discount_policy_id = sdv.statutory_discount_policy_id
+            LEFT JOIN discounts.discount_policy_references AS p
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
             WHERE sdv.parking_session_id = @parking_session_id
               AND sdv.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
               AND sdv.validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
@@ -151,7 +173,6 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                     'PENDING_OPERATOR_REVIEW'::discounts.statutory_discount_validations_status_enum
               )
               AND sdv.evidence_captured = false
-              AND sdv.applied_policy_reference_id IS NULL
               AND sdv.validated_at IS NULL
             ORDER BY sdv.requested_at DESC, sdv.statutory_discount_validation_id DESC
             LIMIT 1;
@@ -194,9 +215,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 evidence_required,
                 evidence_captured,
                 decision_reason_code,
-                statutory_discount_policy_id,
-                resolved_jurisdiction_id,
-                resolved_policy_snapshot_json,
+                evaluated_policy_reference_id,
+                applied_policy_reference_id,
                 requested_at,
                 requested_by_user_id,
                 correlation_id,
@@ -211,9 +231,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 @evidence_required,
                 false,
                 @decision_reason_code,
-                @statutory_discount_policy_id,
-                @resolved_jurisdiction_id,
-                @resolved_policy_snapshot_json::jsonb,
+                @policy_reference_id,
+                @policy_reference_id,
                 now(),
                 @requested_by_user_id,
                 @correlation_id,
@@ -228,9 +247,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("decision_reason_code", NpgsqlDbType.Varchar).Value = DbValue(command.ReasonCode);
-        npgsqlCommand.Parameters.Add("statutory_discount_policy_id", NpgsqlDbType.Uuid).Value = command.Policy.StatutoryDiscountPolicyId;
-        npgsqlCommand.Parameters.Add("resolved_jurisdiction_id", NpgsqlDbType.Uuid).Value = DbValue(command.Policy.JurisdictionId);
-        npgsqlCommand.Parameters.Add("resolved_policy_snapshot_json", NpgsqlDbType.Jsonb).Value = command.Policy.PolicySnapshot.GetRawText();
+        npgsqlCommand.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = command.Policy.StatutoryDiscountPolicyId;
         npgsqlCommand.Parameters.Add("requested_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
         npgsqlCommand.Parameters.Add("created_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
@@ -479,8 +496,10 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             reader.GetString(startOrdinal + 28),
             reader.GetBoolean(startOrdinal + 29),
             reader.GetBoolean(startOrdinal + 30),
-            reader.GetFieldValue<DateOnly>(startOrdinal + 31),
-            reader.IsDBNull(startOrdinal + 32) ? null : reader.GetFieldValue<DateOnly>(startOrdinal + 32),
+            DateOnly.FromDateTime(reader.GetFieldValue<DateTimeOffset>(startOrdinal + 31).Date),
+            reader.IsDBNull(startOrdinal + 32)
+                ? null
+                : DateOnly.FromDateTime(reader.GetFieldValue<DateTimeOffset>(startOrdinal + 32).Date),
             GetNullableString(reader, startOrdinal + 33),
             JsonDocument.Parse(rawSnapshot).RootElement.Clone());
     }

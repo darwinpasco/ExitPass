@@ -17,9 +17,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
 {
     private const decimal VatRate = 0.12m;
     private const decimal StatutoryDiscountRate = 0.20m;
-    private const string ApplicationStatusRequested = "REQUESTED";
     private const string ApplicationStatusApplied = "APPLIED";
-    private const string ApplicationChannel = "OPERATOR_CONSOLE";
     private const string RoundingMode = "HALF_AWAY_FROM_ZERO";
 
     private readonly string _connectionString;
@@ -158,99 +156,6 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         return NotAccepted(command.ValidationId, "PAYABLE_BASIS_APPLICATION_FAILED", "PAYABLE_BASIS_APPLICATION_FAILED");
     }
 
-    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult> FinalizeApplicationAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        ValidationRow validation,
-        Guid applicationId,
-        Guid actorUserId,
-        Guid correlationId,
-        CancellationToken cancellationToken)
-    {
-        var routineResult = await ApplyStatutoryDiscountPayableBasisRoutineAsync(
-            connection,
-            transaction,
-            applicationId,
-            actorUserId,
-            correlationId,
-            cancellationToken);
-
-        if (!routineResult.Succeeded)
-        {
-            var errorCode = MapRoutineFailureCode(routineResult.FailureCode ?? routineResult.OutcomeCode);
-            return NotAccepted(validation, errorCode, errorCode);
-        }
-
-        var finalized = await FindExistingApplicationAsync(connection, transaction, validation.ValidationId, validation.ParkingSessionId, cancellationToken);
-        if (finalized is null)
-        {
-            return NotAccepted(validation, "PAYABLE_BASIS_APPLICATION_FAILED", "PAYABLE_BASIS_APPLICATION_FAILED");
-        }
-
-        return finalized with { AlreadyApplied = routineResult.AlreadyApplied };
-    }
-
-    private static async Task<AppliedLifecycleRoutineResult> ApplyStatutoryDiscountPayableBasisRoutineAsync(
-        NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
-        Guid applicationId,
-        Guid actorUserId,
-        Guid correlationId,
-        CancellationToken cancellationToken)
-    {
-        const string sql = """
-            SELECT
-                statutory_discount_payable_basis_application_id,
-                statutory_discount_validation_id,
-                parking_session_id,
-                original_tariff_snapshot_id,
-                applied_tariff_snapshot_id,
-                application_status,
-                previous_tariff_snapshot_status,
-                applied_tariff_snapshot_status,
-                final_payable_amount_minor_units,
-                currency_code,
-                already_applied,
-                outcome_code,
-                failure_code
-            FROM discounts.apply_statutory_discount_payable_basis(
-                @statutory_discount_payable_basis_application_id,
-                @actor_user_id,
-                @correlation_id
-            );
-            """;
-
-        await using var command = new NpgsqlCommand(sql, connection, transaction);
-        command.Parameters.Add("statutory_discount_payable_basis_application_id", NpgsqlDbType.Uuid).Value = applicationId;
-        command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = actorUserId;
-        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
-
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
-        {
-            return AppliedLifecycleRoutineResult.Failed("PAYABLE_BASIS_APPLICATION_FAILED");
-        }
-
-        var outcomeCode = reader.IsDBNull(11) ? null : reader.GetString(11);
-        var failureCode = reader.IsDBNull(12) ? null : reader.GetString(12);
-        var succeeded = failureCode is null && outcomeCode is ("APPLIED" or "ALREADY_APPLIED");
-
-        return new AppliedLifecycleRoutineResult(
-            Succeeded: succeeded,
-            AlreadyApplied: reader.GetBoolean(10),
-            OutcomeCode: outcomeCode,
-            FailureCode: failureCode);
-    }
-
-    private static string MapRoutineFailureCode(string? routineCode) =>
-        routineCode switch
-        {
-            "TARIFF_SNAPSHOT_NOT_ELIGIBLE" => "TARIFF_SNAPSHOT_INVALID",
-            "PAYABLE_BASIS_APPLICATION_NOT_REQUESTED" => "PAYABLE_BASIS_APPLICATION_FAILED",
-            null or "" => "PAYABLE_BASIS_APPLICATION_FAILED",
-            _ => routineCode
-        };
-
     private static async Task DeferForeignKeysAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction transaction,
@@ -269,18 +174,18 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
     {
         const string sql = """
             SELECT
-                statutory_discount_validation_id,
-                parking_session_id,
-                tariff_snapshot_id,
-                entitlement_type::text,
-                validation_status::text,
-                validation_channel::text,
-                evidence_required,
-                evidence_captured,
-                currency_code,
-                applied_policy_reference_id,
+                sdv.statutory_discount_validation_id,
+                sdv.parking_session_id,
+                sdv.tariff_snapshot_id,
+                sdv.entitlement_type::text,
+                sdv.validation_status::text,
+                sdv.validation_channel::text,
+                sdv.evidence_required,
+                sdv.evidence_captured,
+                sdv.currency_code,
+                COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id) AS policy_reference_id,
                 NULL::uuid AS resolved_jurisdiction_id,
-                policy_resolution_basis::text,
+                sdv.policy_resolution_basis::text,
                 jsonb_build_object(
                     'statutoryDiscountPolicyId', p.discount_policy_reference_id,
                     'policyCode', p.policy_code,
@@ -297,9 +202,12 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 )::text AS resolved_policy_snapshot_json
             FROM discounts.statutory_discount_validations AS sdv
             LEFT JOIN discounts.discount_policy_references AS p
-              ON p.discount_policy_reference_id = sdv.applied_policy_reference_id
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
             WHERE sdv.statutory_discount_validation_id = @statutory_discount_validation_id
-            FOR UPDATE;
+            FOR UPDATE OF sdv;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -456,7 +364,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
     {
         const string sql = """
             SELECT
-                NULL::uuid AS statutory_discount_payable_basis_application_id,
+                NULL::uuid AS payable_basis_application_id,
                 sdv.statutory_discount_validation_id,
                 applied_ts.parking_session_id,
                 original.tariff_snapshot_id AS original_tariff_snapshot_id,
@@ -468,10 +376,26 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 ROUND(applied_ts.statutory_discount_amount * 100)::bigint AS statutory_discount_amount_minor_units,
                 ROUND(applied_ts.net_amount * 100)::bigint AS final_payable_amount_minor_units,
                 applied_ts.currency_code,
-                '{}'::text AS computation_basis_json
+                jsonb_build_object(
+                    'policyContext',
+                    jsonb_build_object(
+                        'statutoryDiscountPolicyId', p.discount_policy_reference_id,
+                        'resolvedJurisdictionId', NULL,
+                        'policyResolutionBasis', sdv.policy_resolution_basis::text,
+                        'policyCode', p.policy_code,
+                        'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                        'nationalLawReference', p.national_law_reference,
+                        'ordinanceReference', p.local_ordinance_reference
+                    )
+                )::text AS computation_basis_json
             FROM core.tariff_snapshots AS applied_ts
             JOIN discounts.statutory_discount_validations AS sdv
               ON sdv.statutory_discount_validation_id = applied_ts.statutory_discount_validation_id
+            LEFT JOIN discounts.discount_policy_references AS p
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
             LEFT JOIN core.tariff_snapshots AS original
               ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
              AND original.parking_session_id = applied_ts.parking_session_id
@@ -479,7 +403,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                OR applied_ts.parking_session_id = @parking_session_id
             ORDER BY applied_ts.calculated_at DESC, applied_ts.tariff_snapshot_id DESC
             LIMIT 1
-            FOR UPDATE;
+            FOR UPDATE OF applied_ts;
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -493,7 +417,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         }
 
         var status = reader.GetString(5);
-        var accepted = status is ApplicationStatusApplied or ApplicationStatusRequested;
+        var accepted = status is ApplicationStatusApplied;
         var policy = ReadPolicySummaryFromComputationBasis(reader.GetString(12));
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult(
             ApplicationAccepted: accepted,
@@ -1042,16 +966,6 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         long StatutoryDiscountAmountMinorUnits,
         long FinalPayableAmountMinorUnits,
         string CurrencyCode);
-
-    private sealed record AppliedLifecycleRoutineResult(
-        bool Succeeded,
-        bool AlreadyApplied,
-        string? OutcomeCode,
-        string? FailureCode)
-    {
-        public static AppliedLifecycleRoutineResult Failed(string failureCode) =>
-            new(Succeeded: false, AlreadyApplied: false, OutcomeCode: failureCode, FailureCode: failureCode);
-    }
 
     private sealed record PolicySnapshotContext(
         Guid StatutoryDiscountPolicyId,
