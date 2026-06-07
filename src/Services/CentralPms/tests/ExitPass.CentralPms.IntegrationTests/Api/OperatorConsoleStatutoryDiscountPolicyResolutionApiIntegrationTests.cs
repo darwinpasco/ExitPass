@@ -555,7 +555,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionApiIntegrati
         const string sql = """
             SELECT
                 (SELECT COUNT(*) FROM discounts.statutory_discount_validations)
-              + (SELECT COUNT(*) FROM discounts.statutory_discount_payable_basis_applications)
+              + (SELECT COUNT(*) FROM core.tariff_snapshots WHERE statutory_discount_validation_id IS NOT NULL AND statutory_discount_amount > 0)
               + (SELECT COUNT(*) FROM core.payment_attempts)
               + (SELECT COUNT(*) FROM core.payment_confirmations)
               + (SELECT COUNT(*) FROM core.exit_authorizations)

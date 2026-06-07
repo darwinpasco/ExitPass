@@ -186,46 +186,46 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
     {
         const string sql = """
             /*
-             * #204 payment initiation alignment:
-             * - an APPLIED statutory discount payable-basis application makes the applied ACTIVE tariff snapshot
-             *   the effective payable basis for payment attempt creation.
-             * - invalid APPLIED application state fails closed; payment must not silently fall back to the
-             *   original SUPERSEDED tariff snapshot.
+             * Locked v1.2 alignment:
+             * - applied statutory discount state is represented by the ACTIVE tariff snapshot linked through
+             *   core.tariff_snapshots.statutory_discount_validation_id.
+             * - the previous base snapshot is the snapshot superseded by the applied tariff snapshot.
              */
-            WITH applied_applications AS (
+            WITH applied_snapshots AS (
                 SELECT
-                    app.statutory_discount_payable_basis_application_id,
-                    app.parking_session_id,
-                    app.original_tariff_snapshot_id,
-                    app.applied_tariff_snapshot_id,
-                    app.statutory_discount_validation_id,
-                    app.applied_at,
-                    app.updated_at,
+                    ts.parking_session_id,
+                    original.tariff_snapshot_id AS original_tariff_snapshot_id,
+                    ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
+                    ts.statutory_discount_validation_id,
+                    ts.calculated_at,
+                    ts.updated_at,
                     COUNT(*) OVER () AS applied_count
-                FROM discounts.statutory_discount_payable_basis_applications AS app
-                WHERE app.parking_session_id = @parking_session_id
-                  AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+                FROM core.tariff_snapshots AS ts
+                LEFT JOIN core.tariff_snapshots AS original
+                  ON original.superseded_by_tariff_snapshot_id = ts.tariff_snapshot_id
+                 AND original.parking_session_id = ts.parking_session_id
+                JOIN discounts.statutory_discount_validations AS sdv
+                  ON sdv.statutory_discount_validation_id = ts.statutory_discount_validation_id
+                 AND sdv.parking_session_id = ts.parking_session_id
+                WHERE ts.parking_session_id = @parking_session_id
+                  AND ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+                  AND ts.statutory_discount_validation_id IS NOT NULL
+                  AND ts.statutory_discount_amount > 0
             )
             SELECT
-                app.statutory_discount_payable_basis_application_id,
+                NULL::uuid AS statutory_discount_payable_basis_application_id,
                 app.parking_session_id,
                 app.original_tariff_snapshot_id,
                 app.applied_tariff_snapshot_id,
                 app.applied_count,
-                applied_ts.tariff_snapshot_id IS NOT NULL AS applied_snapshot_valid,
+                app.applied_tariff_snapshot_id IS NOT NULL AS applied_snapshot_valid,
                 CASE
-                    WHEN app.applied_count > 1 THEN 'MULTIPLE_APPLIED_APPLICATIONS'
+                    WHEN app.applied_count > 1 THEN 'MULTIPLE_APPLIED_TARIFF_SNAPSHOTS'
                     WHEN app.applied_tariff_snapshot_id IS NULL THEN 'APPLIED_TARIFF_SNAPSHOT_MISSING'
-                    WHEN applied_ts.tariff_snapshot_id IS NULL THEN 'APPLIED_TARIFF_SNAPSHOT_INVALID'
                     ELSE NULL
                 END AS invalid_reason_code
-            FROM applied_applications AS app
-            LEFT JOIN core.tariff_snapshots AS applied_ts
-                ON applied_ts.tariff_snapshot_id = app.applied_tariff_snapshot_id
-               AND applied_ts.parking_session_id = app.parking_session_id
-               AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
-               AND applied_ts.statutory_discount_validation_id = app.statutory_discount_validation_id
-            ORDER BY app.applied_at DESC NULLS LAST, app.updated_at DESC
+            FROM applied_snapshots AS app
+            ORDER BY app.calculated_at DESC, app.updated_at DESC
             LIMIT 1;
             """;
 
@@ -256,7 +256,9 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
         return new EffectiveTariffSnapshotResolution
         {
             ParkingSessionId = reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-            StatutoryDiscountApplicationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
+            StatutoryDiscountApplicationId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_payable_basis_application_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
             OriginalTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("original_tariff_snapshot_id"))
                 ? null
                 : reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),

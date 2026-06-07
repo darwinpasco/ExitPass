@@ -468,9 +468,6 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
             BEGIN;
             SET CONSTRAINTS ALL DEFERRED;
 
-            DELETE FROM discounts.statutory_discount_payable_basis_applications
-            WHERE parking_session_id = @parking_session_id;
-
             UPDATE discounts.statutory_discount_validations
                SET tariff_snapshot_id = NULL
              WHERE parking_session_id = @parking_session_id;

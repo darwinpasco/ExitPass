@@ -793,9 +793,11 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         const string sql = """
             SELECT EXISTS (
                 SELECT 1
-                FROM discounts.statutory_discount_payable_basis_applications AS app
-                WHERE app.parking_session_id = @parking_session_id
-                  AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+                FROM core.tariff_snapshots AS ts
+                WHERE ts.parking_session_id = @parking_session_id
+                  AND ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+                  AND ts.statutory_discount_validation_id IS NOT NULL
+                  AND ts.statutory_discount_amount > 0
             );
             """;
 
@@ -815,24 +817,25 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
     {
         const string sql = """
             SELECT
-                app.statutory_discount_payable_basis_application_id,
-                app.statutory_discount_validation_id,
-                app.original_tariff_snapshot_id,
-                app.applied_tariff_snapshot_id,
+                NULL::uuid AS statutory_discount_payable_basis_application_id,
+                applied_ts.statutory_discount_validation_id,
+                original.tariff_snapshot_id AS original_tariff_snapshot_id,
+                applied_ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
                 sdv.policy_resolution_basis::text AS policy_resolution_basis,
-                app.computation_basis_json #>> '{policyContext,benefitType}' AS benefit_type
-            FROM discounts.statutory_discount_payable_basis_applications AS app
+                'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type
+            FROM core.tariff_snapshots AS applied_ts
             INNER JOIN discounts.statutory_discount_validations AS sdv
-                ON sdv.statutory_discount_validation_id = app.statutory_discount_validation_id
-            INNER JOIN core.tariff_snapshots AS applied_ts
-                ON applied_ts.tariff_snapshot_id = app.applied_tariff_snapshot_id
-               AND applied_ts.parking_session_id = app.parking_session_id
-               AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
-               AND applied_ts.statutory_discount_validation_id = app.statutory_discount_validation_id
-            WHERE app.parking_session_id = @parking_session_id
-              AND app.applied_tariff_snapshot_id = @effective_tariff_snapshot_id
-              AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
-            ORDER BY app.applied_at DESC, app.updated_at DESC
+                ON sdv.statutory_discount_validation_id = applied_ts.statutory_discount_validation_id
+               AND sdv.parking_session_id = applied_ts.parking_session_id
+            LEFT JOIN core.tariff_snapshots AS original
+                ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
+               AND original.parking_session_id = applied_ts.parking_session_id
+            WHERE applied_ts.parking_session_id = @parking_session_id
+              AND applied_ts.tariff_snapshot_id = @effective_tariff_snapshot_id
+              AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+              AND applied_ts.statutory_discount_validation_id IS NOT NULL
+              AND applied_ts.statutory_discount_amount > 0
+            ORDER BY applied_ts.calculated_at DESC, applied_ts.updated_at DESC
             LIMIT 1;
             """;
 
@@ -849,9 +852,13 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         return new EffectivePayableBasisSummary
         {
             StatutoryDiscountApplied = true,
-            StatutoryDiscountApplicationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
+            StatutoryDiscountApplicationId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_payable_basis_application_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
             StatutoryDiscountValidationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_validation_id")),
-            OriginalTariffSnapshotId = reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),
+            OriginalTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("original_tariff_snapshot_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),
             EffectiveTariffSnapshotId = effectiveTariffSnapshotId,
             AppliedTariffSnapshotId = reader.GetGuid(reader.GetOrdinal("applied_tariff_snapshot_id")),
             PolicyResolutionBasis = reader.IsDBNull(reader.GetOrdinal("policy_resolution_basis"))

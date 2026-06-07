@@ -571,7 +571,6 @@ public sealed class RecordPaymentConfirmationIntegrationTests
     private static async Task<Guid> CreateAppliedPayableBasisAsync(PaymentTestContext context)
     {
         var validationId = Guid.NewGuid();
-        var applicationId = Guid.NewGuid();
         var appliedTariffSnapshotId = Guid.NewGuid();
 
         const string sql = """
@@ -688,63 +687,12 @@ public sealed class RecordPaymentConfirmationIntegrationTests
                 row_version = row_version + 1
             WHERE tariff_snapshot_id = @original_tariff_snapshot_id;
 
-            INSERT INTO discounts.statutory_discount_payable_basis_applications (
-                statutory_discount_payable_basis_application_id,
-                statutory_discount_validation_id,
-                parking_session_id,
-                original_tariff_snapshot_id,
-                applied_tariff_snapshot_id,
-                application_status,
-                application_channel,
-                gross_amount_minor_units,
-                vat_amount_minor_units,
-                vat_exclusive_amount_minor_units,
-                statutory_discount_amount_minor_units,
-                final_payable_amount_minor_units,
-                currency_code,
-                computation_basis_json,
-                rounding_mode,
-                applied_at,
-                applied_by_service_identity_id,
-                correlation_id,
-                created_at,
-                created_by_service_identity_id,
-                updated_at,
-                updated_by_service_identity_id,
-                row_version
-            )
-            VALUES (
-                @application_id,
-                @validation_id,
-                @parking_session_id,
-                @original_tariff_snapshot_id,
-                @applied_tariff_snapshot_id,
-                'APPLIED',
-                'OPERATOR_CONSOLE',
-                10000,
-                1071,
-                8929,
-                1786,
-                7143,
-                'PHP',
-                '{"policyContext":{"benefitType":"STATUTORY_DISCOUNT_VAT_EXEMPT"}}'::jsonb,
-                'HALF_AWAY_FROM_ZERO',
-                NOW(),
-                @service_identity_id,
-                @correlation_id,
-                NOW(),
-                @service_identity_id,
-                NOW(),
-                @service_identity_id,
-                1
-            );
             """;
 
         await using var connection = new NpgsqlConnection(ConnectionString);
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("validation_id", validationId);
-        command.Parameters.AddWithValue("application_id", applicationId);
         command.Parameters.AddWithValue("applied_tariff_snapshot_id", appliedTariffSnapshotId);
         command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
         command.Parameters.AddWithValue("original_tariff_snapshot_id", context.TariffSnapshotId);
@@ -814,9 +762,6 @@ public sealed class RecordPaymentConfirmationIntegrationTests
     private static async Task CleanupDiscountRowsAsync(PaymentTestContext context)
     {
         const string sql = """
-            DELETE FROM discounts.statutory_discount_payable_basis_applications
-            WHERE parking_session_id = @parking_session_id;
-
             UPDATE core.tariff_snapshots
             SET statutory_discount_validation_id = NULL,
                 superseded_by_tariff_snapshot_id = NULL,

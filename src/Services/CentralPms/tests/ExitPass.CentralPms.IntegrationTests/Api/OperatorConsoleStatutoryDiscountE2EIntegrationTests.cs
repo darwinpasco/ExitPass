@@ -394,9 +394,6 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             DELETE FROM coupons.coupon_applications
             WHERE parking_session_id = @parking_session_id;
 
-            DELETE FROM discounts.statutory_discount_payable_basis_applications
-            WHERE parking_session_id = @parking_session_id;
-
             DELETE FROM discounts.discount_evidence_references
             WHERE statutory_discount_validation_id IN (
                 SELECT statutory_discount_validation_id
@@ -656,8 +653,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
     {
         const string sql = """
             SELECT COUNT(*)
-            FROM discounts.statutory_discount_payable_basis_applications
-            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            FROM core.tariff_snapshots
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id
+              AND statutory_discount_amount > 0;
             """;
 
         await using var connection = await OpenConnectionAsync();

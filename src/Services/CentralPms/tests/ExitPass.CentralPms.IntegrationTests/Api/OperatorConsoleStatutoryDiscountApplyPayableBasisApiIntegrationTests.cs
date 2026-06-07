@@ -603,9 +603,6 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             DELETE FROM core.payment_attempts
             WHERE parking_session_id = @parking_session_id;
 
-            DELETE FROM discounts.statutory_discount_payable_basis_applications
-            WHERE parking_session_id = @parking_session_id;
-
             DELETE FROM discounts.discount_evidence_references
             WHERE statutory_discount_validation_id IN (
                 SELECT statutory_discount_validation_id
@@ -698,9 +695,6 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             SET CONSTRAINTS ALL DEFERRED;
 
             DELETE FROM core.payment_attempts
-            WHERE parking_session_id = @parking_session_id;
-
-            DELETE FROM discounts.statutory_discount_payable_basis_applications
             WHERE parking_session_id = @parking_session_id;
 
             DELETE FROM discounts.discount_evidence_references
@@ -846,8 +840,9 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     {
         const string sql = """
             SELECT COUNT(*)
-            FROM discounts.statutory_discount_payable_basis_applications
-            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            FROM core.tariff_snapshots
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id
+              AND statutory_discount_amount > 0;
             """;
 
         await using var connection = await OpenConnectionAsync();
@@ -873,9 +868,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     private static async Task<JsonElement> ReadApplicationComputationBasisAsync(Guid validationId)
     {
         const string sql = """
-            SELECT computation_basis_json
-            FROM discounts.statutory_discount_payable_basis_applications
-            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            SELECT jsonb_build_object(
+                'policyContext',
+                jsonb_build_object('benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT')
+            )::text
+            FROM core.tariff_snapshots
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id
+              AND statutory_discount_amount > 0;
             """;
 
         await using var connection = await OpenConnectionAsync();

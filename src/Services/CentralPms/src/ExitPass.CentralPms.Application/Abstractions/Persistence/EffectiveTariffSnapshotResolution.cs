@@ -13,7 +13,7 @@ public sealed class EffectiveTariffSnapshotResolution
     /// <summary>
     /// Payable-basis application that established the effective snapshot.
     /// </summary>
-    public Guid StatutoryDiscountApplicationId { get; init; }
+    public Guid? StatutoryDiscountApplicationId { get; init; }
 
     /// <summary>
     /// Original tariff snapshot superseded by the statutory discount application.

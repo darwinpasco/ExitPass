@@ -78,10 +78,13 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 LIMIT 1
             ) AS active_tariff ON TRUE
             LEFT JOIN LATERAL (
-                SELECT final_payable_amount_minor_units, currency_code
-                FROM discounts.statutory_discount_payable_basis_applications
+                SELECT
+                    ROUND(net_amount * 100)::bigint AS final_payable_amount_minor_units,
+                    currency_code
+                FROM core.tariff_snapshots
                 WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
-                ORDER BY created_at DESC, statutory_discount_payable_basis_application_id DESC
+                  AND statutory_discount_amount > 0
+                ORDER BY calculated_at DESC, tariff_snapshot_id DESC
                 LIMIT 1
             ) AS latest_application ON TRUE
             LEFT JOIN LATERAL (
@@ -206,15 +209,19 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             ) AS active_tariff ON TRUE
             LEFT JOIN LATERAL (
                 SELECT
-                    statutory_discount_payable_basis_application_id,
-                    original_tariff_snapshot_id,
-                    application_status,
-                    statutory_discount_amount_minor_units,
-                    final_payable_amount_minor_units,
+                    NULL::uuid AS statutory_discount_payable_basis_application_id,
+                    original.tariff_snapshot_id AS original_tariff_snapshot_id,
+                    'APPLIED'::text AS application_status,
+                    ROUND(applied_ts.statutory_discount_amount * 100)::bigint AS statutory_discount_amount_minor_units,
+                    ROUND(applied_ts.net_amount * 100)::bigint AS final_payable_amount_minor_units,
                     currency_code
-                FROM discounts.statutory_discount_payable_basis_applications
-                WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
-                ORDER BY created_at DESC, statutory_discount_payable_basis_application_id DESC
+                FROM core.tariff_snapshots AS applied_ts
+                LEFT JOIN core.tariff_snapshots AS original
+                  ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
+                 AND original.parking_session_id = applied_ts.parking_session_id
+                WHERE applied_ts.statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND applied_ts.statutory_discount_amount > 0
+                ORDER BY applied_ts.calculated_at DESC, applied_ts.tariff_snapshot_id DESC
                 LIMIT 1
             ) AS latest_application ON TRUE
             LEFT JOIN LATERAL (
