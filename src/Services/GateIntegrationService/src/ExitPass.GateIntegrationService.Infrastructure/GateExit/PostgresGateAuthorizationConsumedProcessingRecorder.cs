@@ -12,7 +12,6 @@ namespace ExitPass.GateIntegrationService.Infrastructure.GateExit;
 public sealed class PostgresGateAuthorizationConsumedProcessingRecorder
     : IGateAuthorizationConsumedProcessingRecorder
 {
-    private const string EventType = "GateAuthorizationConsumed";
     private readonly string _connectionString;
 
     /// <summary>
@@ -32,144 +31,69 @@ public sealed class PostgresGateAuthorizationConsumedProcessingRecorder
     {
         ArgumentNullException.ThrowIfNull(handoff);
 
-        var now = DateTimeOffset.UtcNow;
-        var processingKey = ResolveProcessingKey(handoff);
-
         const string sql = """
-            INSERT INTO gates.gate_authorization_consumed_processing (
-                processing_id,
-                processing_key,
-                event_id,
-                event_type,
-                source_event_ref,
-                gate_authorization_consumption_id,
-                exit_authorization_id,
-                parking_session_id,
-                payment_attempt_id,
-                tariff_snapshot_id,
-                gate_device_id,
-                gate_device_identifier,
-                lane_id,
-                site_id,
-                vendor_system_id,
-                consumed_at_utc,
-                correlation_id,
-                processing_status,
-                result_code,
-                attempt_count,
-                first_seen_at,
-                last_attempted_at,
-                created_at,
-                updated_at
-            )
-            VALUES (
-                @processing_id,
-                @processing_key,
-                @event_id,
-                @event_type,
-                @source_event_ref,
-                @gate_authorization_consumption_id,
-                @exit_authorization_id,
-                @parking_session_id,
-                @payment_attempt_id,
-                @tariff_snapshot_id,
-                @gate_device_id,
-                @gate_device_identifier,
-                @lane_id,
-                @site_id,
-                @vendor_system_id,
-                @consumed_at_utc,
-                @correlation_id,
-                'PROCESSING',
-                'GATE_AUTHORIZATION_CONSUMED_PROCESSING',
-                1,
-                @now,
-                @now,
-                @now,
-                @now
-            )
-            ON CONFLICT (processing_key, event_type) DO UPDATE
-            SET
-                processing_status = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN 'PROCESSING'
-                    ELSE gates.gate_authorization_consumed_processing.processing_status
-                END,
-                result_code = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN 'GATE_AUTHORIZATION_CONSUMED_PROCESSING'
-                    ELSE gates.gate_authorization_consumed_processing.result_code
-                END,
-                attempt_count = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN gates.gate_authorization_consumed_processing.attempt_count + 1
-                    ELSE gates.gate_authorization_consumed_processing.attempt_count
-                END,
-                last_attempted_at = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN @now
-                    ELSE gates.gate_authorization_consumed_processing.last_attempted_at
-                END,
-                last_failure_code = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN NULL
-                    ELSE gates.gate_authorization_consumed_processing.last_failure_code
-                END,
-                last_failure_reason = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN NULL
-                    ELSE gates.gate_authorization_consumed_processing.last_failure_reason
-                END,
-                updated_at = CASE
-                    WHEN gates.gate_authorization_consumed_processing.processing_status = 'FAILED'
-                        THEN @now
-                    ELSE gates.gate_authorization_consumed_processing.updated_at
-                END
-            RETURNING
-                event_id,
-                exit_authorization_id,
-                gate_authorization_consumption_id,
-                tariff_snapshot_id,
-                result_code,
-                COALESCE(processed_at, last_attempted_at, first_seen_at) AS processed_at_utc,
-                processing_status,
-                attempt_count,
-                last_failure_code,
-                last_failure_reason,
-                (xmax = 0) AS inserted;
+            SELECT
+                gac.gate_authorization_consumption_id,
+                gac.exit_authorization_id,
+                gac.command_result_status::text AS command_result_status,
+                gac.command_result_at,
+                gac.failure_detail,
+                COALESCE(command_attempts.attempt_count, 0)::integer AS attempt_count
+            FROM gates.gate_authorization_consumptions AS gac
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*)::integer AS attempt_count
+                FROM gates.gate_events AS ge
+                WHERE ge.gate_authorization_consumption_id = gac.gate_authorization_consumption_id
+                  AND ge.event_type = 'GATE_OPEN_COMMAND_REQUESTED'
+            ) AS command_attempts ON TRUE
+            WHERE gac.gate_authorization_consumption_id = @gate_authorization_consumption_id
+            LIMIT 1;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-
         await using var command = new NpgsqlCommand(sql, connection)
         {
             CommandTimeout = 30
         };
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            handoff.GateAuthorizationConsumptionId;
 
-        AddHandoffParameters(command, handoff, processingKey, now);
-
-        await using var reader = await command.ExecuteReaderAsync(
-            CommandBehavior.SingleRow,
-            cancellationToken);
-
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
-            throw new InvalidOperationException("GateAuthorizationConsumed processing state was not returned.");
+            throw new InvalidOperationException(
+                $"Gate authorization consumption '{handoff.GateAuthorizationConsumptionId}' was not found.");
         }
 
-        var record = ReadRecord(reader);
-        var inserted = reader.GetBoolean(reader.GetOrdinal("inserted"));
-        var canInvokeAdapter = inserted || record.ProcessingStatus == GateAuthorizationConsumedProcessingStatus.Processing
-            && record.AttemptCount > 1
-            && record.LastFailureCode is null;
-        var alreadyProcessed = record.ProcessingStatus == GateAuthorizationConsumedProcessingStatus.Processed;
+        var commandStatus = ReadNullableString(reader, "command_result_status");
+        var processedAt = ReadNullableDateTimeOffset(reader, "command_result_at") ?? handoff.ConsumedAtUtc;
+        var attemptCount = reader.GetInt32(reader.GetOrdinal("attempt_count"));
+        var processingStatus = MapProcessingStatus(commandStatus);
+        var failureCode = processingStatus == GateAuthorizationConsumedProcessingStatus.Failed
+            ? "GATE_HANDOFF_ADAPTER_FAILED"
+            : null;
+
+        var record = new GateAuthorizationConsumedProcessingRecord(
+            handoff.EventId,
+            ReadNullableGuid(reader, "exit_authorization_id") ?? handoff.ExitAuthorizationId,
+            reader.GetGuid(reader.GetOrdinal("gate_authorization_consumption_id")),
+            handoff.TariffSnapshotId,
+            ResolveResultCode(processingStatus),
+            processedAt,
+            processingStatus,
+            Math.Max(1, attemptCount),
+            failureCode,
+            failureCode is null ? null : ReadNullableString(reader, "failure_detail"));
+        var alreadyProcessed = processingStatus == GateAuthorizationConsumedProcessingStatus.Processed;
+        var alreadyInProgress = commandStatus is "REQUESTED" or "ACKNOWLEDGED";
+        var canRetryFailure = processingStatus == GateAuthorizationConsumedProcessingStatus.Failed;
 
         return new GateAuthorizationConsumedProcessingStart(
             record,
-            CanInvokeAdapter: canInvokeAdapter && !alreadyProcessed,
+            CanInvokeAdapter: !alreadyProcessed && (!alreadyInProgress || canRetryFailure),
             AlreadyProcessed: alreadyProcessed,
-            AlreadyInProgress: !inserted && !alreadyProcessed && !canInvokeAdapter);
+            AlreadyInProgress: alreadyInProgress && !canRetryFailure);
     }
 
     /// <inheritdoc />
@@ -180,28 +104,49 @@ public sealed class PostgresGateAuthorizationConsumedProcessingRecorder
         ArgumentNullException.ThrowIfNull(record);
 
         const string sql = """
-            UPDATE gates.gate_authorization_consumed_processing
-            SET
-                processing_status = 'PROCESSED',
-                result_code = @result_code,
-                processed_at = @processed_at,
-                last_failure_code = NULL,
-                last_failure_reason = NULL,
-                updated_at = @processed_at
-            WHERE processing_key = @processing_key
-              AND event_type = @event_type;
+            INSERT INTO gates.gate_events (
+                gate_event_id,
+                gate_device_id,
+                gate_authorization_consumption_id,
+                exit_authorization_id,
+                site_id,
+                lane_id,
+                event_type,
+                event_status,
+                event_reason_code,
+                occurred_at,
+                received_at,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id
+            )
+            SELECT
+                gen_random_uuid(),
+                gac.gate_device_id,
+                gac.gate_authorization_consumption_id,
+                gac.exit_authorization_id,
+                gac.site_id,
+                gac.lane_id,
+                'GATE_OPEN_ACKNOWLEDGED',
+                'SUCCESS',
+                @result_code,
+                @processed_at,
+                @processed_at,
+                gac.correlation_id,
+                @processed_at,
+                gac.created_by_service_identity_id
+            FROM gates.gate_authorization_consumptions AS gac
+            WHERE gac.gate_authorization_consumption_id = @gate_authorization_consumption_id;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-
         await using var command = new NpgsqlCommand(sql, connection)
         {
             CommandTimeout = 30
         };
-
-        command.Parameters.Add("processing_key", NpgsqlDbType.Uuid).Value = record.ProcessingKey;
-        command.Parameters.Add("event_type", NpgsqlDbType.Varchar).Value = EventType;
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            record.GateAuthorizationConsumptionId;
         command.Parameters.Add("result_code", NpgsqlDbType.Varchar).Value = record.ResultCode;
         command.Parameters.Add("processed_at", NpgsqlDbType.TimestampTz).Value = record.ProcessedAtUtc;
 
@@ -217,90 +162,94 @@ public sealed class PostgresGateAuthorizationConsumedProcessingRecorder
     {
         ArgumentNullException.ThrowIfNull(handoff);
 
+        var now = DateTimeOffset.UtcNow;
         const string sql = """
-            UPDATE gates.gate_authorization_consumed_processing
-            SET
-                processing_status = 'FAILED',
-                result_code = @failure_code,
-                processed_at = NULL,
-                last_failure_code = @failure_code,
-                last_failure_reason = @failure_reason,
-                updated_at = @now
-            WHERE processing_key = @processing_key
-              AND event_type = @event_type;
+            WITH updated AS (
+                UPDATE gates.gate_authorization_consumptions
+                SET
+                    command_result_status = CASE
+                        WHEN command_requested THEN 'FAILED'
+                        ELSE command_result_status
+                    END,
+                    command_result_at = CASE
+                        WHEN command_requested THEN @now
+                        ELSE command_result_at
+                    END,
+                    failure_detail = @failure_reason,
+                    updated_at = @now,
+                    row_version = row_version + 1
+                WHERE gate_authorization_consumption_id = @gate_authorization_consumption_id
+                RETURNING *
+            )
+            INSERT INTO gates.gate_events (
+                gate_event_id,
+                gate_device_id,
+                gate_authorization_consumption_id,
+                exit_authorization_id,
+                site_id,
+                lane_id,
+                event_type,
+                event_status,
+                event_reason_code,
+                source_event_ref,
+                occurred_at,
+                received_at,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id
+            )
+            SELECT
+                gen_random_uuid(),
+                updated.gate_device_id,
+                updated.gate_authorization_consumption_id,
+                updated.exit_authorization_id,
+                updated.site_id,
+                updated.lane_id,
+                CASE
+                    WHEN updated.command_requested THEN 'GATE_OPEN_FAILED'::gates.gate_event_type_enum
+                    ELSE 'AUTHORIZATION_DENIED'::gates.gate_event_type_enum
+                END,
+                'FAILED',
+                @failure_code,
+                @source_event_ref,
+                @now,
+                @now,
+                updated.correlation_id,
+                @now,
+                updated.created_by_service_identity_id
+            FROM updated;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-
         await using var command = new NpgsqlCommand(sql, connection)
         {
             CommandTimeout = 30
         };
-
-        command.Parameters.Add("processing_key", NpgsqlDbType.Uuid).Value = ResolveProcessingKey(handoff);
-        command.Parameters.Add("event_type", NpgsqlDbType.Varchar).Value = EventType;
+        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value =
+            handoff.GateAuthorizationConsumptionId;
         command.Parameters.Add("failure_code", NpgsqlDbType.Varchar).Value = failureCode;
         command.Parameters.Add("failure_reason", NpgsqlDbType.Text).Value = failureReason;
-        command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.UtcNow;
+        command.Parameters.Add("source_event_ref", NpgsqlDbType.Varchar).Value = DbValue(handoff.SourceEventRef);
+        command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = now;
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static void AddHandoffParameters(
-        NpgsqlCommand command,
-        GateAuthorizationConsumedHandoff handoff,
-        Guid processingKey,
-        DateTimeOffset now)
-    {
-        command.Parameters.Add("processing_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
-        command.Parameters.Add("processing_key", NpgsqlDbType.Uuid).Value = processingKey;
-        command.Parameters.Add("event_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.EventId == Guid.Empty ? null : handoff.EventId);
-        command.Parameters.Add("event_type", NpgsqlDbType.Varchar).Value = EventType;
-        command.Parameters.Add("source_event_ref", NpgsqlDbType.Varchar).Value = DbValue(handoff.SourceEventRef);
-        command.Parameters.Add("gate_authorization_consumption_id", NpgsqlDbType.Uuid).Value = handoff.GateAuthorizationConsumptionId;
-        command.Parameters.Add("exit_authorization_id", NpgsqlDbType.Uuid).Value = handoff.ExitAuthorizationId;
-        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = handoff.ParkingSessionId;
-        command.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = handoff.PaymentAttemptId;
-        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = handoff.TariffSnapshotId;
-        command.Parameters.Add("gate_device_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.GateDeviceId);
-        command.Parameters.Add("gate_device_identifier", NpgsqlDbType.Varchar).Value = DbValue(handoff.GateDeviceIdentifier);
-        command.Parameters.Add("lane_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.LaneId);
-        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.SiteId);
-        command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = DbValue(handoff.VendorSystemId);
-        command.Parameters.Add("consumed_at_utc", NpgsqlDbType.TimestampTz).Value = handoff.ConsumedAtUtc;
-        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = handoff.CorrelationId;
-        command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = now;
-    }
+    private static GateAuthorizationConsumedProcessingStatus MapProcessingStatus(string? commandStatus) =>
+        commandStatus switch
+        {
+            "OPENED" => GateAuthorizationConsumedProcessingStatus.Processed,
+            "FAILED" or "TIMEOUT" or "UNKNOWN" => GateAuthorizationConsumedProcessingStatus.Failed,
+            _ => GateAuthorizationConsumedProcessingStatus.Processing
+        };
 
-    private static GateAuthorizationConsumedProcessingRecord ReadRecord(NpgsqlDataReader reader)
-    {
-        var eventId = reader.IsDBNull(reader.GetOrdinal("event_id"))
-            ? Guid.Empty
-            : reader.GetGuid(reader.GetOrdinal("event_id"));
-        var status = ParseStatus(reader.GetString(reader.GetOrdinal("processing_status")));
-        var processedAt = reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("processed_at_utc"));
-
-        return new GateAuthorizationConsumedProcessingRecord(
-            eventId,
-            reader.GetGuid(reader.GetOrdinal("exit_authorization_id")),
-            reader.GetGuid(reader.GetOrdinal("gate_authorization_consumption_id")),
-            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
-            reader.GetString(reader.GetOrdinal("result_code")),
-            processedAt,
-            status,
-            reader.GetInt32(reader.GetOrdinal("attempt_count")),
-            ReadNullableString(reader, "last_failure_code"),
-            ReadNullableString(reader, "last_failure_reason"));
-    }
-
-    private static GateAuthorizationConsumedProcessingStatus ParseStatus(string status) =>
+    private static string ResolveResultCode(GateAuthorizationConsumedProcessingStatus status) =>
         status switch
         {
-            "PROCESSING" => GateAuthorizationConsumedProcessingStatus.Processing,
-            "PROCESSED" => GateAuthorizationConsumedProcessingStatus.Processed,
-            "FAILED" => GateAuthorizationConsumedProcessingStatus.Failed,
-            _ => throw new InvalidOperationException($"Unknown GateAuthorizationConsumed processing status '{status}'.")
+            GateAuthorizationConsumedProcessingStatus.Processed => "GATE_AUTHORIZATION_CONSUMED_PROCESSED",
+            GateAuthorizationConsumedProcessingStatus.Failed => "GATE_AUTHORIZATION_CONSUMED_FAILED",
+            _ => "GATE_AUTHORIZATION_CONSUMED_PROCESSING"
         };
 
     private static string? ReadNullableString(NpgsqlDataReader reader, string columnName)
@@ -309,12 +258,18 @@ public sealed class PostgresGateAuthorizationConsumedProcessingRecorder
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
-    private static Guid ResolveProcessingKey(GateAuthorizationConsumedHandoff handoff) =>
-        handoff.EventId == Guid.Empty ? handoff.GateAuthorizationConsumptionId : handoff.EventId;
+    private static DateTimeOffset? ReadNullableDateTimeOffset(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
+    }
+
+    private static Guid? ReadNullableGuid(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetGuid(ordinal);
+    }
 
     private static object DbValue(string? value) =>
         string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
-
-    private static object DbValue(Guid? value) =>
-        value.HasValue && value.Value != Guid.Empty ? value.Value : DBNull.Value;
 }
