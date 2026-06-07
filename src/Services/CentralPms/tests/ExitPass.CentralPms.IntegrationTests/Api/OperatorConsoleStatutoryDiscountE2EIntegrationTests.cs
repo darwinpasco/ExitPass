@@ -34,6 +34,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
     private static readonly Guid ServiceIdentityId = Guid.Parse("77000000-0000-0000-0000-000000000003");
 
     private static readonly Guid JurisdictionId = Guid.Parse("23100000-0000-0000-0000-000000000001");
+    private const string E2ELguCode = "PH-INT-E2E-231";
     private static readonly Guid PolicyId = Guid.Parse("23100000-0000-0000-0000-000000000002");
     private static readonly Guid ParkingSessionId = Guid.Parse("23100000-0000-0000-0000-000000000003");
     private static readonly Guid OriginalTariffSnapshotId = Guid.Parse("23100000-0000-0000-0000-000000000004");
@@ -326,7 +327,8 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         using var request = new HttpRequestMessage(HttpMethod.Get, endpoint);
         AddOperatorHeaders(request);
         using var response = await client.SendAsync(request);
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        response.StatusCode.Should().Be(HttpStatusCode.OK, body);
         var parsed = await response.Content.ReadFromJsonAsync<T>();
         parsed.Should().NotBeNull();
         return parsed!;
@@ -343,20 +345,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
     private static async Task SeedManualFixtureAsync()
     {
-        var sql = ReadRepoFile(
-            "infra",
-            "db",
-            "fixtures",
-            "operator-console-access-evaluation",
-            "Seed-OperatorConsoleAccessEvaluationManualFixtures.sql");
-
-        await using var connection = await OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(sql, connection)
-        {
-            CommandTimeout = 60
-        };
-
-        await command.ExecuteNonQueryAsync();
+        await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
     }
 
     private static async Task ResetE2EStateAsync()
@@ -414,7 +403,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             DELETE FROM core.parking_sessions
             WHERE parking_session_id = @parking_session_id;
 
-            DELETE FROM discounts.statutory_discount_policy_registry
+            DELETE FROM discounts.discount_policy_references
             WHERE policy_code = 'INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231';
 
             COMMIT;
@@ -431,94 +420,46 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         const string sql = """
             BEGIN;
 
-            INSERT INTO sites.jurisdictions (
-                jurisdiction_id,
-                country_code,
-                province_name,
-                city_municipality_name,
-                psgc_code,
-                lgu_code,
-                jurisdiction_type,
-                jurisdiction_status,
-                source_reference
-            )
-            VALUES (
-                @jurisdiction_id,
-                'PH',
-                'Integration Province',
-                'Integration E2E City',
-                '231231231',
-                'PH-INT-E2E-231',
-                'CITY_MUNICIPALITY',
-                'ACTIVE',
-                'Integration E2E statutory discount validation jurisdiction.'
-            )
-            ON CONFLICT (jurisdiction_id) DO UPDATE
-            SET jurisdiction_status = EXCLUDED.jurisdiction_status,
-                updated_at = now();
-
             UPDATE sites.sites
-               SET jurisdiction_id = @jurisdiction_id,
+               SET lgu_code = @lgu_code,
                    updated_at = now()
              WHERE site_id = @site_id;
 
-            INSERT INTO discounts.statutory_discount_policy_registry (
-                statutory_discount_policy_id,
-                jurisdiction_id,
+            INSERT INTO discounts.discount_policy_references (
+                discount_policy_reference_id,
                 policy_code,
                 policy_name,
-                entitlement_type,
-                policy_resolution_basis,
-                policy_level,
+                policy_description,
                 policy_type,
-                ordinance_reference,
-                verification_status,
-                beneficiary_residency_scope,
-                benefit_type,
-                free_duration_minutes,
-                initial_rate_exempt_flag,
-                full_fee_exempt_flag,
-                free_period_application,
-                succeeding_hours_discount_rule,
-                discount_base_scope,
-                stacking_policy,
-                legal_basis_priority,
+                policy_level,
+                entitlement_type,
+                local_ordinance_reference,
+                lgu_code,
+                site_id,
+                precedence_rank,
+                policy_version,
                 requires_operator_validation,
-                requires_evidence,
+                requires_evidence_capture,
                 effective_from,
-                policy_status,
-                source_reference,
-                reviewed_at,
-                policy_snapshot_json
+                policy_status
             )
             VALUES (
                 @policy_id,
-                @jurisdiction_id,
                 'INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231',
                 'Integration E2E Required Evidence Policy 231',
-                'SENIOR_CITIZEN',
-                'LOCAL_ORDINANCE_APPLIED',
-                'SITE_POLICY',
-                'SITE_POLICY',
-                'INTEGRATION-E2E-ORD-231',
-                'VERIFIED_OFFICIAL',
-                'NON_RESIDENT_ALLOWED',
-                'STATUTORY_DISCOUNT_VAT_EXEMPT',
-                NULL,
-                false,
-                false,
-                'NOT_APPLICABLE',
-                'REGULAR_RATE',
-                'CHARGEABLE_PORTION_ONLY',
-                'NO_STACKING_ON_FREE_PERIOD',
-                'LOCAL_ORDINANCE_FIRST',
-                true,
-                true,
-                DATE '2026-01-01',
-                'ACTIVE',
                 'Integration E2E test policy requiring metadata-only evidence.',
-                now(),
-                '{}'::jsonb
+                'SITE_POLICY',
+                'SITE_POLICY',
+                'SENIOR_CITIZEN',
+                'INTEGRATION-E2E-ORD-231',
+                @lgu_code,
+                @site_id,
+                0,
+                'integration-v1',
+                true,
+                true,
+                now() - interval '1 day',
+                'ACTIVE'
             );
 
             COMMIT;
@@ -526,7 +467,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = JurisdictionId;
+        command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = E2ELguCode;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = SiteId;
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = PolicyId;
         await command.ExecuteNonQueryAsync();

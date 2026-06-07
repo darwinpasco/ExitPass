@@ -67,8 +67,11 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
               ON ps.parking_session_id = sdv.parking_session_id
             LEFT JOIN sites.sites AS s
               ON s.site_id = ps.site_id
-            LEFT JOIN discounts.statutory_discount_policy_registry AS p
-              ON p.statutory_discount_policy_id = sdv.statutory_discount_policy_id
+            LEFT JOIN discounts.discount_policy_references AS p
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
             LEFT JOIN LATERAL (
                 SELECT gross_amount, net_amount, currency_code
                 FROM core.tariff_snapshots
@@ -165,22 +168,39 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 sdv.decision_reason_code,
                 sdv.failure_reason_code,
                 sdv.policy_resolution_basis::text,
-                sdv.statutory_discount_policy_id,
-                sdv.resolved_jurisdiction_id,
+                COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id) AS statutory_discount_policy_id,
+                NULL::uuid AS resolved_jurisdiction_id,
                 p.policy_code,
                 p.policy_name,
-                p.legal_basis_reference,
-                p.ordinance_reference,
+                COALESCE(p.local_ordinance_reference, p.national_law_reference) AS legal_basis_reference,
+                p.local_ordinance_reference AS ordinance_reference,
                 p.national_law_reference,
-                p.verification_status::text,
-                p.benefit_type::text,
-                p.free_duration_minutes,
-                p.succeeding_hours_discount_rule::text,
-                p.discount_base_scope::text,
-                p.stacking_policy::text,
-                sdv.resolved_policy_snapshot_json,
+                p.policy_status::text AS verification_status,
+                'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type,
+                NULL::integer AS free_duration_minutes,
+                'APPLY_NATIONAL_STATUTORY_DISCOUNT' AS succeeding_hours_discount_rule,
+                'VAT_EXCLUSIVE' AS discount_base_scope,
+                'STATUTORY_FIRST' AS stacking_policy,
+                jsonb_build_object(
+                    'statutoryDiscountPolicyId', COALESCE(sdv.applied_policy_reference_id, sdv.evaluated_policy_reference_id, sdv.fallback_policy_reference_id),
+                    'policyCode', p.policy_code,
+                    'policyName', p.policy_name,
+                    'entitlementType', sdv.entitlement_type::text,
+                    'policyResolutionBasis', sdv.policy_resolution_basis::text,
+                    'policyLevel', p.policy_level::text,
+                    'policyType', p.policy_type::text,
+                    'legalBasisReference', COALESCE(p.local_ordinance_reference, p.national_law_reference),
+                    'ordinanceReference', p.local_ordinance_reference,
+                    'nationalLawReference', p.national_law_reference,
+                    'verificationStatus', p.policy_status::text,
+                    'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                    'freeDurationMinutes', NULL,
+                    'succeedingHoursDiscountRule', 'APPLY_NATIONAL_STATUTORY_DISCOUNT',
+                    'discountBaseScope', 'VAT_EXCLUSIVE',
+                    'stackingPolicy', 'STATUTORY_FIRST',
+                    'requiresEvidence', p.requires_evidence_capture
+                )::text AS resolved_policy_snapshot_json,
                 latest_application.original_tariff_snapshot_id,
-                latest_application.statutory_discount_payable_basis_application_id,
                 latest_application.application_status::text,
                 ROUND(COALESCE(sdv.gross_amount_at_validation, active_tariff.gross_amount) * 100)::bigint AS original_amount_minor_units,
                 COALESCE(
@@ -197,8 +217,11 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
               ON ps.parking_session_id = sdv.parking_session_id
             LEFT JOIN sites.sites AS s
               ON s.site_id = ps.site_id
-            LEFT JOIN discounts.statutory_discount_policy_registry AS p
-              ON p.statutory_discount_policy_id = sdv.statutory_discount_policy_id
+            LEFT JOIN discounts.discount_policy_references AS p
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
             LEFT JOIN LATERAL (
                 SELECT tariff_snapshot_id, gross_amount, net_amount, currency_code
                 FROM core.tariff_snapshots
@@ -209,12 +232,11 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             ) AS active_tariff ON TRUE
             LEFT JOIN LATERAL (
                 SELECT
-                    NULL::uuid AS statutory_discount_payable_basis_application_id,
                     original.tariff_snapshot_id AS original_tariff_snapshot_id,
                     'APPLIED'::text AS application_status,
                     ROUND(applied_ts.statutory_discount_amount * 100)::bigint AS statutory_discount_amount_minor_units,
                     ROUND(applied_ts.net_amount * 100)::bigint AS final_payable_amount_minor_units,
-                    currency_code
+                    applied_ts.currency_code
                 FROM core.tariff_snapshots AS applied_ts
                 LEFT JOIN core.tariff_snapshots AS original
                   ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
@@ -342,7 +364,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             GetNullableString(reader, "stacking_policy"),
             GetNullableJson(reader, "resolved_policy_snapshot_json"),
             GetNullableGuid(reader, "original_tariff_snapshot_id"),
-            GetNullableGuid(reader, "statutory_discount_payable_basis_application_id"),
+            null,
             applicationStatus,
             GetNullableLong(reader, "original_amount_minor_units"),
             GetNullableLong(reader, "statutory_discount_amount_minor_units"),
