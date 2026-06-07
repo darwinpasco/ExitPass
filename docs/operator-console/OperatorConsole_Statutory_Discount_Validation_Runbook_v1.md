@@ -725,7 +725,20 @@ ORDER BY e.evaluated_at, r.display_order;
 | Apply blocked | Draft is not approved, policy snapshot invalid, payment already started, or unsupported policy. | Verify decision state, policy snapshot, and payment boundary before retrying. |
 | Raw reference concern | Manual reference may have been entered or returned unexpectedly. | Stop validation, preserve correlation ID, and ask backend/compliance observers to review response and storage. |
 
-## 14. Related Tests And Proof Points
+## 14. Pilot Feedback and Defect Logging
+
+Use the pilot feedback artifacts for every failed step, operator confusion, privacy concern, control exception, or runbook mismatch observed during validation:
+
+- Feedback log template: [OperatorConsole_Statutory_Discount_Pilot_Feedback_Log_Template.md](OperatorConsole_Statutory_Discount_Pilot_Feedback_Log_Template.md)
+- Triage guide: [OperatorConsole_Statutory_Discount_Pilot_Triage_Guide.md](OperatorConsole_Statutory_Discount_Pilot_Triage_Guide.md)
+
+Every failed runbook step or operator confusion must be logged with a feedback/defect ID, workflow step, issue type, severity, expected result, actual result, reproducibility, workaround, owner, and status.
+
+Privacy and control issues must be escalated immediately. This includes raw ID number exposure, unexpected raw image/document storage, evidence visibility to an unauthorized operator, approval before required evidence, wrong evidence type satisfying entitlement, or any payment/provider/gate/coupon/reconciliation mutation.
+
+Do not include production credentials, raw ID numbers, raw evidence images, unredacted screenshots, customer names, operator names, vehicle identifiers, or other personal data in feedback artifacts. Use masked values, sandbox values, correlation IDs, and redacted screenshots only.
+
+## 15. Related Tests And Proof Points
 
 Current backend proof points:
 
@@ -754,7 +767,7 @@ The controlled E2E proof verifies:
 - Payable-basis application succeeds after approval.
 - Final read model shows evidence satisfied, latest evidence `CAPTURED`, approved validation, and application `APPLIED`.
 
-## 15. Revision Notes
+## 16. Revision Notes
 
 - v1.0: Initial manual operator validation runbook and production pilot checklist for ExitPass v1.2 Operator Console statutory discount validation.
 - Aligned to Operator Console #229 evidence intake, #230 RBAC/operator identity hardening, #231 controlled E2E validation session, and #232 production-readiness cleanup.
