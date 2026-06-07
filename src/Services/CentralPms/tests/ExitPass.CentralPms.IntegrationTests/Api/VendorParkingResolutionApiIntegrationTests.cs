@@ -457,10 +457,10 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
-    /// Verifies a consumed applied snapshot remains rejected when there is no matching idempotent attempt.
+    /// Verifies a consumed applied snapshot remains protected from a second non-idempotent payment attempt.
     /// </summary>
     [Fact]
-    public async Task CreateOrReusePaymentAttemptHandler_WhenAppliedSnapshotConsumedWithoutMatchingReplay_RejectsEffectiveBasis()
+    public async Task CreateOrReusePaymentAttemptHandler_WhenAppliedSnapshotConsumedWithoutMatchingReplay_RejectsActiveAttempt()
     {
         using var client = _factory.CreateClient();
         var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000023");
@@ -490,7 +490,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         var error = await newPaymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
         error.Should().NotBeNull();
-        error!.ErrorCode.Should().Be("EFFECTIVE_PAYABLE_BASIS_INVALID");
+        error!.ErrorCode.Should().Be("ACTIVE_PAYMENT_ATTEMPT_EXISTS");
 
         var paymentAttempts = await CountPaymentAttemptsAsync(initial.ParkingSessionId);
         paymentAttempts.Should().Be(1);
@@ -755,15 +755,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         Guid correlationId)
     {
         var validationId = Guid.NewGuid();
-        var applicationId = Guid.NewGuid();
         var appliedTariffSnapshotId = Guid.NewGuid();
-        var computationBasisJson = JsonSerializer.Serialize(new
-        {
-            policyContext = new
-            {
-                benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT"
-            }
-        });
 
         const string sql = """
             UPDATE core.tariff_snapshots
@@ -879,56 +871,6 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
                 row_version = row_version + 1
             WHERE tariff_snapshot_id = @original_tariff_snapshot_id;
 
-            INSERT INTO discounts.statutory_discount_payable_basis_applications (
-                statutory_discount_payable_basis_application_id,
-                statutory_discount_validation_id,
-                parking_session_id,
-                original_tariff_snapshot_id,
-                applied_tariff_snapshot_id,
-                application_status,
-                application_channel,
-                gross_amount_minor_units,
-                vat_amount_minor_units,
-                vat_exclusive_amount_minor_units,
-                statutory_discount_amount_minor_units,
-                final_payable_amount_minor_units,
-                currency_code,
-                computation_basis_json,
-                rounding_mode,
-                applied_at,
-                applied_by_service_identity_id,
-                correlation_id,
-                created_at,
-                created_by_service_identity_id,
-                updated_at,
-                updated_by_service_identity_id,
-                row_version
-            )
-            VALUES (
-                @application_id,
-                @validation_id,
-                @parking_session_id,
-                @original_tariff_snapshot_id,
-                @applied_tariff_snapshot_id,
-                'APPLIED',
-                'OPERATOR_CONSOLE',
-                10000,
-                1071,
-                8929,
-                1786,
-                7143,
-                'PHP',
-                @computation_basis_json,
-                'HALF_AWAY_FROM_ZERO',
-                NOW(),
-                @service_identity_id,
-                @correlation_id,
-                NOW(),
-                @service_identity_id,
-                NOW(),
-                @service_identity_id,
-                1
-            );
             """;
 
         await using var connection = new NpgsqlConnection(
@@ -936,17 +878,15 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("validation_id", validationId);
-        command.Parameters.AddWithValue("application_id", applicationId);
         command.Parameters.AddWithValue("applied_tariff_snapshot_id", appliedTariffSnapshotId);
         command.Parameters.AddWithValue("parking_session_id", resolved.ParkingSessionId);
         command.Parameters.AddWithValue("original_tariff_snapshot_id", resolved.TariffSnapshotId);
         command.Parameters.AddWithValue("correlation_id", correlationId);
         command.Parameters.AddWithValue("service_identity_id", Guid.Parse("12000000-0000-0000-0000-000000000001"));
-        command.Parameters.Add("computation_basis_json", NpgsqlDbType.Jsonb).Value = computationBasisJson;
 
         await command.ExecuteNonQueryAsync();
 
-        return new AppliedPayableBasisFixture(validationId, applicationId, appliedTariffSnapshotId);
+        return new AppliedPayableBasisFixture(validationId, null, appliedTariffSnapshotId);
     }
 
     private static async Task<long> CountPaymentAttemptsAsync(Guid parkingSessionId)
@@ -1033,7 +973,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
     private sealed record AppliedPayableBasisFixture(
         Guid ValidationId,
-        Guid ApplicationId,
+        Guid? ApplicationId,
         Guid AppliedTariffSnapshotId);
 
     private sealed record TariffState(

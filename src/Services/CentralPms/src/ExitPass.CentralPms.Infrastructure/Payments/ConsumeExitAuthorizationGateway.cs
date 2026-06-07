@@ -393,13 +393,17 @@ public sealed class ConsumeExitAuthorizationGateway : IConsumeExitAuthorizationG
                AND pc.confirmation_status = 'RECORDED'
             LEFT JOIN LATERAL (
                 SELECT
-                    sdpa.original_tariff_snapshot_id,
-                    sdpa.applied_tariff_snapshot_id
-                FROM discounts.statutory_discount_payable_basis_applications AS sdpa
-                WHERE sdpa.parking_session_id = ea.parking_session_id
-                  AND sdpa.application_status = 'APPLIED'
-                  AND sdpa.applied_tariff_snapshot_id IS NOT NULL
-                ORDER BY sdpa.applied_at DESC NULLS LAST, sdpa.created_at DESC
+                    original.tariff_snapshot_id AS original_tariff_snapshot_id,
+                    applied_ts.tariff_snapshot_id AS applied_tariff_snapshot_id
+                FROM core.tariff_snapshots AS applied_ts
+                LEFT JOIN core.tariff_snapshots AS original
+                  ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
+                 AND original.parking_session_id = applied_ts.parking_session_id
+                WHERE applied_ts.parking_session_id = ea.parking_session_id
+                  AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
+                  AND applied_ts.statutory_discount_validation_id IS NOT NULL
+                  AND applied_ts.statutory_discount_amount > 0
+                ORDER BY applied_ts.calculated_at DESC, applied_ts.created_at DESC
                 LIMIT 1
             ) AS applied ON TRUE
             LEFT JOIN LATERAL (
