@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Internal;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Xunit;
@@ -27,17 +28,17 @@ namespace ExitPass.CentralPms.ContractTests.Internal;
 /// - Duplicate provider references must return deterministic conflict responses.
 /// - Required idempotency and correlation headers must fail closed.
 /// </summary>
-public sealed class ReportVerifiedPaymentOutcomeContractTests
+public sealed class ReportVerifiedPaymentOutcomeContractTests : IClassFixture<CustomWebApplicationFactory>
 {
+    private readonly CustomWebApplicationFactory _factory;
+
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
-    private static Uri ApiBaseUri => new(
-        Environment.GetEnvironmentVariable("EXITPASS_CENTRAL_PMS_API_BASE_URL")
-        ?? Environment.GetEnvironmentVariable("EXITPASS_CENTRAL_PMS_BASE_URL")
-        ?? Environment.GetEnvironmentVariable("CENTRAL_PMS_BASE_URL")
-        ?? "http://localhost:8080",
-        UriKind.Absolute);
+    public ReportVerifiedPaymentOutcomeContractTests(CustomWebApplicationFactory factory)
+    {
+        _factory = factory;
+    }
 
     /// <summary>
     /// Verifies BRD 9.10 and SDD 10.5.3 unknown-payment-attempt behavior.
@@ -274,13 +275,11 @@ public sealed class ReportVerifiedPaymentOutcomeContractTests
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    private static HttpClient CreateClient()
+    private HttpClient CreateClient()
     {
-        return new HttpClient
-        {
-            BaseAddress = ApiBaseUri,
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+        var client = _factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        return client;
     }
 
     private static ReportVerifiedPaymentOutcomeRequest BuildRequest(

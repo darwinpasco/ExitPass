@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.Payments;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Xunit;
@@ -26,19 +27,18 @@ namespace ExitPass.CentralPms.ContractTests.Internal;
 /// - Same-terminal retries must return existing finalized state.
 /// - Conflicting terminal retries must return a deterministic conflict envelope.
 /// </summary>
-public sealed class FinalizePaymentAttemptContractTests
+public sealed class FinalizePaymentAttemptContractTests : IClassFixture<CustomWebApplicationFactory>
 {
     private const string RequestedByActor = "payment-orchestrator";
+    private readonly CustomWebApplicationFactory _factory;
 
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
 
-    private static Uri ApiBaseUri => new(
-        Environment.GetEnvironmentVariable("EXITPASS_CENTRAL_PMS_API_BASE_URL")
-        ?? Environment.GetEnvironmentVariable("EXITPASS_CENTRAL_PMS_BASE_URL")
-        ?? Environment.GetEnvironmentVariable("CENTRAL_PMS_BASE_URL")
-        ?? "http://localhost:8080",
-        UriKind.Absolute);
+    public FinalizePaymentAttemptContractTests(CustomWebApplicationFactory factory)
+    {
+        _factory = factory;
+    }
 
     /// <summary>
     /// Verifies BRD 9.10 and SDD 6.4 unknown-payment-attempt behavior.
@@ -247,13 +247,11 @@ public sealed class FinalizePaymentAttemptContractTests
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
-    private static HttpClient CreateClient()
+    private HttpClient CreateClient()
     {
-        return new HttpClient
-        {
-            BaseAddress = ApiBaseUri,
-            Timeout = TimeSpan.FromSeconds(30)
-        };
+        var client = _factory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+        return client;
     }
 
     private static async Task<HttpResponseMessage> PostFinalizeAsync(
