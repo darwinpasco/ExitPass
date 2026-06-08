@@ -162,7 +162,11 @@ public static class OperatorConsoleStatutoryDiscountPolicyResolutionEndpoints
             policy?.PolicySnapshot,
             result.IneligibilityReason,
             result.ErrorCode,
-            result.CorrelationId);
+            result.CorrelationId,
+            result.PolicyReadinessClassification,
+            result.RequiresManualReview,
+            result.PolicyReadinessReason,
+            result.OperatorMessage);
     }
 
     private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId) =>

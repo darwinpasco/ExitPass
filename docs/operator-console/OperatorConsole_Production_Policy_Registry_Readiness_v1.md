@@ -304,6 +304,14 @@ Policy resolution must return traceable policy basis. Unverified local policy mu
 
 Sandbox policy rows must be rejected or ignored in production. Policy resolution must not mutate payment, provider, gate, coupon, or reconciliation records.
 
+## Implementation Status: #250
+
+The Operator Console backend now classifies resolved statutory discount policies in the application layer and blocks production auto-application of sandbox, development-only, missing, expired, inactive, unscoped, evidence-incomplete, or unverified policy rows as production-ready authority.
+
+Non-production environments continue to allow deterministic sandbox validation fixtures, including the #235A Operator Console sandbox policy path.
+
+Production policy rows remain required before rollout. Database repository alignment is still required before any production policy baseline is accepted because the current live compatibility table does not provide the governed verification metadata expected from the future production registry.
+
 ## UI And Reporting Implications
 
 Operator Console should eventually show:

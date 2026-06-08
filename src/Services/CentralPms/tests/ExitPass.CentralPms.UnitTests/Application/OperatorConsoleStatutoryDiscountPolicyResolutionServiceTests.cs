@@ -77,6 +77,118 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
     }
 
     /// <summary>
+    /// Verifies production policy resolution does not auto-resolve sandbox fixture policy rows.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenProductionAndSandboxPolicyResolved_ReturnsManualReviewFailClosed()
+    {
+        var repository = RepositoryReturning(Policy(
+            policyId: Guid.Parse("23100000-0000-0000-0000-000000000002"),
+            policyCode: "SANDBOX_OC_SD_REQUIRED_EVIDENCE_POLICY_235A",
+            policyName: "Sandbox Operator Console Senior Citizen Required Evidence Policy",
+            policyLevel: "SITE_POLICY",
+            policyType: "SITE_POLICY",
+            policyResolutionBasis: "SITE_POLICY_OPERATIONAL_ONLY",
+            ordinanceReference: "SANDBOX-OC-SD-ORD-235A",
+            nationalLawReference: null,
+            sourceReference: "SANDBOX_METADATA_ONLY"));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeFalse();
+        result.Policy.Should().BeNull();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
+        result.RequiresManualReview.Should().BeTrue();
+        result.PolicyReadinessReason.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
+        result.OperatorMessage.Should().Contain("sandbox");
+    }
+
+    /// <summary>
+    /// Verifies non-production sandbox validation remains supported.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenDevelopmentAndSandboxPolicyResolved_ReturnsPolicy()
+    {
+        var repository = RepositoryReturning(Policy(
+            policyId: Guid.Parse("23100000-0000-0000-0000-000000000002"),
+            policyCode: "SANDBOX_OC_SD_REQUIRED_EVIDENCE_POLICY_235A",
+            policyName: "Sandbox Operator Console Senior Citizen Required Evidence Policy",
+            policyLevel: "SITE_POLICY",
+            policyType: "SITE_POLICY",
+            policyResolutionBasis: "SITE_POLICY_OPERATIONAL_ONLY",
+            ordinanceReference: "SANDBOX-OC-SD-ORD-235A",
+            nationalLawReference: null,
+            sourceReference: "SANDBOX_METADATA_ONLY"));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository);
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeTrue();
+        result.Policy.Should().NotBeNull();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
+        result.RequiresManualReview.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies missing production policies return a controlled not-ready result.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenProductionAndPolicyMissing_ReturnsMissingRequiredPolicy()
+    {
+        var repository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        repository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: false,
+                Policy: null,
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                "NATIONAL_FALLBACK_POLICY_NOT_CONFIGURED",
+                "NATIONAL_FALLBACK_POLICY_NOT_CONFIGURED"));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeFalse();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.MissingRequiredPolicy);
+        result.RequiresManualReview.Should().BeTrue();
+        result.ErrorCode.Should().Be("NATIONAL_FALLBACK_POLICY_NOT_CONFIGURED");
+    }
+
+    /// <summary>
+    /// Verifies inactive or expired rows are not production-ready.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenProductionAndPolicyExpired_ReturnsExpiredOrInactive()
+    {
+        var repository = RepositoryReturning(Policy(effectiveTo: new DateOnly(2026, 5, 1)));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeFalse();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.ExpiredOrInactive);
+        result.RequiresManualReview.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies missing evidence requirements are not production-ready for the Operator Console workflow.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenProductionAndPolicyMissingEvidenceRule_ReturnsMissingEvidenceRule()
+    {
+        var repository = RepositoryReturning(Policy(requiresEvidence: false));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeFalse();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.MissingEvidenceRule);
+        result.RequiresManualReview.Should().BeTrue();
+    }
+
+    /// <summary>
     /// Verifies unsupported entitlement types fail before access evaluation.
     /// </summary>
     [Fact]
@@ -92,7 +204,8 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
 
     private static OperatorConsoleStatutoryDiscountPolicyResolutionService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
-        IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository? repository = null)
+        IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository? repository = null,
+        string environmentName = "Development")
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -111,7 +224,8 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
             accessService,
             accessWriter,
             repository,
-            clock);
+            clock,
+            new OperatorConsolePolicyReadinessEnvironment(environmentName));
     }
 
     private static OperatorConsoleStatutoryDiscountPolicyResolutionCommand Command(string entitlementType = "SENIOR_CITIZEN") =>
@@ -126,22 +240,51 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
             "operator-console-policy-resolution-test",
             CorrelationId);
 
-    private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy() =>
+    private static IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository RepositoryReturning(
+        OperatorConsoleResolvedStatutoryDiscountPolicy policy)
+    {
+        var repository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        repository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: true,
+                policy,
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                IneligibilityReason: null,
+                ErrorCode: null));
+        return repository;
+    }
+
+    private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy(
+        Guid? policyId = null,
+        string policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+        string policyName = "RA 9994 Senior Citizen National Fallback",
+        string policyResolutionBasis = "NATIONAL_LAW_FALLBACK",
+        string policyLevel = "NATIONAL_LAW",
+        string policyType = "LEGAL_REFERENCE",
+        string? legalBasisReference = "Expanded Senior Citizens Act of 2010",
+        string? ordinanceReference = null,
+        string? nationalLawReference = "RA 9994",
+        string verificationStatus = "VERIFIED_OFFICIAL",
+        bool requiresEvidence = true,
+        DateOnly? effectiveTo = null,
+        string? sourceReference = null) =>
         new(
-            PolicyId,
+            policyId ?? PolicyId,
             JurisdictionId,
             SiteId,
             SiteGroupId,
             "SENIOR_CITIZEN",
-            "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
-            "RA 9994 Senior Citizen National Fallback",
-            "NATIONAL_LAW_FALLBACK",
-            "NATIONAL_LAW",
-            "LEGAL_REFERENCE",
-            "Expanded Senior Citizens Act of 2010",
-            OrdinanceReference: null,
-            "RA 9994",
-            "VERIFIED_OFFICIAL",
+            policyCode,
+            policyName,
+            policyResolutionBasis,
+            policyLevel,
+            policyType,
+            legalBasisReference,
+            ordinanceReference,
+            nationalLawReference,
+            verificationStatus,
             "NON_RESIDENT_ALLOWED",
             "STATUTORY_DISCOUNT_VAT_EXEMPT",
             FreeDurationMinutes: null,
@@ -157,11 +300,11 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
             "NO_STACKING_ON_FREE_PERIOD",
             "NATIONAL_FALLBACK_ONLY_IF_NO_LOCAL_POLICY",
             RequiresOperatorValidation: true,
-            RequiresEvidence: true,
+            RequiresEvidence: requiresEvidence,
             new DateOnly(2026, 1, 1),
-            EffectiveTo: null,
-            SourceReference: null,
-            JsonSerializer.SerializeToElement(new { policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK" }));
+            effectiveTo,
+            sourceReference,
+            JsonSerializer.SerializeToElement(new { policyCode }));
 
     private static OperatorConsoleAccessEvaluationResult AccessResult(
         bool allowed,

@@ -30,6 +30,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
     private readonly IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository _policyRepository;
     private readonly IOperatorConsoleStatutoryDiscountDraftWriter _draftWriter;
     private readonly ISystemClock _clock;
+    private readonly OperatorConsolePolicyReadinessEnvironment _environment;
 
     /// <summary>
     /// Creates an Operator Console statutory discount validation draft service.
@@ -40,7 +41,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         IOperatorConsoleSessionLookupReadRepository sessionRepository,
         IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository policyRepository,
         IOperatorConsoleStatutoryDiscountDraftWriter draftWriter,
-        ISystemClock clock)
+        ISystemClock clock,
+        OperatorConsolePolicyReadinessEnvironment environment)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
@@ -48,6 +50,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         _policyRepository = policyRepository ?? throw new ArgumentNullException(nameof(policyRepository));
         _draftWriter = draftWriter ?? throw new ArgumentNullException(nameof(draftWriter));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _environment = environment ?? throw new ArgumentNullException(nameof(environment));
     }
 
     /// <inheritdoc />
@@ -106,24 +109,32 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 "SESSION_NOT_ELIGIBLE_FOR_OPERATOR_WORKFLOW");
         }
 
+        var effectiveDate = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
         var policyResolution = await _policyRepository.ResolveAsync(
             new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
                 session.SiteId,
                 command.SiteGroupId ?? session.SiteGroupId,
                 entitlementType,
-                DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime)),
+                effectiveDate),
             cancellationToken);
 
-        if (!policyResolution.Resolved || policyResolution.Policy is null)
+        var readiness = OperatorConsolePolicyReadinessClassifier.Evaluate(
+            policyResolution,
+            _environment,
+            effectiveDate,
+            evidenceRequiredByWorkflow: true);
+
+        if (!readiness.PolicyResolved || readiness.Policy is null || !readiness.CanCreateDraft)
         {
             return NotAcceptedResult(
                 command,
                 persistedEvaluation,
-                policyResolution.IneligibilityReason ?? "STATUTORY_DISCOUNT_POLICY_NOT_RESOLVED",
-                policyResolution.ErrorCode ?? "STATUTORY_DISCOUNT_POLICY_NOT_RESOLVED");
+                readiness.IneligibilityReason ?? "STATUTORY_DISCOUNT_POLICY_NOT_READY",
+                readiness.ErrorCode ?? "STATUTORY_DISCOUNT_POLICY_NOT_READY",
+                readiness);
         }
 
-        var evidenceRequired = command.EvidenceCaptureRequested || policyResolution.Policy.RequiresEvidence;
+        var evidenceRequired = command.EvidenceCaptureRequested || readiness.Policy.RequiresEvidence;
 
         var draft = await _draftWriter.PersistAsync(
             new OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
@@ -133,7 +144,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
                 NormalizeOptional(command.ReasonCode),
                 command.UserId,
                 command.CorrelationId,
-                policyResolution.Policy),
+                readiness.Policy),
             cancellationToken);
 
         return new OperatorConsoleStatutoryDiscountDraftResult(
@@ -156,7 +167,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             draft.Policy,
             IneligibilityReason: null,
             ErrorCode: null,
-            persistedEvaluation.CorrelationId);
+            persistedEvaluation.CorrelationId,
+            readiness.Classification,
+            readiness.RequiresManualReview,
+            readiness.IneligibilityReason,
+            readiness.OperatorMessage);
     }
 
     private static OperatorConsoleStatutoryDiscountDraftResult DeniedResult(
@@ -182,13 +197,18 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             Policy: null,
             IneligibilityReason: "ACCESS_DENIED",
             ErrorCode: null,
-            persistedEvaluation.CorrelationId);
+            persistedEvaluation.CorrelationId,
+            PolicyReadinessClassification: OperatorConsolePolicyReadinessClassifications.NotReady,
+            RequiresManualReview: false,
+            PolicyReadinessReason: "ACCESS_DENIED",
+            OperatorMessage: "Access denied for this Operator Console action.");
 
     private static OperatorConsoleStatutoryDiscountDraftResult NotAcceptedResult(
         OperatorConsoleStatutoryDiscountDraftCommand command,
         OperatorConsoleAccessEvaluationResult persistedEvaluation,
         string ineligibilityReason,
-        string errorCode) =>
+        string errorCode,
+        OperatorConsolePolicyReadinessEvaluation? readiness = null) =>
         new(
             persistedEvaluation.EvaluationId,
             AccessAllowed: true,
@@ -209,7 +229,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
             Policy: null,
             ineligibilityReason,
             errorCode,
-            persistedEvaluation.CorrelationId);
+            persistedEvaluation.CorrelationId,
+            readiness?.Classification ?? OperatorConsolePolicyReadinessClassifications.NotReady,
+            readiness?.RequiresManualReview ?? false,
+            readiness?.IneligibilityReason ?? ineligibilityReason,
+            readiness?.OperatorMessage ?? "The statutory discount draft request was not accepted.");
 
     private static string Validate(OperatorConsoleStatutoryDiscountDraftCommand command)
     {
