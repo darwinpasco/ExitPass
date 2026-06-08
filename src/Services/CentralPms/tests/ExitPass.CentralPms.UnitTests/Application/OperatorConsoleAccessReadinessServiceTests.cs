@@ -166,8 +166,37 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
         });
 
         result.AccessAllowed.Should().BeFalse();
+        result.AccessDecision.Should().Be("DENIED");
+        result.ReadinessStatus.Should().Be("BLOCKED");
+        result.Retryable.Should().BeFalse();
+        result.NextOperatorAction.Should().Be("Use production device enrollment, active shift, and site readiness records before continuing.");
         result.DenialReasons.Select(reason => reason.Code)
             .Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+        result.DenialReasons.Single(reason => reason.Code == OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction)
+            .Retryable.Should().BeFalse();
+        result.ReadinessDimensions.Single(dimension => dimension.Dimension == "localDevBoundary")
+            .DenialReasonCodes.Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+    }
+
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("Test")]
+    [InlineData("Sandbox")]
+    public void Evaluate_WhenNonProductionUsesLocalDevFallback_DoesNotDenyForProductionFallback(string environmentName)
+    {
+        var sut = CreateSut();
+
+        var result = sut.Evaluate(ValidCommand() with
+        {
+            EnvironmentName = environmentName,
+            UsesLocalDevFallbackContext = true
+        });
+
+        result.AccessAllowed.Should().BeTrue();
+        result.DenialReasons.Select(reason => reason.Code)
+            .Should().NotContain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+        result.ReadinessDimensions.Single(dimension => dimension.Dimension == "localDevBoundary")
+            .Status.Should().Be("READY");
     }
 
     [Theory]

@@ -4,7 +4,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// Environment policy for local/dev Operator Console fallback context.
 ///
 /// Design reference: docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md.
-/// Invariant: fallback headers are never production trust.
+/// Invariant: Local/dev fallback context must never be accepted as production trust for Operator Console controlled actions.
 /// </summary>
 public static class OperatorConsoleLocalDevFallbackPolicy
 {
