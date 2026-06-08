@@ -101,6 +101,10 @@ public sealed class OperatorConsoleAccessReadinessService
             .ToArray();
 
         var allowed = reasons.Length == 0;
+        var nextOperatorAction = allowed
+            ? null
+            : BuildNextOperatorAction(reasons);
+
         return new OperatorConsoleAccessReadinessResult(
             AccessAllowed: allowed,
             AccessDecision: allowed ? "ALLOWED" : "DENIED",
@@ -116,7 +120,7 @@ public sealed class OperatorConsoleAccessReadinessService
             EvaluatedAt: evaluatedAt,
             CorrelationId: command.CorrelationId,
             Retryable: reasons.Any(reason => reason.Retryable),
-            NextOperatorAction: allowed ? null : "Resolve the blocked Operator Console readiness checks before continuing.");
+            NextOperatorAction: nextOperatorAction);
     }
 
     private OperatorConsoleAccessReadinessDenialReason ToDenialReason(string code)
@@ -133,6 +137,15 @@ public sealed class OperatorConsoleAccessReadinessService
 
     private static string DimensionStatus(IReadOnlyCollection<string> reasons) =>
         reasons.Count == 0 ? "READY" : "BLOCKED";
+
+    private static string BuildNextOperatorAction(IReadOnlyCollection<OperatorConsoleAccessReadinessDenialReason> reasons)
+    {
+        // Design reference: docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md.
+        // Invariant: Local/dev fallback context must never be accepted as production trust for controlled actions.
+        return reasons.Any(reason => reason.Code == OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction)
+            ? "Use production device enrollment, active shift, and site readiness records before continuing."
+            : "Resolve the blocked Operator Console readiness checks before continuing.";
+    }
 
     private static void AddReason(List<string> reasons, string reason)
     {

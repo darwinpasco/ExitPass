@@ -152,8 +152,45 @@ public sealed class OperatorConsoleAccessReadinessApiIntegrationTests
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleAccessReadinessResponse>();
         body.Should().NotBeNull();
         body!.AccessAllowed.Should().BeFalse();
+        body.AccessDecision.Should().Be("DENIED");
+        body.ReadinessStatus.Should().Be("BLOCKED");
+        body.Retryable.Should().BeFalse();
+        body.NextOperatorAction.Should().Be("Use production device enrollment, active shift, and site readiness records before continuing.");
         body.DenialReasons.Select(reason => reason.Code)
             .Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+        body.DenialReasons.Single(reason => reason.Code == OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction)
+            .Retryable.Should().BeFalse();
+        body.ReadinessDimensions.Single(dimension => dimension.Dimension == "localDevBoundary")
+            .DenialReasonCodes.Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+    }
+
+    /// <summary>Verifies local/dev fallback remains usable for controlled non-production validation.</summary>
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("Test")]
+    [InlineData("Sandbox")]
+    public async Task Evaluate_WhenNonProductionFallbackContextPosted_DoesNotReturnProductionFallbackDenial(string environmentName)
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            Endpoint,
+            CompleteRequest() with
+            {
+                DevModeContext = new OperatorConsoleAccessReadinessDevModeContextDto(
+                    UsesLocalDevFallbackContext: true,
+                    EnvironmentName: environmentName)
+            });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleAccessReadinessResponse>();
+        body.Should().NotBeNull();
+        body!.AccessAllowed.Should().BeTrue();
+        body.DenialReasons.Select(reason => reason.Code)
+            .Should().NotContain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+        body.ReadinessDimensions.Single(dimension => dimension.Dimension == "localDevBoundary")
+            .Status.Should().Be("READY");
     }
 
     /// <summary>Verifies invalid request shape returns the standard error envelope.</summary>
