@@ -31,4 +31,13 @@ public static class OperatorConsoleActionCodes
 
     /// <summary>Resolve statutory discount policy context.</summary>
     public const string ViewPolicyResolution = "VIEW_POLICY_RESOLUTION";
+
+    /// <summary>Supervisor review for Operator Console workflows.</summary>
+    public const string SupervisorReview = "SUPERVISOR_REVIEW";
+
+    /// <summary>Supervisor override for Operator Console workflows.</summary>
+    public const string SupervisorOverride = "SUPERVISOR_OVERRIDE";
+
+    /// <summary>View Operator Console audit/reporting data.</summary>
+    public const string ViewAuditReport = "VIEW_AUDIT_REPORT";
 }
