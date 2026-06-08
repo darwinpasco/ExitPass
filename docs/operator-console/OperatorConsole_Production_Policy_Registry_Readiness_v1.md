@@ -298,6 +298,86 @@ It is read-only and uses the live baseline table `discounts.discount_policy_refe
 
 Because the live local baseline does not contain `discounts.statutory_discount_policy_registry`, the script does not query that missing table directly. It reports its absence through `to_regclass`.
 
+## Operational Verification Procedure
+
+Run the readiness verification before any production statutory discount rollout decision, before a controlled operational pilot that will use non-sandbox policy rows, after policy registry changes, and during release readiness review for Operator Console statutory discount behavior.
+
+### pgAdmin Or SQL Client
+
+1. Connect to the target local/dev/sandbox/prod-like read replica.
+2. Open `scripts/operator-console/Verify-ProductionPolicyRegistryReadiness.sql`.
+3. Confirm the target database is the intended environment.
+4. Execute the script as a read-only inspection.
+5. Review all result sets:
+   - policy registry table availability;
+   - row-level readiness classification;
+   - Senior Citizen/PWD entitlement coverage;
+   - policy readiness summary.
+
+Do not edit and run production seed data from this slice. The #235A sandbox policy row `SANDBOX_OC_SD_REQUIRED_EVIDENCE_POLICY_235A` is non-production validation data only.
+
+### PowerShell Wrapper
+
+Use the wrapper when running from the repository:
+
+```powershell
+$env:EXITPASS_INTEGRATION_DB="Host=localhost;Port=5433;Database=exitpass_v12_dev;Username=exitpass;Password=change_me"
+.\scripts\operator-console\Run-ProductionPolicyRegistryReadinessCheck.ps1
+```
+
+Or pass a connection string explicitly:
+
+```powershell
+.\scripts\operator-console\Run-ProductionPolicyRegistryReadinessCheck.ps1 -ConnectionString $env:EXITPASS_INTEGRATION_DB
+```
+
+For local development runs where a NOT READY result is expected and should not fail the shell session:
+
+```powershell
+.\scripts\operator-console\Run-ProductionPolicyRegistryReadinessCheck.ps1 -WarnOnly
+```
+
+The wrapper:
+
+- executes only `Verify-ProductionPolicyRegistryReadiness.sql`;
+- strips SQL comments and refuses to run if mutation keywords are detected;
+- does not print the connection string;
+- executes through a read transaction and rolls it back;
+- returns non-zero for interpreted production readiness blockers unless `-WarnOnly` is used.
+
+### Interpreting Results
+
+Production rollout is blocked by:
+
+- `MISSING_REQUIRED_POLICY`
+- `MISSING_SITE_MAPPING`
+- `MISSING_EVIDENCE_RULE`
+- `EXPIRED_OR_INACTIVE`
+- `NOT_READY`
+- any sandbox/dev/test policy row being used as production policy authority
+
+Conditional or manual-review states:
+
+- `READY_WITH_MANUAL_REVIEW`
+- `CONFIGURED_BUT_UNVERIFIED`
+- `COMPATIBILITY_TABLE_ONLY`
+
+`SANDBOX_ONLY` rows must be excluded from production readiness. They are acceptable only for deterministic sandbox validation.
+
+If `discounts.statutory_discount_policy_registry` is missing but `discounts.discount_policy_references` exists, the current environment is operating on the compatibility table only. Full production auto-application remains NO-GO unless equivalent operational controls are formally accepted.
+
+### Expected Current Local Result
+
+For the inspected local `exitpass_v12_dev` database, the expected result is:
+
+- `COMPATIBILITY_TABLE_ONLY`
+- sandbox/dev rows classified as `SANDBOX_ONLY`
+- Senior Citizen production policy coverage classified as `MISSING_REQUIRED_POLICY`
+- PWD production policy coverage classified as `MISSING_REQUIRED_POLICY`
+- production statutory discount auto-application remains NO-GO
+
+This result does not require ad hoc local database changes. If production readiness requires new tables, columns, enums, indexes, constraints, or production policy rows, those changes must be represented in the state-based database repository at `D:\SourceCodes\ExitPass_DBv1.2` and validated there before being treated as baseline.
+
 ## Backend Behavior Expectations
 
 Policy resolution must return traceable policy basis. Unverified local policy must not be auto-applied as production-ready. Missing required policy must fail closed or route to manual review based on configured operating mode.
