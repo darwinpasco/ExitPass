@@ -8,7 +8,7 @@ import {
   mapApiError,
   type OperatorConsoleApiClient
 } from "./apiClient";
-import type { StatutoryDiscountQueueItem } from "./types";
+import type { AccessReadinessResponse, StatutoryDiscountQueueItem } from "./types";
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
 const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
@@ -31,6 +31,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
   it("StatutoryDiscountQueue_RendersLoadingEmptyAndDataStates", async () => {
     let resolveQueue: (items: StatutoryDiscountQueueItem[]) => void = () => undefined;
     const apiClient: OperatorConsoleApiClient = {
+      evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       listStatutoryDiscountDrafts: vi.fn(
         () =>
           new Promise<StatutoryDiscountQueueItem[]>((resolve) => {
@@ -250,6 +251,68 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
   });
 
+  it("OperatorConsoleReadiness_RendersPanelDimensionsAndSandboxIndicator", async () => {
+    render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/statutory-discounts" />);
+
+    expect(await screen.findByRole("heading", { name: "Operator readiness state" })).toBeInTheDocument();
+    expect(await screen.findByText("Sandbox/local validation context is active. This is not production trust.")).toBeInTheDocument();
+    expect(await screen.findByText("Overall readiness")).toBeInTheDocument();
+    expect(screen.getAllByText("READY").length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("OPERATOR");
+    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("DEVICE");
+    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("SHIFT");
+    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("SITE");
+    expect(screen.getByLabelText("Readiness dimensions")).toHaveTextContent("WORKFLOW");
+  });
+
+  it("OperatorConsoleReadiness_DenialShowsReasonsNextActionAndCorrelation", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ readiness: blockedReadiness() })}
+        initialPath="/operator-console/statutory-discounts"
+      />
+    );
+
+    expect(await screen.findByText(/this device, shift, or site is not ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/contact a supervisor or support and provide the correlation id/i)).toBeInTheDocument();
+    expect(screen.getAllByText("LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION").length).toBeGreaterThan(0);
+    expect(screen.getByText(/local\/dev fallback context is not accepted as production trust/i)).toBeInTheDocument();
+    expect(screen.getByText("00000000-0000-0000-0000-00000000feed")).toBeInTheDocument();
+    expect(screen.getByText(/next action: enroll and activate a production device, shift, and site assignment/i)).toBeInTheDocument();
+    expect(screen.getByText("Retryable: No")).toBeInTheDocument();
+  });
+
+  it("OperatorConsoleReadiness_BlocksControlledActionsWhenAccessIsDenied", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ readiness: blockedReadiness() })}
+        initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
+    expect(screen.getAllByText(/readiness check is blocking controlled operator console actions/i).length).toBeGreaterThan(0);
+  });
+
+  it("OperatorConsoleReadiness_AllowsControlledActionsWhenReadyAndWorkflowAllows", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect((await screen.findAllByText("READY")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeEnabled();
+  });
+
   it("StatutoryDiscountDetail_EvidencePanelShowsMetadataOnlyAndMaskedReferenceGuidance", async () => {
     render(
       <App
@@ -343,6 +406,48 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
     expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
     expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+  });
+
+  it("OperatorConsoleApi_EvaluatesAccessReadinessThroughFetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(readyReadiness()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const readiness = await client.evaluateAccessReadiness({
+      siteId: "77000000-0000-0000-0000-000000000002",
+      siteGroupId: "77000000-0000-0000-0000-000000000001",
+      requestedAction: "SESSION_LOOKUP",
+      clientContext: {
+        uiModule: "OperatorConsoleUi",
+        screenState: "/operator-console/statutory-discounts"
+      },
+      devModeContext: {
+        usesLocalDevFallbackContext: true,
+        environmentName: "test"
+      }
+    });
+
+    expect(readiness.accessAllowed).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/access/readiness/evaluate",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expectOperatorContextHeaders(requestOptions?.headers);
+    expect(requestOptions?.headers).toEqual(expect.objectContaining({ "Content-Type": "application/json" }));
+
+    const requestBody = JSON.parse(requestOptions?.body as string);
+    expect(requestBody).toEqual(expect.objectContaining({
+      operatorUserId: "77000000-0000-0000-0000-000000000010",
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
+      operatorShiftId: "77000000-0000-0000-0000-000000000050",
+      requestedAction: "SESSION_LOOKUP",
+      devModeContext: expect.objectContaining({
+        usesLocalDevFallbackContext: true,
+        environmentName: "test"
+      })
+    }));
   });
 
   it("OperatorConsoleApi_EvidenceEndpointsUseOperatorHeaders", async () => {
@@ -458,6 +563,104 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/public\/coupons/i);
   });
 });
+
+function readyReadiness(): AccessReadinessResponse {
+  return {
+    accessEvaluationId: undefined,
+    accessAllowed: true,
+    accessDecision: "ALLOWED",
+    requestedAction: "SESSION_LOOKUP",
+    readinessStatus: "READY",
+    readinessDimensions: [
+      { dimension: "OPERATOR", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "DEVICE", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "SHIFT", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "SITE", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "WORKFLOW", status: "READY", required: true, denialReasonCodes: [] }
+    ],
+    denialReasons: [],
+    operatorReadiness: {
+      operatorUserId: "77000000-0000-0000-0000-000000000010",
+      status: "READY",
+      ready: true
+    },
+    deviceReadiness: {
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
+      status: "READY",
+      ready: true
+    },
+    shiftReadiness: {
+      operatorShiftId: "77000000-0000-0000-0000-000000000050",
+      status: "READY",
+      ready: true
+    },
+    siteReadiness: {
+      siteId: "77000000-0000-0000-0000-000000000002",
+      siteGroupId: "77000000-0000-0000-0000-000000000001",
+      status: "READY",
+      ready: true
+    },
+    workflowReadiness: {
+      requestedAction: "SESSION_LOOKUP",
+      workflowState: "QUEUE",
+      status: "READY",
+      ready: true
+    },
+    auditPersisted: false,
+    evaluatedAt: "2026-06-08T08:00:00+08:00",
+    correlationId: "00000000-0000-0000-0000-00000000cafe",
+    retryable: false,
+    nextOperatorAction: undefined
+  };
+}
+
+function blockedReadiness(): AccessReadinessResponse {
+  return {
+    ...readyReadiness(),
+    accessAllowed: false,
+    accessDecision: "DENIED",
+    readinessStatus: "NOT_READY",
+    readinessDimensions: [
+      { dimension: "OPERATOR", status: "READY", required: true, denialReasonCodes: [] },
+      {
+        dimension: "DEVICE",
+        status: "NOT_READY",
+        required: true,
+        denialReasonCodes: ["LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION"]
+      },
+      { dimension: "SHIFT", status: "NOT_READY", required: true, denialReasonCodes: ["SHIFT_NOT_ACTIVE"] },
+      { dimension: "SITE", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "WORKFLOW", status: "READY", required: true, denialReasonCodes: [] }
+    ],
+    denialReasons: [
+      {
+        code: "LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION",
+        severity: "HIGH",
+        retryable: false,
+        uxMessageCategory: "PRODUCTION_TRUST_REQUIRED"
+      },
+      {
+        code: "SHIFT_NOT_ACTIVE",
+        severity: "MEDIUM",
+        retryable: true,
+        uxMessageCategory: "SHIFT_READINESS"
+      }
+    ],
+    deviceReadiness: {
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
+      status: "NOT_READY",
+      ready: false
+    },
+    shiftReadiness: {
+      operatorShiftId: "77000000-0000-0000-0000-000000000050",
+      status: "NOT_READY",
+      ready: false
+    },
+    correlationId: "00000000-0000-0000-0000-00000000feed",
+    retryable: false,
+    nextOperatorAction: "Enroll and activate a production device, shift, and site assignment."
+  };
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

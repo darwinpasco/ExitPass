@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { createOperatorConsoleApiClient, mapApiError, type OperatorConsoleApiClient } from "./apiClient";
+import {
+  createOperatorConsoleApiClient,
+  defaultDevModeContext,
+  getDefaultOperatorConsoleContext,
+  mapApiError,
+  type OperatorConsoleApiClient
+} from "./apiClient";
 import type {
+  AccessReadinessResponse,
   LoadState,
   PolicyContextKind,
   StatutoryDiscountDraftDetail,
@@ -26,6 +33,9 @@ interface AppProps {
 export function App({ apiClient, initialPath }: AppProps) {
   const client = useMemo(() => apiClient ?? createOperatorConsoleApiClient(), [apiClient]);
   const [path, setPath] = useState(initialPath ?? normalizePath(window.location.pathname));
+  const [readinessState, setReadinessState] = useState<LoadState<AccessReadinessResponse>>({ status: "idle" });
+  const operatorContext = useMemo(() => getDefaultOperatorConsoleContext(), []);
+  const devModeContext = useMemo(() => defaultDevModeContext(), []);
 
   useEffect(() => {
     if (initialPath) {
@@ -44,7 +54,30 @@ export function App({ apiClient, initialPath }: AppProps) {
     }
   }
 
+  function refreshReadiness(requestedAction = "SESSION_LOOKUP") {
+    setReadinessState({ status: "loading" });
+    void client
+      .evaluateAccessReadiness({
+        ...operatorContext,
+        operatorUserId: operatorContext.userId,
+        requestedAction,
+        clientContext: {
+          uiModule: "OperatorConsoleUi",
+          screenState: path
+        },
+        devModeContext
+      })
+      .then((readiness) => setReadinessState({ status: "loaded", data: readiness }))
+      .catch((error) => setReadinessState({ status: "error", message: mapApiError(error).message }));
+  }
+
+  useEffect(() => {
+    refreshReadiness("SESSION_LOOKUP");
+  }, [client]);
+
   const draftId = path.startsWith(routes.detail) ? path.slice(routes.detail.length) : null;
+  const readiness = readinessState.status === "loaded" ? readinessState.data : null;
+  const readinessBlockReason = readiness && !readiness.accessAllowed ? readinessBlockedActionReason(readiness) : null;
 
   return (
     <main className="appShell" aria-labelledby="app-title">
@@ -85,16 +118,27 @@ export function App({ apiClient, initialPath }: AppProps) {
           <div className="statusStack">
             <span className="statusPill">Local shell</span>
             <span className="statusPill">Live read model</span>
+            {devModeContext.usesLocalDevFallbackContext && <span className="statusPill warningPill">Sandbox/local context</span>}
           </div>
         </aside>
 
         <section className="workspace">
+          <AccessReadinessPanel
+            state={readinessState}
+            usesLocalDevFallbackContext={devModeContext.usesLocalDevFallbackContext}
+            onRefresh={() => refreshReadiness("SESSION_LOOKUP")}
+          />
           {draftId ? (
-            <StatutoryDiscountDetailPage client={client} draftId={draftId} navigate={navigate} />
+            <StatutoryDiscountDetailPage
+              client={client}
+              draftId={draftId}
+              navigate={navigate}
+              readinessBlockReason={readinessBlockReason}
+            />
           ) : path === routes.queue ? (
-            <StatutoryDiscountQueuePage client={client} navigate={navigate} />
+            <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.home ? (
-            <OperatorConsoleHome navigate={navigate} />
+            <OperatorConsoleHome navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : (
             <NotFoundPage navigate={navigate} />
           )}
@@ -104,7 +148,13 @@ export function App({ apiClient, initialPath }: AppProps) {
   );
 }
 
-function OperatorConsoleHome({ navigate }: { navigate: (path: string) => void }) {
+function OperatorConsoleHome({
+  navigate,
+  readinessBlockReason
+}: {
+  navigate: (path: string) => void;
+  readinessBlockReason: string | null;
+}) {
   return (
     <section className="panel homePanel" aria-labelledby="home-title">
       <div className="panelHeader">
@@ -115,19 +165,115 @@ function OperatorConsoleHome({ navigate }: { navigate: (path: string) => void })
         The first Operator Console module provides a work queue, draft details, and readable policy context for Senior
         Citizen and PWD statutory discount validation.
       </p>
-      <button type="button" onClick={() => navigate(routes.queue)}>
+      {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
+      <button type="button" disabled={readinessBlockReason !== null} onClick={() => navigate(routes.queue)}>
         Open work queue
       </button>
     </section>
   );
 }
 
+function AccessReadinessPanel({
+  state,
+  usesLocalDevFallbackContext,
+  onRefresh
+}: {
+  state: LoadState<AccessReadinessResponse>;
+  usesLocalDevFallbackContext: boolean;
+  onRefresh: () => void;
+}) {
+  const readiness = state.status === "loaded" ? state.data : null;
+  const blocked = readiness?.accessAllowed === false;
+  const fallbackDenied = readiness?.denialReasons.some((reason) => reason.code === "LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION");
+
+  return (
+    <section
+      className={`panel readinessPanel ${blocked ? "readinessBlocked" : readiness ? "readinessReady" : "readinessPending"}`}
+      aria-labelledby="access-readiness-title"
+    >
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Access readiness</p>
+          <h3 id="access-readiness-title">Operator readiness state</h3>
+        </div>
+        <button type="button" onClick={onRefresh}>
+          {state.status === "loading" ? "Checking readiness" : "Refresh readiness"}
+        </button>
+      </div>
+
+      {usesLocalDevFallbackContext && (
+        <p className="sandboxIndicator">
+          Sandbox/local validation context is active. This is not production trust.
+        </p>
+      )}
+
+      {state.status === "idle" && <StateMessage title="Readiness not checked" message="Check readiness before controlled actions." />}
+      {state.status === "loading" && <StateMessage title="Checking readiness" message="Evaluating operator, device, shift, site, and workflow state." />}
+      {state.status === "error" && <StateMessage title="Unable to check readiness" message={state.message} />}
+
+      {readiness && (
+        <>
+          <DescriptionList
+            items={[
+              ["Overall readiness", readiness.readinessStatus],
+              ["Access decision", readiness.accessDecision],
+              ["Requested action", readiness.requestedAction],
+              ["Operator readiness", readinessLabel(readiness.operatorReadiness.ready, readiness.operatorReadiness.status)],
+              ["Device readiness", readinessLabel(readiness.deviceReadiness.ready, readiness.deviceReadiness.status)],
+              ["Shift readiness", readinessLabel(readiness.shiftReadiness.ready, readiness.shiftReadiness.status)],
+              ["Site readiness", readinessLabel(readiness.siteReadiness.ready, readiness.siteReadiness.status)],
+              ["Workflow readiness", readinessLabel(readiness.workflowReadiness.ready, readiness.workflowReadiness.status)],
+              ["Audit persisted", readiness.auditPersisted ? "Yes" : "No"],
+              ["Correlation ID", readiness.correlationId],
+              ["Evaluated at", formatDateTime(readiness.evaluatedAt)]
+            ]}
+          />
+
+          <div className="readinessDimensionGrid" aria-label="Readiness dimensions">
+            {readiness.readinessDimensions.map((dimension) => (
+              <div
+                className={`readinessDimension ${dimension.denialReasonCodes.length > 0 ? "dimensionBlocked" : "dimensionReady"}`}
+                key={dimension.dimension}
+              >
+                <span>{dimension.required ? "Required" : "Optional"}</span>
+                <strong>{dimension.dimension}</strong>
+                <span>{dimension.status}</span>
+                {dimension.denialReasonCodes.length > 0 && <code>{dimension.denialReasonCodes.join(", ")}</code>}
+              </div>
+            ))}
+          </div>
+
+          {blocked && (
+            <div className="readinessDenial" role="alert">
+              <p>This device, shift, or site is not ready for controlled Operator Console actions.</p>
+              <p>Contact a supervisor or support and provide the correlation ID.</p>
+              {fallbackDenied && <p>Local/dev fallback context is not accepted as production trust.</p>}
+              {readiness.nextOperatorAction && <p>Next action: {readiness.nextOperatorAction}</p>}
+              <p>Retryable: {readiness.retryable ? "Yes" : "No"}</p>
+              <ul className="denialReasonList">
+                {readiness.denialReasons.map((reason) => (
+                  <li key={reason.code}>
+                    <code>{reason.code}</code>
+                    <span>{reason.severity} / {reason.uxMessageCategory}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function StatutoryDiscountQueuePage({
   client,
-  navigate
+  navigate,
+  readinessBlockReason
 }: {
   client: OperatorConsoleApiClient;
   navigate: (path: string) => void;
+  readinessBlockReason: string | null;
 }) {
   const [queueState, setQueueState] = useState<LoadState<StatutoryDiscountQueueItem[]>>({ status: "loading" });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -173,7 +319,7 @@ function StatutoryDiscountQueuePage({
             Review Senior Citizen and PWD statutory discount drafts with stored policy context and decision state.
           </p>
         </div>
-        <button type="button" onClick={() => setRefreshToken((value) => value + 1)}>
+        <button type="button" disabled={readinessBlockReason !== null} onClick={() => setRefreshToken((value) => value + 1)}>
           Refresh
         </button>
       </section>
@@ -184,6 +330,7 @@ function StatutoryDiscountQueuePage({
           <span className="statusPill">Live read model</span>
         </div>
 
+        {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
         {queueState.status === "loading" && <StateMessage title="Loading queue" message="Retrieving drafts." />}
         {queueState.status === "empty" && <StateMessage title="No drafts" message="No statutory discount drafts are waiting for review." />}
         {queueState.status === "access-denied" && <StateMessage title="Access denied" message={queueState.message} />}
@@ -232,6 +379,7 @@ function StatutoryDiscountQueuePage({
                       <button
                         type="button"
                         aria-label={`View ${item.ticketReference}`}
+                        disabled={readinessBlockReason !== null}
                         onClick={() => navigate(`${routes.detail}${item.draftId}`)}
                       >
                         View
@@ -251,11 +399,13 @@ function StatutoryDiscountQueuePage({
 function StatutoryDiscountDetailPage({
   client,
   draftId,
-  navigate
+  navigate,
+  readinessBlockReason
 }: {
   client: OperatorConsoleApiClient;
   draftId: string;
   navigate: (path: string) => void;
+  readinessBlockReason: string | null;
 }) {
   const [detailState, setDetailState] = useState<LoadState<StatutoryDiscountDraftDetail>>({ status: "loading" });
   const [refreshToken, setRefreshToken] = useState(0);
@@ -306,6 +456,7 @@ function StatutoryDiscountDetailPage({
           detail={detailState.data}
           client={client}
           refreshDetail={() => setRefreshToken((value) => value + 1)}
+          readinessBlockReason={readinessBlockReason}
         />
       )}
     </>
@@ -315,11 +466,13 @@ function StatutoryDiscountDetailPage({
 function DraftDetail({
   detail,
   client,
-  refreshDetail
+  refreshDetail,
+  readinessBlockReason
 }: {
   detail: StatutoryDiscountDraftDetail;
   client: OperatorConsoleApiClient;
   refreshDetail: () => void;
+  readinessBlockReason: string | null;
 }) {
   const [rejectReason, setRejectReason] = useState("");
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
@@ -331,9 +484,10 @@ function DraftDetail({
   const [latestPayableBasisResult, setLatestPayableBasisResult] =
     useState<StatutoryDiscountPayableBasisApplicationResult | null>(null);
   const decisionable = detail.status === "Requested" || detail.status === "Pending Review";
-  const approvalDisabledReason = approvalBlockReason(detail, submittingDecision !== null);
-  const rejectDisabledReason = !decisionable ? "Decision is read-only for the current validation status." : null;
-  const payableBasisDisabledReason = payableBasisBlockReason(detail, submittingPayableBasis);
+  const approvalDisabledReason = readinessBlockReason ?? approvalBlockReason(detail, submittingDecision !== null);
+  const rejectDisabledReason =
+    readinessBlockReason ?? (!decisionable ? "Decision is read-only for the current validation status." : null);
+  const payableBasisDisabledReason = readinessBlockReason ?? payableBasisBlockReason(detail, submittingPayableBasis);
 
   async function submitDecision(decision: "APPROVE" | "REJECT") {
     setDecisionMessage(null);
@@ -472,7 +626,12 @@ function DraftDetail({
 
       <PolicyContextDisplay policy={detail.policyContext} />
 
-      <EvidencePanel detail={detail} client={client} refreshDetail={refreshDetail} />
+      <EvidencePanel
+        detail={detail}
+        client={client}
+        refreshDetail={refreshDetail}
+        readinessBlockReason={readinessBlockReason}
+      />
 
       <section className="panel" aria-labelledby="decision-title">
         <div className="panelHeader">
@@ -610,11 +769,13 @@ function WorkflowStateItem({
 function EvidencePanel({
   detail,
   client,
-  refreshDetail
+  refreshDetail,
+  readinessBlockReason
 }: {
   detail: StatutoryDiscountDraftDetail;
   client: OperatorConsoleApiClient;
   refreshDetail: () => void;
+  readinessBlockReason: string | null;
 }) {
   const [evidenceState, setEvidenceState] = useState<LoadState<StatutoryDiscountEvidenceList>>({ status: "loading" });
   const [evidenceType, setEvidenceType] = useState<EvidenceType>(
@@ -661,6 +822,11 @@ function EvidencePanel({
 
     if (!operatorConfirmation) {
       setFormError("Operator confirmation is required.");
+      return;
+    }
+
+    if (readinessBlockReason) {
+      setFormError(readinessBlockReason);
       return;
     }
 
@@ -717,6 +883,7 @@ function EvidencePanel({
       {detail.policyContext.evidenceRequired && !requiredSatisfied && (
         <p className="notice">Approval is blocked until required evidence is captured.</p>
       )}
+      {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
       {requiredSatisfied && <p className="successMessage">Required evidence is captured.</p>}
 
       {evidenceState.status === "loading" && <StateMessage title="Loading evidence" message="Retrieving evidence metadata." />}
@@ -816,7 +983,7 @@ function EvidencePanel({
 
             {formMessage && <p className="successMessage">{formMessage}</p>}
             {formError && <p className="errorMessage">{formError}</p>}
-            <button type="submit" disabled={submitting}>
+            <button type="submit" disabled={submitting || readinessBlockReason !== null}>
               {submitting ? "Capturing" : "Capture evidence"}
             </button>
           </form>
@@ -944,6 +1111,15 @@ function payableBasisBlockReason(detail: StatutoryDiscountDraftDetail, submittin
   }
 
   return null;
+}
+
+function readinessBlockedActionReason(readiness: AccessReadinessResponse) {
+  const reasonCodes = readiness.denialReasons.map((reason) => reason.code).join(", ");
+  return `Readiness check is blocking controlled Operator Console actions.${reasonCodes ? ` Reasons: ${reasonCodes}.` : ""}`;
+}
+
+function readinessLabel(ready: boolean, status: string) {
+  return `${ready ? "Ready" : "Not ready"} (${status})`;
 }
 
 function isPayableBasisApplied(detail: StatutoryDiscountDraftDetail) {

@@ -91,6 +91,98 @@ export interface OperatorConsoleApiError {
   errorCode?: string;
 }
 
+export interface AccessReadinessClientContext {
+  uiModule?: string;
+  screenState?: string;
+}
+
+export interface AccessReadinessDevModeContext {
+  usesLocalDevFallbackContext: boolean;
+  environmentName?: string;
+}
+
+export interface AccessReadinessRequest {
+  operatorUserId?: string;
+  operatorDeviceBindingId?: string;
+  operatorShiftId?: string;
+  siteId?: string;
+  siteGroupId?: string;
+  requestedAction: string;
+  targetEntityType?: string;
+  targetEntityId?: string;
+  workflowState?: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+  clientContext?: AccessReadinessClientContext;
+  devModeContext?: AccessReadinessDevModeContext;
+}
+
+export interface AccessReadinessDimension {
+  dimension: string;
+  status: string;
+  required: boolean;
+  denialReasonCodes: string[];
+}
+
+export interface AccessReadinessDenialReason {
+  code: string;
+  severity: string;
+  retryable: boolean;
+  uxMessageCategory: string;
+}
+
+export interface OperatorReadiness {
+  operatorUserId?: string;
+  status: string;
+  ready: boolean;
+}
+
+export interface DeviceReadiness {
+  operatorDeviceBindingId?: string;
+  status: string;
+  ready: boolean;
+}
+
+export interface ShiftReadiness {
+  operatorShiftId?: string;
+  status: string;
+  ready: boolean;
+}
+
+export interface SiteReadiness {
+  siteId?: string;
+  siteGroupId?: string;
+  status: string;
+  ready: boolean;
+}
+
+export interface WorkflowReadiness {
+  requestedAction: string;
+  workflowState?: string;
+  status: string;
+  ready: boolean;
+}
+
+export interface AccessReadinessResponse {
+  accessEvaluationId?: string;
+  accessAllowed: boolean;
+  accessDecision: string;
+  requestedAction: string;
+  readinessStatus: string;
+  readinessDimensions: AccessReadinessDimension[];
+  denialReasons: AccessReadinessDenialReason[];
+  operatorReadiness: OperatorReadiness;
+  deviceReadiness: DeviceReadiness;
+  shiftReadiness: ShiftReadiness;
+  siteReadiness: SiteReadiness;
+  workflowReadiness: WorkflowReadiness;
+  auditPersisted: boolean;
+  evaluatedAt: string;
+  correlationId: string;
+  retryable: boolean;
+  nextOperatorAction?: string;
+}
+
 export interface StatutoryDiscountDecisionInput {
   draftId: string;
   siteId?: string;
