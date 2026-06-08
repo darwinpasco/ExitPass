@@ -126,6 +126,7 @@ app.MapReconciliationRunItemEndpoints();
 app.MapReconciliationExceptionLifecycleEndpoints();
 app.MapReconciliationEvaluationEndpoints();
 app.MapOperatorConsoleAccessEvaluationEndpoints();
+app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
@@ -209,6 +210,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationExceptionLifecycle")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationEvaluation")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessEvaluation")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessReadiness")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
@@ -377,6 +379,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationService, OperatorConsoleAccessEvaluationService>();
     builder.Services.AddScoped<IOperatorConsoleAccessEvaluationWriter>(_ =>
         new OperatorConsoleAccessEvaluationWriter(mainDatabaseConnectionString));
+    builder.Services.AddSingleton<OperatorConsoleActionCatalog>();
+    builder.Services.AddSingleton<OperatorConsoleDenialReasonCatalog>();
+    builder.Services.AddScoped<OperatorConsoleAccessReadinessService>();
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
