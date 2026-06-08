@@ -1,4 +1,6 @@
 import type {
+  AccessReadinessRequest,
+  AccessReadinessResponse,
   DraftStatus,
   EntitlementType,
   OperatorConsoleApiError,
@@ -16,6 +18,7 @@ import type {
 } from "./types";
 
 export interface OperatorConsoleApiClient {
+  evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
@@ -176,6 +179,31 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
   const baseUrl = options.baseUrl?.replace(/\/$/, "") ?? "";
 
   return {
+    async evaluateAccessReadiness(input) {
+      const correlationId = input.correlationId ?? newCorrelationId();
+      const response = await fetch(`${baseUrl}/v1/ops/operator-console/access/readiness/evaluate`, {
+        method: "POST",
+        headers: operatorConsoleHeaders(correlationId, { json: true }),
+        body: JSON.stringify({
+          operatorUserId: input.operatorUserId ?? defaultOperatorContext.userId,
+          operatorDeviceBindingId: input.operatorDeviceBindingId ?? defaultOperatorContext.operatorDeviceBindingId,
+          operatorShiftId: input.operatorShiftId ?? defaultOperatorContext.operatorShiftId,
+          siteId: input.siteId ?? null,
+          siteGroupId: input.siteGroupId ?? null,
+          requestedAction: input.requestedAction,
+          targetEntityType: input.targetEntityType ?? null,
+          targetEntityId: input.targetEntityId ?? null,
+          workflowState: input.workflowState ?? null,
+          correlationId,
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientContext: input.clientContext ?? null,
+          devModeContext: input.devModeContext ?? defaultDevModeContext()
+        })
+      });
+
+      return parseResponse<AccessReadinessResponse>(response);
+    },
+
     async listStatutoryDiscountDrafts() {
       const correlationId = newCorrelationId();
       const response = await fetch(
@@ -315,9 +343,33 @@ function localFallback(value: string | undefined, fallback: string) {
   return value && value.trim().length > 0 ? value : fallback;
 }
 
+export function getDefaultOperatorConsoleContext() {
+  return { ...defaultOperatorContext };
+}
+
+export function defaultDevModeContext() {
+  return {
+    usesLocalDevFallbackContext: isUsingLocalFallbackContext(),
+    environmentName: import.meta.env.MODE ?? "Development"
+  };
+}
+
+function isUsingLocalFallbackContext() {
+  return (
+    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID) ||
+    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID) ||
+    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID)
+  );
+}
+
+function hasConfiguredValue(value: string | undefined) {
+  return value !== undefined && value.trim().length > 0;
+}
+
 export function createMockOperatorConsoleApiClient(
   options: {
     drafts?: StatutoryDiscountDraftDetail[];
+    readiness?: AccessReadinessResponse;
     listError?: OperatorConsoleApiError;
     detailError?: OperatorConsoleApiError;
     decisionError?: OperatorConsoleApiError;
@@ -331,6 +383,11 @@ export function createMockOperatorConsoleApiClient(
   const drafts = (options.drafts ?? mockDrafts).map((draft) => ({ ...draft }));
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   return {
+    async evaluateAccessReadiness(input) {
+      await delay();
+      return options.readiness ?? mockAccessReadiness(input);
+    },
+
     async listStatutoryDiscountDrafts() {
       await delay();
       if (options.listError) {
@@ -730,6 +787,58 @@ function payableBasisMessage(body: PayableBasisApplicationResponseDto) {
   }
 
   return body.applicationPersisted ? "Payable basis applied." : "Payable basis accepted but not persisted.";
+}
+
+function mockAccessReadiness(input: AccessReadinessRequest): AccessReadinessResponse {
+  const correlationId = input.correlationId ?? newCorrelationId();
+  const requestedAction = input.requestedAction;
+  return {
+    accessEvaluationId: undefined,
+    accessAllowed: true,
+    accessDecision: "ALLOWED",
+    requestedAction,
+    readinessStatus: "READY",
+    readinessDimensions: [
+      { dimension: "OPERATOR", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "DEVICE", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "SHIFT", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "SITE", status: "READY", required: true, denialReasonCodes: [] },
+      { dimension: "WORKFLOW", status: "READY", required: true, denialReasonCodes: [] }
+    ],
+    denialReasons: [],
+    operatorReadiness: {
+      operatorUserId: input.operatorUserId ?? defaultOperatorContext.userId,
+      status: "READY",
+      ready: true
+    },
+    deviceReadiness: {
+      operatorDeviceBindingId: input.operatorDeviceBindingId ?? defaultOperatorContext.operatorDeviceBindingId,
+      status: "READY",
+      ready: true
+    },
+    shiftReadiness: {
+      operatorShiftId: input.operatorShiftId ?? defaultOperatorContext.operatorShiftId,
+      status: "READY",
+      ready: true
+    },
+    siteReadiness: {
+      siteId: input.siteId,
+      siteGroupId: input.siteGroupId,
+      status: "READY",
+      ready: true
+    },
+    workflowReadiness: {
+      requestedAction,
+      workflowState: input.workflowState,
+      status: "READY",
+      ready: true
+    },
+    auditPersisted: false,
+    evaluatedAt: new Date().toISOString(),
+    correlationId,
+    retryable: false,
+    nextOperatorAction: undefined
+  };
 }
 
 function formatMoney(minorUnits?: number | null, currencyCode?: string | null) {

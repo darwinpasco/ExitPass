@@ -187,6 +187,12 @@ code {
   white-space: nowrap;
 }
 
+.warningPill {
+  background: #fff6df;
+  border-color: #ecd289;
+  color: #654d12;
+}
+
 .pending-review {
   background: #fff6df;
   border-color: #ecd289;
@@ -391,6 +397,96 @@ dd {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.readinessPanel {
+  border-left: 5px solid #7ba6b6;
+}
+
+.readinessReady {
+  border-left-color: #2f8a6a;
+}
+
+.readinessBlocked {
+  border-left-color: #b65a5a;
+}
+
+.readinessPending {
+  border-left-color: #d7a63b;
+}
+
+.sandboxIndicator {
+  background: #fff6df;
+  border: 1px solid #ecd289;
+  border-radius: 8px;
+  color: #654d12;
+  font-weight: 700;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+}
+
+.readinessDimensionGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.readinessDimension {
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-height: 92px;
+  padding: 12px;
+}
+
+.readinessDimension span {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.dimensionReady {
+  background: #e4f4ed;
+  border-color: #a8d9c4;
+}
+
+.dimensionBlocked {
+  background: #fae7e7;
+  border-color: #e5b0b0;
+}
+
+.readinessDenial {
+  background: #fae7e7;
+  border: 1px solid #e5b0b0;
+  border-radius: 8px;
+  color: #7a2727;
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.readinessDenial p {
+  margin: 0 0 8px;
+}
+
+.readinessDenial p:last-child {
+  margin-bottom: 0;
+}
+
+.denialReasonList {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.denialReasonList li {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .workflowStep {
   border: 1px solid #dfe5ea;
   border-radius: 8px;
@@ -479,6 +575,7 @@ dd {
   .platformShell,
   .detailGrid,
   .workflowGrid,
+  .readinessDimensionGrid,
   .evidenceLayout {
     display: grid;
     grid-template-columns: 1fr;
