@@ -385,6 +385,37 @@ dd {
   padding-left: 18px;
 }
 
+.workflowGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.workflowStep {
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-height: 76px;
+  padding: 12px;
+}
+
+.workflowStep span,
+.fieldHelp {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.workflowComplete {
+  background: #e4f4ed;
+  border-color: #a8d9c4;
+}
+
+.workflowPending {
+  background: #f7fafb;
+}
+
 .evidenceLayout {
   display: grid;
   gap: 18px;
@@ -447,6 +478,7 @@ dd {
   .pageTitle,
   .platformShell,
   .detailGrid,
+  .workflowGrid,
   .evidenceLayout {
     display: grid;
     grid-template-columns: 1fr;

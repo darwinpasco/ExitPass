@@ -7,6 +7,7 @@ import type {
   StatutoryDiscountEvidenceList,
   EvidenceCaptureMethod,
   EvidenceType,
+  StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem
 } from "./types";
@@ -324,8 +325,15 @@ function DraftDetail({
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState<"APPROVE" | "REJECT" | null>(null);
-  const approveBlockedByEvidence = detail.policyContext.evidenceRequired && !detail.evidenceRequiredSatisfied;
+  const [payableBasisMessage, setPayableBasisMessage] = useState<string | null>(null);
+  const [payableBasisError, setPayableBasisError] = useState<string | null>(null);
+  const [submittingPayableBasis, setSubmittingPayableBasis] = useState(false);
+  const [latestPayableBasisResult, setLatestPayableBasisResult] =
+    useState<StatutoryDiscountPayableBasisApplicationResult | null>(null);
   const decisionable = detail.status === "Requested" || detail.status === "Pending Review";
+  const approvalDisabledReason = approvalBlockReason(detail, submittingDecision !== null);
+  const rejectDisabledReason = !decisionable ? "Decision is read-only for the current validation status." : null;
+  const payableBasisDisabledReason = payableBasisBlockReason(detail, submittingPayableBasis);
 
   async function submitDecision(decision: "APPROVE" | "REJECT") {
     setDecisionMessage(null);
@@ -358,6 +366,39 @@ function DraftDetail({
       setDecisionError(mapApiError(error).message);
     } finally {
       setSubmittingDecision(null);
+    }
+  }
+
+  async function applyPayableBasis() {
+    setPayableBasisMessage(null);
+    setPayableBasisError(null);
+
+    if (payableBasisDisabledReason) {
+      setPayableBasisError(payableBasisDisabledReason);
+      return;
+    }
+
+    setSubmittingPayableBasis(true);
+    try {
+      const result = await client.applyStatutoryDiscountPayableBasis({
+        draftId: detail.draftId,
+        siteId: detail.siteId,
+        siteGroupId: detail.siteGroupId,
+        originalTariffSnapshotId: detail.originalTariffSnapshotId
+      });
+
+      if (!result.accepted) {
+        setPayableBasisError(result.message);
+        return;
+      }
+
+      setLatestPayableBasisResult(result);
+      setPayableBasisMessage(result.message);
+      refreshDetail();
+    } catch (error) {
+      setPayableBasisError(mapApiError(error).message);
+    } finally {
+      setSubmittingPayableBasis(false);
     }
   }
 
@@ -427,16 +468,19 @@ function DraftDetail({
         </section>
       </section>
 
+      <WorkflowStatePanel detail={detail} payableBasisResult={latestPayableBasisResult} />
+
       <PolicyContextDisplay policy={detail.policyContext} />
+
+      <EvidencePanel detail={detail} client={client} refreshDetail={refreshDetail} />
 
       <section className="panel" aria-labelledby="decision-title">
         <div className="panelHeader">
           <h3 id="decision-title">Decision actions</h3>
           <span className="statusPill">{decisionable ? "Ready" : "Read-only status"}</span>
         </div>
-        {approveBlockedByEvidence && (
-          <p className="notice">Approval is blocked until required evidence is captured.</p>
-        )}
+        {approvalDisabledReason && <p className="notice">{approvalDisabledReason}</p>}
+        {rejectDisabledReason && <p className="notice">{rejectDisabledReason}</p>}
         {decisionMessage && <p className="successMessage">{decisionMessage}</p>}
         {decisionError && <p className="errorMessage">{decisionError}</p>}
         <label className="reasonField">
@@ -451,14 +495,14 @@ function DraftDetail({
         <div className="actionBar">
           <button
             type="button"
-            disabled={!decisionable || approveBlockedByEvidence || submittingDecision !== null}
+            disabled={approvalDisabledReason !== null}
             onClick={() => void submitDecision("APPROVE")}
           >
             {submittingDecision === "APPROVE" ? "Approving" : "Approve"}
           </button>
           <button
             type="button"
-            disabled={!decisionable || submittingDecision !== null}
+            disabled={rejectDisabledReason !== null || submittingDecision !== null}
             onClick={() => void submitDecision("REJECT")}
           >
             {submittingDecision === "REJECT" ? "Rejecting" : "Reject"}
@@ -466,7 +510,33 @@ function DraftDetail({
         </div>
       </section>
 
-      <EvidencePanel detail={detail} client={client} refreshDetail={refreshDetail} />
+      <section className="panel" aria-labelledby="payable-basis-title">
+        <div className="panelHeader">
+          <h3 id="payable-basis-title">Apply payable basis</h3>
+          <span className="statusPill">{isPayableBasisApplied(detail) ? "Applied" : "Awaiting approval"}</span>
+        </div>
+        <DescriptionList
+          items={[
+            ["Original tariff snapshot", detail.originalTariffSnapshotId ?? "Not available"],
+            ["Application status", detail.payableBasisApplicationStatus ?? "Not applied"],
+            ["Application ID", detail.payableBasisApplicationId ?? latestPayableBasisResult?.payableBasisApplicationId ?? "Not available"]
+          ]}
+        />
+        {payableBasisDisabledReason && <p className="notice">{payableBasisDisabledReason}</p>}
+        {payableBasisMessage && <p className="successMessage">{payableBasisMessage}</p>}
+        {payableBasisError && <p className="errorMessage">{payableBasisError}</p>}
+        <div className="actionBar">
+          <button
+            type="button"
+            disabled={payableBasisDisabledReason !== null}
+            onClick={() => void applyPayableBasis()}
+          >
+            {submittingPayableBasis ? "Applying payable basis" : "Apply payable basis"}
+          </button>
+        </div>
+      </section>
+
+      <FinalVerificationPanel detail={detail} payableBasisResult={latestPayableBasisResult} />
 
       <section className="panel" aria-labelledby="activity-title">
         <div className="panelHeader">
@@ -479,6 +549,61 @@ function DraftDetail({
         </ul>
       </section>
     </>
+  );
+}
+
+function WorkflowStatePanel({
+  detail,
+  payableBasisResult
+}: {
+  detail: StatutoryDiscountDraftDetail;
+  payableBasisResult: StatutoryDiscountPayableBasisApplicationResult | null;
+}) {
+  const applied = isPayableBasisApplied(detail) || payableBasisResult?.applicationStatus === "APPLIED";
+  const finalAmount =
+    payableBasisResult?.finalPayableAmountMinorUnits ?? detail.finalPayableAmountMinorUnits ?? detail.payableAmountMinorUnits;
+
+  return (
+    <section className="panel" aria-labelledby="workflow-state-title">
+      <div className="panelHeader">
+        <h3 id="workflow-state-title">Workflow state</h3>
+        <span className="statusPill">Validated sequence</span>
+      </div>
+      <div className="workflowGrid">
+        <WorkflowStateItem label="Session resolved" complete={Boolean(detail.parkingSessionId)} />
+        <WorkflowStateItem label="Policy resolved" complete={Boolean(detail.policyContext.policyCode)} />
+        <WorkflowStateItem label="Draft created" complete={Boolean(detail.draftId)} />
+        <WorkflowStateItem
+          label="Evidence required"
+          complete={detail.policyContext.evidenceRequired}
+          inactiveLabel={detail.policyContext.evidenceRequired ? undefined : "Not required"}
+        />
+        <WorkflowStateItem label="Evidence satisfied" complete={detail.evidenceRequiredSatisfied} />
+        <WorkflowStateItem label={`Validation ${detail.status.toLowerCase()}`} complete={detail.status === "Approved"} />
+        <WorkflowStateItem label="Payable basis applied" complete={applied} />
+        <WorkflowStateItem
+          label={`Final payable ${formatMoney(finalAmount, detail.currencyCode)}`}
+          complete={applied && finalAmount !== undefined}
+        />
+      </div>
+    </section>
+  );
+}
+
+function WorkflowStateItem({
+  label,
+  complete,
+  inactiveLabel
+}: {
+  label: string;
+  complete: boolean;
+  inactiveLabel?: string;
+}) {
+  return (
+    <div className={`workflowStep ${complete ? "workflowComplete" : "workflowPending"}`}>
+      <span>{complete ? "Complete" : inactiveLabel ?? "Pending"}</span>
+      <strong>{label}</strong>
+    </div>
   );
 }
 
@@ -588,6 +713,7 @@ function EvidencePanel({
         <span className="statusPill">{detail.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
       </div>
 
+      <p className="notice">Metadata-only evidence capture. Do not upload or enter raw ID numbers.</p>
       {detail.policyContext.evidenceRequired && !requiredSatisfied && (
         <p className="notice">Approval is blocked until required evidence is captured.</p>
       )}
@@ -603,7 +729,9 @@ function EvidencePanel({
                 ["Evidence satisfied", evidenceLoaded.evidenceRequiredSatisfied ? "Yes" : "No"],
                 ["Required types", evidenceLoaded.requiredEvidenceTypes.join(", ") || "None"],
                 ["Evidence count", String(evidenceLoaded.evidenceCount)],
-                ["Latest status", evidenceLoaded.latestEvidenceStatus ?? "None"]
+                ["Latest status", evidenceLoaded.latestEvidenceStatus ?? "None"],
+                ["Metadata-only", "Yes"],
+                ["Raw ID or evidence bytes", "Do not enter or upload"]
               ]}
             />
 
@@ -615,6 +743,7 @@ function EvidencePanel({
                   <li key={item.evidenceId}>
                     <strong>{item.evidenceType}</strong>
                     <span>{item.captureMethod} / {item.verificationStatus}</span>
+                    <span>Storage reference: {item.storageReference ?? "metadata-only"}</span>
                     <span>{formatDateTime(item.capturedAt)}</span>
                     <span>{item.capturedByUserId ?? "Unknown operator"}</span>
                   </li>
@@ -637,8 +766,8 @@ function EvidencePanel({
               Capture method
               <select value={captureMethod} onChange={(event) => setCaptureMethod(event.target.value as EvidenceCaptureMethod)}>
                 <option value="OPERATOR_CONFIRMED">Operator confirmed</option>
-                <option value="MANUAL_REFERENCE">Manual reference</option>
-                <option value="UPLOAD">Upload metadata</option>
+                <option value="MANUAL_REFERENCE">Masked manual reference</option>
+                <option value="UPLOAD">File metadata only</option>
               </select>
             </label>
 
@@ -661,8 +790,13 @@ function EvidencePanel({
 
             {captureMethod === "MANUAL_REFERENCE" && (
               <label>
-                Manual reference
-                <input value={referenceNumber} onChange={(event) => setReferenceNumber(event.target.value)} />
+                Masked ID reference / last 4 only
+                <input
+                  value={referenceNumber}
+                  placeholder="****1234"
+                  onChange={(event) => setReferenceNumber(event.target.value)}
+                />
+                <span className="fieldHelp">Do not enter the full ID number.</span>
               </label>
             )}
 
@@ -719,6 +853,103 @@ function PolicyContextDisplay({ policy }: { policy: StatutoryDiscountPolicyConte
   );
 }
 
+function FinalVerificationPanel({
+  detail,
+  payableBasisResult
+}: {
+  detail: StatutoryDiscountDraftDetail;
+  payableBasisResult: StatutoryDiscountPayableBasisApplicationResult | null;
+}) {
+  const applied = isPayableBasisApplied(detail) || payableBasisResult?.applicationStatus === "APPLIED";
+  const currency = payableBasisResult?.currencyCode ?? detail.currencyCode;
+  const originalAmount = payableBasisResult?.grossAmountMinorUnits ?? detail.originalAmountMinorUnits;
+  const statutoryDiscountAmount =
+    payableBasisResult?.statutoryDiscountAmountMinorUnits ?? detail.statutoryDiscountAmountMinorUnits;
+  const finalPayableAmount =
+    payableBasisResult?.finalPayableAmountMinorUnits ?? detail.finalPayableAmountMinorUnits ?? detail.payableAmountMinorUnits;
+  const appliedTariffSnapshotId = payableBasisResult?.appliedTariffSnapshotId ?? detail.appliedTariffSnapshotId;
+
+  return (
+    <section className="panel" aria-labelledby="final-verification-title">
+      <div className="panelHeader">
+        <h3 id="final-verification-title">Final verification</h3>
+        <span className="statusPill">{applied ? "Approved + applied" : "Pending apply"}</span>
+      </div>
+      <DescriptionList
+        items={[
+          ["Validation status", detail.status],
+          ["Payable basis status", detail.payableBasisApplicationStatus ?? payableBasisResult?.applicationStatus ?? "Not applied"],
+          ["Original amount", formatMoney(originalAmount, currency)],
+          ["VAT amount", formatMoney(payableBasisResult?.vatAmountMinorUnits ?? detail.vatAmountMinorUnits, currency)],
+          [
+            "VAT-exclusive amount",
+            formatMoney(payableBasisResult?.vatExclusiveAmountMinorUnits ?? detail.vatExclusiveAmountMinorUnits, currency)
+          ],
+          ["Statutory discount amount", formatMoney(statutoryDiscountAmount, currency)],
+          ["Final payable amount", formatMoney(finalPayableAmount, currency)],
+          ["Currency", currency ?? "Not available"],
+          ["Applied tariff snapshot ID", appliedTariffSnapshotId ?? "Not available"]
+        ]}
+      />
+      {applied ? (
+        <p className="successMessage">
+          This did not create payment, exit authorization, coupon, or gate records.
+        </p>
+      ) : (
+        <p className="notice">Final payable verification appears after approval and payable-basis application.</p>
+      )}
+    </section>
+  );
+}
+
+function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean) {
+  if (submitting) {
+    return "Decision submission is in progress.";
+  }
+
+  if (!detail.draftId) {
+    return "Resolve a session before starting statutory discount validation.";
+  }
+
+  if (detail.policyContext.evidenceRequired && !detail.evidenceRequiredSatisfied) {
+    return "Approval is blocked until required evidence is captured.";
+  }
+
+  if (["Approved", "Rejected", "Cancelled", "Expired", "Blocked"].includes(detail.status)) {
+    return "Decision is read-only for the current validation status.";
+  }
+
+  return null;
+}
+
+function payableBasisBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean) {
+  if (submitting) {
+    return "Payable basis application is in progress.";
+  }
+
+  if (!detail.draftId) {
+    return "Resolve a session before starting statutory discount validation.";
+  }
+
+  if (detail.status !== "Approved") {
+    return "Payable basis can be applied only after approval.";
+  }
+
+  if (isPayableBasisApplied(detail)) {
+    return "Payable basis has already been applied.";
+  }
+
+  if (!detail.originalTariffSnapshotId) {
+    return "Original tariff snapshot is required before applying payable basis.";
+  }
+
+  return null;
+}
+
+function isPayableBasisApplied(detail: StatutoryDiscountDraftDetail) {
+  return detail.payableBasisApplicationStatus?.toUpperCase() === "APPLIED";
+}
+
 function DescriptionList({ items }: { items: Array<[string, string]> }) {
   return (
     <dl className="summaryList">
@@ -769,6 +1000,14 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function formatMoney(minorUnits?: number, currencyCode?: string) {
+  if (minorUnits === undefined) {
+    return "Not available";
+  }
+
+  return `${currencyCode ?? "PHP"} ${(minorUnits / 100).toFixed(2)}`;
 }
 
 function policyBasisLabel(kind: PolicyContextKind) {

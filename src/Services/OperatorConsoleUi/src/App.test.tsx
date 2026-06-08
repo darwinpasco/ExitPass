@@ -40,7 +40,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       getStatutoryDiscountDraft: vi.fn(),
       listStatutoryDiscountEvidence: vi.fn(),
       captureStatutoryDiscountEvidence: vi.fn(),
-      submitStatutoryDiscountDecision: vi.fn()
+      submitStatutoryDiscountDecision: vi.fn(),
+      applyStatutoryDiscountPayableBasis: vi.fn()
     };
 
     const { rerender } = render(
@@ -179,6 +180,48 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
   });
 
+  it("StatutoryDiscountDetail_DisablesApplyPayableBasisBeforeApproval", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Apply payable basis" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
+    expect(screen.getAllByText(/payable basis can be applied only after approval/i).length).toBeGreaterThan(0);
+  });
+
+  it("StatutoryDiscountDetail_EnablesApplyPayableBasisAfterApprovalAndDisablesOnceApplied", async () => {
+    const onPayableBasisApply = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onPayableBasisApply })}
+        initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Apply payable basis" })).toBeEnabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Apply payable basis" }));
+
+    expect(await screen.findByText("Payable basis applied.")).toBeInTheDocument();
+    expect(onPayableBasisApply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftId: firstDraftId,
+        originalTariffSnapshotId: "23100000-0000-0000-0000-000000000004"
+      })
+    );
+    expect(await screen.findByText(/this did not create payment, exit authorization, coupon, or gate records/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
+    expect(screen.getAllByText(/payable basis has already been applied/i).length).toBeGreaterThan(0);
+  });
+
   it("StatutoryDiscountDetail_CapturesEvidenceAndEnablesApprovalAfterRefresh", async () => {
     const onEvidenceCapture = vi.fn();
     render(
@@ -205,6 +248,25 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         operatorConfirmation: true
       })
     );
+  });
+
+  it("StatutoryDiscountDetail_EvidencePanelShowsMetadataOnlyAndMaskedReferenceGuidance", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath={`/operator-console/statutory-discounts/${verifiedLocalDraftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Evidence" })).toBeInTheDocument();
+    expect(screen.getByText(/metadata-only evidence capture/i)).toBeInTheDocument();
+    expect(screen.getByText(/do not upload or enter raw id numbers/i)).toBeInTheDocument();
+
+    await userEvent.selectOptions(await screen.findByLabelText(/capture method/i), "MANUAL_REFERENCE");
+
+    expect(screen.getByLabelText(/masked id reference \/ last 4 only/i)).toBeInTheDocument();
+    expect(screen.getByText("Do not enter the full ID number.")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("****1234")).toBeInTheDocument();
   });
 
   it("OperatorConsoleApi_MapsBackendErrorsIntoUiErrors", () => {
@@ -333,8 +395,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const requestBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
     expect(requestBody).toEqual(expect.objectContaining({
       userId: "77000000-0000-0000-0000-000000000010",
-      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000011",
-      operatorShiftId: "77000000-0000-0000-0000-000000000012",
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
+      operatorShiftId: "77000000-0000-0000-0000-000000000050",
       evidenceType: "SENIOR_CITIZEN_ID",
       captureMethod: "OPERATOR_CONFIRMED"
     }));
@@ -372,8 +434,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const requestBody = JSON.parse(requestOptions?.body as string);
     expect(requestBody).toEqual(expect.objectContaining({
       userId: "77000000-0000-0000-0000-000000000010",
-      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000011",
-      operatorShiftId: "77000000-0000-0000-0000-000000000012",
+      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
+      operatorShiftId: "77000000-0000-0000-0000-000000000050",
       decision: "APPROVE"
     }));
     expect(requestBody.idempotencyKey).toMatch(`operator-console-ui-approve-${firstDraftId}-`);
@@ -408,7 +470,7 @@ function expectOperatorContextHeaders(headers: unknown) {
   expect(headers).toEqual(expect.objectContaining({
     "X-Correlation-Id": expect.any(String),
     "X-Operator-User-Id": "77000000-0000-0000-0000-000000000010",
-    "X-Operator-Device-Binding-Id": "77000000-0000-0000-0000-000000000011",
-    "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000012"
+    "X-Operator-Device-Binding-Id": "77000000-0000-0000-0000-000000000030",
+    "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000050"
   }));
 }
