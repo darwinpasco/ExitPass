@@ -14,26 +14,51 @@ public sealed class OperatorConsoleAccessReadinessService
     private readonly OperatorConsoleActionCatalog _actionCatalog;
     private readonly OperatorConsoleDenialReasonCatalog _denialReasonCatalog;
     private readonly ISystemClock _clock;
+    private readonly IOperatorConsoleAccessReadinessRepository? _repository;
 
     /// <summary>Creates the Operator Console access readiness service.</summary>
     public OperatorConsoleAccessReadinessService(
         OperatorConsoleActionCatalog actionCatalog,
         OperatorConsoleDenialReasonCatalog denialReasonCatalog,
-        ISystemClock clock)
+        ISystemClock clock,
+        IOperatorConsoleAccessReadinessRepository? repository = null)
     {
         _actionCatalog = actionCatalog ?? throw new ArgumentNullException(nameof(actionCatalog));
         _denialReasonCatalog = denialReasonCatalog ?? throw new ArgumentNullException(nameof(denialReasonCatalog));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _repository = repository;
     }
 
     /// <summary>
     /// Evaluates foundation-level readiness from supplied context. Production table wiring is intentionally later scope.
     /// </summary>
-    public OperatorConsoleAccessReadinessResult Evaluate(OperatorConsoleAccessReadinessCommand command)
+    public OperatorConsoleAccessReadinessResult Evaluate(OperatorConsoleAccessReadinessCommand command) =>
+        Evaluate(command, repositoryResult: null, _clock.UtcNow);
+
+    /// <summary>
+    /// Evaluates readiness with repository-backed operator/device/shift/site facts when configured.
+    /// </summary>
+    public async Task<OperatorConsoleAccessReadinessResult> EvaluateAsync(
+        OperatorConsoleAccessReadinessCommand command,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
 
         var evaluatedAt = _clock.UtcNow;
+        var repositoryResult = _repository is null
+            ? null
+            : await _repository.LoadAsync(command, evaluatedAt, cancellationToken);
+
+        return Evaluate(command, repositoryResult, evaluatedAt);
+    }
+
+    private OperatorConsoleAccessReadinessResult Evaluate(
+        OperatorConsoleAccessReadinessCommand command,
+        OperatorConsoleAccessReadinessRepositoryResult? repositoryResult,
+        DateTimeOffset evaluatedAt)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
         var dimensionReasons = new Dictionary<string, List<string>>(StringComparer.Ordinal)
         {
             ["operator"] = [],
@@ -85,6 +110,8 @@ public sealed class OperatorConsoleAccessReadinessService
         {
             AddReason(dimensionReasons["localDevBoundary"], OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
         }
+
+        ApplyRepositoryReadiness(command, repositoryResult, dimensionReasons);
 
         var dimensions = dimensionReasons
             .Select(pair => new OperatorConsoleReadinessDimensionResult(
@@ -138,6 +165,34 @@ public sealed class OperatorConsoleAccessReadinessService
     private static string DimensionStatus(IReadOnlyCollection<string> reasons) =>
         reasons.Count == 0 ? "READY" : "BLOCKED";
 
+    private static void ApplyRepositoryReadiness(
+        OperatorConsoleAccessReadinessCommand command,
+        OperatorConsoleAccessReadinessRepositoryResult? repositoryResult,
+        IReadOnlyDictionary<string, List<string>> dimensionReasons)
+    {
+        if (repositoryResult is null)
+        {
+            return;
+        }
+
+        if (!repositoryResult.Capabilities.HasReadinessTables)
+        {
+            if (!OperatorConsoleLocalDevFallbackPolicy.IsFallbackAllowed(command.EnvironmentName))
+            {
+                AddReason(
+                    dimensionReasons["localDevBoundary"],
+                    OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+            }
+
+            return;
+        }
+
+        AddReasons(dimensionReasons["operator"], repositoryResult.OperatorDenialReasons);
+        AddReasons(dimensionReasons["device"], repositoryResult.DeviceDenialReasons);
+        AddReasons(dimensionReasons["shift"], repositoryResult.ShiftDenialReasons);
+        AddReasons(dimensionReasons["site"], repositoryResult.SiteDenialReasons);
+    }
+
     private static string BuildNextOperatorAction(IReadOnlyCollection<OperatorConsoleAccessReadinessDenialReason> reasons)
     {
         // Design reference: docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md.
@@ -152,6 +207,14 @@ public sealed class OperatorConsoleAccessReadinessService
         if (!reasons.Contains(reason, StringComparer.Ordinal))
         {
             reasons.Add(reason);
+        }
+    }
+
+    private static void AddReasons(List<string> reasons, IEnumerable<string> additionalReasons)
+    {
+        foreach (var reason in additionalReasons)
+        {
+            AddReason(reasons, reason);
         }
     }
 }

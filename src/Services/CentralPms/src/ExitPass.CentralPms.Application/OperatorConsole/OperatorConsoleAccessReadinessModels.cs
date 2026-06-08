@@ -78,3 +78,40 @@ public sealed record OperatorConsoleWorkflowReadiness(
     string? WorkflowState,
     string Status,
     bool Ready);
+
+/// <summary>Read-only source for repository-backed Operator Console access readiness.</summary>
+public interface IOperatorConsoleAccessReadinessRepository
+{
+    /// <summary>Loads repository-backed readiness facts where operator-console tables are available.</summary>
+    Task<OperatorConsoleAccessReadinessRepositoryResult> LoadAsync(
+        OperatorConsoleAccessReadinessCommand command,
+        DateTimeOffset evaluatedAt,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>Repository-backed readiness result and schema capability snapshot.</summary>
+public sealed record OperatorConsoleAccessReadinessRepositoryResult(
+    OperatorConsoleAccessReadinessRepositoryCapabilities Capabilities,
+    IReadOnlyList<string> OperatorDenialReasons,
+    IReadOnlyList<string> DeviceDenialReasons,
+    IReadOnlyList<string> ShiftDenialReasons,
+    IReadOnlyList<string> SiteDenialReasons);
+
+/// <summary>Detected operator-console readiness table capabilities.</summary>
+public sealed record OperatorConsoleAccessReadinessRepositoryCapabilities(
+    bool OperatorConsoleSchemaExists,
+    bool HrIdentityMappingsTableExists,
+    bool OperatorDeviceBindingsTableExists,
+    bool OperatorDeviceAssignmentHistoryTableExists,
+    bool OperatorShiftsTableExists,
+    bool OperatorAccessEvaluationsTableExists,
+    bool OperatorAccessEvaluationReasonsTableExists)
+{
+    /// <summary>True when the tables required to read operator, device, shift, and site readiness exist.</summary>
+    public bool HasReadinessTables =>
+        OperatorConsoleSchemaExists &&
+        HrIdentityMappingsTableExists &&
+        OperatorDeviceBindingsTableExists &&
+        OperatorDeviceAssignmentHistoryTableExists &&
+        OperatorShiftsTableExists;
+}
