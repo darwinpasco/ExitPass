@@ -8,6 +8,8 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
+  AuditReportQuery,
+  AuditReportResponse,
   LoadState,
   PolicyContextKind,
   StatutoryDiscountDraftDetail,
@@ -21,6 +23,7 @@ import type {
 
 const routes = {
   home: "/operator-console",
+  audit: "/operator-console/audit",
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/"
 };
@@ -113,6 +116,13 @@ export function App({ apiClient, initialPath }: AppProps) {
             >
               Statutory Discounts
             </button>
+            <button
+              className={`navLink ${path === routes.audit ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.audit)}
+            >
+              Audit / Reporting
+            </button>
           </nav>
 
           <div className="statusStack">
@@ -137,6 +147,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             />
           ) : path === routes.queue ? (
             <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
+          ) : path === routes.audit ? (
+            <AuditReportPage client={client} />
           ) : path === routes.home ? (
             <OperatorConsoleHome navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : (
@@ -145,6 +157,185 @@ export function App({ apiClient, initialPath }: AppProps) {
         </section>
       </section>
     </main>
+  );
+}
+
+function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
+  const [filters, setFilters] = useState<AuditReportQuery>({ limit: 25, offset: 0 });
+  const [draftFilters, setDraftFilters] = useState<AuditReportQuery>({ limit: 25, offset: 0 });
+  const [reportState, setReportState] = useState<LoadState<AuditReportResponse>>({ status: "loading" });
+
+  useEffect(() => {
+    let active = true;
+    setReportState({ status: "loading" });
+
+    client
+      .listAuditReport(filters)
+      .then((report) => {
+        if (!active) {
+          return;
+        }
+
+        setReportState(report.items.length === 0 ? { status: "empty" } : { status: "loaded", data: report });
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        setReportState({ status: "error", message: mapApiError(error).message });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, filters]);
+
+  function submitFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFilters({
+      ...draftFilters,
+      limit: 25,
+      offset: 0
+    });
+  }
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Audit / Reporting</p>
+          <h2>Statutory discount audit report</h2>
+          <p>
+            Read-only audit/reporting view for statutory discount validation and access readiness review.
+          </p>
+        </div>
+      </section>
+
+      <section className="panel auditGuardrail" aria-labelledby="audit-guardrail-title">
+        <div className="panelHeader">
+          <h3 id="audit-guardrail-title">Read-only boundaries</h3>
+          <span className="statusPill">Safe summary</span>
+        </div>
+        <p>Read-only audit/reporting view.</p>
+        <p>No payment, gate, coupon, reconciliation, or evidence-file action is performed here.</p>
+        <p>Raw ID numbers and raw evidence files are not displayed.</p>
+      </section>
+
+      <section className="panel" aria-labelledby="audit-filters-title">
+        <div className="panelHeader">
+          <h3 id="audit-filters-title">Filters</h3>
+        </div>
+        <form className="auditFilterGrid" onSubmit={submitFilters}>
+          <label>
+            Status
+            <select
+              value={draftFilters.validationStatus ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, validationStatus: event.target.value || undefined }))}
+            >
+              <option value="">Any status</option>
+              <option value="REQUESTED">Requested</option>
+              <option value="APPROVED">Approved</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="BLOCKED">Blocked</option>
+              <option value="EXPIRED">Expired</option>
+              <option value="CANCELLED">Cancelled</option>
+            </select>
+          </label>
+          <label>
+            Site ID
+            <input
+              value={draftFilters.siteId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, siteId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Parking session ID
+            <input
+              value={draftFilters.parkingSessionId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, parkingSessionId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Date from
+            <input
+              type="datetime-local"
+              value={draftFilters.from ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, from: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Date to
+            <input
+              type="datetime-local"
+              value={draftFilters.to ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, to: event.target.value || undefined }))}
+            />
+          </label>
+          <button type="submit">Apply filters</button>
+        </form>
+      </section>
+
+      <section className="panel" aria-labelledby="audit-results-title">
+        <div className="panelHeader">
+          <h3 id="audit-results-title">Report results</h3>
+          {reportState.status === "loaded" && <span className="statusPill">{reportState.data.totalCount} rows</span>}
+        </div>
+
+        {reportState.status === "loading" && <StateMessage title="Loading audit report" message="Retrieving safe reporting rows." />}
+        {reportState.status === "empty" && <StateMessage title="No report rows" message="No statutory discount audit rows matched the filters." />}
+        {reportState.status === "error" && <StateMessage title="Unable to load audit report" message={reportState.message} />}
+        {reportState.status === "loaded" && (
+          <>
+            <p className="placeholderCopy">Correlation ID: {reportState.data.correlationId}</p>
+            <div className="tableScroller">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Ticket Reference</th>
+                    <th>Session ID</th>
+                    <th>Entitlement</th>
+                    <th>Validation Status</th>
+                    <th>Evidence Status</th>
+                    <th>Evidence Satisfied</th>
+                    <th>Payable Basis Status</th>
+                    <th>Original Amount</th>
+                    <th>Discount</th>
+                    <th>Final Payable</th>
+                    <th>Currency</th>
+                    <th>Requested At</th>
+                    <th>Validated At</th>
+                    <th>Correlation ID</th>
+                    <th>Access Summary</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportState.data.items.map((item) => (
+                    <tr key={item.statutoryDiscountValidationId}>
+                      <td>{item.ticketReference ?? "Not available"}</td>
+                      <td><code>{shortId(item.parkingSessionId)}</code></td>
+                      <td>{item.entitlementType}</td>
+                      <td><span className={`statusPill ${statusClass(item.validationStatus)}`}>{item.validationStatus}</span></td>
+                      <td>{item.latestEvidenceStatus ?? (item.evidenceRequired ? "Pending" : "Not required")}</td>
+                      <td>{item.evidenceRequiredSatisfied ? "Yes" : "No"}</td>
+                      <td>{item.payableBasisApplicationStatus ?? "Not applied"}</td>
+                      <td>{formatMoney(item.originalAmountMinorUnits, item.currencyCode)}</td>
+                      <td>{formatMoney(item.statutoryDiscountAmountMinorUnits, item.currencyCode)}</td>
+                      <td>{formatMoney(item.finalPayableAmountMinorUnits, item.currencyCode)}</td>
+                      <td>{item.currencyCode ?? "Not available"}</td>
+                      <td>{formatDateTime(item.requestedAt)}</td>
+                      <td>{item.validatedAt ? formatDateTime(item.validatedAt) : "Not validated"}</td>
+                      <td>{item.correlationId ?? "Not available"}</td>
+                      <td>{item.accessEvaluationSummary ?? "Not available"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+    </>
   );
 }
 

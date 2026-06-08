@@ -273,6 +273,141 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
         return ReadDetail(reader);
     }
 
+    /// <inheritdoc />
+    public async Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
+        OperatorConsoleStatutoryDiscountAuditReportQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        // Design references:
+        // docs/operator-console/OperatorConsole_Access_Readiness_API_Backend_Design_v1.md
+        // docs/operator-console/OperatorConsole_Production_Readiness_Gap_Review_v1.md
+        // Invariant: Operator Console audit/reporting is read-only and must not expose raw statutory evidence,
+        // raw ID numbers, payment authority, gate authority, coupon authority, or reconciliation mutation.
+        const string sql = """
+            SELECT
+                sdv.statutory_discount_validation_id,
+                sdv.parking_session_id,
+                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS ticket_reference,
+                ps.plate_number_masked,
+                ps.site_id,
+                ps.site_group_id,
+                sdv.entitlement_type::text,
+                sdv.validation_status::text,
+                sdv.evidence_required,
+                sdv.evidence_captured,
+                sdv.evidence_captured AS evidence_required_satisfied,
+                COALESCE(evidence_summary.evidence_count, 0)::int AS evidence_count,
+                evidence_summary.latest_evidence_status,
+                latest_application.application_status,
+                ROUND(COALESCE(sdv.gross_amount_at_validation, active_tariff.gross_amount) * 100)::bigint AS original_amount_minor_units,
+                COALESCE(
+                    latest_application.statutory_discount_amount_minor_units,
+                    ROUND(sdv.statutory_discount_amount * 100)::bigint
+                ) AS statutory_discount_amount_minor_units,
+                COALESCE(
+                    latest_application.final_payable_amount_minor_units,
+                    ROUND(COALESCE(sdv.net_amount_after_discount, active_tariff.net_amount) * 100)::bigint
+                ) AS final_payable_amount_minor_units,
+                COALESCE(sdv.currency_code, latest_application.currency_code, active_tariff.currency_code) AS currency_code,
+                sdv.requested_by_user_id,
+                sdv.validated_by_user_id,
+                sdv.requested_at,
+                sdv.validated_at,
+                sdv.correlation_id,
+                p.policy_code,
+                p.local_ordinance_reference AS ordinance_reference,
+                COALESCE(p.local_ordinance_reference, p.national_law_reference) AS legal_basis_reference,
+                latest_application.applied_tariff_snapshot_id,
+                access_summary.access_evaluation_summary,
+                access_summary.access_decision,
+                COUNT(*) OVER() AS total_count
+            FROM discounts.statutory_discount_validations AS sdv
+            JOIN core.parking_sessions AS ps
+              ON ps.parking_session_id = sdv.parking_session_id
+            LEFT JOIN discounts.discount_policy_references AS p
+              ON p.discount_policy_reference_id = COALESCE(
+                    sdv.applied_policy_reference_id,
+                    sdv.evaluated_policy_reference_id,
+                    sdv.fallback_policy_reference_id)
+            LEFT JOIN LATERAL (
+                SELECT gross_amount, net_amount, currency_code
+                FROM core.tariff_snapshots
+                WHERE parking_session_id = sdv.parking_session_id
+                  AND snapshot_status = 'ACTIVE'
+                ORDER BY calculated_at DESC, tariff_snapshot_id DESC
+                LIMIT 1
+            ) AS active_tariff ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    applied_ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
+                    'APPLIED'::text AS application_status,
+                    ROUND(applied_ts.statutory_discount_amount * 100)::bigint AS statutory_discount_amount_minor_units,
+                    ROUND(applied_ts.net_amount * 100)::bigint AS final_payable_amount_minor_units,
+                    applied_ts.currency_code
+                FROM core.tariff_snapshots AS applied_ts
+                WHERE applied_ts.statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND applied_ts.statutory_discount_amount > 0
+                ORDER BY applied_ts.calculated_at DESC, applied_ts.tariff_snapshot_id DESC
+                LIMIT 1
+            ) AS latest_application ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*)::int AS evidence_count,
+                    (ARRAY_AGG(evidence_capture_status::text ORDER BY captured_at DESC, discount_evidence_reference_id DESC))[1] AS latest_evidence_status
+                FROM discounts.discount_evidence_references
+                WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND purged_at IS NULL
+            ) AS evidence_summary ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    action_status::text AS access_decision,
+                    CONCAT(action_reason_code, ' / ', action_status::text, ' / ', performed_at::text) AS access_evaluation_summary
+                FROM operations.operator_action_logs
+                WHERE target_entity_id IN (sdv.parking_session_id, sdv.statutory_discount_validation_id)
+                  AND action_type = 'CONTROLLED_RECHECK'::operations.operator_action_type_enum
+                ORDER BY performed_at DESC, operator_action_log_id DESC
+                LIMIT 1
+            ) AS access_summary ON TRUE
+            WHERE sdv.validation_channel = 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum
+              AND (@site_id IS NULL OR ps.site_id = @site_id)
+              AND (@site_group_id IS NULL OR ps.site_group_id = @site_group_id)
+              AND (@operator_user_id IS NULL OR sdv.requested_by_user_id = @operator_user_id OR sdv.validated_by_user_id = @operator_user_id)
+              AND (@parking_session_id IS NULL OR sdv.parking_session_id = @parking_session_id)
+              AND (@validation_status IS NULL OR sdv.validation_status = @validation_status::discounts.statutory_discount_validations_status_enum)
+              AND (@evidence_status IS NULL OR evidence_summary.latest_evidence_status = @evidence_status)
+              AND (@access_decision IS NULL OR access_summary.access_decision = @access_decision)
+              AND (@from IS NULL OR sdv.requested_at >= @from)
+              AND (@to IS NULL OR sdv.requested_at <= @to)
+            ORDER BY sdv.requested_at DESC, sdv.statutory_discount_validation_id DESC
+            LIMIT @limit
+            OFFSET @offset;
+            """;
+
+        var items = new List<OperatorConsoleStatutoryDiscountAuditReportItemResult>();
+        var totalCount = 0;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
+        AddAuditReportParameters(command, query);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            items.Add(ReadAuditReportItem(reader));
+            totalCount = reader.GetInt32(reader.GetOrdinal("total_count"));
+        }
+
+        return new OperatorConsoleStatutoryDiscountAuditReportResult(
+            items,
+            totalCount,
+            query.Limit,
+            query.Offset,
+            query.CorrelationId);
+    }
+
     private static void AddQueueParameters(
         NpgsqlCommand command,
         OperatorConsoleStatutoryDiscountDraftQueueQuery query,
@@ -286,6 +421,23 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
         command.Parameters.Add("created_to", NpgsqlDbType.TimestampTz).Value = DbValue(query.CreatedTo);
         command.Parameters.Add("limit", NpgsqlDbType.Integer).Value = limit;
         command.Parameters.Add("offset", NpgsqlDbType.Integer).Value = offset;
+    }
+
+    private static void AddAuditReportParameters(
+        NpgsqlCommand command,
+        OperatorConsoleStatutoryDiscountAuditReportQuery query)
+    {
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(query.SiteId);
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = DbValue(query.SiteGroupId);
+        command.Parameters.Add("operator_user_id", NpgsqlDbType.Uuid).Value = DbValue(query.OperatorUserId);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = DbValue(query.ParkingSessionId);
+        command.Parameters.Add("validation_status", NpgsqlDbType.Text).Value = DbValue(query.ValidationStatus);
+        command.Parameters.Add("evidence_status", NpgsqlDbType.Text).Value = DbValue(query.EvidenceStatus);
+        command.Parameters.Add("access_decision", NpgsqlDbType.Text).Value = DbValue(query.AccessDecision);
+        command.Parameters.Add("from", NpgsqlDbType.TimestampTz).Value = DbValue(query.From);
+        command.Parameters.Add("to", NpgsqlDbType.TimestampTz).Value = DbValue(query.To);
+        command.Parameters.Add("limit", NpgsqlDbType.Integer).Value = query.Limit;
+        command.Parameters.Add("offset", NpgsqlDbType.Integer).Value = query.Offset;
     }
 
     private static OperatorConsoleStatutoryDiscountDraftQueueItemResult ReadQueueItem(NpgsqlDataReader reader) =>
@@ -311,6 +463,37 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
             GetNullableGuid(reader, "requested_by_user_id"),
             GetNullableString(reader, "blocked_reason"));
+
+    private static OperatorConsoleStatutoryDiscountAuditReportItemResult ReadAuditReportItem(NpgsqlDataReader reader) =>
+        new(
+            reader.GetGuid("statutory_discount_validation_id"),
+            reader.GetGuid("parking_session_id"),
+            GetNullableString(reader, "ticket_reference"),
+            GetNullableString(reader, "plate_number_masked"),
+            reader.GetGuid("site_id"),
+            reader.GetGuid("site_group_id"),
+            reader.GetString("entitlement_type"),
+            reader.GetString("validation_status"),
+            reader.GetBoolean(reader.GetOrdinal("evidence_required")),
+            reader.GetBoolean(reader.GetOrdinal("evidence_captured")),
+            reader.GetBoolean(reader.GetOrdinal("evidence_required_satisfied")),
+            reader.GetInt32(reader.GetOrdinal("evidence_count")),
+            GetNullableString(reader, "latest_evidence_status"),
+            GetNullableString(reader, "application_status"),
+            GetNullableLong(reader, "original_amount_minor_units"),
+            GetNullableLong(reader, "statutory_discount_amount_minor_units"),
+            GetNullableLong(reader, "final_payable_amount_minor_units"),
+            GetNullableString(reader, "currency_code"),
+            GetNullableGuid(reader, "requested_by_user_id"),
+            GetNullableGuid(reader, "validated_by_user_id"),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
+            GetNullableDateTimeOffset(reader, "validated_at"),
+            GetNullableGuid(reader, "correlation_id"),
+            GetNullableString(reader, "policy_code"),
+            GetNullableString(reader, "ordinance_reference"),
+            GetNullableString(reader, "legal_basis_reference"),
+            GetNullableGuid(reader, "applied_tariff_snapshot_id"),
+            GetNullableString(reader, "access_evaluation_summary"));
 
     private static OperatorConsoleStatutoryDiscountDraftDetailResult ReadDetail(NpgsqlDataReader reader)
     {

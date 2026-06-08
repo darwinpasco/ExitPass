@@ -86,3 +86,47 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResponse(
     long? PayableAmountMinorUnits,
     string? CurrencyCode,
     IReadOnlyList<string> Activity);
+
+/// <summary>
+/// Read-only audit/reporting response for Operator Console statutory discount validation.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountAuditReportResponse(
+    IReadOnlyList<OperatorConsoleStatutoryDiscountAuditReportItem> Items,
+    int TotalCount,
+    int Limit,
+    int Offset,
+    Guid CorrelationId);
+
+/// <summary>
+/// Safe read-only statutory discount audit/reporting item.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountAuditReportItem(
+    Guid StatutoryDiscountValidationId,
+    Guid DraftId,
+    Guid ParkingSessionId,
+    string? TicketReference,
+    string? PlateNumber,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string EntitlementType,
+    string ValidationStatus,
+    bool EvidenceRequired,
+    bool EvidenceCaptured,
+    bool EvidenceRequiredSatisfied,
+    int EvidenceCount,
+    string? LatestEvidenceStatus,
+    string? PayableBasisApplicationStatus,
+    long? OriginalAmountMinorUnits,
+    long? StatutoryDiscountAmountMinorUnits,
+    long? FinalPayableAmountMinorUnits,
+    string? CurrencyCode,
+    Guid? RequestedByUserId,
+    Guid? ValidatedByUserId,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? ValidatedAt,
+    Guid? CorrelationId,
+    string? PolicyCode,
+    string? OrdinanceReference,
+    string? LegalBasisReference,
+    Guid? AppliedTariffSnapshotId,
+    string? AccessEvaluationSummary);

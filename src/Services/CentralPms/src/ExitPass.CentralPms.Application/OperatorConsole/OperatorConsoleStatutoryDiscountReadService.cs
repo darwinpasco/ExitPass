@@ -13,6 +13,8 @@ public sealed class OperatorConsoleStatutoryDiscountReadService : IOperatorConso
     private const int DefaultPage = 1;
     private const int DefaultPageSize = 25;
     private const int MaxPageSize = 100;
+    private const int DefaultReportLimit = 25;
+    private const int MaxReportLimit = 200;
 
     private readonly IOperatorConsoleStatutoryDiscountReadRepository _repository;
 
@@ -60,6 +62,34 @@ public sealed class OperatorConsoleStatutoryDiscountReadService : IOperatorConso
         ValidateGuid(query.DraftId, nameof(query.DraftId));
         ValidateCorrelation(query.CorrelationId);
         return _repository.GetDraftAsync(query, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
+        OperatorConsoleStatutoryDiscountAuditReportQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ValidateCorrelation(query.CorrelationId);
+
+        if (query.From.HasValue && query.To.HasValue && query.From > query.To)
+        {
+            throw new ArgumentException("from must be before to.", nameof(query));
+        }
+
+        var limit = query.Limit <= 0 ? DefaultReportLimit : Math.Min(query.Limit, MaxReportLimit);
+        var offset = Math.Max(0, query.Offset);
+
+        return _repository.ListAuditReportAsync(
+            query with
+            {
+                ValidationStatus = NormalizeOptional(query.ValidationStatus),
+                EvidenceStatus = NormalizeOptional(query.EvidenceStatus),
+                AccessDecision = NormalizeOptional(query.AccessDecision),
+                Limit = limit,
+                Offset = offset
+            },
+            cancellationToken);
     }
 
     private static string? NormalizeOptional(string? value) =>

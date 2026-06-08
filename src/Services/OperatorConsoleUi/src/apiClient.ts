@@ -1,6 +1,8 @@
 import type {
   AccessReadinessRequest,
   AccessReadinessResponse,
+  AuditReportQuery,
+  AuditReportResponse,
   DraftStatus,
   EntitlementType,
   OperatorConsoleApiError,
@@ -19,6 +21,7 @@ import type {
 
 export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
+  listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
@@ -204,6 +207,24 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       return parseResponse<AccessReadinessResponse>(response);
     },
 
+    async listAuditReport(input = {}) {
+      const correlationId = newCorrelationId();
+      const search = new URLSearchParams({ correlationId });
+      addQuery(search, "siteId", input.siteId);
+      addQuery(search, "parkingSessionId", input.parkingSessionId);
+      addQuery(search, "validationStatus", input.validationStatus);
+      addQuery(search, "from", input.from);
+      addQuery(search, "to", input.to);
+      addQuery(search, "limit", input.limit?.toString());
+      addQuery(search, "offset", input.offset?.toString());
+
+      const response = await fetch(`${baseUrl}/v1/ops/operator-console/audit/statutory-discounts?${search}`, {
+        headers: operatorConsoleHeaders(correlationId)
+      });
+
+      return parseResponse<AuditReportResponse>(response);
+    },
+
     async listStatutoryDiscountDrafts() {
       const correlationId = newCorrelationId();
       const response = await fetch(
@@ -386,6 +407,17 @@ export function createMockOperatorConsoleApiClient(
     async evaluateAccessReadiness(input) {
       await delay();
       return options.readiness ?? mockAccessReadiness(input);
+    },
+
+    async listAuditReport() {
+      await delay();
+      return {
+        items: options.empty ? [] : drafts.map(toAuditReportItem),
+        totalCount: options.empty ? 0 : drafts.length,
+        limit: 25,
+        offset: 0,
+        correlationId: newCorrelationId()
+      };
     },
 
     async listStatutoryDiscountDrafts() {
@@ -662,6 +694,12 @@ function toEvidenceItem(dto: EvidenceItemDto): StatutoryDiscountEvidenceItem {
   };
 }
 
+function addQuery(search: URLSearchParams, key: string, value?: string) {
+  if (value && value.trim().length > 0) {
+    search.set(key, value.trim());
+  }
+}
+
 function toPolicyContext(item: QueueItemDto | DetailDto): StatutoryDiscountPolicyContext {
   const basis = item.policyResolutionBasis ?? "UNKNOWN";
   const detail = item as DetailDto;
@@ -869,6 +907,40 @@ function toQueueFromDetail(draft: StatutoryDiscountDraftDetail): StatutoryDiscou
     originalAmountMinorUnits: draft.originalAmountMinorUnits,
     payableAmountMinorUnits: draft.payableAmountMinorUnits,
     currencyCode: draft.currencyCode
+  };
+}
+
+function toAuditReportItem(draft: StatutoryDiscountDraftDetail) {
+  return {
+    statutoryDiscountValidationId: draft.draftId,
+    draftId: draft.draftId,
+    parkingSessionId: draft.parkingSessionId,
+    ticketReference: draft.ticketReference,
+    plateNumber: draft.plateNumber,
+    siteId: draft.siteId,
+    siteGroupId: draft.siteGroupId ?? "Not available",
+    entitlementType: draft.entitlementType,
+    validationStatus: draft.status,
+    evidenceRequired: draft.policyContext.evidenceRequired,
+    evidenceCaptured: draft.evidenceCaptured,
+    evidenceRequiredSatisfied: draft.evidenceRequiredSatisfied,
+    evidenceCount: draft.evidenceCount,
+    latestEvidenceStatus: draft.latestEvidenceStatus,
+    payableBasisApplicationStatus: draft.payableBasisApplicationStatus,
+    originalAmountMinorUnits: draft.originalAmountMinorUnits,
+    statutoryDiscountAmountMinorUnits: draft.statutoryDiscountAmountMinorUnits,
+    finalPayableAmountMinorUnits: draft.finalPayableAmountMinorUnits ?? draft.payableAmountMinorUnits,
+    currencyCode: draft.currencyCode,
+    requestedByUserId: draft.requestedBy,
+    validatedByUserId: undefined,
+    requestedAt: draft.requestedAt,
+    validatedAt: undefined,
+    correlationId: undefined,
+    policyCode: draft.policyContext.policyCode,
+    ordinanceReference: draft.policyContext.ordinanceReference,
+    legalBasisReference: draft.policyContext.legalBasisReference,
+    appliedTariffSnapshotId: draft.appliedTariffSnapshotId,
+    accessEvaluationSummary: "SESSION_LOOKUP / SUCCESS"
   };
 }
 

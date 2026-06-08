@@ -18,4 +18,11 @@ public interface IOperatorConsoleStatutoryDiscountReadRepository
     Task<OperatorConsoleStatutoryDiscountDraftDetailResult?> GetDraftAsync(
         OperatorConsoleStatutoryDiscountDraftDetailQuery query,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lists read-only audit/reporting rows for statutory discount validation.
+    /// </summary>
+    Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
+        OperatorConsoleStatutoryDiscountAuditReportQuery query,
+        CancellationToken cancellationToken);
 }

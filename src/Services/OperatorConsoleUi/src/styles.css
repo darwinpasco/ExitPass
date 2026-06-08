@@ -357,6 +357,30 @@ dd {
   max-width: 360px;
 }
 
+.auditGuardrail {
+  border-left: 5px solid #2f8a6a;
+}
+
+.auditGuardrail p {
+  color: #465969;
+  margin: 8px 0 0;
+}
+
+.auditFilterGrid {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+}
+
+.auditFilterGrid label {
+  color: #465969;
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 7px;
+}
+
 .notice,
 .successMessage,
 .errorMessage {
@@ -574,6 +598,7 @@ dd {
   .pageTitle,
   .platformShell,
   .detailGrid,
+  .auditFilterGrid,
   .workflowGrid,
   .readinessDimensionGrid,
   .evidenceLayout {

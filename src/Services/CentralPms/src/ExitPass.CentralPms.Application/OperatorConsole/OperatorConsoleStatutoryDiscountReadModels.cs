@@ -104,3 +104,63 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResult(
     long? PayableAmountMinorUnits,
     string? CurrencyCode,
     IReadOnlyList<string> Activity);
+
+/// <summary>
+/// Query for read-only Operator Console statutory discount audit/reporting rows.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountAuditReportQuery(
+    Guid? SiteId,
+    Guid? SiteGroupId,
+    Guid? OperatorUserId,
+    Guid? ParkingSessionId,
+    string? ValidationStatus,
+    string? EvidenceStatus,
+    string? AccessDecision,
+    DateTimeOffset? From,
+    DateTimeOffset? To,
+    int Limit,
+    int Offset,
+    Guid CorrelationId);
+
+/// <summary>
+/// Read-only Operator Console statutory discount audit/reporting result.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountAuditReportResult(
+    IReadOnlyList<OperatorConsoleStatutoryDiscountAuditReportItemResult> Items,
+    int TotalCount,
+    int Limit,
+    int Offset,
+    Guid CorrelationId);
+
+/// <summary>
+/// Safe statutory discount audit/reporting row for Operator Console review.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountAuditReportItemResult(
+    Guid DraftId,
+    Guid ParkingSessionId,
+    string? TicketReference,
+    string? PlateNumber,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string EntitlementType,
+    string ValidationStatus,
+    bool EvidenceRequired,
+    bool EvidenceCaptured,
+    bool EvidenceRequiredSatisfied,
+    int EvidenceCount,
+    string? LatestEvidenceStatus,
+    string? PayableBasisApplicationStatus,
+    long? OriginalAmountMinorUnits,
+    long? StatutoryDiscountAmountMinorUnits,
+    long? FinalPayableAmountMinorUnits,
+    string? CurrencyCode,
+    Guid? RequestedByUserId,
+    Guid? ValidatedByUserId,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? ValidatedAt,
+    Guid? CorrelationId,
+    string? PolicyCode,
+    string? OrdinanceReference,
+    string? LegalBasisReference,
+    Guid? AppliedTariffSnapshotId,
+    string? AccessEvaluationSummary);
