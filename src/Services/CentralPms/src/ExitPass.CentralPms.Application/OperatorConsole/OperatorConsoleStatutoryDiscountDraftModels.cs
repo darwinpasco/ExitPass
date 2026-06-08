@@ -49,7 +49,11 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResult(
     OperatorConsoleResolvedStatutoryDiscountPolicy? Policy,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string PolicyReadinessClassification = OperatorConsolePolicyReadinessClassifications.NotReady,
+    bool RequiresManualReview = false,
+    string? PolicyReadinessReason = null,
+    string? OperatorMessage = null);
 
 /// <summary>
 /// Persistence command for the privacy-minimized statutory discount validation draft row.

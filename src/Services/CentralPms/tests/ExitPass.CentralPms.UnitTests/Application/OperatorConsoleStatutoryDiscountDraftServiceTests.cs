@@ -368,11 +368,114 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
     }
 
+    /// <summary>
+    /// Verifies production draft creation cannot persist against sandbox-only policy rows.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenProductionAndSandboxPolicyResolved_DoesNotCreateDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: true,
+                Policy(
+                    policyId: Guid.Parse("23100000-0000-0000-0000-000000000002"),
+                    policyCode: "SANDBOX_OC_SD_REQUIRED_EVIDENCE_POLICY_235A",
+                    policyName: "Sandbox Operator Console Senior Citizen Required Evidence Policy",
+                    policyLevel: "SITE_POLICY",
+                    policyType: "SITE_POLICY",
+                    policyResolutionBasis: "SITE_POLICY_OPERATIONAL_ONLY",
+                    ordinanceReference: "SANDBOX-OC-SD-ORD-235A",
+                    nationalLawReference: null,
+                    sourceReference: "SANDBOX_METADATA_ONLY"),
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                IneligibilityReason: null,
+                ErrorCode: null));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        var sut = CreateSut(
+            AccessResult(allowed: true, []),
+            repository,
+            writer,
+            policyRepository,
+            environmentName: "Production");
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.DraftAccepted.Should().BeFalse();
+        result.DraftPersisted.Should().BeFalse();
+        result.Policy.Should().BeNull();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
+        result.RequiresManualReview.Should().BeTrue();
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
+    }
+
+    /// <summary>
+    /// Verifies non-production draft validation can still use sandbox fixture policies.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenDevelopmentAndSandboxPolicyResolved_CreatesDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var sandboxPolicy = Policy(
+            policyId: Guid.Parse("23100000-0000-0000-0000-000000000002"),
+            policyCode: "SANDBOX_OC_SD_REQUIRED_EVIDENCE_POLICY_235A",
+            policyName: "Sandbox Operator Console Senior Citizen Required Evidence Policy",
+            policyLevel: "SITE_POLICY",
+            policyType: "SITE_POLICY",
+            policyResolutionBasis: "SITE_POLICY_OPERATIONAL_ONLY",
+            ordinanceReference: "SANDBOX-OC-SD-ORD-235A",
+            nationalLawReference: null,
+            sourceReference: "SANDBOX_METADATA_ONLY");
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: true,
+                sandboxPolicy,
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                IneligibilityReason: null,
+                ErrorCode: null));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: true,
+                EvidenceReferenceId,
+                sandboxPolicy));
+
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer, policyRepository);
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.DraftAccepted.Should().BeTrue();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.SandboxOnly);
+        result.RequiresManualReview.Should().BeFalse();
+        await writer.Received(1).PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>());
+    }
+
     private static OperatorConsoleStatutoryDiscountDraftService CreateSut(
         OperatorConsoleAccessEvaluationResult accessResult,
         IOperatorConsoleSessionLookupReadRepository? sessionRepository = null,
         IOperatorConsoleStatutoryDiscountDraftWriter? draftWriter = null,
-        IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository? policyRepository = null)
+        IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository? policyRepository = null,
+        string environmentName = "Development")
     {
         var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
         accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
@@ -406,7 +509,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             sessionRepository,
             policyRepository,
             draftWriter,
-            clock);
+            clock,
+            new OperatorConsolePolicyReadinessEnvironment(environmentName));
     }
 
     private static OperatorConsoleStatutoryDiscountDraftCommand Command(
@@ -481,21 +585,31 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             DiscountStatus: "NOT_APPLIED",
             ExitAuthorizationStatus: null);
 
-    private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy(bool requiresEvidence = true) =>
+    private static OperatorConsoleResolvedStatutoryDiscountPolicy Policy(
+        bool requiresEvidence = true,
+        Guid? policyId = null,
+        string policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+        string policyName = "RA 9994 Senior Citizen National Fallback",
+        string policyResolutionBasis = "NATIONAL_LAW_FALLBACK",
+        string policyLevel = "NATIONAL_LAW",
+        string policyType = "LEGAL_REFERENCE",
+        string? ordinanceReference = null,
+        string? nationalLawReference = "RA 9994",
+        string? sourceReference = "Unit test policy.") =>
         new(
-            PolicyId,
+            policyId ?? PolicyId,
             JurisdictionId,
             SiteId,
             SiteGroupId,
             "SENIOR_CITIZEN",
-            "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
-            "RA 9994 Senior Citizen National Fallback",
-            "NATIONAL_LAW_FALLBACK",
-            "NATIONAL_LAW",
-            "LEGAL_REFERENCE",
-            "Expanded Senior Citizens Act of 2010",
-            null,
-            "RA 9994",
+            policyCode,
+            policyName,
+            policyResolutionBasis,
+            policyLevel,
+            policyType,
+            ordinanceReference ?? "Expanded Senior Citizens Act of 2010",
+            ordinanceReference,
+            nationalLawReference,
             "VERIFIED_OFFICIAL",
             "NON_RESIDENT_ALLOWED",
             "STATUTORY_DISCOUNT_VAT_EXEMPT",
@@ -515,11 +629,11 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             requiresEvidence,
             DateOnly.Parse("2026-01-01"),
             null,
-            "Unit test policy.",
+            sourceReference,
             JsonSerializer.SerializeToElement(new
             {
-                policyCode = "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
-                nationalLawReference = "RA 9994",
+                policyCode,
+                nationalLawReference,
                 benefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
                 freeDurationMinutes = (int?)null
             }));

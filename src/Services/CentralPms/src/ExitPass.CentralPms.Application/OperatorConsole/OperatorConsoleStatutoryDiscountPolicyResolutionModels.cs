@@ -29,7 +29,11 @@ public sealed record OperatorConsoleStatutoryDiscountPolicyResolutionResult(
     OperatorConsoleResolvedStatutoryDiscountPolicy? Policy,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string PolicyReadinessClassification = OperatorConsolePolicyReadinessClassifications.NotReady,
+    bool RequiresManualReview = false,
+    string? PolicyReadinessReason = null,
+    string? OperatorMessage = null);
 
 /// <summary>
 /// Read request for statutory discount policy resolution.
@@ -90,3 +94,37 @@ public sealed record OperatorConsoleResolvedStatutoryDiscountPolicy(
     DateOnly? EffectiveTo,
     string? SourceReference,
     JsonElement PolicySnapshot);
+
+/// <summary>
+/// Runtime environment used by policy readiness evaluation.
+/// </summary>
+public sealed record OperatorConsolePolicyReadinessEnvironment(string EnvironmentName);
+
+/// <summary>
+/// Stable policy readiness classifications surfaced to Operator Console clients.
+/// </summary>
+public static class OperatorConsolePolicyReadinessClassifications
+{
+    public const string ReadyVerified = "READY_VERIFIED";
+    public const string ReadyWithManualReview = "READY_WITH_MANUAL_REVIEW";
+    public const string ConfiguredButUnverified = "CONFIGURED_BUT_UNVERIFIED";
+    public const string MissingRequiredPolicy = "MISSING_REQUIRED_POLICY";
+    public const string MissingSiteMapping = "MISSING_SITE_MAPPING";
+    public const string MissingEvidenceRule = "MISSING_EVIDENCE_RULE";
+    public const string ExpiredOrInactive = "EXPIRED_OR_INACTIVE";
+    public const string SandboxOnly = "SANDBOX_ONLY";
+    public const string NotReady = "NOT_READY";
+}
+
+/// <summary>
+/// Evaluated readiness result for resolved statutory discount policy references.
+/// </summary>
+public sealed record OperatorConsolePolicyReadinessEvaluation(
+    string Classification,
+    bool PolicyResolved,
+    OperatorConsoleResolvedStatutoryDiscountPolicy? Policy,
+    bool RequiresManualReview,
+    bool CanCreateDraft,
+    string? IneligibilityReason,
+    string? ErrorCode,
+    string OperatorMessage);

@@ -710,7 +710,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.Policy?.PolicySnapshot,
             result.IneligibilityReason,
             result.ErrorCode,
-            result.CorrelationId);
+            result.CorrelationId,
+            result.PolicyReadinessClassification,
+            result.RequiresManualReview,
+            result.PolicyReadinessReason,
+            result.OperatorMessage);
 
     private static OperatorConsoleStatutoryDiscountDecisionResponse ToContract(
         OperatorConsoleStatutoryDiscountDecisionResult result) =>

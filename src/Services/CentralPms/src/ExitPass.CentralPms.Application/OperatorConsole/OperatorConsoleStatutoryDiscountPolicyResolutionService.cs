@@ -23,6 +23,7 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionService
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;
     private readonly IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository _repository;
     private readonly ISystemClock _clock;
+    private readonly OperatorConsolePolicyReadinessEnvironment _environment;
 
     /// <summary>
     /// Creates a statutory discount policy resolution service.
@@ -31,12 +32,14 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionService
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository repository,
-        ISystemClock clock)
+        ISystemClock clock,
+        OperatorConsolePolicyReadinessEnvironment environment)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _environment = environment ?? throw new ArgumentNullException(nameof(environment));
     }
 
     /// <inheritdoc />
@@ -75,16 +78,26 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionService
                 Policy: null,
                 IneligibilityReason: "ACCESS_DENIED",
                 ErrorCode: null,
-                persistedEvaluation.CorrelationId);
+                persistedEvaluation.CorrelationId,
+                PolicyReadinessClassification: OperatorConsolePolicyReadinessClassifications.NotReady,
+                RequiresManualReview: false,
+                PolicyReadinessReason: "ACCESS_DENIED",
+                OperatorMessage: "Access denied for this Operator Console action.");
         }
 
+        var effectiveDate = DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime);
         var readResult = await _repository.ResolveAsync(
             new OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest(
                 command.SiteId,
                 command.SiteGroupId,
                 entitlementType,
-                DateOnly.FromDateTime(_clock.UtcNow.UtcDateTime)),
+                effectiveDate),
             cancellationToken);
+        var readiness = OperatorConsolePolicyReadinessClassifier.Evaluate(
+            readResult,
+            _environment,
+            effectiveDate,
+            evidenceRequiredByWorkflow: true);
 
         return new OperatorConsoleStatutoryDiscountPolicyResolutionResult(
             persistedEvaluation.EvaluationId,
@@ -92,11 +105,15 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionService
             persistedEvaluation.Decision,
             persistedEvaluation.DenialReasons,
             persistedEvaluation.Persisted,
-            readResult.Resolved,
-            readResult.Policy,
-            readResult.IneligibilityReason,
-            readResult.ErrorCode,
-            persistedEvaluation.CorrelationId);
+            readiness.PolicyResolved,
+            readiness.Policy,
+            readiness.IneligibilityReason,
+            readiness.ErrorCode,
+            persistedEvaluation.CorrelationId,
+            readiness.Classification,
+            readiness.RequiresManualReview,
+            readiness.IneligibilityReason,
+            readiness.OperatorMessage);
     }
 
     private static string Validate(OperatorConsoleStatutoryDiscountPolicyResolutionCommand command)

@@ -62,4 +62,8 @@ public sealed record OperatorConsoleStatutoryDiscountPolicyResolutionResponse(
     JsonElement? PolicySnapshot,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    string? PolicyReadinessClassification = null,
+    bool RequiresManualReview = false,
+    string? PolicyReadinessReason = null,
+    string? OperatorMessage = null);
