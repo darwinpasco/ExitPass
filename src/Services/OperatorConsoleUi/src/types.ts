@@ -183,6 +183,56 @@ export interface AccessReadinessResponse {
   nextOperatorAction?: string;
 }
 
+export interface AuditReportQuery {
+  siteId?: string;
+  parkingSessionId?: string;
+  validationStatus?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditReportResponse {
+  items: AuditReportItem[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  correlationId: string;
+}
+
+export interface AuditReportItem {
+  statutoryDiscountValidationId: string;
+  draftId: string;
+  parkingSessionId: string;
+  ticketReference?: string;
+  plateNumber?: string;
+  siteId: string;
+  siteGroupId: string;
+  entitlementType: string;
+  validationStatus: string;
+  evidenceRequired: boolean;
+  evidenceCaptured: boolean;
+  evidenceRequiredSatisfied: boolean;
+  evidenceCount: number;
+  latestEvidenceStatus?: string;
+  payableBasisApplicationStatus?: string;
+  originalAmountMinorUnits?: number;
+  statutoryDiscountAmountMinorUnits?: number;
+  finalPayableAmountMinorUnits?: number;
+  currencyCode?: string;
+  requestedByUserId?: string;
+  validatedByUserId?: string;
+  requestedAt: string;
+  validatedAt?: string;
+  correlationId?: string;
+  policyCode?: string;
+  ordinanceReference?: string;
+  legalBasisReference?: string;
+  appliedTariffSnapshotId?: string;
+  accessEvaluationSummary?: string;
+}
+
 export interface StatutoryDiscountDecisionInput {
   draftId: string;
   siteId?: string;

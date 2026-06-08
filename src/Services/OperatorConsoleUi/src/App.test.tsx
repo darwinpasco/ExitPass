@@ -32,6 +32,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     let resolveQueue: (items: StatutoryDiscountQueueItem[]) => void = () => undefined;
     const apiClient: OperatorConsoleApiClient = {
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
+      listAuditReport: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
         () =>
           new Promise<StatutoryDiscountQueueItem[]>((resolve) => {
@@ -313,6 +314,44 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeEnabled();
   });
 
+  it("AuditReporting_RendersReadOnlyPanelRowsAndGuardrails", async () => {
+    render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/audit" />);
+
+    expect(await screen.findByRole("heading", { name: "Statutory discount audit report" })).toBeInTheDocument();
+    expect(screen.getByText("Read-only audit/reporting view.")).toBeInTheDocument();
+    expect(screen.getByText(/no payment, gate, coupon, reconciliation, or evidence-file action is performed here/i)).toBeInTheDocument();
+    expect(screen.getByText(/raw id numbers and raw evidence files are not displayed/i)).toBeInTheDocument();
+    expect(await screen.findByText("STAT-OP-SESSION-0001")).toBeInTheDocument();
+    expect(screen.getAllByText("SESSION_LOOKUP / SUCCESS")).not.toHaveLength(0);
+    expect(screen.getByRole("columnheader", { name: "Final Payable" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /pay/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /open gate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /apply coupon/i })).not.toBeInTheDocument();
+  });
+
+  it("AuditReporting_RendersEmptyAndErrorStates", async () => {
+    const { rerender } = render(
+      <App apiClient={createMockOperatorConsoleApiClient({ empty: true })} initialPath="/operator-console/audit" />
+    );
+
+    expect(await screen.findByText("No report rows")).toBeInTheDocument();
+
+    rerender(
+      <App
+        apiClient={{
+          ...createMockOperatorConsoleApiClient(),
+          listAuditReport: vi.fn(async () => {
+            throw { status: "error", message: "Audit report unavailable." };
+          })
+        }}
+        initialPath="/operator-console/audit"
+      />
+    );
+
+    expect(await screen.findByText("Unable to load audit report")).toBeInTheDocument();
+    expect(screen.getByText("Audit report unavailable.")).toBeInTheDocument();
+  });
+
   it("StatutoryDiscountDetail_EvidencePanelShowsMetadataOnlyAndMaskedReferenceGuidance", async () => {
     render(
       <App
@@ -448,6 +487,57 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         environmentName: "test"
       })
     }));
+  });
+
+  it("OperatorConsoleApi_LoadsAuditReportThroughFetch", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      items: [
+        {
+          statutoryDiscountValidationId: firstDraftId,
+          draftId: firstDraftId,
+          parkingSessionId: "25000000-0000-0000-0000-000000000001",
+          ticketReference: "AUDIT-001",
+          plateNumber: "ABC 1234",
+          siteId: "77000000-0000-0000-0000-000000000002",
+          siteGroupId: "77000000-0000-0000-0000-000000000001",
+          entitlementType: "SENIOR_CITIZEN",
+          validationStatus: "REQUESTED",
+          evidenceRequired: true,
+          evidenceCaptured: false,
+          evidenceRequiredSatisfied: false,
+          evidenceCount: 0,
+          latestEvidenceStatus: null,
+          payableBasisApplicationStatus: null,
+          originalAmountMinorUnits: 12500,
+          statutoryDiscountAmountMinorUnits: 2232,
+          finalPayableAmountMinorUnits: 8929,
+          currencyCode: "PHP",
+          requestedAt: "2026-06-01T08:15:00+08:00",
+          validatedAt: null,
+          correlationId: "00000000-0000-0000-0000-00000000abcd"
+        }
+      ],
+      totalCount: 1,
+      limit: 25,
+      offset: 0,
+      correlationId: "00000000-0000-0000-0000-00000000abcd"
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const report = await client.listAuditReport({
+      siteId: "77000000-0000-0000-0000-000000000002",
+      validationStatus: "REQUESTED"
+    });
+
+    expect(report.items[0].ticketReference).toBe("AUDIT-001");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/ops/operator-console/audit/statutory-discounts?"),
+      expect.any(Object)
+    );
+    expect(fetchMock.mock.calls[0][0]).toContain("siteId=77000000-0000-0000-0000-000000000002");
+    expect(fetchMock.mock.calls[0][0]).toContain("validationStatus=REQUESTED");
+    expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
   });
 
   it("OperatorConsoleApi_EvidenceEndpointsUseOperatorHeaders", async () => {

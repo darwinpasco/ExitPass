@@ -54,6 +54,16 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithSummary("Get Operator Console statutory discount validation draft detail")
             .WithDescription("Returns read-only detail for one Operator Console statutory discount validation draft using the stored policy snapshot and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
+        group.MapGet("/audit/statutory-discounts", ListAuditReportAsync)
+            .WithName("ListOperatorConsoleStatutoryDiscountAuditReport")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleStatutoryDiscountAuditReportResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("List Operator Console statutory discount audit/reporting rows")
+            .WithDescription("Returns a read-only statutory discount/access audit report using safe masked fields only. This endpoint does not return raw evidence, raw ID numbers, payment authority, gate authority, coupon authority, or reconciliation mutation.");
+
         group.MapPost("/statutory-discounts/draft", DraftAsync)
             .WithName("DraftOperatorConsoleStatutoryDiscount")
             .WithTags("OperatorConsole")
@@ -268,6 +278,97 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         }
     }
 
+    private static async Task<IResult> ListAuditReportAsync(
+        Guid? siteId,
+        Guid? siteGroupId,
+        Guid? operatorUserId,
+        Guid? parkingSessionId,
+        string? validationStatus,
+        string? evidenceStatus,
+        string? accessDecision,
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        int? limit,
+        int? offset,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleStatutoryDiscountReadService service,
+        IOperatorConsoleAccessEvaluationService accessEvaluationService,
+        IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = ReadActivitySource.StartActivity("HTTP ListOperatorConsoleStatutoryDiscountAuditReport", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", effectiveCorrelationId);
+        activity?.SetTag("validation_status", validationStatus);
+        activity?.SetTag("evidence_status", evidenceStatus);
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
+
+            var access = await EvaluateAndPersistAccessAsync(
+                identity with
+                {
+                    SiteId = siteId ?? identity.SiteId,
+                    SiteGroupId = siteGroupId ?? identity.SiteGroupId
+                },
+                OperatorConsoleActionCodes.ViewAuditReport,
+                ParkingSessionId: parkingSessionId,
+                IdempotencyKey: $"operator-console-audit-report-{effectiveCorrelationId}",
+                accessEvaluationService,
+                accessEvaluationWriter,
+                httpRequest);
+
+            if (!access.Allowed)
+            {
+                return AccessDenied(access, effectiveCorrelationId);
+            }
+
+            var result = await service.ListAuditReportAsync(
+                new OperatorConsoleStatutoryDiscountAuditReportQuery(
+                    siteId ?? access.SiteContext.SiteId,
+                    siteGroupId ?? access.SiteContext.SiteGroupId,
+                    operatorUserId,
+                    parkingSessionId,
+                    validationStatus,
+                    evidenceStatus,
+                    accessDecision,
+                    from,
+                    to,
+                    limit.GetValueOrDefault(25),
+                    offset.GetValueOrDefault(0),
+                    effectiveCorrelationId),
+                httpRequest.HttpContext.RequestAborted);
+
+            activity?.SetTag("report_count", result.Items.Count);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_AUDIT_REPORT_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console statutory discount audit report read failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_AUDIT_REPORT_READ_FAILED",
+                    "The Operator Console statutory discount audit report could not be loaded.",
+                    effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
     private static async Task<IResult> DraftAsync(
         OperatorConsoleStatutoryDiscountDraftRequest request,
         HttpRequest httpRequest,
@@ -448,6 +549,44 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.PayableAmountMinorUnits,
             result.CurrencyCode,
             result.Activity);
+
+    private static OperatorConsoleStatutoryDiscountAuditReportResponse ToContract(
+        OperatorConsoleStatutoryDiscountAuditReportResult result) =>
+        new(
+            result.Items.Select(item => new OperatorConsoleStatutoryDiscountAuditReportItem(
+                item.DraftId,
+                item.DraftId,
+                item.ParkingSessionId,
+                item.TicketReference,
+                item.PlateNumber,
+                item.SiteId,
+                item.SiteGroupId,
+                item.EntitlementType,
+                item.ValidationStatus,
+                item.EvidenceRequired,
+                item.EvidenceCaptured,
+                item.EvidenceRequiredSatisfied,
+                item.EvidenceCount,
+                item.LatestEvidenceStatus,
+                item.PayableBasisApplicationStatus,
+                item.OriginalAmountMinorUnits,
+                item.StatutoryDiscountAmountMinorUnits,
+                item.FinalPayableAmountMinorUnits,
+                item.CurrencyCode,
+                item.RequestedByUserId,
+                item.ValidatedByUserId,
+                item.RequestedAt,
+                item.ValidatedAt,
+                item.CorrelationId,
+                item.PolicyCode,
+                item.OrdinanceReference,
+                item.LegalBasisReference,
+                item.AppliedTariffSnapshotId,
+                item.AccessEvaluationSummary)).ToArray(),
+            result.TotalCount,
+            result.Limit,
+            result.Offset,
+            result.CorrelationId);
 
     private static async Task<IResult> DecideAsync(
         Guid draftId,

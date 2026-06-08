@@ -19,6 +19,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
 {
     private const string QueueEndpoint = "/v1/ops/operator-console/statutory-discounts/drafts";
+    private const string AuditReportEndpoint = "/v1/ops/operator-console/audit/statutory-discounts";
     private static readonly Guid DraftId = Guid.Parse("8c000000-0000-0000-0000-000000000001");
     private static readonly Guid ParkingSessionId = Guid.Parse("8c000000-0000-0000-0000-000000000002");
     private static readonly Guid SiteId = Guid.Parse("8c000000-0000-0000-0000-000000000003");
@@ -62,6 +63,22 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
     }
 
     [Fact]
+    public void AuditReportEndpointRouteExists()
+    {
+        using var factory = new CustomWebApplicationFactory();
+
+        var endpoints = factory.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText == AuditReportEndpoint)
+            .ToArray();
+
+        endpoints.Should().ContainSingle();
+        endpoints[0].Metadata.GetMetadata<HttpMethodMetadata>()!
+            .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Get.Method);
+    }
+
+    [Fact]
     public async Task ReadEndpointsAppearInSwagger()
     {
         using var factory = new CustomWebApplicationFactory();
@@ -71,8 +88,10 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
 
         swaggerJson.Should().Contain("/v1/ops/operator-console/statutory-discounts/drafts");
         swaggerJson.Should().Contain("/v1/ops/operator-console/statutory-discounts/drafts/{draftId}");
+        swaggerJson.Should().Contain("/v1/ops/operator-console/audit/statutory-discounts");
         swaggerJson.Should().Contain("ListOperatorConsoleStatutoryDiscountDrafts");
         swaggerJson.Should().Contain("GetOperatorConsoleStatutoryDiscountDraft");
+        swaggerJson.Should().Contain("ListOperatorConsoleStatutoryDiscountAuditReport");
     }
 
     [Theory]
@@ -173,6 +192,37 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
         body.OriginalAmountMinorUnits.Should().Be(18000);
         body.PayableAmountMinorUnits.Should().Be(14400);
         body.Activity.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task AuditReport_WhenRowsExist_ReturnsSafeReadOnlySummary()
+    {
+        using var factory = CreateFactory(detail: Detail());
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"{AuditReportEndpoint}?correlationId={CorrelationId}&validationStatus=REQUESTED");
+        AddOperatorHeaders(request);
+
+        using var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountAuditReportResponse>();
+        body.Should().NotBeNull();
+        body!.Items.Should().ContainSingle();
+        body.Items[0].DraftId.Should().Be(DraftId);
+        body.Items[0].StatutoryDiscountValidationId.Should().Be(DraftId);
+        body.Items[0].TicketReference.Should().Be("READ-QUEUE-001");
+        body.Items[0].PlateNumber.Should().Be("ABC 1234");
+        body.Items[0].EvidenceRequiredSatisfied.Should().BeFalse();
+        body.Items[0].OriginalAmountMinorUnits.Should().Be(18000);
+        body.Items[0].StatutoryDiscountAmountMinorUnits.Should().Be(3600);
+        body.Items[0].FinalPayableAmountMinorUnits.Should().Be(14400);
+        body.Items[0].AccessEvaluationSummary.Should().Be("VIEW_AUDIT_REPORT / SUCCESS");
+        body.CorrelationId.Should().Be(CorrelationId);
+
+        var json = await response.Content.ReadAsStringAsync();
+        json.Should().NotContain("referenceNumber");
+        json.Should().NotContain("evidenceStorageRef");
+        json.Should().NotContain("raw");
     }
 
     [Fact]
@@ -373,6 +423,53 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
             OperatorConsoleStatutoryDiscountDraftDetailQuery query,
             CancellationToken cancellationToken) =>
             Task.FromResult(_detail);
+
+        public Task<OperatorConsoleStatutoryDiscountAuditReportResult> ListAuditReportAsync(
+            OperatorConsoleStatutoryDiscountAuditReportQuery query,
+            CancellationToken cancellationToken)
+        {
+            var items = _emptyQueue || _detail is null
+                ? Array.Empty<OperatorConsoleStatutoryDiscountAuditReportItemResult>()
+                :
+                [
+                    new OperatorConsoleStatutoryDiscountAuditReportItemResult(
+                        _detail.DraftId,
+                        _detail.ParkingSessionId,
+                        _detail.TicketReference,
+                        _detail.PlateNumber,
+                        _detail.SiteId,
+                        _detail.SiteGroupId,
+                        _detail.EntitlementType!,
+                        _detail.ValidationStatus!,
+                        _detail.EvidenceRequired,
+                        _detail.EvidenceCaptured,
+                        _detail.EvidenceRequiredSatisfied,
+                        _detail.EvidenceCount,
+                        _detail.LatestEvidenceStatus,
+                        _detail.PayableBasisApplicationStatus,
+                        _detail.OriginalAmountMinorUnits,
+                        _detail.StatutoryDiscountAmountMinorUnits,
+                        _detail.PayableAmountMinorUnits,
+                        _detail.CurrencyCode,
+                        _detail.RequestedByUserId,
+                        _detail.ValidatedByUserId,
+                        _detail.RequestedAt,
+                        _detail.ValidatedAt,
+                        query.CorrelationId,
+                        _detail.PolicyCode,
+                        _detail.OrdinanceReference,
+                        _detail.LegalBasisReference,
+                        null,
+                        "VIEW_AUDIT_REPORT / SUCCESS")
+                ];
+
+            return Task.FromResult(new OperatorConsoleStatutoryDiscountAuditReportResult(
+                items,
+                items.Length,
+                query.Limit,
+                query.Offset,
+                query.CorrelationId));
+        }
     }
 
     private sealed class FakeAccessEvaluationService : IOperatorConsoleAccessEvaluationService
