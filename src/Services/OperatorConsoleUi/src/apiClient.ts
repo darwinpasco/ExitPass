@@ -9,6 +9,8 @@ import type {
   StatutoryDiscountEvidenceCaptureResult,
   StatutoryDiscountEvidenceItem,
   StatutoryDiscountEvidenceList,
+  StatutoryDiscountPayableBasisApplicationInput,
+  StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem
 } from "./types";
@@ -19,6 +21,9 @@ export interface OperatorConsoleApiClient {
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
   captureStatutoryDiscountEvidence(input: StatutoryDiscountEvidenceCaptureInput): Promise<StatutoryDiscountEvidenceCaptureResult>;
   submitStatutoryDiscountDecision(input: StatutoryDiscountDecisionInput): Promise<StatutoryDiscountDecisionResult>;
+  applyStatutoryDiscountPayableBasis(
+    input: StatutoryDiscountPayableBasisApplicationInput
+  ): Promise<StatutoryDiscountPayableBasisApplicationResult>;
 }
 
 interface QueueResponse {
@@ -69,7 +74,11 @@ interface DetailDto extends QueueItemDto {
   originalTariffSnapshotId?: string | null;
   payableBasisApplicationId?: string | null;
   payableBasisApplicationStatus?: string | null;
+  appliedTariffSnapshotId?: string | null;
+  vatAmountMinorUnits?: number | null;
+  vatExclusiveAmountMinorUnits?: number | null;
   statutoryDiscountAmountMinorUnits?: number | null;
+  finalPayableAmountMinorUnits?: number | null;
   activity: string[];
 }
 
@@ -119,6 +128,29 @@ interface EvidenceCaptureResponseDto {
   errorCode?: string | null;
 }
 
+interface PayableBasisApplicationResponseDto {
+  accessAllowed: boolean;
+  accessDecision: string;
+  accessDenialReasons: string[];
+  applicationAccepted: boolean;
+  applicationPersisted: boolean;
+  payableBasisApplicationId?: string | null;
+  statutoryDiscountValidationId?: string | null;
+  parkingSessionId?: string | null;
+  originalTariffSnapshotId?: string | null;
+  appliedTariffSnapshotId?: string | null;
+  applicationStatus?: string | null;
+  alreadyApplied: boolean;
+  grossAmountMinorUnits?: number | null;
+  vatAmountMinorUnits?: number | null;
+  vatExclusiveAmountMinorUnits?: number | null;
+  statutoryDiscountAmountMinorUnits?: number | null;
+  finalPayableAmountMinorUnits?: number | null;
+  currencyCode?: string | null;
+  ineligibilityReason?: string | null;
+  errorCode?: string | null;
+}
+
 export interface OperatorConsoleOperatorContext {
   userId: string;
   operatorDeviceBindingId: string;
@@ -129,9 +161,9 @@ const defaultOperatorContext: OperatorConsoleOperatorContext = {
   userId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID, "77000000-0000-0000-0000-000000000010"),
   operatorDeviceBindingId: localFallback(
     import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID,
-    "77000000-0000-0000-0000-000000000011"
+    "77000000-0000-0000-0000-000000000030"
   ),
-  operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000012")
+  operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000050")
 };
 
 export function createOperatorConsoleApiClient(): OperatorConsoleApiClient {
@@ -242,6 +274,29 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         errorCode: body.errorCode ?? undefined,
         message: decisionMessage(body)
       };
+    },
+
+    async applyStatutoryDiscountPayableBasis(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/${encodeURIComponent(input.draftId)}/apply-payable-basis`,
+        {
+          method: "POST",
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
+          body: JSON.stringify({
+            userId: defaultOperatorContext.userId,
+            operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
+            siteId: input.siteId ?? null,
+            siteGroupId: input.siteGroupId ?? null,
+            operatorShiftId: defaultOperatorContext.operatorShiftId,
+            originalTariffSnapshotId: input.originalTariffSnapshotId ?? null,
+            idempotencyKey: `operator-console-ui-apply-payable-basis-${input.draftId}-${correlationId}`,
+            correlationId
+          })
+        }
+      );
+      const body = await parseResponse<PayableBasisApplicationResponseDto>(response);
+      return toPayableBasisResult(body);
     }
   };
 }
@@ -270,6 +325,7 @@ export function createMockOperatorConsoleApiClient(
     empty?: boolean;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
+    onPayableBasisApply?: (input: StatutoryDiscountPayableBasisApplicationInput) => void;
   } = {}
 ): OperatorConsoleApiClient {
   const drafts = (options.drafts ?? mockDrafts).map((draft) => ({ ...draft }));
@@ -376,11 +432,48 @@ export function createMockOperatorConsoleApiClient(
       }
 
       options.onDecision?.(input);
+      const draft = drafts.find((item) => item.draftId === input.draftId);
+      if (draft) {
+        draft.status = input.decision === "APPROVE" ? "Approved" : "Rejected";
+      }
       return {
         accepted: true,
         persisted: true,
         currentStatus: input.decision === "APPROVE" ? "Approved" : "Rejected",
         message: input.decision === "APPROVE" ? "Decision approved." : "Decision rejected."
+      };
+    },
+
+    async applyStatutoryDiscountPayableBasis(input) {
+      await delay();
+      options.onPayableBasisApply?.(input);
+      const draft = drafts.find((item) => item.draftId === input.draftId);
+      if (draft) {
+        draft.payableBasisApplicationStatus = "APPLIED";
+        draft.payableBasisApplicationId = "4a000000-0000-0000-0000-000000000001";
+        draft.appliedTariffSnapshotId = "4b000000-0000-0000-0000-00000000000a";
+        draft.statutoryDiscountAmountMinorUnits = draft.statutoryDiscountAmountMinorUnits ?? 3600;
+        draft.finalPayableAmountMinorUnits = draft.finalPayableAmountMinorUnits ?? draft.payableAmountMinorUnits;
+        draft.payableBasisPreview = `APPLIED - ${formatMoney(draft.finalPayableAmountMinorUnits, draft.currencyCode)}`;
+      }
+
+      return {
+        accepted: true,
+        persisted: true,
+        alreadyApplied: false,
+        applicationStatus: "APPLIED",
+        payableBasisApplicationId: draft?.payableBasisApplicationId,
+        statutoryDiscountValidationId: input.draftId,
+        parkingSessionId: draft?.parkingSessionId,
+        originalTariffSnapshotId: input.originalTariffSnapshotId ?? draft?.originalTariffSnapshotId,
+        appliedTariffSnapshotId: draft?.appliedTariffSnapshotId,
+        grossAmountMinorUnits: draft?.originalAmountMinorUnits,
+        vatAmountMinorUnits: draft?.vatAmountMinorUnits,
+        vatExclusiveAmountMinorUnits: draft?.vatExclusiveAmountMinorUnits,
+        statutoryDiscountAmountMinorUnits: draft?.statutoryDiscountAmountMinorUnits,
+        finalPayableAmountMinorUnits: draft?.finalPayableAmountMinorUnits ?? draft?.payableAmountMinorUnits,
+        currencyCode: draft?.currencyCode,
+        message: "Payable basis applied."
       };
     }
   };
@@ -451,9 +544,37 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     evidenceCount: item.evidenceCount ?? 0,
     latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
     requiredEvidenceTypes: item.requiredEvidenceTypes ?? [],
+    originalTariffSnapshotId: item.originalTariffSnapshotId ?? undefined,
+    payableBasisApplicationId: item.payableBasisApplicationId ?? undefined,
+    appliedTariffSnapshotId: item.appliedTariffSnapshotId ?? undefined,
+    vatAmountMinorUnits: item.vatAmountMinorUnits ?? undefined,
+    vatExclusiveAmountMinorUnits: item.vatExclusiveAmountMinorUnits ?? undefined,
     statutoryDiscountAmountMinorUnits: item.statutoryDiscountAmountMinorUnits ?? undefined,
+    finalPayableAmountMinorUnits: item.finalPayableAmountMinorUnits ?? item.payableAmountMinorUnits ?? undefined,
     payableBasisApplicationStatus: item.payableBasisApplicationStatus ?? undefined,
     auditActivity: item.activity.length > 0 ? item.activity : ["No activity history is available yet."]
+  };
+}
+
+function toPayableBasisResult(body: PayableBasisApplicationResponseDto): StatutoryDiscountPayableBasisApplicationResult {
+  return {
+    accepted: body.applicationAccepted,
+    persisted: body.applicationPersisted,
+    alreadyApplied: body.alreadyApplied,
+    applicationStatus: body.applicationStatus ?? undefined,
+    payableBasisApplicationId: body.payableBasisApplicationId ?? undefined,
+    statutoryDiscountValidationId: body.statutoryDiscountValidationId ?? undefined,
+    parkingSessionId: body.parkingSessionId ?? undefined,
+    originalTariffSnapshotId: body.originalTariffSnapshotId ?? undefined,
+    appliedTariffSnapshotId: body.appliedTariffSnapshotId ?? undefined,
+    grossAmountMinorUnits: body.grossAmountMinorUnits ?? undefined,
+    vatAmountMinorUnits: body.vatAmountMinorUnits ?? undefined,
+    vatExclusiveAmountMinorUnits: body.vatExclusiveAmountMinorUnits ?? undefined,
+    statutoryDiscountAmountMinorUnits: body.statutoryDiscountAmountMinorUnits ?? undefined,
+    finalPayableAmountMinorUnits: body.finalPayableAmountMinorUnits ?? undefined,
+    currencyCode: body.currencyCode ?? undefined,
+    errorCode: body.errorCode ?? undefined,
+    message: payableBasisMessage(body)
   };
 }
 
@@ -554,7 +675,7 @@ function payableBasisPreview(item: DetailDto) {
     return `Preview ${formatMoney(item.payableAmountMinorUnits, item.currencyCode)}`;
   }
 
-  return item.evidenceRequired && !item.evidenceCaptured ? "Evidence upload pending" : "Not available";
+  return item.evidenceRequired && !item.evidenceCaptured ? "Evidence metadata pending" : "Not available";
 }
 
 function mapEntitlement(value: string): EntitlementType {
@@ -576,6 +697,7 @@ function mapStatus(value: string): DraftStatus {
     APPROVED: "Approved",
     REJECTED: "Rejected",
     EXPIRED: "Expired",
+    CANCELLED: "Cancelled",
     BLOCKED: "Blocked"
   };
 
@@ -592,6 +714,22 @@ function decisionMessage(body: DecisionResponse) {
   }
 
   return body.decisionPersisted ? "Decision saved." : "Decision accepted but not persisted.";
+}
+
+function payableBasisMessage(body: PayableBasisApplicationResponseDto) {
+  if (!body.accessAllowed) {
+    return `Access denied: ${body.accessDenialReasons.join(", ") || body.accessDecision}`;
+  }
+
+  if (!body.applicationAccepted) {
+    return body.errorCode ?? body.ineligibilityReason ?? "Payable basis was not applied.";
+  }
+
+  if (body.alreadyApplied) {
+    return "Payable basis has already been applied.";
+  }
+
+  return body.applicationPersisted ? "Payable basis applied." : "Payable basis accepted but not persisted.";
 }
 
 function formatMoney(minorUnits?: number | null, currencyCode?: string | null) {
@@ -715,6 +853,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     evidenceCount: 0,
     latestEvidenceStatus: undefined,
     requiredEvidenceTypes: [],
+    originalTariffSnapshotId: "23100000-0000-0000-0000-000000000004",
     originalAmountMinorUnits: 18000,
     payableAmountMinorUnits: 14400,
     currencyCode: "PHP",
@@ -736,7 +875,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     requestedBy: "operator.shift-a",
     parkingStartedAt: "2026-06-01T07:10:00+08:00",
     originalTariffAmount: "PHP 220.00",
-    payableBasisPreview: "Evidence upload pending",
+    payableBasisPreview: "Evidence metadata pending",
     currentPaymentStatus: "Read-only in this module",
     maskedIdReference: "Evidence metadata only",
     issuingAuthority: "PDAO",
@@ -745,6 +884,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     evidenceCount: 0,
     latestEvidenceStatus: undefined,
     requiredEvidenceTypes: ["PWD_ID"],
+    originalTariffSnapshotId: "23100000-0000-0000-0000-000000000014",
     originalAmountMinorUnits: 22000,
     currencyCode: "PHP",
     policyContext: pwdLocalPolicy,
@@ -774,6 +914,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     evidenceCount: 0,
     latestEvidenceStatus: undefined,
     requiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
+    originalTariffSnapshotId: "23100000-0000-0000-0000-000000000024",
     originalAmountMinorUnits: 9000,
     currencyCode: "PHP",
     policyContext: blockedLocalPolicy,

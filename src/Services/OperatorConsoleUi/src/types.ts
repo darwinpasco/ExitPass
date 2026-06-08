@@ -6,6 +6,7 @@ export type DraftStatus =
   | "Approved"
   | "Rejected"
   | "Blocked"
+  | "Cancelled"
   | "Expired";
 
 export type PolicyContextKind =
@@ -65,7 +66,13 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   evidenceCount: number;
   latestEvidenceStatus?: string;
   requiredEvidenceTypes: string[];
+  originalTariffSnapshotId?: string;
+  payableBasisApplicationId?: string;
+  appliedTariffSnapshotId?: string;
+  vatAmountMinorUnits?: number;
+  vatExclusiveAmountMinorUnits?: number;
   statutoryDiscountAmountMinorUnits?: number;
+  finalPayableAmountMinorUnits?: number;
   payableBasisApplicationStatus?: string;
   auditActivity: string[];
 }
@@ -97,6 +104,33 @@ export interface StatutoryDiscountDecisionResult {
   accepted: boolean;
   persisted: boolean;
   currentStatus?: DraftStatus;
+  errorCode?: string;
+  message: string;
+}
+
+export interface StatutoryDiscountPayableBasisApplicationInput {
+  draftId: string;
+  siteId?: string;
+  siteGroupId?: string;
+  originalTariffSnapshotId?: string;
+}
+
+export interface StatutoryDiscountPayableBasisApplicationResult {
+  accepted: boolean;
+  persisted: boolean;
+  alreadyApplied: boolean;
+  applicationStatus?: string;
+  payableBasisApplicationId?: string;
+  statutoryDiscountValidationId?: string;
+  parkingSessionId?: string;
+  originalTariffSnapshotId?: string;
+  appliedTariffSnapshotId?: string;
+  grossAmountMinorUnits?: number;
+  vatAmountMinorUnits?: number;
+  vatExclusiveAmountMinorUnits?: number;
+  statutoryDiscountAmountMinorUnits?: number;
+  finalPayableAmountMinorUnits?: number;
+  currencyCode?: string;
   errorCode?: string;
   message: string;
 }
