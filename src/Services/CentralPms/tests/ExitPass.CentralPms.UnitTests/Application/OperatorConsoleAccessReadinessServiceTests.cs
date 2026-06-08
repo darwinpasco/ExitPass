@@ -178,6 +178,57 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
             .DenialReasonCodes.Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
     }
 
+    [Fact]
+    public async Task EvaluateAsync_WhenProductionRepositoryCapabilityMissing_FailsClosed()
+    {
+        var sut = CreateSut(MissingRepositoryCapabilities());
+
+        var result = await sut.EvaluateAsync(ValidCommand() with { EnvironmentName = "Production" }, CancellationToken.None);
+
+        result.AccessAllowed.Should().BeFalse();
+        result.AccessDecision.Should().Be("DENIED");
+        result.DenialReasons.Select(reason => reason.Code)
+            .Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenNonProductionRepositoryCapabilityMissing_PreservesSandboxFallback()
+    {
+        var sut = CreateSut(MissingRepositoryCapabilities());
+
+        var result = await sut.EvaluateAsync(ValidCommand() with { EnvironmentName = "Development" }, CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.DenialReasons.Select(reason => reason.Code)
+            .Should().NotContain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenRepositoryReturnsReadinessFailures_MapsStableDenialReasons()
+    {
+        var sut = CreateSut(new OperatorConsoleAccessReadinessRepositoryResult(
+            FullRepositoryCapabilities(),
+            [OperatorConsoleDenialReasonCatalog.OperatorNotFound],
+            [OperatorConsoleDenialReasonCatalog.DeviceNotEnrolled],
+            [OperatorConsoleDenialReasonCatalog.ShiftNotFound],
+            [OperatorConsoleDenialReasonCatalog.OperatorSiteNotAllowed]));
+
+        var result = await sut.EvaluateAsync(ValidCommand(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeFalse();
+        result.DenialReasons.Select(reason => reason.Code).Should().Contain(new[]
+        {
+            OperatorConsoleDenialReasonCatalog.OperatorNotFound,
+            OperatorConsoleDenialReasonCatalog.DeviceNotEnrolled,
+            OperatorConsoleDenialReasonCatalog.ShiftNotFound,
+            OperatorConsoleDenialReasonCatalog.OperatorSiteNotAllowed
+        });
+        result.OperatorReadiness.Ready.Should().BeFalse();
+        result.DeviceReadiness.Ready.Should().BeFalse();
+        result.ShiftReadiness.Ready.Should().BeFalse();
+        result.SiteReadiness.Ready.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData("Development")]
     [InlineData("Test")]
@@ -227,6 +278,23 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
             clock);
     }
 
+    private static OperatorConsoleAccessReadinessService CreateSut(
+        OperatorConsoleAccessReadinessRepositoryResult repositoryResult)
+    {
+        var clock = Substitute.For<ISystemClock>();
+        clock.UtcNow.Returns(Now);
+
+        var repository = Substitute.For<IOperatorConsoleAccessReadinessRepository>();
+        repository.LoadAsync(Arg.Any<OperatorConsoleAccessReadinessCommand>(), Arg.Any<DateTimeOffset>(), Arg.Any<CancellationToken>())
+            .Returns(repositoryResult);
+
+        return new OperatorConsoleAccessReadinessService(
+            new OperatorConsoleActionCatalog(),
+            new OperatorConsoleDenialReasonCatalog(),
+            clock,
+            repository);
+    }
+
     private static OperatorConsoleAccessReadinessCommand ValidCommand() =>
         new(
             OperatorUserId,
@@ -241,4 +309,29 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
             CorrelationId,
             EnvironmentName: "Development",
             UsesLocalDevFallbackContext: false);
+
+    private static OperatorConsoleAccessReadinessRepositoryResult MissingRepositoryCapabilities() =>
+        new(
+            new OperatorConsoleAccessReadinessRepositoryCapabilities(
+                OperatorConsoleSchemaExists: false,
+                HrIdentityMappingsTableExists: false,
+                OperatorDeviceBindingsTableExists: false,
+                OperatorDeviceAssignmentHistoryTableExists: false,
+                OperatorShiftsTableExists: false,
+                OperatorAccessEvaluationsTableExists: false,
+                OperatorAccessEvaluationReasonsTableExists: false),
+            OperatorDenialReasons: [],
+            DeviceDenialReasons: [],
+            ShiftDenialReasons: [],
+            SiteDenialReasons: []);
+
+    private static OperatorConsoleAccessReadinessRepositoryCapabilities FullRepositoryCapabilities() =>
+        new(
+            OperatorConsoleSchemaExists: true,
+            HrIdentityMappingsTableExists: true,
+            OperatorDeviceBindingsTableExists: true,
+            OperatorDeviceAssignmentHistoryTableExists: true,
+            OperatorShiftsTableExists: true,
+            OperatorAccessEvaluationsTableExists: true,
+            OperatorAccessEvaluationReasonsTableExists: true);
 }

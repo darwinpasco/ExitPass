@@ -36,12 +36,13 @@ public static class OperatorConsoleAccessReadinessEndpoints
         return app;
     }
 
-    private static IResult EvaluateAsync(
+    private static async Task<IResult> EvaluateAsync(
         OperatorConsoleAccessReadinessRequest request,
         OperatorConsoleAccessReadinessService service,
         IWebHostEnvironment environment,
         HttpRequest httpRequest,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("HTTP EvaluateOperatorConsoleAccessReadiness", ActivityKind.Server);
         var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleAccessReadinessEndpoints");
@@ -63,7 +64,7 @@ public static class OperatorConsoleAccessReadinessEndpoints
                     correlationId));
             }
 
-            var result = service.Evaluate(new OperatorConsoleAccessReadinessCommand(
+            var result = await service.EvaluateAsync(new OperatorConsoleAccessReadinessCommand(
                 request.OperatorUserId,
                 request.OperatorDeviceBindingId,
                 request.OperatorShiftId,
@@ -75,7 +76,8 @@ public static class OperatorConsoleAccessReadinessEndpoints
                 request.WorkflowState,
                 correlationId,
                 request.DevModeContext?.EnvironmentName ?? environment.EnvironmentName,
-                request.DevModeContext?.UsesLocalDevFallbackContext ?? false));
+                request.DevModeContext?.UsesLocalDevFallbackContext ?? false),
+                cancellationToken);
 
             activity?.SetTag("access_readiness_decision", result.AccessDecision);
             activity?.SetTag("access_readiness_allowed", result.AccessAllowed);

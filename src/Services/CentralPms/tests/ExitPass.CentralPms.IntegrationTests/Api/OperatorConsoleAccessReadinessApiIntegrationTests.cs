@@ -164,6 +164,31 @@ public sealed class OperatorConsoleAccessReadinessApiIntegrationTests
             .DenialReasonCodes.Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
     }
 
+    /// <summary>Verifies production fails closed when operator-console readiness tables are not available.</summary>
+    [Fact]
+    public async Task Evaluate_WhenProductionRepositoryCapabilityMissing_ReturnsProductionTrustDenial()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            Endpoint,
+            CompleteRequest() with
+            {
+                DevModeContext = new OperatorConsoleAccessReadinessDevModeContextDto(
+                    UsesLocalDevFallbackContext: false,
+                    EnvironmentName: "Production")
+            });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleAccessReadinessResponse>();
+        body.Should().NotBeNull();
+        body!.AccessAllowed.Should().BeFalse();
+        body.DenialReasons.Select(reason => reason.Code)
+            .Should().Contain(OperatorConsoleDenialReasonCatalog.LocalDevContextNotAllowedInProduction);
+    }
+
+
     /// <summary>Verifies local/dev fallback remains usable for controlled non-production validation.</summary>
     [Theory]
     [InlineData("Development")]

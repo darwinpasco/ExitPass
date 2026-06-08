@@ -868,6 +868,20 @@ Recommended immediate next slice: #242 Operator Console access readiness backend
 
 Reason: the service/catalog/readiness model should be introduced before adding a public readiness endpoint or replacing repository reads. That lets the implementation preserve current pilot behavior while building the production contract behind focused tests.
 
+## Implementation Status After #245
+
+`#245 Operator Console device/shift/site repository wiring` added repository-backed readiness capability detection and read-only operator, device, shift, and site readiness checks for the `/v1/ops/operator-console/access/readiness/evaluate` path.
+
+The inspected local `exitpass_v12_dev` database did not contain the `operator_console` schema or tables. The repository therefore fails closed in Production when required readiness tables are unavailable, while Development/Test/Sandbox fallback validation remains usable according to `OperatorConsoleLocalDevFallbackPolicy`.
+
+The repo patch `infra/db/patches/ExitPass_OperatorConsoleSchema_v1.2.sql` contains the target `operator_console` tables used by the repository wiring, including `hr_identity_mappings`, `operator_device_bindings`, `operator_device_assignment_history`, `operator_shifts`, `operator_access_evaluations`, and `operator_access_evaluation_reasons`.
+
+Remaining work:
+
+- Apply or migrate the operator-console schema through the approved database change path.
+- Add production fixture or integration coverage once the schema is present in the validation database.
+- Wire dedicated access-evaluation persistence once the production schema is available.
+
 ## 19. Go/No-Go Position
 
 - GO for continued controlled sandbox/pilot validation.

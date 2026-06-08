@@ -381,6 +381,8 @@ static void ConfigureApplicationServices(
         new OperatorConsoleAccessEvaluationWriter(mainDatabaseConnectionString));
     builder.Services.AddSingleton<OperatorConsoleActionCatalog>();
     builder.Services.AddSingleton<OperatorConsoleDenialReasonCatalog>();
+    builder.Services.AddScoped<IOperatorConsoleAccessReadinessRepository>(_ =>
+        new OperatorConsoleAccessReadinessRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<OperatorConsoleAccessReadinessService>();
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
