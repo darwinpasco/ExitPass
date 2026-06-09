@@ -392,6 +392,14 @@ Non-production environments continue to allow deterministic sandbox validation f
 
 Production policy rows remain required before rollout. Database repository alignment is still required before any production policy baseline is accepted because the current live compatibility table does not provide the governed verification metadata expected from the future production registry.
 
+## Implementation Status: #256
+
+The Operator Console backend now detects policy registry source capability and prefers `discounts.statutory_discount_policy_registry` when that dedicated governed registry is present. If the dedicated registry is absent, the compatibility path using `discounts.discount_policy_references` remains supported so current local and sandbox validation can continue.
+
+The production readiness SQL now prefers the dedicated registry when present, emits `DEDICATED_REGISTRY_PRESENT` in the table availability result, and still supports `COMPATIBILITY_TABLE_ONLY` environments. Sandbox, dev, test, and E2E rows remain excluded from production readiness.
+
+Production Senior Citizen and PWD policy rows are still required. The local dev DB must be rebuilt or updated from the `D:\SourceCodes\ExitPass_DBv1.2` baseline before the dedicated registry path can be exercised against the live local database. Until verified production rows exist in the governed registry, full production statutory discount auto-application remains NO-GO.
+
 ## UI And Reporting Implications
 
 Operator Console should eventually show:

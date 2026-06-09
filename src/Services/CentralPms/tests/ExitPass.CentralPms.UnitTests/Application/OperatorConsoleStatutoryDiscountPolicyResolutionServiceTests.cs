@@ -189,6 +189,60 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionServiceTests
     }
 
     /// <summary>
+    /// Verifies dedicated-registry active-approved rows classify as production verified when required fields are present.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenProductionAndDedicatedRegistryPolicyActiveApproved_ReturnsReadyVerified()
+    {
+        var repository = RepositoryReturning(Policy(verificationStatus: "ACTIVE_APPROVED", sourceReference: "DB repo approved registry baseline"));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeTrue();
+        result.Policy.Should().NotBeNull();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.ReadyVerified);
+        result.RequiresManualReview.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// Verifies pilot-approved dedicated-registry rows stay manual-review only.
+    /// </summary>
+    [Fact]
+    public async Task ResolveAsync_WhenProductionAndDedicatedRegistryPolicyPilotApproved_ReturnsManualReview()
+    {
+        var repository = RepositoryReturning(Policy(verificationStatus: "APPROVED_FOR_PILOT", sourceReference: "Pilot-approved registry row"));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeTrue();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.ReadyWithManualReview);
+        result.RequiresManualReview.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Verifies unverified/proposed dedicated-registry rows are not production-ready.
+    /// </summary>
+    [Theory]
+    [InlineData("LEAD_UNVERIFIED")]
+    [InlineData("VERIFIED_SECONDARY")]
+    [InlineData("PROPOSED_ONLY")]
+    public async Task ResolveAsync_WhenProductionAndDedicatedRegistryPolicyNotVerified_ReturnsConfiguredButUnverified(
+        string verificationStatus)
+    {
+        var repository = RepositoryReturning(Policy(verificationStatus: verificationStatus, sourceReference: "Registry lead row"));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, environmentName: "Production");
+
+        var result = await sut.ResolveAsync(Command(), CancellationToken.None);
+
+        result.PolicyResolved.Should().BeFalse();
+        result.Policy.Should().BeNull();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.ConfiguredButUnverified);
+        result.RequiresManualReview.Should().BeTrue();
+    }
+
+    /// <summary>
     /// Verifies unsupported entitlement types fail before access evaluation.
     /// </summary>
     [Fact]

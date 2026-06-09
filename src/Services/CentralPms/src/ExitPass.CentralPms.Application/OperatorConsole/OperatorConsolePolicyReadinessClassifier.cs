@@ -77,8 +77,8 @@ public static class OperatorConsolePolicyReadinessClassifier
             return OperatorConsolePolicyReadinessClassifications.SandboxOnly;
         }
 
-        if (!string.Equals(policy.VerificationStatus, "ACTIVE", StringComparison.OrdinalIgnoreCase) &&
-            !IsVerifiedStatus(policy.VerificationStatus))
+        var verificationReadiness = ClassifyVerificationStatus(policy.VerificationStatus);
+        if (verificationReadiness == VerificationReadiness.Inactive)
         {
             return OperatorConsolePolicyReadinessClassifications.ExpiredOrInactive;
         }
@@ -109,9 +109,13 @@ public static class OperatorConsolePolicyReadinessClassifier
             return OperatorConsolePolicyReadinessClassifications.ConfiguredButUnverified;
         }
 
-        return IsVerifiedStatus(policy.VerificationStatus)
-            ? OperatorConsolePolicyReadinessClassifications.ReadyVerified
-            : OperatorConsolePolicyReadinessClassifications.ReadyWithManualReview;
+        return verificationReadiness switch
+        {
+            VerificationReadiness.VerifiedProduction => OperatorConsolePolicyReadinessClassifications.ReadyVerified,
+            VerificationReadiness.PilotApproved or VerificationReadiness.CompatibilityActive =>
+                OperatorConsolePolicyReadinessClassifications.ReadyWithManualReview,
+            _ => OperatorConsolePolicyReadinessClassifications.ConfiguredButUnverified
+        };
     }
 
     private static OperatorConsolePolicyReadinessEvaluation Build(
@@ -204,11 +208,24 @@ public static class OperatorConsolePolicyReadinessClassifier
     private static bool RequiresScopedMapping(OperatorConsoleResolvedStatutoryDiscountPolicy policy) =>
         policy.PolicyLevel is "LOCAL_ORDINANCE" or "SITE_POLICY" or "OPERATIONAL_POLICY";
 
-    private static bool IsVerifiedStatus(string? verificationStatus) =>
-        !string.IsNullOrWhiteSpace(verificationStatus) &&
-        (verificationStatus.Contains("VERIFIED", StringComparison.OrdinalIgnoreCase) ||
-         verificationStatus.Contains("APPROVED", StringComparison.OrdinalIgnoreCase) ||
-         verificationStatus.Contains("OFFICIAL", StringComparison.OrdinalIgnoreCase));
+    private static VerificationReadiness ClassifyVerificationStatus(string? verificationStatus)
+    {
+        if (string.IsNullOrWhiteSpace(verificationStatus))
+        {
+            return VerificationReadiness.Unverified;
+        }
+
+        return verificationStatus.Trim().ToUpperInvariant() switch
+        {
+            "ACTIVE" => VerificationReadiness.CompatibilityActive,
+            "ACTIVE_APPROVED" or "VERIFIED_OFFICIAL" => VerificationReadiness.VerifiedProduction,
+            "APPROVED_FOR_PILOT" => VerificationReadiness.PilotApproved,
+            "VERIFIED_SECONDARY" or "LEAD_UNVERIFIED" or "PROPOSED_ONLY" or "REJECTED" =>
+                VerificationReadiness.Unverified,
+            "DRAFT" or "SUSPENDED" or "SUPERSEDED" or "RETIRED" => VerificationReadiness.Inactive,
+            _ => VerificationReadiness.Unverified
+        };
+    }
 
     private static bool ContainsWholeToken(string value, string token)
     {
@@ -237,6 +254,15 @@ public static class OperatorConsolePolicyReadinessClassifier
 
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
+    private enum VerificationReadiness
+    {
+        CompatibilityActive,
+        VerifiedProduction,
+        PilotApproved,
+        Unverified,
+        Inactive
+    }
 
     private static string OperatorMessageFor(string classification) =>
         classification switch
