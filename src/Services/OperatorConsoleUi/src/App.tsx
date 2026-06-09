@@ -8,6 +8,7 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
+  AuditReportItem,
   AuditReportQuery,
   AuditReportResponse,
   LoadState,
@@ -295,6 +296,7 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
                     <th>Ticket Reference</th>
                     <th>Session ID</th>
                     <th>Entitlement</th>
+                    <th>Policy Readiness</th>
                     <th>Validation Status</th>
                     <th>Evidence Status</th>
                     <th>Evidence Satisfied</th>
@@ -315,6 +317,9 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
                       <td>{item.ticketReference ?? "Not available"}</td>
                       <td><code>{shortId(item.parkingSessionId)}</code></td>
                       <td>{item.entitlementType}</td>
+                      <td>
+                        <AuditPolicyReadinessSummary item={item} />
+                      </td>
                       <td><span className={`statusPill ${statusClass(item.validationStatus)}`}>{item.validationStatus}</span></td>
                       <td>{item.latestEvidenceStatus ?? (item.evidenceRequired ? "Pending" : "Not required")}</td>
                       <td>{item.evidenceRequiredSatisfied ? "Yes" : "No"}</td>
@@ -536,6 +541,7 @@ function StatutoryDiscountQueuePage({
                   <th>Site</th>
                   <th>Entitlement</th>
                   <th>Policy basis</th>
+                  <th>Policy readiness</th>
                   <th>Evidence</th>
                   <th>Status</th>
                   <th>Requested</th>
@@ -555,6 +561,9 @@ function StatutoryDiscountQueuePage({
                     <td>{item.siteName}</td>
                     <td>{item.entitlementType}</td>
                     <td>{policyBasisLabel(item.policyContext.kind)}</td>
+                    <td>
+                      <PolicyReadinessSummary policy={item.policyContext} compact />
+                    </td>
                     <td>
                       <span>{item.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
                       <span>{item.evidenceRequiredSatisfied ? "Satisfied" : `${item.evidenceCount} captured`}</span>
@@ -1185,29 +1194,91 @@ function EvidencePanel({
 }
 
 function PolicyContextDisplay({ policy }: { policy: StatutoryDiscountPolicyContext }) {
+  const readiness = policy.policyReadinessClassification ?? "NOT_READY";
+  const readinessClassName = policyReadinessClass(readiness);
   return (
-    <section className={`panel policyPanel policy-${policy.kind}`} aria-labelledby="policy-context-title">
+    <section
+      className={`panel policyPanel policy-${policy.kind} ${readinessClassName}`}
+      aria-labelledby="policy-context-title"
+    >
       <div className="panelHeader">
-        <p className="eyebrow">Policy context</p>
-        <h3 id="policy-context-title">{policy.title}</h3>
+        <div>
+          <p className="eyebrow">Policy context</p>
+          <h3 id="policy-context-title">{policy.title}</h3>
+        </div>
+        <span className={`statusPill ${readinessClassName}`}>{readinessLabelForPolicy(readiness)}</span>
       </div>
       <p className="policySummary">{policy.operatorSummary}</p>
+      <div className="policyGuardrail" role="note">
+        <p>Policy readiness is not the same as payment approval.</p>
+        <p>Sandbox/test policies are not production-ready.</p>
+        <p>Manual review is required before automatic production application.</p>
+        <p>No raw evidence or ID numbers are displayed here.</p>
+      </div>
+      {!policy.productionAutoApplicationEligible && (
+        <p className="notice">Automatic production application is not allowed for this policy state.</p>
+      )}
+      {policy.requiresManualReview && <p className="notice">Manual review required before production use.</p>}
       <DescriptionList
         items={[
+          ["Policy source", policySourceLabel(policy.registrySource)],
           ["Policy basis", policyBasisLabel(policy.kind)],
           ["Resolution basis", policy.policyResolutionBasis],
           ["Policy code", policy.policyCode ?? "Not available"],
           ["Policy name", policy.policyName ?? "Not available"],
+          ["Readiness classification", readiness],
+          ["Manual review required", policy.requiresManualReview ? "Yes" : "No"],
+          ["Production auto-application eligible", policy.productionAutoApplicationEligible ? "Yes" : "No"],
+          ["Readiness reason", policy.policyReadinessReason ?? "Not available"],
+          ["Operator message", policy.operatorMessage ?? "Not available"],
           ["Legal basis", policy.legalBasisReference ?? "Not available"],
           ["National law", policy.nationalLawReference ?? "Not available"],
           ["Local ordinance", policy.ordinanceReference ?? "None"],
           ["Verification status", policy.verificationStatus ?? "Not available"],
           ["Benefit type", policy.benefitType ?? "Not available"],
+          ["Discount base scope", policy.discountBaseScope ?? "Not available"],
           ["Evidence required", policy.evidenceRequired ? "Yes" : "No"],
+          ["Required evidence type", policy.requiredEvidenceType ?? "Not available"],
+          ["Effective from", policy.effectiveFrom ? formatDateTime(policy.effectiveFrom) : "Not available"],
+          ["Effective to", policy.effectiveTo ? formatDateTime(policy.effectiveTo) : "Open-ended or not available"],
           ["Operator action", policy.ineligibilityReason ?? "Review can proceed when access and evidence rules allow."]
         ]}
       />
     </section>
+  );
+}
+
+function PolicyReadinessSummary({
+  policy,
+  compact = false
+}: {
+  policy: StatutoryDiscountPolicyContext;
+  compact?: boolean;
+}) {
+  const readiness = policy.policyReadinessClassification ?? "NOT_READY";
+  return (
+    <div className={`policyReadinessSummary ${compact ? "policyReadinessCompact" : ""}`}>
+      <span className={`statusPill ${policyReadinessClass(readiness)}`}>{readinessLabelForPolicy(readiness)}</span>
+      <strong>{policy.policyCode ?? "Policy missing"}</strong>
+      <span>{readiness}</span>
+      <span>{policySourceLabel(policy.registrySource)}</span>
+      <span>{policy.verificationStatus ?? "Verification unknown"}</span>
+      <span>{policy.requiresManualReview ? "Manual review required" : "No manual review flag"}</span>
+    </div>
+  );
+}
+
+function AuditPolicyReadinessSummary({ item }: { item: AuditReportItem }) {
+  const readiness = item.policyReadinessClassification ?? "NOT_READY";
+  return (
+    <div className="policyReadinessSummary policyReadinessCompact">
+      <span className={`statusPill ${policyReadinessClass(readiness)}`}>{readinessLabelForPolicy(readiness)}</span>
+      <strong>{item.policyCode ?? "Policy missing"}</strong>
+      <span>{readiness}</span>
+      <span>{policySourceLabel(item.registrySource)}</span>
+      <span>{item.verificationStatus ?? "Verification unknown"}</span>
+      <span>{item.requiresManualReview ? "Manual review required" : "No manual review flag"}</span>
+    </div>
   );
 }
 
@@ -1385,6 +1456,48 @@ function policyBasisLabel(kind: PolicyContextKind) {
     "unsupported-entitlement": "Unsupported entitlement",
     "missing-site-jurisdiction": "Missing site jurisdiction"
   }[kind];
+}
+
+function policySourceLabel(source?: string) {
+  return {
+    DEDICATED_REGISTRY: "Dedicated registry",
+    COMPATIBILITY_POLICY_REFERENCES: "Compatibility policy references"
+  }[source ?? ""] ?? "Policy source not confirmed";
+}
+
+function readinessLabelForPolicy(classification: string) {
+  return {
+    READY_VERIFIED: "Production-ready",
+    READY_WITH_MANUAL_REVIEW: "Manual review",
+    CONFIGURED_BUT_UNVERIFIED: "Unverified",
+    LEAD_UNVERIFIED: "Unverified",
+    PROPOSED_ONLY: "Proposed only",
+    SANDBOX_ONLY: "Sandbox/test",
+    MISSING_REQUIRED_POLICY: "Policy missing",
+    NOT_READY: "Blocked",
+    EXPIRED_OR_INACTIVE: "Inactive"
+  }[classification] ?? classification;
+}
+
+function policyReadinessClass(classification: string) {
+  if (classification === "READY_VERIFIED") {
+    return "readiness-ready";
+  }
+
+  if (classification === "READY_WITH_MANUAL_REVIEW") {
+    return "readiness-manual";
+  }
+
+  if (
+    classification === "CONFIGURED_BUT_UNVERIFIED" ||
+    classification === "LEAD_UNVERIFIED" ||
+    classification === "PROPOSED_ONLY" ||
+    classification === "SANDBOX_ONLY"
+  ) {
+    return "readiness-warning";
+  }
+
+  return "readiness-blocked";
 }
 
 function statusClass(status: string) {

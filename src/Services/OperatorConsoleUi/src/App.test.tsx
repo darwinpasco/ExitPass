@@ -8,7 +8,7 @@ import {
   mapApiError,
   type OperatorConsoleApiClient
 } from "./apiClient";
-import type { AccessReadinessResponse, StatutoryDiscountQueueItem } from "./types";
+import type { AccessReadinessResponse, StatutoryDiscountDraftDetail, StatutoryDiscountQueueItem } from "./types";
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
 const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
@@ -90,6 +90,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("Republic Act No. 9994")).toBeInTheDocument();
     expect(screen.getAllByText("RA 9994").length).toBeGreaterThan(0);
     expect(screen.getByText(/no verified local ordinance overrides it/i)).toBeInTheDocument();
+    expect(screen.getByText("Production-ready")).toBeInTheDocument();
+    expect(screen.getAllByText("READY_VERIFIED").length).toBeGreaterThan(0);
+    expect(screen.getByText("Compatibility policy references")).toBeInTheDocument();
+    expect(screen.getByText("Policy readiness is not the same as payment approval.")).toBeInTheDocument();
+    expect(screen.getByText("No raw evidence or ID numbers are displayed here.")).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_RendersVerifiedLocalPolicyContext", async () => {
@@ -103,6 +108,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("heading", { name: "Verified local policy" })).toBeInTheDocument();
     expect(screen.getByText("QC Ordinance 2026-04")).toBeInTheDocument();
     expect(screen.getByText("RA 10754")).toBeInTheDocument();
+    expect(screen.getByText("Dedicated registry")).toBeInTheDocument();
+    expect(screen.getAllByText("Manual review").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("READY_WITH_MANUAL_REVIEW").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/manual review required before production use/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
   });
 
@@ -117,7 +126,24 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("heading", { name: "Unverified local policy blocked" })).toBeInTheDocument();
     expect(screen.getByText("LOCAL_POLICY_BLOCKED")).toBeInTheDocument();
     expect(screen.getByText("Local policy is not verified for operator use.")).toBeInTheDocument();
+    expect(screen.getAllByText("CONFIGURED_BUT_UNVERIFIED").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/automatic production application is not allowed/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0);
+  });
+
+  it("StatutoryDiscountDetail_RendersSandboxOnlyPolicyReadinessWarning", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [sandboxOnlyDraft()] })}
+        initialPath="/operator-console/statutory-discounts/47000000-0000-0000-0000-000000000099"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Sandbox/test policy warning" })).toBeInTheDocument();
+    expect(screen.getAllByText("SANDBOX_ONLY").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sandbox/test").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/sandbox\/test policies are not production-ready/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/automatic production application is not allowed/i)).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_ApproveActionCallsDecisionEndpointAndRefreshes", async () => {
@@ -323,7 +349,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText(/raw id numbers and raw evidence files are not displayed/i)).toBeInTheDocument();
     expect(await screen.findByText("STAT-OP-SESSION-0001")).toBeInTheDocument();
     expect(screen.getAllByText("SESSION_LOOKUP / SUCCESS")).not.toHaveLength(0);
+    expect(screen.getByRole("columnheader", { name: "Policy Readiness" })).toBeInTheDocument();
+    expect(screen.getAllByText("Production-ready").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("READY_VERIFIED").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Compatibility policy references").length).toBeGreaterThan(0);
     expect(screen.getByRole("columnheader", { name: "Final Payable" })).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/1234-5678-9012/i);
     expect(screen.queryByRole("button", { name: /pay/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /open gate/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply coupon/i })).not.toBeInTheDocument();
@@ -402,6 +433,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
             evidenceCount: 0,
             policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
             policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+            verificationStatus: "VERIFIED_OFFICIAL",
+            registrySource: "DEDICATED_REGISTRY",
+            policyReadinessClassification: "READY_VERIFIED",
+            requiresManualReview: false,
             requestedAt: "2026-06-01T08:15:00+08:00"
           }
         ]
@@ -425,6 +460,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
         policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
         nationalLawReference: "RA 9994",
+        verificationStatus: "VERIFIED_OFFICIAL",
+        registrySource: "DEDICATED_REGISTRY",
+        policyReadinessClassification: "READY_VERIFIED",
+        requiresManualReview: false,
         activity: ["Draft requested."]
       }));
     vi.stubGlobal("fetch", fetchMock);
@@ -434,7 +473,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const detail = await client.getStatutoryDiscountDraft(firstDraftId);
 
     expect(queue[0].ticketReference).toBe("REAL-QUEUE-001");
+    expect(queue[0].policyContext.registrySource).toBe("DEDICATED_REGISTRY");
+    expect(queue[0].policyContext.policyReadinessClassification).toBe("READY_VERIFIED");
     expect(detail.policyContext.nationalLawReference).toBe("RA 9994");
+    expect(detail.policyContext.productionAutoApplicationEligible).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/v1/ops/operator-console/statutory-discounts/drafts?correlationId="),
       expect.any(Object)
@@ -514,7 +556,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
           currencyCode: "PHP",
           requestedAt: "2026-06-01T08:15:00+08:00",
           validatedAt: null,
-          correlationId: "00000000-0000-0000-0000-00000000abcd"
+          correlationId: "00000000-0000-0000-0000-00000000abcd",
+          registrySource: "DEDICATED_REGISTRY",
+          policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
+          verificationStatus: "VERIFIED_OFFICIAL",
+          policyReadinessClassification: "READY_VERIFIED",
+          requiresManualReview: false
         }
       ],
       totalCount: 1,
@@ -531,6 +578,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     });
 
     expect(report.items[0].ticketReference).toBe("AUDIT-001");
+    expect(report.items[0].registrySource).toBe("DEDICATED_REGISTRY");
+    expect(report.items[0].policyReadinessClassification).toBe("READY_VERIFIED");
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/v1/ops/operator-console/audit/statutory-discounts?"),
       expect.any(Object)
@@ -653,6 +702,59 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/public\/coupons/i);
   });
 });
+
+function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
+  return {
+    draftId: "47000000-0000-0000-0000-000000000099",
+    parkingSessionId: "25000000-0000-0000-0000-000000000099",
+    ticketReference: "STAT-OP-SANDBOX-0099",
+    plateNumber: "SAN 0099",
+    siteId: "77000000-0000-0000-0000-000000000002",
+    siteGroupId: "77000000-0000-0000-0000-000000000001",
+    siteName: "Sandbox Parking / Exit",
+    laneName: "Sandbox Exit Lane",
+    entitlementType: "Senior Citizen",
+    status: "Blocked",
+    requestedAt: "2026-06-01T09:30:00+08:00",
+    requestedBy: "operator.sandbox",
+    parkingStartedAt: "2026-06-01T08:30:00+08:00",
+    originalTariffAmount: "PHP 90.00",
+    payableBasisPreview: "Blocked",
+    currentPaymentStatus: "Read-only in this module",
+    maskedIdReference: "Evidence metadata only",
+    issuingAuthority: "OSCA",
+    evidenceCaptured: false,
+    evidenceRequiredSatisfied: false,
+    evidenceCount: 0,
+    requiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
+    originalTariffSnapshotId: "23100000-0000-0000-0000-000000000099",
+    originalAmountMinorUnits: 9000,
+    currencyCode: "PHP",
+    policyContext: {
+      kind: "blocked-unverified-local",
+      title: "Sandbox/test policy warning",
+      operatorSummary: "Sandbox/test policies are visible for validation only and are not production-ready.",
+      registrySource: "DEDICATED_REGISTRY",
+      policyResolutionBasis: "LOCAL_POLICY_BLOCKED",
+      policyCode: "TEST_OC_POLICY_SC_SANDBOX_ONLY",
+      policyName: "Sandbox Operator Console Senior Citizen Policy",
+      legalBasisReference: "TEST-LEGAL-ONLY",
+      ordinanceReference: "TEST-ORD-ONLY",
+      verificationStatus: "VERIFIED_OFFICIAL",
+      policyReadinessClassification: "SANDBOX_ONLY",
+      requiresManualReview: true,
+      policyReadinessReason: "SANDBOX_ONLY",
+      operatorMessage: "Sandbox/test policies are not production-ready.",
+      productionAutoApplicationEligible: false,
+      benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+      discountBaseScope: "VAT_EXCLUSIVE",
+      evidenceRequired: true,
+      requiredEvidenceType: "SENIOR_CITIZEN_ID",
+      ineligibilityReason: "Sandbox policy is not production-ready."
+    },
+    auditActivity: ["Sandbox policy detected.", "Decision blocked pending production policy readiness."]
+  };
+}
 
 function readyReadiness(): AccessReadinessResponse {
   return {
