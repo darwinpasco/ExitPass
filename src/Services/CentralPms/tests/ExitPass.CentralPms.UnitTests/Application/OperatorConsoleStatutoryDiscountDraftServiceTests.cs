@@ -418,6 +418,46 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     }
 
     /// <summary>
+    /// Verifies production draft creation is blocked for dedicated-registry rows that are not production verified.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenProductionAndDedicatedRegistryPolicyProposedOnly_DoesNotCreateDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var policyRepository = Substitute.For<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>();
+        policyRepository.ResolveAsync(Arg.Any<OperatorConsoleStatutoryDiscountPolicyResolutionReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountPolicyResolutionReadResult(
+                Resolved: true,
+                Policy(verificationStatus: "PROPOSED_ONLY", sourceReference: "Registry proposed row"),
+                SiteId,
+                SiteGroupId,
+                JurisdictionId,
+                IneligibilityReason: null,
+                ErrorCode: null));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        var sut = CreateSut(
+            AccessResult(allowed: true, []),
+            repository,
+            writer,
+            policyRepository,
+            environmentName: "Production");
+
+        var result = await sut.DraftAsync(Command(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.DraftAccepted.Should().BeFalse();
+        result.DraftPersisted.Should().BeFalse();
+        result.Policy.Should().BeNull();
+        result.PolicyReadinessClassification.Should().Be(OperatorConsolePolicyReadinessClassifications.ConfiguredButUnverified);
+        result.RequiresManualReview.Should().BeTrue();
+        await writer.DidNotReceiveWithAnyArgs().PersistAsync(default!, default);
+    }
+
+    /// <summary>
     /// Verifies non-production draft validation can still use sandbox fixture policies.
     /// </summary>
     [Fact]
@@ -595,6 +635,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
         string policyType = "LEGAL_REFERENCE",
         string? ordinanceReference = null,
         string? nationalLawReference = "RA 9994",
+        string verificationStatus = "VERIFIED_OFFICIAL",
         string? sourceReference = "Unit test policy.") =>
         new(
             policyId ?? PolicyId,
@@ -610,7 +651,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
             ordinanceReference ?? "Expanded Senior Citizens Act of 2010",
             ordinanceReference,
             nationalLawReference,
-            "VERIFIED_OFFICIAL",
+            verificationStatus,
             "NON_RESIDENT_ALLOWED",
             "STATUTORY_DISCOUNT_VAT_EXEMPT",
             null,
