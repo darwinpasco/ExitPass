@@ -20,6 +20,7 @@ export interface StatutoryDiscountPolicyContext {
   kind: PolicyContextKind;
   title: string;
   operatorSummary: string;
+  registrySource?: string;
   policyResolutionBasis: string;
   policyCode?: string;
   policyName?: string;
@@ -27,8 +28,17 @@ export interface StatutoryDiscountPolicyContext {
   ordinanceReference?: string;
   nationalLawReference?: string;
   verificationStatus?: string;
+  policyReadinessClassification?: string;
+  requiresManualReview: boolean;
+  policyReadinessReason?: string;
+  operatorMessage?: string;
+  productionAutoApplicationEligible: boolean;
   benefitType?: string;
+  discountBaseScope?: string;
   evidenceRequired: boolean;
+  requiredEvidenceType?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
   ineligibilityReason?: string;
 }
 
@@ -226,7 +236,13 @@ export interface AuditReportItem {
   requestedAt: string;
   validatedAt?: string;
   correlationId?: string;
+  registrySource?: string;
   policyCode?: string;
+  verificationStatus?: string;
+  policyReadinessClassification?: string;
+  requiresManualReview?: boolean;
+  policyReadinessReason?: string;
+  operatorMessage?: string;
   ordinanceReference?: string;
   legalBasisReference?: string;
   appliedTariffSnapshotId?: string;

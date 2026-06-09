@@ -49,9 +49,18 @@ interface QueueItemDto {
   evidenceRequiredSatisfied?: boolean | null;
   evidenceCount?: number | null;
   latestEvidenceStatus?: string | null;
+  registrySource?: string | null;
   policyResolutionBasis?: string | null;
   policyCode?: string | null;
   policyName?: string | null;
+  verificationStatus?: string | null;
+  policyReadinessClassification?: string | null;
+  requiresManualReview?: boolean | null;
+  policyReadinessReason?: string | null;
+  operatorMessage?: string | null;
+  requiredEvidenceType?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
   originalAmountMinorUnits?: number | null;
   payableAmountMinorUnits?: number | null;
   currencyCode?: string | null;
@@ -77,6 +86,14 @@ interface DetailDto extends QueueItemDto {
   succeedingHoursDiscountRule?: string | null;
   discountBaseScope?: string | null;
   stackingPolicy?: string | null;
+  registrySource?: string | null;
+  policyReadinessClassification?: string | null;
+  requiresManualReview?: boolean | null;
+  policyReadinessReason?: string | null;
+  operatorMessage?: string | null;
+  requiredEvidenceType?: string | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
   originalTariffSnapshotId?: string | null;
   payableBasisApplicationId?: string | null;
   payableBasisApplicationStatus?: string | null;
@@ -157,6 +174,52 @@ interface PayableBasisApplicationResponseDto {
   errorCode?: string | null;
 }
 
+interface AuditReportItemDto {
+  statutoryDiscountValidationId: string;
+  draftId: string;
+  parkingSessionId: string;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  siteId: string;
+  siteGroupId: string;
+  entitlementType: string;
+  validationStatus: string;
+  evidenceRequired: boolean;
+  evidenceCaptured: boolean;
+  evidenceRequiredSatisfied: boolean;
+  evidenceCount: number;
+  latestEvidenceStatus?: string | null;
+  payableBasisApplicationStatus?: string | null;
+  originalAmountMinorUnits?: number | null;
+  statutoryDiscountAmountMinorUnits?: number | null;
+  finalPayableAmountMinorUnits?: number | null;
+  currencyCode?: string | null;
+  requestedByUserId?: string | null;
+  validatedByUserId?: string | null;
+  requestedAt: string;
+  validatedAt?: string | null;
+  correlationId?: string | null;
+  registrySource?: string | null;
+  policyCode?: string | null;
+  verificationStatus?: string | null;
+  policyReadinessClassification?: string | null;
+  requiresManualReview?: boolean | null;
+  policyReadinessReason?: string | null;
+  operatorMessage?: string | null;
+  ordinanceReference?: string | null;
+  legalBasisReference?: string | null;
+  appliedTariffSnapshotId?: string | null;
+  accessEvaluationSummary?: string | null;
+}
+
+interface AuditReportResponseDto {
+  items: AuditReportItemDto[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  correlationId: string;
+}
+
 export interface OperatorConsoleOperatorContext {
   userId: string;
   operatorDeviceBindingId: string;
@@ -222,7 +285,7 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         headers: operatorConsoleHeaders(correlationId)
       });
 
-      return parseResponse<AuditReportResponse>(response);
+      return toAuditReport(await parseResponse<AuditReportResponseDto>(response));
     },
 
     async listStatutoryDiscountDrafts() {
@@ -703,26 +766,51 @@ function addQuery(search: URLSearchParams, key: string, value?: string) {
 function toPolicyContext(item: QueueItemDto | DetailDto): StatutoryDiscountPolicyContext {
   const basis = item.policyResolutionBasis ?? "UNKNOWN";
   const detail = item as DetailDto;
-  const kind = policyKind(basis, detail.verificationStatus);
+  const verificationStatus = detail.verificationStatus ?? item.verificationStatus ?? undefined;
+  const readinessClassification =
+    detail.policyReadinessClassification ?? item.policyReadinessClassification ?? inferPolicyReadiness(item, verificationStatus);
+  const requiresManualReview =
+    detail.requiresManualReview ?? item.requiresManualReview ?? readinessClassification !== "READY_VERIFIED";
+  const kind = policyKind(basis, verificationStatus, readinessClassification);
+  const operatorMessage = detail.operatorMessage ?? item.operatorMessage ?? policyReadinessMessage(readinessClassification);
   return {
     kind,
-    title: policyTitle(kind),
-    operatorSummary: policySummary(kind),
+    title: policyTitle(kind, readinessClassification),
+    operatorSummary: policySummary(kind, readinessClassification),
+    registrySource: detail.registrySource ?? item.registrySource ?? inferRegistrySource(basis),
     policyResolutionBasis: basis,
     policyCode: item.policyCode ?? undefined,
     policyName: item.policyName ?? undefined,
     legalBasisReference: detail.legalBasisReference ?? undefined,
     ordinanceReference: detail.ordinanceReference ?? undefined,
     nationalLawReference: detail.nationalLawReference ?? undefined,
-    verificationStatus: detail.verificationStatus ?? undefined,
+    verificationStatus,
+    policyReadinessClassification: readinessClassification,
+    requiresManualReview,
+    policyReadinessReason: detail.policyReadinessReason ?? item.policyReadinessReason ?? readinessClassification,
+    operatorMessage,
+    productionAutoApplicationEligible: readinessClassification === "READY_VERIFIED" && !requiresManualReview,
     benefitType: detail.benefitType ?? undefined,
+    discountBaseScope: detail.discountBaseScope ?? undefined,
     evidenceRequired: item.evidenceRequired,
+    requiredEvidenceType: detail.requiredEvidenceType ?? item.requiredEvidenceType ?? undefined,
+    effectiveFrom: detail.effectiveFrom ?? item.effectiveFrom ?? undefined,
+    effectiveTo: detail.effectiveTo ?? item.effectiveTo ?? undefined,
     ineligibilityReason: item.blockedReason ?? detail.failureReasonCode ?? undefined
   };
 }
 
-function policyKind(basis: string, verificationStatus?: string | null): StatutoryDiscountPolicyContext["kind"] {
-  if (basis === "LOCAL_POLICY_BLOCKED" || verificationStatus?.includes("UNVERIFIED")) {
+function policyKind(
+  basis: string,
+  verificationStatus?: string | null,
+  readinessClassification?: string
+): StatutoryDiscountPolicyContext["kind"] {
+  if (
+    readinessClassification === "SANDBOX_ONLY" ||
+    readinessClassification === "CONFIGURED_BUT_UNVERIFIED" ||
+    basis === "LOCAL_POLICY_BLOCKED" ||
+    verificationStatus?.includes("UNVERIFIED")
+  ) {
     return "blocked-unverified-local";
   }
 
@@ -741,7 +829,19 @@ function policyKind(basis: string, verificationStatus?: string | null): Statutor
   return "national-fallback";
 }
 
-function policyTitle(kind: StatutoryDiscountPolicyContext["kind"]) {
+function policyTitle(kind: StatutoryDiscountPolicyContext["kind"], readinessClassification?: string) {
+  if (readinessClassification === "READY_VERIFIED") {
+    return "Production-ready verified policy";
+  }
+
+  if (readinessClassification === "READY_WITH_MANUAL_REVIEW") {
+    return "Manual-review policy";
+  }
+
+  if (readinessClassification === "SANDBOX_ONLY") {
+    return "Sandbox/test policy warning";
+  }
+
   return {
     "national-fallback": "National fallback policy",
     "verified-local": "Verified local policy",
@@ -751,7 +851,19 @@ function policyTitle(kind: StatutoryDiscountPolicyContext["kind"]) {
   }[kind];
 }
 
-function policySummary(kind: StatutoryDiscountPolicyContext["kind"]) {
+function policySummary(kind: StatutoryDiscountPolicyContext["kind"], readinessClassification?: string) {
+  if (readinessClassification === "READY_VERIFIED") {
+    return "The policy is verified for production readiness review. Payment approval and payable-basis application remain separate controlled steps.";
+  }
+
+  if (readinessClassification === "READY_WITH_MANUAL_REVIEW") {
+    return "The policy requires manual review before any production automatic application decision.";
+  }
+
+  if (readinessClassification === "SANDBOX_ONLY") {
+    return "Sandbox/test policies are visible for validation only and are not production-ready.";
+  }
+
   return {
     "national-fallback": "Use the stored national statutory policy because no verified local policy overrides it for this draft.",
     "verified-local": "Use the stored verified local policy linked to the site jurisdiction.",
@@ -759,6 +871,78 @@ function policySummary(kind: StatutoryDiscountPolicyContext["kind"]) {
     "unsupported-entitlement": "The entitlement type is not supported by the statutory discount workflow.",
     "missing-site-jurisdiction": "The site does not have a resolved jurisdiction for policy selection."
   }[kind];
+}
+
+function inferPolicyReadiness(
+  item: {
+    policyCode?: string | null;
+    policyName?: string | null;
+    policyResolutionBasis?: string | null;
+    legalBasisReference?: string | null;
+    ordinanceReference?: string | null;
+    nationalLawReference?: string | null;
+  },
+  verificationStatus?: string | null
+) {
+  const markerText = [
+    item.policyCode,
+    item.policyName,
+    item.policyResolutionBasis,
+    (item as DetailDto).legalBasisReference,
+    (item as DetailDto).ordinanceReference,
+    (item as DetailDto).nationalLawReference
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toUpperCase();
+
+  if (/\b(SANDBOX|TEST|DEV|E2E)\b/.test(markerText) || markerText.includes("TEST_") || markerText.includes("SANDBOX_")) {
+    return "SANDBOX_ONLY";
+  }
+
+  if (!item.policyCode) {
+    return "MISSING_REQUIRED_POLICY";
+  }
+
+  if (verificationStatus === "ACTIVE_APPROVED" || verificationStatus === "VERIFIED_OFFICIAL") {
+    return "READY_VERIFIED";
+  }
+
+  if (verificationStatus === "APPROVED_FOR_PILOT") {
+    return "READY_WITH_MANUAL_REVIEW";
+  }
+
+  if (verificationStatus === "LEAD_UNVERIFIED" || verificationStatus === "VERIFIED_SECONDARY" || verificationStatus === "PROPOSED_ONLY") {
+    return "CONFIGURED_BUT_UNVERIFIED";
+  }
+
+  if (verificationStatus === "REJECTED") {
+    return "NOT_READY";
+  }
+
+  return "NOT_READY";
+}
+
+function inferRegistrySource(policyResolutionBasis?: string | null) {
+  return policyResolutionBasis?.startsWith("DEDICATED_")
+    ? "DEDICATED_REGISTRY"
+    : "COMPATIBILITY_POLICY_REFERENCES";
+}
+
+function policyReadinessMessage(classification: string) {
+  const messages: Record<string, string> = {
+    READY_VERIFIED: "Policy is verified. Policy readiness is not payment approval.",
+    READY_WITH_MANUAL_REVIEW: "Manual review is required before automatic production application.",
+    CONFIGURED_BUT_UNVERIFIED: "Policy is configured but is not verified for production auto-application.",
+    MISSING_REQUIRED_POLICY: "Required production policy is missing.",
+    MISSING_SITE_MAPPING: "Policy scope or site mapping is missing.",
+    MISSING_EVIDENCE_RULE: "Evidence rule is missing or inconsistent.",
+    EXPIRED_OR_INACTIVE: "Policy is expired or inactive.",
+    SANDBOX_ONLY: "Sandbox/test policies are not production-ready.",
+    NOT_READY: "Policy is not production-ready."
+  };
+
+  return messages[classification] ?? "Policy readiness could not be confirmed.";
 }
 
 function payableBasisPreview(item: DetailDto) {
@@ -910,6 +1094,57 @@ function toQueueFromDetail(draft: StatutoryDiscountDraftDetail): StatutoryDiscou
   };
 }
 
+function toAuditReport(dto: AuditReportResponseDto): AuditReportResponse {
+  return {
+    items: dto.items.map((item) => {
+      const verificationStatus = item.verificationStatus ?? undefined;
+      const policyReadinessClassification =
+        item.policyReadinessClassification ?? inferPolicyReadiness(item, verificationStatus);
+      return {
+        statutoryDiscountValidationId: item.statutoryDiscountValidationId,
+        draftId: item.draftId,
+        parkingSessionId: item.parkingSessionId,
+        ticketReference: item.ticketReference ?? undefined,
+        plateNumber: item.plateNumber ?? undefined,
+        siteId: item.siteId,
+        siteGroupId: item.siteGroupId,
+        entitlementType: item.entitlementType,
+        validationStatus: item.validationStatus,
+        evidenceRequired: item.evidenceRequired,
+        evidenceCaptured: item.evidenceCaptured,
+        evidenceRequiredSatisfied: item.evidenceRequiredSatisfied,
+        evidenceCount: item.evidenceCount,
+        latestEvidenceStatus: item.latestEvidenceStatus ?? undefined,
+        payableBasisApplicationStatus: item.payableBasisApplicationStatus ?? undefined,
+        originalAmountMinorUnits: item.originalAmountMinorUnits ?? undefined,
+        statutoryDiscountAmountMinorUnits: item.statutoryDiscountAmountMinorUnits ?? undefined,
+        finalPayableAmountMinorUnits: item.finalPayableAmountMinorUnits ?? undefined,
+        currencyCode: item.currencyCode ?? undefined,
+        requestedByUserId: item.requestedByUserId ?? undefined,
+        validatedByUserId: item.validatedByUserId ?? undefined,
+        requestedAt: item.requestedAt,
+        validatedAt: item.validatedAt ?? undefined,
+        correlationId: item.correlationId ?? undefined,
+        registrySource: item.registrySource ?? inferRegistrySource(undefined),
+        policyCode: item.policyCode ?? undefined,
+        verificationStatus,
+        policyReadinessClassification,
+        requiresManualReview: item.requiresManualReview ?? policyReadinessClassification !== "READY_VERIFIED",
+        policyReadinessReason: item.policyReadinessReason ?? policyReadinessClassification,
+        operatorMessage: item.operatorMessage ?? policyReadinessMessage(policyReadinessClassification),
+        ordinanceReference: item.ordinanceReference ?? undefined,
+        legalBasisReference: item.legalBasisReference ?? undefined,
+        appliedTariffSnapshotId: item.appliedTariffSnapshotId ?? undefined,
+        accessEvaluationSummary: item.accessEvaluationSummary ?? undefined
+      };
+    }),
+    totalCount: dto.totalCount,
+    limit: dto.limit,
+    offset: dto.offset,
+    correlationId: dto.correlationId
+  };
+}
+
 function toAuditReportItem(draft: StatutoryDiscountDraftDetail) {
   return {
     statutoryDiscountValidationId: draft.draftId,
@@ -936,7 +1171,13 @@ function toAuditReportItem(draft: StatutoryDiscountDraftDetail) {
     requestedAt: draft.requestedAt,
     validatedAt: undefined,
     correlationId: undefined,
+    registrySource: draft.policyContext.registrySource,
     policyCode: draft.policyContext.policyCode,
+    verificationStatus: draft.policyContext.verificationStatus,
+    policyReadinessClassification: draft.policyContext.policyReadinessClassification,
+    requiresManualReview: draft.policyContext.requiresManualReview,
+    policyReadinessReason: draft.policyContext.policyReadinessReason,
+    operatorMessage: draft.policyContext.operatorMessage,
     ordinanceReference: draft.policyContext.ordinanceReference,
     legalBasisReference: draft.policyContext.legalBasisReference,
     appliedTariffSnapshotId: draft.appliedTariffSnapshotId,
@@ -967,13 +1208,20 @@ const seniorNationalPolicy = {
   title: "National fallback policy",
   operatorSummary:
     "Use the national Senior Citizen parking discount policy because no verified local ordinance overrides it for this site.",
+  registrySource: "COMPATIBILITY_POLICY_REFERENCES",
   policyResolutionBasis: "NATIONAL_LAW_FALLBACK",
   policyCode: "PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK",
   policyName: "Senior Citizen Parking Benefit",
   legalBasisReference: "Republic Act No. 9994",
   nationalLawReference: "RA 9994",
   verificationStatus: "VERIFIED_OFFICIAL",
+  policyReadinessClassification: "READY_VERIFIED",
+  requiresManualReview: false,
+  policyReadinessReason: "READY_VERIFIED",
+  operatorMessage: "Policy is verified. Policy readiness is not payment approval.",
+  productionAutoApplicationEligible: true,
   benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+  discountBaseScope: "VAT_EXCLUSIVE",
   evidenceRequired: false
 };
 
@@ -982,15 +1230,23 @@ const pwdLocalPolicy = {
   title: "Verified local policy",
   operatorSummary:
     "Apply the verified city policy for PWD parking benefits. Local policy is active and linked to this site jurisdiction.",
+  registrySource: "DEDICATED_REGISTRY",
   policyResolutionBasis: "LOCAL_ORDINANCE_APPLIED",
   policyCode: "QC-PWD-PARKING-2026",
   policyName: "Quezon City PWD Parking Benefit",
   legalBasisReference: "RA 10754 and verified local ordinance",
   ordinanceReference: "QC Ordinance 2026-04",
   nationalLawReference: "RA 10754",
-  verificationStatus: "VERIFIED_OFFICIAL",
+  verificationStatus: "APPROVED_FOR_PILOT",
+  policyReadinessClassification: "READY_WITH_MANUAL_REVIEW",
+  requiresManualReview: true,
+  policyReadinessReason: "READY_WITH_MANUAL_REVIEW",
+  operatorMessage: "Manual review is required before automatic production application.",
+  productionAutoApplicationEligible: false,
   benefitType: "FREE_DURATION",
-  evidenceRequired: true
+  discountBaseScope: "VAT_EXCLUSIVE",
+  evidenceRequired: true,
+  requiredEvidenceType: "PWD_ID"
 };
 
 const blockedLocalPolicy = {
@@ -998,14 +1254,22 @@ const blockedLocalPolicy = {
   title: "Unverified local policy blocked",
   operatorSummary:
     "A local ordinance candidate exists, but it is not verified. The draft must not be approved using this local policy.",
+  registrySource: "DEDICATED_REGISTRY",
   policyResolutionBasis: "LOCAL_POLICY_BLOCKED",
   policyCode: "LOCAL-UNVERIFIED",
   policyName: "Unverified Local Parking Benefit",
   legalBasisReference: "Local policy verification required",
   ordinanceReference: "Pending verification",
   verificationStatus: "LEAD_UNVERIFIED",
+  policyReadinessClassification: "CONFIGURED_BUT_UNVERIFIED",
+  requiresManualReview: true,
+  policyReadinessReason: "CONFIGURED_BUT_UNVERIFIED",
+  operatorMessage: "Policy is configured but is not verified for production auto-application.",
+  productionAutoApplicationEligible: false,
   benefitType: "FREE_DURATION",
+  discountBaseScope: "VAT_EXCLUSIVE",
   evidenceRequired: true,
+  requiredEvidenceType: "SENIOR_CITIZEN_ID",
   ineligibilityReason: "Local policy is not verified for operator use."
 };
 
