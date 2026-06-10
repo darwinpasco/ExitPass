@@ -13,6 +13,9 @@ import type {
   AuditReportResponse,
   LoadState,
   PolicyContextKind,
+  ProductionPolicyImportDryRunResult,
+  ProductionPolicyImportReviewDecisionAction,
+  ProductionPolicyImportReviewResult,
   StatutoryDiscountDraftDetail,
   StatutoryDiscountEvidenceList,
   EvidenceCaptureMethod,
@@ -26,7 +29,8 @@ const routes = {
   home: "/operator-console",
   audit: "/operator-console/audit",
   queue: "/operator-console/statutory-discounts",
-  detail: "/operator-console/statutory-discounts/"
+  detail: "/operator-console/statutory-discounts/",
+  policyImportReview: "/operator-console/production-policy-import-review"
 };
 
 interface AppProps {
@@ -124,6 +128,13 @@ export function App({ apiClient, initialPath }: AppProps) {
             >
               Audit / Reporting
             </button>
+            <button
+              className={`navLink ${path === routes.policyImportReview ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.policyImportReview)}
+            >
+              Policy Import Review
+            </button>
           </nav>
 
           <div className="statusStack">
@@ -150,6 +161,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.audit ? (
             <AuditReportPage client={client} />
+          ) : path === routes.policyImportReview ? (
+            <ProductionPolicyImportReviewPage client={client} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.home ? (
             <OperatorConsoleHome navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : (
@@ -366,6 +379,283 @@ function OperatorConsoleHome({
         Open work queue
       </button>
     </section>
+  );
+}
+
+function ProductionPolicyImportReviewPage({
+  client,
+  readinessBlockReason
+}: {
+  client: OperatorConsoleApiClient;
+  readinessBlockReason: string | null;
+}) {
+  const [csvContent, setCsvContent] = useState(productionPolicyImportSampleCsv());
+  const [fileName, setFileName] = useState("production-policy-candidate.csv");
+  const [dryRunResult, setDryRunResult] = useState<ProductionPolicyImportDryRunResult | null>(null);
+  const [reviewResult, setReviewResult] = useState<ProductionPolicyImportReviewResult | null>(null);
+  const [reviewerRole, setReviewerRole] = useState<"LEGAL" | "OPS" | "QA" | "DB">("LEGAL");
+  const [decisionReason, setDecisionReason] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<"dry-run" | "submit-review" | ProductionPolicyImportReviewDecisionAction | null>(null);
+
+  async function runDryRun(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+    setError(null);
+    setReviewResult(null);
+
+    if (!csvContent.trim()) {
+      setError("CSV content is required.");
+      return;
+    }
+
+    setSubmitting("dry-run");
+    try {
+      const result = await client.dryRunProductionPolicyImport({
+        csvContent,
+        fileName: fileName.trim() || undefined
+      });
+      setDryRunResult(result);
+      setMessage(result.message);
+    } catch (caught) {
+      setError(mapApiError(caught).message);
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function submitForReview() {
+    setMessage(null);
+    setError(null);
+
+    if (!dryRunResult) {
+      setError("Run dry-run validation before submitting for review.");
+      return;
+    }
+
+    setSubmitting("submit-review");
+    try {
+      const result = await client.submitProductionPolicyImportReview({
+        dryRunResult,
+        fileName: fileName.trim() || undefined
+      });
+      setReviewResult(result);
+      setMessage(result.message);
+    } catch (caught) {
+      setError(mapApiError(caught).message);
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function decide(action: "APPROVE" | "REJECT" | "REQUEST_CHANGES" | "ESCALATE") {
+    setMessage(null);
+    setError(null);
+
+    if (!reviewResult) {
+      setError("Submit the dry-run result for review before recording a decision.");
+      return;
+    }
+
+    if (action !== "APPROVE" && decisionReason.trim().length === 0) {
+      setError(`${action} requires a reason.`);
+      return;
+    }
+
+    const mappedAction: ProductionPolicyImportReviewDecisionAction =
+      action === "APPROVE" ? `APPROVE_${reviewerRole}` : action;
+
+    setSubmitting(mappedAction);
+    try {
+      const result = await client.decideProductionPolicyImportReview({
+        reviewId: reviewResult.submission.reviewId,
+        action: mappedAction,
+        reason: action === "APPROVE" ? decisionReason.trim() || "Approved for DB repo alignment." : decisionReason.trim()
+      });
+      setReviewResult(result);
+      setMessage(result.message);
+    } catch (caught) {
+      setError(mapApiError(caught).message);
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  const decisionDisabled = readinessBlockReason !== null || reviewResult === null || submitting !== null;
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Production Policy Import Review</p>
+          <h2>DB-backed review queue</h2>
+          <p>Dry-run candidate policies, then submit the dry-run result for review queue persistence.</p>
+        </div>
+        <span className="statusPill warningPill">No import execution</span>
+      </section>
+
+      <section className="panel auditGuardrail" aria-labelledby="policy-import-boundary-title">
+        <div className="panelHeader">
+          <h3 id="policy-import-boundary-title">Review-only boundary</h3>
+          <span className="statusPill">Activation blocked</span>
+        </div>
+        <p>This screen does not execute production import.</p>
+        <p>This screen does not activate production policies.</p>
+        <p>Approval means DB repo alignment only.</p>
+        <p>Final approved state is APPROVED_FOR_DB_REPO_ALIGNMENT, not production active.</p>
+        {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
+      </section>
+
+      <section className="panel" aria-labelledby="dry-run-title">
+        <div className="panelHeader">
+          <h3 id="dry-run-title">Dry-run validation</h3>
+          <span className="statusPill">imported=false</span>
+        </div>
+        <form className="policyImportForm" onSubmit={(event) => void runDryRun(event)}>
+          <label>
+            File name
+            <input value={fileName} onChange={(event) => setFileName(event.target.value)} />
+          </label>
+          <label>
+            Candidate CSV
+            <textarea value={csvContent} onChange={(event) => setCsvContent(event.target.value)} />
+          </label>
+          <button type="submit" disabled={readinessBlockReason !== null || submitting !== null}>
+            {submitting === "dry-run" ? "Running dry-run" : "Run dry-run"}
+          </button>
+        </form>
+        {message && <p className="successMessage">{message}</p>}
+        {error && <p className="errorMessage">{error}</p>}
+      </section>
+
+      {dryRunResult && (
+        <section className="panel" aria-labelledby="dry-run-result-title">
+          <div className="panelHeader">
+            <h3 id="dry-run-result-title">Dry-run result</h3>
+            <span className="statusPill">{dryRunResult.dryRunOnly ? "Dry-run only" : "Unexpected state"}</span>
+          </div>
+          <DescriptionList
+            items={[
+              ["Imported", String(dryRunResult.imported)],
+              ["Imported row count", String(dryRunResult.importedRowCount)],
+              ["Dry-run only", String(dryRunResult.dryRunOnly)],
+              ["Total rows", String(dryRunResult.summary.totalRows)],
+              ["Importable rows", String(dryRunResult.summary.importableCount)],
+              ["Fail count", String(dryRunResult.summary.failCount)],
+              ["Correlation ID", dryRunResult.correlationId]
+            ]}
+          />
+          <div className="actionBar">
+            <button
+              type="button"
+              disabled={readinessBlockReason !== null || submitting !== null}
+              onClick={() => void submitForReview()}
+            >
+              {submitting === "submit-review" ? "Submitting for review" : "Submit for review"}
+            </button>
+          </div>
+          {dryRunResult.rows.length > 0 && (
+            <div className="tableScroller policyImportRows">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Row</th>
+                    <th>Policy</th>
+                    <th>Entitlement</th>
+                    <th>Decision</th>
+                    <th>Findings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dryRunResult.rows.map((row) => (
+                    <tr key={`${row.rowNumber}-${row.policyCode ?? "policy"}`}>
+                      <td>{row.rowNumber}</td>
+                      <td>{row.policyCode ?? "Not available"}</td>
+                      <td>{row.entitlementType ?? "Not available"}</td>
+                      <td>{row.decision}</td>
+                      <td>{row.findings.map((finding) => finding.message).join("; ") || "None"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {reviewResult && (
+        <section className="panel" aria-labelledby="review-result-title">
+          <div className="panelHeader">
+            <h3 id="review-result-title">Persisted review</h3>
+            <span className={`statusPill ${statusClass(reviewResult.submission.status)}`}>{reviewResult.submission.status}</span>
+          </div>
+          <DescriptionList
+            items={[
+              ["Review ID", reviewResult.submission.reviewId],
+              ["Status", reviewResult.submission.status],
+              ["Imported", String(reviewResult.imported)],
+              ["Production policy activation blocked", String(reviewResult.productionPolicyActivationBlocked)],
+              ["Approval meaning", "DB repo alignment only"],
+              ["Final approved state", "APPROVED_FOR_DB_REPO_ALIGNMENT"],
+              ["History count", String(reviewResult.submission.history.length)],
+              ["Decision count", String(reviewResult.submission.reviewerDecisions.length)]
+            ]}
+          />
+
+          <div className="policyReviewDecisionControls" aria-label="Production policy review decision controls">
+            <label>
+              Reviewer role for approve
+              <select value={reviewerRole} onChange={(event) => setReviewerRole(event.target.value as typeof reviewerRole)}>
+                <option value="LEGAL">Legal</option>
+                <option value="OPS">Ops</option>
+                <option value="QA">QA</option>
+                <option value="DB">DB</option>
+              </select>
+            </label>
+            <label>
+              Decision reason
+              <input
+                value={decisionReason}
+                placeholder="Reviewed for DB repo alignment"
+                onChange={(event) => setDecisionReason(event.target.value)}
+              />
+            </label>
+            <div className="actionBar">
+              <button type="button" disabled={decisionDisabled} onClick={() => void decide("APPROVE")}>
+                Approve
+              </button>
+              <button type="button" disabled={decisionDisabled} onClick={() => void decide("REJECT")}>
+                Reject
+              </button>
+              <button type="button" disabled={decisionDisabled} onClick={() => void decide("REQUEST_CHANGES")}>
+                Request changes
+              </button>
+              <button type="button" disabled={decisionDisabled} onClick={() => void decide("ESCALATE")}>
+                Escalate
+              </button>
+            </div>
+          </div>
+
+          {reviewResult.findings.length > 0 && (
+            <ul className="activityList" aria-label="Review findings">
+              {reviewResult.findings.map((finding) => (
+                <li key={`${finding.severity}-${finding.message}`}>
+                  {finding.severity}: {finding.message}
+                </li>
+              ))}
+            </ul>
+          )}
+          <ul className="activityList" aria-label="Review history">
+            {reviewResult.submission.history.map((entry) => (
+              <li key={`${entry.action}-${entry.occurredAt}`}>
+                {entry.action} - {entry.status} - {formatDateTime(entry.occurredAt)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
   );
 }
 
@@ -1427,6 +1717,101 @@ function normalizePath(path: string) {
   }
 
   return path;
+}
+
+function productionPolicyImportSampleCsv() {
+  return [
+    [
+      "policy_code",
+      "policy_name",
+      "entitlement_type",
+      "lgu_code",
+      "jurisdiction_name",
+      "site_group_code",
+      "site_code",
+      "policy_level",
+      "policy_type",
+      "policy_resolution_basis",
+      "benefit_type",
+      "discount_base_scope",
+      "free_duration_minutes",
+      "initial_rate_exempt",
+      "full_fee_exempt",
+      "overnight_excluded",
+      "valet_excluded",
+      "standalone_parking_excluded",
+      "driver_or_passenger_required",
+      "beneficiary_residency_scope",
+      "requires_evidence",
+      "required_evidence_type",
+      "requires_operator_validation",
+      "legal_basis_reference",
+      "ordinance_reference",
+      "national_law_reference",
+      "source_reference",
+      "verification_status",
+      "effective_from",
+      "effective_to",
+      "reviewed_by",
+      "reviewed_at",
+      "approved_by",
+      "approved_at",
+      "notes",
+      "review_status",
+      "review_owner",
+      "legal_review_decision",
+      "product_review_decision",
+      "ops_review_decision",
+      "engineering_review_decision",
+      "qa_review_decision",
+      "approval_notes"
+    ].join(","),
+    [
+      "PH_VALID_SC_IMPORT_001",
+      "Controlled Senior Citizen Candidate",
+      "SENIOR_CITIZEN",
+      "QAX",
+      "Controlled Review City",
+      "CONTROLLED_GROUP",
+      "CONTROLLED_SITE",
+      "LOCAL_ORDINANCE",
+      "LOCAL_ORDINANCE",
+      "LOCAL_ORDINANCE_APPLIED",
+      "STATUTORY_DISCOUNT_VAT_EXEMPT",
+      "VAT_EXCLUSIVE",
+      "",
+      "false",
+      "false",
+      "true",
+      "true",
+      "false",
+      "true",
+      "RESIDENT_ONLY",
+      "true",
+      "SENIOR_CITIZEN_ID",
+      "true",
+      "CONTROLLED LEGAL REFERENCE",
+      "ORD-2099-001",
+      "",
+      "CONTROLLED SOURCE REFERENCE",
+      "ACTIVE_APPROVED",
+      "2099-01-01",
+      "",
+      "reviewer",
+      "2099-01-02T00:00:00Z",
+      "approver",
+      "2099-01-03T00:00:00Z",
+      "Controlled review note",
+      "APPROVE_FOR_IMPORT",
+      "review-owner",
+      "APPROVE",
+      "APPROVE",
+      "APPROVE",
+      "APPROVE",
+      "APPROVE",
+      "Controlled approval note"
+    ].join(",")
+  ].join("\n");
 }
 
 function shortId(id: string) {

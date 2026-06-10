@@ -344,3 +344,111 @@ export interface StatutoryDiscountEvidenceCaptureResult {
   currentDraftStatus: DraftStatus;
   message: string;
 }
+
+export interface ProductionPolicyImportDryRunInput {
+  csvContent: string;
+  fileName?: string;
+}
+
+export interface ProductionPolicyImportDryRunSummary {
+  totalRows: number;
+  passCount: number;
+  warnCount: number;
+  failCount: number;
+  importableCount: number;
+  manualReviewCount: number;
+  notImportableCount: number;
+  dryRunOnlyCount: number;
+  duplicateCount: number;
+}
+
+export interface ProductionPolicyImportDryRunFinding {
+  severity: string;
+  code: string;
+  message: string;
+  fieldName?: string;
+}
+
+export interface ProductionPolicyImportDryRunRow {
+  rowNumber: number;
+  policyCode?: string;
+  entitlementType?: string;
+  decision: string;
+  findings: ProductionPolicyImportDryRunFinding[];
+}
+
+export interface ProductionPolicyImportDryRunResult {
+  imported: false;
+  importedRowCount: 0;
+  dryRunOnly: true;
+  message: string;
+  summary: ProductionPolicyImportDryRunSummary;
+  rows: ProductionPolicyImportDryRunRow[];
+  correlationId: string;
+}
+
+export interface ProductionPolicyImportReviewSubmitInput {
+  dryRunResult: ProductionPolicyImportDryRunResult;
+  fileName?: string;
+}
+
+export type ProductionPolicyImportReviewDecisionAction =
+  | "APPROVE_LEGAL"
+  | "APPROVE_OPS"
+  | "APPROVE_QA"
+  | "APPROVE_DB"
+  | "REJECT"
+  | "REQUEST_CHANGES"
+  | "ESCALATE";
+
+export interface ProductionPolicyImportReviewDecisionInput {
+  reviewId: string;
+  action: ProductionPolicyImportReviewDecisionAction;
+  reason?: string;
+}
+
+export interface ProductionPolicyImportReviewDecision {
+  reviewerRole: string;
+  action: string;
+  reviewerOperatorId: string;
+  reason?: string;
+  decidedAt: string;
+  correlationId: string;
+}
+
+export interface ProductionPolicyImportReviewHistoryEntry {
+  action: string;
+  status: string;
+  actorOperatorId: string;
+  reviewerRole?: string;
+  reason?: string;
+  occurredAt: string;
+  correlationId: string;
+}
+
+export interface ProductionPolicyImportReviewFinding {
+  severity: string;
+  message: string;
+  fieldName?: string;
+}
+
+export interface ProductionPolicyImportReviewSubmission {
+  reviewId: string;
+  makerOperatorId: string;
+  fileName?: string;
+  status: string;
+  dryRunSummary: ProductionPolicyImportDryRunSummary;
+  reviewerDecisions: ProductionPolicyImportReviewDecision[];
+  history: ProductionPolicyImportReviewHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductionPolicyImportReviewResult {
+  imported: false;
+  productionPolicyActivationBlocked: true;
+  message: string;
+  submission: ProductionPolicyImportReviewSubmission;
+  findings: ProductionPolicyImportReviewFinding[];
+  correlationId: string;
+}
