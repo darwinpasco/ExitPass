@@ -136,9 +136,15 @@ Production statutory discount auto-application remains NO-GO until approved Seni
 4. Route reviewed candidates through maker/checker approval.
 5. Keep production auto-application disabled until readiness checks pass with approved production rows.
 
+## Implementation Status After #262
+
+Backend dry-run validation now also exists as a Central PMS application service foundation. It parses import-template CSV text, accepts candidate worksheet review columns, validates rows, and returns row-level `PASS` / `WARN` / `FAIL` findings with aggregate dry-run counts.
+
+No production import/write endpoint is active in #262. No policies are inserted, seeded, activated, or approved by the service.
+
 Recommended next slice:
 
-- #262 Production policy import/admin API design
+- #263 Production policy import/admin dry-run API endpoint
 
 ## Boundary Confirmations
 
