@@ -144,7 +144,17 @@ No production import/write endpoint is active in #262. No policies are inserted,
 
 Recommended next slice:
 
-- #263 Production policy import/admin dry-run API endpoint
+- #264 Production policy import/admin maker-checker design
+
+## Implementation Status After #263
+
+Dry-run validation is now exposed through the Operator Console admin API endpoint:
+
+- `POST /v1/ops/operator-console/statutory-discounts/policies/import/dry-run`
+
+The endpoint returns row-level findings and aggregate dry-run summary fields with `imported=false`, `importedRowCount=0`, and `dryRunOnly=true`. It does not import, seed, activate, approve, or write policy rows.
+
+Production remains NO-GO until approved Senior Citizen and PWD rows exist and pass readiness verification.
 
 ## Boundary Confirmations
 
