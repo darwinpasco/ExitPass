@@ -130,6 +130,7 @@ app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
+app.MapOperatorConsoleProductionPolicyImportEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -217,6 +218,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountPolicyResolution")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImport")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
                 .AddSource("ExitPass.CentralPms.Api.EventRecovery")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
@@ -406,6 +408,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>(_ =>
         new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionService, OperatorConsoleStatutoryDiscountPolicyResolutionService>();
+    builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
