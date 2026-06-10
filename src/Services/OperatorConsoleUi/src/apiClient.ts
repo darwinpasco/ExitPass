@@ -6,6 +6,11 @@ import type {
   DraftStatus,
   EntitlementType,
   OperatorConsoleApiError,
+  ProductionPolicyImportDryRunInput,
+  ProductionPolicyImportDryRunResult,
+  ProductionPolicyImportReviewDecisionInput,
+  ProductionPolicyImportReviewResult,
+  ProductionPolicyImportReviewSubmitInput,
   StatutoryDiscountDecisionInput,
   StatutoryDiscountDecisionResult,
   StatutoryDiscountDraftDetail,
@@ -30,6 +35,9 @@ export interface OperatorConsoleApiClient {
   applyStatutoryDiscountPayableBasis(
     input: StatutoryDiscountPayableBasisApplicationInput
   ): Promise<StatutoryDiscountPayableBasisApplicationResult>;
+  dryRunProductionPolicyImport(input: ProductionPolicyImportDryRunInput): Promise<ProductionPolicyImportDryRunResult>;
+  submitProductionPolicyImportReview(input: ProductionPolicyImportReviewSubmitInput): Promise<ProductionPolicyImportReviewResult>;
+  decideProductionPolicyImportReview(input: ProductionPolicyImportReviewDecisionInput): Promise<ProductionPolicyImportReviewResult>;
 }
 
 interface QueueResponse {
@@ -409,6 +417,63 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       );
       const body = await parseResponse<PayableBasisApplicationResponseDto>(response);
       return toPayableBasisResult(body);
+    },
+
+    async dryRunProductionPolicyImport(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/policies/import/dry-run`,
+        {
+          method: "POST",
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
+          body: JSON.stringify({
+            csvContent: input.csvContent,
+            fileName: input.fileName ?? null,
+            submittedByOperatorId: defaultOperatorContext.userId,
+            correlationId
+          })
+        }
+      );
+
+      return parseResponse<ProductionPolicyImportDryRunResult>(response);
+    },
+
+    async submitProductionPolicyImportReview(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/policies/import/reviews`,
+        {
+          method: "POST",
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
+          body: JSON.stringify({
+            dryRunResult: input.dryRunResult,
+            fileName: input.fileName ?? null,
+            submittedByOperatorId: defaultOperatorContext.userId,
+            correlationId
+          })
+        }
+      );
+
+      return parseResponse<ProductionPolicyImportReviewResult>(response);
+    },
+
+    async decideProductionPolicyImportReview(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/policies/import/reviews/${encodeURIComponent(input.reviewId)}/decision`,
+        {
+          method: "POST",
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
+          body: JSON.stringify({
+            action: input.action,
+            reason: input.reason ?? null,
+            reviewerOperatorId: defaultOperatorContext.userId,
+            correlationId
+          })
+        }
+      );
+
+      return parseResponse<ProductionPolicyImportReviewResult>(response);
     }
   };
 }
@@ -462,10 +527,14 @@ export function createMockOperatorConsoleApiClient(
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
     onPayableBasisApply?: (input: StatutoryDiscountPayableBasisApplicationInput) => void;
+    onProductionPolicyDryRun?: (input: ProductionPolicyImportDryRunInput) => void;
+    onProductionPolicyReviewSubmit?: (input: ProductionPolicyImportReviewSubmitInput) => void;
+    onProductionPolicyReviewDecision?: (input: ProductionPolicyImportReviewDecisionInput) => void;
   } = {}
 ): OperatorConsoleApiClient {
   const drafts = (options.drafts ?? mockDrafts).map((draft) => ({ ...draft }));
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
+  let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
     async evaluateAccessReadiness(input) {
       await delay();
@@ -627,6 +696,119 @@ export function createMockOperatorConsoleApiClient(
         currencyCode: draft?.currencyCode,
         message: "Payable basis applied."
       };
+    },
+
+    async dryRunProductionPolicyImport(input) {
+      await delay();
+      options.onProductionPolicyDryRun?.(input);
+      const rowCount = Math.max(input.csvContent.split(/\r?\n/).filter((line) => line.trim()).length - 1, 0);
+      return {
+        imported: false,
+        importedRowCount: 0,
+        dryRunOnly: true,
+        message: "Dry run completed. No policies were imported.",
+        summary: {
+          totalRows: rowCount,
+          passCount: rowCount > 0 ? rowCount : 0,
+          warnCount: 0,
+          failCount: 0,
+          importableCount: rowCount,
+          manualReviewCount: 0,
+          notImportableCount: 0,
+          dryRunOnlyCount: 0,
+          duplicateCount: 0
+        },
+        rows: rowCount > 0
+          ? [
+              {
+                rowNumber: 2,
+                policyCode: "PH_VALID_SC_IMPORT_001",
+                entitlementType: "SENIOR_CITIZEN",
+                decision: "IMPORTABLE_AFTER_APPROVAL",
+                findings: []
+              }
+            ]
+          : [],
+        correlationId: newCorrelationId()
+      };
+    },
+
+    async submitProductionPolicyImportReview(input) {
+      await delay();
+      options.onProductionPolicyReviewSubmit?.(input);
+      productionPolicyReview = {
+        imported: false,
+        productionPolicyActivationBlocked: true,
+        message: "Review submission created. No policies were imported.",
+        submission: {
+          reviewId: "99000000-0000-0000-0000-000000000001",
+          makerOperatorId: defaultOperatorContext.userId,
+          fileName: input.fileName,
+          status: "LEGAL_REVIEW_PENDING",
+          dryRunSummary: input.dryRunResult.summary,
+          reviewerDecisions: [],
+          history: [
+            {
+              action: "SUBMIT_FOR_REVIEW",
+              status: "LEGAL_REVIEW_PENDING",
+              actorOperatorId: defaultOperatorContext.userId,
+              occurredAt: new Date().toISOString(),
+              correlationId: input.dryRunResult.correlationId
+            }
+          ],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        findings: [],
+        correlationId: input.dryRunResult.correlationId
+      };
+
+      return productionPolicyReview;
+    },
+
+    async decideProductionPolicyImportReview(input) {
+      await delay();
+      options.onProductionPolicyReviewDecision?.(input);
+      const current = productionPolicyReview ?? mockProductionPolicyReview();
+      const approved = input.action.startsWith("APPROVE");
+      const status = approved ? "APPROVED_FOR_DB_REPO_ALIGNMENT" : input.action === "REJECT" ? "REJECTED" : "SUBMITTED_FOR_REVIEW";
+      const reviewerRole = input.action.startsWith("APPROVE") ? input.action.replace("APPROVE_", "") : undefined;
+      productionPolicyReview = {
+        ...current,
+        message: "Review decision recorded. No policies were imported or activated.",
+        submission: {
+          ...current.submission,
+          status,
+          reviewerDecisions: approved
+            ? [
+                ...current.submission.reviewerDecisions,
+                {
+                  reviewerRole: reviewerRole ?? "LEGAL",
+                  action: input.action,
+                  reviewerOperatorId: defaultOperatorContext.userId,
+                  reason: input.reason,
+                  decidedAt: new Date().toISOString(),
+                  correlationId: current.correlationId
+                }
+              ]
+            : current.submission.reviewerDecisions,
+          history: [
+            ...current.submission.history,
+            {
+              action: input.action,
+              status,
+              actorOperatorId: defaultOperatorContext.userId,
+              reviewerRole,
+              reason: input.reason,
+              occurredAt: new Date().toISOString(),
+              correlationId: current.correlationId
+            }
+          ],
+          updatedAt: new Date().toISOString()
+        }
+      };
+
+      return productionPolicyReview;
     }
   };
 }
@@ -1060,6 +1242,46 @@ function mockAccessReadiness(input: AccessReadinessRequest): AccessReadinessResp
     correlationId,
     retryable: false,
     nextOperatorAction: undefined
+  };
+}
+
+function mockProductionPolicyReview(): ProductionPolicyImportReviewResult {
+  const now = new Date().toISOString();
+  return {
+    imported: false,
+    productionPolicyActivationBlocked: true,
+    message: "Review submission created. No policies were imported.",
+    submission: {
+      reviewId: "99000000-0000-0000-0000-000000000001",
+      makerOperatorId: defaultOperatorContext.userId,
+      fileName: "candidate.csv",
+      status: "LEGAL_REVIEW_PENDING",
+      dryRunSummary: {
+        totalRows: 1,
+        passCount: 1,
+        warnCount: 0,
+        failCount: 0,
+        importableCount: 1,
+        manualReviewCount: 0,
+        notImportableCount: 0,
+        dryRunOnlyCount: 0,
+        duplicateCount: 0
+      },
+      reviewerDecisions: [],
+      history: [
+        {
+          action: "SUBMIT_FOR_REVIEW",
+          status: "LEGAL_REVIEW_PENDING",
+          actorOperatorId: defaultOperatorContext.userId,
+          occurredAt: now,
+          correlationId: "99000000-0000-0000-0000-000000000099"
+        }
+      ],
+      createdAt: now,
+      updatedAt: now
+    },
+    findings: [],
+    correlationId: "99000000-0000-0000-0000-000000000099"
   };
 }
 

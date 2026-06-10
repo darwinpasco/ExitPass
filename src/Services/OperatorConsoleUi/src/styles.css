@@ -651,6 +651,30 @@ dd {
   gap: 7px;
 }
 
+.policyImportForm,
+.policyReviewDecisionControls {
+  display: grid;
+  gap: 12px;
+}
+
+.policyImportForm label,
+.policyReviewDecisionControls label {
+  color: #465969;
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 7px;
+}
+
+.policyImportForm textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  min-height: 220px;
+}
+
+.policyImportRows {
+  margin-top: 16px;
+}
+
 .checkboxField {
   align-items: center;
   display: flex !important;

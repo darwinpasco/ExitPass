@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -8,7 +8,13 @@ import {
   mapApiError,
   type OperatorConsoleApiClient
 } from "./apiClient";
-import type { AccessReadinessResponse, StatutoryDiscountDraftDetail, StatutoryDiscountQueueItem } from "./types";
+import type {
+  AccessReadinessResponse,
+  ProductionPolicyImportDryRunResult,
+  ProductionPolicyImportReviewResult,
+  StatutoryDiscountDraftDetail,
+  StatutoryDiscountQueueItem
+} from "./types";
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
 const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
@@ -43,7 +49,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       listStatutoryDiscountEvidence: vi.fn(),
       captureStatutoryDiscountEvidence: vi.fn(),
       submitStatutoryDiscountDecision: vi.fn(),
-      applyStatutoryDiscountPayableBasis: vi.fn()
+      applyStatutoryDiscountPayableBasis: vi.fn(),
+      dryRunProductionPolicyImport: vi.fn(),
+      submitProductionPolicyImportReview: vi.fn(),
+      decideProductionPolicyImportReview: vi.fn()
     };
 
     const { rerender } = render(
@@ -685,6 +694,165 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(requestBody.idempotencyKey).toMatch(`operator-console-ui-approve-${firstDraftId}-`);
   });
 
+  it("ProductionPolicyImportReview_SubmitsDryRunForReviewAndDisplaysReviewOnlyState", async () => {
+    const onDryRun = vi.fn();
+    const onSubmitReview = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          onProductionPolicyDryRun: onDryRun,
+          onProductionPolicyReviewSubmit: onSubmitReview
+        })}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "DB-backed review queue" })).toBeInTheDocument();
+    expect(screen.getByText("This screen does not execute production import.")).toBeInTheDocument();
+    expect(screen.getByText("This screen does not activate production policies.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Run dry-run" }));
+    expect(await screen.findByRole("heading", { name: "Dry-run result" })).toBeInTheDocument();
+    expect(screen.getByText("Dry run completed. No policies were imported.")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Submit for review" }));
+    expect(await screen.findByRole("heading", { name: "Persisted review" })).toBeInTheDocument();
+    expect(screen.getAllByText("LEGAL_REVIEW_PENDING").length).toBeGreaterThan(0);
+    expect(screen.getByText("Production policy activation blocked")).toBeInTheDocument();
+    expect(screen.getByText("DB repo alignment only")).toBeInTheDocument();
+    const reviewPanel = screen.getByRole("heading", { name: "Persisted review" }).closest("section");
+    expect(reviewPanel).not.toBeNull();
+    expect(within(reviewPanel as HTMLElement).getByText("false")).toBeInTheDocument();
+    expect(within(reviewPanel as HTMLElement).getByText("true")).toBeInTheDocument();
+    expect(screen.getByText("Final approved state is APPROVED_FOR_DB_REPO_ALIGNMENT, not production active.")).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/production active<\/dt><dd>true/i);
+    expect(document.body.innerHTML).not.toMatch(/activated<\/dt><dd>true/i);
+    expect(onDryRun).toHaveBeenCalled();
+    expect(onSubmitReview).toHaveBeenCalledWith(expect.objectContaining({
+      fileName: "production-policy-candidate.csv",
+      dryRunResult: expect.objectContaining({ imported: false, dryRunOnly: true })
+    }));
+  });
+
+  it("ProductionPolicyImportReview_DecisionControlsRecordApprovalForDbRepoAlignmentOnly", async () => {
+    const onDecision = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onProductionPolicyReviewDecision: onDecision })}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Run dry-run" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Submit for review" }));
+    await userEvent.selectOptions(await screen.findByLabelText(/reviewer role for approve/i), "DB");
+    await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
+
+    expect(await screen.findByText("APPROVED_FOR_DB_REPO_ALIGNMENT")).toBeInTheDocument();
+    expect(screen.getByText("Review decision recorded. No policies were imported or activated.")).toBeInTheDocument();
+    const reviewPanel = screen.getByRole("heading", { name: "Persisted review" }).closest("section");
+    expect(reviewPanel).not.toBeNull();
+    expect(within(reviewPanel as HTMLElement).getByText("false")).toBeInTheDocument();
+    expect(within(reviewPanel as HTMLElement).getByText("true")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /activate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /execute import/i })).not.toBeInTheDocument();
+    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({
+      reviewId: "99000000-0000-0000-0000-000000000001",
+      action: "APPROVE_DB"
+    }));
+  });
+
+  it("ProductionPolicyImportReview_RejectRequestChangesAndEscalateRequireReason", async () => {
+    const onDecision = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onProductionPolicyReviewDecision: onDecision })}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "Run dry-run" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Submit for review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Reject" }));
+
+    expect(screen.getByText("REJECT requires a reason.")).toBeInTheDocument();
+    expect(onDecision).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText(/decision reason/i), "Needs source correction");
+    await userEvent.click(screen.getByRole("button", { name: "Request changes" }));
+    await waitFor(() => expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({
+      action: "REQUEST_CHANGES",
+      reason: "Needs source correction"
+    })));
+    await userEvent.click(screen.getByRole("button", { name: "Escalate" }));
+
+    await waitFor(() => expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({
+      action: "ESCALATE",
+      reason: "Needs source correction"
+    })));
+  });
+
+  it("OperatorConsoleApi_ProductionPolicyReviewEndpointsUseExpectedUrlsAndNeverCallActivation", async () => {
+    const dryRunResult = productionPolicyDryRunResponse();
+    const reviewResponse = productionPolicyReviewResponse("LEGAL_REVIEW_PENDING");
+    const approvedReviewResponse = productionPolicyReviewResponse("APPROVED_FOR_DB_REPO_ALIGNMENT", "APPROVE_DB");
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(dryRunResult))
+      .mockResolvedValueOnce(jsonResponse(reviewResponse))
+      .mockResolvedValueOnce(jsonResponse(approvedReviewResponse));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const dryRun = await client.dryRunProductionPolicyImport({
+      csvContent: "policy_code\nPH_VALID_SC_IMPORT_001",
+      fileName: "candidate.csv"
+    });
+    const submitted = await client.submitProductionPolicyImportReview({
+      dryRunResult: dryRun,
+      fileName: "candidate.csv"
+    });
+    const decided = await client.decideProductionPolicyImportReview({
+      reviewId: submitted.submission.reviewId,
+      action: "APPROVE_DB",
+      reason: "Approved for DB repo alignment."
+    });
+
+    expect(dryRun.imported).toBe(false);
+    expect(submitted.productionPolicyActivationBlocked).toBe(true);
+    expect(decided.submission.status).toBe("APPROVED_FOR_DB_REPO_ALIGNMENT");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/statutory-discounts/policies/import/dry-run",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/statutory-discounts/policies/import/reviews",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://central-pms.test/v1/ops/operator-console/statutory-discounts/policies/import/reviews/${submitted.submission.reviewId}/decision`,
+      expect.objectContaining({ method: "POST" })
+    );
+
+    const submitBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
+    const decisionBody = JSON.parse(fetchMock.mock.calls[2][1]?.body as string);
+    expect(submitBody).toEqual(expect.objectContaining({
+      fileName: "candidate.csv",
+      dryRunResult: expect.objectContaining({ imported: false, dryRunOnly: true })
+    }));
+    expect(decisionBody).toEqual(expect.objectContaining({
+      action: "APPROVE_DB",
+      reason: "Approved for DB repo alignment."
+    }));
+    expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+    expectOperatorContextHeaders(fetchMock.mock.calls[2][1]?.headers);
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(calledUrls).not.toMatch(/activate/i);
+    expect(calledUrls).not.toMatch(/execution/i);
+    expect(calledUrls).not.toMatch(/execute/i);
+    expect(calledUrls).not.toMatch(/import\/run/i);
+  });
+
   it("OperatorConsole_DoesNotExposeOutOfScopeControls", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -851,6 +1019,86 @@ function blockedReadiness(): AccessReadinessResponse {
     correlationId: "00000000-0000-0000-0000-00000000feed",
     retryable: false,
     nextOperatorAction: "Enroll and activate a production device, shift, and site assignment."
+  };
+}
+
+function productionPolicyDryRunResponse(): ProductionPolicyImportDryRunResult {
+  return {
+    imported: false,
+    importedRowCount: 0,
+    dryRunOnly: true,
+    message: "Dry run completed. No policies were imported.",
+    summary: {
+      totalRows: 1,
+      passCount: 1,
+      warnCount: 0,
+      failCount: 0,
+      importableCount: 1,
+      manualReviewCount: 0,
+      notImportableCount: 0,
+      dryRunOnlyCount: 1,
+      duplicateCount: 0
+    },
+    rows: [
+      {
+        rowNumber: 2,
+        policyCode: "PH_VALID_SC_IMPORT_001",
+        entitlementType: "SENIOR_CITIZEN",
+        decision: "IMPORTABLE_AFTER_APPROVAL",
+        findings: []
+      }
+    ],
+    correlationId: "99000000-0000-0000-0000-000000000099"
+  };
+}
+
+function productionPolicyReviewResponse(status: string, action?: string): ProductionPolicyImportReviewResult {
+  const now = "2026-06-10T08:00:00+08:00";
+  return {
+    imported: false,
+    productionPolicyActivationBlocked: true,
+    message: action
+      ? "Review decision recorded. No policies were imported or activated."
+      : "Review submission created. No policies were imported.",
+    submission: {
+      reviewId: "99000000-0000-0000-0000-000000000001",
+      makerOperatorId: "77000000-0000-0000-0000-000000000010",
+      fileName: "candidate.csv",
+      status,
+      dryRunSummary: productionPolicyDryRunResponse().summary,
+      reviewerDecisions: action
+        ? [
+            {
+              reviewerRole: "DB",
+              action,
+              reviewerOperatorId: "77000000-0000-0000-0000-000000000010",
+              reason: "Approved for DB repo alignment.",
+              decidedAt: now,
+              correlationId: "99000000-0000-0000-0000-000000000099"
+            }
+          ]
+        : [],
+      history: [
+        {
+          action: action ?? "SUBMIT_FOR_REVIEW",
+          status,
+          actorOperatorId: "77000000-0000-0000-0000-000000000010",
+          reviewerRole: action ? "DB" : undefined,
+          reason: action ? "Approved for DB repo alignment." : undefined,
+          occurredAt: now,
+          correlationId: "99000000-0000-0000-0000-000000000099"
+        }
+      ],
+      createdAt: now,
+      updatedAt: now
+    },
+    findings: [
+      {
+        severity: "INFO",
+        message: "Review-only path; production policy activation remains blocked."
+      }
+    ],
+    correlationId: "99000000-0000-0000-0000-000000000099"
   };
 }
 
