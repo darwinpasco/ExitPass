@@ -4,10 +4,12 @@ public sealed record ProductionPolicyImportReviewSubmission(
     Guid ReviewId,
     Guid MakerOperatorId,
     string? FileName,
+    string SubmissionFingerprint,
     ProductionPolicyImportReviewSubmissionStatus Status,
     ProductionPolicyImportDryRunResult DryRunResult,
     IReadOnlyList<ProductionPolicyImportReviewDecision> ReviewerDecisions,
     IReadOnlyList<ProductionPolicyImportReviewHistoryEntry> History,
+    IReadOnlyList<ProductionPolicyImportReviewFinding> Findings,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     Guid CorrelationId);
@@ -82,6 +84,7 @@ public enum ProductionPolicyImportReviewDecisionAction
     APPROVE_QA,
     APPROVE_DB,
     REJECT,
+    ESCALATE,
     CANCEL,
     MARK_SUPERSEDED
 }

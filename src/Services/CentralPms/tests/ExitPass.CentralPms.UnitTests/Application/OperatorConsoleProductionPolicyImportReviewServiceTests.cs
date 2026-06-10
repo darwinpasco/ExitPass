@@ -39,6 +39,20 @@ public sealed class OperatorConsoleProductionPolicyImportReviewServiceTests
     }
 
     [Fact]
+    public async Task SubmitForReviewAsync_WhenActiveSubmissionIsReplayed_ReusesExistingReview()
+    {
+        var sut = Sut(out var queue);
+
+        var first = await SubmitAsync(sut, DryRunResult());
+        var second = await SubmitAsync(sut, DryRunResult());
+
+        second.Submission.ReviewId.Should().Be(first.Submission.ReviewId);
+        second.Message.Should().Contain("already exists");
+        second.PoliciesImported.Should().BeFalse();
+        queue.SaveCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task DecideAsync_WhenDryRunHasFailFindings_BlocksApprovalForDbRepoAlignment()
     {
         var sut = Sut(out var queue);
@@ -264,6 +278,21 @@ public sealed class OperatorConsoleProductionPolicyImportReviewServiceTests
         public bool DbWriteRequested => false;
 
         public ProductionPolicyImportReviewSubmission? LastSaved { get; private set; }
+
+        public Task<ProductionPolicyImportReviewSubmission?> FindActiveByFingerprintAsync(
+            Guid makerOperatorId,
+            string submissionFingerprint,
+            CancellationToken cancellationToken)
+        {
+            var submission = _submissions.Values.FirstOrDefault(value =>
+                value.MakerOperatorId == makerOperatorId &&
+                value.SubmissionFingerprint == submissionFingerprint &&
+                value.Status is not ProductionPolicyImportReviewSubmissionStatus.REJECTED and
+                    not ProductionPolicyImportReviewSubmissionStatus.CANCELLED and
+                    not ProductionPolicyImportReviewSubmissionStatus.SUPERSEDED);
+
+            return Task.FromResult(submission);
+        }
 
         public Task<ProductionPolicyImportReviewSubmission?> GetAsync(
             Guid reviewId,

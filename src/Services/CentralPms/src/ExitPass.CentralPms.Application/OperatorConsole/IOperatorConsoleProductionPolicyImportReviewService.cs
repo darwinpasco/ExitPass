@@ -13,6 +13,11 @@ public interface IOperatorConsoleProductionPolicyImportReviewService
 
 public interface IOperatorConsoleProductionPolicyImportReviewQueue
 {
+    Task<ProductionPolicyImportReviewSubmission?> FindActiveByFingerprintAsync(
+        Guid makerOperatorId,
+        string submissionFingerprint,
+        CancellationToken cancellationToken);
+
     Task<ProductionPolicyImportReviewSubmission?> GetAsync(
         Guid reviewId,
         CancellationToken cancellationToken);

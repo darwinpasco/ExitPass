@@ -1,7 +1,18 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
 public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperatorConsoleProductionPolicyImportReviewService
 {
+    private static readonly JsonSerializerOptions FingerprintJsonOptions = new()
+    {
+        Converters = { new JsonStringEnumConverter() },
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     private static readonly ProductionPolicyImportReviewerRole[] RequiredReviewerRoles =
     [
         ProductionPolicyImportReviewerRole.LEGAL,
@@ -39,6 +50,25 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
 
         var now = DateTimeOffset.UtcNow;
         var correlationId = request.CorrelationId ?? request.DryRunResult.CorrelationId ?? Guid.NewGuid();
+        var submissionFingerprint = ComputeSubmissionFingerprint(
+            request.MakerOperatorId,
+            request.FileName,
+            request.DryRunResult);
+
+        var existing = await _queue.FindActiveByFingerprintAsync(
+            request.MakerOperatorId,
+            submissionFingerprint,
+            cancellationToken);
+
+        if (existing is not null)
+        {
+            return new ProductionPolicyImportReviewSubmitResult(
+                existing,
+                PoliciesImported: false,
+                "Active review submission already exists. No policies were imported.",
+                existing.Findings);
+        }
+
         var status = request.DryRunResult.FailCount > 0
             ? ProductionPolicyImportReviewSubmissionStatus.SUBMITTED_FOR_REVIEW
             : ProductionPolicyImportReviewSubmissionStatus.LEGAL_REVIEW_PENDING;
@@ -53,21 +83,6 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
                 now,
                 correlationId)
         };
-
-        var submission = new ProductionPolicyImportReviewSubmission(
-            Guid.NewGuid(),
-            request.MakerOperatorId,
-            request.FileName,
-            status,
-            request.DryRunResult,
-            Array.Empty<ProductionPolicyImportReviewDecision>(),
-            history,
-            now,
-            now,
-            correlationId);
-
-        await _queue.SaveAsync(submission, cancellationToken);
-
         var findings = request.DryRunResult.FailCount > 0
             ? new[]
             {
@@ -76,6 +91,22 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
                     "Dry-run FAIL findings must be resolved before DB repo alignment approval.")
             }
             : Array.Empty<ProductionPolicyImportReviewFinding>();
+
+        var submission = new ProductionPolicyImportReviewSubmission(
+            Guid.NewGuid(),
+            request.MakerOperatorId,
+            request.FileName,
+            submissionFingerprint,
+            status,
+            request.DryRunResult,
+            Array.Empty<ProductionPolicyImportReviewDecision>(),
+            history,
+            findings,
+            now,
+            now,
+            correlationId);
+
+        await _queue.SaveAsync(submission, cancellationToken);
 
         return new ProductionPolicyImportReviewSubmitResult(
             submission,
@@ -100,10 +131,10 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
             throw new InvalidOperationException($"Review submission is terminal with status {submission.Status}.");
         }
 
-        if ((request.Action is ProductionPolicyImportReviewDecisionAction.REJECT or ProductionPolicyImportReviewDecisionAction.REQUEST_CHANGES) &&
+        if ((request.Action is ProductionPolicyImportReviewDecisionAction.REJECT or ProductionPolicyImportReviewDecisionAction.REQUEST_CHANGES or ProductionPolicyImportReviewDecisionAction.ESCALATE) &&
             string.IsNullOrWhiteSpace(request.Reason))
         {
-            throw new ArgumentException("A reason is required for rejection or requested changes.", nameof(request.Reason));
+            throw new ArgumentException("A reason is required for rejection, requested changes, or escalation.", nameof(request.Reason));
         }
 
         var now = DateTimeOffset.UtcNow;
@@ -148,6 +179,7 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
             {
                 ProductionPolicyImportReviewDecisionAction.REQUEST_CHANGES => ProductionPolicyImportReviewSubmissionStatus.DRAFT_DRY_RUN,
                 ProductionPolicyImportReviewDecisionAction.REJECT => ProductionPolicyImportReviewSubmissionStatus.REJECTED,
+                ProductionPolicyImportReviewDecisionAction.ESCALATE => ProductionPolicyImportReviewSubmissionStatus.SUBMITTED_FOR_REVIEW,
                 ProductionPolicyImportReviewDecisionAction.CANCEL => ProductionPolicyImportReviewSubmissionStatus.CANCELLED,
                 ProductionPolicyImportReviewDecisionAction.MARK_SUPERSEDED => ProductionPolicyImportReviewSubmissionStatus.SUPERSEDED,
                 ProductionPolicyImportReviewDecisionAction.SUBMIT_FOR_REVIEW => submission.DryRunResult.FailCount > 0
@@ -181,6 +213,24 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
             PoliciesImported: false,
             "Review decision recorded. No policies were imported or activated.",
             Array.Empty<ProductionPolicyImportReviewFinding>());
+    }
+
+    private static string ComputeSubmissionFingerprint(
+        Guid makerOperatorId,
+        string? fileName,
+        ProductionPolicyImportDryRunResult dryRunResult)
+    {
+        var payload = JsonSerializer.Serialize(
+            new
+            {
+                MakerOperatorId = makerOperatorId,
+                FileName = string.IsNullOrWhiteSpace(fileName) ? null : fileName.Trim(),
+                DryRunResult = dryRunResult
+            },
+            FingerprintJsonOptions);
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static ProductionPolicyImportReviewSubmissionStatus EvaluateStatus(

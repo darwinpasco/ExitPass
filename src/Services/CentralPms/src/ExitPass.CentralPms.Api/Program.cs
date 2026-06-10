@@ -409,6 +409,9 @@ static void ConfigureApplicationServices(
         new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionService, OperatorConsoleStatutoryDiscountPolicyResolutionService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
+    builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
+        new OperatorConsoleProductionPolicyImportReviewQueueRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewService, OperatorConsoleProductionPolicyImportReviewService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
