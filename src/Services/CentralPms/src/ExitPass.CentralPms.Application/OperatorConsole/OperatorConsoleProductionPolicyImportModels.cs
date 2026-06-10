@@ -71,6 +71,7 @@ public sealed record ProductionPolicyImportDryRunResult(
 public sealed record ProductionPolicyImportRowResult(
     int RowNumber,
     string? PolicyCode,
+    string? EntitlementType,
     ProductionPolicyImportRowDecision Decision,
     IReadOnlyList<ProductionPolicyImportFinding> Findings);
 
