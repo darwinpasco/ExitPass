@@ -146,7 +146,7 @@ public sealed class OperatorConsoleProductionPolicyImportService : IOperatorCons
             if (row.Fields.Count != parseResult.Header.Count)
             {
                 findings.Add(Fail($"Row has {row.Fields.Count} fields; expected {parseResult.Header.Count}.", row.RowNumber));
-                rowResults.Add(new ProductionPolicyImportRowResult(row.RowNumber, null, ProductionPolicyImportRowDecision.NOT_IMPORTABLE, findings));
+                rowResults.Add(new ProductionPolicyImportRowResult(row.RowNumber, null, null, ProductionPolicyImportRowDecision.NOT_IMPORTABLE, findings));
                 continue;
             }
 
@@ -157,6 +157,7 @@ public sealed class OperatorConsoleProductionPolicyImportService : IOperatorCons
             rowResults.Add(new ProductionPolicyImportRowResult(
                 row.RowNumber,
                 NullIfBlank(candidate.PolicyCode),
+                NullIfBlank(candidate.EntitlementType),
                 Decide(candidate, findings),
                 findings));
         }
