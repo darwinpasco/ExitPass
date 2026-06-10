@@ -156,6 +156,16 @@ The endpoint returns row-level findings and aggregate dry-run summary fields wit
 
 Production remains NO-GO until approved Senior Citizen and PWD rows exist and pass readiness verification.
 
+## Implementation Status After #264
+
+The Central PMS application layer now has a production policy import review queue and maker/checker workflow foundation.
+
+The workflow can move reviewed dry-run candidates only to `APPROVED_FOR_DB_REPO_ALIGNMENT`; it cannot import, seed, activate, or approve production auto-application.
+
+No import/activation endpoint or DB-backed review queue is active in #264. Persistent review queue storage requires a future DB repo baseline slice.
+
+Production remains NO-GO until approved Senior Citizen and PWD rows exist and pass readiness verification.
+
 ## Boundary Confirmations
 
 - No backend behavior changes.
