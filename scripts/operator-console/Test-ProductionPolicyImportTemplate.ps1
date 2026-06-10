@@ -44,6 +44,19 @@ $expectedColumns = @(
     "notes"
 )
 
+$optionalCandidateReviewColumns = @(
+    "review_status",
+    "review_owner",
+    "legal_review_decision",
+    "product_review_decision",
+    "ops_review_decision",
+    "engineering_review_decision",
+    "qa_review_decision",
+    "approval_notes"
+)
+
+$allAllowedColumns = @($expectedColumns + $optionalCandidateReviewColumns)
+
 $requiredColumns = @(
     "policy_code",
     "policy_name",
@@ -77,6 +90,7 @@ $allowed = @{
     beneficiary_residency_scope = @("RESIDENT_ONLY", "NON_RESIDENT_ALLOWED", "MIXED_OR_CONFLICTING", "UNVERIFIED", "NOT_APPLICABLE")
     required_evidence_type = @("SENIOR_CITIZEN_ID", "PWD_ID", "AUTHORIZATION_LETTER", "SUPPORTING_DOCUMENT", "VALIDATION_SCREENSHOT", "HASH_ONLY_REFERENCE", "OTHER")
     verification_status = @("LEAD_UNVERIFIED", "VERIFIED_SECONDARY", "VERIFIED_OFFICIAL", "APPROVED_FOR_PILOT", "ACTIVE_APPROVED", "PROPOSED_ONLY", "REJECTED")
+    review_status = @("APPROVE_FOR_IMPORT", "APPROVE_FOR_PILOT_ONLY", "ROUTE_TO_MANUAL_REVIEW", "REJECT_NEEDS_SOURCE", "REJECT_SCOPE_UNCLEAR", "REJECT_NOT_ENACTED", "REJECT_DUPLICATE", "DEFER_PENDING_LEGAL_REVIEW", "DRY_RUN_ONLY", "EXAMPLE_DO_NOT_IMPORT")
 }
 
 $booleanColumns = @(
@@ -211,18 +225,31 @@ else {
         }
     }
 
-    $unexpectedHeaders = $header | Where-Object { -not ($expectedColumns -contains $_) }
+    $unexpectedHeaders = $header | Where-Object { -not ($allAllowedColumns -contains $_) }
     foreach ($column in $unexpectedHeaders) {
         Add-Finding -Level "WARN" -Message "Unexpected header '$column' is present."
     }
 
-    if ($header.Count -ne $expectedColumns.Count) {
-        Add-Finding -Level "FAIL" -Message "Header count is $($header.Count); expected $($expectedColumns.Count)."
+    if ($header.Count -ne $expectedColumns.Count -and $header.Count -ne $allAllowedColumns.Count) {
+        Add-Finding -Level "FAIL" -Message "Header count is $($header.Count); expected $($expectedColumns.Count) import columns or $($allAllowedColumns.Count) candidate worksheet columns."
     }
-    else {
-        for ($i = 0; $i -lt $expectedColumns.Count; $i++) {
-            if ($header[$i] -ne $expectedColumns[$i]) {
-                Add-Finding -Level "FAIL" -Message "Header order mismatch at column $($i + 1): expected '$($expectedColumns[$i])', found '$($header[$i])'."
+
+    for ($i = 0; $i -lt $expectedColumns.Count; $i++) {
+        if ($i -ge $header.Count -or $header[$i] -ne $expectedColumns[$i]) {
+            $found = ""
+            if ($i -lt $header.Count) {
+                $found = $header[$i]
+            }
+
+            Add-Finding -Level "FAIL" -Message "Header order mismatch at column $($i + 1): expected '$($expectedColumns[$i])', found '$found'."
+        }
+    }
+
+    if ($header.Count -eq $allAllowedColumns.Count) {
+        for ($i = 0; $i -lt $optionalCandidateReviewColumns.Count; $i++) {
+            $columnIndex = $expectedColumns.Count + $i
+            if ($header[$columnIndex] -ne $optionalCandidateReviewColumns[$i]) {
+                Add-Finding -Level "FAIL" -Message "Candidate review header order mismatch at column $($columnIndex + 1): expected '$($optionalCandidateReviewColumns[$i])', found '$($header[$columnIndex])'."
             }
         }
     }
@@ -244,6 +271,11 @@ else {
         }
 
         $map = Get-RowMap -Header $header -Fields $row.Fields
+        $rowText = ($row.Fields -join "|")
+
+        if ($rowText -match "(?i)(DRY_RUN_ONLY|EXAMPLE_DO_NOT_IMPORT)") {
+            Add-Finding -Level "FAIL" -RowNumber $row.RowNumber -Message "Row is marked DRY_RUN_ONLY or EXAMPLE_DO_NOT_IMPORT and is not importable production policy data."
+        }
 
         foreach ($column in $requiredColumns) {
             if (Is-Blank $map[$column]) {
@@ -375,6 +407,16 @@ else {
             Add-Finding -Level "WARN" -RowNumber $row.RowNumber -Message "Row is not eligible for production auto-application."
         }
 
+        if ($header -contains "review_status") {
+            if ($map["review_status"] -eq "APPROVE_FOR_IMPORT" -and $map["verification_status"] -ne "ACTIVE_APPROVED") {
+                Add-Finding -Level "FAIL" -RowNumber $row.RowNumber -Message "APPROVE_FOR_IMPORT requires verification_status=ACTIVE_APPROVED."
+            }
+
+            if ($map["review_status"] -eq "APPROVE_FOR_PILOT_ONLY" -and $map["verification_status"] -ne "APPROVED_FOR_PILOT") {
+                Add-Finding -Level "WARN" -RowNumber $row.RowNumber -Message "APPROVE_FOR_PILOT_ONLY should use verification_status=APPROVED_FOR_PILOT."
+            }
+        }
+
         if ($map["beneficiary_residency_scope"] -in @("MIXED_OR_CONFLICTING", "UNVERIFIED")) {
             Add-Finding -Level "WARN" -RowNumber $row.RowNumber -Message "Residency scope requires manual review."
         }
@@ -432,6 +474,11 @@ foreach ($finding in $findings) {
 
     Write-Host "$($finding.Level):$rowPrefix $($finding.Message)"
 }
+
+$passCount = @($findings | Where-Object { $_.Level -eq "PASS" }).Count
+$warnCount = @($findings | Where-Object { $_.Level -eq "WARN" }).Count
+$failCount = @($findings | Where-Object { $_.Level -eq "FAIL" }).Count
+Write-Host "SUMMARY: pass=$passCount warn=$warnCount fail=$failCount"
 
 if ($findings | Where-Object { $_.Level -eq "FAIL" }) {
     exit 1

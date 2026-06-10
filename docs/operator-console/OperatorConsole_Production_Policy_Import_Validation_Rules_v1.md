@@ -330,15 +330,33 @@ Expected behavior:
 - checks duplicate headers
 - checks required columns are present
 - checks exact header order for the controlled template contract
+- accepts the candidate worksheet review columns after the import template columns
 - reports `PASS`, `WARN`, and `FAIL`
+- emits row numbers and a summary line
 - treats the official template as safe only when it is header-only
 - validates candidate rows for obvious field, enum, date, evidence, source, sandbox/dev marker, and duplicate-code errors
+- rejects `DRY_RUN_ONLY` and `EXAMPLE_DO_NOT_IMPORT` rows as not importable
 - does not connect to the database
 - does not import anything
 - does not mutate files
 - does not print secrets
 
-## 14. Recommended Next Slices
+## 14. Dry-Run Validation After #261
+
+#261 adds an offline sample dry run:
+
+- `docs/operator-console/samples/OperatorConsole_Production_Policy_Candidate_Dry_Run_Sample_v1.csv`
+- `docs/operator-console/OperatorConsole_Production_Policy_Candidate_Dry_Run_Report_v1.md`
+
+The sample is deliberately non-production and includes bad rows. It is expected to fail validation so reviewers can confirm that the validator catches dry-run/example markers, missing source references, entitlement/evidence mismatches, proposed-only approval mistakes, sandbox/test markers, and duplicate policy codes.
+
+The header-only candidate worksheet remains safe and should validate with no hard failures:
+
+- `docs/operator-console/OperatorConsole_Production_Policy_Candidate_Worksheet_v1.csv`
+
+This validation remains offline only. It does not connect to the database, execute SQL, import rows, mutate files, or approve production policy data.
+
+## 15. Recommended Next Slices
 
 Recommended bounded next slices:
 
@@ -351,7 +369,7 @@ Recommended immediate next slice: #253 Operator Console policy registry DB basel
 
 Reason: the import template now defines candidate policy shape and validation rules. The next blocker is deciding how the governed registry, enum values, and baseline/reference policy data are represented in the state-based DB repository.
 
-## 15. Boundary Confirmations
+## 16. Boundary Confirmations
 
 - No backend behavior changes.
 - No frontend behavior changes.
