@@ -30,4 +30,19 @@ public interface ICentralPmsRbacRepository
         Guid? correlationId,
         string requestPath,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records an operational audit event where the audit schema supports it.
+    /// </summary>
+    Task RecordAuditEventAsync(
+        string eventType,
+        string eventResult,
+        string eventReasonCode,
+        string targetEntityType,
+        Guid? targetEntityId,
+        Guid? actorUserId,
+        Guid? actorServiceIdentityId,
+        Guid? correlationId,
+        string summary,
+        CancellationToken cancellationToken);
 }

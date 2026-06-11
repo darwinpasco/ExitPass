@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 
@@ -16,6 +19,17 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 public static class OperatorConsoleProductionPolicyImportEndpoints
 {
     private const int MaxCsvContentLength = 1_000_000;
+    private const string SubmitPolicy = "OperatorConsolePolicyImportReviewSubmit";
+    private const string ViewerPolicy = "OperatorConsolePolicyImportReviewViewer";
+    private const string DecisionPolicy = "OperatorConsolePolicyImportReviewDecision";
+    private const string PermissionSubmit = "operator-console.policy-import-review.submit";
+    private const string PermissionViewOwn = "operator-console.policy-import-review.view-own";
+    private const string PermissionReview = "operator-console.policy-import-review.review";
+    private const string PermissionManage = "operator-console.policy-import-review.manage";
+    private const string PermissionApproveLegal = "operator-console.policy-import-review.approve.legal";
+    private const string PermissionApproveOps = "operator-console.policy-import-review.approve.ops";
+    private const string PermissionApproveQa = "operator-console.policy-import-review.approve.qa";
+    private const string PermissionApproveDb = "operator-console.policy-import-review.approve.db";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImport");
 
     /// <summary>
@@ -42,8 +56,10 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             .Accepts<OperatorConsoleProductionPolicyImportReviewSubmitRequest>("application/json")
             .Produces<OperatorConsoleProductionPolicyImportReviewResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(SubmitPolicy))
             .WithSummary("Submit production policy import dry-run result for DB-backed review")
             .WithDescription("Persists a dry-run production policy import result into the DB-backed review queue. This endpoint does not import, seed, activate, or write production policy registry rows.");
 
@@ -52,7 +68,9 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             .WithTags("OperatorConsole")
             .Produces<OperatorConsoleProductionPolicyImportReviewListResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(ViewerPolicy))
             .WithSummary("List DB-backed production policy import review submissions")
             .WithDescription("Retrieves persisted production policy import review queue submissions. This endpoint does not import, seed, activate, or write production policy registry rows.");
 
@@ -60,8 +78,10 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             .WithName("GetOperatorConsoleProductionPolicyImportReview")
             .WithTags("OperatorConsole")
             .Produces<OperatorConsoleProductionPolicyImportReviewResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(ViewerPolicy))
             .WithSummary("Get one DB-backed production policy import review submission")
             .WithDescription("Retrieves one persisted production policy import review submission by reviewId. This endpoint does not import, seed, activate, or write production policy registry rows.");
 
@@ -71,8 +91,10 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             .Accepts<OperatorConsoleProductionPolicyImportReviewDecisionRequest>("application/json")
             .Produces<OperatorConsoleProductionPolicyImportReviewResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
             .WithSummary("Record production policy import review decision")
             .WithDescription("Records checker approval, rejection, escalation, or requested changes in the DB-backed review queue. Approval stops at APPROVED_FOR_DB_REPO_ALIGNMENT and never imports or activates production policy rows.");
 
@@ -82,6 +104,7 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
     private static async Task<IResult> ListReviewsAsync(
         HttpRequest httpRequest,
         IOperatorConsoleProductionPolicyImportReviewService service,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory,
         string? status = null,
         Guid? makerOperatorId = null,
@@ -105,10 +128,33 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: resolvedCorrelationId);
+            resolvedCorrelationId = identity.CorrelationId;
+            var access = await ResolveReviewAccessAsync(httpRequest, identity.UserId, rbacRepository, httpRequest.HttpContext.RequestAborted);
+
+            if (!CanListReviews(access))
+            {
+                await AuditReviewActionAsync(
+                    rbacRepository,
+                    logger,
+                    "OperatorConsoleProductionPolicyImportReviewAccessDenied",
+                    "DENIED",
+                    "REVIEW_LIST_FORBIDDEN",
+                    null,
+                    identity.UserId,
+                    resolvedCorrelationId,
+                    "Operator Console production policy import review list access denied.",
+                    httpRequest.HttpContext.RequestAborted);
+                return Forbidden("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_FORBIDDEN", "The operator is not authorized to list production policy import reviews.", resolvedCorrelationId);
+            }
+
+            var effectiveMakerOperatorId = CanReviewAny(access)
+                ? makerOperatorId
+                : identity.UserId;
             var result = await service.ListAsync(
                 new ProductionPolicyImportReviewQuery(
                     ParseNullableEnum<ProductionPolicyImportReviewSubmissionStatus>(status, nameof(status)),
-                    makerOperatorId,
+                    effectiveMakerOperatorId,
                     reviewerOperatorId,
                     ParseNullableEnum<ProductionPolicyImportReviewerRole>(reviewerRole, nameof(reviewerRole)),
                     createdFrom,
@@ -117,6 +163,14 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                     offset ?? 0),
                 resolvedCorrelationId,
                 httpRequest.HttpContext.RequestAborted);
+            var visibleItems = result.Items
+                .Where(submission => CanViewSubmission(access, identity.UserId, submission))
+                .ToArray();
+            result = result with
+            {
+                Items = visibleItems,
+                TotalCount = visibleItems.Length
+            };
 
             activity?.SetTag("review_count", result.Items.Count);
             activity?.SetStatus(ActivityStatusCode.Ok);
@@ -124,6 +178,18 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             logger.LogInformation(
                 "Operator Console production policy import reviews listed. count={Count} imported=false activation_blocked=true",
                 result.Items.Count);
+
+            await AuditReviewActionAsync(
+                rbacRepository,
+                logger,
+                "OperatorConsoleProductionPolicyImportReviewListed",
+                "SUCCESS",
+                "REVIEW_LISTED",
+                null,
+                identity.UserId,
+                resolvedCorrelationId,
+                $"Operator Console production policy import reviews listed. count={result.Items.Count}.",
+                httpRequest.HttpContext.RequestAborted);
 
             return Results.Ok(ToContract(result));
         }
@@ -153,6 +219,7 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
         Guid reviewId,
         HttpRequest httpRequest,
         IOperatorConsoleProductionPolicyImportReviewService service,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory,
         Guid? correlationId = null)
     {
@@ -169,6 +236,8 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
 
         try
         {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: resolvedCorrelationId);
+            resolvedCorrelationId = identity.CorrelationId;
             var submission = await service.GetAsync(reviewId, httpRequest.HttpContext.RequestAborted);
             if (submission is null)
             {
@@ -179,6 +248,23 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                     resolvedCorrelationId));
             }
 
+            var access = await ResolveReviewAccessAsync(httpRequest, identity.UserId, rbacRepository, httpRequest.HttpContext.RequestAborted);
+            if (!CanViewSubmission(access, identity.UserId, submission))
+            {
+                await AuditReviewActionAsync(
+                    rbacRepository,
+                    logger,
+                    "OperatorConsoleProductionPolicyImportReviewAccessDenied",
+                    "DENIED",
+                    "REVIEW_DETAIL_FORBIDDEN",
+                    submission.ReviewId,
+                    identity.UserId,
+                    resolvedCorrelationId,
+                    $"Operator Console production policy import review detail access denied. review_id={submission.ReviewId}.",
+                    httpRequest.HttpContext.RequestAborted);
+                return Forbidden("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_FORBIDDEN", "The operator is not authorized to view this production policy import review.", resolvedCorrelationId);
+            }
+
             activity?.SetTag("review_status", submission.Status.ToString());
             activity?.SetStatus(ActivityStatusCode.Ok);
 
@@ -186,6 +272,18 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                 "Operator Console production policy import review loaded. review_id={ReviewId} status={Status} imported=false activation_blocked=true",
                 submission.ReviewId,
                 submission.Status);
+
+            await AuditReviewActionAsync(
+                rbacRepository,
+                logger,
+                "OperatorConsoleProductionPolicyImportReviewDetailViewed",
+                "SUCCESS",
+                "REVIEW_DETAIL_VIEWED",
+                submission.ReviewId,
+                identity.UserId,
+                resolvedCorrelationId,
+                $"Operator Console production policy import review detail viewed. review_id={submission.ReviewId}.",
+                httpRequest.HttpContext.RequestAborted);
 
             return Results.Ok(ToContract(submission, resolvedCorrelationId));
         }
@@ -287,6 +385,7 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
         OperatorConsoleProductionPolicyImportReviewSubmitRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleProductionPolicyImportReviewService service,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP SubmitOperatorConsoleProductionPolicyImportReview", ActivityKind.Server);
@@ -314,6 +413,22 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                 request.SubmittedByOperatorId,
                 fallbackCorrelationId: correlationId);
             correlationId = identity.CorrelationId;
+            var access = await ResolveReviewAccessAsync(httpRequest, identity.UserId, rbacRepository, httpRequest.HttpContext.RequestAborted);
+            if (!access.CanSubmit)
+            {
+                await AuditReviewActionAsync(
+                    rbacRepository,
+                    logger,
+                    "OperatorConsoleProductionPolicyImportReviewAccessDenied",
+                    "DENIED",
+                    "REVIEW_SUBMIT_FORBIDDEN",
+                    null,
+                    identity.UserId,
+                    correlationId,
+                    "Operator Console production policy import review submit access denied.",
+                    httpRequest.HttpContext.RequestAborted);
+                return Forbidden("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_FORBIDDEN", "The operator is not authorized to submit production policy import reviews.", correlationId);
+            }
 
             var result = await service.SubmitForReviewAsync(
                 new ProductionPolicyImportReviewSubmitRequest(
@@ -331,6 +446,18 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                 "Operator Console production policy import review submitted. review_id={ReviewId} status={Status} imported=false activation_blocked=true",
                 result.Submission.ReviewId,
                 result.Submission.Status);
+
+            await AuditReviewActionAsync(
+                rbacRepository,
+                logger,
+                "OperatorConsoleProductionPolicyImportReviewSubmitted",
+                "SUCCESS",
+                "REVIEW_SUBMITTED",
+                result.Submission.ReviewId,
+                identity.UserId,
+                correlationId,
+                $"Operator Console production policy import review submitted. review_id={result.Submission.ReviewId}.",
+                httpRequest.HttpContext.RequestAborted);
 
             return Results.Ok(ToContract(result, correlationId));
         }
@@ -369,6 +496,7 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
         OperatorConsoleProductionPolicyImportReviewDecisionRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleProductionPolicyImportReviewService service,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory)
     {
         using var activity = ActivitySource.StartActivity("HTTP DecideOperatorConsoleProductionPolicyImportReview", ActivityKind.Server);
@@ -395,6 +523,45 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                 throw new ArgumentException("Unsupported production policy import review decision.", nameof(request.Action));
             }
 
+            var submission = await service.GetAsync(reviewId, httpRequest.HttpContext.RequestAborted)
+                ?? throw new ArgumentException("Review submission was not found.", nameof(reviewId));
+            var access = await ResolveReviewAccessAsync(httpRequest, identity.UserId, rbacRepository, httpRequest.HttpContext.RequestAborted);
+
+            if (submission.MakerOperatorId == identity.UserId)
+            {
+                await AuditReviewActionAsync(
+                    rbacRepository,
+                    logger,
+                    "OperatorConsoleProductionPolicyImportReviewSelfDecisionBlocked",
+                    "REJECTED",
+                    "MAKER_CHECKER_SELF_DECISION_BLOCKED",
+                    submission.ReviewId,
+                    identity.UserId,
+                    correlationId,
+                    $"Maker/checker self-decision blocked. review_id={submission.ReviewId}. action={action}.",
+                    httpRequest.HttpContext.RequestAborted);
+                return Results.Conflict(BuildError(
+                    "OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_SELF_DECISION_BLOCKED",
+                    "Maker cannot decide their own production policy import review submission.",
+                    correlationId));
+            }
+
+            if (!CanDecideReview(access, action))
+            {
+                await AuditReviewActionAsync(
+                    rbacRepository,
+                    logger,
+                    "OperatorConsoleProductionPolicyImportReviewAccessDenied",
+                    "DENIED",
+                    "REVIEW_DECISION_FORBIDDEN",
+                    submission.ReviewId,
+                    identity.UserId,
+                    correlationId,
+                    $"Operator Console production policy import review decision access denied. review_id={submission.ReviewId}. action={action}.",
+                    httpRequest.HttpContext.RequestAborted);
+                return Forbidden("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_DECISION_FORBIDDEN", "The operator is not authorized to record this production policy import review decision.", correlationId);
+            }
+
             var result = await service.DecideAsync(
                 new ProductionPolicyImportReviewDecisionRequest(
                     reviewId,
@@ -412,6 +579,18 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
                 result.Submission.ReviewId,
                 action,
                 result.Submission.Status);
+
+            await AuditReviewActionAsync(
+                rbacRepository,
+                logger,
+                "OperatorConsoleProductionPolicyImportReviewDecisionRecorded",
+                "SUCCESS",
+                "REVIEW_DECISION_RECORDED",
+                result.Submission.ReviewId,
+                identity.UserId,
+                correlationId,
+                $"Operator Console production policy import review decision recorded. review_id={result.Submission.ReviewId}. action={action}.",
+                httpRequest.HttpContext.RequestAborted);
 
             return Results.Ok(ToContract(result, correlationId));
         }
@@ -639,6 +818,161 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             ? correlationId
             : null;
 
+    private static async Task<ReviewAccess> ResolveReviewAccessAsync(
+        HttpRequest request,
+        Guid userId,
+        ICentralPmsRbacRepository repository,
+        CancellationToken cancellationToken)
+    {
+        var headerPermissions = ResolvePermissionHeader(request);
+        var claimPermissions = ResolvePermissionClaims(request.HttpContext.User);
+
+        async Task<bool> HasAsync(string permission)
+        {
+            if (headerPermissions.Contains(permission) || claimPermissions.Contains(permission))
+            {
+                return true;
+            }
+
+            return await repository.UserHasAnyPermissionAsync(userId, [permission], cancellationToken);
+        }
+
+        var manage = await HasAsync(PermissionManage);
+        return new ReviewAccess(
+            CanSubmit: manage || await HasAsync(PermissionSubmit),
+            CanViewOwn: manage || await HasAsync(PermissionViewOwn) || await HasAsync(PermissionSubmit),
+            CanReview: manage || await HasAsync(PermissionReview),
+            CanManage: manage,
+            CanApproveLegal: manage || await HasAsync(PermissionApproveLegal),
+            CanApproveOps: manage || await HasAsync(PermissionApproveOps),
+            CanApproveQa: manage || await HasAsync(PermissionApproveQa),
+            CanApproveDb: manage || await HasAsync(PermissionApproveDb));
+    }
+
+    private static bool CanListReviews(ReviewAccess access) =>
+        access.CanManage ||
+        access.CanReview ||
+        access.CanViewOwn ||
+        access.CanApproveLegal ||
+        access.CanApproveOps ||
+        access.CanApproveQa ||
+        access.CanApproveDb;
+
+    private static bool CanReviewAny(ReviewAccess access) =>
+        access.CanManage ||
+        access.CanReview ||
+        access.CanApproveLegal ||
+        access.CanApproveOps ||
+        access.CanApproveQa ||
+        access.CanApproveDb;
+
+    private static bool CanViewSubmission(
+        ReviewAccess access,
+        Guid userId,
+        ProductionPolicyImportReviewSubmission submission)
+    {
+        if (access.CanManage || access.CanReview)
+        {
+            return true;
+        }
+
+        if (submission.MakerOperatorId == userId)
+        {
+            return access.CanViewOwn || access.CanSubmit;
+        }
+
+        if (submission.ReviewerDecisions.Any(decision => decision.ReviewerOperatorId == userId))
+        {
+            return true;
+        }
+
+        return submission.Status switch
+        {
+            ProductionPolicyImportReviewSubmissionStatus.LEGAL_REVIEW_PENDING => access.CanApproveLegal,
+            ProductionPolicyImportReviewSubmissionStatus.OPS_REVIEW_PENDING => access.CanApproveOps,
+            ProductionPolicyImportReviewSubmissionStatus.QA_REVIEW_PENDING => access.CanApproveQa,
+            ProductionPolicyImportReviewSubmissionStatus.DB_REVIEW_PENDING => access.CanApproveDb,
+            ProductionPolicyImportReviewSubmissionStatus.SUBMITTED_FOR_REVIEW => access.CanApproveLegal || access.CanApproveOps || access.CanApproveQa || access.CanApproveDb,
+            _ => access.CanApproveLegal || access.CanApproveOps || access.CanApproveQa || access.CanApproveDb
+        };
+    }
+
+    private static bool CanDecideReview(
+        ReviewAccess access,
+        ProductionPolicyImportReviewDecisionAction action)
+    {
+        if (access.CanManage)
+        {
+            return true;
+        }
+
+        return action switch
+        {
+            ProductionPolicyImportReviewDecisionAction.APPROVE_LEGAL => access.CanApproveLegal,
+            ProductionPolicyImportReviewDecisionAction.APPROVE_OPS => access.CanApproveOps,
+            ProductionPolicyImportReviewDecisionAction.APPROVE_QA => access.CanApproveQa,
+            ProductionPolicyImportReviewDecisionAction.APPROVE_DB => access.CanApproveDb,
+            ProductionPolicyImportReviewDecisionAction.REJECT => access.CanReview,
+            ProductionPolicyImportReviewDecisionAction.REQUEST_CHANGES => access.CanReview,
+            ProductionPolicyImportReviewDecisionAction.ESCALATE => access.CanReview,
+            ProductionPolicyImportReviewDecisionAction.CANCEL => access.CanReview,
+            ProductionPolicyImportReviewDecisionAction.MARK_SUPERSEDED => access.CanReview,
+            ProductionPolicyImportReviewDecisionAction.SUBMIT_FOR_REVIEW => access.CanReview,
+            _ => false
+        };
+    }
+
+    private static HashSet<string> ResolvePermissionHeader(HttpRequest request)
+    {
+        if (!request.Headers.TryGetValue(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, out var value))
+        {
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return value.ToString()
+            .Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static HashSet<string> ResolvePermissionClaims(ClaimsPrincipal principal) =>
+        principal.Claims
+            .Where(claim =>
+                string.Equals(claim.Type, CentralPmsRbacPolicyCatalog.PermissionClaimType, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(claim.Type, "permission", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(claim.Type, "scope", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(claim => claim.Value.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static async Task AuditReviewActionAsync(
+        ICentralPmsRbacRepository repository,
+        ILogger logger,
+        string eventType,
+        string eventResult,
+        string eventReasonCode,
+        Guid? reviewId,
+        Guid actorUserId,
+        Guid correlationId,
+        string summary,
+        CancellationToken cancellationToken)
+    {
+        await repository.RecordAuditEventAsync(
+            eventType,
+            eventResult,
+            eventReasonCode,
+            "OperatorConsoleProductionPolicyImportReview",
+            reviewId,
+            actorUserId,
+            null,
+            correlationId,
+            summary,
+            cancellationToken);
+    }
+
+    private static IResult Forbidden(string errorCode, string message, Guid correlationId) =>
+        Results.Json(
+            BuildError(errorCode, message, correlationId),
+            statusCode: StatusCodes.Status403Forbidden);
+
     private static TEnum? ParseNullableEnum<TEnum>(string? value, string parameterName)
         where TEnum : struct
     {
@@ -663,4 +997,14 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             CorrelationId = correlationId,
             Retryable = false
         };
+
+    private sealed record ReviewAccess(
+        bool CanSubmit,
+        bool CanViewOwn,
+        bool CanReview,
+        bool CanManage,
+        bool CanApproveLegal,
+        bool CanApproveOps,
+        bool CanApproveQa,
+        bool CanApproveDb);
 }
