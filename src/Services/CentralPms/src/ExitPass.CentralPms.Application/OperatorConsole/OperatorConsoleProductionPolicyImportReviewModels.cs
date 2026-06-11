@@ -47,6 +47,23 @@ public sealed record ProductionPolicyImportReviewDecisionRequest(
     string? Reason = null,
     Guid? CorrelationId = null);
 
+public sealed record ProductionPolicyImportReviewQuery(
+    ProductionPolicyImportReviewSubmissionStatus? Status = null,
+    Guid? MakerOperatorId = null,
+    Guid? ReviewerOperatorId = null,
+    ProductionPolicyImportReviewerRole? ReviewerRole = null,
+    DateTimeOffset? CreatedFrom = null,
+    DateTimeOffset? CreatedTo = null,
+    int Limit = 50,
+    int Offset = 0);
+
+public sealed record ProductionPolicyImportReviewListResult(
+    IReadOnlyList<ProductionPolicyImportReviewSubmission> Items,
+    int TotalCount,
+    int Limit,
+    int Offset,
+    Guid CorrelationId);
+
 public sealed record ProductionPolicyImportReviewDecisionResult(
     ProductionPolicyImportReviewSubmission Submission,
     bool PoliciesImported,

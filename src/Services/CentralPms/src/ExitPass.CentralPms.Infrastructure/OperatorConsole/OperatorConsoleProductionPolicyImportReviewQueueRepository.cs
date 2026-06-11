@@ -85,6 +85,67 @@ public sealed class OperatorConsoleProductionPolicyImportReviewQueueRepository
         };
     }
 
+    public async Task<(IReadOnlyList<ProductionPolicyImportReviewSubmission> Items, int TotalCount)> ListAsync(
+        ProductionPolicyImportReviewQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        const string filter = """
+            FROM operator_console.production_policy_import_review_submissions s
+            WHERE (@review_status IS NULL OR s.review_status = @review_status)
+              AND (@maker_operator_id IS NULL OR s.maker_operator_id = @maker_operator_id)
+              AND (@created_from IS NULL OR s.created_at >= @created_from)
+              AND (@created_to IS NULL OR s.created_at <= @created_to)
+              AND (
+                    (@reviewer_operator_id IS NULL AND @reviewer_role IS NULL)
+                    OR EXISTS (
+                        SELECT 1
+                        FROM operator_console.production_policy_import_review_decisions d
+                        WHERE d.review_id = s.review_id
+                          AND (@reviewer_operator_id IS NULL OR d.reviewer_operator_id = @reviewer_operator_id)
+                          AND (@reviewer_role IS NULL OR d.reviewer_role = @reviewer_role)
+                    )
+                  )
+            """;
+
+        var countSql = $"SELECT count(*) {filter};";
+        var listSql = $"""
+            SELECT s.review_id
+            {filter}
+            ORDER BY s.updated_at DESC, s.created_at DESC, s.review_id DESC
+            LIMIT @limit OFFSET @offset;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var countCommand = new NpgsqlCommand(countSql, connection);
+        AddListParameters(countCommand, query, includePaging: false);
+        var totalCount = Convert.ToInt32(await countCommand.ExecuteScalarAsync(cancellationToken));
+
+        await using var listCommand = new NpgsqlCommand(listSql, connection);
+        AddListParameters(listCommand, query, includePaging: true);
+        await using var reader = await listCommand.ExecuteReaderAsync(cancellationToken);
+        var reviewIds = new List<Guid>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            reviewIds.Add(reader.GetGuid(0));
+        }
+
+        var items = new List<ProductionPolicyImportReviewSubmission>(reviewIds.Count);
+        foreach (var reviewId in reviewIds)
+        {
+            var item = await GetAsync(reviewId, cancellationToken);
+            if (item is not null)
+            {
+                items.Add(item);
+            }
+        }
+
+        return (items, totalCount);
+    }
+
     public async Task SaveAsync(
         ProductionPolicyImportReviewSubmission submission,
         CancellationToken cancellationToken)
@@ -467,4 +528,29 @@ public sealed class OperatorConsoleProductionPolicyImportReviewQueueRepository
     }
 
     private static object DbValue(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
+
+    private static void AddListParameters(
+        NpgsqlCommand command,
+        ProductionPolicyImportReviewQuery query,
+        bool includePaging)
+    {
+        command.Parameters.Add("review_status", NpgsqlDbType.Varchar).Value =
+            query.Status?.ToString() is { } status ? status : DBNull.Value;
+        command.Parameters.Add("maker_operator_id", NpgsqlDbType.Uuid).Value =
+            query.MakerOperatorId.HasValue ? query.MakerOperatorId.Value : DBNull.Value;
+        command.Parameters.Add("reviewer_operator_id", NpgsqlDbType.Uuid).Value =
+            query.ReviewerOperatorId.HasValue ? query.ReviewerOperatorId.Value : DBNull.Value;
+        command.Parameters.Add("reviewer_role", NpgsqlDbType.Varchar).Value =
+            query.ReviewerRole?.ToString() is { } role ? role : DBNull.Value;
+        command.Parameters.Add("created_from", NpgsqlDbType.TimestampTz).Value =
+            query.CreatedFrom.HasValue ? query.CreatedFrom.Value : DBNull.Value;
+        command.Parameters.Add("created_to", NpgsqlDbType.TimestampTz).Value =
+            query.CreatedTo.HasValue ? query.CreatedTo.Value : DBNull.Value;
+
+        if (includePaging)
+        {
+            command.Parameters.Add("limit", NpgsqlDbType.Integer).Value = query.Limit;
+            command.Parameters.Add("offset", NpgsqlDbType.Integer).Value = query.Offset;
+        }
+    }
 }

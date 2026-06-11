@@ -675,6 +675,17 @@ dd {
   margin-top: 16px;
 }
 
+.reviewDetailGrid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18px;
+}
+
+.reviewDetailGrid h4 {
+  margin: 0 0 10px;
+}
+
 .checkboxField {
   align-items: center;
   display: flex !important;
@@ -695,9 +706,10 @@ dd {
   .platformShell,
   .detailGrid,
   .auditFilterGrid,
-  .workflowGrid,
-  .readinessDimensionGrid,
-  .evidenceLayout {
+    .workflowGrid,
+    .readinessDimensionGrid,
+    .evidenceLayout,
+    .reviewDetailGrid {
     display: grid;
     grid-template-columns: 1fr;
   }

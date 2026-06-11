@@ -215,6 +215,55 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
             Array.Empty<ProductionPolicyImportReviewFinding>());
     }
 
+    public async Task<ProductionPolicyImportReviewListResult> ListAsync(
+        ProductionPolicyImportReviewQuery query,
+        Guid? correlationId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (query.Limit is < 1 or > 200)
+        {
+            throw new ArgumentException("limit must be between 1 and 200.", nameof(query.Limit));
+        }
+
+        if (query.Offset < 0)
+        {
+            throw new ArgumentException("offset must be greater than or equal to 0.", nameof(query.Offset));
+        }
+
+        if (query.MakerOperatorId == Guid.Empty)
+        {
+            throw new ArgumentException("makerOperatorId must be a non-empty GUID.", nameof(query.MakerOperatorId));
+        }
+
+        if (query.ReviewerOperatorId == Guid.Empty)
+        {
+            throw new ArgumentException("reviewerOperatorId must be a non-empty GUID.", nameof(query.ReviewerOperatorId));
+        }
+
+        if (query.CreatedFrom.HasValue && query.CreatedTo.HasValue && query.CreatedFrom > query.CreatedTo)
+        {
+            throw new ArgumentException("createdFrom must be earlier than or equal to createdTo.", nameof(query.CreatedFrom));
+        }
+
+        var (items, totalCount) = await _queue.ListAsync(query, cancellationToken);
+        return new ProductionPolicyImportReviewListResult(
+            items,
+            totalCount,
+            query.Limit,
+            query.Offset,
+            correlationId ?? Guid.NewGuid());
+    }
+
+    public Task<ProductionPolicyImportReviewSubmission?> GetAsync(
+        Guid reviewId,
+        CancellationToken cancellationToken)
+    {
+        ValidateGuid(reviewId, nameof(reviewId));
+        return _queue.GetAsync(reviewId, cancellationToken);
+    }
+
     private static string ComputeSubmissionFingerprint(
         Guid makerOperatorId,
         string? fileName,

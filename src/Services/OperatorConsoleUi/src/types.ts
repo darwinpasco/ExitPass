@@ -407,6 +407,17 @@ export interface ProductionPolicyImportReviewDecisionInput {
   reason?: string;
 }
 
+export interface ProductionPolicyImportReviewQuery {
+  status?: string;
+  makerOperatorId?: string;
+  reviewerOperatorId?: string;
+  reviewerRole?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface ProductionPolicyImportReviewDecision {
   reviewerRole: string;
   action: string;
@@ -450,5 +461,22 @@ export interface ProductionPolicyImportReviewResult {
   message: string;
   submission: ProductionPolicyImportReviewSubmission;
   findings: ProductionPolicyImportReviewFinding[];
+  correlationId: string;
+}
+
+export interface ProductionPolicyImportReviewQueueItem {
+  imported: false;
+  productionPolicyActivationBlocked: true;
+  submission: ProductionPolicyImportReviewSubmission;
+  findings: ProductionPolicyImportReviewFinding[];
+}
+
+export interface ProductionPolicyImportReviewListResult {
+  imported: false;
+  productionPolicyActivationBlocked: true;
+  items: ProductionPolicyImportReviewQueueItem[];
+  totalCount: number;
+  limit: number;
+  offset: number;
   correlationId: string;
 }

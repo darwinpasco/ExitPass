@@ -302,6 +302,27 @@ public sealed class OperatorConsoleProductionPolicyImportReviewServiceTests
             return Task.FromResult(submission);
         }
 
+        public Task<(IReadOnlyList<ProductionPolicyImportReviewSubmission> Items, int TotalCount)> ListAsync(
+            ProductionPolicyImportReviewQuery query,
+            CancellationToken cancellationToken)
+        {
+            var items = _submissions.Values
+                .Where(submission => !query.Status.HasValue || submission.Status == query.Status.Value)
+                .Where(submission => !query.MakerOperatorId.HasValue || submission.MakerOperatorId == query.MakerOperatorId.Value)
+                .Where(submission => !query.ReviewerOperatorId.HasValue ||
+                    submission.ReviewerDecisions.Any(decision => decision.ReviewerOperatorId == query.ReviewerOperatorId.Value))
+                .Where(submission => !query.ReviewerRole.HasValue ||
+                    submission.ReviewerDecisions.Any(decision => decision.ReviewerRole == query.ReviewerRole.Value))
+                .Where(submission => !query.CreatedFrom.HasValue || submission.CreatedAt >= query.CreatedFrom.Value)
+                .Where(submission => !query.CreatedTo.HasValue || submission.CreatedAt <= query.CreatedTo.Value)
+                .OrderByDescending(submission => submission.UpdatedAt)
+                .Skip(query.Offset)
+                .Take(query.Limit)
+                .ToArray();
+
+            return Task.FromResult(((IReadOnlyList<ProductionPolicyImportReviewSubmission>)items, _submissions.Count));
+        }
+
         public Task SaveAsync(
             ProductionPolicyImportReviewSubmission submission,
             CancellationToken cancellationToken)
