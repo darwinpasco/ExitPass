@@ -862,6 +862,59 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(document.body.innerHTML).not.toMatch(/activated<\/dt><dd>true/i);
   });
 
+  it("ProductionPolicyImportReview_HidesDecisionControlsWhenOperatorIsUnauthorized", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ productionPolicyReviewDecisionAuthorized: false })}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Persisted review" })).toBeInTheDocument();
+    expect(screen.getByText(/not authorized to record reviewer decisions/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/reviewer role for approve/i)).not.toBeInTheDocument();
+  });
+
+  it("ProductionPolicyImportReview_RendersAccessDeniedForReviewQueue", async () => {
+    const listReviews = vi.fn(async () => {
+      throw {
+        status: "access-denied",
+        message: "The operator is not authorized to list production policy import reviews.",
+        errorCode: "OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_FORBIDDEN"
+      };
+    });
+
+    render(
+      <App
+        apiClient={{
+          ...createMockOperatorConsoleApiClient(),
+          listProductionPolicyImportReviews: listReviews
+        }}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    expect(await screen.findByText("Access denied")).toBeInTheDocument();
+    expect(screen.getByText("The operator is not authorized to list production policy import reviews.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+  });
+
+  it("ProductionPolicyImportReview_AuthorizedReviewerSeesDecisionControls", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ productionPolicyReviewDecisionAuthorized: true })}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Persisted review" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/reviewer role for approve/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+  });
+
   it("ProductionPolicyImportReview_RejectRequestChangesAndEscalateRequireReason", async () => {
     const onDecision = vi.fn();
     render(
@@ -1267,6 +1320,8 @@ function expectOperatorContextHeaders(headers: unknown) {
   expect(headers).toEqual(expect.objectContaining({
     "X-Correlation-Id": expect.any(String),
     "X-Operator-User-Id": "77000000-0000-0000-0000-000000000010",
+    "X-ExitPass-User-Id": "77000000-0000-0000-0000-000000000010",
+    "X-ExitPass-Permissions": expect.stringContaining("operator-console.policy-import-review.view-own"),
     "X-Operator-Device-Binding-Id": "77000000-0000-0000-0000-000000000030",
     "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000050"
   }));

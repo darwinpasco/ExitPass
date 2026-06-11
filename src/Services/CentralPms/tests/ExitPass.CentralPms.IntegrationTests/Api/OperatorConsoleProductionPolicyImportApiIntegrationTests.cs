@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.IntegrationTests.Shared;
@@ -18,6 +19,13 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
     private const string ReviewEndpoint = "/v1/ops/operator-console/statutory-discounts/policies/import/reviews";
     private static readonly SemaphoreSlim SchemaSemaphore = new(1, 1);
     private static bool s_schemaEnsured;
+    private const string SubmitPermission = "operator-console.policy-import-review.submit";
+    private const string ViewOwnPermission = "operator-console.policy-import-review.view-own";
+    private const string ReviewPermission = "operator-console.policy-import-review.review";
+    private const string ApproveLegalPermission = "operator-console.policy-import-review.approve.legal";
+    private const string ApproveOpsPermission = "operator-console.policy-import-review.approve.ops";
+    private const string ApproveQaPermission = "operator-console.policy-import-review.approve.qa";
+    private const string ApproveDbPermission = "operator-console.policy-import-review.approve.db";
 
     [Fact]
     public async Task DryRun_WhenHeaderOnlyWorksheet_ReturnsSafeNoImportResponse()
@@ -151,7 +159,7 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
 
             using var response = await SubmitReviewAsync(client, makerId, correlationId, dryRun);
 
-            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
             var body = await response.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewResponse>();
             body.Should().NotBeNull();
             body!.Imported.Should().BeFalse();
@@ -164,6 +172,7 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
             persisted.SubmissionCount.Should().Be(1);
             persisted.HistoryCount.Should().Be(1);
             persisted.FindingCount.Should().Be(1);
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewSubmitted")).Should().Be(1);
         }
         finally
         {
@@ -207,6 +216,146 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
             var persisted = await ReadReviewPersistenceCountsAsync(submitted.Submission.ReviewId);
             persisted.DecisionCount.Should().Be(1);
             persisted.HistoryCount.Should().Be(2);
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewDecisionRecorded")).Should().Be(1);
+        }
+        finally
+        {
+            await CleanupReviewRowsAsync(makerId);
+        }
+    }
+
+    [Fact]
+    public async Task SubmitReview_WhenPermissionMissing_ReturnsForbiddenAndAuditsDenied()
+    {
+        await EnsureReviewQueueSchemaAsync();
+        var makerId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var dryRun = await DryRunAsync(client, makerId, correlationId, Csv(Row()));
+
+            using var response = await SubmitReviewAsync(
+                client,
+                makerId,
+                correlationId,
+                dryRun,
+                permissions: []);
+
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            error.Should().NotBeNull();
+            error!.ErrorCode.Should().Be("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_FORBIDDEN");
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewAccessDenied")).Should().Be(1);
+        }
+        finally
+        {
+            await CleanupReviewRowsAsync(makerId);
+        }
+    }
+
+    [Fact]
+    public async Task ListReviews_WhenMakerPermissionOnly_ReturnsOnlyOwnReviews()
+    {
+        await EnsureReviewQueueSchemaAsync();
+        var makerId = Guid.NewGuid();
+        var otherMakerId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var own = await SubmitCleanReviewAsync(client, makerId, correlationId);
+            var other = await SubmitCleanReviewAsync(client, otherMakerId, Guid.NewGuid());
+
+            using var response = await GetReviewListAsync(
+                client,
+                makerId: null,
+                status: null,
+                correlationId,
+                operatorId: makerId,
+                permissions: [ViewOwnPermission]);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewListResponse>();
+            body.Should().NotBeNull();
+            body!.Items.Should().ContainSingle(item => item.Submission.ReviewId == own.Submission.ReviewId);
+            body.Items.Should().NotContain(item => item.Submission.ReviewId == other.Submission.ReviewId);
+            body.Imported.Should().BeFalse();
+            body.ProductionPolicyActivationBlocked.Should().BeTrue();
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewListed")).Should().Be(1);
+        }
+        finally
+        {
+            await CleanupReviewRowsAsync(makerId);
+            await CleanupReviewRowsAsync(otherMakerId);
+        }
+    }
+
+    [Fact]
+    public async Task GetReview_WhenUnauthorizedOperatorReadsUnrelatedReview_ReturnsForbiddenAndAuditsDenied()
+    {
+        await EnsureReviewQueueSchemaAsync();
+        var makerId = Guid.NewGuid();
+        var unauthorizedId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var submitted = await SubmitCleanReviewAsync(client, makerId, correlationId);
+
+            using var response = await GetReviewAsync(
+                client,
+                submitted.Submission.ReviewId,
+                correlationId,
+                unauthorizedId,
+                ViewOwnPermission);
+
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            error.Should().NotBeNull();
+            error!.ErrorCode.Should().Be("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_FORBIDDEN");
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewAccessDenied")).Should().Be(1);
+        }
+        finally
+        {
+            await CleanupReviewRowsAsync(makerId);
+        }
+    }
+
+    [Fact]
+    public async Task DecideReview_WhenReviewerPermissionMissing_ReturnsForbiddenAndAuditsDenied()
+    {
+        await EnsureReviewQueueSchemaAsync();
+        var makerId = Guid.NewGuid();
+        var reviewerId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var submitted = await SubmitCleanReviewAsync(client, makerId, correlationId);
+
+            using var response = await DecideReviewAsync(
+                client,
+                submitted.Submission.ReviewId,
+                reviewerId,
+                "APPROVE_LEGAL",
+                "legal approved",
+                correlationId,
+                permissions: []);
+
+            response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            error.Should().NotBeNull();
+            error!.ErrorCode.Should().Be("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_DECISION_FORBIDDEN");
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewAccessDenied")).Should().Be(1);
         }
         finally
         {
@@ -238,11 +387,12 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
             response.StatusCode.Should().Be(HttpStatusCode.Conflict);
             var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
             error.Should().NotBeNull();
-            error!.Message.Should().Contain("Maker cannot approve");
+            error!.Message.Should().Contain("Maker cannot decide");
 
             var persisted = await ReadReviewPersistenceCountsAsync(submitted.Submission.ReviewId);
             persisted.DecisionCount.Should().Be(0);
             persisted.HistoryCount.Should().Be(1);
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewSelfDecisionBlocked")).Should().Be(1);
         }
         finally
         {
@@ -316,6 +466,7 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
             item.Submission.History.Should().Contain(history => history.Action == "SUBMIT_FOR_REVIEW");
             item.Submission.CreatedAt.Should().NotBe(default);
             item.Submission.UpdatedAt.Should().NotBe(default);
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewListed")).Should().Be(1);
         }
         finally
         {
@@ -371,6 +522,8 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
             var filteredList = await filteredListResponse.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewListResponse>();
             filteredList.Should().NotBeNull();
             filteredList!.Items.Should().ContainSingle(item => item.Submission.ReviewId == submitted.Submission.ReviewId);
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewDetailViewed")).Should().Be(1);
+            (await CountAuditEventsAsync(correlationId, "OperatorConsoleProductionPolicyImportReviewListed")).Should().Be(1);
         }
         finally
         {
@@ -512,8 +665,10 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         HttpClient client,
         Guid makerId,
         Guid correlationId,
-        OperatorConsoleProductionPolicyImportDryRunResponse dryRun)
+        OperatorConsoleProductionPolicyImportDryRunResponse dryRun,
+        string[]? permissions = null)
     {
+        await SeedIdentityUserAsync(makerId, correlationId);
         var request = new HttpRequestMessage(HttpMethod.Post, ReviewEndpoint)
         {
             Content = JsonContent.Create(new OperatorConsoleProductionPolicyImportReviewSubmitRequest(
@@ -524,6 +679,7 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         };
         request.Headers.Add("X-Operator-User-Id", makerId.ToString());
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        AddPermissions(request, permissions ?? [SubmitPermission, ViewOwnPermission]);
         return await client.SendAsync(request);
     }
 
@@ -533,8 +689,10 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         Guid reviewerId,
         string action,
         string? reason,
-        Guid correlationId)
+        Guid correlationId,
+        string[]? permissions = null)
     {
+        await SeedIdentityUserAsync(reviewerId, correlationId);
         var request = new HttpRequestMessage(HttpMethod.Post, $"{ReviewEndpoint}/{reviewId}/decision")
         {
             Content = JsonContent.Create(new OperatorConsoleProductionPolicyImportReviewDecisionRequest(
@@ -545,6 +703,7 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         };
         request.Headers.Add("X-Operator-User-Id", reviewerId.ToString());
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        AddPermissions(request, permissions ?? [PermissionForDecision(action)]);
         return await client.SendAsync(request);
     }
 
@@ -554,8 +713,12 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         string? status,
         Guid correlationId,
         Guid? reviewerId = null,
-        string? reviewerRole = null)
+        string? reviewerRole = null,
+        Guid? operatorId = null,
+        string[]? permissions = null)
     {
+        var effectiveOperatorId = operatorId ?? makerId ?? OperatorUserId;
+        await SeedIdentityUserAsync(effectiveOperatorId, correlationId);
         var parameters = new List<string>
         {
             $"correlationId={Uri.EscapeDataString(correlationId.ToString())}",
@@ -584,20 +747,93 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         }
 
         var request = new HttpRequestMessage(HttpMethod.Get, $"{ReviewEndpoint}?{string.Join("&", parameters)}");
-        request.Headers.Add("X-Operator-User-Id", makerId?.ToString() ?? OperatorUserId.ToString());
+        request.Headers.Add("X-Operator-User-Id", effectiveOperatorId.ToString());
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        AddPermissions(
+            request,
+            permissions ?? [ReviewPermission, ViewOwnPermission, ApproveLegalPermission, ApproveOpsPermission, ApproveQaPermission, ApproveDbPermission]);
         return await client.SendAsync(request);
     }
 
     private static async Task<HttpResponseMessage> GetReviewAsync(
         HttpClient client,
         Guid reviewId,
-        Guid correlationId)
+        Guid correlationId,
+        Guid? operatorId = null,
+        params string[] permissions)
     {
+        var effectiveOperatorId = operatorId ?? OperatorUserId;
+        await SeedIdentityUserAsync(effectiveOperatorId, correlationId);
         var request = new HttpRequestMessage(HttpMethod.Get, $"{ReviewEndpoint}/{reviewId}?correlationId={correlationId}");
-        request.Headers.Add("X-Operator-User-Id", OperatorUserId.ToString());
+        request.Headers.Add("X-Operator-User-Id", effectiveOperatorId.ToString());
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        AddPermissions(
+            request,
+            permissions.Length == 0
+                ? [ReviewPermission, ViewOwnPermission, ApproveLegalPermission, ApproveOpsPermission, ApproveQaPermission, ApproveDbPermission]
+                : permissions);
         return await client.SendAsync(request);
+    }
+
+    private static void AddPermissions(HttpRequestMessage request, params string[] permissions)
+    {
+        request.Headers.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, request.Headers.GetValues("X-Operator-User-Id").Single());
+        request.Headers.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, string.Join(",", permissions.Distinct()));
+    }
+
+    private static string PermissionForDecision(string action) =>
+        action switch
+        {
+            "APPROVE_LEGAL" => ApproveLegalPermission,
+            "APPROVE_OPS" => ApproveOpsPermission,
+            "APPROVE_QA" => ApproveQaPermission,
+            "APPROVE_DB" => ApproveDbPermission,
+            _ => ReviewPermission
+        };
+
+    private static async Task SeedIdentityUserAsync(Guid userId, Guid correlationId)
+    {
+        const string sql = """
+            INSERT INTO identity.users (
+                user_id,
+                username,
+                email,
+                email_normalized,
+                display_name,
+                user_type,
+                user_status,
+                effective_from,
+                effective_to,
+                created_by_user_id,
+                updated_by_user_id
+            )
+            VALUES (
+                @user_id,
+                @username,
+                @email,
+                @email_normalized,
+                @display_name,
+                'SITE_OPERATOR',
+                'ACTIVE',
+                @effective_from,
+                @effective_to,
+                @user_id,
+                @user_id
+            )
+            ON CONFLICT (user_id) DO NOTHING;
+            """;
+
+        await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = userId;
+        command.Parameters.Add("username", NpgsqlDbType.Varchar).Value = $"op-review-{userId:N}";
+        command.Parameters.Add("email", NpgsqlDbType.Varchar).Value = $"op-review-{userId:N}@example.test";
+        command.Parameters.Add("email_normalized", NpgsqlDbType.Varchar).Value = $"OP-REVIEW-{userId:N}@EXAMPLE.TEST";
+        command.Parameters.Add("display_name", NpgsqlDbType.Varchar).Value = $"Operator Review Test {correlationId:N}";
+        command.Parameters.Add("effective_from", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.Parse("2020-01-01T00:00:00Z");
+        command.Parameters.Add("effective_to", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.Parse("2035-01-01T00:00:00Z");
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task EnsureReviewQueueSchemaAsync()
@@ -738,6 +974,24 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
+        var value = await command.ExecuteScalarAsync();
+        return (long)value!;
+    }
+
+    private static async Task<long> CountAuditEventsAsync(Guid correlationId, string eventType)
+    {
+        const string sql = """
+            SELECT count(*)
+            FROM audit.audit_events
+            WHERE correlation_id = @correlation_id
+              AND event_type = @event_type;
+            """;
+
+        await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
+        command.Parameters.Add("event_type", NpgsqlDbType.Varchar).Value = eventType;
         var value = await command.ExecuteScalarAsync();
         return (long)value!;
     }

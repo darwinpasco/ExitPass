@@ -158,6 +158,74 @@ public sealed class CentralPmsRbacRepository : ICentralPmsRbacRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task RecordAuditEventAsync(
+        string eventType,
+        string eventResult,
+        string eventReasonCode,
+        string targetEntityType,
+        Guid? targetEntityId,
+        Guid? actorUserId,
+        Guid? actorServiceIdentityId,
+        Guid? correlationId,
+        string summary,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO audit.audit_events (
+                audit_event_id,
+                event_type,
+                event_category,
+                event_result,
+                event_reason_code,
+                target_entity_type,
+                target_entity_id,
+                source_schema,
+                source_service_name,
+                source_channel,
+                actor_user_id,
+                actor_service_identity_id,
+                summary,
+                occurred_at,
+                recorded_at,
+                correlation_id,
+                created_at
+            )
+            VALUES (
+                gen_random_uuid(),
+                @event_type,
+                'SECURITY_RELEVANT',
+                @event_result::audit.audit_event_result_enum,
+                @event_reason_code,
+                @target_entity_type,
+                @target_entity_id,
+                'identity',
+                'central-pms',
+                'HTTP',
+                @actor_user_id,
+                @actor_service_identity_id,
+                @summary,
+                now(),
+                now(),
+                @correlation_id,
+                now()
+            );
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("event_type", eventType);
+        command.Parameters.AddWithValue("event_result", eventResult);
+        command.Parameters.AddWithValue("event_reason_code", eventReasonCode);
+        command.Parameters.AddWithValue("target_entity_type", targetEntityType);
+        command.Parameters.Add("target_entity_id", NpgsqlDbType.Uuid).Value = (object?)targetEntityId ?? DBNull.Value;
+        command.Parameters.Add("actor_user_id", NpgsqlDbType.Uuid).Value = (object?)actorUserId ?? DBNull.Value;
+        command.Parameters.Add("actor_service_identity_id", NpgsqlDbType.Uuid).Value = (object?)actorServiceIdentityId ?? DBNull.Value;
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = (object?)correlationId ?? DBNull.Value;
+        command.Parameters.AddWithValue("summary", summary.Length > 256 ? summary[..256] : summary);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
         var connection = new NpgsqlConnection(_connectionString);

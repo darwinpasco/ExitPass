@@ -126,6 +126,11 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
         var submission = await _queue.GetAsync(request.ReviewId, cancellationToken)
             ?? throw new ArgumentException("Review submission was not found.", nameof(request.ReviewId));
 
+        if (request.ReviewerOperatorId == submission.MakerOperatorId)
+        {
+            throw new InvalidOperationException("Maker cannot decide their own production policy import review submission.");
+        }
+
         if (TerminalStatuses.Contains(submission.Status))
         {
             throw new InvalidOperationException($"Review submission is terminal with status {submission.Status}.");
@@ -147,11 +152,6 @@ public sealed class OperatorConsoleProductionPolicyImportReviewService : IOperat
         if (TryResolveReviewerRole(request.Action, out var role))
         {
             reviewerRole = role;
-
-            if (request.ReviewerOperatorId == submission.MakerOperatorId)
-            {
-                throw new InvalidOperationException("Maker cannot approve their own production policy import review submission.");
-            }
 
             if (submission.DryRunResult.FailCount > 0)
             {

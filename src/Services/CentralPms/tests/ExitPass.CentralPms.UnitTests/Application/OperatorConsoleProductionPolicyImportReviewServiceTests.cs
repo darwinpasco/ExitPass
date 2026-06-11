@@ -78,7 +78,25 @@ public sealed class OperatorConsoleProductionPolicyImportReviewServiceTests
             CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*Maker cannot approve*");
+            .WithMessage("*Maker cannot decide*");
+    }
+
+    [Fact]
+    public async Task DecideAsync_WhenMakerRequestsChangesOwnSubmission_RejectsSelfDecision()
+    {
+        var sut = Sut(out _);
+        var submitted = await SubmitAsync(sut, DryRunResult());
+
+        var act = () => sut.DecideAsync(
+            Decision(
+                submitted.Submission.ReviewId,
+                MakerId,
+                ProductionPolicyImportReviewDecisionAction.REQUEST_CHANGES,
+                "maker requested changes"),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Maker cannot decide*");
     }
 
     [Fact]

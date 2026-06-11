@@ -42,6 +42,7 @@ export interface OperatorConsoleApiClient {
   decideProductionPolicyImportReview(input: ProductionPolicyImportReviewDecisionInput): Promise<ProductionPolicyImportReviewResult>;
   listProductionPolicyImportReviews(input?: ProductionPolicyImportReviewQuery): Promise<ProductionPolicyImportReviewListResult>;
   getProductionPolicyImportReview(reviewId: string): Promise<ProductionPolicyImportReviewResult>;
+  canDecideProductionPolicyImportReview?(): boolean;
 }
 
 interface QueueResponse {
@@ -247,6 +248,28 @@ const defaultOperatorContext: OperatorConsoleOperatorContext = {
   operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000050")
 };
 
+const reviewDecisionPermissions = new Set([
+  "operator-console.policy-import-review.manage",
+  "operator-console.policy-import-review.review",
+  "operator-console.policy-import-review.approve.legal",
+  "operator-console.policy-import-review.approve.ops",
+  "operator-console.policy-import-review.approve.qa",
+  "operator-console.policy-import-review.approve.db"
+]);
+
+const defaultOperatorPermissions = localFallback(
+  import.meta.env.VITE_OPERATOR_CONSOLE_PERMISSIONS,
+  [
+    "operator-console.policy-import-review.submit",
+    "operator-console.policy-import-review.view-own",
+    "operator-console.policy-import-review.review",
+    "operator-console.policy-import-review.approve.legal",
+    "operator-console.policy-import-review.approve.ops",
+    "operator-console.policy-import-review.approve.qa",
+    "operator-console.policy-import-review.approve.db"
+  ].join(",")
+);
+
 export function createOperatorConsoleApiClient(): OperatorConsoleApiClient {
   return createHttpOperatorConsoleApiClient({
     baseUrl: import.meta.env.VITE_CENTRAL_PMS_BASE_URL ?? ""
@@ -255,8 +278,13 @@ export function createOperatorConsoleApiClient(): OperatorConsoleApiClient {
 
 export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string } = {}): OperatorConsoleApiClient {
   const baseUrl = options.baseUrl?.replace(/\/$/, "") ?? "";
+  const permissions = parsePermissions(defaultOperatorPermissions);
 
   return {
+    canDecideProductionPolicyImportReview() {
+      return permissions.some((permission) => reviewDecisionPermissions.has(permission));
+    },
+
     async evaluateAccessReadiness(input) {
       const correlationId = input.correlationId ?? newCorrelationId();
       const response = await fetch(`${baseUrl}/v1/ops/operator-console/access/readiness/evaluate`, {
@@ -517,9 +545,18 @@ function operatorConsoleHeaders(correlationId: string, options: { json?: boolean
     ...(options.json ? { "Content-Type": "application/json" } : {}),
     "X-Correlation-Id": correlationId,
     "X-Operator-User-Id": defaultOperatorContext.userId,
+    "X-ExitPass-User-Id": defaultOperatorContext.userId,
+    "X-ExitPass-Permissions": defaultOperatorPermissions,
     "X-Operator-Device-Binding-Id": defaultOperatorContext.operatorDeviceBindingId,
     "X-Operator-Shift-Id": defaultOperatorContext.operatorShiftId
   };
+}
+
+function parsePermissions(value: string) {
+  return value
+    .split(/[,\s]+/)
+    .map((permission) => permission.trim().toLowerCase())
+    .filter((permission) => permission.length > 0);
 }
 
 function localFallback(value: string | undefined, fallback: string) {
@@ -564,12 +601,17 @@ export function createMockOperatorConsoleApiClient(
     onProductionPolicyDryRun?: (input: ProductionPolicyImportDryRunInput) => void;
     onProductionPolicyReviewSubmit?: (input: ProductionPolicyImportReviewSubmitInput) => void;
     onProductionPolicyReviewDecision?: (input: ProductionPolicyImportReviewDecisionInput) => void;
+    productionPolicyReviewDecisionAuthorized?: boolean;
   } = {}
 ): OperatorConsoleApiClient {
   const drafts = (options.drafts ?? mockDrafts).map((draft) => ({ ...draft }));
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
+    canDecideProductionPolicyImportReview() {
+      return options.productionPolicyReviewDecisionAuthorized ?? true;
+    },
+
     async evaluateAccessReadiness(input) {
       await delay();
       return options.readiness ?? mockAccessReadiness(input);

@@ -414,7 +414,12 @@ function ProductionPolicyImportReviewPage({
         return result;
       })
       .catch((caught) => {
-        setReviewQueueState({ status: "error", message: mapApiError(caught).message });
+        const mapped = mapApiError(caught);
+        setReviewQueueState(
+          mapped.status === "access-denied"
+            ? { status: "access-denied", message: mapped.message }
+            : { status: "error", message: mapped.message }
+        );
         return null;
       });
   }
@@ -436,7 +441,12 @@ function ProductionPolicyImportReviewPage({
       })
       .catch((caught) => {
         if (active) {
-          setReviewQueueState({ status: "error", message: mapApiError(caught).message });
+          const mapped = mapApiError(caught);
+          setReviewQueueState(
+            mapped.status === "access-denied"
+              ? { status: "access-denied", message: mapped.message }
+              : { status: "error", message: mapped.message }
+          );
         }
       });
 
@@ -460,7 +470,9 @@ function ProductionPolicyImportReviewPage({
       })
       .catch((caught) => {
         if (active) {
-          setError(mapApiError(caught).message);
+          const mapped = mapApiError(caught);
+          setReviewResult(null);
+          setError(mapped.status === "access-denied" ? `Access denied: ${mapped.message}` : mapped.message);
         }
       });
 
@@ -526,6 +538,11 @@ function ProductionPolicyImportReviewPage({
     setMessage(null);
     setError(null);
 
+    if (!canRecordReviewDecision) {
+      setError("Access denied: the current operator is not authorized to record production policy import review decisions.");
+      return;
+    }
+
     if (!reviewResult) {
       setError("Submit the dry-run result for review before recording a decision.");
       return;
@@ -557,7 +574,8 @@ function ProductionPolicyImportReviewPage({
     }
   }
 
-  const decisionDisabled = readinessBlockReason !== null || reviewResult === null || submitting !== null;
+  const canRecordReviewDecision = client.canDecideProductionPolicyImportReview?.() ?? true;
+  const decisionDisabled = readinessBlockReason !== null || reviewResult === null || submitting !== null || !canRecordReviewDecision;
 
   return (
     <>
@@ -596,6 +614,7 @@ function ProductionPolicyImportReviewPage({
 
         {reviewQueueState.status === "loading" && <StateMessage title="Loading review queue" message="Retrieving persisted review submissions." />}
         {reviewQueueState.status === "empty" && <StateMessage title="No persisted reviews" message="No production policy import reviews are in the queue." />}
+        {reviewQueueState.status === "access-denied" && <StateMessage title="Access denied" message={reviewQueueState.message} />}
         {reviewQueueState.status === "error" && <StateMessage title="Unable to load review queue" message={reviewQueueState.message} />}
         {reviewQueueState.status === "loaded" && (
           <div className="tableScroller policyImportRows">
@@ -742,39 +761,45 @@ function ProductionPolicyImportReviewPage({
             ]}
           />
 
-          <div className="policyReviewDecisionControls" aria-label="Production policy review decision controls">
-            <label>
-              Reviewer role for approve
-              <select value={reviewerRole} onChange={(event) => setReviewerRole(event.target.value as typeof reviewerRole)}>
-                <option value="LEGAL">Legal</option>
-                <option value="OPS">Ops</option>
-                <option value="QA">QA</option>
-                <option value="DB">DB</option>
-              </select>
-            </label>
-            <label>
-              Decision reason
-              <input
-                value={decisionReason}
-                placeholder="Reviewed for DB repo alignment"
-                onChange={(event) => setDecisionReason(event.target.value)}
-              />
-            </label>
-            <div className="actionBar">
-              <button type="button" disabled={decisionDisabled} onClick={() => void decide("APPROVE")}>
-                Approve
-              </button>
-              <button type="button" disabled={decisionDisabled} onClick={() => void decide("REJECT")}>
-                Reject
-              </button>
-              <button type="button" disabled={decisionDisabled} onClick={() => void decide("REQUEST_CHANGES")}>
-                Request changes
-              </button>
-              <button type="button" disabled={decisionDisabled} onClick={() => void decide("ESCALATE")}>
-                Escalate
-              </button>
+          {canRecordReviewDecision ? (
+            <div className="policyReviewDecisionControls" aria-label="Production policy review decision controls">
+              <label>
+                Reviewer role for approve
+                <select value={reviewerRole} onChange={(event) => setReviewerRole(event.target.value as typeof reviewerRole)}>
+                  <option value="LEGAL">Legal</option>
+                  <option value="OPS">Ops</option>
+                  <option value="QA">QA</option>
+                  <option value="DB">DB</option>
+                </select>
+              </label>
+              <label>
+                Decision reason
+                <input
+                  value={decisionReason}
+                  placeholder="Reviewed for DB repo alignment"
+                  onChange={(event) => setDecisionReason(event.target.value)}
+                />
+              </label>
+              <div className="actionBar">
+                <button type="button" disabled={decisionDisabled} onClick={() => void decide("APPROVE")}>
+                  Approve
+                </button>
+                <button type="button" disabled={decisionDisabled} onClick={() => void decide("REJECT")}>
+                  Reject
+                </button>
+                <button type="button" disabled={decisionDisabled} onClick={() => void decide("REQUEST_CHANGES")}>
+                  Request changes
+                </button>
+                <button type="button" disabled={decisionDisabled} onClick={() => void decide("ESCALATE")}>
+                  Escalate
+                </button>
+              </div>
             </div>
-          </div>
+          ) : (
+            <p className="notice">
+              Access denied: the current operator can view this review but is not authorized to record reviewer decisions.
+            </p>
+          )}
 
           {reviewResult.findings.length > 0 && (
             <ul className="activityList" aria-label="Review findings">

@@ -51,7 +51,28 @@ public static class CentralPmsRbacPolicyCatalog
             ["ReconciliationRunViewer"] = ["reconciliation.view", "reconciliation.manage"],
             ["ReconciliationItemViewer"] = ["reconciliation.view", "reconciliation.manage"],
             ["ReconciliationEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"],
-            ["ReconciliationRunEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"]
+            ["ReconciliationRunEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"],
+
+            ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
+            ["OperatorConsolePolicyImportReviewViewer"] =
+            [
+                "operator-console.policy-import-review.view-own",
+                "operator-console.policy-import-review.review",
+                "operator-console.policy-import-review.manage",
+                "operator-console.policy-import-review.approve.legal",
+                "operator-console.policy-import-review.approve.ops",
+                "operator-console.policy-import-review.approve.qa",
+                "operator-console.policy-import-review.approve.db"
+            ],
+            ["OperatorConsolePolicyImportReviewDecision"] =
+            [
+                "operator-console.policy-import-review.review",
+                "operator-console.policy-import-review.manage",
+                "operator-console.policy-import-review.approve.legal",
+                "operator-console.policy-import-review.approve.ops",
+                "operator-console.policy-import-review.approve.qa",
+                "operator-console.policy-import-review.approve.db"
+            ]
         };
 
     /// <summary>
