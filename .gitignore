@@ -45,3 +45,5 @@ src/Services/WebPayUi/.vite/
 /post-merge-central-pms-smoke.txt
 /.gitignore
 /.gitignore
+
+.env.local

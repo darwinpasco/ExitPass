@@ -1,4 +1,5 @@
-using System.Net.Http.Json;
+using System.Net.Http.Headers;
+using System.Text;
 using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 using Xunit;
 
@@ -52,10 +53,10 @@ public sealed class HikCentralRequestSignerTests
     }
 
     /// <summary>
-    /// Verifies that the request body digest participates in the signature.
+    /// Verifies that the local OpenDataServer profile does not include Content-MD5 in the signature by default.
     /// </summary>
     [Fact]
-    public async Task HikCentralRequestSigner_WhenBodyChanges_ChangesSignature()
+    public async Task HikCentralRequestSigner_DefaultLocalProfile_DoesNotAddContentMd5()
     {
         using var first = CreateCalculateRequest("/artemis/api/vehicle/v1/parkingfee/calculate", "ABC123");
         using var second = CreateCalculateRequest("/artemis/api/vehicle/v1/parkingfee/calculate", "XYZ789");
@@ -64,7 +65,8 @@ public sealed class HikCentralRequestSignerTests
         await signer.SignAsync(first, CancellationToken.None);
         await signer.SignAsync(second, CancellationToken.None);
 
-        Assert.NotEqual(
+        Assert.False(first.Content!.Headers.Contains("Content-MD5"));
+        Assert.Equal(
             first.Headers.GetValues("X-Ca-Signature").Single(),
             second.Headers.GetValues("X-Ca-Signature").Single());
     }
@@ -82,10 +84,10 @@ public sealed class HikCentralRequestSignerTests
     }
 
     /// <summary>
-    /// Verifies the canonical string shape from HikCentral Professional OpenAPI V3.1.0 section 3.2.
+    /// Verifies the canonical string shape confirmed against local HikCentral OpenDataServer V3.1.0.
     /// </summary>
     [Fact]
-    public async Task HikCentralRequestSigner_BuildsOfficialV310CanonicalStringShape()
+    public async Task HikCentralRequestSigner_BuildsLocalOpenDataServerCanonicalStringShape()
     {
         using var request = CreateCalculateRequest("/artemis/api/vehicle/v1/parkingfee/calculate", "ABC123");
         var signer = CreateSigner();
@@ -97,17 +99,46 @@ public sealed class HikCentralRequestSignerTests
             [
                 "POST",
                 "*/*",
-                request.Content!.Headers.GetValues("Content-MD5").Single(),
-                "application/json; charset=utf-8",
+                "application/json",
                 "x-ca-key:test-ak",
                 "x-ca-timestamp:1479968678000",
                 "/artemis/api/vehicle/v1/parkingfee/calculate"
             ]);
         Assert.Equal(expected, HikCentralRequestSigner.BuildStringToSign(request));
+        Assert.Equal("rkpWqx7qKJj95FSwyQhUDgIGT30BCs6AjwFxQwYizmk=", request.Headers.GetValues("X-Ca-Signature").Single());
         Assert.Equal("test-ak", request.Headers.GetValues("X-Ca-Key").Single());
         Assert.Equal("1479968678000", request.Headers.GetValues("X-Ca-Timestamp").Single());
         Assert.Equal("x-ca-key,x-ca-timestamp", request.Headers.GetValues("X-Ca-Signature-Headers").Single());
         Assert.True(request.Headers.Contains("X-Ca-Signature"));
+        Assert.False(request.Content!.Headers.Contains("Content-MD5"));
+    }
+
+    [Fact]
+    public void HikCentralLogSanitizer_RedactsAppSecretFromDiagnostics()
+    {
+        var message = "HikCentral failure appSecret=local-secret-value signature=abc123";
+
+        var sanitized = HikCentralLogSanitizer.Redact(
+            message,
+            "local-secret-value",
+            ["abc123"]);
+
+        Assert.DoesNotContain("local-secret-value", sanitized, StringComparison.Ordinal);
+        Assert.DoesNotContain("abc123", sanitized, StringComparison.Ordinal);
+        Assert.Contains(HikCentralLogSanitizer.Redacted, sanitized, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HikCentralLogSanitizer_RedactsSignatureUnlessLocalDebugModeEnabled()
+    {
+        const string signature = "signature-to-redact";
+
+        Assert.Equal(
+            HikCentralLogSanitizer.Redacted,
+            HikCentralLogSanitizer.SignatureForDiagnostics(signature, allowSignatureDebug: false));
+        Assert.Equal(
+            signature,
+            HikCentralLogSanitizer.SignatureForDiagnostics(signature, allowSignatureDebug: true));
     }
 
     private static HikCentralRequestSigner CreateSigner()
@@ -119,9 +150,11 @@ public sealed class HikCentralRequestSignerTests
 
     private static HttpRequestMessage CreateCalculateRequest(string path, string plateLicense)
     {
+        var content = new StringContent($"{{ \"plateLicense\": \"{plateLicense}\" }}", Encoding.UTF8);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         return new HttpRequestMessage(HttpMethod.Post, path)
         {
-            Content = JsonContent.Create(new { plateLicense })
+            Content = content
         };
     }
 }

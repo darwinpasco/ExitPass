@@ -595,7 +595,8 @@ public sealed class HikCentralParkingClientTests
         Assert.NotEmpty(request.Headers.GetValues("X-Ca-Signature").Single());
         Assert.Equal("*/*", request.Headers.Accept.Single().ToString());
         Assert.Equal(expectedPath, request.RequestUri?.AbsolutePath);
-        Assert.True(request.Content?.Headers.Contains("Content-MD5"));
+        Assert.False(request.Content?.Headers.Contains("Content-MD5"));
+        Assert.Equal("application/json", request.Content?.Headers.ContentType?.MediaType);
     }
 
     private static HttpResponseMessage JsonResponse(string json)

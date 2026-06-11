@@ -16,13 +16,18 @@ public sealed class HikCentralRequestSigner : IHikCentralRequestSigner
     private const string SignedHeaderNames = "x-ca-key,x-ca-timestamp";
     private readonly HikCentralCredentialOptions _credentials;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly bool _includeContentMd5;
 
     /// <summary>
     /// Initializes a new instance of the HikCentral AK/SK request signer.
     /// </summary>
     /// <param name="credentials">HikCentral app key and secret key.</param>
     /// <param name="utcNow">Optional deterministic clock for tests.</param>
-    public HikCentralRequestSigner(HikCentralCredentialOptions credentials, Func<DateTimeOffset>? utcNow = null)
+    /// <param name="includeContentMd5">Whether to include the legacy Content-MD5 header in the signature.</param>
+    public HikCentralRequestSigner(
+        HikCentralCredentialOptions credentials,
+        Func<DateTimeOffset>? utcNow = null,
+        bool includeContentMd5 = false)
     {
         ArgumentNullException.ThrowIfNull(credentials);
 
@@ -38,13 +43,17 @@ public sealed class HikCentralRequestSigner : IHikCentralRequestSigner
 
         _credentials = credentials;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+        _includeContentMd5 = includeContentMd5;
     }
 
     /// <inheritdoc />
     public async Task SignAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         EnsureStandardHeaders(request);
-        await EnsureContentMd5Async(request, cancellationToken);
+        if (_includeContentMd5)
+        {
+            await EnsureContentMd5Async(request, cancellationToken);
+        }
 
         var timestamp = _utcNow().ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
         request.Headers.Remove("X-Ca-Key");

@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ExitPass.VendorPmsAdapter.Application.Parking;
@@ -99,7 +101,7 @@ public sealed class HikCentralParkingClient(
                 "/artemis/api/vehicle/v1/parkingfee/calculate");
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
             request.Headers.TryAddWithoutValidation("userId", userId);
-            request.Content = JsonContent.Create(calculateRequest, options: JsonOptions);
+            request.Content = CreateJsonContent(calculateRequest);
             await _requestSigner.SignAsync(request, cancellationToken);
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -153,7 +155,7 @@ public sealed class HikCentralParkingClient(
                 "/artemis/api/vehicle/v1/parkingfee/confirm");
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
             request.Headers.TryAddWithoutValidation("userId", userId);
-            request.Content = JsonContent.Create(confirmRequest, options: JsonOptions);
+            request.Content = CreateJsonContent(confirmRequest);
             await _requestSigner.SignAsync(request, cancellationToken);
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
@@ -340,6 +342,13 @@ public sealed class HikCentralParkingClient(
     {
         return message?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true ||
                code is "404" or "0x00072002";
+    }
+
+    private static StringContent CreateJsonContent(object value)
+    {
+        var content = new StringContent(JsonSerializer.Serialize(value, JsonOptions), Encoding.UTF8);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        return content;
     }
 
     private sealed record HikCentralParkingFeeCalculateData(
