@@ -1,7 +1,8 @@
 param(
     [string]$BeginTime = "",
     [string]$EndTime = "",
-    [string]$CameraIndexCode = ""
+    [string]$CameraIndexCode = "",
+    [string]$FloorIndexCode = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +40,10 @@ if (-not [string]::IsNullOrWhiteSpace($EndTime)) {
 
 if (-not [string]::IsNullOrWhiteSpace($CameraIndexCode)) {
     [Environment]::SetEnvironmentVariable("HIKCENTRAL_TEST_CAMERA_INDEX_CODE", $CameraIndexCode, "Process")
+}
+
+if (-not [string]::IsNullOrWhiteSpace($FloorIndexCode)) {
+    [Environment]::SetEnvironmentVariable("HIKCENTRAL_TEST_FLOOR_INDEX_CODE", $FloorIndexCode, "Process")
 }
 
 dotnet test `

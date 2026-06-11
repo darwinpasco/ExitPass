@@ -9,6 +9,8 @@ namespace ExitPass.VendorPmsAdapter.UnitTests.HikCentral;
 public sealed class HikCentralTicketDiscoveryClientTests
 {
     private const string TicketNumber = "3518855073102";
+    private const string SecondTicketNumber = "3518855085105";
+    private const string ObservedHistoricalCardNum = "3518835144105";
     private const string ParkingLotIndexCode = "1";
 
     [Fact]
@@ -19,6 +21,33 @@ public sealed class HikCentralTicketDiscoveryClientTests
         var formatted = HikCentralParkingTimeFormatter.Format(value);
 
         Assert.Equal("2026-06-11T15:00:00+08:00", formatted);
+    }
+
+    [Fact]
+    public void DiagnosticEndpointCatalog_IncludesOnlyReadOnlyEndpointsForLiveDiagnostics()
+    {
+        Assert.All(
+            HikCentralDiagnosticEndpointCatalog.LiveDiagnosticEndpoints,
+            endpoint =>
+            {
+                Assert.True(endpoint.IsReadOnly);
+                Assert.True(endpoint.SafeForLiveDiagnostics);
+            });
+    }
+
+    [Fact]
+    public void DiagnosticEndpointCatalog_ExcludesParkingFeeConfirmFromLiveDiagnostics()
+    {
+        Assert.DoesNotContain(
+            HikCentralTicketDiscoveryClient.ParkingFeeConfirmPath,
+            HikCentralDiagnosticEndpointCatalog.LiveDiagnosticEndpoints.Select(endpoint => endpoint.Endpoint),
+            StringComparer.OrdinalIgnoreCase);
+
+        Assert.Contains(
+            HikCentralDiagnosticEndpointCatalog.ReferenceInventory,
+            endpoint => endpoint.Endpoint == HikCentralTicketDiscoveryClient.ParkingFeeConfirmPath &&
+                        !endpoint.IsReadOnly &&
+                        !endpoint.SafeForLiveDiagnostics);
     }
 
     [Fact]
@@ -93,7 +122,11 @@ public sealed class HikCentralTicketDiscoveryClientTests
             result.EndpointSummaries,
             summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.PassagewayRecordPath);
         Assert.Equal(1, passagewaySummary.ItemCount);
-        Assert.Equal("returned records with matching ticket identifier", passagewaySummary.Outcome);
+        Assert.True(passagewaySummary.TicketMatched);
+        Assert.Equal(TicketNumber, passagewaySummary.MatchedTicketValue);
+        Assert.Equal("ticketNo", passagewaySummary.MatchedTicketField);
+        Assert.Empty(passagewaySummary.ObservedOtherLookupValues);
+        Assert.Equal("returned records with matching current ticket identifier", passagewaySummary.Outcome);
         Assert.Contains(passagewaySummary.SanitizedRecordSamples, sample => sample.Contains($"ticketNo={TicketNumber}", StringComparison.Ordinal));
         Assert.Contains(passagewaySummary.SanitizedRecordSamples, sample => sample.Contains("plateLicense=ABC123", StringComparison.Ordinal));
         Assert.Contains(HikCentralTicketDiscoveryClient.ParkingSpaceRecordPath, handler.Paths);
@@ -102,6 +135,10 @@ public sealed class HikCentralTicketDiscoveryClientTests
             result.EndpointSummaries,
             summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.CrossRecordsPagePath &&
                        summary.Outcome == "skipped, missing HIKCENTRAL_TEST_CAMERA_INDEX_CODE");
+        Assert.Contains(
+            result.EndpointSummaries,
+            summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.FloorParkingSpaceStatusPath &&
+                       summary.Outcome == "skipped, missing HIKCENTRAL_TEST_FLOOR_INDEX_CODE");
     }
 
     [Fact]
@@ -139,7 +176,10 @@ public sealed class HikCentralTicketDiscoveryClientTests
         var parkingSpaceSummary = Assert.Single(
             result.EndpointSummaries,
             summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.ParkingSpaceRecordPath);
-        Assert.Equal("returned records with matching ticket identifier", parkingSpaceSummary.Outcome);
+        Assert.True(parkingSpaceSummary.TicketMatched);
+        Assert.Equal($"prefix-{TicketNumber}-suffix", parkingSpaceSummary.MatchedTicketValue);
+        Assert.Equal("parkingSpaceSerial", parkingSpaceSummary.MatchedTicketField);
+        Assert.Equal("returned records with matching current ticket identifier", parkingSpaceSummary.Outcome);
         Assert.Contains(
             parkingSpaceSummary.SanitizedRecordSamples,
             sample => sample.Contains($"parkingSpaceSerial=prefix-{TicketNumber}-suffix", StringComparison.Ordinal));
@@ -183,6 +223,7 @@ public sealed class HikCentralTicketDiscoveryClientTests
             summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.PassagewayRecordPath &&
                        summary.ItemCount == 1 &&
                        summary.Outcome == "returned records with no matching ticket identifier" &&
+                       !summary.TicketMatched &&
                        summary.SanitizedRecordSamples.Any(sample => sample.Contains("ticketNo=different-ticket", StringComparison.Ordinal)));
         Assert.Contains(
             result.EndpointSummaries,
@@ -193,6 +234,69 @@ public sealed class HikCentralTicketDiscoveryClientTests
             result.EndpointSummaries,
             summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.CrossRecordsPagePath &&
                        summary.Outcome == "skipped, missing HIKCENTRAL_TEST_CAMERA_INDEX_CODE");
+        Assert.Contains(
+            result.EndpointSummaries,
+            summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.FloorParkingSpaceStatusPath &&
+                       summary.Outcome == "skipped, missing HIKCENTRAL_TEST_FLOOR_INDEX_CODE");
+    }
+
+    [Fact]
+    public async Task DiscoverTicket_WhenControlLookupValueAppearsForCurrentTicket_DoesNotMarkTicketMatched()
+    {
+        var handler = new FakeHikCentralHandler(path => path switch
+        {
+            HikCentralTicketDiscoveryClient.ParkingFeeCalculatePath => NotFoundCalculate(),
+            HikCentralTicketDiscoveryClient.PassagewayRecordPath => HistoricalCardNumRecord(),
+            _ => JsonResponse("""{ "code": "0", "msg": "Success", "data": [] }""")
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.DiscoverTicketAsync(
+            Request(additionalLookupValues: [ObservedHistoricalCardNum]),
+            CancellationToken.None);
+
+        var summary = Assert.Single(
+            result.EndpointSummaries,
+            item => item.EndpointPath == HikCentralTicketDiscoveryClient.PassagewayRecordPath);
+        Assert.False(summary.TicketMatched);
+        Assert.Null(summary.MatchedTicketValue);
+        Assert.Null(summary.MatchedTicketField);
+        Assert.Contains(ObservedHistoricalCardNum, summary.ObservedOtherLookupValues);
+        Assert.Equal("returned records, but only non-ticket lookup values observed", summary.Outcome);
+        Assert.Null(result.DiscoveredIdentifierType);
+        Assert.Null(result.DiscoveredIdentifierValue);
+    }
+
+    [Fact]
+    public async Task DiscoverTicket_WhenControlLookupValueAppearsForSecondTicket_DoesNotMarkTicketMatched()
+    {
+        var handler = new FakeHikCentralHandler(path => path switch
+        {
+            HikCentralTicketDiscoveryClient.ParkingFeeCalculatePath => NotFoundCalculate(),
+            HikCentralTicketDiscoveryClient.PassagewayRecordPath => HistoricalCardNumRecord(),
+            _ => JsonResponse("""{ "code": "0", "msg": "Success", "data": [] }""")
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.DiscoverTicketAsync(
+            new HikCentralTicketDiscoveryRequest(
+                SecondTicketNumber,
+                ParkingLotIndexCode,
+                DateTimeOffset.Parse("2026-06-11T00:00:00+08:00"),
+                DateTimeOffset.Parse("2026-06-11T23:59:59+08:00"),
+                AdditionalLookupValues: [ObservedHistoricalCardNum]),
+            CancellationToken.None);
+
+        var summary = Assert.Single(
+            result.EndpointSummaries,
+            item => item.EndpointPath == HikCentralTicketDiscoveryClient.PassagewayRecordPath);
+        Assert.False(summary.TicketMatched);
+        Assert.Null(summary.MatchedTicketValue);
+        Assert.Null(summary.MatchedTicketField);
+        Assert.Contains(ObservedHistoricalCardNum, summary.ObservedOtherLookupValues);
+        Assert.Equal("returned records, but only non-ticket lookup values observed", summary.Outcome);
+        Assert.Null(result.DiscoveredIdentifierType);
+        Assert.Null(result.DiscoveredIdentifierValue);
     }
 
     [Fact]
@@ -238,6 +342,49 @@ public sealed class HikCentralTicketDiscoveryClientTests
     }
 
     [Fact]
+    public async Task DiscoverTicket_WhenFloorIndexMissing_SkipsFloorParkingSpaceStatus()
+    {
+        var handler = new FakeHikCentralHandler(path => path switch
+        {
+            HikCentralTicketDiscoveryClient.ParkingFeeCalculatePath => NotFoundCalculate(),
+            _ => JsonResponse("""{ "code": "0", "msg": "Success", "data": [] }""")
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.DiscoverTicketAsync(Request(), CancellationToken.None);
+
+        Assert.DoesNotContain(HikCentralTicketDiscoveryClient.FloorParkingSpaceStatusPath, handler.Paths);
+        Assert.Contains(
+            result.EndpointSummaries,
+            summary => summary.EndpointPath == HikCentralTicketDiscoveryClient.FloorParkingSpaceStatusPath &&
+                       summary.HttpStatusCode == 0 &&
+                       summary.HikCentralMessage == "skipped, missing HIKCENTRAL_TEST_FLOOR_INDEX_CODE");
+    }
+
+    [Fact]
+    public async Task DiscoverTicket_WhenFloorIndexPresent_SendsFloorParkingSpaceStatusBody()
+    {
+        var handler = new FakeHikCentralHandler(path => path switch
+        {
+            HikCentralTicketDiscoveryClient.ParkingFeeCalculatePath => NotFoundCalculate(),
+            _ => JsonResponse("""{ "code": "0", "msg": "Success", "data": [] }""")
+        });
+        var client = CreateClient(handler);
+
+        await client.DiscoverTicketAsync(
+            new HikCentralTicketDiscoveryRequest(
+                TicketNumber,
+                ParkingLotIndexCode,
+                DateTimeOffset.Parse("2026-06-11T15:00:00.1234567+08:00"),
+                DateTimeOffset.Parse("2026-06-11T18:00:00.7654321+08:00"),
+                FloorIndexCode: "FLOOR-1"),
+            CancellationToken.None);
+
+        var body = ParseBody(handler.SingleBody(HikCentralTicketDiscoveryClient.FloorParkingSpaceStatusPath));
+        Assert.Equal("FLOOR-1", body.RootElement.GetProperty("floorIndexCode").GetString());
+    }
+
+    [Fact]
     public async Task DiscoverTicket_WhenCameraIndexPresent_SendsCrossRecordsPageBody()
     {
         var handler = new FakeHikCentralHandler(path => path switch
@@ -265,6 +412,69 @@ public sealed class HikCentralTicketDiscoveryClientTests
     }
 
     [Fact]
+    public async Task DiscoverTicket_SanitizedSamplesIncludeNestedTicketCardAndSessionLikeFields()
+    {
+        var handler = new FakeHikCentralHandler(path => path switch
+        {
+            HikCentralTicketDiscoveryClient.ParkingFeeCalculatePath => NotFoundCalculate(),
+            HikCentralTicketDiscoveryClient.PassagewayRecordPath => JsonResponse("""
+                {
+                  "code": "0",
+                  "msg": "Success",
+                  "data": {
+                    "list": [
+                      {
+                        "carInfo": {
+                          "plateNo": "ABC123",
+                          "vehicleColor": "blue"
+                        },
+                        "personInfo": {
+                          "cardNum": "3518835144105",
+                          "personName": "Local Test"
+                        },
+                        "parkingLotInfo": {
+                          "parkingLotName": "TEST SITE"
+                        },
+                        "passagewayInfo": {
+                          "passagewayIndexCode": "PASS-1"
+                        },
+                        "laneInfo": {
+                          "laneIndexCode": "LANE-1"
+                        },
+                        "guid": "GUID-1",
+                        "occurTime": "2026-06-11T15:00:00+08:00",
+                        "feeOrderNo": "ORDER-1"
+                      }
+                    ]
+                  }
+                }
+                """),
+            _ => JsonResponse("""{ "code": "0", "msg": "Success", "data": [] }""")
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.DiscoverTicketAsync(
+            Request(additionalLookupValues: [ObservedHistoricalCardNum]),
+            CancellationToken.None);
+
+        var summary = Assert.Single(
+            result.EndpointSummaries,
+            item => item.EndpointPath == HikCentralTicketDiscoveryClient.PassagewayRecordPath);
+        var sample = Assert.Single(summary.SanitizedRecordSamples);
+        Assert.Contains("carInfo.plateNo=ABC123", sample, StringComparison.Ordinal);
+        Assert.Contains("personInfo.cardNum=3518835144105", sample, StringComparison.Ordinal);
+        Assert.Contains("parkingLotInfo.parkingLotName=TEST SITE", sample, StringComparison.Ordinal);
+        Assert.Contains("passagewayInfo.passagewayIndexCode=PASS-1", sample, StringComparison.Ordinal);
+        Assert.Contains("laneInfo.laneIndexCode=LANE-1", sample, StringComparison.Ordinal);
+        Assert.Contains("guid=GUID-1", sample, StringComparison.Ordinal);
+        Assert.Contains("occurTime=2026-06-11T15:00:00+08:00", sample, StringComparison.Ordinal);
+        Assert.Contains("feeOrderNo=ORDER-1", sample, StringComparison.Ordinal);
+        Assert.False(summary.TicketMatched);
+        Assert.Contains(ObservedHistoricalCardNum, summary.ObservedOtherLookupValues);
+        Assert.Equal("returned records, but only non-ticket lookup values observed", summary.Outcome);
+    }
+
+    [Fact]
     public async Task DiscoverTicket_NeverCallsParkingFeeConfirm()
     {
         var handler = new FakeHikCentralHandler(_ => JsonResponse("""
@@ -280,12 +490,13 @@ public sealed class HikCentralTicketDiscoveryClientTests
             StringComparer.OrdinalIgnoreCase);
     }
 
-    private static HikCentralTicketDiscoveryRequest Request() =>
+    private static HikCentralTicketDiscoveryRequest Request(IReadOnlyList<string>? additionalLookupValues = null) =>
         new(
             TicketNumber,
             ParkingLotIndexCode,
             DateTimeOffset.Parse("2026-06-11T00:00:00+08:00"),
-            DateTimeOffset.Parse("2026-06-11T23:59:59+08:00"));
+            DateTimeOffset.Parse("2026-06-11T23:59:59+08:00"),
+            AdditionalLookupValues: additionalLookupValues);
 
     private static void AssertParkingRecordBody(string json)
     {
@@ -315,6 +526,23 @@ public sealed class HikCentralTicketDiscoveryClientTests
 
     private static HttpResponseMessage NotFoundCalculate() =>
         JsonResponse("""{ "code": "128", "msg": "The request resource does not exist. [vehicle is not exist]", "data": null }""");
+
+    private static HttpResponseMessage HistoricalCardNumRecord() =>
+        JsonResponse($$"""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "list": [
+                  {
+                    "personInfo": {
+                      "cardNum": "{{ObservedHistoricalCardNum}}"
+                    }
+                  }
+                ]
+              }
+            }
+            """);
 
     private static HttpResponseMessage JsonResponse(string json) =>
         new(HttpStatusCode.OK)
