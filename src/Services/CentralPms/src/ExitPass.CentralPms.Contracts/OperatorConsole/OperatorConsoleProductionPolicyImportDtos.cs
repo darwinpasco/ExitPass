@@ -74,6 +74,21 @@ public sealed record OperatorConsoleProductionPolicyImportReviewResponse(
     IReadOnlyList<OperatorConsoleProductionPolicyImportReviewFinding> Findings,
     Guid CorrelationId);
 
+public sealed record OperatorConsoleProductionPolicyImportReviewListResponse(
+    bool Imported,
+    bool ProductionPolicyActivationBlocked,
+    IReadOnlyList<OperatorConsoleProductionPolicyImportReviewListItem> Items,
+    int TotalCount,
+    int Limit,
+    int Offset,
+    Guid CorrelationId);
+
+public sealed record OperatorConsoleProductionPolicyImportReviewListItem(
+    bool Imported,
+    bool ProductionPolicyActivationBlocked,
+    OperatorConsoleProductionPolicyImportReviewSubmission Submission,
+    IReadOnlyList<OperatorConsoleProductionPolicyImportReviewFinding> Findings);
+
 public sealed record OperatorConsoleProductionPolicyImportReviewSubmission(
     Guid ReviewId,
     Guid MakerOperatorId,

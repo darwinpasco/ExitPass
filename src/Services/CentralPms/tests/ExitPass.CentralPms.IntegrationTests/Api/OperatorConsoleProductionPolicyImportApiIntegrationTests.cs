@@ -285,6 +285,116 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
     }
 
     [Fact]
+    public async Task ListReviews_WhenSubmissionPersisted_ReturnsReviewQueueSummaryAndSafetyFlags()
+    {
+        await EnsureReviewQueueSchemaAsync();
+        var makerId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var submitted = await SubmitCleanReviewAsync(client, makerId, correlationId);
+
+            using var response = await GetReviewListAsync(
+                client,
+                makerId,
+                status: submitted.Submission.Status,
+                correlationId);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewListResponse>();
+            body.Should().NotBeNull();
+            body!.Imported.Should().BeFalse();
+            body.ProductionPolicyActivationBlocked.Should().BeTrue();
+            body.Items.Should().ContainSingle(item => item.Submission.ReviewId == submitted.Submission.ReviewId);
+            var item = body.Items.Single(item => item.Submission.ReviewId == submitted.Submission.ReviewId);
+            item.Imported.Should().BeFalse();
+            item.ProductionPolicyActivationBlocked.Should().BeTrue();
+            item.Submission.DryRunSummary.ImportableCount.Should().Be(submitted.Submission.DryRunSummary.ImportableCount);
+            item.Submission.History.Should().Contain(history => history.Action == "SUBMIT_FOR_REVIEW");
+            item.Submission.CreatedAt.Should().NotBe(default);
+            item.Submission.UpdatedAt.Should().NotBe(default);
+        }
+        finally
+        {
+            await CleanupReviewRowsAsync(makerId);
+        }
+    }
+
+    [Fact]
+    public async Task GetReview_WhenSubmissionPersisted_ReturnsDetailByReviewIdAndSafetyFlags()
+    {
+        await EnsureReviewQueueSchemaAsync();
+        var makerId = Guid.NewGuid();
+        var checkerId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var submitted = await SubmitCleanReviewAsync(client, makerId, correlationId);
+            using var decisionResponse = await DecideReviewAsync(
+                client,
+                submitted.Submission.ReviewId,
+                checkerId,
+                "APPROVE_LEGAL",
+                "legal approved",
+                correlationId);
+            decisionResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            using var response = await GetReviewAsync(client, submitted.Submission.ReviewId, correlationId);
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewResponse>();
+            body.Should().NotBeNull();
+            body!.Imported.Should().BeFalse();
+            body.ProductionPolicyActivationBlocked.Should().BeTrue();
+            body.Submission.ReviewId.Should().Be(submitted.Submission.ReviewId);
+            body.Submission.Status.Should().Be("OPS_REVIEW_PENDING");
+            body.Submission.ReviewerDecisions.Should().ContainSingle(decision =>
+                decision.ReviewerRole == "LEGAL" &&
+                decision.ReviewerOperatorId == checkerId);
+            body.Submission.History.Should().Contain(history => history.Action == "APPROVE_LEGAL");
+            body.Message.Should().Contain("No policies were imported or activated");
+
+            using var filteredListResponse = await GetReviewListAsync(
+                client,
+                makerId: null,
+                status: null,
+                correlationId,
+                reviewerId: checkerId,
+                reviewerRole: "LEGAL");
+            filteredListResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            var filteredList = await filteredListResponse.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewListResponse>();
+            filteredList.Should().NotBeNull();
+            filteredList!.Items.Should().ContainSingle(item => item.Submission.ReviewId == submitted.Submission.ReviewId);
+        }
+        finally
+        {
+            await CleanupReviewRowsAsync(makerId);
+        }
+    }
+
+    [Fact]
+    public async Task GetReview_WhenReviewIdUnknown_ReturnsNotFound()
+    {
+        await EnsureReviewQueueSchemaAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await GetReviewAsync(client, Guid.NewGuid(), Guid.NewGuid());
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        error.Should().NotBeNull();
+        error!.ErrorCode.Should().Be("OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_NOT_FOUND");
+    }
+
+    [Fact]
     public async Task DecideReview_WhenFullyApproved_DoesNotActivateProductionPolicyRowsOrCreateImportJob()
     {
         await EnsureReviewQueueSchemaAsync();
@@ -326,6 +436,14 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
             current.ProductionPolicyActivationBlocked.Should().BeTrue();
             current.Submission.Status.Should().Be("APPROVED_FOR_DB_REPO_ALIGNMENT");
             current.Message.Should().Contain("No policies were imported or activated");
+
+            using var detailResponse = await GetReviewAsync(client, submitted.Submission.ReviewId, correlationId);
+            detailResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+            var detail = await detailResponse.Content.ReadFromJsonAsync<OperatorConsoleProductionPolicyImportReviewResponse>();
+            detail.Should().NotBeNull();
+            detail!.Imported.Should().BeFalse();
+            detail.ProductionPolicyActivationBlocked.Should().BeTrue();
+            detail.Submission.Status.Should().Be("APPROVED_FOR_DB_REPO_ALIGNMENT");
 
             var activePoliciesAfter = await CountActiveProductionPolicyRowsAsync();
             var importJobTablesAfter = await CountProductionPolicyImportJobTablesAsync();
@@ -426,6 +544,58 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
                 correlationId))
         };
         request.Headers.Add("X-Operator-User-Id", reviewerId.ToString());
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> GetReviewListAsync(
+        HttpClient client,
+        Guid? makerId,
+        string? status,
+        Guid correlationId,
+        Guid? reviewerId = null,
+        string? reviewerRole = null)
+    {
+        var parameters = new List<string>
+        {
+            $"correlationId={Uri.EscapeDataString(correlationId.ToString())}",
+            "limit=25",
+            "offset=0"
+        };
+
+        if (makerId.HasValue)
+        {
+            parameters.Add($"makerOperatorId={Uri.EscapeDataString(makerId.Value.ToString())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(status))
+        {
+            parameters.Add($"status={Uri.EscapeDataString(status)}");
+        }
+
+        if (reviewerId.HasValue)
+        {
+            parameters.Add($"reviewerOperatorId={Uri.EscapeDataString(reviewerId.Value.ToString())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(reviewerRole))
+        {
+            parameters.Add($"reviewerRole={Uri.EscapeDataString(reviewerRole)}");
+        }
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{ReviewEndpoint}?{string.Join("&", parameters)}");
+        request.Headers.Add("X-Operator-User-Id", makerId?.ToString() ?? OperatorUserId.ToString());
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        return await client.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> GetReviewAsync(
+        HttpClient client,
+        Guid reviewId,
+        Guid correlationId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"{ReviewEndpoint}/{reviewId}?correlationId={correlationId}");
+        request.Headers.Add("X-Operator-User-Id", OperatorUserId.ToString());
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
         return await client.SendAsync(request);
     }

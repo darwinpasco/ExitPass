@@ -9,6 +9,8 @@ import type {
   ProductionPolicyImportDryRunInput,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewDecisionInput,
+  ProductionPolicyImportReviewListResult,
+  ProductionPolicyImportReviewQuery,
   ProductionPolicyImportReviewResult,
   ProductionPolicyImportReviewSubmitInput,
   StatutoryDiscountDecisionInput,
@@ -38,6 +40,8 @@ export interface OperatorConsoleApiClient {
   dryRunProductionPolicyImport(input: ProductionPolicyImportDryRunInput): Promise<ProductionPolicyImportDryRunResult>;
   submitProductionPolicyImportReview(input: ProductionPolicyImportReviewSubmitInput): Promise<ProductionPolicyImportReviewResult>;
   decideProductionPolicyImportReview(input: ProductionPolicyImportReviewDecisionInput): Promise<ProductionPolicyImportReviewResult>;
+  listProductionPolicyImportReviews(input?: ProductionPolicyImportReviewQuery): Promise<ProductionPolicyImportReviewListResult>;
+  getProductionPolicyImportReview(reviewId: string): Promise<ProductionPolicyImportReviewResult>;
 }
 
 interface QueueResponse {
@@ -474,6 +478,36 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       );
 
       return parseResponse<ProductionPolicyImportReviewResult>(response);
+    },
+
+    async listProductionPolicyImportReviews(input = {}) {
+      const correlationId = newCorrelationId();
+      const search = new URLSearchParams({ correlationId });
+      addQuery(search, "status", input.status);
+      addQuery(search, "makerOperatorId", input.makerOperatorId);
+      addQuery(search, "reviewerOperatorId", input.reviewerOperatorId);
+      addQuery(search, "reviewerRole", input.reviewerRole);
+      addQuery(search, "createdFrom", input.createdFrom);
+      addQuery(search, "createdTo", input.createdTo);
+      addQuery(search, "limit", input.limit?.toString());
+      addQuery(search, "offset", input.offset?.toString());
+
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/policies/import/reviews?${search}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return parseResponse<ProductionPolicyImportReviewListResult>(response);
+    },
+
+    async getProductionPolicyImportReview(reviewId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/policies/import/reviews/${encodeURIComponent(reviewId)}?correlationId=${correlationId}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return parseResponse<ProductionPolicyImportReviewResult>(response);
     }
   };
 }
@@ -809,6 +843,56 @@ export function createMockOperatorConsoleApiClient(
       };
 
       return productionPolicyReview;
+    },
+
+    async listProductionPolicyImportReviews(input = {}) {
+      await delay();
+      const reviews = options.empty
+        ? []
+        : [productionPolicyReview ?? mockProductionPolicyReview()];
+      const filtered = reviews.filter((review) => {
+        const matchesStatus = !input.status || review.submission.status === input.status;
+        const matchesMaker = !input.makerOperatorId || review.submission.makerOperatorId === input.makerOperatorId;
+        const matchesReviewer = !input.reviewerOperatorId ||
+          review.submission.reviewerDecisions.some((decision) => decision.reviewerOperatorId === input.reviewerOperatorId);
+        const matchesRole = !input.reviewerRole ||
+          review.submission.reviewerDecisions.some((decision) => decision.reviewerRole === input.reviewerRole);
+        return matchesStatus && matchesMaker && matchesReviewer && matchesRole;
+      });
+      const offset = input.offset ?? 0;
+      const limit = input.limit ?? 50;
+
+      return {
+        imported: false,
+        productionPolicyActivationBlocked: true,
+        items: filtered.slice(offset, offset + limit).map((review) => ({
+          imported: false,
+          productionPolicyActivationBlocked: true,
+          submission: review.submission,
+          findings: review.findings
+        })),
+        totalCount: filtered.length,
+        limit,
+        offset,
+        correlationId: newCorrelationId()
+      };
+    },
+
+    async getProductionPolicyImportReview(reviewId) {
+      await delay();
+      const review = productionPolicyReview ?? mockProductionPolicyReview();
+      if (!review || review.submission.reviewId !== reviewId) {
+        throw {
+          status: "not-found",
+          message: "Review submission was not found.",
+          errorCode: "OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      return {
+        ...review,
+        message: "Review submission loaded. No policies were imported or activated."
+      };
     }
   };
 }

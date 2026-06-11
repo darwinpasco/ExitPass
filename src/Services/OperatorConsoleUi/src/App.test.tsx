@@ -11,6 +11,7 @@ import {
 import type {
   AccessReadinessResponse,
   ProductionPolicyImportDryRunResult,
+  ProductionPolicyImportReviewListResult,
   ProductionPolicyImportReviewResult,
   StatutoryDiscountDraftDetail,
   StatutoryDiscountQueueItem
@@ -52,7 +53,17 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       applyStatutoryDiscountPayableBasis: vi.fn(),
       dryRunProductionPolicyImport: vi.fn(),
       submitProductionPolicyImportReview: vi.fn(),
-      decideProductionPolicyImportReview: vi.fn()
+      decideProductionPolicyImportReview: vi.fn(),
+      listProductionPolicyImportReviews: vi.fn(async () => ({
+        imported: false,
+        productionPolicyActivationBlocked: true,
+        items: [],
+        totalCount: 0,
+        limit: 50,
+        offset: 0,
+        correlationId: "99000000-0000-0000-0000-000000000099"
+      })),
+      getProductionPolicyImportReview: vi.fn()
     };
 
     const { rerender } = render(
@@ -719,7 +730,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("heading", { name: "Persisted review" })).toBeInTheDocument();
     expect(screen.getAllByText("LEGAL_REVIEW_PENDING").length).toBeGreaterThan(0);
     expect(screen.getByText("Production policy activation blocked")).toBeInTheDocument();
-    expect(screen.getByText("DB repo alignment only")).toBeInTheDocument();
+    expect(screen.getAllByText("DB repo alignment only").length).toBeGreaterThan(0);
     const reviewPanel = screen.getByRole("heading", { name: "Persisted review" }).closest("section");
     expect(reviewPanel).not.toBeNull();
     expect(within(reviewPanel as HTMLElement).getByText("false")).toBeInTheDocument();
@@ -748,8 +759,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.selectOptions(await screen.findByLabelText(/reviewer role for approve/i), "DB");
     await userEvent.click(await screen.findByRole("button", { name: "Approve" }));
 
-    expect(await screen.findByText("APPROVED_FOR_DB_REPO_ALIGNMENT")).toBeInTheDocument();
-    expect(screen.getByText("Review decision recorded. No policies were imported or activated.")).toBeInTheDocument();
+    expect((await screen.findAllByText("APPROVED_FOR_DB_REPO_ALIGNMENT")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Review decision recorded. No policies were imported or activated.")).toBeInTheDocument();
     const reviewPanel = screen.getByRole("heading", { name: "Persisted review" }).closest("section");
     expect(reviewPanel).not.toBeNull();
     expect(within(reviewPanel as HTMLElement).getByText("false")).toBeInTheDocument();
@@ -760,6 +771,95 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       reviewId: "99000000-0000-0000-0000-000000000001",
       action: "APPROVE_DB"
     }));
+  });
+
+  it("ProductionPolicyImportReview_LoadsPersistedQueueAndDetailAfterReload", async () => {
+    const listReviews = vi.fn(async () => productionPolicyReviewListResponse("LEGAL_REVIEW_PENDING"));
+    const getReview = vi.fn(async (reviewId: string) => ({
+      ...productionPolicyReviewResponse("LEGAL_REVIEW_PENDING"),
+      submission: {
+        ...productionPolicyReviewResponse("LEGAL_REVIEW_PENDING").submission,
+        reviewId
+      },
+      message: "Review submission loaded. No policies were imported or activated."
+    }));
+
+    render(
+      <App
+        apiClient={{
+          ...createMockOperatorConsoleApiClient(),
+          listProductionPolicyImportReviews: listReviews,
+          getProductionPolicyImportReview: getReview
+        }}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Review queue" })).toBeInTheDocument();
+    expect(await screen.findByText("1 persisted")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Persisted review" })).toBeInTheDocument();
+    expect(screen.getAllByText("LEGAL_REVIEW_PENDING").length).toBeGreaterThan(0);
+    expect(screen.getByText("Created at")).toBeInTheDocument();
+    expect(screen.getByText("Updated at")).toBeInTheDocument();
+    expect(screen.getByText("Dry-run total rows")).toBeInTheDocument();
+    expect(screen.getByText("Reviewer decisions")).toBeInTheDocument();
+    expect(screen.getByText("Decision history")).toBeInTheDocument();
+    expect(screen.getAllByText(/DB repo alignment only/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/imported=false/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/productionPolicyActivationBlocked=true/i).length).toBeGreaterThan(0);
+    expect(listReviews).toHaveBeenCalledWith(expect.objectContaining({ limit: 50, offset: 0 }));
+    expect(getReview).toHaveBeenCalledWith("99000000-0000-0000-0000-000000000001");
+  });
+
+  it("ProductionPolicyImportReview_RefreshButtonReloadsPersistedQueue", async () => {
+    const listReviews = vi.fn(async () => productionPolicyReviewListResponse("LEGAL_REVIEW_PENDING"));
+
+    render(
+      <App
+        apiClient={{
+          ...createMockOperatorConsoleApiClient(),
+          listProductionPolicyImportReviews: listReviews
+        }}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    expect(await screen.findByText("1 persisted")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Refresh reviews" }));
+
+    await waitFor(() => expect(listReviews).toHaveBeenCalledTimes(2));
+  });
+
+  it("ProductionPolicyImportReview_AfterDecisionRefreshesPersistedDetail", async () => {
+    const reviewId = "99000000-0000-0000-0000-000000000001";
+    const getReview = vi
+      .fn()
+      .mockResolvedValueOnce(productionPolicyReviewResponse("LEGAL_REVIEW_PENDING"))
+      .mockResolvedValueOnce(productionPolicyReviewResponse("APPROVED_FOR_DB_REPO_ALIGNMENT", "APPROVE_DB"));
+    const decideReview = vi.fn(async () => productionPolicyReviewResponse("APPROVED_FOR_DB_REPO_ALIGNMENT", "APPROVE_DB"));
+
+    render(
+      <App
+        apiClient={{
+          ...createMockOperatorConsoleApiClient({ empty: true }),
+          listProductionPolicyImportReviews: vi.fn(async () => productionPolicyReviewListResponse("LEGAL_REVIEW_PENDING")),
+          getProductionPolicyImportReview: getReview,
+          decideProductionPolicyImportReview: decideReview
+        }}
+        initialPath="/operator-console/production-policy-import-review"
+      />
+    );
+
+    await screen.findByRole("heading", { name: "Persisted review" });
+    await userEvent.selectOptions(screen.getByLabelText(/reviewer role for approve/i), "DB");
+    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    expect((await screen.findAllByText("APPROVED_FOR_DB_REPO_ALIGNMENT")).length).toBeGreaterThan(0);
+    expect(getReview).toHaveBeenLastCalledWith(reviewId);
+    expect(decideReview).toHaveBeenCalledWith(expect.objectContaining({ reviewId, action: "APPROVE_DB" }));
+    expect(screen.getByText("Review decision recorded. No policies were imported or activated.")).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/production active<\/dt><dd>true/i);
+    expect(document.body.innerHTML).not.toMatch(/activated<\/dt><dd>true/i);
   });
 
   it("ProductionPolicyImportReview_RejectRequestChangesAndEscalateRequireReason", async () => {
@@ -851,6 +951,40 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(calledUrls).not.toMatch(/execution/i);
     expect(calledUrls).not.toMatch(/execute/i);
     expect(calledUrls).not.toMatch(/import\/run/i);
+  });
+
+  it("OperatorConsoleApi_ProductionPolicyReviewListAndDetailUseExpectedUrls", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(productionPolicyReviewListResponse("LEGAL_REVIEW_PENDING")))
+      .mockResolvedValueOnce(jsonResponse(productionPolicyReviewResponse("LEGAL_REVIEW_PENDING")));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const list = await client.listProductionPolicyImportReviews({ status: "LEGAL_REVIEW_PENDING", limit: 25, offset: 0 });
+    const detail = await client.getProductionPolicyImportReview(list.items[0].submission.reviewId);
+
+    expect(detail.submission.status).toBe("LEGAL_REVIEW_PENDING");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^http:\/\/central-pms\.test\/v1\/ops\/operator-console\/statutory-discounts\/policies\/import\/reviews\?/
+      ),
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+    expect(String(fetchMock.mock.calls[0][0])).toContain("status=LEGAL_REVIEW_PENDING");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("limit=25");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        `/v1/ops/operator-console/statutory-discounts/policies/import/reviews/${list.items[0].submission.reviewId}`
+      ),
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+    expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
+    expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(calledUrls).not.toMatch(/activate/i);
+    expect(calledUrls).not.toMatch(/execution/i);
+    expect(calledUrls).not.toMatch(/execute/i);
   });
 
   it("OperatorConsole_DoesNotExposeOutOfScopeControls", async () => {
@@ -1099,6 +1233,26 @@ function productionPolicyReviewResponse(status: string, action?: string): Produc
       }
     ],
     correlationId: "99000000-0000-0000-0000-000000000099"
+  };
+}
+
+function productionPolicyReviewListResponse(status: string): ProductionPolicyImportReviewListResult {
+  const review = productionPolicyReviewResponse(status);
+  return {
+    imported: false,
+    productionPolicyActivationBlocked: true,
+    items: [
+      {
+        imported: false,
+        productionPolicyActivationBlocked: true,
+        submission: review.submission,
+        findings: review.findings
+      }
+    ],
+    totalCount: 1,
+    limit: 50,
+    offset: 0,
+    correlationId: review.correlationId
   };
 }
 

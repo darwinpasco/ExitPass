@@ -15,6 +15,7 @@ import type {
   PolicyContextKind,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewDecisionAction,
+  ProductionPolicyImportReviewListResult,
   ProductionPolicyImportReviewResult,
   StatutoryDiscountDraftDetail,
   StatutoryDiscountEvidenceList,
@@ -393,17 +394,87 @@ function ProductionPolicyImportReviewPage({
   const [fileName, setFileName] = useState("production-policy-candidate.csv");
   const [dryRunResult, setDryRunResult] = useState<ProductionPolicyImportDryRunResult | null>(null);
   const [reviewResult, setReviewResult] = useState<ProductionPolicyImportReviewResult | null>(null);
+  const [reviewQueueState, setReviewQueueState] = useState<LoadState<ProductionPolicyImportReviewListResult>>({ status: "loading" });
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
   const [reviewerRole, setReviewerRole] = useState<"LEGAL" | "OPS" | "QA" | "DB">("LEGAL");
   const [decisionReason, setDecisionReason] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<"dry-run" | "submit-review" | ProductionPolicyImportReviewDecisionAction | null>(null);
 
+  function loadReviewQueue(selectFirst = false) {
+    setReviewQueueState({ status: "loading" });
+    return client
+      .listProductionPolicyImportReviews({ limit: 50, offset: 0 })
+      .then((result) => {
+        setReviewQueueState(result.items.length === 0 ? { status: "empty" } : { status: "loaded", data: result });
+        if (selectFirst && !selectedReviewId && result.items[0]) {
+          setSelectedReviewId(result.items[0].submission.reviewId);
+        }
+        return result;
+      })
+      .catch((caught) => {
+        setReviewQueueState({ status: "error", message: mapApiError(caught).message });
+        return null;
+      });
+  }
+
+  useEffect(() => {
+    let active = true;
+    setReviewQueueState({ status: "loading" });
+    client
+      .listProductionPolicyImportReviews({ limit: 50, offset: 0 })
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+
+        setReviewQueueState(result.items.length === 0 ? { status: "empty" } : { status: "loaded", data: result });
+        if (result.items[0]) {
+          setSelectedReviewId((current) => current ?? result.items[0].submission.reviewId);
+        }
+      })
+      .catch((caught) => {
+        if (active) {
+          setReviewQueueState({ status: "error", message: mapApiError(caught).message });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  useEffect(() => {
+    if (!selectedReviewId) {
+      return;
+    }
+
+    let active = true;
+    client
+      .getProductionPolicyImportReview(selectedReviewId)
+      .then((result) => {
+        if (active) {
+          setReviewResult(result);
+        }
+      })
+      .catch((caught) => {
+        if (active) {
+          setError(mapApiError(caught).message);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, selectedReviewId]);
+
   async function runDryRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage(null);
     setError(null);
     setReviewResult(null);
+    setSelectedReviewId(null);
 
     if (!csvContent.trim()) {
       setError("CSV content is required.");
@@ -441,7 +512,9 @@ function ProductionPolicyImportReviewPage({
         fileName: fileName.trim() || undefined
       });
       setReviewResult(result);
+      setSelectedReviewId(result.submission.reviewId);
       setMessage(result.message);
+      void loadReviewQueue(false);
     } catch (caught) {
       setError(mapApiError(caught).message);
     } finally {
@@ -473,8 +546,10 @@ function ProductionPolicyImportReviewPage({
         action: mappedAction,
         reason: action === "APPROVE" ? decisionReason.trim() || "Approved for DB repo alignment." : decisionReason.trim()
       });
-      setReviewResult(result);
+      const refreshed = await client.getProductionPolicyImportReview(result.submission.reviewId);
+      setReviewResult(refreshed);
       setMessage(result.message);
+      void loadReviewQueue(false);
     } catch (caught) {
       setError(mapApiError(caught).message);
     } finally {
@@ -505,6 +580,65 @@ function ProductionPolicyImportReviewPage({
         <p>Approval means DB repo alignment only.</p>
         <p>Final approved state is APPROVED_FOR_DB_REPO_ALIGNMENT, not production active.</p>
         {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
+      </section>
+
+      <section className="panel" aria-labelledby="review-queue-title">
+        <div className="panelHeader">
+          <h3 id="review-queue-title">Review queue</h3>
+          {reviewQueueState.status === "loaded" && <span className="statusPill">{reviewQueueState.data.totalCount} persisted</span>}
+        </div>
+        <p className="placeholderCopy">Persisted review queue records reload from the backend; approval remains DB repo alignment only.</p>
+        <div className="actionBar">
+          <button type="button" onClick={() => void loadReviewQueue(false)} disabled={submitting !== null}>
+            Refresh reviews
+          </button>
+        </div>
+
+        {reviewQueueState.status === "loading" && <StateMessage title="Loading review queue" message="Retrieving persisted review submissions." />}
+        {reviewQueueState.status === "empty" && <StateMessage title="No persisted reviews" message="No production policy import reviews are in the queue." />}
+        {reviewQueueState.status === "error" && <StateMessage title="Unable to load review queue" message={reviewQueueState.message} />}
+        {reviewQueueState.status === "loaded" && (
+          <div className="tableScroller policyImportRows">
+            <table>
+              <thead>
+                <tr>
+                  <th>Review</th>
+                  <th>Status</th>
+                  <th>Dry-run summary</th>
+                  <th>Safety state</th>
+                  <th>Updated</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reviewQueueState.data.items.map((item) => (
+                  <tr key={item.submission.reviewId}>
+                    <td>
+                      <code>{shortId(item.submission.reviewId)}</code>
+                      <span>{item.submission.fileName ?? "No file name"}</span>
+                    </td>
+                    <td><span className={`statusPill ${statusClass(item.submission.status)}`}>{item.submission.status}</span></td>
+                    <td>
+                      <strong>{item.submission.dryRunSummary.totalRows} rows</strong>
+                      <span>{item.submission.dryRunSummary.failCount} fail / {item.submission.dryRunSummary.importableCount} importable</span>
+                    </td>
+                    <td>
+                      <span>imported={String(item.imported)}</span>
+                      <span>productionPolicyActivationBlocked={String(item.productionPolicyActivationBlocked)}</span>
+                      <span>DB repo alignment only</span>
+                    </td>
+                    <td>{formatDateTime(item.submission.updatedAt)}</td>
+                    <td>
+                      <button type="button" onClick={() => setSelectedReviewId(item.submission.reviewId)}>
+                        Inspect review
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       <section className="panel" aria-labelledby="dry-run-title">
@@ -598,6 +732,11 @@ function ProductionPolicyImportReviewPage({
               ["Production policy activation blocked", String(reviewResult.productionPolicyActivationBlocked)],
               ["Approval meaning", "DB repo alignment only"],
               ["Final approved state", "APPROVED_FOR_DB_REPO_ALIGNMENT"],
+              ["Created at", formatDateTime(reviewResult.submission.createdAt)],
+              ["Updated at", formatDateTime(reviewResult.submission.updatedAt)],
+              ["Dry-run total rows", String(reviewResult.submission.dryRunSummary.totalRows)],
+              ["Dry-run fail count", String(reviewResult.submission.dryRunSummary.failCount)],
+              ["Dry-run importable rows", String(reviewResult.submission.dryRunSummary.importableCount)],
               ["History count", String(reviewResult.submission.history.length)],
               ["Decision count", String(reviewResult.submission.reviewerDecisions.length)]
             ]}
@@ -646,13 +785,32 @@ function ProductionPolicyImportReviewPage({
               ))}
             </ul>
           )}
-          <ul className="activityList" aria-label="Review history">
-            {reviewResult.submission.history.map((entry) => (
-              <li key={`${entry.action}-${entry.occurredAt}`}>
-                {entry.action} - {entry.status} - {formatDateTime(entry.occurredAt)}
-              </li>
-            ))}
-          </ul>
+          <div className="reviewDetailGrid">
+            <section aria-labelledby="review-decisions-title">
+              <h4 id="review-decisions-title">Reviewer decisions</h4>
+              {reviewResult.submission.reviewerDecisions.length === 0 ? (
+                <p className="placeholderCopy">No reviewer decisions recorded.</p>
+              ) : (
+                <ul className="activityList">
+                  {reviewResult.submission.reviewerDecisions.map((decision) => (
+                    <li key={`${decision.reviewerRole}-${decision.decidedAt}`}>
+                      {decision.reviewerRole}: {decision.action} by {shortId(decision.reviewerOperatorId)} at {formatDateTime(decision.decidedAt)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section aria-labelledby="review-history-title">
+              <h4 id="review-history-title">Decision history</h4>
+              <ul className="activityList">
+                {reviewResult.submission.history.map((entry) => (
+                  <li key={`${entry.action}-${entry.occurredAt}`}>
+                    {entry.action} - {entry.status} - {formatDateTime(entry.occurredAt)}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
         </section>
       )}
     </>

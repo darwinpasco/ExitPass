@@ -47,6 +47,24 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             .WithSummary("Submit production policy import dry-run result for DB-backed review")
             .WithDescription("Persists a dry-run production policy import result into the DB-backed review queue. This endpoint does not import, seed, activate, or write production policy registry rows.");
 
+        group.MapGet("/statutory-discounts/policies/import/reviews", ListReviewsAsync)
+            .WithName("ListOperatorConsoleProductionPolicyImportReviews")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleProductionPolicyImportReviewListResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("List DB-backed production policy import review submissions")
+            .WithDescription("Retrieves persisted production policy import review queue submissions. This endpoint does not import, seed, activate, or write production policy registry rows.");
+
+        group.MapGet("/statutory-discounts/policies/import/reviews/{reviewId:guid}", GetReviewAsync)
+            .WithName("GetOperatorConsoleProductionPolicyImportReview")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleProductionPolicyImportReviewResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithSummary("Get one DB-backed production policy import review submission")
+            .WithDescription("Retrieves one persisted production policy import review submission by reviewId. This endpoint does not import, seed, activate, or write production policy registry rows.");
+
         group.MapPost("/statutory-discounts/policies/import/reviews/{reviewId:guid}/decision", DecideReviewAsync)
             .WithName("DecideOperatorConsoleProductionPolicyImportReview")
             .WithTags("OperatorConsole")
@@ -59,6 +77,130 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             .WithDescription("Records checker approval, rejection, escalation, or requested changes in the DB-backed review queue. Approval stops at APPROVED_FOR_DB_REPO_ALIGNMENT and never imports or activates production policy rows.");
 
         return app;
+    }
+
+    private static async Task<IResult> ListReviewsAsync(
+        HttpRequest httpRequest,
+        IOperatorConsoleProductionPolicyImportReviewService service,
+        ILoggerFactory loggerFactory,
+        string? status = null,
+        Guid? makerOperatorId = null,
+        Guid? reviewerOperatorId = null,
+        string? reviewerRole = null,
+        DateTimeOffset? createdFrom = null,
+        DateTimeOffset? createdTo = null,
+        int? limit = null,
+        int? offset = null,
+        Guid? correlationId = null)
+    {
+        using var activity = ActivitySource.StartActivity("HTTP ListOperatorConsoleProductionPolicyImportReviews", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImportEndpoints");
+        var resolvedCorrelationId = correlationId ?? ResolveCorrelationId(httpRequest) ?? Guid.NewGuid();
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", resolvedCorrelationId);
+        activity?.SetTag("policy_import.imported", false);
+        activity?.SetTag("policy_import.activation_blocked", true);
+
+        try
+        {
+            var result = await service.ListAsync(
+                new ProductionPolicyImportReviewQuery(
+                    ParseNullableEnum<ProductionPolicyImportReviewSubmissionStatus>(status, nameof(status)),
+                    makerOperatorId,
+                    reviewerOperatorId,
+                    ParseNullableEnum<ProductionPolicyImportReviewerRole>(reviewerRole, nameof(reviewerRole)),
+                    createdFrom,
+                    createdTo,
+                    limit ?? 50,
+                    offset ?? 0),
+                resolvedCorrelationId,
+                httpRequest.HttpContext.RequestAborted);
+
+            activity?.SetTag("review_count", result.Items.Count);
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            logger.LogInformation(
+                "Operator Console production policy import reviews listed. count={Count} imported=false activation_blocked=true",
+                result.Items.Count);
+
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError(
+                "INVALID_OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_LIST_REQUEST",
+                ex.Message,
+                resolvedCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console production policy import review list failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_LIST_FAILED",
+                    "The Operator Console production policy import review list could not be loaded.",
+                    resolvedCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static async Task<IResult> GetReviewAsync(
+        Guid reviewId,
+        HttpRequest httpRequest,
+        IOperatorConsoleProductionPolicyImportReviewService service,
+        ILoggerFactory loggerFactory,
+        Guid? correlationId = null)
+    {
+        using var activity = ActivitySource.StartActivity("HTTP GetOperatorConsoleProductionPolicyImportReview", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImportEndpoints");
+        var resolvedCorrelationId = correlationId ?? ResolveCorrelationId(httpRequest) ?? Guid.NewGuid();
+
+        activity?.SetTag("url.path", httpRequest.Path.Value);
+        activity?.SetTag("http.request.method", httpRequest.Method);
+        activity?.SetTag("correlation_id", resolvedCorrelationId);
+        activity?.SetTag("review_id", reviewId);
+        activity?.SetTag("policy_import.imported", false);
+        activity?.SetTag("policy_import.activation_blocked", true);
+
+        try
+        {
+            var submission = await service.GetAsync(reviewId, httpRequest.HttpContext.RequestAborted);
+            if (submission is null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Review submission was not found.");
+                return Results.NotFound(BuildError(
+                    "OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_NOT_FOUND",
+                    "Review submission was not found.",
+                    resolvedCorrelationId));
+            }
+
+            activity?.SetTag("review_status", submission.Status.ToString());
+            activity?.SetStatus(ActivityStatusCode.Ok);
+
+            logger.LogInformation(
+                "Operator Console production policy import review loaded. review_id={ReviewId} status={Status} imported=false activation_blocked=true",
+                submission.ReviewId,
+                submission.Status);
+
+            return Results.Ok(ToContract(submission, resolvedCorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console production policy import review detail failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_POLICY_IMPORT_REVIEW_DETAIL_FAILED",
+                    "The Operator Console production policy import review detail could not be loaded.",
+                    resolvedCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     private static async Task<IResult> DryRunAsync(
@@ -363,6 +505,32 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
             result.Findings.Select(ToContract).ToArray(),
             correlationId);
 
+    private static OperatorConsoleProductionPolicyImportReviewListResponse ToContract(
+        ProductionPolicyImportReviewListResult result) =>
+        new(
+            Imported: false,
+            ProductionPolicyActivationBlocked: true,
+            result.Items.Select(submission => new OperatorConsoleProductionPolicyImportReviewListItem(
+                Imported: false,
+                ProductionPolicyActivationBlocked: true,
+                ToContract(submission),
+                submission.Findings.Select(ToContract).ToArray())).ToArray(),
+            result.TotalCount,
+            result.Limit,
+            result.Offset,
+            result.CorrelationId);
+
+    private static OperatorConsoleProductionPolicyImportReviewResponse ToContract(
+        ProductionPolicyImportReviewSubmission submission,
+        Guid correlationId) =>
+        new(
+            Imported: false,
+            ProductionPolicyActivationBlocked: true,
+            "Review submission loaded. No policies were imported or activated.",
+            ToContract(submission),
+            submission.Findings.Select(ToContract).ToArray(),
+            correlationId);
+
     private static OperatorConsoleProductionPolicyImportReviewSubmission ToContract(
         ProductionPolicyImportReviewSubmission submission) =>
         new(
@@ -470,6 +638,22 @@ public static class OperatorConsoleProductionPolicyImportEndpoints
         Guid.TryParse(value.ToString(), out var correlationId)
             ? correlationId
             : null;
+
+    private static TEnum? ParseNullableEnum<TEnum>(string? value, string parameterName)
+        where TEnum : struct
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (Enum.TryParse<TEnum>(value, ignoreCase: false, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new ArgumentException($"{parameterName} has an unsupported value.", parameterName);
+    }
 
     private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId) =>
         new()
