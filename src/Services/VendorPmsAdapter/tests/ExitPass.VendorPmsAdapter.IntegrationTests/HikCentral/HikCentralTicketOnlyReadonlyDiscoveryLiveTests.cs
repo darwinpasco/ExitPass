@@ -42,7 +42,8 @@ public sealed class HikCentralTicketOnlyReadonlyDiscoveryLiveTests
                 $"source={settings.TimeWindowSource}",
                 $"beginTimeSent={HikCentralParkingTimeFormatter.Format(settings.BeginTime)}",
                 $"endTimeSent={HikCentralParkingTimeFormatter.Format(settings.EndTime)}",
-                $"cameraIndexCode={Safe(settings.CameraIndexCode)}"));
+                $"cameraIndexCode={Safe(settings.CameraIndexCode)}",
+                $"floorIndexCode={Safe(settings.FloorIndexCode)}"));
 
         var version = await client.GetVersionAsync(CancellationToken.None);
         _output.WriteLine(FormatEndpoint("version", version.ToSummary()));
@@ -58,7 +59,9 @@ public sealed class HikCentralTicketOnlyReadonlyDiscoveryLiveTests
                     settings.ParkingLotIndexCode,
                     settings.BeginTime,
                     settings.EndTime,
-                    settings.CameraIndexCode),
+                    settings.CameraIndexCode,
+                    settings.FloorIndexCode,
+                    PhysicalTicketNumbers.Append("3518835144105").ToArray()),
                 CancellationToken.None);
 
             _output.WriteLine(FormatTicketResult(result));
@@ -93,7 +96,12 @@ public sealed class HikCentralTicketOnlyReadonlyDiscoveryLiveTests
             $"hikCentralCode={Safe(summary.HikCentralCode)}",
             $"hikCentralMsg={Safe(summary.HikCentralMessage)}",
             $"itemCount={summary.ItemCount}",
-            $"outcome={summary.Outcome}");
+            $"outcome={summary.Outcome}",
+            $"requestShape={Safe(summary.RequestShape)}",
+            $"ticketMatched={summary.TicketMatched}",
+            $"matchedTicketValue={Safe(summary.MatchedTicketValue)}",
+            $"matchedTicketField={Safe(summary.MatchedTicketField)}",
+            $"observedOtherLookupValues={FormatList(summary.ObservedOtherLookupValues)}");
 
     private static string FormatTicketResult(HikCentralTicketDiscoveryResult result) =>
         string.Join(
@@ -116,6 +124,9 @@ public sealed class HikCentralTicketOnlyReadonlyDiscoveryLiveTests
 
     private static string Safe(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "n/a" : value;
+
+    private static string FormatList(IReadOnlyList<string> values) =>
+        values.Count == 0 ? "n/a" : string.Join(",", values);
 }
 
 internal sealed class HikCentralTicketDiscoveryFactAttribute : FactAttribute
@@ -138,6 +149,7 @@ internal static class HikCentralTicketDiscoveryEnvironment
     public const string BeginTimeName = "HIKCENTRAL_TICKET_DISCOVERY_BEGIN_TIME";
     public const string EndTimeName = "HIKCENTRAL_TICKET_DISCOVERY_END_TIME";
     public const string CameraIndexCodeName = "HIKCENTRAL_TEST_CAMERA_INDEX_CODE";
+    public const string FloorIndexCodeName = "HIKCENTRAL_TEST_FLOOR_INDEX_CODE";
 
     public static HikCentralTicketDiscoveryGateResult Evaluate(Func<string, string?> getEnvironmentVariable)
     {
@@ -206,7 +218,8 @@ internal static class HikCentralTicketDiscoveryEnvironment
             beginTime,
             endTime,
             timeWindowSource,
-            Environment.GetEnvironmentVariable(CameraIndexCodeName));
+            Environment.GetEnvironmentVariable(CameraIndexCodeName),
+            Environment.GetEnvironmentVariable(FloorIndexCodeName));
     }
 
     private static DateTimeOffset? ParseOptionalDate(string? value) =>
@@ -228,4 +241,5 @@ internal sealed record HikCentralTicketDiscoverySettings(
     DateTimeOffset BeginTime,
     DateTimeOffset EndTime,
     string TimeWindowSource,
-    string? CameraIndexCode);
+    string? CameraIndexCode,
+    string? FloorIndexCode);

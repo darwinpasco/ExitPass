@@ -17,6 +17,8 @@ public sealed class HikCentralTicketDiscoveryClient
     public const string PassagewayRecordPath = "/artemis/api/vehicle/v1/parkinglot/passageway/record";
     public const string ParkingSpaceRecordPath = "/artemis/api/vehicle/v1/parkingspace/record";
     public const string CrossRecordsPagePath = "/artemis/api/pms/v1/crossRecords/page";
+    public const string FloorParkingSpaceStatusPath = "/artemis/api/vehicle/v1/floor/parkingspace/status";
+    public const string ParkingFeeConfirmPath = "/artemis/api/vehicle/v1/parkingfee/confirm";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -38,7 +40,8 @@ public sealed class HikCentralTicketDiscoveryClient
         "barcode",
         "barcodePayload",
         "qr",
-        "qrPayload"
+        "qrPayload",
+        "plateNo"
     };
 
     private static readonly HashSet<string> DiagnosticFieldNames = new(StringComparer.OrdinalIgnoreCase)
@@ -55,6 +58,32 @@ public sealed class HikCentralTicketDiscoveryClient
         "parkingLotIndexCode",
         "parkingLotName"
     };
+
+    private static readonly string[] DiagnosticPathTokens =
+    [
+        "carInfo",
+        "personInfo",
+        "parkingLotInfo",
+        "passagewayInfo",
+        "laneInfo"
+    ];
+
+    private static readonly string[] DiagnosticNameTokens =
+    [
+        "ticket",
+        "card",
+        "serial",
+        "guid",
+        "record",
+        "order",
+        "bill",
+        "fee",
+        "parking",
+        "plate",
+        "occurTime",
+        "enterTime",
+        "exitTime"
+    ];
 
     private readonly HttpClient _httpClient;
     private readonly IHikCentralRequestSigner _requestSigner;
@@ -84,7 +113,10 @@ public sealed class HikCentralTicketDiscoveryClient
             ParkingFeeCalculatePath,
             new { cardNum = request.PrintedTicketNumber },
             cancellationToken);
-        endpointSummaries.Add(calculate.ToSummary(request.PrintedTicketNumber));
+        endpointSummaries.Add(calculate.ToSummary(
+            request.PrintedTicketNumber,
+            request.ControlLookupValues,
+            requestShape: "cardNum=<ticketNumber>"));
 
         if (calculate.Code is "0")
         {
@@ -105,16 +137,22 @@ public sealed class HikCentralTicketDiscoveryClient
         {
             if (endpoint.SkipReason is not null)
             {
-                endpointSummaries.Add(HikCentralEndpointSummary.Skipped(endpoint.Path, endpoint.SkipReason));
+                endpointSummaries.Add(HikCentralEndpointSummary.Skipped(
+                    endpoint.Path,
+                    endpoint.SkipReason,
+                    endpoint.RequestShape));
                 continue;
             }
 
             var recordResult = await SendReadOnlyPostAsync(endpoint.Path, endpoint.Body!, cancellationToken);
-            var candidate = FindCandidate(recordResult.Root, request.PrintedTicketNumber);
-            endpointSummaries.Add(recordResult.ToSummary(request.PrintedTicketNumber, candidate is not null));
-            if (candidate is not null && discoveredCandidate is null)
+            var primaryTicketCandidate = FindCandidate(recordResult.Root, request.PrintedTicketNumber);
+            endpointSummaries.Add(recordResult.ToSummary(
+                request.PrintedTicketNumber,
+                request.ControlLookupValues,
+                endpoint.RequestShape));
+            if (primaryTicketCandidate is not null && discoveredCandidate is null)
             {
-                discoveredCandidate = candidate;
+                discoveredCandidate = primaryTicketCandidate;
                 discoveredEndpointPath = endpoint.Path;
                 discoveredRoot = recordResult.Root;
             }
@@ -147,13 +185,25 @@ public sealed class HikCentralTicketDiscoveryClient
     internal static bool FindCandidateForSummary(JsonElement? root, string ticketNumber) =>
         FindCandidate(root, ticketNumber) is not null;
 
+    internal static bool FindCandidateForSummary(JsonElement? root, IEnumerable<string> lookupValues) =>
+        FindCandidate(root, lookupValues) is not null;
+
+    internal static HikCentralCandidateMatch? FindCandidateMatchForSummary(JsonElement? root, string ticketNumber)
+    {
+        var candidate = FindCandidate(root, ticketNumber);
+        return candidate is null
+            ? null
+            : new HikCentralCandidateMatch(candidate.IdentifierType, candidate.IdentifierValue);
+    }
+
     internal static string BuildEndpointOutcomeForSummary(
         HttpStatusCode httpStatusCode,
         string? code,
         int itemCount,
-        bool matchedTicketIdentifier,
+        bool ticketMatched,
+        bool observedOtherLookupValue,
         bool ticketSearchApplied) =>
-        BuildEndpointOutcome(httpStatusCode, code, itemCount, matchedTicketIdentifier, ticketSearchApplied);
+        BuildEndpointOutcome(httpStatusCode, code, itemCount, ticketMatched, observedOtherLookupValue, ticketSearchApplied);
 
     internal static IReadOnlyList<string> BuildSanitizedRecordSamplesForSummary(JsonElement? root) =>
         BuildSanitizedRecordSamples(root);
@@ -214,7 +264,8 @@ public sealed class HikCentralTicketDiscoveryClient
                     pageIndex = 1,
                     pageSize = 50,
                     queryInfo
-                }),
+                },
+                RequestShape: $"pageIndex=1,pageSize=50,queryInfo.parkingLotIndexCode={request.ParkingLotIndexCode},queryInfo.beginTime={beginTime},queryInfo.endTime={endTime}"),
             new(
                 ParkingSpaceRecordPath,
                 new
@@ -222,14 +273,16 @@ public sealed class HikCentralTicketDiscoveryClient
                     pageIndex = 1,
                     pageSize = 50,
                     queryInfo
-                })
+                },
+                RequestShape: $"pageIndex=1,pageSize=50,queryInfo.parkingLotIndexCode={request.ParkingLotIndexCode},queryInfo.beginTime={beginTime},queryInfo.endTime={endTime}")
         };
 
         recordEndpoints.Add(string.IsNullOrWhiteSpace(request.CameraIndexCode)
             ? new RecordEndpointRequest(
                 CrossRecordsPagePath,
                 Body: null,
-                "skipped, missing HIKCENTRAL_TEST_CAMERA_INDEX_CODE")
+                "skipped, missing HIKCENTRAL_TEST_CAMERA_INDEX_CODE",
+                "requires HIKCENTRAL_TEST_CAMERA_INDEX_CODE")
             : new RecordEndpointRequest(
                 CrossRecordsPagePath,
                 new
@@ -239,7 +292,22 @@ public sealed class HikCentralTicketDiscoveryClient
                     endTime,
                     pageNo = 1,
                     pageSize = 50
-                }));
+                },
+                RequestShape: $"cameraIndexCode=<configured>,startTime={beginTime},endTime={endTime},pageNo=1,pageSize=50"));
+
+        recordEndpoints.Add(string.IsNullOrWhiteSpace(request.FloorIndexCode)
+            ? new RecordEndpointRequest(
+                FloorParkingSpaceStatusPath,
+                Body: null,
+                "skipped, missing HIKCENTRAL_TEST_FLOOR_INDEX_CODE",
+                "requires HIKCENTRAL_TEST_FLOOR_INDEX_CODE")
+            : new RecordEndpointRequest(
+                FloorParkingSpaceStatusPath,
+                new
+                {
+                    floorIndexCode = request.FloorIndexCode
+                },
+                RequestShape: "floorIndexCode=<configured>"));
 
         return recordEndpoints;
     }
@@ -296,6 +364,20 @@ public sealed class HikCentralTicketDiscoveryClient
         }
 
         return FindCandidate(root.Value, Normalize(ticketNumber));
+    }
+
+    private static CandidateIdentifier? FindCandidate(JsonElement? root, IEnumerable<string> ticketNumbers)
+    {
+        foreach (var ticketNumber in ticketNumbers.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            var candidate = FindCandidate(root, ticketNumber);
+            if (candidate is not null)
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private static CandidateIdentifier? FindCandidate(JsonElement element, string normalizedTicket)
@@ -465,7 +547,8 @@ public sealed class HikCentralTicketDiscoveryClient
         HttpStatusCode httpStatusCode,
         string? code,
         int itemCount,
-        bool matchedTicketIdentifier,
+        bool ticketMatched,
+        bool observedOtherLookupValue,
         bool ticketSearchApplied)
     {
         if ((int)httpStatusCode is < 200 or >= 300)
@@ -488,8 +571,13 @@ public sealed class HikCentralTicketDiscoveryClient
             return "returned records";
         }
 
-        return matchedTicketIdentifier
-            ? "returned records with matching ticket identifier"
+        if (ticketMatched)
+        {
+            return "returned records with matching current ticket identifier";
+        }
+
+        return observedOtherLookupValue
+            ? "returned records, but only non-ticket lookup values observed"
             : "returned records with no matching ticket identifier";
     }
 
@@ -551,7 +639,7 @@ public sealed class HikCentralTicketDiscoveryClient
                     continue;
                 }
 
-                if ((IsCandidateField(property.Name) || DiagnosticFieldNames.Contains(property.Name)) &&
+                if (ShouldIncludeDiagnosticField(name, property.Name) &&
                     TryReadScalar(property.Value, out var value))
                 {
                     fields.Add($"{name}={SanitizeDiagnosticValue(value)}");
@@ -601,7 +689,17 @@ public sealed class HikCentralTicketDiscoveryClient
     private static string Normalize(string? value) =>
         new((value ?? string.Empty).Where(char.IsLetterOrDigit).ToArray());
 
-    private sealed record RecordEndpointRequest(string Path, object? Body, string? SkipReason = null);
+    private static bool ShouldIncludeDiagnosticField(string path, string fieldName) =>
+        IsCandidateField(fieldName) ||
+        DiagnosticFieldNames.Contains(fieldName) ||
+        DiagnosticPathTokens.Any(token => path.Contains(token, StringComparison.OrdinalIgnoreCase)) ||
+        DiagnosticNameTokens.Any(token => fieldName.Contains(token, StringComparison.OrdinalIgnoreCase));
+
+    private sealed record RecordEndpointRequest(
+        string Path,
+        object? Body,
+        string? SkipReason = null,
+        string? RequestShape = null);
 
     private sealed record CandidateIdentifier(string IdentifierType, string IdentifierValue);
 }
@@ -611,7 +709,24 @@ public sealed record HikCentralTicketDiscoveryRequest(
     string ParkingLotIndexCode,
     DateTimeOffset? BeginTime = null,
     DateTimeOffset? EndTime = null,
-    string? CameraIndexCode = null);
+    string? CameraIndexCode = null,
+    string? FloorIndexCode = null,
+    IReadOnlyList<string>? AdditionalLookupValues = null)
+{
+    public IReadOnlyList<string> LookupValues =>
+        new[] { PrintedTicketNumber }
+            .Concat(AdditionalLookupValues ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    public IReadOnlyList<string> ControlLookupValues =>
+        (AdditionalLookupValues ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value) &&
+                            !string.Equals(value, PrintedTicketNumber, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+}
 
 public sealed record HikCentralTicketDiscoveryResult(
     string TicketNumber,
@@ -638,9 +753,14 @@ public sealed record HikCentralEndpointSummary(
     string? HikCentralMessage,
     int ItemCount,
     string Outcome,
-    IReadOnlyList<string> SanitizedRecordSamples)
+    IReadOnlyList<string> SanitizedRecordSamples,
+    bool TicketMatched,
+    string? MatchedTicketValue,
+    string? MatchedTicketField,
+    IReadOnlyList<string> ObservedOtherLookupValues,
+    string? RequestShape)
 {
-    public static HikCentralEndpointSummary Skipped(string endpointPath, string reason) =>
+    public static HikCentralEndpointSummary Skipped(string endpointPath, string reason, string? requestShape) =>
         new(
             endpointPath,
             HttpStatusCode: 0,
@@ -648,7 +768,12 @@ public sealed record HikCentralEndpointSummary(
             HikCentralMessage: reason,
             ItemCount: 0,
             Outcome: reason,
-            SanitizedRecordSamples: []);
+            SanitizedRecordSamples: [],
+            TicketMatched: false,
+            MatchedTicketValue: null,
+            MatchedTicketField: null,
+            ObservedOtherLookupValues: [],
+            RequestShape: requestShape);
 }
 
 public sealed record HikCentralReadOnlyEndpointResult(
@@ -661,12 +786,32 @@ public sealed record HikCentralReadOnlyEndpointResult(
 {
     public HikCentralEndpointSummary ToSummary(
         string? ticketNumber = null,
-        bool matchedTicketIdentifier = false)
+        bool matchedTicketIdentifier = false,
+        string? requestShape = null) =>
+        ToSummary(
+            ticketNumber,
+            observedLookupValues: [],
+            requestShape);
+
+    public HikCentralEndpointSummary ToSummary(
+        string? currentTicketNumber,
+        IEnumerable<string>? observedLookupValues,
+        string? requestShape = null)
     {
         var itemCount = ItemCount;
-        var matched = matchedTicketIdentifier ||
-            (!string.IsNullOrWhiteSpace(ticketNumber) &&
-             HikCentralTicketDiscoveryClient.FindCandidateForSummary(Root, ticketNumber));
+        var currentTicket = currentTicketNumber ?? string.Empty;
+        var ticketMatch = string.IsNullOrWhiteSpace(currentTicket)
+            ? null
+            : HikCentralTicketDiscoveryClient.FindCandidateMatchForSummary(Root, currentTicket);
+        var observedLookupValueList = (observedLookupValues ?? [])
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var observedOtherLookupValues = observedLookupValueList
+            .Where(value => !string.Equals(value, currentTicket, StringComparison.OrdinalIgnoreCase))
+            .Where(value => HikCentralTicketDiscoveryClient.FindCandidateForSummary(Root, value))
+            .ToArray();
 
         return new(
             EndpointPath,
@@ -678,8 +823,16 @@ public sealed record HikCentralReadOnlyEndpointResult(
                 HttpStatusCode,
                 Code,
                 itemCount,
-                matched,
-                !string.IsNullOrWhiteSpace(ticketNumber)),
-            HikCentralTicketDiscoveryClient.BuildSanitizedRecordSamplesForSummary(Root));
+                ticketMatch is not null,
+                observedOtherLookupValues.Length > 0,
+                !string.IsNullOrWhiteSpace(currentTicket)),
+            HikCentralTicketDiscoveryClient.BuildSanitizedRecordSamplesForSummary(Root),
+            ticketMatch is not null,
+            ticketMatch?.IdentifierValue,
+            ticketMatch?.IdentifierType,
+            observedOtherLookupValues,
+            requestShape);
     }
 }
+
+internal sealed record HikCentralCandidateMatch(string IdentifierType, string IdentifierValue);
