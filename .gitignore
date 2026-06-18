@@ -47,3 +47,4 @@ src/Services/WebPayUi/.vite/
 /.gitignore
 
 .env.local
+/scripts/hikcentral
