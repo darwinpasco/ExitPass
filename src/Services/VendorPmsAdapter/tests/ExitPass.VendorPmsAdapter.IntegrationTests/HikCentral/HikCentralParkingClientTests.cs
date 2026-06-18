@@ -1,8 +1,10 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace ExitPass.VendorPmsAdapter.IntegrationTests.HikCentral;
@@ -109,6 +111,68 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
+    /// Verifies that ticket-only HikCentral calculate payloads do not require a real plate license.
+    /// </summary>
+    [Fact]
+    public async Task ResolveSession_WhenTicketOnlyCalculateReturnsUnknownPlate_ReturnsProviderNeutralSession()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "plateLicense": "Unknown",
+                "cardNum": "3519351207107",
+                "parkingInTime": "2026-06-17T11:19:12+08:00",
+                "parkingDuration": 3539,
+                "feeRuleType": 0,
+                "feeRuleIndexCode": "1",
+                "feeRuleName": "test fee",
+                "fee": "50.00"
+              }
+            }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(null, "3519351207107", Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.Found, result.Status);
+        Assert.Equal("Unknown", result.Session?.PlateNumber);
+        Assert.Contains("3519351207107", result.Session?.VendorSessionReference, StringComparison.Ordinal);
+        Assert.Equal(5000, result.Session?.TariffQuote?.AmountMinor);
+        Assert.Equal("1", result.Session?.TariffQuote?.TariffVersionReference);
+    }
+
+    /// <summary>
+    /// Verifies that ticket-only calculate can still map when HikCentral omits plateLicense.
+    /// </summary>
+    [Fact]
+    public async Task ResolveSession_WhenTicketOnlyCalculateOmitsPlateLicense_ReturnsUnknownPlate()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "cardNum": "3519351207107",
+                "parkingInTime": "2026-06-17T11:19:12+08:00",
+                "parkingDuration": 3539,
+                "fee": "50.00"
+              }
+            }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(null, "3519351207107", Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.Found, result.Status);
+        Assert.Equal("Unknown", result.Session?.PlateNumber);
+        Assert.Equal(5000, result.Session?.TariffQuote?.AmountMinor);
+    }
+
+    /// <summary>
     /// Verifies that HikCentral array payloads with one candidate still map into one provider-neutral session.
     /// </summary>
     [Fact]
@@ -186,21 +250,21 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
-    /// Verifies that nonzero HikCentral response codes map to deterministic vendor rejection.
+    /// Verifies that nonzero HikCentral response codes map to deterministic adapter diagnostics.
     /// </summary>
     [Fact]
-    public async Task CalculateParkingFee_WhenCodeIsNonZero_ReturnsVendorRejectedOrNotFoundAsAppropriate()
+    public async Task CalculateParkingFee_WhenCodeIsNonZero_ReturnsAdapterErrorWithHikCentralCode()
     {
         var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
-            { "code": "12345", "msg": "fee calculation failed", "data": {} }
+            { "code": "128", "msg": "The request resource does not exist. [vehicle is not exist]", "data": {} }
             """)));
 
         var result = await client.ResolveSessionAsync(
             new VendorParkingSessionLookupRequest("ABC123", null, Guid.NewGuid()),
             CancellationToken.None);
 
-        Assert.Equal(VendorParkingLookupStatus.VendorRejected, result.Status);
-        Assert.Equal("VENDOR_PMS_REJECTED", result.ErrorCode);
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_128", result.ErrorCode);
     }
 
     /// <summary>
@@ -246,10 +310,10 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
-    /// Verifies that HikCentral not-found responses map deterministically.
+    /// Verifies that HikCentral nonzero not-found envelope codes map to adapter diagnostics.
     /// </summary>
     [Fact]
-    public async Task ResolveSession_WhenHikCentralReturnsNotFound_ReturnsNotFound()
+    public async Task ResolveSession_WhenHikCentralReturnsNonzeroNotFoundCode_ReturnsAdapterError()
     {
         var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
             { "code": "404", "msg": "vehicle not found", "data": null }
@@ -259,8 +323,8 @@ public sealed class HikCentralParkingClientTests
             new VendorParkingSessionLookupRequest("MISSING", null, Guid.NewGuid()),
             CancellationToken.None);
 
-        Assert.Equal(VendorParkingLookupStatus.NotFound, result.Status);
-        Assert.Equal("VENDOR_SESSION_NOT_FOUND", result.ErrorCode);
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_404", result.ErrorCode);
         Assert.False(result.Retryable);
     }
 
@@ -404,6 +468,24 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
+    /// Verifies that confirmation fails closed unless explicitly enabled.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmParkingFee_WhenConfirmPaymentDisabled_DoesNotCallHikCentral()
+    {
+        var handler = new FakeHikCentralHandler(_ => throw new InvalidOperationException("Vendor should not be called."));
+        var client = CreateClient(handler, confirmPaymentEnabled: false);
+
+        var result = await client.ConfirmParkingFeeAsync(
+            new VendorParkingFeeConfirmationRequest(null, "3519351207107", 0, 5000, "PHP", Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_CONFIRMATION_DISABLED", result.ErrorCode);
+        Assert.Null(handler.LastRequest);
+    }
+
+    /// <summary>
     /// Verifies that card-based confirmations send the official HikCentral V3.1.0 body shape.
     /// </summary>
     [Fact]
@@ -497,19 +579,19 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
-    /// Verifies that nonzero HikCentral confirm codes map to deterministic vendor rejection.
+    /// Verifies that nonzero HikCentral confirm codes map to deterministic adapter diagnostics.
     /// </summary>
     [Fact]
-    public async Task ConfirmParkingFee_WhenCodeIsNonZero_ReturnsVendorRejected()
+    public async Task ConfirmParkingFee_WhenCodeIsNonZero_ReturnsAdapterErrorWithHikCentralCode()
     {
-        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""{ "code": "12345", "msg": "confirm failed", "data": {} }""")));
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""{ "code": "128", "msg": "confirm failed", "data": {} }""")));
 
         var result = await client.ConfirmParkingFeeAsync(
             new VendorParkingFeeConfirmationRequest("2700H", null, 1, 20000, "PHP", Guid.NewGuid()),
             CancellationToken.None);
 
-        Assert.Equal(VendorParkingLookupStatus.VendorRejected, result.Status);
-        Assert.Equal("VENDOR_PMS_REJECTED", result.ErrorCode);
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_128", result.ErrorCode);
     }
 
     /// <summary>
@@ -567,7 +649,121 @@ public sealed class HikCentralParkingClientTests
             StringComparison.Ordinal);
     }
 
-    private static HikCentralParkingClient CreateClient(HttpMessageHandler handler)
+    /// <summary>
+    /// Verifies calculate diagnostic logs include safe request and response metadata.
+    /// </summary>
+    [Fact]
+    public async Task CalculateParkingFee_LogsStructuredDiagnostics()
+    {
+        var correlationId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        var logger = new CapturingLogger<HikCentralParkingClient>();
+        var handler = new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "10.00"));
+        var client = CreateClient(handler, logger: logger);
+
+        var result = await client.ResolveTariffAsync(
+            new VendorTariffQuoteRequest(null, "CARD-9", correlationId),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.Found, result.Status);
+        var responseLog = Assert.Single(logger.Entries, entry => entry.Properties.ContainsKey("Outcome"));
+        Assert.Equal(HikCentralParkingClient.CalculateOperationName, responseLog.Properties["OperationName"]);
+        Assert.Equal(HikCentralParkingClient.OutcomeSuccess, responseLog.Properties["Outcome"]);
+        Assert.Equal("/artemis/api/vehicle/v1/parkingfee/calculate", responseLog.Properties["EndpointPath"]);
+        Assert.Equal("parkingfee.calculate", responseLog.Properties["EndpointName"]);
+        Assert.Equal(correlationId, responseLog.Properties["CorrelationId"]);
+        Assert.Equal("CARD-9", responseLog.Properties["CardNum"]);
+        Assert.Equal("0", responseLog.Properties["HikCentralCode"]);
+        Assert.Equal("Success", responseLog.Properties["HikCentralMessage"]);
+        Assert.Equal("10.00", responseLog.Properties["ResponseFee"]);
+        Assert.True(Convert.ToDouble(responseLog.Properties["ElapsedMs"], CultureInfo.InvariantCulture) >= 0);
+
+        var loggedText = logger.JoinedText();
+        Assert.DoesNotContain("test-secret", loggedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("X-Ca-Signature", loggedText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Authorization", loggedText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies confirm diagnostic logs include request fee, response feeTime, and vendor envelope metadata.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmParkingFee_LogsStructuredDiagnostics()
+    {
+        var correlationId = Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff");
+        var logger = new CapturingLogger<HikCentralParkingClient>();
+        var handler = new FakeHikCentralHandler(_ => SuccessfulConfirmResponse("200.00"));
+        var client = CreateClient(handler, logger: logger);
+
+        var result = await client.ConfirmParkingFeeAsync(
+            new VendorParkingFeeConfirmationRequest(null, "CARD-9", 1, 20000, "PHP", correlationId),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.Confirmed, result.Status);
+        var responseLog = Assert.Single(logger.Entries, entry => entry.Properties.ContainsKey("Outcome"));
+        Assert.Equal(HikCentralParkingClient.ConfirmOperationName, responseLog.Properties["OperationName"]);
+        Assert.Equal(HikCentralParkingClient.OutcomeSuccess, responseLog.Properties["Outcome"]);
+        Assert.Equal("/artemis/api/vehicle/v1/parkingfee/confirm", responseLog.Properties["EndpointPath"]);
+        Assert.Equal("CARD-9", responseLog.Properties["CardNum"]);
+        Assert.Equal("200.00", responseLog.Properties["RequestFee"]);
+        Assert.Equal("0", responseLog.Properties["HikCentralCode"]);
+        Assert.Equal("Success", responseLog.Properties["HikCentralMessage"]);
+        Assert.Equal("200.00", responseLog.Properties["ResponseFee"]);
+        Assert.Equal("2022-04-12T14:48:11+08:00", responseLog.Properties["FeeTime"]);
+        Assert.True(Convert.ToDouble(responseLog.Properties["ElapsedMs"], CultureInfo.InvariantCulture) >= 0);
+    }
+
+    /// <summary>
+    /// Verifies nonzero HikCentral response codes are reported with the dedicated diagnostic outcome.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmParkingFee_WhenCodeIsNonZero_LogsHikCentralNonzeroOutcome()
+    {
+        var logger = new CapturingLogger<HikCentralParkingClient>();
+        var client = CreateClient(
+            new FakeHikCentralHandler(_ => JsonResponse("""{ "code": "12345", "msg": "confirm failed", "data": {} }""")),
+            logger: logger);
+
+        var result = await client.ConfirmParkingFeeAsync(
+            new VendorParkingFeeConfirmationRequest("2700H", null, 1, 20000, "PHP", Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        var responseLog = Assert.Single(logger.Entries, entry => entry.Properties.ContainsKey("Outcome"));
+        Assert.Equal(HikCentralParkingClient.OutcomeHikCentralNonZeroCode, responseLog.Properties["Outcome"]);
+        Assert.Equal("12345", responseLog.Properties["HikCentralCode"]);
+        Assert.Equal("confirm failed", responseLog.Properties["HikCentralMessage"]);
+        Assert.Equal("VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_12345", responseLog.Properties["ErrorCode"]);
+        Assert.DoesNotContain("test-secret", logger.JoinedText(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Verifies the explicit confirmation guard is logged without calling HikCentral confirm.
+    /// </summary>
+    [Fact]
+    public async Task ConfirmParkingFee_WhenConfirmDisabled_LogsGuardBlockedWithoutVendorCall()
+    {
+        var logger = new CapturingLogger<HikCentralParkingClient>();
+        var handler = new FakeHikCentralHandler(_ => throw new InvalidOperationException("Vendor should not be called."));
+        var client = CreateClient(handler, confirmPaymentEnabled: false, logger: logger);
+
+        var result = await client.ConfirmParkingFeeAsync(
+            new VendorParkingFeeConfirmationRequest(null, "CARD-9", 1, 20000, "PHP", Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.AdapterError, result.Status);
+        Assert.Equal("VENDOR_CONFIRMATION_DISABLED", result.ErrorCode);
+        Assert.Null(handler.LastRequest);
+        var responseLog = Assert.Single(logger.Entries, entry => entry.Properties.ContainsKey("Outcome"));
+        Assert.Equal(HikCentralParkingClient.OutcomeConfirmGuardBlocked, responseLog.Properties["Outcome"]);
+        Assert.Equal(HikCentralParkingClient.ConfirmOperationName, responseLog.Properties["OperationName"]);
+        Assert.Equal("CARD-9", responseLog.Properties["CardNum"]);
+        Assert.Equal("200.00", responseLog.Properties["RequestFee"]);
+    }
+
+    private static HikCentralParkingClient CreateClient(
+        HttpMessageHandler handler,
+        bool confirmPaymentEnabled = true,
+        ILogger<HikCentralParkingClient>? logger = null)
     {
         var signer = new HikCentralRequestSigner(
             new HikCentralCredentialOptions("test-ak", "test-secret"),
@@ -578,7 +774,9 @@ public sealed class HikCentralParkingClientTests
                 BaseAddress = new Uri("https://hikcentral.fake")
             },
             signer,
-            "exitpass-adapter");
+            "exitpass-adapter",
+            confirmPaymentEnabled,
+            logger);
     }
 
     private static void AssertSignedCalculateRequest(HttpRequestMessage? request)
@@ -664,4 +862,50 @@ public sealed class HikCentralParkingClientTests
             return _responseFactory(request);
         }
     }
+
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        public List<CapturedLogEntry> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return null;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var properties = state as IEnumerable<KeyValuePair<string, object?>>
+                ?? [];
+            Entries.Add(new CapturedLogEntry(
+                logLevel,
+                formatter(state, exception),
+                properties
+                    .Where(property => property.Key != "{OriginalFormat}")
+                    .ToDictionary(property => property.Key, property => property.Value)));
+        }
+
+        public string JoinedText()
+        {
+            return string.Join(
+                "|",
+                Entries.Select(entry =>
+                    $"{entry.Message}|{string.Join("|", entry.Properties.Select(property => $"{property.Key}={property.Value}"))}"));
+        }
+    }
+
+    private sealed record CapturedLogEntry(
+        LogLevel Level,
+        string Message,
+        IReadOnlyDictionary<string, object?> Properties);
 }
