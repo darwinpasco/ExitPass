@@ -17,6 +17,11 @@ namespace ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 public sealed class HikCentralOptions
 {
     /// <summary>
+    /// Environment variable that enables the mutating HikCentral payment confirmation call.
+    /// </summary>
+    public const string ConfirmPaymentEnabledEnvironmentVariable = "HIKCENTRAL_CONFIRM_PAYMENT_ENABLED";
+
+    /// <summary>
     /// Gets or sets a value indicating whether the HikCentral adapter is enabled.
     /// </summary>
     public bool Enabled { get; set; }
@@ -40,6 +45,23 @@ public sealed class HikCentralOptions
     /// Gets or sets the HikCentral userId header value.
     /// </summary>
     public string? UserId { get; set; } = "exitpass-adapter";
+
+    /// <summary>
+    /// Gets or sets a value indicating whether HikCentral parking fee confirmation is allowed.
+    /// </summary>
+    public bool ConfirmPaymentEnabled { get; set; }
+
+    /// <summary>
+    /// Reads the fail-closed payment confirmation guard from the process environment.
+    /// </summary>
+    public static bool ReadConfirmPaymentEnabledFromEnvironment(Func<string, string?>? getEnvironmentVariable = null)
+    {
+        var readEnvironment = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        return string.Equals(
+            readEnvironment(ConfirmPaymentEnabledEnvironmentVariable),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Validates configured HikCentral settings without returning secret values.

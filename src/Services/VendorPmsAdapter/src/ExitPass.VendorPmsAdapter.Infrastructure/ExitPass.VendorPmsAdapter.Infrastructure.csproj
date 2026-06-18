@@ -3,6 +3,7 @@
     <RootNamespace>ExitPass.VendorPmsAdapter.Infrastructure</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
     <ProjectReference Include="../ExitPass.VendorPmsAdapter.Application/ExitPass.VendorPmsAdapter.Application.csproj" />
     <ProjectReference Include="../ExitPass.VendorPmsAdapter.Domain/ExitPass.VendorPmsAdapter.Domain.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />

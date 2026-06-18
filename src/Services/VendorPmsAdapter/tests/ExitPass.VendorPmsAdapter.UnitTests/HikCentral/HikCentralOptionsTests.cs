@@ -22,6 +22,7 @@ public sealed class HikCentralOptionsTests
         var errors = options.Validate();
 
         Assert.Empty(errors);
+        Assert.False(options.ConfirmPaymentEnabled);
     }
 
     /// <summary>
@@ -36,12 +37,14 @@ public sealed class HikCentralOptionsTests
             BaseUrl = "https://hikcentral.example",
             AppKey = "test-ak",
             AppSecret = "test-secret",
-            UserId = "exitpass-adapter"
+            UserId = "exitpass-adapter",
+            ConfirmPaymentEnabled = true
         };
 
         var errors = options.Validate();
 
         Assert.Empty(errors);
+        Assert.True(options.ConfirmPaymentEnabled);
     }
 
     /// <summary>
@@ -65,5 +68,23 @@ public sealed class HikCentralOptionsTests
         Assert.Contains("HIKCENTRAL_APP_KEY_REQUIRED", errors);
         Assert.Contains("HIKCENTRAL_USER_ID_INVALID", errors);
         Assert.DoesNotContain(errors, error => error.Contains("do-not-leak-this-secret", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Verifies that the mutating payment confirmation guard uses the exact environment variable and fails closed.
+    /// </summary>
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("false", false)]
+    [InlineData("true", true)]
+    [InlineData("TRUE", true)]
+    public void ReadConfirmPaymentEnabledFromEnvironment_ParsesExplicitTrueOnly(
+        string? configuredValue,
+        bool expected)
+    {
+        var enabled = HikCentralOptions.ReadConfirmPaymentEnabledFromEnvironment(
+            name => name == HikCentralOptions.ConfirmPaymentEnabledEnvironmentVariable ? configuredValue : null);
+
+        Assert.Equal(expected, enabled);
     }
 }

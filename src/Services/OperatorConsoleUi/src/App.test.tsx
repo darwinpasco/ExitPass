@@ -10,6 +10,7 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
+  OperatorTicketLookupResult,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewListResult,
   ProductionPolicyImportReviewResult,
@@ -39,6 +40,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     let resolveQueue: (items: StatutoryDiscountQueueItem[]) => void = () => undefined;
     const apiClient: OperatorConsoleApiClient = {
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
+      lookupSessionByTicket: vi.fn(),
       listAuditReport: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
         () =>
@@ -55,8 +57,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       submitProductionPolicyImportReview: vi.fn(),
       decideProductionPolicyImportReview: vi.fn(),
       listProductionPolicyImportReviews: vi.fn(async () => ({
-        imported: false,
-        productionPolicyActivationBlocked: true,
+        imported: false as const,
+        productionPolicyActivationBlocked: true as const,
         items: [],
         totalCount: 0,
         limit: 50,
@@ -360,6 +362,65 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeEnabled();
   });
 
+  it("TicketLookup_LooksUpByTicketOnlyAndShowsConfirmedVendorExitInstruction", async () => {
+    const onTicketLookup = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onTicketLookup })}
+        initialPath="/operator-console/ticket-lookup"
+      />
+    );
+
+    await userEvent.type(await screen.findByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-0001");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+
+    expect(await screen.findByText("Vendor confirmation complete.")).toBeInTheDocument();
+    expect(screen.getByText("Proceed to ticket exit validator.")).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Session Information" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tariff Information" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Payment Information" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Vendor Information" })).toBeInTheDocument();
+    expect(screen.getByText("STD-001")).toBeInTheDocument();
+    expect(screen.getByText("Standard Parking Fee")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Diagnostics"));
+    expect(screen.getAllByText("mock-ticket-lookup-confirmed").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("textbox", { name: /plate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /paid/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /pay/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /open gate/i })).not.toBeInTheDocument();
+    expect(onTicketLookup).toHaveBeenCalledWith({ ticketNumber: "STAT-OP-SESSION-0001" });
+  });
+
+  it("TicketLookup_ShowsUnpaidVendorPendingVendorFailedAndNotFoundStates", async () => {
+    const { rerender } = render(
+      <App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />
+    );
+
+    await userEvent.type(await screen.findByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-0002");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+    expect((await screen.findAllByText("Vendor confirmation unavailable")).length).toBeGreaterThan(0);
+
+    rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
+    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter ticket number"));
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-PENDING");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+    expect(await screen.findByText("Payment confirmed in ExitPass. Vendor confirmation pending.")).toBeInTheDocument();
+
+    rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
+    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter ticket number"));
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-VENDOR-FAILED");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+    expect((await screen.findAllByText("Vendor confirmation failed.")).length).toBeGreaterThan(0);
+    expect(screen.getByText("Escalate to supervisor.")).toBeInTheDocument();
+
+    rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
+    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter ticket number"));
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter ticket number"), "MISSING-TICKET");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+    expect(await screen.findByText("Ticket not found")).toBeInTheDocument();
+  });
+
   it("AuditReporting_RendersReadOnlyPanelRowsAndGuardrails", async () => {
     render(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/audit" />);
 
@@ -507,6 +568,42 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
     expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
     expectOperatorContextHeaders(fetchMock.mock.calls[1][1]?.headers);
+  });
+
+  it("OperatorConsoleApi_LooksUpTicketThroughOperatorConsoleEndpointOnly", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(ticketLookupResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.lookupSessionByTicket({ ticketNumber: "REAL-TICKET-001" });
+
+    expect(result.sessionFound).toBe(true);
+    expect(result.ticketNumber).toBe("REAL-TICKET-001");
+    expect(result.cardNum).toBe("REAL-TICKET-001");
+    expect(result.paymentStatus).toBe("CONFIRMED");
+    expect(result.vendorConfirmationStatus).toBe("CONFIRMED");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/ticket-session-summary",
+      expect.objectContaining({ method: "POST" })
+    );
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expectOperatorContextHeaders(requestOptions?.headers);
+    expect(JSON.parse(requestOptions?.body as string)).toEqual(expect.objectContaining({
+      ticketNumber: "REAL-TICKET-001",
+      cardNum: null
+    }));
+    expect(JSON.parse(requestOptions?.body as string)).not.toEqual(expect.objectContaining({
+      plateNumber: expect.anything(),
+      parkingSessionId: expect.anything(),
+      lookupMode: expect.anything()
+    }));
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(calledUrls).not.toMatch(/sessions\/lookup/i);
+    expect(calledUrls).not.toMatch(/parkingfee/i);
+    expect(calledUrls).not.toMatch(/confirm/i);
+    expect(calledUrls).not.toMatch(/hikcentral/i);
+    expect(calledUrls).not.toMatch(/gate/i);
   });
 
   it("OperatorConsoleApi_EvaluatesAccessReadinessThroughFetch", async () => {
@@ -1306,6 +1403,32 @@ function productionPolicyReviewListResponse(status: string): ProductionPolicyImp
     limit: 50,
     offset: 0,
     correlationId: review.correlationId
+  };
+}
+
+function ticketLookupResponse(): OperatorTicketLookupResult {
+  return {
+    sessionFound: true,
+    ticketNumber: "REAL-TICKET-001",
+    cardNum: "REAL-TICKET-001",
+    plateLicense: "Unknown",
+    parkingInTime: "2026-06-01T08:00:00+08:00",
+    parkingDurationSeconds: 3600,
+    feeMinorUnits: 12000,
+    currencyCode: "PHP",
+    feeRuleType: "STANDARD",
+    feeRuleIndexCode: "STD-REAL",
+    feeRuleName: "Standard Fee",
+    paymentAttemptStatus: "CONFIRMED",
+    paymentStatus: "CONFIRMED",
+    paymentConfirmationStatus: "RECORDED",
+    vendorSystemCode: "HIKCENTRAL",
+    vendorConfirmationCode: "CONFIRMED",
+    vendorConfirmationStatus: "CONFIRMED",
+    vendorConfirmationTimestamp: "2026-06-01T09:00:00+08:00",
+    vendorMessage: "Accepted",
+    diagnostics: ["summary-only"],
+    correlationId: "77000000-0000-0000-0000-000000000092"
   };
 }
 

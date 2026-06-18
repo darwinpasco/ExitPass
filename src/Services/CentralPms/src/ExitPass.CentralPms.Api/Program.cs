@@ -27,6 +27,7 @@ using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Operations;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
@@ -40,6 +41,7 @@ using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
 using ExitPass.CentralPms.Infrastructure.OperatorConsole;
+using ExitPass.CentralPms.Infrastructure.Operations;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.Security;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
@@ -128,6 +130,7 @@ app.MapReconciliationEvaluationEndpoints();
 app.MapOperatorConsoleAccessEvaluationEndpoints();
 app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
+app.MapTicketSessionSummaryEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
@@ -213,6 +216,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessEvaluation")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessReadiness")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
+                .AddSource("ExitPass.CentralPms.Api.TicketSessionSummary")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
@@ -390,6 +394,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
+    builder.Services.AddScoped<ITicketSessionSummaryReadRepository>(_ =>
+        new TicketSessionSummaryReadRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ITicketSessionSummaryService, TicketSessionSummaryService>();
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDraftWriter>(_ =>
         new OperatorConsoleStatutoryDiscountDraftWriter(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountDraftService, OperatorConsoleStatutoryDiscountDraftService>();

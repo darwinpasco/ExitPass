@@ -1,12 +1,14 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ExitPass.VendorPmsAdapter.Application.Parking;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 
@@ -19,18 +21,59 @@ namespace ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 /// <param name="httpClient">HTTP client configured by the caller.</param>
 /// <param name="requestSigner">HikCentral AK/SK request signer.</param>
 /// <param name="userId">HikCentral required userId header value.</param>
+/// <param name="confirmPaymentEnabled">Whether the mutating HikCentral fee confirmation call is allowed.</param>
+/// <param name="logger">Structured diagnostics logger.</param>
 public sealed class HikCentralParkingClient(
     HttpClient httpClient,
     IHikCentralRequestSigner requestSigner,
-    string userId = "exitpass-adapter") : IVendorParkingDataClient
+    string userId = "exitpass-adapter",
+    bool? confirmPaymentEnabled = null,
+    ILogger<HikCentralParkingClient>? logger = null) : IVendorParkingDataClient
 {
     /// <summary>
     /// Provider code emitted by the HikCentral adapter.
     /// </summary>
     public const string ProviderCode = "HIKCENTRAL";
 
+    /// <summary>
+    /// Structured operation name for HikCentral parking fee calculation.
+    /// </summary>
+    public const string CalculateOperationName = "hikcentral.parkingfee.calculate";
+
+    /// <summary>
+    /// Structured operation name for HikCentral parking fee confirmation.
+    /// </summary>
+    public const string ConfirmOperationName = "hikcentral.parkingfee.confirm";
+
+    /// <summary>
+    /// Diagnostic outcome for successful HikCentral responses.
+    /// </summary>
+    public const string OutcomeSuccess = "success";
+
+    /// <summary>
+    /// Diagnostic outcome for nonzero HikCentral response codes.
+    /// </summary>
+    public const string OutcomeHikCentralNonZeroCode = "hikcentral_nonzero_code";
+
+    /// <summary>
+    /// Diagnostic outcome for transport, HTTP, validation, or mapping failures.
+    /// </summary>
+    public const string OutcomeRequestFailed = "request_failed";
+
+    /// <summary>
+    /// Diagnostic outcome for local guards blocking mutating confirmation calls.
+    /// </summary>
+    public const string OutcomeConfirmGuardBlocked = "confirm_guard_blocked";
+
+    private const string ParkingFeeCalculatePath = "/artemis/api/vehicle/v1/parkingfee/calculate";
+    private const string ParkingFeeConfirmPath = "/artemis/api/vehicle/v1/parkingfee/confirm";
+    private const string CalculateEndpointName = "parkingfee.calculate";
+    private const string ConfirmEndpointName = "parkingfee.confirm";
+
     private readonly IHikCentralRequestSigner _requestSigner =
         requestSigner ?? throw new InvalidOperationException("HikCentral request signer is required.");
+    private readonly ILogger<HikCentralParkingClient> _logger =
+        logger ?? NullLogger<HikCentralParkingClient>.Instance;
 
     private static readonly char[] UserIdForbiddenCharacters = ['\'', '/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
@@ -75,8 +118,38 @@ public sealed class HikCentralParkingClient(
         VendorParkingFeeConfirmationRequest request,
         CancellationToken cancellationToken)
     {
+        var confirmRequest = HikCentralParkingFeeConfirmRequest.FromProviderNeutral(request);
+        if (!(confirmPaymentEnabled ?? HikCentralOptions.ReadConfirmPaymentEnabledFromEnvironment()))
+        {
+            var disabled = HikCentralParkingFeeConfirmationResult.Disabled();
+            var stopwatch = Stopwatch.StartNew();
+            LogRequest(
+                ConfirmOperationName,
+                ConfirmEndpointName,
+                ParkingFeeConfirmPath,
+                request.CorrelationId,
+                confirmRequest.PlateLicense,
+                confirmRequest.CardNum,
+                confirmRequest.Fee);
+            LogCompletion(
+                ConfirmOperationName,
+                ConfirmEndpointName,
+                ParkingFeeConfirmPath,
+                OutcomeConfirmGuardBlocked,
+                request.CorrelationId,
+                confirmRequest.PlateLicense,
+                confirmRequest.CardNum,
+                confirmRequest.Fee,
+                responseMetadata: null,
+                httpStatusCode: null,
+                disabled.Status,
+                disabled.ErrorCode,
+                stopwatch.Elapsed);
+            return disabled.ToResponse(request.CorrelationId);
+        }
+
         var result = await ConfirmParkingFeeAsync(
-            HikCentralParkingFeeConfirmRequest.FromProviderNeutral(request),
+            confirmRequest,
             request.CorrelationId,
             cancellationToken);
 
@@ -88,52 +161,183 @@ public sealed class HikCentralParkingClient(
         Guid correlationId,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        LogRequest(
+            CalculateOperationName,
+            CalculateEndpointName,
+            ParkingFeeCalculatePath,
+            correlationId,
+            calculateRequest.PlateLicense,
+            calculateRequest.CardNum,
+            requestFee: null);
+
         try
         {
             var validationError = ValidateCalculateRequest(calculateRequest);
             if (validationError is not null)
             {
+                LogCompletion(
+                    CalculateOperationName,
+                    CalculateEndpointName,
+                    ParkingFeeCalculatePath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    calculateRequest.PlateLicense,
+                    calculateRequest.CardNum,
+                    requestFee: null,
+                    responseMetadata: null,
+                    httpStatusCode: null,
+                    validationError.Status,
+                    validationError.ErrorCode,
+                    stopwatch.Elapsed);
                 return validationError;
             }
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
-                "/artemis/api/vehicle/v1/parkingfee/calculate");
+                ParkingFeeCalculatePath);
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
             request.Headers.TryAddWithoutValidation("userId", userId);
             request.Content = CreateJsonContent(calculateRequest);
             await _requestSigner.SignAsync(request, cancellationToken);
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseMetadata = HikCentralVendorResponseMetadata.FromBody(responseBody);
 
             if (response.StatusCode is HttpStatusCode.NotFound)
             {
-                return HikCentralParkingFeeLookupResult.NotFound();
+                var result = HikCentralParkingFeeLookupResult.NotFound();
+                LogCompletion(
+                    CalculateOperationName,
+                    CalculateEndpointName,
+                    ParkingFeeCalculatePath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    calculateRequest.PlateLicense,
+                    calculateRequest.CardNum,
+                    requestFee: null,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
             if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout)
             {
-                return HikCentralParkingFeeLookupResult.UnavailableRetryable();
+                var result = HikCentralParkingFeeLookupResult.UnavailableRetryable();
+                LogCompletion(
+                    CalculateOperationName,
+                    CalculateEndpointName,
+                    ParkingFeeCalculatePath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    calculateRequest.PlateLicense,
+                    calculateRequest.CardNum,
+                    requestFee: null,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
             if (!response.IsSuccessStatusCode)
             {
-                return HikCentralParkingFeeLookupResult.AdapterError();
+                var result = HikCentralParkingFeeLookupResult.AdapterError();
+                LogCompletion(
+                    CalculateOperationName,
+                    CalculateEndpointName,
+                    ParkingFeeCalculatePath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    calculateRequest.PlateLicense,
+                    calculateRequest.CardNum,
+                    requestFee: null,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
-            return await MapCalculateResponseAsync(response.Content, cancellationToken);
+            var mappedResult = MapCalculateResponse(responseBody);
+            LogCompletion(
+                CalculateOperationName,
+                CalculateEndpointName,
+                ParkingFeeCalculatePath,
+                DetermineOutcome(responseMetadata, mappedResult.Status),
+                correlationId,
+                calculateRequest.PlateLicense,
+                calculateRequest.CardNum,
+                requestFee: null,
+                responseMetadata,
+                response.StatusCode,
+                mappedResult.Status,
+                mappedResult.ErrorCode,
+                stopwatch.Elapsed);
+            return mappedResult;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return HikCentralParkingFeeLookupResult.UnavailableRetryable();
+            var result = HikCentralParkingFeeLookupResult.UnavailableRetryable();
+            LogCompletion(
+                CalculateOperationName,
+                CalculateEndpointName,
+                ParkingFeeCalculatePath,
+                OutcomeRequestFailed,
+                correlationId,
+                calculateRequest.PlateLicense,
+                calculateRequest.CardNum,
+                requestFee: null,
+                responseMetadata: null,
+                httpStatusCode: null,
+                result.Status,
+                result.ErrorCode,
+                stopwatch.Elapsed);
+            return result;
         }
         catch (HttpRequestException)
         {
-            return HikCentralParkingFeeLookupResult.UnavailableRetryable();
+            var result = HikCentralParkingFeeLookupResult.UnavailableRetryable();
+            LogCompletion(
+                CalculateOperationName,
+                CalculateEndpointName,
+                ParkingFeeCalculatePath,
+                OutcomeRequestFailed,
+                correlationId,
+                calculateRequest.PlateLicense,
+                calculateRequest.CardNum,
+                requestFee: null,
+                responseMetadata: null,
+                httpStatusCode: null,
+                result.Status,
+                result.ErrorCode,
+                stopwatch.Elapsed);
+            return result;
         }
         catch (JsonException)
         {
-            return HikCentralParkingFeeLookupResult.AdapterError();
+            var result = HikCentralParkingFeeLookupResult.AdapterError();
+            LogCompletion(
+                CalculateOperationName,
+                CalculateEndpointName,
+                ParkingFeeCalculatePath,
+                OutcomeRequestFailed,
+                correlationId,
+                calculateRequest.PlateLicense,
+                calculateRequest.CardNum,
+                requestFee: null,
+                responseMetadata: null,
+                httpStatusCode: HttpStatusCode.OK,
+                result.Status,
+                result.ErrorCode,
+                stopwatch.Elapsed);
+            return result;
         }
     }
 
@@ -142,63 +346,335 @@ public sealed class HikCentralParkingClient(
         Guid correlationId,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+        LogRequest(
+            ConfirmOperationName,
+            ConfirmEndpointName,
+            ParkingFeeConfirmPath,
+            correlationId,
+            confirmRequest.PlateLicense,
+            confirmRequest.CardNum,
+            confirmRequest.Fee);
+
         try
         {
             var validationError = ValidateConfirmRequest(confirmRequest);
             if (validationError is not null)
             {
+                LogCompletion(
+                    ConfirmOperationName,
+                    ConfirmEndpointName,
+                    ParkingFeeConfirmPath,
+                    OutcomeConfirmGuardBlocked,
+                    correlationId,
+                    confirmRequest.PlateLicense,
+                    confirmRequest.CardNum,
+                    confirmRequest.Fee,
+                    responseMetadata: null,
+                    httpStatusCode: null,
+                    validationError.Status,
+                    validationError.ErrorCode,
+                    stopwatch.Elapsed);
                 return validationError;
             }
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
-                "/artemis/api/vehicle/v1/parkingfee/confirm");
+                ParkingFeeConfirmPath);
             request.Headers.TryAddWithoutValidation("X-Correlation-Id", correlationId.ToString());
             request.Headers.TryAddWithoutValidation("userId", userId);
             request.Content = CreateJsonContent(confirmRequest);
             await _requestSigner.SignAsync(request, cancellationToken);
 
             using var response = await httpClient.SendAsync(request, cancellationToken);
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            var responseMetadata = HikCentralVendorResponseMetadata.FromBody(responseBody);
 
             if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout)
             {
-                return HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+                var result = HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+                LogCompletion(
+                    ConfirmOperationName,
+                    ConfirmEndpointName,
+                    ParkingFeeConfirmPath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    confirmRequest.PlateLicense,
+                    confirmRequest.CardNum,
+                    confirmRequest.Fee,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
             if (!response.IsSuccessStatusCode)
             {
-                return HikCentralParkingFeeConfirmationResult.AdapterError();
+                var result = HikCentralParkingFeeConfirmationResult.AdapterError();
+                LogCompletion(
+                    ConfirmOperationName,
+                    ConfirmEndpointName,
+                    ParkingFeeConfirmPath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    confirmRequest.PlateLicense,
+                    confirmRequest.CardNum,
+                    confirmRequest.Fee,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
-            var envelope = await response.Content.ReadFromJsonAsync<HikCentralResponse<HikCentralParkingFeeConfirmData>>(
-                JsonOptions,
-                cancellationToken);
+            var envelope = JsonSerializer.Deserialize<HikCentralResponse<HikCentralParkingFeeConfirmData>>(
+                responseBody,
+                JsonOptions);
 
             if (envelope is null)
             {
-                return HikCentralParkingFeeConfirmationResult.AdapterError();
+                var result = HikCentralParkingFeeConfirmationResult.AdapterError();
+                LogCompletion(
+                    ConfirmOperationName,
+                    ConfirmEndpointName,
+                    ParkingFeeConfirmPath,
+                    OutcomeRequestFailed,
+                    correlationId,
+                    confirmRequest.PlateLicense,
+                    confirmRequest.CardNum,
+                    confirmRequest.Fee,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
             if (!envelope.IsSuccess())
             {
-                return HikCentralParkingFeeConfirmationResult.VendorRejected();
+                var result = HikCentralParkingFeeConfirmationResult.AdapterError(envelope.Code);
+                LogCompletion(
+                    ConfirmOperationName,
+                    ConfirmEndpointName,
+                    ParkingFeeConfirmPath,
+                    DetermineOutcome(responseMetadata, result.Status),
+                    correlationId,
+                    confirmRequest.PlateLicense,
+                    confirmRequest.CardNum,
+                    confirmRequest.Fee,
+                    responseMetadata,
+                    response.StatusCode,
+                    result.Status,
+                    result.ErrorCode,
+                    stopwatch.Elapsed);
+                return result;
             }
 
-            return envelope.Data is null
+            var mappedResult = envelope.Data is null
                 ? HikCentralParkingFeeConfirmationResult.AdapterError()
                 : HikCentralParkingFeeConfirmationMapper.Map(envelope.Data);
+            LogCompletion(
+                ConfirmOperationName,
+                ConfirmEndpointName,
+                ParkingFeeConfirmPath,
+                DetermineOutcome(responseMetadata, mappedResult.Status),
+                correlationId,
+                confirmRequest.PlateLicense,
+                confirmRequest.CardNum,
+                confirmRequest.Fee,
+                responseMetadata,
+                response.StatusCode,
+                mappedResult.Status,
+                mappedResult.ErrorCode,
+                stopwatch.Elapsed);
+            return mappedResult;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+            var result = HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+            LogCompletion(
+                ConfirmOperationName,
+                ConfirmEndpointName,
+                ParkingFeeConfirmPath,
+                OutcomeRequestFailed,
+                correlationId,
+                confirmRequest.PlateLicense,
+                confirmRequest.CardNum,
+                confirmRequest.Fee,
+                responseMetadata: null,
+                httpStatusCode: null,
+                result.Status,
+                result.ErrorCode,
+                stopwatch.Elapsed);
+            return result;
         }
         catch (HttpRequestException)
         {
-            return HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+            var result = HikCentralParkingFeeConfirmationResult.UnavailableRetryable();
+            LogCompletion(
+                ConfirmOperationName,
+                ConfirmEndpointName,
+                ParkingFeeConfirmPath,
+                OutcomeRequestFailed,
+                correlationId,
+                confirmRequest.PlateLicense,
+                confirmRequest.CardNum,
+                confirmRequest.Fee,
+                responseMetadata: null,
+                httpStatusCode: null,
+                result.Status,
+                result.ErrorCode,
+                stopwatch.Elapsed);
+            return result;
         }
         catch (JsonException)
         {
-            return HikCentralParkingFeeConfirmationResult.AdapterError();
+            var result = HikCentralParkingFeeConfirmationResult.AdapterError();
+            LogCompletion(
+                ConfirmOperationName,
+                ConfirmEndpointName,
+                ParkingFeeConfirmPath,
+                OutcomeRequestFailed,
+                correlationId,
+                confirmRequest.PlateLicense,
+                confirmRequest.CardNum,
+                confirmRequest.Fee,
+                responseMetadata: null,
+                httpStatusCode: HttpStatusCode.OK,
+                result.Status,
+                result.ErrorCode,
+                stopwatch.Elapsed);
+            return result;
+        }
+    }
+
+    private static string DetermineOutcome(
+        HikCentralVendorResponseMetadata? responseMetadata,
+        VendorParkingLookupStatus vendorStatus)
+    {
+        if (responseMetadata?.Code is not null && responseMetadata.Code != "0")
+        {
+            return OutcomeHikCentralNonZeroCode;
+        }
+
+        return responseMetadata?.Code == "0" &&
+               vendorStatus is not VendorParkingLookupStatus.AdapterError and not VendorParkingLookupStatus.UnavailableRetryable
+            ? OutcomeSuccess
+            : OutcomeRequestFailed;
+    }
+
+    private void LogRequest(
+        string operationName,
+        string endpointName,
+        string endpointPath,
+        Guid correlationId,
+        string? plateLicense,
+        string? cardNum,
+        string? requestFee)
+    {
+        _logger.LogInformation(
+            "HikCentral parking fee request {OperationName} {EndpointName} {EndpointPath} {CorrelationId} {PlateLicense} {CardNum} {RequestFee}",
+            operationName,
+            endpointName,
+            endpointPath,
+            correlationId,
+            plateLicense,
+            cardNum,
+            requestFee);
+    }
+
+    private void LogCompletion(
+        string operationName,
+        string endpointName,
+        string endpointPath,
+        string outcome,
+        Guid correlationId,
+        string? plateLicense,
+        string? cardNum,
+        string? requestFee,
+        HikCentralVendorResponseMetadata? responseMetadata,
+        HttpStatusCode? httpStatusCode,
+        VendorParkingLookupStatus vendorStatus,
+        string? errorCode,
+        TimeSpan elapsed)
+    {
+        _logger.LogInformation(
+            "HikCentral parking fee response {OperationName} {Outcome} {EndpointName} {EndpointPath} {CorrelationId} {PlateLicense} {CardNum} {RequestFee} {HikCentralCode} {HikCentralMessage} {ResponseFee} {FeeTime} {ElapsedMs} {HttpStatusCode} {VendorStatus} {ErrorCode}",
+            operationName,
+            outcome,
+            endpointName,
+            endpointPath,
+            correlationId,
+            plateLicense,
+            cardNum,
+            requestFee,
+            responseMetadata?.Code,
+            responseMetadata?.Message,
+            responseMetadata?.Fee,
+            responseMetadata?.FeeTime,
+            elapsed.TotalMilliseconds,
+            httpStatusCode.HasValue ? (int)httpStatusCode.Value : null,
+            vendorStatus.ToString(),
+            errorCode);
+    }
+
+    private sealed record HikCentralVendorResponseMetadata(
+        string? Code,
+        string? Message,
+        string? Fee,
+        string? FeeTime)
+    {
+        public static HikCentralVendorResponseMetadata? FromBody(string? responseBody)
+        {
+            if (string.IsNullOrWhiteSpace(responseBody))
+            {
+                return null;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(responseBody);
+                if (document.RootElement.ValueKind is not JsonValueKind.Object)
+                {
+                    return null;
+                }
+
+                var code = TryGetString(document.RootElement, "code");
+                var message = TryGetString(document.RootElement, "msg");
+                var (fee, feeTime) = ExtractFeeMetadata(document.RootElement);
+                return new HikCentralVendorResponseMetadata(code, message, fee, feeTime);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static (string? Fee, string? FeeTime) ExtractFeeMetadata(JsonElement root)
+        {
+            if (!root.TryGetProperty("data", out var data) ||
+                data.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            {
+                return (null, null);
+            }
+
+            if (data.ValueKind is JsonValueKind.Array)
+            {
+                data = data.EnumerateArray().FirstOrDefault();
+            }
+
+            if (data.ValueKind is not JsonValueKind.Object)
+            {
+                return (null, null);
+            }
+
+            return (
+                TryGetString(data, "fee"),
+                TryGetString(data, "feeTime"));
         }
     }
 
@@ -259,20 +735,11 @@ public sealed class HikCentralParkingClient(
         {
             return Code is "0";
         }
-
-        public bool IsNotFound()
-        {
-            return Message?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true ||
-                   Code is "404" or "0x00072002";
-        }
     }
 
-    private static async Task<HikCentralParkingFeeLookupResult> MapCalculateResponseAsync(
-        HttpContent content,
-        CancellationToken cancellationToken)
+    private static HikCentralParkingFeeLookupResult MapCalculateResponse(string responseBody)
     {
-        await using var responseStream = await content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(responseStream, cancellationToken: cancellationToken);
+        using var document = JsonDocument.Parse(responseBody);
 
         if (document.RootElement.ValueKind is not JsonValueKind.Object)
         {
@@ -284,9 +751,7 @@ public sealed class HikCentralParkingClient(
 
         if (code is not "0")
         {
-            return IsNotFound(code, message)
-                ? HikCentralParkingFeeLookupResult.NotFound()
-                : HikCentralParkingFeeLookupResult.VendorRejected();
+            return HikCentralParkingFeeLookupResult.AdapterError(code);
         }
 
         if (!document.RootElement.TryGetProperty("data", out var data) ||
@@ -338,12 +803,6 @@ public sealed class HikCentralParkingClient(
             : null;
     }
 
-    private static bool IsNotFound(string? code, string? message)
-    {
-        return message?.Contains("not found", StringComparison.OrdinalIgnoreCase) == true ||
-               code is "404" or "0x00072002";
-    }
-
     private static StringContent CreateJsonContent(object value)
     {
         var content = new StringContent(JsonSerializer.Serialize(value, JsonOptions), Encoding.UTF8);
@@ -353,6 +812,7 @@ public sealed class HikCentralParkingClient(
 
     private sealed record HikCentralParkingFeeCalculateData(
         [property: JsonPropertyName("plateLicense")] string? PlateLicense,
+        [property: JsonPropertyName("cardNum")] string? CardNum,
         [property: JsonPropertyName("parkingInTime")] string? ParkingInTime,
         [property: JsonPropertyName("parkingDuration")] int? ParkingDuration,
         [property: JsonPropertyName("feeRuleType")] int? FeeRuleType,
@@ -403,13 +863,13 @@ public sealed class HikCentralParkingClient(
                 true);
         }
 
-        public static HikCentralParkingFeeLookupResult AdapterError()
+        public static HikCentralParkingFeeLookupResult AdapterError(string? hikCentralCode = null)
         {
             return new HikCentralParkingFeeLookupResult(
                 VendorParkingLookupStatus.AdapterError,
                 null,
                 null,
-                "VENDOR_PMS_ADAPTER_ERROR",
+                BuildAdapterErrorCode(hikCentralCode),
                 false);
         }
 
@@ -420,16 +880,6 @@ public sealed class HikCentralParkingClient(
                 null,
                 null,
                 "VENDOR_LOOKUP_VALIDATION_ERROR",
-                false);
-        }
-
-        public static HikCentralParkingFeeLookupResult VendorRejected()
-        {
-            return new HikCentralParkingFeeLookupResult(
-                VendorParkingLookupStatus.VendorRejected,
-                null,
-                null,
-                "VENDOR_PMS_REJECTED",
                 false);
         }
 
@@ -451,6 +901,19 @@ public sealed class HikCentralParkingClient(
         public VendorTariffQuoteResponse ToTariffResponse(Guid correlationId)
         {
             return new VendorTariffQuoteResponse(Status, Quote, ErrorCode, Retryable, correlationId);
+        }
+
+        private static string BuildAdapterErrorCode(string? hikCentralCode)
+        {
+            if (string.IsNullOrWhiteSpace(hikCentralCode))
+            {
+                return "VENDOR_PMS_ADAPTER_ERROR";
+            }
+
+            var safeCode = new string(hikCentralCode.Where(char.IsLetterOrDigit).ToArray());
+            return string.IsNullOrWhiteSpace(safeCode)
+                ? "VENDOR_PMS_ADAPTER_ERROR"
+                : $"VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_{safeCode}";
         }
     }
 
@@ -479,12 +942,21 @@ public sealed class HikCentralParkingClient(
                 true);
         }
 
-        public static HikCentralParkingFeeConfirmationResult AdapterError()
+        public static HikCentralParkingFeeConfirmationResult AdapterError(string? hikCentralCode = null)
         {
             return new HikCentralParkingFeeConfirmationResult(
                 VendorParkingLookupStatus.AdapterError,
                 null,
-                "VENDOR_PMS_ADAPTER_ERROR",
+                BuildAdapterErrorCode(hikCentralCode),
+                false);
+        }
+
+        public static HikCentralParkingFeeConfirmationResult Disabled()
+        {
+            return new HikCentralParkingFeeConfirmationResult(
+                VendorParkingLookupStatus.AdapterError,
+                null,
+                "VENDOR_CONFIRMATION_DISABLED",
                 false);
         }
 
@@ -497,18 +969,22 @@ public sealed class HikCentralParkingClient(
                 false);
         }
 
-        public static HikCentralParkingFeeConfirmationResult VendorRejected()
-        {
-            return new HikCentralParkingFeeConfirmationResult(
-                VendorParkingLookupStatus.VendorRejected,
-                null,
-                "VENDOR_PMS_REJECTED",
-                false);
-        }
-
         public VendorParkingFeeConfirmationResponse ToResponse(Guid correlationId)
         {
             return new VendorParkingFeeConfirmationResponse(Status, Confirmation, ErrorCode, Retryable, correlationId);
+        }
+
+        private static string BuildAdapterErrorCode(string? hikCentralCode)
+        {
+            if (string.IsNullOrWhiteSpace(hikCentralCode))
+            {
+                return "VENDOR_PMS_ADAPTER_ERROR";
+            }
+
+            var safeCode = new string(hikCentralCode.Where(char.IsLetterOrDigit).ToArray());
+            return string.IsNullOrWhiteSpace(safeCode)
+                ? "VENDOR_PMS_ADAPTER_ERROR"
+                : $"VENDOR_PMS_ADAPTER_ERROR_HIKCENTRAL_CODE_{safeCode}";
         }
     }
 
@@ -572,8 +1048,7 @@ public sealed class HikCentralParkingClient(
     {
         public static HikCentralParkingFeeLookupResult Map(HikCentralParkingFeeCalculateData data)
         {
-            if (string.IsNullOrWhiteSpace(data.PlateLicense) ||
-                string.IsNullOrWhiteSpace(data.ParkingInTime) ||
+            if (string.IsNullOrWhiteSpace(data.ParkingInTime) ||
                 string.IsNullOrWhiteSpace(data.Fee) ||
                 !DateTimeOffset.TryParse(data.ParkingInTime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var entryTime) ||
                 !TryParseAmountMinor(data.Fee, out var amountMinor))
@@ -588,16 +1063,28 @@ public sealed class HikCentralParkingClient(
                 data.FeeRuleName,
                 DateTimeOffset.UtcNow);
 
+            var plateNumber = NormalizePlateLicense(data.PlateLicense);
+            var sessionReferenceIdentifier = string.IsNullOrWhiteSpace(data.CardNum)
+                ? plateNumber
+                : data.CardNum.Trim();
+
             var session = new VendorParkingSessionDto(
                 ProviderCode,
-                BuildSessionReference(data.PlateLicense, entryTime),
-                data.PlateLicense,
+                BuildSessionReference(sessionReferenceIdentifier, entryTime),
+                plateNumber,
                 entryTime,
                 data.ParkingDuration,
                 "ACTIVE",
                 tariffQuote);
 
             return HikCentralParkingFeeLookupResult.Found(session, tariffQuote);
+        }
+
+        private static string NormalizePlateLicense(string? plateLicense)
+        {
+            return string.IsNullOrWhiteSpace(plateLicense)
+                ? "Unknown"
+                : plateLicense.Trim();
         }
 
         private static string BuildSessionReference(string plateLicense, DateTimeOffset entryTime)
