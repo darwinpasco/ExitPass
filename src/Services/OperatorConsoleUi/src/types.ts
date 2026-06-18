@@ -101,6 +101,36 @@ export interface OperatorConsoleApiError {
   errorCode?: string;
 }
 
+export interface OperatorTicketLookupInput {
+  ticketNumber: string;
+  cardNum?: string;
+}
+
+export interface OperatorTicketLookupResult {
+  sessionFound: boolean;
+  ticketNumber?: string;
+  cardNum?: string;
+  plateLicense?: string;
+  parkingInTime?: string;
+  parkingDurationSeconds?: number;
+  feeMinorUnits?: number;
+  currencyCode?: string;
+  feeRuleType?: string;
+  feeRuleIndexCode?: string;
+  feeRuleName?: string;
+  paymentAttemptStatus?: string;
+  paymentStatus?: string;
+  paymentConfirmationStatus?: string;
+  vendorSystemCode?: string;
+  vendorConfirmationCode?: string;
+  vendorConfirmationStatus?: string | null;
+  vendorConfirmationTimestamp?: string;
+  vendorMessage?: string;
+  diagnostics?: string[];
+  correlationId?: string;
+  message?: string;
+}
+
 export interface AccessReadinessClientContext {
   uiModule?: string;
   screenState?: string;

@@ -453,6 +453,70 @@ dd {
   gap: 7px;
 }
 
+.ticketLookupForm {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(240px, 1fr) auto;
+}
+
+.ticketLookupForm label {
+  color: #465969;
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 7px;
+}
+
+.lookupGuardrail {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.lookupGuardrail p {
+  color: #465969;
+  font-weight: 700;
+  margin: 0;
+}
+
+.ticketSummaryPanel h4 {
+  margin: 0 0 12px;
+}
+
+.diagnosticsPanel {
+  border-top: 1px solid #eef2f4;
+  margin-top: 18px;
+  padding-top: 14px;
+}
+
+.diagnosticsPanel summary {
+  color: #315469;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.diagnosticsPanel .summaryList {
+  margin-top: 12px;
+}
+
+.notice p,
+.successMessage p,
+.errorMessage p {
+  margin: 0;
+}
+
+.notice p + p,
+.successMessage p + p,
+.errorMessage p + p {
+  margin-top: 6px;
+}
+
 .notice,
 .successMessage,
 .errorMessage {
@@ -708,6 +772,7 @@ dd {
   .auditFilterGrid,
     .workflowGrid,
     .readinessDimensionGrid,
+    .ticketLookupForm,
     .evidenceLayout,
     .reviewDetailGrid {
     display: grid;

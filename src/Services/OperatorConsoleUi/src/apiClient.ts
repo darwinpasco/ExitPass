@@ -6,6 +6,8 @@ import type {
   DraftStatus,
   EntitlementType,
   OperatorConsoleApiError,
+  OperatorTicketLookupInput,
+  OperatorTicketLookupResult,
   ProductionPolicyImportDryRunInput,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewDecisionInput,
@@ -28,6 +30,7 @@ import type {
 
 export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
+  lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
@@ -233,6 +236,31 @@ interface AuditReportResponseDto {
   correlationId: string;
 }
 
+interface OperatorTicketLookupResponseDto {
+  ticketNumber?: string | null;
+  cardNum?: string | null;
+  plateLicense?: string | null;
+  parkingInTime?: string | null;
+  parkingDurationSeconds?: number | null;
+  feeMinorUnits?: number | null;
+  currencyCode?: string | null;
+  feeRuleType?: string | null;
+  feeRuleIndexCode?: string | null;
+  feeRuleName?: string | null;
+  paymentAttemptStatus?: string | null;
+  paymentStatus?: string | null;
+  paymentConfirmationStatus?: string | null;
+  vendorSystemCode?: string | null;
+  vendorConfirmationCode?: string | null;
+  vendorConfirmationStatus?: string | null;
+  vendorConfirmationTimestamp?: string | null;
+  vendorMessage?: string | null;
+  diagnostics?: string[] | null;
+  correlationId?: string | null;
+  message?: string | null;
+  errorCode?: string | null;
+}
+
 export interface OperatorConsoleOperatorContext {
   userId: string;
   operatorDeviceBindingId: string;
@@ -308,6 +336,21 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       });
 
       return parseResponse<AccessReadinessResponse>(response);
+    },
+
+    async lookupSessionByTicket(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(`${baseUrl}/v1/ops/ticket-session-summary`, {
+        method: "POST",
+        headers: operatorConsoleHeaders(correlationId, { json: true }),
+        body: JSON.stringify({
+          ticketNumber: input.ticketNumber,
+          cardNum: input.cardNum ?? null,
+          correlationId
+        })
+      });
+
+      return parseTicketLookupResponse(response);
     },
 
     async listAuditReport(input = {}) {
@@ -594,7 +637,10 @@ export function createMockOperatorConsoleApiClient(
     detailError?: OperatorConsoleApiError;
     decisionError?: OperatorConsoleApiError;
     evidenceError?: OperatorConsoleApiError;
+    ticketLookupError?: OperatorConsoleApiError;
+    ticketLookupResults?: OperatorTicketLookupResult[];
     empty?: boolean;
+    onTicketLookup?: (input: OperatorTicketLookupInput) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
     onPayableBasisApply?: (input: StatutoryDiscountPayableBasisApplicationInput) => void;
@@ -615,6 +661,27 @@ export function createMockOperatorConsoleApiClient(
     async evaluateAccessReadiness(input) {
       await delay();
       return options.readiness ?? mockAccessReadiness(input);
+    },
+
+    async lookupSessionByTicket(input) {
+      await delay();
+      options.onTicketLookup?.(input);
+      if (options.ticketLookupError) {
+        throw options.ticketLookupError;
+      }
+
+      const results = options.ticketLookupResults ?? mockTicketLookupResults;
+      const match = results.find((item) => item.ticketNumber === input.ticketNumber || item.cardNum === input.ticketNumber);
+      if (match) {
+        return { ...match, ticketNumber: match.ticketNumber ?? input.ticketNumber };
+      }
+
+      return {
+        sessionFound: false,
+        ticketNumber: input.ticketNumber,
+        correlationId: newCorrelationId(),
+        message: "Ticket not found."
+      };
     },
 
     async listAuditReport() {
@@ -962,6 +1029,55 @@ async function parseResponse<T>(response: Response): Promise<T> {
     message: body.message ?? body.errorCode ?? "Operator Console request failed.",
     errorCode: body.errorCode
   } satisfies OperatorConsoleApiError;
+}
+
+async function parseTicketLookupResponse(response: Response): Promise<OperatorTicketLookupResult> {
+  const text = await response.text();
+  const body = (text ? JSON.parse(text) : {}) as OperatorTicketLookupResponseDto;
+  if (response.status === 404) {
+    return {
+      sessionFound: false,
+      correlationId: body.correlationId ?? undefined,
+      message: body.message ?? body.errorCode ?? "Ticket not found."
+    };
+  }
+
+  if (response.ok) {
+    return toTicketLookupResult(body);
+  }
+
+  throw {
+    status: response.status === 401 || response.status === 403 ? "access-denied" : "error",
+    message: body.message ?? body.errorCode ?? "Operator Console ticket lookup failed.",
+    errorCode: body.errorCode ?? undefined
+  } satisfies OperatorConsoleApiError;
+}
+
+function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTicketLookupResult {
+  return {
+    sessionFound: true,
+    ticketNumber: body.ticketNumber ?? undefined,
+    cardNum: body.cardNum ?? undefined,
+    plateLicense: body.plateLicense ?? undefined,
+    parkingInTime: body.parkingInTime ?? undefined,
+    parkingDurationSeconds: body.parkingDurationSeconds ?? undefined,
+    feeMinorUnits: body.feeMinorUnits ?? undefined,
+    currencyCode: body.currencyCode ?? undefined,
+    feeRuleType: body.feeRuleType ?? undefined,
+    feeRuleIndexCode: body.feeRuleIndexCode ?? undefined,
+    feeRuleName: body.feeRuleName ?? undefined,
+    paymentAttemptStatus: body.paymentAttemptStatus ?? undefined,
+    paymentStatus: body.paymentStatus ?? undefined,
+    paymentConfirmationStatus: body.paymentConfirmationStatus ?? undefined,
+    vendorSystemCode: body.vendorSystemCode ?? undefined,
+    vendorConfirmationCode: body.vendorConfirmationCode ?? undefined,
+    vendorConfirmationStatus: body.vendorConfirmationStatus ?? undefined,
+    vendorConfirmationTimestamp: body.vendorConfirmationTimestamp ?? undefined,
+    vendorMessage: body.vendorMessage ?? undefined,
+    diagnostics: body.diagnostics ?? undefined,
+    correlationId: body.correlationId ?? undefined,
+    message: body.message ?? body.errorCode ?? undefined
+  };
 }
 
 function toQueueItem(item: QueueItemDto): StatutoryDiscountQueueItem {
@@ -1620,6 +1736,95 @@ const blockedLocalPolicy = {
   requiredEvidenceType: "SENIOR_CITIZEN_ID",
   ineligibilityReason: "Local policy is not verified for operator use."
 };
+
+const mockTicketLookupResults: OperatorTicketLookupResult[] = [
+  {
+    sessionFound: true,
+    ticketNumber: "STAT-OP-SESSION-0001",
+    cardNum: "STAT-OP-SESSION-0001",
+    plateLicense: "Unknown",
+    parkingInTime: "2026-06-01T06:55:00+08:00",
+    parkingDurationSeconds: 4800,
+    feeMinorUnits: 18000,
+    currencyCode: "PHP",
+    feeRuleType: "STANDARD",
+    feeRuleIndexCode: "STD-001",
+    feeRuleName: "Standard Parking Fee",
+    paymentAttemptStatus: "CONFIRMED",
+    paymentStatus: "CONFIRMED",
+    paymentConfirmationStatus: "RECORDED",
+    vendorSystemCode: "HIKCENTRAL",
+    vendorConfirmationCode: "CONFIRMED",
+    vendorConfirmationStatus: "CONFIRMED",
+    vendorConfirmationTimestamp: "2026-06-01T08:20:00+08:00",
+    vendorMessage: "Payment confirmation accepted by vendor.",
+    diagnostics: ["summary-only"],
+    correlationId: "mock-ticket-lookup-confirmed"
+  },
+  {
+    sessionFound: true,
+    ticketNumber: "STAT-OP-SESSION-0002",
+    cardNum: "STAT-OP-SESSION-0002",
+    plateLicense: "PWD 2048",
+    parkingInTime: "2026-06-01T07:10:00+08:00",
+    parkingDurationSeconds: 5520,
+    feeMinorUnits: 22000,
+    currencyCode: "PHP",
+    feeRuleType: "STANDARD",
+    feeRuleIndexCode: "STD-002",
+    feeRuleName: "Standard Parking Fee",
+    paymentAttemptStatus: "REQUESTED",
+    paymentStatus: "UNPAID",
+    paymentConfirmationStatus: "NONE",
+    vendorSystemCode: "HIKCENTRAL",
+    vendorConfirmationCode: undefined,
+    vendorConfirmationStatus: null,
+    vendorMessage: "No vendor confirmation is available.",
+    correlationId: "mock-ticket-lookup-unpaid"
+  },
+  {
+    sessionFound: true,
+    ticketNumber: "STAT-OP-SESSION-PENDING",
+    cardNum: "STAT-OP-SESSION-PENDING",
+    plateLicense: "ABC 5678",
+    parkingInTime: "2026-06-01T08:00:00+08:00",
+    parkingDurationSeconds: 2700,
+    feeMinorUnits: 9000,
+    currencyCode: "PHP",
+    feeRuleType: "STANDARD",
+    feeRuleIndexCode: "STD-003",
+    feeRuleName: "Standard Parking Fee",
+    paymentAttemptStatus: "CONFIRMED",
+    paymentStatus: "CONFIRMED",
+    paymentConfirmationStatus: "RECORDED",
+    vendorSystemCode: "HIKCENTRAL",
+    vendorConfirmationCode: "PENDING",
+    vendorConfirmationStatus: "PENDING",
+    vendorMessage: "Vendor confirmation is still pending.",
+    correlationId: "mock-ticket-lookup-vendor-pending"
+  },
+  {
+    sessionFound: true,
+    ticketNumber: "STAT-OP-SESSION-VENDOR-FAILED",
+    cardNum: "STAT-OP-SESSION-VENDOR-FAILED",
+    plateLicense: "VND 5000",
+    parkingInTime: "2026-06-01T08:10:00+08:00",
+    parkingDurationSeconds: 2100,
+    feeMinorUnits: 12000,
+    currencyCode: "PHP",
+    feeRuleType: "STANDARD",
+    feeRuleIndexCode: "STD-004",
+    feeRuleName: "Standard Parking Fee",
+    paymentAttemptStatus: "CONFIRMED",
+    paymentStatus: "CONFIRMED",
+    paymentConfirmationStatus: "RECORDED",
+    vendorSystemCode: "HIKCENTRAL",
+    vendorConfirmationCode: "FAILED",
+    vendorConfirmationStatus: "FAILED",
+    vendorMessage: "Vendor confirmation failed.",
+    correlationId: "mock-ticket-lookup-vendor-failed"
+  }
+];
 
 const mockDrafts: StatutoryDiscountDraftDetail[] = [
   {

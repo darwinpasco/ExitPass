@@ -21,6 +21,7 @@ import type {
   StatutoryDiscountEvidenceList,
   EvidenceCaptureMethod,
   EvidenceType,
+  OperatorTicketLookupResult,
   StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem
@@ -28,6 +29,7 @@ import type {
 
 const routes = {
   home: "/operator-console",
+  ticketLookup: "/operator-console/ticket-lookup",
   audit: "/operator-console/audit",
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/",
@@ -116,6 +118,13 @@ export function App({ apiClient, initialPath }: AppProps) {
               Overview
             </button>
             <button
+              className={`navLink ${path === routes.ticketLookup ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.ticketLookup)}
+            >
+              Ticket Lookup
+            </button>
+            <button
               className={`navLink ${path.startsWith(routes.queue) ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.queue)}
@@ -158,6 +167,8 @@ export function App({ apiClient, initialPath }: AppProps) {
               navigate={navigate}
               readinessBlockReason={readinessBlockReason}
             />
+          ) : path === routes.ticketLookup ? (
+            <TicketLookupPage client={client} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.queue ? (
             <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.audit ? (
@@ -379,6 +390,181 @@ function OperatorConsoleHome({
       <button type="button" disabled={readinessBlockReason !== null} onClick={() => navigate(routes.queue)}>
         Open work queue
       </button>
+      <button type="button" disabled={readinessBlockReason !== null} onClick={() => navigate(routes.ticketLookup)}>
+        Open ticket lookup
+      </button>
+    </section>
+  );
+}
+
+function TicketLookupPage({
+  client,
+  readinessBlockReason
+}: {
+  client: OperatorConsoleApiClient;
+  readinessBlockReason: string | null;
+}) {
+  const [ticketReference, setTicketReference] = useState("");
+  const [lookupState, setLookupState] = useState<LoadState<OperatorTicketLookupResult>>({ status: "idle" });
+
+  async function submitLookup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalizedTicket = ticketReference.trim();
+    if (!normalizedTicket) {
+      setLookupState({ status: "error", message: "Scan or enter a ticket number." });
+      return;
+    }
+
+    setLookupState({ status: "loading" });
+    try {
+      const result = await client.lookupSessionByTicket({ ticketNumber: normalizedTicket });
+      setLookupState(result.sessionFound ? { status: "loaded", data: result } : { status: "not-found" });
+    } catch (error) {
+      const mapped = mapApiError(error);
+      setLookupState(
+        mapped.status === "access-denied"
+          ? { status: "access-denied", message: mapped.message }
+          : { status: "error", message: mapped.message }
+      );
+    }
+  }
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Ticket Lookup</p>
+          <h2>Ticket exit readiness</h2>
+          <p>Scan or enter a ticket number to review session, payment, and vendor confirmation state.</p>
+        </div>
+      </section>
+
+      <section className="panel" aria-labelledby="ticket-lookup-title">
+        <div className="panelHeader">
+          <h3 id="ticket-lookup-title">Ticket number</h3>
+          <span className="statusPill">Read-only lookup</span>
+        </div>
+
+        {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
+        <form className="ticketLookupForm" onSubmit={submitLookup}>
+          <label>
+            Ticket number
+            <input
+              autoComplete="off"
+              autoFocus
+              inputMode="text"
+              name="ticketReference"
+              placeholder="Scan or enter ticket number"
+              value={ticketReference}
+              onChange={(event) => setTicketReference(event.target.value)}
+            />
+          </label>
+          <button type="submit" disabled={readinessBlockReason !== null || lookupState.status === "loading"}>
+            {lookupState.status === "loading" ? "Looking up" : "Lookup"}
+          </button>
+        </form>
+
+        <div className="lookupGuardrail" role="note">
+          <p>No manual mark-as-paid.</p>
+          <p>No payment collection.</p>
+          <p>No direct gate open.</p>
+        </div>
+      </section>
+
+      {lookupState.status === "loading" && <StateMessage title="Looking up ticket" message="Retrieving Operator Console session status." />}
+      {lookupState.status === "not-found" && <StateMessage title="Ticket not found" message="No active session was found for this ticket." />}
+      {lookupState.status === "access-denied" && <StateMessage title="Access denied" message={lookupState.message} />}
+      {lookupState.status === "error" && <StateMessage title="Unable to look up ticket" message={lookupState.message} />}
+      {lookupState.status === "loaded" && <TicketLookupSummary result={lookupState.data} />}
+    </>
+  );
+}
+
+function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult }) {
+  const guidance = ticketLookupGuidance(result);
+
+  return (
+    <section className="panel ticketSummaryPanel" aria-labelledby="ticket-summary-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Session summary</p>
+          <h3 id="ticket-summary-title">{displayValue(result.ticketNumber ?? result.cardNum)}</h3>
+        </div>
+        <span className={`statusPill ${guidance.className}`}>{guidance.label}</span>
+      </div>
+
+      <div className={guidance.messageClass}>
+        {guidance.messages.map((message) => (
+          <p key={message}>{message}</p>
+        ))}
+      </div>
+
+      <div className="detailGrid">
+        <section aria-labelledby="ticket-session-heading">
+          <h4 id="ticket-session-heading">Session Information</h4>
+          <DescriptionList
+            items={[
+              ["Ticket number", displayValue(result.ticketNumber)],
+              ["Card number", displayValue(result.cardNum)],
+              ["Plate license", displayPlateLicense(result.plateLicense)],
+              ["Parking in time", result.parkingInTime ? formatDateTime(result.parkingInTime) : "Not available"],
+              ["Parking duration seconds", formatSeconds(result.parkingDurationSeconds)]
+            ]}
+          />
+        </section>
+
+        <section aria-labelledby="ticket-tariff-heading">
+          <h4 id="ticket-tariff-heading">Tariff Information</h4>
+          <DescriptionList
+            items={[
+              ["Fee minor units", formatMinorUnits(result.feeMinorUnits)],
+              ["Currency code", displayValue(result.currencyCode)],
+              ["Fee rule type", displayValue(result.feeRuleType)],
+              ["Fee rule index code", displayValue(result.feeRuleIndexCode)],
+              ["Fee rule name", displayValue(result.feeRuleName)]
+            ]}
+          />
+        </section>
+
+        <section aria-labelledby="ticket-payment-heading">
+          <h4 id="ticket-payment-heading">Payment Information</h4>
+          <DescriptionList
+            items={[
+              ["Payment attempt status", displayValue(result.paymentAttemptStatus)],
+              ["Payment status", displayValue(result.paymentStatus)],
+              ["Payment confirmation status", displayValue(result.paymentConfirmationStatus)]
+            ]}
+          />
+        </section>
+
+        <section aria-labelledby="ticket-vendor-heading">
+          <h4 id="ticket-vendor-heading">Vendor Information</h4>
+          <DescriptionList
+            items={[
+              ["Vendor system code", displayValue(result.vendorSystemCode)],
+              ["Vendor confirmation code", displayValue(result.vendorConfirmationCode)],
+              ["Vendor confirmation status", result.vendorConfirmationStatus ?? "Vendor confirmation unavailable"],
+              [
+                "Vendor confirmation timestamp",
+                result.vendorConfirmationTimestamp ? formatDateTime(result.vendorConfirmationTimestamp) : "Not available"
+              ],
+              ["Vendor message", displayValue(result.vendorMessage)]
+            ]}
+          />
+        </section>
+      </div>
+
+      <details className="diagnosticsPanel">
+        <summary>Diagnostics</summary>
+        <DescriptionList
+          items={[
+            ["Vendor system code", displayValue(result.vendorSystemCode)],
+            ["Vendor confirmation code", displayValue(result.vendorConfirmationCode)],
+            ["Vendor message", displayValue(result.vendorMessage)],
+            ["Correlation ID", displayValue(result.correlationId)]
+          ]}
+        />
+      </details>
     </section>
   );
 }
@@ -1892,6 +2078,77 @@ function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
       </button>
     </section>
   );
+}
+
+function ticketLookupGuidance(result: OperatorTicketLookupResult) {
+  const vendorStatus = normalizeStatus(result.vendorConfirmationStatus);
+
+  if (!vendorStatus) {
+    return {
+      label: "Vendor unavailable",
+      messages: ["Vendor confirmation unavailable"],
+      messageClass: "notice",
+      className: "pending-review"
+    };
+  }
+
+  if (vendorStatus === "PENDING") {
+    return {
+      label: "Vendor pending",
+      messages: ["Payment confirmed in ExitPass. Vendor confirmation pending."],
+      messageClass: "notice",
+      className: "pending-review"
+    };
+  }
+
+  if (vendorStatus === "CONFIRMED") {
+    return {
+      label: "Vendor confirmed",
+      messages: ["Vendor confirmation complete.", "Proceed to ticket exit validator."],
+      messageClass: "successMessage",
+      className: "readiness-ready"
+    };
+  }
+
+  if (vendorStatus === "FAILED") {
+    return {
+      label: "Vendor failed",
+      messages: ["Vendor confirmation failed.", "Escalate to supervisor."],
+      messageClass: "errorMessage",
+      className: "blocked"
+    };
+  }
+
+  return {
+    label: "Status review",
+    messages: ["Vendor confirmation unavailable"],
+    messageClass: "notice",
+    className: "pending-review"
+  };
+}
+
+function normalizeStatus(status?: string | null) {
+  return status?.trim().toUpperCase().replaceAll(" ", "_") ?? "";
+}
+
+function displayValue(value?: string) {
+  return value && value.trim().length > 0 ? value : "Not available";
+}
+
+function displayPlateLicense(value?: string) {
+  if (!value || value.trim().length === 0 || value.trim().toUpperCase() === "UNKNOWN") {
+    return "Unknown";
+  }
+
+  return value;
+}
+
+function formatSeconds(value?: number) {
+  return value === undefined ? "Not available" : String(value);
+}
+
+function formatMinorUnits(value?: number) {
+  return value === undefined ? "Not available" : String(value);
 }
 
 function normalizePath(path: string) {
