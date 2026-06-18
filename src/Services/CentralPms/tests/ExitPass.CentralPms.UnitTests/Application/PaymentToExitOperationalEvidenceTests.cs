@@ -6,6 +6,7 @@ using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
@@ -245,6 +246,128 @@ public sealed class PaymentToExitOperationalEvidenceTests
         Assert.Equal("CONFIRMED", result.AttemptStatus);
         Assert.Equal(ExitAuthorizationId, result.ExitAuthorizationId);
         Assert.Equal("ISSUED", result.AuthorizationStatus);
+    }
+
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_WhenFinalityIsNotConfirmed_DoesNotProcessVendorAcknowledgment()
+    {
+        var recordGateway = Substitute.For<IRecordPaymentConfirmationGateway>();
+        var finalizeUseCase = Substitute.For<IFinalizePaymentAttemptUseCase>();
+        var issueUseCase = Substitute.For<IIssueExitAuthorizationUseCase>();
+        var eventPublisher = Substitute.For<IIntegrationEventPublisher>();
+        var vendorAcknowledgmentWorkflow = Substitute.For<IVendorPaymentAcknowledgmentWorkflow>();
+        var clock = Substitute.For<ISystemClock>();
+        clock.UtcNow.Returns(Now);
+
+        recordGateway.RecordAsync(Arg.Any<RecordPaymentConfirmationCommand>(), Now, Arg.Any<CancellationToken>())
+            .Returns(new RecordPaymentConfirmationResult(
+                Guid.Parse("10000000-0000-0000-0000-000000000007"),
+                PaymentAttemptId,
+                "evt-provider-001",
+                "FAILED",
+                "VERIFIED",
+                Now));
+        finalizeUseCase.ExecuteAsync(Arg.Any<FinalizePaymentAttemptCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new FinalizePaymentAttemptResult(PaymentAttemptId, "FAILED"));
+
+        var sut = new ReportVerifiedPaymentOutcomeHandler(
+            recordGateway,
+            finalizeUseCase,
+            issueUseCase,
+            eventPublisher,
+            clock,
+            NullLogger<ReportVerifiedPaymentOutcomeHandler>.Instance,
+            vendorPaymentAcknowledgmentWorkflow: vendorAcknowledgmentWorkflow);
+
+        var result = await sut.ExecuteAsync(
+            new ReportVerifiedPaymentOutcomeCommand(
+                PaymentAttemptId,
+                ParkingSessionId,
+                "evt-provider-001",
+                "FAILED",
+                "FAILED",
+                "payment-orchestrator",
+                RequestedByUserId,
+                CorrelationId),
+            CancellationToken.None);
+
+        Assert.Equal(PaymentAttemptId, result.PaymentAttemptId);
+        Assert.Equal("FAILED", result.AttemptStatus);
+        Assert.Null(result.ExitAuthorizationId);
+        await vendorAcknowledgmentWorkflow.DidNotReceive().ProcessAsync(
+            Arg.Any<VendorPaymentAcknowledgmentWorkflowCommand>(),
+            Arg.Any<CancellationToken>());
+        await issueUseCase.DidNotReceive().ExecuteAsync(
+            Arg.Any<IssueExitAuthorizationCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_WhenVendorAcknowledgmentFails_StillReturnsAuthoritativeFinality()
+    {
+        var recordGateway = Substitute.For<IRecordPaymentConfirmationGateway>();
+        var finalizeUseCase = Substitute.For<IFinalizePaymentAttemptUseCase>();
+        var issueUseCase = Substitute.For<IIssueExitAuthorizationUseCase>();
+        var eventPublisher = Substitute.For<IIntegrationEventPublisher>();
+        var vendorAcknowledgmentWorkflow = Substitute.For<IVendorPaymentAcknowledgmentWorkflow>();
+        var clock = Substitute.For<ISystemClock>();
+        clock.UtcNow.Returns(Now);
+
+        var paymentConfirmationId = Guid.Parse("10000000-0000-0000-0000-000000000007");
+        recordGateway.RecordAsync(Arg.Any<RecordPaymentConfirmationCommand>(), Now, Arg.Any<CancellationToken>())
+            .Returns(new RecordPaymentConfirmationResult(
+                paymentConfirmationId,
+                PaymentAttemptId,
+                "evt-provider-001",
+                "SUCCEEDED",
+                "VERIFIED",
+                Now));
+        finalizeUseCase.ExecuteAsync(Arg.Any<FinalizePaymentAttemptCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new FinalizePaymentAttemptResult(PaymentAttemptId, "CONFIRMED"));
+        issueUseCase.ExecuteAsync(Arg.Any<IssueExitAuthorizationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new IssueExitAuthorizationResult(
+                ExitAuthorizationId,
+                ParkingSessionId,
+                PaymentAttemptId,
+                "AUTH-001",
+                "ISSUED",
+                Now,
+                Now.AddMinutes(15)));
+        vendorAcknowledgmentWorkflow
+            .ProcessAsync(Arg.Any<VendorPaymentAcknowledgmentWorkflowCommand>(), Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("Vendor PMS unavailable"));
+
+        var sut = new ReportVerifiedPaymentOutcomeHandler(
+            recordGateway,
+            finalizeUseCase,
+            issueUseCase,
+            eventPublisher,
+            clock,
+            NullLogger<ReportVerifiedPaymentOutcomeHandler>.Instance,
+            vendorPaymentAcknowledgmentWorkflow: vendorAcknowledgmentWorkflow);
+
+        var result = await sut.ExecuteAsync(
+            new ReportVerifiedPaymentOutcomeCommand(
+                PaymentAttemptId,
+                ParkingSessionId,
+                "evt-provider-001",
+                "SUCCEEDED",
+                "CONFIRMED",
+                "payment-orchestrator",
+                RequestedByUserId,
+                CorrelationId),
+            CancellationToken.None);
+
+        Assert.Equal(PaymentAttemptId, result.PaymentAttemptId);
+        Assert.Equal("CONFIRMED", result.AttemptStatus);
+        Assert.Equal(ExitAuthorizationId, result.ExitAuthorizationId);
+        await vendorAcknowledgmentWorkflow.Received(1).ProcessAsync(
+            Arg.Is<VendorPaymentAcknowledgmentWorkflowCommand>(command =>
+                command.PaymentAttemptId == PaymentAttemptId &&
+                command.PaymentConfirmationId == paymentConfirmationId &&
+                command.ParkingSessionId == ParkingSessionId &&
+                command.CorrelationId == CorrelationId),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]

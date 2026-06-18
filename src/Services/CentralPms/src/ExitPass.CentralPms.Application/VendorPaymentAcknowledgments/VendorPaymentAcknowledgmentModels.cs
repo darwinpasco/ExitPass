@@ -99,6 +99,29 @@ public sealed record VendorPaymentAcknowledgmentRecord(
     DateTimeOffset UpdatedAt);
 
 /// <summary>
+/// Immutable payment/session basis used to acknowledge paid state to the Vendor PMS.
+/// </summary>
+public sealed record VendorPaymentAcknowledgmentBasis(
+    Guid PaymentAttemptId,
+    Guid PaymentConfirmationId,
+    Guid ParkingSessionId,
+    string VendorSystemCode,
+    string? VendorSessionRef,
+    string? TicketNumber,
+    string? CardNum,
+    long RequestFeeMinorUnits,
+    string RequestCurrencyCode);
+
+/// <summary>
+/// Command to process the Vendor PMS paid-state acknowledgment after ExitPass finality.
+/// </summary>
+public sealed record VendorPaymentAcknowledgmentWorkflowCommand(
+    Guid PaymentAttemptId,
+    Guid PaymentConfirmationId,
+    Guid ParkingSessionId,
+    Guid CorrelationId);
+
+/// <summary>
 /// Raised when the database rejects a duplicate or conflicting Vendor PMS acknowledgment record.
 /// </summary>
 public sealed class VendorPaymentAcknowledgmentConflictException : Exception

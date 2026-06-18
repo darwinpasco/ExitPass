@@ -5,6 +5,13 @@ namespace ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 /// </summary>
 public interface IVendorPaymentAcknowledgmentRepository
 {
+    /// <summary>Loads immutable payment/session data required for Vendor PMS acknowledgment.</summary>
+    Task<VendorPaymentAcknowledgmentBasis?> LoadBasisAsync(
+        Guid paymentAttemptId,
+        Guid paymentConfirmationId,
+        Guid parkingSessionId,
+        CancellationToken cancellationToken);
+
     /// <summary>Creates the durable pending acknowledgment record.</summary>
     Task<VendorPaymentAcknowledgmentRecord> CreatePendingAsync(
         CreateVendorPaymentAcknowledgmentCommand command,
@@ -28,5 +35,16 @@ public interface IVendorPaymentAcknowledgmentRepository
     /// <summary>Reads one durable acknowledgment record by identifier.</summary>
     Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
         Guid vendorPaymentAcknowledgmentId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Reads one durable acknowledgment record by payment confirmation and vendor system.</summary>
+    Task<VendorPaymentAcknowledgmentRecord?> ReadByPaymentConfirmationAsync(
+        Guid paymentConfirmationId,
+        string vendorSystemCode,
+        CancellationToken cancellationToken);
+
+    /// <summary>Reads the latest durable acknowledgment record for a payment attempt.</summary>
+    Task<VendorPaymentAcknowledgmentRecord?> ReadLatestByPaymentAttemptAsync(
+        Guid paymentAttemptId,
         CancellationToken cancellationToken);
 }

@@ -199,17 +199,20 @@ public sealed class TicketSessionSummaryService : ITicketSessionSummaryService
                 CorrelationId: sessionResponse.CorrelationId));
         }
 
-        var vendorSystemCode = NormalizeSystemCode(session.VendorProviderCode);
-        const string vendorConfirmationCode = "VENDOR_CONFIRMATION_STATUS_UNAVAILABLE";
-        const string vendorMessage = "Vendor session and tariff summary resolved.";
+        var vendorSystemCode = localStatus.Status?.VendorSystemCode ?? NormalizeSystemCode(session.VendorProviderCode);
+        var vendorConfirmationCode = localStatus.Status?.VendorConfirmationCode ?? "VENDOR_CONFIRMATION_STATUS_UNAVAILABLE";
+        var vendorMessage = localStatus.Status?.VendorMessage ?? "Vendor session and tariff summary resolved.";
+        var vendorDiagnosticMessage = localStatus.Status?.VendorConfirmationStatus is null
+            ? "Vendor payment confirmation status is not available from the current read-only adapter contract."
+            : "Vendor payment confirmation status was read from durable Central PMS acknowledgment state.";
         diagnostics.Add(new TicketSessionSummaryDiagnostic(
             vendorConfirmationCode,
-            "Vendor payment confirmation status is not available from the current read-only adapter contract.",
+            vendorDiagnosticMessage,
             "central-pms-read-model",
             Retryable: false,
             VendorSystemCode: vendorSystemCode,
             VendorConfirmationCode: vendorConfirmationCode,
-            VendorMessage: "Vendor confirmation status is not available from the current read-only adapter contract.",
+            VendorMessage: vendorMessage,
             CorrelationId: sessionResponse.CorrelationId));
 
         var summary = new TicketSessionSummaryReadModel(

@@ -55,6 +55,33 @@ public sealed class TicketSessionSummaryServiceTests
             diagnostic.CorrelationId == CorrelationId);
         vendor.ResolveSessionCalls.Should().Be(1);
         vendor.ResolveTariffCalls.Should().Be(0);
+        vendor.ConfirmParkingFeeCalls.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies the summary reads durable Vendor PMS acknowledgment status when it exists locally.
+    /// </summary>
+    [Fact]
+    public async Task GetAsync_WhenDurableVendorAcknowledgmentExists_ReturnsVendorConfirmationStatus()
+    {
+        var vendor = FakeVendorClient.FoundWithInlineQuote("Unknown");
+        var repository = FakeRepository.FoundWithDurableVendorConfirmation();
+        var sut = CreateSut(vendor, repository);
+
+        var result = await sut.GetAsync(Command(), CancellationToken.None);
+
+        result.Outcome.Should().Be(TicketSessionSummaryOutcome.Resolved);
+        result.Summary.Should().NotBeNull();
+        result.Summary!.VendorSystemCode.Should().Be("HIKCENTRAL");
+        result.Summary.VendorConfirmationStatus.Should().Be("CONFIRMED");
+        result.Summary.VendorConfirmationCode.Should().Be("0");
+        result.Summary.VendorConfirmationTimestamp.Should().Be(CalculatedAt);
+        result.Summary.VendorMessage.Should().Be("Success");
+        result.Diagnostics.Should().Contain(diagnostic =>
+            diagnostic.Code == "0" &&
+            diagnostic.Message == "Vendor payment confirmation status was read from durable Central PMS acknowledgment state." &&
+            diagnostic.VendorSystemCode == "HIKCENTRAL");
+        vendor.ConfirmParkingFeeCalls.Should().Be(0);
     }
 
     /// <summary>
@@ -74,6 +101,7 @@ public sealed class TicketSessionSummaryServiceTests
         result.Diagnostics.Should().Contain(diagnostic => diagnostic.Code == "LOCAL_PAYMENT_STATUS_UNAVAILABLE");
         vendor.ResolveSessionCalls.Should().Be(1);
         vendor.ResolveTariffCalls.Should().Be(1);
+        vendor.ConfirmParkingFeeCalls.Should().Be(0);
     }
 
     /// <summary>
@@ -175,6 +203,8 @@ public sealed class TicketSessionSummaryServiceTests
 
         public int ResolveTariffCalls { get; private set; }
 
+        public int ConfirmParkingFeeCalls { get; private set; }
+
         public static FakeVendorClient FoundWithInlineQuote(string plateNumber)
         {
             var quote = new VendorTariffQuoteDto(12550, "php", "RULE-001", "Standard parking", CalculatedAt);
@@ -249,6 +279,19 @@ public sealed class TicketSessionSummaryServiceTests
             ResolveTariffCalls++;
             return Task.FromResult(_tariffResponse);
         }
+
+        public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+            VendorParkingFeeConfirmationRequest request,
+            CancellationToken cancellationToken)
+        {
+            ConfirmParkingFeeCalls++;
+            return Task.FromResult(new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.Confirmed,
+                new VendorParkingFeeConfirmationDto(request.AmountMinor ?? 0, request.Currency, CalculatedAt),
+                "0",
+                false,
+                request.CorrelationId));
+        }
     }
 
     private sealed class FakeRepository : ITicketSessionSummaryReadRepository
@@ -269,8 +312,26 @@ public sealed class TicketSessionSummaryServiceTests
                     "FINALIZED",
                     "Paid",
                     "RECORDED",
+                    VendorSystemCode: null,
+                    VendorConfirmationCode: null,
+                    VendorMessage: null,
                     VendorConfirmationStatus: null,
                     VendorConfirmationTimestamp: null)));
+
+        public static FakeRepository FoundWithDurableVendorConfirmation() =>
+            new(new TicketSessionLocalStatusResult(
+                TicketSessionLocalStatusOutcome.Found,
+                new TicketSessionLocalStatusReadModel(
+                    ParkingSessionId,
+                    PaymentAttemptId,
+                    "CONFIRMED",
+                    "Paid",
+                    "RECORDED",
+                    VendorSystemCode: "HIKCENTRAL",
+                    VendorConfirmationCode: "0",
+                    VendorMessage: "Success",
+                    VendorConfirmationStatus: "CONFIRMED",
+                    VendorConfirmationTimestamp: CalculatedAt)));
 
         public static FakeRepository NotFound() =>
             new(new TicketSessionLocalStatusResult(TicketSessionLocalStatusOutcome.NotFound, Status: null));
