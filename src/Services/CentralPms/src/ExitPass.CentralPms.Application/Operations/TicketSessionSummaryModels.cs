@@ -113,6 +113,9 @@ public sealed record TicketSessionLocalStatusReadModel(
     string? PaymentAttemptStatus,
     string? PaymentStatus,
     string? PaymentConfirmationStatus,
+    string? VendorSystemCode,
+    string? VendorConfirmationCode,
+    string? VendorMessage,
     string? VendorConfirmationStatus,
     DateTimeOffset? VendorConfirmationTimestamp);
 

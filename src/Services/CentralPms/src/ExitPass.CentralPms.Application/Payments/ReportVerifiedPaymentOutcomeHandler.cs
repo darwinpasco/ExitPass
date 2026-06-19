@@ -161,12 +161,6 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
                 ExpirationTimestamp: null);
         }
 
-        await ProcessVendorPaymentAcknowledgmentBestEffortAsync(
-            command,
-            confirmation,
-            finalized,
-            cancellationToken);
-
         await PublishBestEffortAsync(
             CreatePaymentAttemptConfirmedEvent(command, finalized),
             cancellationToken);
@@ -181,6 +175,12 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         await PublishBestEffortAsync(
             CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
+            cancellationToken);
+
+        await ProcessVendorPaymentAcknowledgmentBestEffortAsync(
+            command,
+            confirmation,
+            finalized,
             cancellationToken);
 
         activity?.SetStatus(ActivityStatusCode.Ok);

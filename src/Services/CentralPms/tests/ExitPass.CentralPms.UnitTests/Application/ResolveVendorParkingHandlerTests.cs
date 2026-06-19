@@ -540,6 +540,13 @@ public sealed class ResolveVendorParkingHandlerTests
             return Task.FromResult(_tariffResponse);
         }
 
+        public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+            VendorParkingFeeConfirmationRequest request,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException("Parking resolution tests must not confirm Vendor PMS payment.");
+        }
+
         private static FakeVendorPmsParkingResolutionClient Found(
             VendorTariffQuoteDto? sessionQuote,
             VendorTariffQuoteDto tariffQuote)

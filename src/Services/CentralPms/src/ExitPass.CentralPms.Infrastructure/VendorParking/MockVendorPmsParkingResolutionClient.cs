@@ -121,6 +121,49 @@ public sealed class MockVendorPmsParkingResolutionClient : IVendorPmsParkingReso
         return Task.FromResult(response);
     }
 
+    /// <inheritdoc />
+    public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+        VendorParkingFeeConfirmationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.AmountMinor is null)
+        {
+            return Task.FromResult(new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.ValidationError,
+                null,
+                "VENDOR_CONFIRMATION_AMOUNT_REQUIRED",
+                false,
+                request.CorrelationId));
+        }
+
+        var lookupKey = Normalize(request.PlateNumber) ?? Normalize(request.TicketReference) ?? string.Empty;
+        var response = lookupKey.Equals("UNAVAILABLE", StringComparison.OrdinalIgnoreCase)
+            ? new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.UnavailableRetryable,
+                null,
+                "VENDOR_UNAVAILABLE",
+                true,
+                request.CorrelationId)
+            : lookupKey.Equals("REJECTED", StringComparison.OrdinalIgnoreCase)
+                ? new VendorParkingFeeConfirmationResponse(
+                    VendorParkingLookupStatus.VendorRejected,
+                    null,
+                    "VENDOR_CONFIRMATION_REJECTED",
+                    false,
+                    request.CorrelationId)
+                : new VendorParkingFeeConfirmationResponse(
+                    VendorParkingLookupStatus.Confirmed,
+                    new VendorParkingFeeConfirmationDto(
+                        request.AmountMinor.Value,
+                        string.IsNullOrWhiteSpace(request.Currency) ? "PHP" : request.Currency.Trim().ToUpperInvariant(),
+                        FixedCalculatedAt),
+                    "0",
+                    false,
+                    request.CorrelationId);
+
+        return Task.FromResult(response);
+    }
+
     private static VendorTariffQuoteDto CreateQuote(long amountMinor, string tariffVersionReference)
     {
         return new VendorTariffQuoteDto(
