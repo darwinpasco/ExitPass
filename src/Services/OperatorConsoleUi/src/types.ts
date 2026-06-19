@@ -279,6 +279,86 @@ export interface AuditReportItem {
   accessEvaluationSummary?: string;
 }
 
+export type VendorPaymentAcknowledgmentStatus =
+  | "PENDING"
+  | "RETRY_PENDING"
+  | "FAILED"
+  | "CONFIRMED"
+  | "SKIPPED_DISABLED"
+  | "CANCELLED";
+
+export interface VendorPaymentAcknowledgmentSearchInput {
+  acknowledgmentStatus?: VendorPaymentAcknowledgmentStatus | string;
+  vendorSystemCode?: string;
+  paymentAttemptId?: string;
+  paymentConfirmationId?: string;
+  parkingSessionId?: string;
+  ticketNumber?: string;
+  cardNum?: string;
+  correlationId?: string;
+  createdFrom?: string;
+  createdTo?: string;
+  lastAttemptedFrom?: string;
+  lastAttemptedTo?: string;
+  nextRetryDueOnly?: boolean;
+  pageIndex?: number;
+  pageSize?: number;
+}
+
+export interface VendorPaymentAcknowledgmentStatusBuckets {
+  pending: number;
+  retryPending: number;
+  failed: number;
+  confirmed: number;
+  skippedDisabled: number;
+  cancelled: number;
+}
+
+export interface VendorPaymentAcknowledgmentSummary {
+  vendorPaymentAcknowledgmentId: string;
+  paymentAttemptId: string;
+  paymentConfirmationId: string;
+  parkingSessionId?: string;
+  vendorSystemCode: string;
+  vendorSessionRef?: string;
+  ticketNumber?: string;
+  cardNum?: string;
+  acknowledgmentStatus: VendorPaymentAcknowledgmentStatus | string;
+  statusBucket?: string;
+  vendorCode?: string;
+  vendorMessage?: string;
+  requestFeeMinorUnits?: number;
+  requestCurrencyCode?: string;
+  confirmedFeeMinorUnits?: number;
+  vendorConfirmedAt?: string;
+  attemptCount: number;
+  lastAttemptedAt?: string;
+  nextRetryAt?: string;
+  correlationId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendorPaymentAcknowledgmentDiagnostic {
+  code: string;
+  message: string;
+  source: string;
+  retryable: boolean;
+  correlationId?: string;
+}
+
+export interface VendorPaymentAcknowledgmentDetail extends VendorPaymentAcknowledgmentSummary {
+  diagnostics: VendorPaymentAcknowledgmentDiagnostic[];
+}
+
+export interface VendorPaymentAcknowledgmentSearchResult {
+  items: VendorPaymentAcknowledgmentSummary[];
+  statusBuckets: VendorPaymentAcknowledgmentStatusBuckets;
+  pageIndex: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
 export interface StatutoryDiscountDecisionInput {
   draftId: string;
   siteId?: string;

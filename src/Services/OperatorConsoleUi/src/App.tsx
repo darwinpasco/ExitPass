@@ -24,7 +24,12 @@ import type {
   OperatorTicketLookupResult,
   StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
-  StatutoryDiscountQueueItem
+  StatutoryDiscountQueueItem,
+  VendorPaymentAcknowledgmentDetail,
+  VendorPaymentAcknowledgmentSearchInput,
+  VendorPaymentAcknowledgmentSearchResult,
+  VendorPaymentAcknowledgmentStatus,
+  VendorPaymentAcknowledgmentSummary
 } from "./types";
 
 const routes = {
@@ -33,6 +38,7 @@ const routes = {
   audit: "/operator-console/audit",
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/",
+  vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
   policyImportReview: "/operator-console/production-policy-import-review"
 };
 
@@ -139,6 +145,13 @@ export function App({ apiClient, initialPath }: AppProps) {
               Audit / Reporting
             </button>
             <button
+              className={`navLink ${path === routes.vendorAcknowledgments ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.vendorAcknowledgments)}
+            >
+              Vendor Acknowledgments
+            </button>
+            <button
               className={`navLink ${path === routes.policyImportReview ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.policyImportReview)}
@@ -173,6 +186,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.audit ? (
             <AuditReportPage client={client} />
+          ) : path === routes.vendorAcknowledgments ? (
+            <VendorPaymentAcknowledgmentsPage client={client} />
           ) : path === routes.policyImportReview ? (
             <ProductionPolicyImportReviewPage client={client} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.home ? (
@@ -366,6 +381,447 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
         )}
       </section>
     </>
+  );
+}
+
+const vendorAcknowledgmentStatuses: VendorPaymentAcknowledgmentStatus[] = [
+  "PENDING",
+  "RETRY_PENDING",
+  "FAILED",
+  "CONFIRMED",
+  "SKIPPED_DISABLED",
+  "CANCELLED"
+];
+
+function VendorPaymentAcknowledgmentsPage({ client }: { client: OperatorConsoleApiClient }) {
+  const [filters, setFilters] = useState<VendorPaymentAcknowledgmentSearchInput>({
+    pageIndex: 0,
+    pageSize: 25,
+    nextRetryDueOnly: false
+  });
+  const [draftFilters, setDraftFilters] = useState<VendorPaymentAcknowledgmentSearchInput>({
+    pageIndex: 0,
+    pageSize: 25,
+    nextRetryDueOnly: false
+  });
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [searchState, setSearchState] = useState<LoadState<VendorPaymentAcknowledgmentSearchResult>>({ status: "loading" });
+  const [selectedAcknowledgmentId, setSelectedAcknowledgmentId] = useState<string | null>(null);
+  const [detailState, setDetailState] = useState<LoadState<VendorPaymentAcknowledgmentDetail>>({ status: "idle" });
+
+  useEffect(() => {
+    let active = true;
+    setSearchState({ status: "loading" });
+
+    client
+      .searchVendorPaymentAcknowledgments(filters)
+      .then((result) => {
+        if (!active) {
+          return;
+        }
+
+        setSearchState(result.items.length === 0 ? { status: "empty" } : { status: "loaded", data: result });
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        const mapped = mapApiError(error);
+        setSearchState(
+          mapped.status === "access-denied"
+            ? { status: "access-denied", message: mapped.message }
+            : { status: "error", message: mapped.message }
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, filters, refreshToken]);
+
+  useEffect(() => {
+    if (!selectedAcknowledgmentId) {
+      setDetailState({ status: "idle" });
+      return;
+    }
+
+    let active = true;
+    setDetailState({ status: "loading" });
+    client
+      .getVendorPaymentAcknowledgment(selectedAcknowledgmentId)
+      .then((detail) => {
+        if (active) {
+          setDetailState({ status: "loaded", data: detail });
+        }
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        const mapped = mapApiError(error);
+        setDetailState(
+          mapped.status === "not-found"
+            ? { status: "not-found" }
+            : mapped.status === "access-denied"
+              ? { status: "access-denied", message: mapped.message }
+              : { status: "error", message: mapped.message }
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, selectedAcknowledgmentId]);
+
+  function submitFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFilters({
+      acknowledgmentStatus: draftFilters.acknowledgmentStatus || undefined,
+      vendorSystemCode: draftFilters.vendorSystemCode || undefined,
+      ticketNumber: draftFilters.ticketNumber || undefined,
+      cardNum: draftFilters.cardNum || undefined,
+      nextRetryDueOnly: draftFilters.nextRetryDueOnly ?? false,
+      pageIndex: draftFilters.pageIndex ?? 0,
+      pageSize: draftFilters.pageSize ?? 25
+    });
+  }
+
+  function updateDraftFilter<K extends keyof VendorPaymentAcknowledgmentSearchInput>(
+    key: K,
+    value: VendorPaymentAcknowledgmentSearchInput[K]
+  ) {
+    setDraftFilters((current) => ({ ...current, [key]: value }));
+  }
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Vendor PMS Monitoring</p>
+          <h2>Vendor payment acknowledgments</h2>
+          <p>
+            Read-only monitoring for Vendor PMS paid-state acknowledgments after ExitPass payment finality.
+          </p>
+        </div>
+        <button type="button" onClick={() => setRefreshToken((current) => current + 1)}>
+          Refresh
+        </button>
+      </section>
+
+      <section className="panel auditGuardrail" aria-labelledby="vendor-ack-boundaries-title">
+        <div className="panelHeader">
+          <h3 id="vendor-ack-boundaries-title">Read-only boundaries</h3>
+          <span className="statusPill">Ops monitoring</span>
+        </div>
+        <p>Vendor PMS acknowledgment is not ExitPass payment finality.</p>
+        <p>No retry, confirm, cancel, payment, vendor adapter, or gate action is available here.</p>
+        <p>Secret-bearing payloads, signatures, and auth headers are not displayed.</p>
+      </section>
+
+      <section className="panel" aria-labelledby="vendor-ack-filters-title">
+        <div className="panelHeader">
+          <h3 id="vendor-ack-filters-title">Filters</h3>
+        </div>
+        <form className="auditFilterGrid" onSubmit={submitFilters}>
+          <label>
+            Status
+            <select
+              value={draftFilters.acknowledgmentStatus ?? ""}
+              onChange={(event) =>
+                updateDraftFilter("acknowledgmentStatus", event.target.value as VendorPaymentAcknowledgmentStatus | "")
+              }
+            >
+              <option value="">Any status</option>
+              {vendorAcknowledgmentStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {status}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Vendor system code
+            <input
+              value={draftFilters.vendorSystemCode ?? ""}
+              onChange={(event) => updateDraftFilter("vendorSystemCode", event.target.value || undefined)}
+            />
+          </label>
+          <label>
+            Ticket number
+            <input
+              value={draftFilters.ticketNumber ?? ""}
+              onChange={(event) => updateDraftFilter("ticketNumber", event.target.value || undefined)}
+            />
+          </label>
+          <label>
+            Card number
+            <input
+              value={draftFilters.cardNum ?? ""}
+              onChange={(event) => updateDraftFilter("cardNum", event.target.value || undefined)}
+            />
+          </label>
+          <label>
+            Page index
+            <input
+              min="0"
+              type="number"
+              value={draftFilters.pageIndex ?? 0}
+              onChange={(event) => updateDraftFilter("pageIndex", Math.max(0, Number(event.target.value) || 0))}
+            />
+          </label>
+          <label>
+            Page size
+            <select
+              value={draftFilters.pageSize ?? 25}
+              onChange={(event) => updateDraftFilter("pageSize", Number(event.target.value))}
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </label>
+          <label className="checkboxField">
+            <input
+              checked={draftFilters.nextRetryDueOnly ?? false}
+              type="checkbox"
+              onChange={(event) => updateDraftFilter("nextRetryDueOnly", event.target.checked)}
+            />
+            Next retry due only
+          </label>
+          <button type="submit">Apply filters</button>
+        </form>
+      </section>
+
+      <section className="panel" aria-labelledby="vendor-ack-results-title">
+        <div className="panelHeader">
+          <h3 id="vendor-ack-results-title">Acknowledgments</h3>
+          {searchState.status === "loaded" && (
+            <span className="statusPill">
+              Page {searchState.data.pageIndex} / {searchState.data.items.length} rows
+            </span>
+          )}
+        </div>
+
+        {searchState.status === "loading" && (
+          <StateMessage title="Loading vendor acknowledgments" message="Retrieving read-only acknowledgment rows." />
+        )}
+        {searchState.status === "empty" && (
+          <StateMessage title="No acknowledgments" message="No vendor payment acknowledgments matched the filters." />
+        )}
+        {searchState.status === "access-denied" && <StateMessage title="Access denied" message={searchState.message} />}
+        {searchState.status === "error" && <StateMessage title="Unable to load acknowledgments" message={searchState.message} />}
+        {searchState.status === "loaded" && (
+          <>
+            <VendorAcknowledgmentStatusBuckets result={searchState.data} />
+            <div className="tableScroller">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Status</th>
+                    <th>Vendor</th>
+                    <th>Ticket/Card</th>
+                    <th>Payment Attempt ID</th>
+                    <th>Payment Confirmation ID</th>
+                    <th>Vendor Code</th>
+                    <th>Vendor Message</th>
+                    <th>Attempt Count</th>
+                    <th>Last Attempted At</th>
+                    <th>Next Retry At</th>
+                    <th>Vendor Confirmed At</th>
+                    <th>Correlation ID</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {searchState.data.items.map((item) => (
+                    <VendorPaymentAcknowledgmentRow
+                      key={item.vendorPaymentAcknowledgmentId}
+                      item={item}
+                      selected={selectedAcknowledgmentId === item.vendorPaymentAcknowledgmentId}
+                      onSelect={() => setSelectedAcknowledgmentId(item.vendorPaymentAcknowledgmentId)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </section>
+
+      <VendorPaymentAcknowledgmentDetailPanel state={detailState} />
+    </>
+  );
+}
+
+function VendorAcknowledgmentStatusBuckets({ result }: { result: VendorPaymentAcknowledgmentSearchResult }) {
+  const buckets = result.statusBuckets;
+  return (
+    <div className="statusStack" aria-label="Vendor acknowledgment status buckets">
+      <span className="statusPill pending-review">PENDING {buckets.pending}</span>
+      <span className="statusPill pending-review">RETRY_PENDING {buckets.retryPending}</span>
+      <span className="statusPill blocked">FAILED {buckets.failed}</span>
+      <span className="statusPill readiness-ready">CONFIRMED {buckets.confirmed}</span>
+      <span className="statusPill">SKIPPED_DISABLED {buckets.skippedDisabled}</span>
+      <span className="statusPill">CANCELLED {buckets.cancelled}</span>
+      {result.hasMore && <span className="statusPill warningPill">More pages available</span>}
+    </div>
+  );
+}
+
+function VendorPaymentAcknowledgmentRow({
+  item,
+  selected,
+  onSelect
+}: {
+  item: VendorPaymentAcknowledgmentSummary;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <tr>
+      <td>
+        <span className={`statusPill ${vendorAcknowledgmentStatusClass(item.acknowledgmentStatus)}`}>
+          {item.acknowledgmentStatus}
+        </span>
+      </td>
+      <td>{displayValue(item.vendorSystemCode)}</td>
+      <td>
+        <strong>{displayValue(item.ticketNumber)}</strong>
+        <span>{displayValue(item.cardNum)}</span>
+      </td>
+      <td><code>{shortId(item.paymentAttemptId)}</code></td>
+      <td><code>{shortId(item.paymentConfirmationId)}</code></td>
+      <td>{displayValue(item.vendorCode)}</td>
+      <td>{displayValue(item.vendorMessage)}</td>
+      <td>{item.attemptCount}</td>
+      <td>{formatOptionalDateTime(item.lastAttemptedAt)}</td>
+      <td>{formatOptionalDateTime(item.nextRetryAt)}</td>
+      <td>{formatOptionalDateTime(item.vendorConfirmedAt)}</td>
+      <td>{displayValue(item.correlationId)}</td>
+      <td>
+        <button type="button" onClick={onSelect}>
+          {selected ? "Selected" : "View details"}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function VendorPaymentAcknowledgmentDetailPanel({ state }: { state: LoadState<VendorPaymentAcknowledgmentDetail> }) {
+  if (state.status === "idle") {
+    return (
+      <section className="panel">
+        <StateMessage title="No acknowledgment selected" message="Select a row to read durable vendor acknowledgment detail." />
+      </section>
+    );
+  }
+
+  if (state.status === "loading") {
+    return <StateMessage title="Loading acknowledgment detail" message="Retrieving safe detail fields." />;
+  }
+
+  if (state.status === "not-found") {
+    return <StateMessage title="Acknowledgment not found" message="The selected vendor acknowledgment was not found." />;
+  }
+
+  if (state.status === "access-denied") {
+    return <StateMessage title="Access denied" message={state.message} />;
+  }
+
+  if (state.status === "error") {
+    return <StateMessage title="Unable to load acknowledgment detail" message={state.message} />;
+  }
+
+  if (state.status === "empty") {
+    return <StateMessage title="No detail available" message="No vendor acknowledgment detail was returned." />;
+  }
+
+  if (state.status !== "loaded") {
+    return null;
+  }
+
+  const detail = state.data;
+  return (
+    <section className="panel" aria-labelledby="vendor-ack-detail-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Acknowledgment detail</p>
+          <h3 id="vendor-ack-detail-title">{detail.vendorPaymentAcknowledgmentId}</h3>
+        </div>
+        <span className={`statusPill ${vendorAcknowledgmentStatusClass(detail.acknowledgmentStatus)}`}>
+          {detail.acknowledgmentStatus}
+        </span>
+      </div>
+
+      <div className="detailGrid">
+        <section aria-labelledby="vendor-ack-identity-heading">
+          <h4 id="vendor-ack-identity-heading">Identity</h4>
+          <DescriptionList
+            items={[
+              ["Vendor payment acknowledgment ID", detail.vendorPaymentAcknowledgmentId],
+              ["Payment attempt ID", detail.paymentAttemptId],
+              ["Payment confirmation ID", detail.paymentConfirmationId],
+              ["Parking session ID", displayValue(detail.parkingSessionId)],
+              ["Vendor system code", displayValue(detail.vendorSystemCode)],
+              ["Vendor session ref", displayValue(detail.vendorSessionRef)]
+            ]}
+          />
+        </section>
+
+        <section aria-labelledby="vendor-ack-ticket-heading">
+          <h4 id="vendor-ack-ticket-heading">Ticket</h4>
+          <DescriptionList
+            items={[
+              ["Ticket number", displayValue(detail.ticketNumber)],
+              ["Card number", displayValue(detail.cardNum)],
+              ["Acknowledgment status", displayValue(detail.acknowledgmentStatus)],
+              ["Vendor code", displayValue(detail.vendorCode)],
+              ["Vendor message", displayValue(detail.vendorMessage)],
+              ["Correlation ID", displayValue(detail.correlationId)]
+            ]}
+          />
+        </section>
+
+        <section aria-labelledby="vendor-ack-fees-heading">
+          <h4 id="vendor-ack-fees-heading">Fees and attempts</h4>
+          <DescriptionList
+            items={[
+              ["Request fee minor units", formatOptionalNumber(detail.requestFeeMinorUnits)],
+              ["Request currency code", displayValue(detail.requestCurrencyCode)],
+              ["Confirmed fee minor units", formatOptionalNumber(detail.confirmedFeeMinorUnits)],
+              ["Vendor confirmed at", formatOptionalDateTime(detail.vendorConfirmedAt)],
+              ["Attempt count", String(detail.attemptCount)],
+              ["Last attempted at", formatOptionalDateTime(detail.lastAttemptedAt)],
+              ["Next retry at", formatOptionalDateTime(detail.nextRetryAt)],
+              ["Created at", formatDateTime(detail.createdAt)],
+              ["Updated at", formatDateTime(detail.updatedAt)]
+            ]}
+          />
+        </section>
+      </div>
+
+      <details className="diagnosticsPanel">
+        <summary>Derived diagnostics</summary>
+        {detail.diagnostics.length === 0 ? (
+          <p className="placeholderCopy">No safe diagnostics were returned.</p>
+        ) : (
+          <ul className="activityList">
+            {detail.diagnostics.map((diagnostic) => (
+              <li key={`${diagnostic.code}-${diagnostic.message}`}>
+                <strong>{diagnostic.code}</strong>
+                <span>{diagnostic.message}</span>
+                <span>{diagnostic.source}</span>
+                <span>Retryable: {diagnostic.retryable ? "Yes" : "No"}</span>
+                <span>Correlation ID: {displayValue(diagnostic.correlationId)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
+    </section>
   );
 }
 
@@ -2135,6 +2591,14 @@ function displayValue(value?: string) {
   return value && value.trim().length > 0 ? value : "Not available";
 }
 
+function formatOptionalDateTime(value?: string) {
+  return value ? formatDateTime(value) : "Not available";
+}
+
+function formatOptionalNumber(value?: number) {
+  return value === undefined ? "Not available" : String(value);
+}
+
 function displayPlateLicense(value?: string) {
   if (!value || value.trim().length === 0 || value.trim().toUpperCase() === "UNKNOWN") {
     return "Unknown";
@@ -2327,4 +2791,25 @@ function policyReadinessClass(classification: string) {
 
 function statusClass(status: string) {
   return status.toLowerCase().replaceAll(" ", "-");
+}
+
+function vendorAcknowledgmentStatusClass(status: string) {
+  const normalized = status.toUpperCase();
+  if (normalized === "CONFIRMED") {
+    return "readiness-ready";
+  }
+
+  if (normalized === "FAILED") {
+    return "blocked";
+  }
+
+  if (normalized === "PENDING" || normalized === "RETRY_PENDING") {
+    return "pending-review";
+  }
+
+  if (normalized === "SKIPPED_DISABLED") {
+    return "warningPill";
+  }
+
+  return statusClass(status);
 }
