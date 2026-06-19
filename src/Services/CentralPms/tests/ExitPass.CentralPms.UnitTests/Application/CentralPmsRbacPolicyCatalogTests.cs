@@ -19,6 +19,7 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("EventDeadLetterReplayer", "event.dead-letter.replay")]
     [InlineData("EventCheckpointViewer", "event.checkpoint.view")]
     [InlineData("EventCheckpointOperator", "event.checkpoint.operate")]
+    [InlineData("VendorPaymentAcknowledgmentViewer", "reconciliation.view")]
     public void ResolvePermissions_ReturnsExpectedPermission(string policyName, string expectedPermission)
     {
         var permissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);

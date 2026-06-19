@@ -52,6 +52,7 @@ public static class CentralPmsRbacPolicyCatalog
             ["ReconciliationItemViewer"] = ["reconciliation.view", "reconciliation.manage"],
             ["ReconciliationEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"],
             ["ReconciliationRunEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"],
+            ["VendorPaymentAcknowledgmentViewer"] = ["reconciliation.view", "reconciliation.manage"],
 
             ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
             ["OperatorConsolePolicyImportReviewViewer"] =

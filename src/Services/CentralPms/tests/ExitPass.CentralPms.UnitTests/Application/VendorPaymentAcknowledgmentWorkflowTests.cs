@@ -286,6 +286,16 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<VendorPaymentAcknowledgmentRecord>>(Array.Empty<VendorPaymentAcknowledgmentRecord>());
 
+        public Task<VendorPaymentAcknowledgmentSearchResult> SearchAsync(
+            SearchVendorPaymentAcknowledgmentsQuery query,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new VendorPaymentAcknowledgmentSearchResult(
+                Array.Empty<VendorPaymentAcknowledgmentRecord>(),
+                new VendorPaymentAcknowledgmentStatusBucketCounts(0, 0, 0, 0, 0, 0),
+                query.PageIndex,
+                query.PageSize,
+                HasMore: false));
+
         public Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
             Guid vendorPaymentAcknowledgmentId,
             CancellationToken cancellationToken) =>
