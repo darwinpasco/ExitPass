@@ -25,7 +25,13 @@ import type {
   StatutoryDiscountPayableBasisApplicationInput,
   StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
-  StatutoryDiscountQueueItem
+  StatutoryDiscountQueueItem,
+  VendorPaymentAcknowledgmentDetail,
+  VendorPaymentAcknowledgmentDiagnostic,
+  VendorPaymentAcknowledgmentSearchInput,
+  VendorPaymentAcknowledgmentSearchResult,
+  VendorPaymentAcknowledgmentStatusBuckets,
+  VendorPaymentAcknowledgmentSummary
 } from "./types";
 
 export interface OperatorConsoleApiClient {
@@ -45,6 +51,8 @@ export interface OperatorConsoleApiClient {
   decideProductionPolicyImportReview(input: ProductionPolicyImportReviewDecisionInput): Promise<ProductionPolicyImportReviewResult>;
   listProductionPolicyImportReviews(input?: ProductionPolicyImportReviewQuery): Promise<ProductionPolicyImportReviewListResult>;
   getProductionPolicyImportReview(reviewId: string): Promise<ProductionPolicyImportReviewResult>;
+  searchVendorPaymentAcknowledgments(input?: VendorPaymentAcknowledgmentSearchInput): Promise<VendorPaymentAcknowledgmentSearchResult>;
+  getVendorPaymentAcknowledgment(vendorPaymentAcknowledgmentId: string): Promise<VendorPaymentAcknowledgmentDetail>;
   canDecideProductionPolicyImportReview?(): boolean;
 }
 
@@ -259,6 +267,60 @@ interface OperatorTicketLookupResponseDto {
   correlationId?: string | null;
   message?: string | null;
   errorCode?: string | null;
+}
+
+interface VendorPaymentAcknowledgmentSearchResponseDto {
+  items: VendorPaymentAcknowledgmentDto[];
+  statusBuckets: VendorPaymentAcknowledgmentStatusBucketsDto;
+  pageIndex: number;
+  pageSize: number;
+  hasMore: boolean;
+}
+
+interface VendorPaymentAcknowledgmentDetailResponseDto extends VendorPaymentAcknowledgmentDto {
+  diagnostics?: VendorPaymentAcknowledgmentDiagnosticDto[] | null;
+}
+
+interface VendorPaymentAcknowledgmentDto {
+  vendorPaymentAcknowledgmentId: string;
+  paymentAttemptId: string;
+  paymentConfirmationId: string;
+  parkingSessionId?: string | null;
+  vendorSystemCode: string;
+  vendorSessionRef?: string | null;
+  ticketNumber?: string | null;
+  cardNum?: string | null;
+  acknowledgmentStatus: string;
+  statusBucket?: string | null;
+  vendorCode?: string | null;
+  vendorMessage?: string | null;
+  requestFeeMinorUnits?: number | null;
+  requestCurrencyCode?: string | null;
+  confirmedFeeMinorUnits?: number | null;
+  vendorConfirmedAt?: string | null;
+  attemptCount: number;
+  lastAttemptedAt?: string | null;
+  nextRetryAt?: string | null;
+  correlationId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface VendorPaymentAcknowledgmentStatusBucketsDto {
+  pending: number;
+  retryPending: number;
+  failed: number;
+  confirmed: number;
+  skippedDisabled: number;
+  cancelled: number;
+}
+
+interface VendorPaymentAcknowledgmentDiagnosticDto {
+  code: string;
+  message: string;
+  source: string;
+  retryable: boolean;
+  correlationId?: string | null;
 }
 
 export interface OperatorConsoleOperatorContext {
@@ -579,6 +641,47 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       );
 
       return parseResponse<ProductionPolicyImportReviewResult>(response);
+    },
+
+    async searchVendorPaymentAcknowledgments(input = {}) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(`${baseUrl}/v1/ops/vendor-payment-acknowledgments/search`, {
+        method: "POST",
+        headers: operatorConsoleHeaders(correlationId, { json: true }),
+        body: JSON.stringify({
+          acknowledgmentStatus: blankToNull(input.acknowledgmentStatus),
+          vendorSystemCode: blankToNull(input.vendorSystemCode),
+          paymentAttemptId: blankToNull(input.paymentAttemptId),
+          paymentConfirmationId: blankToNull(input.paymentConfirmationId),
+          parkingSessionId: blankToNull(input.parkingSessionId),
+          ticketNumber: blankToNull(input.ticketNumber),
+          cardNum: blankToNull(input.cardNum),
+          correlationId: blankToNull(input.correlationId),
+          createdFrom: blankToNull(input.createdFrom),
+          createdTo: blankToNull(input.createdTo),
+          lastAttemptedFrom: blankToNull(input.lastAttemptedFrom),
+          lastAttemptedTo: blankToNull(input.lastAttemptedTo),
+          nextRetryDueOnly: input.nextRetryDueOnly ?? false,
+          pageIndex: input.pageIndex ?? 0,
+          pageSize: input.pageSize ?? 25
+        })
+      });
+
+      return toVendorPaymentAcknowledgmentSearchResult(
+        await parseResponse<VendorPaymentAcknowledgmentSearchResponseDto>(response)
+      );
+    },
+
+    async getVendorPaymentAcknowledgment(vendorPaymentAcknowledgmentId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/vendor-payment-acknowledgments/${encodeURIComponent(vendorPaymentAcknowledgmentId)}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return toVendorPaymentAcknowledgmentDetail(
+        await parseResponse<VendorPaymentAcknowledgmentDetailResponseDto>(response)
+      );
     }
   };
 }
@@ -604,6 +707,10 @@ function parsePermissions(value: string) {
 
 function localFallback(value: string | undefined, fallback: string) {
   return value && value.trim().length > 0 ? value : fallback;
+}
+
+function blankToNull(value: string | undefined) {
+  return value && value.trim().length > 0 ? value.trim() : null;
 }
 
 export function getDefaultOperatorConsoleContext() {
@@ -647,10 +754,17 @@ export function createMockOperatorConsoleApiClient(
     onProductionPolicyDryRun?: (input: ProductionPolicyImportDryRunInput) => void;
     onProductionPolicyReviewSubmit?: (input: ProductionPolicyImportReviewSubmitInput) => void;
     onProductionPolicyReviewDecision?: (input: ProductionPolicyImportReviewDecisionInput) => void;
+    onVendorPaymentAcknowledgmentSearch?: (input: VendorPaymentAcknowledgmentSearchInput) => void;
+    onVendorPaymentAcknowledgmentDetail?: (vendorPaymentAcknowledgmentId: string) => void;
+    vendorPaymentAcknowledgments?: VendorPaymentAcknowledgmentDetail[];
     productionPolicyReviewDecisionAuthorized?: boolean;
   } = {}
 ): OperatorConsoleApiClient {
   const drafts = (options.drafts ?? mockDrafts).map((draft) => ({ ...draft }));
+  const vendorPaymentAcknowledgments = (options.vendorPaymentAcknowledgments ?? mockVendorPaymentAcknowledgments()).map((item) => ({
+    ...item,
+    diagnostics: item.diagnostics.map((diagnostic) => ({ ...diagnostic }))
+  }));
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
@@ -1002,6 +1116,55 @@ export function createMockOperatorConsoleApiClient(
         ...review,
         message: "Review submission loaded. No policies were imported or activated."
       };
+    },
+
+    async searchVendorPaymentAcknowledgments(input = {}) {
+      await delay();
+      options.onVendorPaymentAcknowledgmentSearch?.(input);
+      const pageIndex = input.pageIndex ?? 0;
+      const pageSize = input.pageSize ?? 25;
+      const filtered = vendorPaymentAcknowledgments.filter((item) => {
+        const matchesStatus = !input.acknowledgmentStatus || item.acknowledgmentStatus === input.acknowledgmentStatus;
+        const matchesVendor = !input.vendorSystemCode ||
+          item.vendorSystemCode.toUpperCase().includes(input.vendorSystemCode.toUpperCase());
+        const matchesTicket = !input.ticketNumber ||
+          item.ticketNumber?.toUpperCase().includes(input.ticketNumber.toUpperCase());
+        const matchesCard = !input.cardNum ||
+          item.cardNum?.toUpperCase().includes(input.cardNum.toUpperCase());
+        const matchesRetryDue = !input.nextRetryDueOnly ||
+          (item.acknowledgmentStatus === "RETRY_PENDING" &&
+            (!item.nextRetryAt || new Date(item.nextRetryAt).getTime() <= Date.now()));
+        return matchesStatus && matchesVendor && matchesTicket && matchesCard && matchesRetryDue;
+      });
+      const offset = pageIndex * pageSize;
+
+      return {
+        items: filtered.slice(offset, offset + pageSize).map(({ diagnostics: _diagnostics, ...item }) => ({ ...item })),
+        statusBuckets: countVendorPaymentAcknowledgmentBuckets(filtered),
+        pageIndex,
+        pageSize,
+        hasMore: offset + pageSize < filtered.length
+      };
+    },
+
+    async getVendorPaymentAcknowledgment(vendorPaymentAcknowledgmentId) {
+      await delay();
+      options.onVendorPaymentAcknowledgmentDetail?.(vendorPaymentAcknowledgmentId);
+      const detail = vendorPaymentAcknowledgments.find(
+        (item) => item.vendorPaymentAcknowledgmentId === vendorPaymentAcknowledgmentId
+      );
+      if (!detail) {
+        throw {
+          status: "not-found",
+          message: "Vendor payment acknowledgment was not found.",
+          errorCode: "VENDOR_PAYMENT_ACKNOWLEDGMENT_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      return {
+        ...detail,
+        diagnostics: detail.diagnostics.map((diagnostic) => ({ ...diagnostic }))
+      };
     }
   };
 }
@@ -1077,6 +1240,73 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     diagnostics: body.diagnostics ?? undefined,
     correlationId: body.correlationId ?? undefined,
     message: body.message ?? body.errorCode ?? undefined
+  };
+}
+
+function toVendorPaymentAcknowledgmentSearchResult(
+  body: VendorPaymentAcknowledgmentSearchResponseDto
+): VendorPaymentAcknowledgmentSearchResult {
+  return {
+    items: body.items.map(toVendorPaymentAcknowledgmentSummary),
+    statusBuckets: {
+      pending: body.statusBuckets.pending,
+      retryPending: body.statusBuckets.retryPending,
+      failed: body.statusBuckets.failed,
+      confirmed: body.statusBuckets.confirmed,
+      skippedDisabled: body.statusBuckets.skippedDisabled,
+      cancelled: body.statusBuckets.cancelled
+    },
+    pageIndex: body.pageIndex,
+    pageSize: body.pageSize,
+    hasMore: body.hasMore
+  };
+}
+
+function toVendorPaymentAcknowledgmentDetail(
+  body: VendorPaymentAcknowledgmentDetailResponseDto
+): VendorPaymentAcknowledgmentDetail {
+  return {
+    ...toVendorPaymentAcknowledgmentSummary(body),
+    diagnostics: (body.diagnostics ?? []).map(toVendorPaymentAcknowledgmentDiagnostic)
+  };
+}
+
+function toVendorPaymentAcknowledgmentSummary(dto: VendorPaymentAcknowledgmentDto): VendorPaymentAcknowledgmentSummary {
+  return {
+    vendorPaymentAcknowledgmentId: dto.vendorPaymentAcknowledgmentId,
+    paymentAttemptId: dto.paymentAttemptId,
+    paymentConfirmationId: dto.paymentConfirmationId,
+    parkingSessionId: dto.parkingSessionId ?? undefined,
+    vendorSystemCode: dto.vendorSystemCode,
+    vendorSessionRef: dto.vendorSessionRef ?? undefined,
+    ticketNumber: dto.ticketNumber ?? undefined,
+    cardNum: dto.cardNum ?? undefined,
+    acknowledgmentStatus: dto.acknowledgmentStatus,
+    statusBucket: dto.statusBucket ?? undefined,
+    vendorCode: dto.vendorCode ?? undefined,
+    vendorMessage: dto.vendorMessage ?? undefined,
+    requestFeeMinorUnits: dto.requestFeeMinorUnits ?? undefined,
+    requestCurrencyCode: dto.requestCurrencyCode ?? undefined,
+    confirmedFeeMinorUnits: dto.confirmedFeeMinorUnits ?? undefined,
+    vendorConfirmedAt: dto.vendorConfirmedAt ?? undefined,
+    attemptCount: dto.attemptCount,
+    lastAttemptedAt: dto.lastAttemptedAt ?? undefined,
+    nextRetryAt: dto.nextRetryAt ?? undefined,
+    correlationId: dto.correlationId ?? undefined,
+    createdAt: dto.createdAt,
+    updatedAt: dto.updatedAt
+  };
+}
+
+function toVendorPaymentAcknowledgmentDiagnostic(
+  dto: VendorPaymentAcknowledgmentDiagnosticDto
+): VendorPaymentAcknowledgmentDiagnostic {
+  return {
+    code: dto.code,
+    message: dto.message,
+    source: dto.source,
+    retryable: dto.retryable,
+    correlationId: dto.correlationId ?? undefined
   };
 }
 
@@ -1485,6 +1715,110 @@ function mockAccessReadiness(input: AccessReadinessRequest): AccessReadinessResp
     retryable: false,
     nextOperatorAction: undefined
   };
+}
+
+function mockVendorPaymentAcknowledgments(): VendorPaymentAcknowledgmentDetail[] {
+  const now = "2026-06-18T09:15:00+08:00";
+  return [
+    {
+      vendorPaymentAcknowledgmentId: "88000000-0000-0000-0000-000000000001",
+      paymentAttemptId: "28000000-0000-0000-0000-000000000001",
+      paymentConfirmationId: "38000000-0000-0000-0000-000000000001",
+      parkingSessionId: "25000000-0000-0000-0000-000000000001",
+      vendorSystemCode: "HIKCENTRAL",
+      vendorSessionRef: "HC-SESSION-001",
+      ticketNumber: "VENDOR-TICKET-001",
+      cardNum: "VENDOR-CARD-001",
+      acknowledgmentStatus: "RETRY_PENDING",
+      statusBucket: "retry_pending",
+      vendorCode: "TEMPORARY_FAILURE",
+      vendorMessage: "Vendor acknowledgment retry is pending.",
+      requestFeeMinorUnits: 12000,
+      requestCurrencyCode: "PHP",
+      confirmedFeeMinorUnits: undefined,
+      vendorConfirmedAt: undefined,
+      attemptCount: 2,
+      lastAttemptedAt: "2026-06-18T09:10:00+08:00",
+      nextRetryAt: "2026-06-18T09:12:00+08:00",
+      correlationId: "88000000-0000-0000-0000-000000000099",
+      createdAt: "2026-06-18T09:00:00+08:00",
+      updatedAt: now,
+      diagnostics: [
+        {
+          code: "VENDOR_PAYMENT_ACKNOWLEDGMENT_RETRY_DUE",
+          message: "Retry-pending acknowledgment is due for dispatcher pickup.",
+          source: "central-pms.vendor-payment-acknowledgments",
+          retryable: true,
+          correlationId: "88000000-0000-0000-0000-000000000099"
+        }
+      ]
+    },
+    {
+      vendorPaymentAcknowledgmentId: "88000000-0000-0000-0000-000000000002",
+      paymentAttemptId: "28000000-0000-0000-0000-000000000002",
+      paymentConfirmationId: "38000000-0000-0000-0000-000000000002",
+      parkingSessionId: "25000000-0000-0000-0000-000000000002",
+      vendorSystemCode: "HIKCENTRAL",
+      vendorSessionRef: "HC-SESSION-002",
+      ticketNumber: "VENDOR-TICKET-002",
+      cardNum: "VENDOR-CARD-002",
+      acknowledgmentStatus: "CONFIRMED",
+      statusBucket: "confirmed",
+      vendorCode: "0",
+      vendorMessage: "Accepted",
+      requestFeeMinorUnits: 9000,
+      requestCurrencyCode: "PHP",
+      confirmedFeeMinorUnits: 9000,
+      vendorConfirmedAt: "2026-06-18T08:50:00+08:00",
+      attemptCount: 1,
+      lastAttemptedAt: "2026-06-18T08:50:00+08:00",
+      nextRetryAt: undefined,
+      correlationId: "88000000-0000-0000-0000-000000000098",
+      createdAt: "2026-06-18T08:45:00+08:00",
+      updatedAt: "2026-06-18T08:50:00+08:00",
+      diagnostics: [
+        {
+          code: "VENDOR_PAYMENT_ACKNOWLEDGMENT_STATUS_BUCKET",
+          message: "Status bucket: confirmed.",
+          source: "central-pms.vendor-payment-acknowledgments",
+          retryable: false,
+          correlationId: "88000000-0000-0000-0000-000000000098"
+        }
+      ]
+    }
+  ];
+}
+
+function countVendorPaymentAcknowledgmentBuckets(
+  items: VendorPaymentAcknowledgmentSummary[]
+): VendorPaymentAcknowledgmentStatusBuckets {
+  return items.reduce<VendorPaymentAcknowledgmentStatusBuckets>(
+    (counts, item) => {
+      switch (item.acknowledgmentStatus) {
+        case "PENDING":
+          counts.pending += 1;
+          break;
+        case "RETRY_PENDING":
+          counts.retryPending += 1;
+          break;
+        case "FAILED":
+          counts.failed += 1;
+          break;
+        case "CONFIRMED":
+          counts.confirmed += 1;
+          break;
+        case "SKIPPED_DISABLED":
+          counts.skippedDisabled += 1;
+          break;
+        case "CANCELLED":
+          counts.cancelled += 1;
+          break;
+      }
+
+      return counts;
+    },
+    { pending: 0, retryPending: 0, failed: 0, confirmed: 0, skippedDisabled: 0, cancelled: 0 }
+  );
 }
 
 function mockProductionPolicyReview(): ProductionPolicyImportReviewResult {

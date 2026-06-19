@@ -15,7 +15,9 @@ import type {
   ProductionPolicyImportReviewListResult,
   ProductionPolicyImportReviewResult,
   StatutoryDiscountDraftDetail,
-  StatutoryDiscountQueueItem
+  StatutoryDiscountQueueItem,
+  VendorPaymentAcknowledgmentDetail,
+  VendorPaymentAcknowledgmentSearchResult
 } from "./types";
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
@@ -65,7 +67,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         offset: 0,
         correlationId: "99000000-0000-0000-0000-000000000099"
       })),
-      getProductionPolicyImportReview: vi.fn()
+      getProductionPolicyImportReview: vi.fn(),
+      searchVendorPaymentAcknowledgments: vi.fn(async () => vendorAcknowledgmentSearchResponse()),
+      getVendorPaymentAcknowledgment: vi.fn(async () => vendorAcknowledgmentDetailResponse())
     };
 
     const { rerender } = render(
@@ -1137,6 +1141,129 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(calledUrls).not.toMatch(/execute/i);
   });
 
+  it("VendorPaymentAcknowledgments_RendersRouteAndSearches", async () => {
+    const onSearch = vi.fn();
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onVendorPaymentAcknowledgmentSearch: onSearch })}
+        initialPath="/operator-console/vendor-acknowledgments"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Vendor payment acknowledgments" })).toBeInTheDocument();
+    expect(await screen.findByText("VENDOR-TICKET-001")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
+    expect(screen.getByText("Vendor PMS acknowledgment is not ExitPass payment finality.")).toBeInTheDocument();
+    expect(onSearch).toHaveBeenCalledWith(expect.objectContaining({ pageIndex: 0, pageSize: 25 }));
+  });
+
+  it("VendorPaymentAcknowledgments_AppliesStatusAndRetryDueFilters", async () => {
+    const onSearch = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onVendorPaymentAcknowledgmentSearch: onSearch })}
+        initialPath="/operator-console/vendor-acknowledgments"
+      />
+    );
+
+    await screen.findByText("VENDOR-TICKET-001");
+    onSearch.mockClear();
+    await userEvent.selectOptions(screen.getByLabelText("Status"), "FAILED");
+    await userEvent.click(screen.getByLabelText("Next retry due only"));
+    await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() =>
+      expect(onSearch).toHaveBeenCalledWith(expect.objectContaining({
+        acknowledgmentStatus: "FAILED",
+        nextRetryDueOnly: true
+      }))
+    );
+  });
+
+  it("VendorPaymentAcknowledgments_FetchesDetailWhenRowIsSelected", async () => {
+    const onDetail = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ onVendorPaymentAcknowledgmentDetail: onDetail })}
+        initialPath="/operator-console/vendor-acknowledgments"
+      />
+    );
+
+    await screen.findByText("VENDOR-TICKET-001");
+    await userEvent.click((await screen.findAllByRole("button", { name: "View details" }))[0]);
+
+    await waitFor(() => expect(onDetail).toHaveBeenCalledWith("88000000-0000-0000-0000-000000000001"));
+    expect(await screen.findByRole("heading", { name: "88000000-0000-0000-0000-000000000001" })).toBeInTheDocument();
+    expect(screen.getByText("VENDOR_PAYMENT_ACKNOWLEDGMENT_RETRY_DUE")).toBeInTheDocument();
+  });
+
+  it("VendorPaymentAcknowledgments_DoesNotExposeMutationControls", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/vendor-acknowledgments"
+      />
+    );
+
+    expect(await screen.findByText("VENDOR-TICKET-001")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^retry$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^confirm$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /mark confirmed/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /open gate/i })).not.toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/appsecret|raw payload/i);
+  });
+
+  it("OperatorConsoleApi_VendorPaymentAcknowledgmentEndpointsUseExpectedUrls", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(vendorAcknowledgmentSearchResponse()))
+      .mockResolvedValueOnce(jsonResponse(vendorAcknowledgmentDetailResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const search = await client.searchVendorPaymentAcknowledgments({
+      acknowledgmentStatus: "RETRY_PENDING",
+      vendorSystemCode: "HIKCENTRAL",
+      ticketNumber: "VENDOR-TICKET-001",
+      cardNum: "VENDOR-CARD-001",
+      nextRetryDueOnly: true,
+      pageIndex: 1,
+      pageSize: 10
+    });
+    const detail = await client.getVendorPaymentAcknowledgment(search.items[0].vendorPaymentAcknowledgmentId);
+
+    expect(search.items[0].acknowledgmentStatus).toBe("RETRY_PENDING");
+    expect(detail.diagnostics[0].code).toBe("VENDOR_PAYMENT_ACKNOWLEDGMENT_RETRY_DUE");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/vendor-payment-acknowledgments/search",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://central-pms.test/v1/ops/vendor-payment-acknowledgments/${search.items[0].vendorPaymentAcknowledgmentId}`,
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expectOperatorContextHeaders(requestOptions?.headers);
+    expect(requestOptions?.headers).toEqual(expect.objectContaining({ "Content-Type": "application/json" }));
+    expect(JSON.parse(requestOptions?.body as string)).toEqual(expect.objectContaining({
+      acknowledgmentStatus: "RETRY_PENDING",
+      vendorSystemCode: "HIKCENTRAL",
+      ticketNumber: "VENDOR-TICKET-001",
+      cardNum: "VENDOR-CARD-001",
+      nextRetryDueOnly: true,
+      pageIndex: 1,
+      pageSize: 10
+    }));
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(calledUrls).not.toMatch(/parkingfee/i);
+    expect(calledUrls).not.toMatch(/confirm/i);
+    expect(calledUrls).not.toMatch(/hikcentral/i);
+    expect(calledUrls).not.toMatch(/gate/i);
+  });
+
   it("OperatorConsole_DoesNotExposeOutOfScopeControls", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -1429,6 +1556,85 @@ function ticketLookupResponse(): OperatorTicketLookupResult {
     vendorMessage: "Accepted",
     diagnostics: ["summary-only"],
     correlationId: "77000000-0000-0000-0000-000000000092"
+  };
+}
+
+function vendorAcknowledgmentSearchResponse(): VendorPaymentAcknowledgmentSearchResult {
+  const detail = vendorAcknowledgmentDetailResponse();
+  return {
+    items: [
+      {
+        vendorPaymentAcknowledgmentId: detail.vendorPaymentAcknowledgmentId,
+        paymentAttemptId: detail.paymentAttemptId,
+        paymentConfirmationId: detail.paymentConfirmationId,
+        parkingSessionId: detail.parkingSessionId,
+        vendorSystemCode: detail.vendorSystemCode,
+        vendorSessionRef: detail.vendorSessionRef,
+        ticketNumber: detail.ticketNumber,
+        cardNum: detail.cardNum,
+        acknowledgmentStatus: detail.acknowledgmentStatus,
+        statusBucket: detail.statusBucket,
+        vendorCode: detail.vendorCode,
+        vendorMessage: detail.vendorMessage,
+        requestFeeMinorUnits: detail.requestFeeMinorUnits,
+        requestCurrencyCode: detail.requestCurrencyCode,
+        confirmedFeeMinorUnits: detail.confirmedFeeMinorUnits,
+        vendorConfirmedAt: detail.vendorConfirmedAt,
+        attemptCount: detail.attemptCount,
+        lastAttemptedAt: detail.lastAttemptedAt,
+        nextRetryAt: detail.nextRetryAt,
+        correlationId: detail.correlationId,
+        createdAt: detail.createdAt,
+        updatedAt: detail.updatedAt
+      }
+    ],
+    statusBuckets: {
+      pending: 0,
+      retryPending: 1,
+      failed: 0,
+      confirmed: 0,
+      skippedDisabled: 0,
+      cancelled: 0
+    },
+    pageIndex: 0,
+    pageSize: 25,
+    hasMore: false
+  };
+}
+
+function vendorAcknowledgmentDetailResponse(): VendorPaymentAcknowledgmentDetail {
+  return {
+    vendorPaymentAcknowledgmentId: "88000000-0000-0000-0000-000000000001",
+    paymentAttemptId: "28000000-0000-0000-0000-000000000001",
+    paymentConfirmationId: "38000000-0000-0000-0000-000000000001",
+    parkingSessionId: "25000000-0000-0000-0000-000000000001",
+    vendorSystemCode: "HIKCENTRAL",
+    vendorSessionRef: "HC-SESSION-001",
+    ticketNumber: "VENDOR-TICKET-001",
+    cardNum: "VENDOR-CARD-001",
+    acknowledgmentStatus: "RETRY_PENDING",
+    statusBucket: "retry_pending",
+    vendorCode: "TEMPORARY_FAILURE",
+    vendorMessage: "Vendor acknowledgment retry is pending.",
+    requestFeeMinorUnits: 12000,
+    requestCurrencyCode: "PHP",
+    confirmedFeeMinorUnits: undefined,
+    vendorConfirmedAt: undefined,
+    attemptCount: 2,
+    lastAttemptedAt: "2026-06-18T09:10:00+08:00",
+    nextRetryAt: "2026-06-18T09:12:00+08:00",
+    correlationId: "88000000-0000-0000-0000-000000000099",
+    createdAt: "2026-06-18T09:00:00+08:00",
+    updatedAt: "2026-06-18T09:15:00+08:00",
+    diagnostics: [
+      {
+        code: "VENDOR_PAYMENT_ACKNOWLEDGMENT_RETRY_DUE",
+        message: "Retry-pending acknowledgment is due for dispatcher pickup.",
+        source: "central-pms.vendor-payment-acknowledgments",
+        retryable: true,
+        correlationId: "88000000-0000-0000-0000-000000000099"
+      }
+    ]
   };
 }
 
