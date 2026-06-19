@@ -280,6 +280,12 @@ public sealed class VendorPaymentAcknowledgmentWorkflowTests
             return Task.FromResult(Record);
         }
 
+        public Task<IReadOnlyList<VendorPaymentAcknowledgmentRecord>> FindDueRetryPendingAsync(
+            DateTimeOffset utcNow,
+            int limit,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<VendorPaymentAcknowledgmentRecord>>(Array.Empty<VendorPaymentAcknowledgmentRecord>());
+
         public Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
             Guid vendorPaymentAcknowledgmentId,
             CancellationToken cancellationToken) =>
