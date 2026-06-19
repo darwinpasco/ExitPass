@@ -133,6 +133,7 @@ app.MapOperatorConsoleAccessEvaluationEndpoints();
 app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapTicketSessionSummaryEndpoints();
+app.MapVendorPaymentAcknowledgmentOpsEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
@@ -219,6 +220,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleAccessReadiness")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
                 .AddSource("ExitPass.CentralPms.Api.TicketSessionSummary")
+                .AddSource("ExitPass.CentralPms.Api.VendorPaymentAcknowledgments")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
@@ -341,6 +343,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddSingleton<IVendorPaymentConfirmationGuard, EnvironmentVendorPaymentConfirmationGuard>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentWorkflow, VendorPaymentAcknowledgmentWorkflow>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRetryDispatcherService, VendorPaymentAcknowledgmentRetryDispatcherService>();
+    builder.Services.AddScoped<IVendorPaymentAcknowledgmentOpsService, VendorPaymentAcknowledgmentOpsService>();
 
     builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 

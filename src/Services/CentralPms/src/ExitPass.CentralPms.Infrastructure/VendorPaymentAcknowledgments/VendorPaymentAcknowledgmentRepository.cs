@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using Npgsql;
 using NpgsqlTypes;
+using System.Text;
 
 namespace ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
 
@@ -296,6 +297,88 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
     }
 
     /// <inheritdoc />
+    public async Task<VendorPaymentAcknowledgmentSearchResult> SearchAsync(
+        SearchVendorPaymentAcknowledgmentsQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+
+        var pageIndex = query.PageIndex < 0 ? 0 : Math.Min(query.PageIndex, 10000);
+        var pageSize = query.PageSize <= 0 ? 25 : Math.Min(query.PageSize, 100);
+        var limitPlusOne = pageSize + 1;
+        var offset = pageIndex * pageSize;
+        var whereClause = BuildSearchWhereClause(query);
+
+        var listSql = $$"""
+            SELECT
+                {{SelectRecordColumns}}
+            FROM integration.vendor_payment_acknowledgments
+            {{whereClause}}
+            ORDER BY created_at DESC, updated_at DESC, vendor_payment_acknowledgment_id DESC
+            LIMIT @limit
+            OFFSET @offset;
+            """;
+
+        var bucketSql = $"""
+            SELECT
+                COUNT(*) FILTER (WHERE acknowledgment_status = 'PENDING'::integration.vendor_payment_acknowledgment_status_enum) AS pending_count,
+                COUNT(*) FILTER (WHERE acknowledgment_status = 'RETRY_PENDING'::integration.vendor_payment_acknowledgment_status_enum) AS retry_pending_count,
+                COUNT(*) FILTER (WHERE acknowledgment_status = 'FAILED'::integration.vendor_payment_acknowledgment_status_enum) AS failed_count,
+                COUNT(*) FILTER (WHERE acknowledgment_status = 'CONFIRMED'::integration.vendor_payment_acknowledgment_status_enum) AS confirmed_count,
+                COUNT(*) FILTER (WHERE acknowledgment_status = 'SKIPPED_DISABLED'::integration.vendor_payment_acknowledgment_status_enum) AS skipped_disabled_count,
+                COUNT(*) FILTER (WHERE acknowledgment_status = 'CANCELLED'::integration.vendor_payment_acknowledgment_status_enum) AS cancelled_count
+            FROM integration.vendor_payment_acknowledgments
+            {whereClause};
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+
+        await using var listCommand = new NpgsqlCommand(listSql, connection);
+        AddSearchParameters(listCommand, query);
+        listCommand.Parameters.Add("limit", NpgsqlDbType.Integer).Value = limitPlusOne;
+        listCommand.Parameters.Add("offset", NpgsqlDbType.Integer).Value = offset;
+
+        var records = new List<VendorPaymentAcknowledgmentRecord>(limitPlusOne);
+        await using (var reader = await listCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                records.Add(ReadRecord(reader));
+            }
+        }
+
+        await using var bucketCommand = new NpgsqlCommand(bucketSql, connection);
+        AddSearchParameters(bucketCommand, query);
+
+        VendorPaymentAcknowledgmentStatusBucketCounts buckets;
+        await using (var reader = await bucketCommand.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                buckets = new VendorPaymentAcknowledgmentStatusBucketCounts(0, 0, 0, 0, 0, 0);
+            }
+            else
+            {
+                buckets = new VendorPaymentAcknowledgmentStatusBucketCounts(
+                    Pending: ToInt32(reader, "pending_count"),
+                    RetryPending: ToInt32(reader, "retry_pending_count"),
+                    Failed: ToInt32(reader, "failed_count"),
+                    Confirmed: ToInt32(reader, "confirmed_count"),
+                    SkippedDisabled: ToInt32(reader, "skipped_disabled_count"),
+                    Cancelled: ToInt32(reader, "cancelled_count"));
+            }
+        }
+
+        var hasMore = records.Count > pageSize;
+        if (hasMore)
+        {
+            records.RemoveAt(records.Count - 1);
+        }
+
+        return new VendorPaymentAcknowledgmentSearchResult(records, buckets, pageIndex, pageSize, hasMore);
+    }
+
+    /// <inheritdoc />
     public async Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
         Guid vendorPaymentAcknowledgmentId,
         CancellationToken cancellationToken)
@@ -413,6 +496,163 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         dbCommand.Parameters.Add("created_at", NpgsqlDbType.TimestampTz).Value = ToUtc(command.CreatedAt);
     }
 
+    private static string BuildSearchWhereClause(SearchVendorPaymentAcknowledgmentsQuery query)
+    {
+        var where = new StringBuilder("WHERE 1 = 1");
+
+        if (!string.IsNullOrWhiteSpace(query.AcknowledgmentStatus))
+        {
+            where.AppendLine();
+            where.Append("  AND acknowledgment_status = @acknowledgment_status::integration.vendor_payment_acknowledgment_status_enum");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.VendorSystemCode))
+        {
+            where.AppendLine();
+            where.Append("  AND UPPER(vendor_system_code) = UPPER(@vendor_system_code)");
+        }
+
+        if (query.PaymentAttemptId.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND payment_attempt_id = @payment_attempt_id");
+        }
+
+        if (query.PaymentConfirmationId.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND payment_confirmation_id = @payment_confirmation_id");
+        }
+
+        if (query.ParkingSessionId.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND parking_session_id = @parking_session_id");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.TicketNumber))
+        {
+            where.AppendLine();
+            where.Append("  AND ticket_number = @ticket_number");
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.CardNum))
+        {
+            where.AppendLine();
+            where.Append("  AND card_num = @card_num");
+        }
+
+        if (query.CorrelationId.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND correlation_id = @correlation_id");
+        }
+
+        if (query.CreatedFrom.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND created_at >= @created_from");
+        }
+
+        if (query.CreatedTo.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND created_at <= @created_to");
+        }
+
+        if (query.LastAttemptedFrom.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND last_attempted_at >= @last_attempted_from");
+        }
+
+        if (query.LastAttemptedTo.HasValue)
+        {
+            where.AppendLine();
+            where.Append("  AND last_attempted_at <= @last_attempted_to");
+        }
+
+        if (query.NextRetryDueOnly)
+        {
+            where.AppendLine();
+            where.Append("  AND acknowledgment_status = 'RETRY_PENDING'::integration.vendor_payment_acknowledgment_status_enum");
+            where.AppendLine();
+            where.Append("  AND (next_retry_at IS NULL OR next_retry_at <= @utc_now)");
+        }
+
+        return where.ToString();
+    }
+
+    private static void AddSearchParameters(
+        NpgsqlCommand dbCommand,
+        SearchVendorPaymentAcknowledgmentsQuery query)
+    {
+        if (!string.IsNullOrWhiteSpace(query.AcknowledgmentStatus))
+        {
+            dbCommand.Parameters.Add("acknowledgment_status", NpgsqlDbType.Text).Value = query.AcknowledgmentStatus.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.VendorSystemCode))
+        {
+            dbCommand.Parameters.Add("vendor_system_code", NpgsqlDbType.Text).Value = query.VendorSystemCode.Trim();
+        }
+
+        if (query.PaymentAttemptId.HasValue)
+        {
+            dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = query.PaymentAttemptId.Value;
+        }
+
+        if (query.PaymentConfirmationId.HasValue)
+        {
+            dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = query.PaymentConfirmationId.Value;
+        }
+
+        if (query.ParkingSessionId.HasValue)
+        {
+            dbCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = query.ParkingSessionId.Value;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.TicketNumber))
+        {
+            dbCommand.Parameters.Add("ticket_number", NpgsqlDbType.Text).Value = query.TicketNumber.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.CardNum))
+        {
+            dbCommand.Parameters.Add("card_num", NpgsqlDbType.Text).Value = query.CardNum.Trim();
+        }
+
+        if (query.CorrelationId.HasValue)
+        {
+            dbCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = query.CorrelationId.Value;
+        }
+
+        if (query.CreatedFrom.HasValue)
+        {
+            dbCommand.Parameters.Add("created_from", NpgsqlDbType.TimestampTz).Value = ToUtc(query.CreatedFrom.Value);
+        }
+
+        if (query.CreatedTo.HasValue)
+        {
+            dbCommand.Parameters.Add("created_to", NpgsqlDbType.TimestampTz).Value = ToUtc(query.CreatedTo.Value);
+        }
+
+        if (query.LastAttemptedFrom.HasValue)
+        {
+            dbCommand.Parameters.Add("last_attempted_from", NpgsqlDbType.TimestampTz).Value = ToUtc(query.LastAttemptedFrom.Value);
+        }
+
+        if (query.LastAttemptedTo.HasValue)
+        {
+            dbCommand.Parameters.Add("last_attempted_to", NpgsqlDbType.TimestampTz).Value = ToUtc(query.LastAttemptedTo.Value);
+        }
+
+        if (query.NextRetryDueOnly)
+        {
+            dbCommand.Parameters.Add("utc_now", NpgsqlDbType.TimestampTz).Value = ToUtc(query.UtcNow);
+        }
+    }
+
     private static VendorPaymentAcknowledgmentRecord ReadRecord(NpgsqlDataReader reader)
     {
         return new VendorPaymentAcknowledgmentRecord(
@@ -487,5 +727,11 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
+    }
+
+    private static int ToInt32(NpgsqlDataReader reader, string columnName)
+    {
+        var value = reader.GetInt64(reader.GetOrdinal(columnName));
+        return checked((int)value);
     }
 }

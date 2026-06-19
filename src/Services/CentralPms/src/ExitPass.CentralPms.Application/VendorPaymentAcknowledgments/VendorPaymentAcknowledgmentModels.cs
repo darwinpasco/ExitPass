@@ -155,6 +155,48 @@ public sealed record VendorPaymentAcknowledgmentRetryDispatchResult(
     IReadOnlyList<VendorPaymentAcknowledgmentRetryDispatchItemResult> Items);
 
 /// <summary>
+/// Bounded ops query for durable Vendor PMS payment acknowledgments.
+/// </summary>
+public sealed record SearchVendorPaymentAcknowledgmentsQuery(
+    string? AcknowledgmentStatus,
+    string? VendorSystemCode,
+    Guid? PaymentAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? ParkingSessionId,
+    string? TicketNumber,
+    string? CardNum,
+    Guid? CorrelationId,
+    DateTimeOffset? CreatedFrom,
+    DateTimeOffset? CreatedTo,
+    DateTimeOffset? LastAttemptedFrom,
+    DateTimeOffset? LastAttemptedTo,
+    bool NextRetryDueOnly,
+    DateTimeOffset UtcNow,
+    int PageIndex,
+    int PageSize);
+
+/// <summary>
+/// Status bucket counts for a filtered Vendor PMS acknowledgment query.
+/// </summary>
+public sealed record VendorPaymentAcknowledgmentStatusBucketCounts(
+    int Pending,
+    int RetryPending,
+    int Failed,
+    int Confirmed,
+    int SkippedDisabled,
+    int Cancelled);
+
+/// <summary>
+/// Bounded ops search result for durable Vendor PMS payment acknowledgments.
+/// </summary>
+public sealed record VendorPaymentAcknowledgmentSearchResult(
+    IReadOnlyList<VendorPaymentAcknowledgmentRecord> Items,
+    VendorPaymentAcknowledgmentStatusBucketCounts StatusBuckets,
+    int PageIndex,
+    int PageSize,
+    bool HasMore);
+
+/// <summary>
 /// Raised when the database rejects a duplicate or conflicting Vendor PMS acknowledgment record.
 /// </summary>
 public sealed class VendorPaymentAcknowledgmentConflictException : Exception

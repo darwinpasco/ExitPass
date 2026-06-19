@@ -38,6 +38,11 @@ public interface IVendorPaymentAcknowledgmentRepository
         int limit,
         CancellationToken cancellationToken);
 
+    /// <summary>Searches durable acknowledgment records for read-only operations monitoring.</summary>
+    Task<VendorPaymentAcknowledgmentSearchResult> SearchAsync(
+        SearchVendorPaymentAcknowledgmentsQuery query,
+        CancellationToken cancellationToken);
+
     /// <summary>Reads one durable acknowledgment record by identifier.</summary>
     Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
         Guid vendorPaymentAcknowledgmentId,

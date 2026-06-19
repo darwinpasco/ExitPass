@@ -313,6 +313,16 @@ public sealed class VendorPaymentAcknowledgmentRetryDispatcherServiceTests
             return Task.FromResult<IReadOnlyList<VendorPaymentAcknowledgmentRecord>>(DueRecords.Take(limit).ToArray());
         }
 
+        public Task<VendorPaymentAcknowledgmentSearchResult> SearchAsync(
+            SearchVendorPaymentAcknowledgmentsQuery query,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new VendorPaymentAcknowledgmentSearchResult(
+                Records.Values.ToArray(),
+                new VendorPaymentAcknowledgmentStatusBucketCounts(0, 0, 0, 0, 0, 0),
+                query.PageIndex,
+                query.PageSize,
+                HasMore: false));
+
         public Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
             Guid vendorPaymentAcknowledgmentId,
             CancellationToken cancellationToken) =>

@@ -355,6 +355,174 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
     }
 
     /// <summary>
+    /// Verifies ops search is paginated, bounded, and returns filtered status buckets.
+    /// </summary>
+    [Fact]
+    public async Task SearchAsync_WhenPaged_ReturnsBoundedResultsAndStatusBuckets()
+    {
+        var context = CreateContext(nameof(SearchAsync_WhenPaged_ReturnsBoundedResultsAndStatusBuckets));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed Vendor PMS acknowledgment search paging test data.");
+
+        try
+        {
+            var repository = CreateRepository();
+
+            for (var index = 0; index < 3; index++)
+            {
+                var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+                await repository.CreatePendingAsync(
+                    CreatePendingCommand(context, attempt, confirmation) with
+                    {
+                        TicketNumber = $"SEARCH-PAGE-{index}",
+                        CardNum = $"SEARCH-CARD-{index}"
+                    },
+                    CancellationToken.None);
+            }
+
+            var result = await repository.SearchAsync(
+                new SearchVendorPaymentAcknowledgmentsQuery(
+                    AcknowledgmentStatus: null,
+                    VendorSystemCode: "HIKCENTRAL",
+                    PaymentAttemptId: null,
+                    PaymentConfirmationId: null,
+                    ParkingSessionId: null,
+                    TicketNumber: null,
+                    CardNum: null,
+                    CorrelationId: context.CorrelationId,
+                    CreatedFrom: null,
+                    CreatedTo: null,
+                    LastAttemptedFrom: null,
+                    LastAttemptedTo: null,
+                    NextRetryDueOnly: false,
+                    UtcNow: DateTimeOffset.UtcNow,
+                    PageIndex: 0,
+                    PageSize: 2),
+                CancellationToken.None);
+
+            Assert.Equal(2, result.Items.Count);
+            Assert.True(result.HasMore);
+            Assert.Equal(0, result.PageIndex);
+            Assert.Equal(2, result.PageSize);
+            Assert.Equal(3, result.StatusBuckets.Pending);
+            Assert.All(result.Items, item => Assert.Equal(VendorPaymentAcknowledgmentStatuses.Pending, item.AcknowledgmentStatus));
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies ops search can filter by status and vendor system code.
+    /// </summary>
+    [Fact]
+    public async Task SearchAsync_WhenStatusAndVendorFiltersApplied_ReturnsOnlyMatches()
+    {
+        var context = CreateContext(nameof(SearchAsync_WhenStatusAndVendorFiltersApplied_ReturnsOnlyMatches));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed Vendor PMS acknowledgment search filter test data.");
+
+        try
+        {
+            var repository = CreateRepository();
+            var now = DateTimeOffset.UtcNow;
+
+            var (hikAttempt, hikConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var hikPending = await repository.CreatePendingAsync(
+                CreatePendingCommand(context, hikAttempt, hikConfirmation),
+                CancellationToken.None);
+            await repository.MarkConfirmedAsync(
+                new MarkVendorPaymentAcknowledgmentConfirmedCommand(
+                    hikPending.VendorPaymentAcknowledgmentId,
+                    "0",
+                    "Success",
+                    5000,
+                    now,
+                    now),
+                CancellationToken.None);
+
+            var (fakeAttempt, fakeConfirmation) = await CreateConfirmedPaymentAsync(context);
+            await repository.CreatePendingAsync(
+                CreatePendingCommand(context, fakeAttempt, fakeConfirmation) with
+                {
+                    VendorSystemCode = "FAKE_PMS",
+                    TicketNumber = "FAKE-TICKET-279D",
+                    CardNum = "FAKE-CARD-279D"
+                },
+                CancellationToken.None);
+
+            var statusResult = await repository.SearchAsync(
+                SearchQuery(context, acknowledgmentStatus: VendorPaymentAcknowledgmentStatuses.Confirmed),
+                CancellationToken.None);
+            var vendorResult = await repository.SearchAsync(
+                SearchQuery(context, vendorSystemCode: "FAKE_PMS"),
+                CancellationToken.None);
+
+            Assert.Single(statusResult.Items);
+            Assert.Equal(VendorPaymentAcknowledgmentStatuses.Confirmed, statusResult.Items.Single().AcknowledgmentStatus);
+            Assert.Equal(1, statusResult.StatusBuckets.Confirmed);
+
+            Assert.Single(vendorResult.Items);
+            Assert.Equal("FAKE_PMS", vendorResult.Items.Single().VendorSystemCode);
+            Assert.Equal("FAKE-TICKET-279D", vendorResult.Items.Single().TicketNumber);
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies ops search nextRetryDueOnly returns only due retry-pending acknowledgments.
+    /// </summary>
+    [Fact]
+    public async Task SearchAsync_WhenNextRetryDueOnly_ReturnsOnlyDueRetryPendingAcknowledgments()
+    {
+        var context = CreateContext(nameof(SearchAsync_WhenNextRetryDueOnly_ReturnsOnlyDueRetryPendingAcknowledgments));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed Vendor PMS acknowledgment search retry test data.");
+
+        try
+        {
+            var repository = CreateRepository();
+            var now = DateTimeOffset.UtcNow;
+
+            var (dueAttempt, dueConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var due = await repository.CreatePendingAsync(CreatePendingCommand(context, dueAttempt, dueConfirmation), CancellationToken.None);
+            await SetRetryPendingAsync(due.VendorPaymentAcknowledgmentId, now.AddMinutes(-1));
+
+            var (futureAttempt, futureConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var future = await repository.CreatePendingAsync(CreatePendingCommand(context, futureAttempt, futureConfirmation), CancellationToken.None);
+            await SetRetryPendingAsync(future.VendorPaymentAcknowledgmentId, now.AddMinutes(10));
+
+            var (pendingAttempt, pendingConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, pendingAttempt, pendingConfirmation), CancellationToken.None);
+
+            var result = await repository.SearchAsync(
+                SearchQuery(context) with
+                {
+                    NextRetryDueOnly = true,
+                    UtcNow = now
+                },
+                CancellationToken.None);
+            var ids = result.Items.Select(item => item.VendorPaymentAcknowledgmentId).ToHashSet();
+
+            Assert.Contains(due.VendorPaymentAcknowledgmentId, ids);
+            Assert.DoesNotContain(future.VendorPaymentAcknowledgmentId, ids);
+            Assert.DoesNotContain(pending.VendorPaymentAcknowledgmentId, ids);
+            Assert.All(result.Items, item => Assert.Equal(VendorPaymentAcknowledgmentStatuses.RetryPending, item.AcknowledgmentStatus));
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Verifies the expected DB enum, uniqueness constraint, and query indexes exist.
     /// </summary>
     [Fact]
@@ -419,6 +587,28 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
             context.CorrelationId,
             DateTimeOffset.UtcNow);
     }
+
+    private static SearchVendorPaymentAcknowledgmentsQuery SearchQuery(
+        PaymentTestContext context,
+        string? acknowledgmentStatus = null,
+        string? vendorSystemCode = "HIKCENTRAL") =>
+        new(
+            acknowledgmentStatus,
+            vendorSystemCode,
+            PaymentAttemptId: null,
+            PaymentConfirmationId: null,
+            ParkingSessionId: null,
+            TicketNumber: null,
+            CardNum: null,
+            CorrelationId: context.CorrelationId,
+            CreatedFrom: null,
+            CreatedTo: null,
+            LastAttemptedFrom: null,
+            LastAttemptedTo: null,
+            NextRetryDueOnly: false,
+            UtcNow: DateTimeOffset.UtcNow,
+            PageIndex: 0,
+            PageSize: 25);
 
     private static async Task<(CreateAttemptResult Attempt, RecordPaymentConfirmationResult Confirmation)> CreateConfirmedPaymentAsync(
         PaymentTestContext context)
