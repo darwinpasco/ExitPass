@@ -213,6 +213,83 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
     }
 
     /// <summary>
+    /// Verifies the workflow basis is loaded only from already-recorded confirmation and confirmed finality state.
+    /// </summary>
+    [Fact]
+    public async Task LoadBasisAsync_WhenPaymentFinalityIsConfirmed_ReturnsImmutablePaymentBasis()
+    {
+        var context = CreateContext(nameof(LoadBasisAsync_WhenPaymentFinalityIsConfirmed_ReturnsImmutablePaymentBasis));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed Vendor PMS acknowledgment basis test data.");
+
+        try
+        {
+            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var repository = CreateRepository();
+
+            var basis = await repository.LoadBasisAsync(
+                confirmation.PaymentAttemptId,
+                confirmation.PaymentConfirmationId,
+                context.ParkingSessionId,
+                CancellationToken.None);
+
+            Assert.NotNull(basis);
+            Assert.Equal(confirmation.PaymentAttemptId, basis.PaymentAttemptId);
+            Assert.Equal(confirmation.PaymentConfirmationId, basis.PaymentConfirmationId);
+            Assert.Equal(context.ParkingSessionId, basis.ParkingSessionId);
+            Assert.Equal(context.VendorSystemCode, basis.VendorSystemCode);
+            Assert.False(string.IsNullOrWhiteSpace(basis.VendorSessionRef));
+            Assert.True(
+                !string.IsNullOrWhiteSpace(basis.TicketNumber) ||
+                !string.IsNullOrWhiteSpace(basis.CardNum));
+            Assert.Equal(5000, basis.RequestFeeMinorUnits);
+            Assert.Equal("PHP", basis.RequestCurrencyCode);
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies read helpers can return a durable acknowledgment by confirmation and by latest payment attempt.
+    /// </summary>
+    [Fact]
+    public async Task ReadHelpers_WhenAcknowledgmentExists_ReturnPersistedStatus()
+    {
+        var context = CreateContext(nameof(ReadHelpers_WhenAcknowledgmentExists_ReturnPersistedStatus));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed Vendor PMS acknowledgment read test data.");
+
+        try
+        {
+            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var repository = CreateRepository();
+            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, confirmation), CancellationToken.None);
+
+            var byConfirmation = await repository.ReadByPaymentConfirmationAsync(
+                confirmation.PaymentConfirmationId,
+                "HIKCENTRAL",
+                CancellationToken.None);
+            var latest = await repository.ReadLatestByPaymentAttemptAsync(
+                confirmation.PaymentAttemptId,
+                CancellationToken.None);
+
+            Assert.NotNull(byConfirmation);
+            Assert.NotNull(latest);
+            Assert.Equal(pending.VendorPaymentAcknowledgmentId, byConfirmation.VendorPaymentAcknowledgmentId);
+            Assert.Equal(pending.VendorPaymentAcknowledgmentId, latest.VendorPaymentAcknowledgmentId);
+            Assert.Equal(VendorPaymentAcknowledgmentStatuses.Pending, latest.AcknowledgmentStatus);
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Verifies the expected DB enum, uniqueness constraint, and query indexes exist.
     /// </summary>
     [Fact]

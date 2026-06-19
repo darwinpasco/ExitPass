@@ -26,4 +26,14 @@ public interface IVendorPmsParkingResolutionClient
     Task<VendorTariffQuoteResponse> ResolveTariffAsync(
         VendorTariffQuoteRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Confirms a provider-neutral vendor parking fee payment acknowledgment.
+    /// </summary>
+    /// <param name="request">Provider-neutral vendor payment acknowledgment request.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The provider-neutral vendor parking fee confirmation response.</returns>
+    Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+        VendorParkingFeeConfirmationRequest request,
+        CancellationToken cancellationToken);
 }

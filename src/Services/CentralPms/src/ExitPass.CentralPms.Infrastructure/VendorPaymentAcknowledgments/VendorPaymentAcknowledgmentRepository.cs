@@ -10,6 +10,30 @@ namespace ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
 public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknowledgmentRepository
 {
     private readonly string _connectionString;
+    private const string SelectRecordColumns = """
+                vendor_payment_acknowledgment_id,
+                payment_attempt_id,
+                payment_confirmation_id,
+                parking_session_id,
+                vendor_system_code,
+                vendor_session_ref,
+                ticket_number,
+                card_num,
+                acknowledgment_status::text,
+                vendor_code,
+                vendor_message,
+                request_fee_minor_units,
+                request_currency_code,
+                confirmed_fee_minor_units,
+                vendor_confirmed_at,
+                attempt_count,
+                last_attempted_at,
+                next_retry_at,
+                idempotency_key,
+                correlation_id,
+                created_at,
+                updated_at
+            """;
 
     /// <summary>
     /// Creates a Vendor PMS acknowledgment repository.
@@ -22,11 +46,69 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
     }
 
     /// <inheritdoc />
+    public async Task<VendorPaymentAcknowledgmentBasis?> LoadBasisAsync(
+        Guid paymentAttemptId,
+        Guid paymentConfirmationId,
+        Guid parkingSessionId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                pa.payment_attempt_id,
+                pc.payment_confirmation_id,
+                ps.parking_session_id,
+                vs.vendor_code AS vendor_system_code,
+                ps.vendor_session_ref,
+                ps.ticket_number_masked AS ticket_number,
+                COALESCE(ps.ticket_number_masked, ps.vendor_session_ref) AS card_num,
+                FLOOR(pa.amount * 100)::bigint AS request_fee_minor_units,
+                pa.currency_code::text AS request_currency_code
+            FROM core.payment_attempts AS pa
+            INNER JOIN core.payment_confirmations AS pc
+                ON pc.payment_attempt_id = pa.payment_attempt_id
+               AND pc.payment_confirmation_id = @payment_confirmation_id
+               AND pc.confirmation_status = 'RECORDED'::core.payment_confirmation_status_enum
+            INNER JOIN core.parking_sessions AS ps
+                ON ps.parking_session_id = pa.parking_session_id
+               AND ps.parking_session_id = @parking_session_id
+            INNER JOIN integration.vendor_systems AS vs
+                ON vs.vendor_system_id = ps.vendor_system_id
+            WHERE pa.payment_attempt_id = @payment_attempt_id
+              AND pa.attempt_status = 'CONFIRMED'::core.payment_attempt_status_enum
+              AND pa.finalized_at IS NOT NULL
+            LIMIT 1;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = paymentAttemptId;
+        dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = paymentConfirmationId;
+        dbCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new VendorPaymentAcknowledgmentBasis(
+            PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            PaymentConfirmationId: reader.GetGuid(reader.GetOrdinal("payment_confirmation_id")),
+            ParkingSessionId: reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            VendorSystemCode: reader.GetString(reader.GetOrdinal("vendor_system_code")),
+            VendorSessionRef: GetNullableString(reader, "vendor_session_ref"),
+            TicketNumber: GetNullableString(reader, "ticket_number"),
+            CardNum: GetNullableString(reader, "card_num"),
+            RequestFeeMinorUnits: reader.GetInt64(reader.GetOrdinal("request_fee_minor_units")),
+            RequestCurrencyCode: reader.GetString(reader.GetOrdinal("request_currency_code")).Trim());
+    }
+
+    /// <inheritdoc />
     public async Task<VendorPaymentAcknowledgmentRecord> CreatePendingAsync(
         CreateVendorPaymentAcknowledgmentCommand command,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $$"""
             INSERT INTO integration.vendor_payment_acknowledgments (
                 vendor_payment_acknowledgment_id,
                 payment_attempt_id,
@@ -62,28 +144,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 @created_at
             )
             RETURNING
-                vendor_payment_acknowledgment_id,
-                payment_attempt_id,
-                payment_confirmation_id,
-                parking_session_id,
-                vendor_system_code,
-                vendor_session_ref,
-                ticket_number,
-                card_num,
-                acknowledgment_status::text,
-                vendor_code,
-                vendor_message,
-                request_fee_minor_units,
-                request_currency_code,
-                confirmed_fee_minor_units,
-                vendor_confirmed_at,
-                attempt_count,
-                last_attempted_at,
-                next_retry_at,
-                idempotency_key,
-                correlation_id,
-                created_at,
-                updated_at;
+                {{SelectRecordColumns}}
+                ;
             """;
 
         try
@@ -114,7 +176,7 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         MarkVendorPaymentAcknowledgmentConfirmedCommand command,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $$"""
             UPDATE integration.vendor_payment_acknowledgments
             SET
                 acknowledgment_status = 'CONFIRMED'::integration.vendor_payment_acknowledgment_status_enum,
@@ -128,28 +190,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 updated_at = @updated_at
             WHERE vendor_payment_acknowledgment_id = @vendor_payment_acknowledgment_id
             RETURNING
-                vendor_payment_acknowledgment_id,
-                payment_attempt_id,
-                payment_confirmation_id,
-                parking_session_id,
-                vendor_system_code,
-                vendor_session_ref,
-                ticket_number,
-                card_num,
-                acknowledgment_status::text,
-                vendor_code,
-                vendor_message,
-                request_fee_minor_units,
-                request_currency_code,
-                confirmed_fee_minor_units,
-                vendor_confirmed_at,
-                attempt_count,
-                last_attempted_at,
-                next_retry_at,
-                idempotency_key,
-                correlation_id,
-                created_at,
-                updated_at;
+                {{SelectRecordColumns}}
+                ;
             """;
 
         return UpdateAsync(sql, command.VendorPaymentAcknowledgmentId, dbCommand =>
@@ -167,7 +209,7 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         MarkVendorPaymentAcknowledgmentFailedCommand command,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $$"""
             UPDATE integration.vendor_payment_acknowledgments
             SET
                 acknowledgment_status = CASE
@@ -182,28 +224,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 updated_at = @updated_at
             WHERE vendor_payment_acknowledgment_id = @vendor_payment_acknowledgment_id
             RETURNING
-                vendor_payment_acknowledgment_id,
-                payment_attempt_id,
-                payment_confirmation_id,
-                parking_session_id,
-                vendor_system_code,
-                vendor_session_ref,
-                ticket_number,
-                card_num,
-                acknowledgment_status::text,
-                vendor_code,
-                vendor_message,
-                request_fee_minor_units,
-                request_currency_code,
-                confirmed_fee_minor_units,
-                vendor_confirmed_at,
-                attempt_count,
-                last_attempted_at,
-                next_retry_at,
-                idempotency_key,
-                correlation_id,
-                created_at,
-                updated_at;
+                {{SelectRecordColumns}}
+                ;
             """;
 
         return UpdateAsync(sql, command.VendorPaymentAcknowledgmentId, dbCommand =>
@@ -221,7 +243,7 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         MarkVendorPaymentAcknowledgmentSkippedDisabledCommand command,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $$"""
             UPDATE integration.vendor_payment_acknowledgments
             SET
                 acknowledgment_status = 'SKIPPED_DISABLED'::integration.vendor_payment_acknowledgment_status_enum,
@@ -230,28 +252,8 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 updated_at = @updated_at
             WHERE vendor_payment_acknowledgment_id = @vendor_payment_acknowledgment_id
             RETURNING
-                vendor_payment_acknowledgment_id,
-                payment_attempt_id,
-                payment_confirmation_id,
-                parking_session_id,
-                vendor_system_code,
-                vendor_session_ref,
-                ticket_number,
-                card_num,
-                acknowledgment_status::text,
-                vendor_code,
-                vendor_message,
-                request_fee_minor_units,
-                request_currency_code,
-                confirmed_fee_minor_units,
-                vendor_confirmed_at,
-                attempt_count,
-                last_attempted_at,
-                next_retry_at,
-                idempotency_key,
-                correlation_id,
-                created_at,
-                updated_at;
+                {{SelectRecordColumns}}
+                ;
             """;
 
         return UpdateAsync(sql, command.VendorPaymentAcknowledgmentId, dbCommand =>
@@ -266,30 +268,9 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         Guid vendorPaymentAcknowledgmentId,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = $$"""
             SELECT
-                vendor_payment_acknowledgment_id,
-                payment_attempt_id,
-                payment_confirmation_id,
-                parking_session_id,
-                vendor_system_code,
-                vendor_session_ref,
-                ticket_number,
-                card_num,
-                acknowledgment_status::text,
-                vendor_code,
-                vendor_message,
-                request_fee_minor_units,
-                request_currency_code,
-                confirmed_fee_minor_units,
-                vendor_confirmed_at,
-                attempt_count,
-                last_attempted_at,
-                next_retry_at,
-                idempotency_key,
-                correlation_id,
-                created_at,
-                updated_at
+                {{SelectRecordColumns}}
             FROM integration.vendor_payment_acknowledgments
             WHERE vendor_payment_acknowledgment_id = @vendor_payment_acknowledgment_id;
             """;
@@ -297,6 +278,56 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var dbCommand = new NpgsqlCommand(sql, connection);
         dbCommand.Parameters.Add("vendor_payment_acknowledgment_id", NpgsqlDbType.Uuid).Value = vendorPaymentAcknowledgmentId;
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? ReadRecord(reader)
+            : null;
+    }
+
+    /// <inheritdoc />
+    public async Task<VendorPaymentAcknowledgmentRecord?> ReadByPaymentConfirmationAsync(
+        Guid paymentConfirmationId,
+        string vendorSystemCode,
+        CancellationToken cancellationToken)
+    {
+        var sql = $$"""
+            SELECT
+                {{SelectRecordColumns}}
+            FROM integration.vendor_payment_acknowledgments
+            WHERE payment_confirmation_id = @payment_confirmation_id
+              AND vendor_system_code = @vendor_system_code
+            LIMIT 1;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.Add("payment_confirmation_id", NpgsqlDbType.Uuid).Value = paymentConfirmationId;
+        dbCommand.Parameters.Add("vendor_system_code", NpgsqlDbType.Text).Value = vendorSystemCode.Trim();
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? ReadRecord(reader)
+            : null;
+    }
+
+    /// <inheritdoc />
+    public async Task<VendorPaymentAcknowledgmentRecord?> ReadLatestByPaymentAttemptAsync(
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $$"""
+            SELECT
+                {{SelectRecordColumns}}
+            FROM integration.vendor_payment_acknowledgments
+            WHERE payment_attempt_id = @payment_attempt_id
+            ORDER BY updated_at DESC, created_at DESC, vendor_payment_acknowledgment_id DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = paymentAttemptId;
 
         await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken)

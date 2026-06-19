@@ -31,4 +31,12 @@ public sealed class HikCentralVendorPmsParkingResolutionClient(
     {
         return vendorParkingDataClient.ResolveTariffAsync(request, cancellationToken);
     }
+
+    /// <inheritdoc />
+    public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+        VendorParkingFeeConfirmationRequest request,
+        CancellationToken cancellationToken)
+    {
+        return vendorParkingDataClient.ConfirmParkingFeeAsync(request, cancellationToken);
+    }
 }

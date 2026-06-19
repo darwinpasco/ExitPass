@@ -85,6 +85,43 @@ public sealed class FakeVendorPmsParkingResolutionClient : IVendorPmsParkingReso
             request.CorrelationId));
     }
 
+    /// <inheritdoc />
+    public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+        VendorParkingFeeConfirmationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var lookupKey = Normalize(request.PlateNumber) ?? Normalize(request.TicketReference) ?? string.Empty;
+
+        var response = lookupKey.ToUpperInvariant() switch
+        {
+            "UNAVAILABLE" => new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.UnavailableRetryable,
+                null,
+                "VENDOR_UNAVAILABLE",
+                true,
+                request.CorrelationId),
+
+            "REJECTED" => new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.VendorRejected,
+                null,
+                "VENDOR_REJECTED_CONFIRMATION",
+                false,
+                request.CorrelationId),
+
+            _ => new VendorParkingFeeConfirmationResponse(
+                VendorParkingLookupStatus.Confirmed,
+                new VendorParkingFeeConfirmationDto(
+                    request.AmountMinor ?? 0,
+                    request.Currency,
+                    FixedCalculatedAt),
+                "0",
+                false,
+                request.CorrelationId)
+        };
+
+        return Task.FromResult(response);
+    }
+
     private static VendorTariffQuoteDto CreateQuote(long amountMinor, string tariffVersionReference)
     {
         return new VendorTariffQuoteDto(

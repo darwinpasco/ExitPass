@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
+using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
@@ -37,6 +38,7 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     private readonly IFinalizePaymentAttemptUseCase _finalizePaymentAttemptUseCase;
     private readonly IIssueExitAuthorizationUseCase _issueExitAuthorizationUseCase;
     private readonly IIntegrationEventPublisher _eventPublisher;
+    private readonly IVendorPaymentAcknowledgmentWorkflow? _vendorPaymentAcknowledgmentWorkflow;
     private readonly ISystemClock _systemClock;
     private readonly ILogger<ReportVerifiedPaymentOutcomeHandler> _logger;
     private readonly CentralPmsMetrics _metrics;
@@ -50,6 +52,8 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
     /// <param name="eventPublisher">Best-effort integration event publisher for already-committed finality evidence.</param>
     /// <param name="systemClock">System clock used for authoritative timestamps.</param>
     /// <param name="logger">Application logger.</param>
+    /// <param name="metrics">Optional Central PMS metrics recorder.</param>
+    /// <param name="vendorPaymentAcknowledgmentWorkflow">Optional post-finality Vendor PMS payment acknowledgment workflow.</param>
     public ReportVerifiedPaymentOutcomeHandler(
         IRecordPaymentConfirmationGateway recordPaymentConfirmationGateway,
         IFinalizePaymentAttemptUseCase finalizePaymentAttemptUseCase,
@@ -57,12 +61,14 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
         IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         ILogger<ReportVerifiedPaymentOutcomeHandler> logger,
-        CentralPmsMetrics? metrics = null)
+        CentralPmsMetrics? metrics = null,
+        IVendorPaymentAcknowledgmentWorkflow? vendorPaymentAcknowledgmentWorkflow = null)
     {
         _recordPaymentConfirmationGateway = recordPaymentConfirmationGateway;
         _finalizePaymentAttemptUseCase = finalizePaymentAttemptUseCase;
         _issueExitAuthorizationUseCase = issueExitAuthorizationUseCase;
         _eventPublisher = eventPublisher;
+        _vendorPaymentAcknowledgmentWorkflow = vendorPaymentAcknowledgmentWorkflow;
         _systemClock = systemClock;
         _logger = logger;
         _metrics = metrics ?? new CentralPmsMetrics();
@@ -169,6 +175,12 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
 
         await PublishBestEffortAsync(
             CreatePaymentFinalityReportedEvent(command, confirmation, finalized),
+            cancellationToken);
+
+        await ProcessVendorPaymentAcknowledgmentBestEffortAsync(
+            command,
+            confirmation,
+            finalized,
             cancellationToken);
 
         activity?.SetStatus(ActivityStatusCode.Ok);
@@ -313,6 +325,39 @@ public sealed class ReportVerifiedPaymentOutcomeHandler : IReportVerifiedPayment
                 envelope.EventType,
                 envelope.EventId,
                 envelope.CorrelationId);
+        }
+    }
+
+    private async Task ProcessVendorPaymentAcknowledgmentBestEffortAsync(
+        ReportVerifiedPaymentOutcomeCommand command,
+        RecordPaymentConfirmationResult confirmation,
+        FinalizePaymentAttemptResult finalized,
+        CancellationToken cancellationToken)
+    {
+        if (_vendorPaymentAcknowledgmentWorkflow is null ||
+            !string.Equals(finalized.AttemptStatus, "CONFIRMED", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            await _vendorPaymentAcknowledgmentWorkflow.ProcessAsync(
+                new VendorPaymentAcknowledgmentWorkflowCommand(
+                    finalized.PaymentAttemptId,
+                    confirmation.PaymentConfirmationId,
+                    command.ParkingSessionId,
+                    command.CorrelationId),
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Vendor PMS payment acknowledgment failed after ExitPass payment finality and will not roll back finality. payment_attempt_id={PaymentAttemptId} payment_confirmation_id={PaymentConfirmationId} correlation_id={CorrelationId}",
+                finalized.PaymentAttemptId,
+                confirmation.PaymentConfirmationId,
+                command.CorrelationId);
         }
     }
 }

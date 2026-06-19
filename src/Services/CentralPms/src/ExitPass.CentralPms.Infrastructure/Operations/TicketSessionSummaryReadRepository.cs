@@ -38,7 +38,12 @@ public sealed class TicketSessionSummaryReadRepository : ITicketSessionSummaryRe
                 ps.parking_session_id,
                 latest_attempt.payment_attempt_id,
                 latest_attempt.attempt_status::text AS payment_attempt_status,
-                latest_confirmation.confirmation_status::text AS payment_confirmation_status
+                latest_confirmation.confirmation_status::text AS payment_confirmation_status,
+                latest_ack.vendor_system_code AS vendor_ack_vendor_system_code,
+                latest_ack.acknowledgment_status::text AS vendor_confirmation_status,
+                latest_ack.vendor_code AS vendor_confirmation_code,
+                latest_ack.vendor_message AS vendor_message,
+                latest_ack.vendor_confirmed_at AS vendor_confirmation_timestamp
             FROM core.parking_sessions AS ps
             LEFT JOIN LATERAL (
                 SELECT
@@ -56,6 +61,18 @@ public sealed class TicketSessionSummaryReadRepository : ITicketSessionSummaryRe
                 ORDER BY pc.confirmed_at DESC, pc.payment_confirmation_id DESC
                 LIMIT 1
             ) AS latest_confirmation ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT
+                    vpa.vendor_system_code,
+                    vpa.acknowledgment_status,
+                    vpa.vendor_code,
+                    vpa.vendor_message,
+                    vpa.vendor_confirmed_at
+                FROM integration.vendor_payment_acknowledgments AS vpa
+                WHERE vpa.payment_attempt_id = latest_attempt.payment_attempt_id
+                ORDER BY vpa.updated_at DESC, vpa.created_at DESC, vpa.vendor_payment_acknowledgment_id DESC
+                LIMIT 1
+            ) AS latest_ack ON TRUE
             WHERE (@site_id IS NULL OR ps.site_id = @site_id)
               AND (@site_group_id IS NULL OR ps.site_group_id = @site_group_id)
               AND (
@@ -86,14 +103,19 @@ public sealed class TicketSessionSummaryReadRepository : ITicketSessionSummaryRe
         {
             var attemptStatus = GetNullableString(reader, "payment_attempt_status");
             var confirmationStatus = GetNullableString(reader, "payment_confirmation_status");
+            var vendorConfirmationStatus = GetNullableString(reader, "vendor_confirmation_status");
             matches.Add(new TicketSessionLocalStatusReadModel(
                 reader.GetGuid(reader.GetOrdinal("parking_session_id")),
                 GetNullableGuid(reader, "payment_attempt_id"),
                 attemptStatus,
                 MapPaymentStatus(attemptStatus, confirmationStatus),
                 confirmationStatus,
-                VendorConfirmationStatus: null,
-                VendorConfirmationTimestamp: null));
+                VendorSystemCode: GetNullableString(reader, "vendor_ack_vendor_system_code"),
+                VendorConfirmationCode: GetNullableString(reader, "vendor_confirmation_code") ??
+                    (vendorConfirmationStatus is null ? null : $"VENDOR_ACK_{vendorConfirmationStatus}"),
+                VendorMessage: GetNullableString(reader, "vendor_message"),
+                VendorConfirmationStatus: vendorConfirmationStatus,
+                VendorConfirmationTimestamp: GetNullableDateTimeOffset(reader, "vendor_confirmation_timestamp")));
         }
 
         return matches.Count switch
@@ -147,5 +169,11 @@ public sealed class TicketSessionSummaryReadRepository : ITicketSessionSummaryRe
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static DateTimeOffset? GetNullableDateTimeOffset(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
     }
 }
