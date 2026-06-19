@@ -32,6 +32,12 @@ public interface IVendorPaymentAcknowledgmentRepository
         MarkVendorPaymentAcknowledgmentSkippedDisabledCommand command,
         CancellationToken cancellationToken);
 
+    /// <summary>Finds retry-pending acknowledgments that are due for a bounded retry dispatch.</summary>
+    Task<IReadOnlyList<VendorPaymentAcknowledgmentRecord>> FindDueRetryPendingAsync(
+        DateTimeOffset utcNow,
+        int limit,
+        CancellationToken cancellationToken);
+
     /// <summary>Reads one durable acknowledgment record by identifier.</summary>
     Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
         Guid vendorPaymentAcknowledgmentId,

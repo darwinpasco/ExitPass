@@ -264,6 +264,38 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<VendorPaymentAcknowledgmentRecord>> FindDueRetryPendingAsync(
+        DateTimeOffset utcNow,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var boundedLimit = limit <= 0 ? 25 : Math.Min(limit, 100);
+        var sql = $$"""
+            SELECT
+                {{SelectRecordColumns}}
+            FROM integration.vendor_payment_acknowledgments
+            WHERE acknowledgment_status = 'RETRY_PENDING'::integration.vendor_payment_acknowledgment_status_enum
+              AND (next_retry_at IS NULL OR next_retry_at <= @utc_now)
+            ORDER BY COALESCE(next_retry_at, created_at), updated_at, vendor_payment_acknowledgment_id
+            LIMIT @limit;
+            """;
+
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var dbCommand = new NpgsqlCommand(sql, connection);
+        dbCommand.Parameters.Add("utc_now", NpgsqlDbType.TimestampTz).Value = ToUtc(utcNow);
+        dbCommand.Parameters.Add("limit", NpgsqlDbType.Integer).Value = boundedLimit;
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        var records = new List<VendorPaymentAcknowledgmentRecord>(boundedLimit);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            records.Add(ReadRecord(reader));
+        }
+
+        return records;
+    }
+
+    /// <inheritdoc />
     public async Task<VendorPaymentAcknowledgmentRecord?> ReadAsync(
         Guid vendorPaymentAcknowledgmentId,
         CancellationToken cancellationToken)

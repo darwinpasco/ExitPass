@@ -27,17 +27,17 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
 
             var record = await repository.CreatePendingAsync(
-                CreatePendingCommand(context, confirmation),
+                CreatePendingCommand(context, attempt, confirmation),
                 CancellationToken.None);
 
             Assert.NotEqual(Guid.Empty, record.VendorPaymentAcknowledgmentId);
             Assert.Equal(confirmation.PaymentAttemptId, record.PaymentAttemptId);
             Assert.Equal(confirmation.PaymentConfirmationId, record.PaymentConfirmationId);
-            Assert.Equal(context.ParkingSessionId, record.ParkingSessionId);
+            Assert.Equal(attempt.ParkingSessionId, record.ParkingSessionId);
             Assert.Equal("HIKCENTRAL", record.VendorSystemCode);
             Assert.Equal("HIK:CARD-123", record.VendorSessionRef);
             Assert.Equal("TICKET-123", record.TicketNumber);
@@ -67,9 +67,9 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
-            var command = CreatePendingCommand(context, confirmation);
+            var command = CreatePendingCommand(context, attempt, confirmation);
 
             await repository.CreatePendingAsync(command, CancellationToken.None);
 
@@ -97,9 +97,9 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
-            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, confirmation), CancellationToken.None);
+            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, attempt, confirmation), CancellationToken.None);
             var vendorConfirmedAt = DateTimeOffset.Parse("2026-06-17T12:19:02+08:00");
 
             var confirmed = await repository.MarkConfirmedAsync(
@@ -145,9 +145,9 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
-            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, confirmation), CancellationToken.None);
+            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, attempt, confirmation), CancellationToken.None);
             var attemptedAt = DateTimeOffset.UtcNow;
 
             var failed = await repository.MarkFailedAsync(
@@ -189,9 +189,9 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
-            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, confirmation), CancellationToken.None);
+            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, attempt, confirmation), CancellationToken.None);
 
             var skipped = await repository.MarkSkippedDisabledAsync(
                 new MarkVendorPaymentAcknowledgmentSkippedDisabledCommand(
@@ -224,19 +224,19 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
 
             var basis = await repository.LoadBasisAsync(
                 confirmation.PaymentAttemptId,
                 confirmation.PaymentConfirmationId,
-                context.ParkingSessionId,
+                attempt.ParkingSessionId,
                 CancellationToken.None);
 
             Assert.NotNull(basis);
             Assert.Equal(confirmation.PaymentAttemptId, basis.PaymentAttemptId);
             Assert.Equal(confirmation.PaymentConfirmationId, basis.PaymentConfirmationId);
-            Assert.Equal(context.ParkingSessionId, basis.ParkingSessionId);
+            Assert.Equal(attempt.ParkingSessionId, basis.ParkingSessionId);
             Assert.Equal(context.VendorSystemCode, basis.VendorSystemCode);
             Assert.False(string.IsNullOrWhiteSpace(basis.VendorSessionRef));
             Assert.True(
@@ -264,9 +264,9 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
         try
         {
-            var (_, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
             var repository = CreateRepository();
-            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, confirmation), CancellationToken.None);
+            var pending = await repository.CreatePendingAsync(CreatePendingCommand(context, attempt, confirmation), CancellationToken.None);
 
             var byConfirmation = await repository.ReadByPaymentConfirmationAsync(
                 confirmation.PaymentConfirmationId,
@@ -281,6 +281,71 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
             Assert.Equal(pending.VendorPaymentAcknowledgmentId, byConfirmation.VendorPaymentAcknowledgmentId);
             Assert.Equal(pending.VendorPaymentAcknowledgmentId, latest.VendorPaymentAcknowledgmentId);
             Assert.Equal(VendorPaymentAcknowledgmentStatuses.Pending, latest.AcknowledgmentStatus);
+        }
+        finally
+        {
+            await CleanupAcknowledgmentsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies due retry selection is bounded to RETRY_PENDING rows whose retry time has arrived.
+    /// </summary>
+    [Fact]
+    public async Task FindDueRetryPendingAsync_ReturnsOnlyDueRetryPendingAcknowledgments()
+    {
+        var context = CreateContext(nameof(FindDueRetryPendingAsync_ReturnsOnlyDueRetryPendingAcknowledgments));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed Vendor PMS retry query test data.");
+
+        try
+        {
+            var repository = CreateRepository();
+            var now = DateTimeOffset.UtcNow;
+
+            var (nullRetryAttempt, nullRetryConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var nullRetry = await repository.CreatePendingAsync(CreatePendingCommand(context, nullRetryAttempt, nullRetryConfirmation), CancellationToken.None);
+            await SetRetryPendingAsync(nullRetry.VendorPaymentAcknowledgmentId, nextRetryAt: null);
+
+            var (dueAttempt, dueConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var due = await repository.CreatePendingAsync(CreatePendingCommand(context, dueAttempt, dueConfirmation), CancellationToken.None);
+            await SetRetryPendingAsync(due.VendorPaymentAcknowledgmentId, now.AddMinutes(-1));
+
+            var (futureAttempt, futureConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var future = await repository.CreatePendingAsync(CreatePendingCommand(context, futureAttempt, futureConfirmation), CancellationToken.None);
+            await SetRetryPendingAsync(future.VendorPaymentAcknowledgmentId, now.AddMinutes(10));
+
+            var (confirmedAttempt, confirmedConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var confirmedPending = await repository.CreatePendingAsync(CreatePendingCommand(context, confirmedAttempt, confirmedConfirmation), CancellationToken.None);
+            await repository.MarkConfirmedAsync(
+                new MarkVendorPaymentAcknowledgmentConfirmedCommand(
+                    confirmedPending.VendorPaymentAcknowledgmentId,
+                    "0",
+                    "Success",
+                    5000,
+                    now,
+                    now),
+                CancellationToken.None);
+
+            var (skippedAttempt, skippedConfirmation) = await CreateConfirmedPaymentAsync(context);
+            var skippedPending = await repository.CreatePendingAsync(CreatePendingCommand(context, skippedAttempt, skippedConfirmation), CancellationToken.None);
+            await repository.MarkSkippedDisabledAsync(
+                new MarkVendorPaymentAcknowledgmentSkippedDisabledCommand(
+                    skippedPending.VendorPaymentAcknowledgmentId,
+                    "HIKCENTRAL_CONFIRM_PAYMENT_ENABLED is false.",
+                    now),
+                CancellationToken.None);
+
+            var records = await repository.FindDueRetryPendingAsync(now, limit: 10, CancellationToken.None);
+            var ids = records.Select(record => record.VendorPaymentAcknowledgmentId).ToHashSet();
+
+            Assert.Contains(nullRetry.VendorPaymentAcknowledgmentId, ids);
+            Assert.Contains(due.VendorPaymentAcknowledgmentId, ids);
+            Assert.DoesNotContain(future.VendorPaymentAcknowledgmentId, ids);
+            Assert.DoesNotContain(confirmedPending.VendorPaymentAcknowledgmentId, ids);
+            Assert.DoesNotContain(skippedPending.VendorPaymentAcknowledgmentId, ids);
+            Assert.All(records, record => Assert.Equal(VendorPaymentAcknowledgmentStatuses.RetryPending, record.AcknowledgmentStatus));
         }
         finally
         {
@@ -337,12 +402,13 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
 
     private static CreateVendorPaymentAcknowledgmentCommand CreatePendingCommand(
         PaymentTestContext context,
+        CreateAttemptResult attempt,
         RecordPaymentConfirmationResult confirmation)
     {
         return new CreateVendorPaymentAcknowledgmentCommand(
             confirmation.PaymentAttemptId,
             confirmation.PaymentConfirmationId,
-            context.ParkingSessionId,
+            attempt.ParkingSessionId,
             "HIKCENTRAL",
             "HIK:CARD-123",
             "TICKET-123",
@@ -357,12 +423,108 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
     private static async Task<(CreateAttemptResult Attempt, RecordPaymentConfirmationResult Confirmation)> CreateConfirmedPaymentAsync(
         PaymentTestContext context)
     {
+        var parkingSessionId = Guid.NewGuid();
         var paymentAttemptId = Guid.NewGuid();
         var paymentConfirmationId = Guid.NewGuid();
+        var tariffSnapshotId = Guid.NewGuid();
         var providerReference = $"PCONF-VENDOR-ACK-{Guid.NewGuid():N}";
         var now = DateTimeOffset.UtcNow;
 
         const string sql = """
+            INSERT INTO core.parking_sessions (
+                parking_session_id,
+                site_group_id,
+                site_id,
+                vendor_system_id,
+                vendor_session_ref,
+                plate_number_hash,
+                plate_number_masked,
+                ticket_number_hash,
+                ticket_number_masked,
+                entry_at,
+                vendor_session_status,
+                session_status,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            SELECT
+                @parking_session_id,
+                site_group_id,
+                site_id,
+                vendor_system_id,
+                @vendor_session_ref,
+                plate_number_hash,
+                plate_number_masked,
+                ticket_number_hash,
+                ticket_number_masked,
+                entry_at,
+                vendor_session_status,
+                session_status,
+                @correlation_id,
+                @now,
+                @requested_by,
+                @now,
+                @requested_by,
+                1
+            FROM core.parking_sessions
+            WHERE parking_session_id = @source_parking_session_id;
+
+            INSERT INTO core.tariff_snapshots (
+                tariff_snapshot_id,
+                parking_session_id,
+                superseded_by_tariff_snapshot_id,
+                vendor_system_id,
+                vendor_tariff_ref,
+                tariff_version_reference,
+                currency_code,
+                gross_amount,
+                statutory_discount_amount,
+                coupon_discount_amount,
+                net_amount,
+                statutory_discount_validation_id,
+                coupon_application_id,
+                snapshot_status,
+                calculated_at,
+                expires_at,
+                consumed_at,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            SELECT
+                @tariff_snapshot_id,
+                @parking_session_id,
+                NULL,
+                vendor_system_id,
+                @vendor_tariff_ref,
+                @tariff_version_reference,
+                currency_code,
+                gross_amount,
+                statutory_discount_amount,
+                coupon_discount_amount,
+                net_amount,
+                statutory_discount_validation_id,
+                coupon_application_id,
+                snapshot_status,
+                @now,
+                @now + INTERVAL '1 hour',
+                NULL,
+                @correlation_id,
+                @now,
+                @requested_by,
+                @now,
+                @requested_by,
+                1
+            FROM core.tariff_snapshots
+            WHERE tariff_snapshot_id = @source_tariff_snapshot_id;
+
             INSERT INTO core.payment_attempts (
                 payment_attempt_id,
                 parking_session_id,
@@ -439,8 +601,13 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
         command.Parameters.AddWithValue("payment_confirmation_id", paymentConfirmationId);
-        command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
-        command.Parameters.AddWithValue("tariff_snapshot_id", context.TariffSnapshotId);
+        command.Parameters.AddWithValue("source_parking_session_id", context.ParkingSessionId);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        command.Parameters.AddWithValue("vendor_session_ref", $"VACK-VSESSION-{parkingSessionId:N}");
+        command.Parameters.AddWithValue("source_tariff_snapshot_id", context.TariffSnapshotId);
+        command.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
+        command.Parameters.AddWithValue("vendor_tariff_ref", $"VTAR-{tariffSnapshotId:N}");
+        command.Parameters.AddWithValue("tariff_version_reference", $"TVR-{tariffSnapshotId:N}");
         command.Parameters.AddWithValue("idempotency_key", $"idem-vendor-ack-{Guid.NewGuid():N}");
         command.Parameters.AddWithValue("provider_reference", providerReference);
         command.Parameters.AddWithValue("correlation_id", context.CorrelationId);
@@ -451,8 +618,8 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
         return (
             new CreateAttemptResult(
                 paymentAttemptId,
-                context.ParkingSessionId,
-                context.TariffSnapshotId,
+                parkingSessionId,
+                tariffSnapshotId,
                 "CONFIRMED",
                 "DIRECT_TEST"),
             new RecordPaymentConfirmationResult(
@@ -480,6 +647,38 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
                         ON pa.payment_attempt_id = pc.payment_attempt_id
                     WHERE pa.parking_session_id = @parking_session_id
                );
+
+            DELETE FROM core.payment_confirmations
+            WHERE payment_attempt_id IN (
+                SELECT pa.payment_attempt_id
+                FROM core.payment_attempts pa
+                INNER JOIN core.parking_sessions ps
+                    ON ps.parking_session_id = pa.parking_session_id
+                WHERE ps.correlation_id = @correlation_id
+                  AND ps.parking_session_id <> @parking_session_id
+            );
+
+            DELETE FROM core.payment_attempts
+            WHERE payment_attempt_id IN (
+                SELECT pa.payment_attempt_id
+                FROM core.payment_attempts pa
+                INNER JOIN core.parking_sessions ps
+                    ON ps.parking_session_id = pa.parking_session_id
+                WHERE ps.correlation_id = @correlation_id
+                  AND ps.parking_session_id <> @parking_session_id
+            );
+
+            DELETE FROM core.tariff_snapshots
+            WHERE parking_session_id IN (
+                SELECT parking_session_id
+                FROM core.parking_sessions
+                WHERE correlation_id = @correlation_id
+                  AND parking_session_id <> @parking_session_id
+            );
+
+            DELETE FROM core.parking_sessions
+            WHERE correlation_id = @correlation_id
+              AND parking_session_id <> @parking_session_id;
             """;
 
         await using var connection = new NpgsqlConnection(ConnectionString);
@@ -487,6 +686,29 @@ public sealed class VendorPaymentAcknowledgmentRepositoryTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("correlation_id", context.CorrelationId);
         command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task SetRetryPendingAsync(
+        Guid vendorPaymentAcknowledgmentId,
+        DateTimeOffset? nextRetryAt)
+    {
+        const string sql = """
+            UPDATE integration.vendor_payment_acknowledgments
+            SET acknowledgment_status = 'RETRY_PENDING'::integration.vendor_payment_acknowledgment_status_enum,
+                next_retry_at = @next_retry_at,
+                updated_at = @updated_at
+            WHERE vendor_payment_acknowledgment_id = @vendor_payment_acknowledgment_id;
+            """;
+
+        var now = DateTimeOffset.UtcNow;
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("vendor_payment_acknowledgment_id", vendorPaymentAcknowledgmentId);
+        command.Parameters.Add("next_retry_at", NpgsqlTypes.NpgsqlDbType.TimestampTz).Value =
+            nextRetryAt.HasValue ? nextRetryAt.Value : (object)DBNull.Value;
+        command.Parameters.Add("updated_at", NpgsqlTypes.NpgsqlDbType.TimestampTz).Value = now;
         await command.ExecuteNonQueryAsync();
     }
 

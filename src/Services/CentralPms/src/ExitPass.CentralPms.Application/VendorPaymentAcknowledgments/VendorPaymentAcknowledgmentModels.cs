@@ -122,6 +122,39 @@ public sealed record VendorPaymentAcknowledgmentWorkflowCommand(
     Guid CorrelationId);
 
 /// <summary>
+/// Command to dispatch a bounded batch of due Vendor PMS acknowledgment retries.
+/// </summary>
+public sealed record DispatchVendorPaymentAcknowledgmentRetriesCommand(int BatchSize);
+
+/// <summary>
+/// Result for one Vendor PMS acknowledgment retry dispatch item.
+/// </summary>
+public sealed record VendorPaymentAcknowledgmentRetryDispatchItemResult(
+    Guid VendorPaymentAcknowledgmentId,
+    Guid PaymentAttemptId,
+    Guid PaymentConfirmationId,
+    Guid? ParkingSessionId,
+    string VendorSystemCode,
+    string InitialStatus,
+    string? FinalStatus,
+    bool Succeeded,
+    bool Skipped,
+    string? FailureCode,
+    Guid? CorrelationId);
+
+/// <summary>
+/// Result for a bounded Vendor PMS acknowledgment retry dispatch.
+/// </summary>
+public sealed record VendorPaymentAcknowledgmentRetryDispatchResult(
+    int RequestedBatchSize,
+    int DueCount,
+    int ProcessedCount,
+    int ConfirmedCount,
+    int SkippedCount,
+    int FailedCount,
+    IReadOnlyList<VendorPaymentAcknowledgmentRetryDispatchItemResult> Items);
+
+/// <summary>
 /// Raised when the database rejects a duplicate or conflicting Vendor PMS acknowledgment record.
 /// </summary>
 public sealed class VendorPaymentAcknowledgmentConflictException : Exception

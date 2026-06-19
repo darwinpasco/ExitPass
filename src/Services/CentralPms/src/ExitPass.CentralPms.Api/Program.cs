@@ -340,6 +340,7 @@ static void ConfigureApplicationServices(
         new VendorPaymentAcknowledgmentRepository(mainDatabaseConnectionString));
     builder.Services.AddSingleton<IVendorPaymentConfirmationGuard, EnvironmentVendorPaymentConfirmationGuard>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentWorkflow, VendorPaymentAcknowledgmentWorkflow>();
+    builder.Services.AddScoped<IVendorPaymentAcknowledgmentRetryDispatcherService, VendorPaymentAcknowledgmentRetryDispatcherService>();
 
     builder.Services.AddScoped<IReportVerifiedPaymentOutcomeUseCase, ReportVerifiedPaymentOutcomeHandler>();
 
