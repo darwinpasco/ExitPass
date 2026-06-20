@@ -38,5 +38,10 @@ public enum ResolveVendorParkingOutcome
     /// <summary>
     /// Vendor PMS returned more than one candidate for the supplied lookup identifier.
     /// </summary>
-    AmbiguousMatch = 6
+    AmbiguousMatch = 6,
+
+    /// <summary>
+    /// Live vendor lookup was unavailable and a non-authoritative projection snapshot is available for degraded visibility.
+    /// </summary>
+    ProjectionSnapshotAvailable = 7
 }

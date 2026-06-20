@@ -6,6 +6,7 @@ using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
 using ExitPass.CentralPms.Application.PaymentAttempts.Results;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
@@ -14,6 +15,7 @@ using ExitPass.CentralPms.Domain.Tariffs;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -188,6 +190,90 @@ public sealed class ResolveVendorParkingHandlerTests
     }
 
     /// <summary>
+    /// Verifies live vendor success remains authoritative and does not consult projection fallback.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenLiveVendorSucceeds_DoesNotUseProjectionFallback()
+    {
+        var projectionLookup = new RecordingProjectionLookupService(FreshProjection());
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.FoundWithInlineQuote(),
+            projectionLookup: projectionLookup,
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true
+            });
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.Resolved);
+        result.ProjectionFallback.Should().BeNull();
+        projectionLookup.Calls.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies live vendor unavailability can return a non-authoritative fresh projection snapshot.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenVendorUnavailableAndFallbackEnabled_ReturnsProjectionSnapshot()
+    {
+        var publisher = new RecordingIntegrationEventPublisher();
+        var projectionLookup = new RecordingProjectionLookupService(FreshProjection());
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.Unavailable(),
+            publisher,
+            projectionLookup,
+            new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 60
+            },
+            new FixedClock(Now));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.ProjectionSnapshotAvailable);
+        result.ErrorCode.Should().Be("VENDOR_UNAVAILABLE_PROJECTION_SNAPSHOT_AVAILABLE");
+        result.Retryable.Should().BeTrue();
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+        result.ProjectionFallback.Should().NotBeNull();
+        result.ProjectionFallback!.IsProjectionBased.Should().BeTrue();
+        result.ProjectionFallback.IsAuthoritativeForParkingSession.Should().BeFalse();
+        result.ProjectionFallback.IsAuthoritativeForTariff.Should().BeFalse();
+        result.ProjectionFallback.IsAuthoritativeForPayment.Should().BeFalse();
+        publisher.Published.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies stale projections are explicit and not used as degraded resolve fallback.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenProjectionFallbackIsStale_ReturnsRetryableUnavailable()
+    {
+        var projection = FreshProjection() with
+        {
+            LastRefreshedAt = Now.AddHours(-2)
+        };
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.Unavailable(),
+            projectionLookup: new RecordingProjectionLookupService(projection),
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 30
+            },
+            clock: new FixedClock(Now));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.RetryableUnavailable);
+        result.ProjectionFallback.Should().BeNull();
+        result.ParkingSession.Should().BeNull();
+        result.TariffSnapshot.Should().BeNull();
+    }
+
+    /// <summary>
     /// Verifies that malformed provider-neutral vendor data is rejected deterministically.
     /// </summary>
     [Fact]
@@ -337,14 +423,20 @@ public sealed class ResolveVendorParkingHandlerTests
 
     private static ResolveVendorParkingHandler CreateSut(
         FakeVendorPmsParkingResolutionClient vendorClient,
-        RecordingIntegrationEventPublisher? eventPublisher = null)
+        RecordingIntegrationEventPublisher? eventPublisher = null,
+        IVendorSessionProjectionLookupService? projectionLookup = null,
+        VendorSessionProjectionOptions? projectionOptions = null,
+        ISystemClock? clock = null)
     {
         return new ResolveVendorParkingHandler(
             vendorClient,
             new PassThroughVendorParkingResolutionPersistence(),
             eventPublisher ?? new RecordingIntegrationEventPublisher(),
             new CentralPmsMetrics(),
-            NullLogger<ResolveVendorParkingHandler>.Instance);
+            NullLogger<ResolveVendorParkingHandler>.Instance,
+            projectionLookup,
+            Options.Create(projectionOptions ?? new VendorSessionProjectionOptions()),
+            clock);
     }
 
     private static CreateOrReusePaymentAttemptHandler CreatePaymentAttemptSut(
@@ -445,6 +537,43 @@ public sealed class ResolveVendorParkingHandlerTests
             TicketReference = "TICKET-001",
             CorrelationId = CorrelationId
         };
+    }
+
+    private static VendorSessionProjection FreshProjection()
+    {
+        return new VendorSessionProjection(
+            Guid.Parse("99999999-0000-0000-0000-000000000001"),
+            VendorSystemId: Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+            SiteId: null,
+            SiteGroupId: null,
+            ParkingLotIndexCode: "LOT-1",
+            ParkingLotName: "Main Lot",
+            PassagewayIndexCode: "PASS-1",
+            PassagewayName: "Entry Passageway",
+            LaneIndexCode: "LANE-1",
+            LaneName: "Lane 1",
+            LaneDirection: "ENTRY",
+            VendorRecordGuid: "REC-FALLBACK",
+            CardNum: "TICKET-001",
+            PlateLicense: null,
+            EnterTime: Now.AddHours(-1),
+            ExitTime: null,
+            AllowType: "TEMP",
+            AllowResult: "ALLOW",
+            ImageUrl: null,
+            SourceApi: "/artemis/api/vehicle/v1/parkinglot/passageway/record",
+            SourcePayloadHash: new string('a', 64),
+            SourcePayloadReference: "REC-FALLBACK",
+            SourceEventAt: Now.AddHours(-1),
+            StableIdentityType: "VENDOR_RECORD_GUID",
+            StableIdentityKey: "HIKCENTRAL|GUID|REC-FALLBACK",
+            FirstSeenAt: Now.AddMinutes(-5),
+            LastSeenAt: Now.AddMinutes(-5),
+            LastRefreshedAt: Now.AddMinutes(-5),
+            ProjectionStatus: VendorSessionProjectionStatus.Active,
+            CorrelationId: CorrelationId,
+            CreatedAt: Now.AddMinutes(-5),
+            UpdatedAt: Now.AddMinutes(-5));
     }
 
     private sealed class FakeVendorPmsParkingResolutionClient : IVendorPmsParkingResolutionClient
@@ -564,6 +693,27 @@ public sealed class ResolveVendorParkingHandlerTests
                 new VendorParkingSessionLookupResponse(VendorParkingLookupStatus.Found, session, null, false, CorrelationId),
                 new VendorTariffQuoteResponse(VendorParkingLookupStatus.Found, tariffQuote, null, false, CorrelationId));
         }
+    }
+
+    private sealed class RecordingProjectionLookupService(VendorSessionProjection? projection)
+        : IVendorSessionProjectionLookupService
+    {
+        public int Calls { get; private set; }
+
+        public Task<VendorSessionProjectionLookupResult> LookupAsync(
+            VendorSessionProjectionLookupQuery query,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(projection is null
+                ? VendorSessionProjectionLookupResult.NotFound(query.CorrelationId)
+                : VendorSessionProjectionLookupResult.FoundProjection(projection, query.RequestedAt, query.CorrelationId));
+        }
+    }
+
+    private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
     }
 
     private sealed class PassThroughVendorParkingResolutionPersistence : IVendorParkingResolutionPersistence

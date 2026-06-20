@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
+using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
 
@@ -18,6 +19,7 @@ namespace ExitPass.CentralPms.Application.VendorParking;
 /// <param name="SiteName">Business-friendly site name resolved from canonical site data.</param>
 /// <param name="PaymentStatus">Current payment status display value derived from authoritative payment attempts.</param>
 /// <param name="EffectivePayableBasis">Applied statutory discount payable-basis summary when present.</param>
+/// <param name="ProjectionFallback">Non-authoritative projection snapshot metadata when live vendor lookup is unavailable.</param>
 public sealed record ResolveVendorParkingResult(
     ResolveVendorParkingOutcome Outcome,
     ParkingSession? ParkingSession,
@@ -29,7 +31,8 @@ public sealed record ResolveVendorParkingResult(
     string? SiteGroupName,
     string? SiteName,
     string? PaymentStatus,
-    EffectivePayableBasisSummary? EffectivePayableBasis)
+    EffectivePayableBasisSummary? EffectivePayableBasis,
+    VendorSessionProjectionLookupResult? ProjectionFallback)
 {
     /// <summary>
     /// Creates a successful vendor parking resolution result.
@@ -64,7 +67,8 @@ public sealed record ResolveVendorParkingResult(
             siteGroupName,
             siteName,
             paymentStatus,
-            effectivePayableBasis);
+            effectivePayableBasis,
+            ProjectionFallback: null);
     }
 
     /// <summary>
@@ -83,6 +87,30 @@ public sealed record ResolveVendorParkingResult(
         Guid correlationId,
         string? vendorSystemId = null)
     {
-        return new ResolveVendorParkingResult(outcome, null, null, errorCode, retryable, correlationId, vendorSystemId, null, null, null, null);
+        return new ResolveVendorParkingResult(outcome, null, null, errorCode, retryable, correlationId, vendorSystemId, null, null, null, null, null);
+    }
+
+    /// <summary>
+    /// Creates a degraded result carrying a non-authoritative projection snapshot.
+    /// </summary>
+    public static ResolveVendorParkingResult ProjectionSnapshot(
+        VendorSessionProjectionLookupResult projection,
+        string errorCode,
+        Guid correlationId,
+        string? vendorSystemId = null)
+    {
+        return new ResolveVendorParkingResult(
+            ResolveVendorParkingOutcome.ProjectionSnapshotAvailable,
+            ParkingSession: null,
+            TariffSnapshot: null,
+            errorCode,
+            Retryable: true,
+            correlationId,
+            vendorSystemId,
+            SiteGroupName: null,
+            SiteName: null,
+            PaymentStatus: null,
+            EffectivePayableBasis: null,
+            projection);
     }
 }

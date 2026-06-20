@@ -46,6 +46,7 @@ public static class CentralPmsVendorPmsAdapterRegistration
     private static IServiceCollection AddMockVendorPmsAdapter(IServiceCollection services)
     {
         services.AddScoped<IVendorPmsParkingResolutionClient, MockVendorPmsParkingResolutionClient>();
+        services.AddScoped<IVendorSessionProjectionSyncService, DisabledVendorSessionProjectionSyncService>();
         return services;
     }
 
