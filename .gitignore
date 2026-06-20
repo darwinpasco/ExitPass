@@ -51,3 +51,5 @@ src/Services/WebPayUi/.vite/
 !/scripts/hikcentral/
 /scripts/hikcentral/*
 !/scripts/hikcentral/Invoke-HikCentralVendorAckUat.ps1
+
+.local/

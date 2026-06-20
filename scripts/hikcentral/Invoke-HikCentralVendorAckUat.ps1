@@ -50,6 +50,14 @@ param(
 
     [switch] $SkipOpsEndpointCheck,
 
+    [switch] $UseDockerPsql,
+
+    [string] $DockerContainerName = "exitpass-postgres",
+
+    [string] $DockerDatabaseName = "exitpass_v12_dev",
+
+    [string] $DockerDatabaseUser = "exitpass",
+
     [switch] $OutputJson
 )
 
@@ -394,6 +402,28 @@ function Get-DbSettings {
 
 function Invoke-PsqlRows {
     param([string] $Sql)
+
+    if ($UseDockerPsql) {
+        $args = @(
+            "exec",
+            "-i",
+            $DockerContainerName,
+            "psql",
+            "-U", $DockerDatabaseUser,
+            "-d", $DockerDatabaseName,
+            "-v", "ON_ERROR_STOP=1",
+            "-t",
+            "-A",
+            "-f", "-"
+        )
+
+        $output = $Sql | & docker @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "docker exec psql failed with exit code $LASTEXITCODE."
+        }
+
+        return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
 
     $settings = Get-DbSettings
     $psql = Get-Command "psql" -ErrorAction SilentlyContinue
