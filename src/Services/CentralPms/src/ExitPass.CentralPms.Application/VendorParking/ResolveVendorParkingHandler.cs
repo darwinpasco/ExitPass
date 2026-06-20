@@ -2,10 +2,13 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Observability;
+using ExitPass.CentralPms.Application.VendorSessions;
+using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Application.VendorParking;
@@ -23,6 +26,9 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     private readonly IIntegrationEventPublisher _eventPublisher;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<ResolveVendorParkingHandler> _logger;
+    private readonly IVendorSessionProjectionLookupService? _projectionLookupService;
+    private readonly VendorSessionProjectionOptions _projectionOptions;
+    private readonly ISystemClock? _clock;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ResolveVendorParkingHandler"/> class.
@@ -32,18 +38,27 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
     /// <param name="eventPublisher">Integration event publisher for successful Central PMS state changes.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
+    /// <param name="projectionLookupService">Optional projection lookup service for degraded-mode visibility.</param>
+    /// <param name="projectionOptions">Projection scheduler/fallback options.</param>
+    /// <param name="clock">Optional clock used for projection freshness checks.</param>
     public ResolveVendorParkingHandler(
         IVendorPmsParkingResolutionClient vendorClient,
         IVendorParkingResolutionPersistence persistence,
         IIntegrationEventPublisher eventPublisher,
         CentralPmsMetrics metrics,
-        ILogger<ResolveVendorParkingHandler> logger)
+        ILogger<ResolveVendorParkingHandler> logger,
+        IVendorSessionProjectionLookupService? projectionLookupService = null,
+        IOptions<VendorSessionProjectionOptions>? projectionOptions = null,
+        ISystemClock? clock = null)
     {
         _vendorClient = vendorClient;
         _persistence = persistence;
         _eventPublisher = eventPublisher;
         _metrics = metrics;
         _logger = logger;
+        _projectionLookupService = projectionLookupService;
+        _projectionOptions = projectionOptions?.Value ?? new VendorSessionProjectionOptions();
+        _clock = clock;
     }
 
     /// <inheritdoc />
@@ -85,6 +100,19 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
 
         if (sessionResponse.Status != VendorParkingLookupStatus.Found)
         {
+            if (sessionResponse.Status == VendorParkingLookupStatus.UnavailableRetryable)
+            {
+                var projectionFallback = await TryResolveProjectionFallbackAsync(
+                    command,
+                    sessionResponse,
+                    cancellationToken);
+
+                if (projectionFallback is not null)
+                {
+                    return projectionFallback;
+                }
+            }
+
             return CompleteFailure(
                 activity,
                 MapOutcome(sessionResponse.Status),
@@ -275,6 +303,55 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             retryable);
 
         return ResolveVendorParkingResult.Failed(outcome, errorCode, retryable, correlationId, vendorSystemId);
+    }
+
+    private async Task<ResolveVendorParkingResult?> TryResolveProjectionFallbackAsync(
+        ResolveVendorParkingCommand command,
+        VendorParkingSessionLookupResponse sessionResponse,
+        CancellationToken cancellationToken)
+    {
+        if (!_projectionOptions.DegradedResolveFallbackEnabled || _projectionLookupService is null)
+        {
+            return null;
+        }
+
+        var requestedAt = _clock?.UtcNow ?? DateTimeOffset.UtcNow;
+        var lookup = await _projectionLookupService.LookupAsync(
+            new VendorSessionProjectionLookupQuery(
+                CardNum: Normalize(command.TicketReference),
+                PlateLicense: Normalize(command.PlateNumber),
+                SiteId: ParseOptionalGuid(command.SiteId),
+                SiteGroupId: ParseOptionalGuid(command.SiteGroupId),
+                ParkingLotIndexCode: null,
+                requestedAt,
+                sessionResponse.CorrelationId),
+            cancellationToken);
+
+        if (!lookup.Found || lookup.Projection is null)
+        {
+            return null;
+        }
+
+        var maxAge = _projectionOptions.EffectiveMaxProjectionAge();
+        if (lookup.FreshnessAge is null || lookup.FreshnessAge > maxAge)
+        {
+            _logger.LogWarning(
+                "Vendor projection fallback found stale snapshot and will not return it as usable continuity data. freshness_age_seconds={FreshnessAgeSeconds} max_age_seconds={MaxAgeSeconds}",
+                lookup.FreshnessAge?.TotalSeconds,
+                maxAge.TotalSeconds);
+            return null;
+        }
+
+        _logger.LogWarning(
+            "Vendor parking live lookup unavailable; returning non-authoritative projection snapshot metadata. projection_id={ProjectionId} freshness_age_seconds={FreshnessAgeSeconds}",
+            lookup.Projection.VendorSessionProjectionId,
+            lookup.FreshnessAge.Value.TotalSeconds);
+
+        return ResolveVendorParkingResult.ProjectionSnapshot(
+            lookup,
+            "VENDOR_UNAVAILABLE_PROJECTION_SNAPSHOT_AVAILABLE",
+            sessionResponse.CorrelationId,
+            sessionResponse.Session?.VendorProviderCode ?? command.VendorSystemId);
     }
 
     private static ResolveVendorParkingOutcome MapOutcome(VendorParkingLookupStatus status)

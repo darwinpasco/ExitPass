@@ -1121,6 +1121,54 @@ COMMENT ON COLUMN sessions.vendor_session_projections.updated_at IS 'Last update
 COMMENT ON COLUMN sessions.vendor_session_projections.updated_by_service_identity_id IS 'Service identity that last updated the projection.';
 COMMENT ON COLUMN sessions.vendor_session_projections.row_version IS 'Optimistic concurrency version.';
 
+-- sessions.vendor_session_projection_sync_targets
+CREATE TABLE IF NOT EXISTS sessions.vendor_session_projection_sync_targets (
+    projection_sync_target_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    site_id uuid NOT NULL,
+    site_group_id uuid NOT NULL,
+    vendor_system_id uuid NOT NULL,
+    parking_lot_index_code text NOT NULL,
+    parking_lot_name text NULL,
+    enabled_flag boolean DEFAULT true NOT NULL,
+    poll_interval_seconds integer DEFAULT 300 NOT NULL,
+    lookback_window_minutes integer DEFAULT 180 NOT NULL,
+    page_size integer DEFAULT 100 NOT NULL,
+    last_success_at timestamptz NULL,
+    last_failure_at timestamptz NULL,
+    last_attempt_at timestamptz NULL,
+    health_status text DEFAULT 'UNKNOWN' NOT NULL,
+    failure_count integer DEFAULT 0 NOT NULL,
+    last_error_code text NULL,
+    last_error_message text NULL,
+    correlation_id uuid NULL,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    updated_at timestamptz DEFAULT now() NOT NULL,
+    row_version integer DEFAULT 1 NOT NULL,
+    CONSTRAINT pk_vendor_session_projection_sync_targets PRIMARY KEY (projection_sync_target_id)
+);
+COMMENT ON TABLE sessions.vendor_session_projection_sync_targets IS 'Site-scoped HikCentral vendor session projection scheduler targets. This table configures refresh of continuity snapshots and is not parking-session authority, tariff authority, payment finality, or exit authorization.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.projection_sync_target_id IS 'Canonical identifier of the projection sync target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.site_id IS 'ExitPass site scope for this projection sync target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.site_group_id IS 'ExitPass site group scope for this projection sync target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.vendor_system_id IS 'Vendor PMS that supplies passageway records for this target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.parking_lot_index_code IS 'HikCentral parking lot index code scoped to this target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.parking_lot_name IS 'Optional HikCentral parking lot display name.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.enabled_flag IS 'Whether the centralized scheduler may run this target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.poll_interval_seconds IS 'Minimum interval between scheduled attempts for this target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.lookback_window_minutes IS 'Lookback window used for passageway record pulls.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.page_size IS 'Vendor API page size used for passageway record pulls.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_success_at IS 'Last successful projection sync completion timestamp.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_failure_at IS 'Last failed projection sync completion timestamp.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_attempt_at IS 'Last projection sync attempt timestamp.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.health_status IS 'Operational target health: HEALTHY, DEGRADED, FAILING, DISABLED, or UNKNOWN.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.failure_count IS 'Consecutive failure count for this target.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_error_code IS 'Last sync error code, when failed.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_error_message IS 'Last sync error message, when failed.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.correlation_id IS 'Correlation identifier for the last scheduler/manual attempt.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.created_at IS 'Record creation timestamp.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.updated_at IS 'Last update timestamp.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.row_version IS 'Optimistic concurrency version.';
+
 -- ------------------------------------------------------------
 -- sessions.session_identifier_indexes
 -- ------------------------------------------------------------
@@ -4190,6 +4238,9 @@ ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT fk_vendor_session
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT fk_vendor_session_projections__site_group_id FOREIGN KEY (site_group_id) REFERENCES sites.site_groups(site_group_id) DEFERRABLE INITIALLY IMMEDIATE;
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT fk_vendor_session_projections__created_by_service_identity_id FOREIGN KEY (created_by_service_identity_id) REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE;
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT fk_vendor_session_projections__updated_by_service_identity_id FOREIGN KEY (updated_by_service_identity_id) REFERENCES identity.service_identities(service_identity_id) DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT fk_vendor_session_projection_sync_targets__site_id FOREIGN KEY (site_id) REFERENCES sites.sites(site_id) DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT fk_vendor_session_projection_sync_targets__site_group_id FOREIGN KEY (site_group_id) REFERENCES sites.site_groups(site_group_id) DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT fk_vendor_session_projection_sync_targets__vendor_system_id FOREIGN KEY (vendor_system_id) REFERENCES integration.vendor_systems(vendor_system_id) DEFERRABLE INITIALLY IMMEDIATE;
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT fk_session_identifier_indexes__parking_session_id FOREIGN KEY (parking_session_id) REFERENCES core.parking_sessions(parking_session_id) DEFERRABLE INITIALLY IMMEDIATE;
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT fk_session_identifier_indexes__site_group_id FOREIGN KEY (site_group_id) REFERENCES sites.site_groups(site_group_id) DEFERRABLE INITIALLY IMMEDIATE;
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT fk_session_identifier_indexes__site_id FOREIGN KEY (site_id) REFERENCES sites.sites(site_id) DEFERRABLE INITIALLY IMMEDIATE;
@@ -4601,6 +4652,13 @@ ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session_projections__source_payload_hash_sha256 CHECK (source_payload_hash ~ '^[0-9a-f]{64}$');
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session_projections__stable_identity_required CHECK (length(btrim(stable_identity_type)) > 0 AND length(btrim(stable_identity_key)) > 0);
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session_projections__seen_window CHECK (last_seen_at >= first_seen_at AND last_refreshed_at >= first_seen_at);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__row_version_positive CHECK (row_version > 0);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__health_status CHECK (health_status IN ('HEALTHY', 'DEGRADED', 'FAILING', 'DISABLED', 'UNKNOWN'));
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__parking_lot_required CHECK (length(btrim(parking_lot_index_code)) > 0);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__poll_interval_positive CHECK (poll_interval_seconds > 0);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__lookback_positive CHECK (lookback_window_minutes > 0);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__page_size_bounds CHECK (page_size BETWEEN 1 AND 500);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__failure_count_non_negative CHECK (failure_count >= 0);
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT ck_session_identifier_indexes__row_version_positive CHECK (row_version > 0);
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT ck_session_identifier_indexes__effective_window CHECK (effective_to IS NULL OR effective_to > effective_from);
 ALTER TABLE coupons.coupons ADD CONSTRAINT ck_coupons__row_version_positive CHECK (row_version > 0);
@@ -4827,6 +4885,10 @@ ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT uq_vendor_session
 CREATE UNIQUE INDEX IF NOT EXISTS ux_vendor_session_projections__vendor_record_guid
 ON sessions.vendor_session_projections (vendor_record_guid)
 WHERE vendor_record_guid IS NOT NULL;
+
+-- sessions.vendor_session_projection_sync_targets
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vendor_session_projection_sync_targets__scope
+ON sessions.vendor_session_projection_sync_targets (site_id, vendor_system_id, parking_lot_index_code);
 
 -- sessions.session_identifier_indexes
 CREATE UNIQUE INDEX IF NOT EXISTS ux_session_identifier_indexes__active_scope_without_site
@@ -5085,6 +5147,12 @@ CREATE INDEX IF NOT EXISTS ix_vendor_session_projections__status_refreshed ON se
 CREATE INDEX IF NOT EXISTS ix_vendor_session_projections__active_open ON sessions.vendor_session_projections (parking_lot_index_code, last_refreshed_at DESC) WHERE projection_status = 'ACTIVE';
 CREATE INDEX IF NOT EXISTS ix_vendor_session_projections__last_refreshed_at ON sessions.vendor_session_projections (last_refreshed_at);
 CREATE INDEX IF NOT EXISTS ix_vendor_session_projections__correlation_id ON sessions.vendor_session_projections (correlation_id) WHERE correlation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_vendor_session_projection_sync_targets__enabled_due ON sessions.vendor_session_projection_sync_targets (enabled_flag, last_attempt_at, poll_interval_seconds) WHERE enabled_flag = TRUE;
+CREATE INDEX IF NOT EXISTS ix_vendor_session_projection_sync_targets__site ON sessions.vendor_session_projection_sync_targets (site_id);
+CREATE INDEX IF NOT EXISTS ix_vendor_session_projection_sync_targets__parking_lot ON sessions.vendor_session_projection_sync_targets (parking_lot_index_code);
+CREATE INDEX IF NOT EXISTS ix_vendor_session_projection_sync_targets__vendor_system ON sessions.vendor_session_projection_sync_targets (vendor_system_id);
+CREATE INDEX IF NOT EXISTS ix_vendor_session_projection_sync_targets__health ON sessions.vendor_session_projection_sync_targets (health_status, last_success_at DESC, last_failure_at DESC);
+CREATE INDEX IF NOT EXISTS ix_vendor_session_projection_sync_targets__correlation_id ON sessions.vendor_session_projection_sync_targets (correlation_id) WHERE correlation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_session_identifier_indexes__parking_session_id ON sessions.session_identifier_indexes (parking_session_id);
 CREATE INDEX IF NOT EXISTS ix_session_identifier_indexes__site_group_id ON sessions.session_identifier_indexes (site_group_id);
 CREATE INDEX IF NOT EXISTS ix_session_identifier_indexes__site_id ON sessions.session_identifier_indexes (site_id);

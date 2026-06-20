@@ -22,6 +22,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Endpoints;
 using ExitPass.CentralPms.Api.Security;
+using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
@@ -125,6 +126,7 @@ app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
+app.MapInternalVendorSessionProjectionEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
@@ -310,11 +312,17 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
     builder.Services.AddCentralPmsVendorPmsAdapter(builder.Configuration);
+    builder.Services.Configure<VendorSessionProjectionOptions>(
+        builder.Configuration.GetSection(VendorSessionProjectionOptions.SectionName));
     builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionRepository>(_ =>
         new PostgresVendorSessionProjectionRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IVendorSessionProjectionSyncTargetRepository>(_ =>
+        new PostgresVendorSessionProjectionSyncTargetRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionLookupService, VendorSessionProjectionLookupService>();
+    builder.Services.AddScoped<IVendorSessionProjectionSyncOrchestrator, VendorSessionProjectionSyncOrchestrator>();
+    builder.Services.AddHostedService<VendorSessionProjectionSchedulerHostedService>();
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
     builder.Services.AddCentralPmsEventPublishing(builder.Configuration, mainDatabaseConnectionString);
