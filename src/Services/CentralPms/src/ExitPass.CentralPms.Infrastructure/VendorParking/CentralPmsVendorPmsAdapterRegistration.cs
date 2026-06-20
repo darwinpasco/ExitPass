@@ -1,8 +1,11 @@
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorSessions;
+using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.VendorPmsAdapter.Application.Parking;
 using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ExitPass.CentralPms.Infrastructure.VendorParking;
 
@@ -75,6 +78,18 @@ public static class CentralPmsVendorPmsAdapterRegistration
                 serviceProvider.GetRequiredService<IHikCentralRequestSigner>(),
                 hikCentralOptions.UserId ?? "exitpass-adapter");
         });
+        services.AddSingleton<IHikCentralPassagewayRecordClient>(serviceProvider =>
+            new HikCentralPassagewayRecordClient(
+                new HttpClient
+                {
+                    BaseAddress = new Uri(hikCentralOptions.BaseUrl!, UriKind.Absolute),
+                    Timeout = TimeSpan.FromSeconds(20)
+                },
+                serviceProvider.GetRequiredService<IHikCentralRequestSigner>(),
+                hikCentralOptions.UserId ?? "exitpass-adapter",
+                serviceProvider.GetService<ILogger<HikCentralPassagewayRecordClient>>()));
+        services.AddSingleton<HikCentralPassagewayProjectionNormalizer>();
+        services.AddScoped<IVendorSessionProjectionSyncService, HikCentralVendorSessionProjectionSyncService>();
 
         services.AddScoped<IVendorPmsParkingResolutionClient, HikCentralVendorPmsParkingResolutionClient>();
         return services;

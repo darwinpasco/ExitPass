@@ -525,6 +525,15 @@ ON CONFLICT ON CONSTRAINT uq_vendor_endpoints__vendor_endpoint_code DO UPDATE SE
   timeout_policy_code = EXCLUDED.timeout_policy_code, retry_policy_code = EXCLUDED.retry_policy_code, rate_limit_policy_code = EXCLUDED.rate_limit_policy_code,
   endpoint_status = EXCLUDED.endpoint_status, updated_at = now(), updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id;
 INSERT INTO integration.vendor_endpoints (vendor_endpoint_id, vendor_system_id, endpoint_code, endpoint_name, endpoint_description, endpoint_type, http_method, path_template, operation_ref, timeout_policy_code, retry_policy_code, rate_limit_policy_code, endpoint_status, effective_from, created_by_service_identity_id, updated_by_service_identity_id)
+SELECT '94ea77cd-3f75-50cb-9556-e4673788d48a', vs.vendor_system_id, 'PASSAGEWAY_RECORD', 'HikCentral Passageway Record', 'Local development endpoint metadata for HIKCENTRAL_DEV.PASSAGEWAY_RECORD projection source.', 'OTHER', 'POST', '/artemis/api/vehicle/v1/parkinglot/passageway/record', 'HIKCENTRAL_DEV.PASSAGEWAY_RECORD', 'DEFAULT_TIMEOUT', 'DEFAULT_RETRY', 'SERVICE_TO_SERVICE_DEFAULT', 'ACTIVE', now(), '1f2ffdfb-c4a9-5a00-a656-9f3a132b1978', '1f2ffdfb-c4a9-5a00-a656-9f3a132b1978'
+FROM integration.vendor_systems vs
+WHERE vs.vendor_code = 'HIKCENTRAL_DEV' AND vs.environment_code = 'DEV'
+ON CONFLICT ON CONSTRAINT uq_vendor_endpoints__vendor_endpoint_code DO UPDATE SET
+  endpoint_name = EXCLUDED.endpoint_name, endpoint_description = EXCLUDED.endpoint_description, endpoint_type = EXCLUDED.endpoint_type,
+  http_method = EXCLUDED.http_method, path_template = EXCLUDED.path_template, operation_ref = EXCLUDED.operation_ref,
+  timeout_policy_code = EXCLUDED.timeout_policy_code, retry_policy_code = EXCLUDED.retry_policy_code, rate_limit_policy_code = EXCLUDED.rate_limit_policy_code,
+  endpoint_status = EXCLUDED.endpoint_status, updated_at = now(), updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id;
+INSERT INTO integration.vendor_endpoints (vendor_endpoint_id, vendor_system_id, endpoint_code, endpoint_name, endpoint_description, endpoint_type, http_method, path_template, operation_ref, timeout_policy_code, retry_policy_code, rate_limit_policy_code, endpoint_status, effective_from, created_by_service_identity_id, updated_by_service_identity_id)
 SELECT 'cfc3656e-700a-5621-b048-5e2fbfc41c15', vs.vendor_system_id, 'CHECKOUT_SESSION_CREATE', 'Create Checkout Session', 'Local development endpoint metadata for PAYMONGO_DEV.CHECKOUT_SESSION_CREATE.', 'PAYMENT_CREATE', 'POST', '/v1/checkout_sessions', 'PAYMONGO_DEV.CHECKOUT_SESSION_CREATE', 'DEFAULT_TIMEOUT', 'DEFAULT_RETRY', 'SERVICE_TO_SERVICE_DEFAULT', 'ACTIVE', now(), '1f2ffdfb-c4a9-5a00-a656-9f3a132b1978', '1f2ffdfb-c4a9-5a00-a656-9f3a132b1978'
 FROM integration.vendor_systems vs
 WHERE vs.vendor_code = 'PAYMONGO_DEV' AND vs.environment_code = 'DEV'
