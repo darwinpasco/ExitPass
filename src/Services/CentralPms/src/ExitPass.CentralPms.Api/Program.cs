@@ -33,6 +33,7 @@ using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
@@ -46,6 +47,7 @@ using ExitPass.CentralPms.Infrastructure.Operations;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.Security;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
+using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -310,6 +312,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddCentralPmsVendorPmsAdapter(builder.Configuration);
     builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IVendorSessionProjectionRepository>(_ =>
+        new PostgresVendorSessionProjectionRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IVendorSessionProjectionLookupService, VendorSessionProjectionLookupService>();
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();
     builder.Services.AddCentralPmsEventPublishing(builder.Configuration, mainDatabaseConnectionString);
