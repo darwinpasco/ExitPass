@@ -8,6 +8,10 @@
     attempt, reports controlled verified payment finality, verifies database evidence, and checks
     the read-only ops monitoring endpoint.
 
+    -ResetUatData is for local/UAT only. It requires the deterministic 279F UAT site
+    identifiers and cleans HikCentral records for the exact supplied card/ticket reference,
+    including older dynamic-site UAT sessions.
+
     Modes:
       - EnabledConfirm: requires HIKCENTRAL_CONFIRM_PAYMENT_ENABLED=true and explicitly confirms
         an operator-controlled live ticket. HikCentral gate open must remain disabled.
@@ -30,7 +34,7 @@ param(
 
     [string] $CentralPmsBaseUrl = "http://127.0.0.1:8080",
 
-    [string] $PaymentProvider = "GCASH",
+    [string] $PaymentProvider = "PAYMONGO_CHECKOUT_SESSION",
 
     [string] $RequestedBy = "controlled-hikcentral-vendor-ack-uat",
 
@@ -50,11 +54,27 @@ param(
 
     [switch] $SkipOpsEndpointCheck,
 
+    [switch] $UseDockerPsql,
+
+    [string] $DockerContainerName = "exitpass-postgres",
+
+    [string] $DockerDatabaseName = "exitpass_v12_dev",
+
+    [string] $DockerDatabaseUser = "exitpass",
+
+    [switch] $ResetUatData,
+
     [switch] $OutputJson
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$DefaultUatSiteGroupId = "77000000-0000-0000-0000-000000000001"
+$DefaultUatSiteId = "77000000-0000-0000-0000-000000000002"
+$UatCorrelationPrefix = "uat-279f-"
+$UatPayMongoCheckoutRailId = "12000000-0000-0000-0000-000000000205"
+$UatPaymentRoutingPolicyId = "77000000-0000-0000-0000-000000000279"
 
 function Get-RequiredEnv {
     param([string] $Name)
@@ -395,6 +415,28 @@ function Get-DbSettings {
 function Invoke-PsqlRows {
     param([string] $Sql)
 
+    if ($UseDockerPsql) {
+        $args = @(
+            "exec",
+            "-i",
+            $DockerContainerName,
+            "psql",
+            "-U", $DockerDatabaseUser,
+            "-d", $DockerDatabaseName,
+            "-v", "ON_ERROR_STOP=1",
+            "-t",
+            "-A",
+            "-f", "-"
+        )
+
+        $output = $Sql | & docker @args
+        if ($LASTEXITCODE -ne 0) {
+            throw "docker exec psql failed with exit code $LASTEXITCODE."
+        }
+
+        return @($output | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    }
+
     $settings = Get-DbSettings
     $psql = Get-Command "psql" -ErrorAction SilentlyContinue
     if ($null -eq $psql) {
@@ -434,6 +476,16 @@ function Invoke-PsqlJsonRows {
     return @($lines | ForEach-Object { $_ | ConvertFrom-Json })
 }
 
+function ConvertTo-SqlLiteral {
+    param([string] $Value)
+
+    if ($null -eq $Value) {
+        return "NULL"
+    }
+
+    return "'" + ($Value -replace "'", "''") + "'"
+}
+
 function Assert-DatabaseShape {
     $sql = @"
 SELECT row_to_json(q)
@@ -443,7 +495,9 @@ FROM (
         to_regclass('core.payment_attempts') IS NOT NULL AS payment_attempts_exists,
         to_regclass('core.payment_confirmations') IS NOT NULL AS payment_confirmations_exists,
         to_regclass('core.exit_authorizations') IS NOT NULL AS exit_authorizations_exists,
-        to_regclass('integration.vendor_payment_acknowledgments') IS NOT NULL AS vendor_acknowledgments_exists
+        to_regclass('integration.vendor_payment_acknowledgments') IS NOT NULL AS vendor_acknowledgments_exists,
+        to_regclass('payments.payment_rails') IS NOT NULL AS payment_rails_exists,
+        to_regclass('payments.payment_provider_routing_policies') IS NOT NULL AS payment_provider_routing_policies_exists
 ) q;
 "@
     $shape = @(Invoke-PsqlJsonRows $sql)[0]
@@ -452,6 +506,321 @@ FROM (
             throw "Stop: live database schema is not aligned. Missing relation check failed: $($property.Name)"
         }
     }
+}
+
+function Invoke-UatResetAndSetup {
+    param(
+        [string] $SiteGroupId,
+        [string] $SiteId,
+        [string] $CardNum
+    )
+
+    if ($SiteGroupId -ne $DefaultUatSiteGroupId -or $SiteId -ne $DefaultUatSiteId) {
+        throw "Refusing -ResetUatData because SiteGroupId/SiteId are not the deterministic local UAT IDs."
+    }
+
+    $siteGroupSql = ConvertTo-SqlLiteral $SiteGroupId
+    $siteSql = ConvertTo-SqlLiteral $SiteId
+    $cardSql = ConvertTo-SqlLiteral $CardNum
+    $prefixSql = ConvertTo-SqlLiteral $UatCorrelationPrefix
+    $railIdSql = ConvertTo-SqlLiteral $UatPayMongoCheckoutRailId
+    $routingPolicyIdSql = ConvertTo-SqlLiteral $UatPaymentRoutingPolicyId
+
+    # LOCAL/UAT ONLY: This reset is authorized only for the deterministic 279F
+    # UAT site. Cleanup discovery also includes older dynamic-site UAT sessions
+    # for the exact supplied HikCentral card/ticket reference.
+    $sql = @"
+WITH constants AS (
+    SELECT
+        $siteGroupSql::uuid AS site_group_id,
+        $siteSql::uuid AS site_id,
+        $cardSql::text AS card_num,
+        $prefixSql::text AS uat_prefix,
+        $railIdSql::uuid AS payment_rail_id,
+        $routingPolicyIdSql::uuid AS payment_routing_policy_id
+),
+card_matched_hikcentral_sessions AS MATERIALIZED (
+    SELECT DISTINCT ps.parking_session_id
+    FROM constants c
+    JOIN core.parking_sessions ps
+      ON (
+          ps.vendor_session_ref = c.card_num
+          OR ps.ticket_number_masked = c.card_num
+      )
+    JOIN integration.vendor_systems vs
+      ON vs.vendor_system_id = ps.vendor_system_id
+    WHERE vs.vendor_code = 'HIKCENTRAL'
+),
+uat_prefixed_payment_attempt_sessions AS MATERIALIZED (
+    SELECT DISTINCT ps.parking_session_id
+    FROM constants c
+    JOIN core.parking_sessions ps
+      ON (
+          ps.vendor_session_ref = c.card_num
+          OR ps.ticket_number_masked = c.card_num
+      )
+    JOIN integration.vendor_systems vs
+      ON vs.vendor_system_id = ps.vendor_system_id
+    JOIN core.payment_attempts pa
+      ON pa.parking_session_id = ps.parking_session_id
+     AND pa.idempotency_key LIKE c.uat_prefix || '%'
+    WHERE vs.vendor_code = 'HIKCENTRAL'
+),
+scoped_sessions AS MATERIALIZED (
+    SELECT parking_session_id
+    FROM card_matched_hikcentral_sessions
+    UNION
+    SELECT parking_session_id
+    FROM uat_prefixed_payment_attempt_sessions
+),
+legacy_cross_site_sessions AS MATERIALIZED (
+    SELECT ss.parking_session_id
+    FROM scoped_sessions ss
+    JOIN core.parking_sessions ps
+      ON ps.parking_session_id = ss.parking_session_id
+    CROSS JOIN constants c
+    WHERE ps.site_group_id <> c.site_group_id
+       OR ps.site_id <> c.site_id
+),
+deleted_vendor_acknowledgments AS (
+    DELETE FROM integration.vendor_payment_acknowledgments vpa
+    USING scoped_sessions ss
+    WHERE vpa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_exit_authorizations AS (
+    DELETE FROM core.exit_authorizations ea
+    USING scoped_sessions ss, (SELECT count(*) FROM deleted_vendor_acknowledgments) dependency_barrier
+    WHERE ea.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_payment_confirmations AS (
+    DELETE FROM core.payment_confirmations pc
+    USING core.payment_attempts pa,
+          scoped_sessions ss,
+          (SELECT count(*) FROM deleted_exit_authorizations) dependency_barrier
+    WHERE pc.payment_attempt_id = pa.payment_attempt_id
+      AND pa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_provider_outcomes AS (
+    DELETE FROM payments.provider_outcomes po
+    USING core.payment_attempts pa,
+          scoped_sessions ss,
+          (SELECT count(*) FROM deleted_payment_confirmations) dependency_barrier
+    WHERE po.payment_attempt_id = pa.payment_attempt_id
+      AND pa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_provider_status_queries AS (
+    DELETE FROM payments.provider_status_queries psq
+    USING core.payment_attempts pa,
+          scoped_sessions ss,
+          (SELECT count(*) FROM deleted_provider_outcomes) dependency_barrier
+    WHERE psq.payment_attempt_id = pa.payment_attempt_id
+      AND pa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_provider_callbacks AS (
+    DELETE FROM payments.provider_callbacks pcb
+    USING core.payment_attempts pa,
+          scoped_sessions ss,
+          (SELECT count(*) FROM deleted_provider_status_queries) dependency_barrier
+    WHERE pcb.payment_attempt_id = pa.payment_attempt_id
+      AND pa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_provider_sessions AS (
+    DELETE FROM payments.provider_sessions psn
+    USING core.payment_attempts pa,
+          scoped_sessions ss,
+          (SELECT count(*) FROM deleted_provider_callbacks) dependency_barrier
+    WHERE psn.payment_attempt_id = pa.payment_attempt_id
+      AND pa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_payment_attempts AS (
+    DELETE FROM core.payment_attempts pa
+    USING scoped_sessions ss, (SELECT count(*) FROM deleted_provider_sessions) dependency_barrier
+    WHERE pa.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_tariff_snapshots AS (
+    DELETE FROM core.tariff_snapshots ts
+    USING scoped_sessions ss, (SELECT count(*) FROM deleted_payment_attempts) dependency_barrier
+    WHERE ts.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_session_identifier_indexes AS (
+    DELETE FROM sessions.session_identifier_indexes sii
+    USING scoped_sessions ss, (SELECT count(*) FROM deleted_tariff_snapshots) dependency_barrier
+    WHERE sii.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+deleted_parking_sessions AS (
+    DELETE FROM core.parking_sessions ps
+    USING scoped_sessions ss, (SELECT count(*) FROM deleted_session_identifier_indexes) dependency_barrier
+    WHERE ps.parking_session_id = ss.parking_session_id
+    RETURNING 1
+),
+upsert_payment_rail AS (
+    INSERT INTO payments.payment_rails (
+        payment_rail_id,
+        rail_code,
+        rail_name,
+        provider_code,
+        rail_type,
+        supported_currency_code,
+        rail_status,
+        is_primary,
+        is_fallback,
+        provider_profile_ref,
+        configuration_ref,
+        effective_from,
+        effective_to,
+        created_at,
+        updated_at,
+        row_version
+    )
+    SELECT
+        c.payment_rail_id,
+        'PAYMONGO_CHECKOUT_SESSION',
+        'PayMongo Checkout Session',
+        'PAYMONGO',
+        'HOSTED_CHECKOUT',
+        'PHP',
+        'ACTIVE',
+        true,
+        false,
+        'PAYMONGO_TEST',
+        'uat-279f',
+        now() - interval '1 day',
+        NULL,
+        now(),
+        now(),
+        1
+    FROM constants c
+    ON CONFLICT ON CONSTRAINT uq_payment_rails__rail_code DO UPDATE
+    SET
+        rail_name = EXCLUDED.rail_name,
+        provider_code = EXCLUDED.provider_code,
+        rail_type = EXCLUDED.rail_type,
+        supported_currency_code = EXCLUDED.supported_currency_code,
+        rail_status = EXCLUDED.rail_status,
+        is_primary = EXCLUDED.is_primary,
+        is_fallback = EXCLUDED.is_fallback,
+        provider_profile_ref = EXCLUDED.provider_profile_ref,
+        configuration_ref = EXCLUDED.configuration_ref,
+        effective_from = EXCLUDED.effective_from,
+        effective_to = EXCLUDED.effective_to,
+        updated_at = now(),
+        row_version = payments.payment_rails.row_version + 1
+    RETURNING 1
+),
+deleted_duplicate_routing_policies AS (
+    DELETE FROM payments.payment_provider_routing_policies pprp
+    USING constants c, (SELECT count(*) FROM upsert_payment_rail) dependency_barrier
+    WHERE pprp.site_group_id = c.site_group_id
+      AND pprp.site_id = c.site_id
+      AND pprp.payment_method_code = 'PAYMONGO_CHECKOUT_SESSION'
+      AND pprp.currency_code = 'PHP'
+      AND pprp.payment_routing_policy_id <> c.payment_routing_policy_id
+    RETURNING 1
+),
+upsert_routing_policy AS (
+    INSERT INTO payments.payment_provider_routing_policies (
+        payment_routing_policy_id,
+        site_id,
+        site_group_id,
+        payment_method_code,
+        primary_provider_code,
+        fallback_provider_code,
+        currency_code,
+        min_amount_minor_units,
+        max_amount_minor_units,
+        is_enabled,
+        primary_provider_enabled,
+        fallback_provider_enabled,
+        effective_from,
+        effective_until,
+        created_at,
+        updated_at,
+        row_version
+    )
+    SELECT
+        c.payment_routing_policy_id,
+        c.site_id,
+        c.site_group_id,
+        'PAYMONGO_CHECKOUT_SESSION',
+        'PAYMONGO',
+        NULL,
+        'PHP',
+        NULL,
+        NULL,
+        true,
+        true,
+        false,
+        now() - interval '1 day',
+        NULL,
+        now(),
+        now(),
+        1
+    FROM constants c, (SELECT count(*) FROM deleted_duplicate_routing_policies) dependency_barrier
+    ON CONFLICT ON CONSTRAINT pk_payment_provider_routing_policies DO UPDATE
+    SET
+        site_id = EXCLUDED.site_id,
+        site_group_id = EXCLUDED.site_group_id,
+        payment_method_code = EXCLUDED.payment_method_code,
+        primary_provider_code = EXCLUDED.primary_provider_code,
+        fallback_provider_code = EXCLUDED.fallback_provider_code,
+        currency_code = EXCLUDED.currency_code,
+        min_amount_minor_units = EXCLUDED.min_amount_minor_units,
+        max_amount_minor_units = EXCLUDED.max_amount_minor_units,
+        is_enabled = EXCLUDED.is_enabled,
+        primary_provider_enabled = EXCLUDED.primary_provider_enabled,
+        fallback_provider_enabled = EXCLUDED.fallback_provider_enabled,
+        effective_from = EXCLUDED.effective_from,
+        effective_until = EXCLUDED.effective_until,
+        updated_at = now(),
+        row_version = payments.payment_provider_routing_policies.row_version + 1
+    RETURNING 1
+)
+SELECT row_to_json(q)
+FROM (
+    SELECT
+        (SELECT site_group_id::text FROM constants) AS site_group_id,
+        (SELECT site_id::text FROM constants) AS site_id,
+        (SELECT card_num FROM constants) AS card_num,
+        (SELECT uat_prefix FROM constants) AS uat_prefix,
+        (SELECT count(*) FROM card_matched_hikcentral_sessions) AS card_matched_hikcentral_sessions,
+        (SELECT count(*) FROM uat_prefixed_payment_attempt_sessions) AS uat_prefixed_payment_attempt_sessions,
+        (SELECT count(*) FROM scoped_sessions) AS scoped_parking_sessions,
+        (SELECT count(*) FROM legacy_cross_site_sessions) AS legacy_cross_site_uat_sessions,
+        (SELECT count(*) FROM deleted_vendor_acknowledgments) AS deleted_vendor_acknowledgments,
+        (SELECT count(*) FROM deleted_exit_authorizations) AS deleted_exit_authorizations,
+        (SELECT count(*) FROM deleted_payment_confirmations) AS deleted_payment_confirmations,
+        (SELECT count(*) FROM deleted_provider_outcomes) AS deleted_provider_outcomes,
+        (SELECT count(*) FROM deleted_provider_status_queries) AS deleted_provider_status_queries,
+        (SELECT count(*) FROM deleted_provider_callbacks) AS deleted_provider_callbacks,
+        (SELECT count(*) FROM deleted_provider_sessions) AS deleted_provider_sessions,
+        (SELECT count(*) FROM deleted_payment_attempts) AS deleted_payment_attempts,
+        (SELECT count(*) FROM deleted_tariff_snapshots) AS deleted_tariff_snapshots,
+        (SELECT count(*) FROM deleted_session_identifier_indexes) AS deleted_session_identifier_indexes,
+        (SELECT count(*) FROM deleted_parking_sessions) AS deleted_parking_sessions,
+        (SELECT count(*) FROM upsert_payment_rail) AS upserted_payment_rails,
+        (SELECT count(*) FROM deleted_duplicate_routing_policies) AS deleted_duplicate_routing_policies,
+        (SELECT count(*) FROM upsert_routing_policy) AS upserted_routing_policies,
+        'PAYMONGO_CHECKOUT_SESSION' AS seeded_payment_rail_code,
+        'PAYMONGO' AS seeded_primary_provider_code
+) q;
+"@
+
+    $rows = @(Invoke-PsqlJsonRows $sql)
+    if ($rows.Count -ne 1) {
+        throw "Expected exactly one UAT reset/setup result row."
+    }
+
+    return $rows[0]
 }
 
 function Read-Evidence {
@@ -471,7 +840,7 @@ FROM (
         pa.finalized_at,
         pc.payment_confirmation_id::text,
         pc.confirmation_status::text AS payment_confirmation_status,
-        pc.provider_reference,
+        pc.provider_transaction_ref AS provider_reference,
         pc.verified_timestamp,
         ea.exit_authorization_id::text,
         ea.authorization_status::text AS exit_authorization_status,
@@ -613,16 +982,35 @@ Assert-DatabaseShape
 
 $centralPmsBase = $CentralPmsBaseUrl.TrimEnd("/")
 $siteGroup = if ([string]::IsNullOrWhiteSpace($SiteGroupId)) {
-    ConvertTo-CorrelatedGuidString "279f0001" $CorrelationId
+    $DefaultUatSiteGroupId
 }
 else {
     $SiteGroupId
 }
 $site = if ([string]::IsNullOrWhiteSpace($SiteId)) {
-    ConvertTo-CorrelatedGuidString "279f0002" $CorrelationId
+    $DefaultUatSiteId
 }
 else {
     $SiteId
+}
+
+$uatDataSetup = $null
+if ($ResetUatData) {
+    Write-Step "Reset deterministic local UAT data"
+    $uatDataSetup = Invoke-UatResetAndSetup `
+        -SiteGroupId $siteGroup `
+        -SiteId $site `
+        -CardNum $CardNum
+
+    if (-not $OutputJson) {
+        Write-Host "Scoped parking sessions: $($uatDataSetup.scoped_parking_sessions)"
+        Write-Host "Cross-site legacy UAT sessions included: $($uatDataSetup.legacy_cross_site_uat_sessions)"
+        Write-Host "Deleted payment attempts: $($uatDataSetup.deleted_payment_attempts)"
+        Write-Host "Deleted tariff snapshots: $($uatDataSetup.deleted_tariff_snapshots)"
+        Write-Host "Deleted parking sessions: $($uatDataSetup.deleted_parking_sessions)"
+        Write-Host "Seeded payment rail: $($uatDataSetup.seeded_payment_rail_code) ($($uatDataSetup.upserted_payment_rails))"
+        Write-Host "Seeded routing policy: $($uatDataSetup.upserted_routing_policies)"
+    }
 }
 
 $rawCalculate = $null
@@ -741,16 +1129,24 @@ $summary = [ordered]@{
     cardNum = $CardNum
     centralPmsBaseUrl = $centralPmsBase
     correlationId = $CorrelationId
+    deterministicUatScope = [ordered]@{
+        siteGroupId = $siteGroup
+        siteId = $site
+        resetUatData = [bool] $ResetUatData
+        uatCorrelationPrefix = $UatCorrelationPrefix
+        paymentProvider = $PaymentProvider
+    }
     safety = [ordered]@{
         confirmPaymentEnabled = (Get-EnvValue "HIKCENTRAL_CONFIRM_PAYMENT_ENABLED" "")
         gateOpenAllowed = (Get-EnvValue "HIKCENTRAL_GATE_OPEN_ALLOWED" "")
         immediatelyLeave = 0
     }
     commands = [ordered]@{
-        runner = ".\scripts\hikcentral\Invoke-HikCentralVendorAckUat.ps1 -Mode $Mode -CardNum <cardNum> -CentralPmsBaseUrl $CentralPmsBaseUrl"
+        runner = ".\scripts\hikcentral\Invoke-HikCentralVendorAckUat.ps1 -Mode $Mode -CardNum <cardNum> -CentralPmsBaseUrl $CentralPmsBaseUrl$(if ($ResetUatData) { ' -ResetUatData' } else { '' })$(if ($UseDockerPsql) { ' -UseDockerPsql' } else { '' })"
         createPaymentIdempotencyKey = $createPaymentIdempotencyKey
         outcomeIdempotencyKey = $outcomeIdempotencyKey
     }
+    uatDataSetup = $uatDataSetup
     rawHikCentralCalculate = $rawCalculate
     centralPmsResolve = $resolve.Body
     paymentAttempt = $payment.Body
