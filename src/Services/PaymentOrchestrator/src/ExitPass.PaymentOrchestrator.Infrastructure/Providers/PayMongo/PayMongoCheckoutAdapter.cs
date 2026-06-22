@@ -29,7 +29,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Providers.PayMongo;
 /// - PayMongo webhooks must pass signature verification before they are treated as authentic.
 /// - Checkout-session rails must preserve event-type distinctions so non-authoritative events can be safely ignored upstream.
 /// </summary>
-public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
+public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter, IProviderStatusQueryAdapter
 {
     private readonly PayMongoClient _client;
     private readonly PayMongoOptions _options;

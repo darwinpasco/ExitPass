@@ -6,6 +6,7 @@ using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Application.Observability;
 using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
+using ExitPass.PaymentOrchestrator.Application.UseCases.QueryProviderSessionStatus;
 using ExitPass.PaymentOrchestrator.Application.UseCases.VerifyProviderWebhook;
 using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
@@ -218,6 +219,7 @@ static void RegisterApplicationServices(IServiceCollection services)
     ArgumentNullException.ThrowIfNull(services);
 
     services.AddScoped<InitiateProviderPaymentHandler>();
+    services.AddScoped<QueryProviderSessionStatusHandler>();
     services.AddScoped<WebPayPaymentIntentHandler>();
     services.AddScoped<IProviderPaymentHandoffInitiator, ProviderPaymentHandoffInitiator>();
     services.AddSingleton<IProviderProductResolver, ProviderProductResolver>();
@@ -247,6 +249,7 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
 
     services.AddScoped<PayMongoCheckoutAdapter>();
     services.AddScoped<IPaymentProviderAdapter, PayMongoCheckoutAdapter>();
+    services.AddScoped<IProviderStatusQueryAdapter, PayMongoCheckoutAdapter>();
     services.AddSingleton(new PaymentProviderAdapterRegistration(
         ProviderCode: "PAYMONGO",
         ProviderProduct: "PAYMONGO_CHECKOUT_SESSION",
