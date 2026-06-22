@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -75,6 +76,129 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
             handoff,
             providerResponse.ExpiresAtUtc,
             providerResponse.RawJson);
+    }
+
+    /// <summary>
+    /// Queries PayMongo checkout-session status and maps it to provider-neutral evidence.
+    /// </summary>
+    /// <param name="command">The scoped provider status-query command.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>Provider-neutral status-query evidence. This is not platform payment finality.</returns>
+    public async Task<ProviderStatusQueryResult> QueryProviderSessionStatusAsync(
+        ProviderStatusQueryCommand command,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+
+        if (string.IsNullOrWhiteSpace(command.ProviderSessionId))
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_MISSING_PROVIDER_SESSION",
+                "Provider session id is required.",
+                command.CorrelationId);
+        }
+
+        PayMongoCheckoutSessionStatusResponse response;
+        try
+        {
+            response = await _client.RetrieveCheckoutSessionStatusAsync(
+                command.ProviderSessionId,
+                cancellationToken);
+        }
+        catch (PayMongoProviderApiException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_PROVIDER_SESSION_NOT_FOUND",
+                "PayMongo checkout session was not found.",
+                command.CorrelationId,
+                new Dictionary<string, string>
+                {
+                    ["http_status_code"] = ((int)ex.StatusCode).ToString(CultureInfo.InvariantCulture),
+                    ["provider_reason_code"] = ex.ReasonCode
+                });
+        }
+        catch (PayMongoProviderApiException ex) when ((int)ex.StatusCode >= 500)
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: true,
+                "PAYMONGO_STATUS_QUERY_PROVIDER_UNAVAILABLE",
+                "PayMongo status query failed with a retryable provider error.",
+                command.CorrelationId,
+                new Dictionary<string, string>
+                {
+                    ["http_status_code"] = ((int)ex.StatusCode).ToString(CultureInfo.InvariantCulture),
+                    ["provider_reason_code"] = ex.ReasonCode
+                });
+        }
+        catch (PayMongoProviderApiException ex)
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_PROVIDER_REJECTED",
+                "PayMongo status query failed with a non-retryable provider response.",
+                command.CorrelationId,
+                new Dictionary<string, string>
+                {
+                    ["http_status_code"] = ((int)ex.StatusCode).ToString(CultureInfo.InvariantCulture),
+                    ["provider_reason_code"] = ex.ReasonCode
+                });
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: true,
+                "PAYMONGO_STATUS_QUERY_TIMEOUT",
+                "PayMongo status query timed out.",
+                command.CorrelationId);
+        }
+        catch (JsonException)
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_MALFORMED_RESPONSE",
+                "PayMongo status query returned malformed JSON.",
+                command.CorrelationId);
+        }
+        catch (InvalidOperationException)
+        {
+            return CreateStatusQueryFailure(
+                command.ProviderSessionId,
+                command.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_MALFORMED_RESPONSE",
+                "PayMongo status query returned an invalid response shape.",
+                command.CorrelationId);
+        }
+
+        return MapStatusResponse(command, response);
     }
 
     /// <inheritdoc />
@@ -160,6 +284,224 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
             {
                 ["rejection_code"] = rejectionCode
             });
+    }
+
+    private static ProviderStatusQueryResult MapStatusResponse(
+        ProviderStatusQueryCommand command,
+        PayMongoCheckoutSessionStatusResponse response)
+    {
+        if (!string.Equals(command.ProviderSessionId.Trim(), response.CheckoutSessionId, StringComparison.Ordinal))
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                response.ProviderReference,
+                response.SourceStatus,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_PROVIDER_SESSION_MISMATCH",
+                "PayMongo checkout session id did not match the requested provider session.",
+                command.CorrelationId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(command.ProviderReference) &&
+            !string.Equals(command.ProviderReference.Trim(), response.ProviderReference, StringComparison.Ordinal))
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                response.ProviderReference,
+                response.SourceStatus,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_PROVIDER_REFERENCE_MISMATCH",
+                "PayMongo provider reference did not match the expected provider reference.",
+                command.CorrelationId);
+        }
+
+        if (command.ExpectedAmountMinor is not null &&
+            response.AmountMinor is not null &&
+            command.ExpectedAmountMinor.Value != response.AmountMinor.Value)
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                response.ProviderReference,
+                response.SourceStatus,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_AMOUNT_MISMATCH",
+                "PayMongo amount did not match the expected amount.",
+                command.CorrelationId,
+                CreateSafeStatusDiagnostics(response));
+        }
+
+        if (!string.IsNullOrWhiteSpace(command.ExpectedCurrencyCode) &&
+            !string.IsNullOrWhiteSpace(response.CurrencyCode) &&
+            !string.Equals(command.ExpectedCurrencyCode.Trim(), response.CurrencyCode.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                response.ProviderReference,
+                response.SourceStatus,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_CURRENCY_MISMATCH",
+                "PayMongo currency did not match the expected currency.",
+                command.CorrelationId,
+                CreateSafeStatusDiagnostics(response));
+        }
+
+        if (string.IsNullOrWhiteSpace(response.SourceStatus))
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                response.ProviderReference,
+                null,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_MISSING_STATUS",
+                "PayMongo status query response did not include a provider status.",
+                command.CorrelationId,
+                CreateSafeStatusDiagnostics(response));
+        }
+
+        var normalized = MapStatusQuerySourceStatus(response.SourceStatus);
+        if (normalized.Unknown)
+        {
+            return CreateStatusQueryFailure(
+                response.CheckoutSessionId,
+                response.ProviderReference,
+                response.SourceStatus,
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                retryable: false,
+                "PAYMONGO_STATUS_QUERY_UNKNOWN_STATUS",
+                "PayMongo status query returned an unknown provider status.",
+                command.CorrelationId,
+                CreateSafeStatusDiagnostics(response));
+        }
+
+        return new ProviderStatusQueryResult(
+            ProviderCodeConstants.PayMongo,
+            ProviderProductCodeConstants.PayMongoCheckoutSession,
+            response.CheckoutSessionId,
+            response.ProviderReference,
+            response.SourceStatus,
+            normalized.Status,
+            normalized.IsTerminal,
+            normalized.IsSuccess,
+            normalized.Retryable,
+            normalized.ReportableToCentralPms,
+            response.AmountMinor,
+            response.CurrencyCode,
+            response.ObservedAtUtc,
+            command.CorrelationId,
+            null,
+            null,
+            CreateSafeStatusDiagnostics(response));
+    }
+
+    private static ProviderStatusQueryResult CreateStatusQueryFailure(
+        string? providerSessionId,
+        string? providerReference,
+        string? sourceStatus,
+        CanonicalPaymentOutcomeStatus normalizedStatus,
+        bool retryable,
+        string errorCode,
+        string errorMessage,
+        Guid? correlationId,
+        IReadOnlyDictionary<string, string>? diagnostics = null)
+    {
+        return new ProviderStatusQueryResult(
+            ProviderCodeConstants.PayMongo,
+            ProviderProductCodeConstants.PayMongoCheckoutSession,
+            providerSessionId?.Trim() ?? string.Empty,
+            providerReference,
+            sourceStatus,
+            normalizedStatus,
+            IsTerminal: false,
+            IsSuccess: false,
+            Retryable: retryable,
+            ReportableToCentralPms: false,
+            AmountMinor: null,
+            CurrencyCode: null,
+            ProviderObservedAtUtc: null,
+            CorrelationId: correlationId,
+            ErrorCode: errorCode,
+            ErrorMessage: errorMessage,
+            Diagnostics: diagnostics ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static IReadOnlyDictionary<string, string> CreateSafeStatusDiagnostics(
+        PayMongoCheckoutSessionStatusResponse response)
+    {
+        var diagnostics = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["checkout_session_id"] = response.CheckoutSessionId
+        };
+
+        if (!string.IsNullOrWhiteSpace(response.ProviderReference))
+        {
+            diagnostics["provider_reference"] = response.ProviderReference;
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.SourceStatus))
+        {
+            diagnostics["source_status"] = response.SourceStatus;
+        }
+
+        return diagnostics;
+    }
+
+    private static PayMongoStatusMapping MapStatusQuerySourceStatus(string sourceStatus)
+    {
+        return sourceStatus.Trim().ToLowerInvariant() switch
+        {
+            "paid" or "succeeded" or "success" => new PayMongoStatusMapping(
+                CanonicalPaymentOutcomeStatus.Succeeded,
+                IsTerminal: true,
+                IsSuccess: true,
+                Retryable: false,
+                ReportableToCentralPms: true,
+                Unknown: false),
+
+            "failed" or "declined" => new PayMongoStatusMapping(
+                CanonicalPaymentOutcomeStatus.Failed,
+                IsTerminal: true,
+                IsSuccess: false,
+                Retryable: false,
+                ReportableToCentralPms: false,
+                Unknown: false),
+
+            "expired" => new PayMongoStatusMapping(
+                CanonicalPaymentOutcomeStatus.Expired,
+                IsTerminal: true,
+                IsSuccess: false,
+                Retryable: false,
+                ReportableToCentralPms: false,
+                Unknown: false),
+
+            "cancelled" or "canceled" => new PayMongoStatusMapping(
+                CanonicalPaymentOutcomeStatus.Cancelled,
+                IsTerminal: true,
+                IsSuccess: false,
+                Retryable: false,
+                ReportableToCentralPms: false,
+                Unknown: false),
+
+            "pending" or "awaiting_payment" or "processing" or "active" or "unpaid" => new PayMongoStatusMapping(
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                IsTerminal: false,
+                IsSuccess: false,
+                Retryable: true,
+                ReportableToCentralPms: false,
+                Unknown: false),
+
+            _ => new PayMongoStatusMapping(
+                CanonicalPaymentOutcomeStatus.PendingProvider,
+                IsTerminal: false,
+                IsSuccess: false,
+                Retryable: false,
+                ReportableToCentralPms: false,
+                Unknown: true)
+        };
     }
 
     private static bool TryParseWebhookEvent(
@@ -538,4 +880,12 @@ public sealed class PayMongoCheckoutAdapter : IPaymentProviderAdapter
         value = property.GetString() ?? string.Empty;
         return !string.IsNullOrWhiteSpace(value);
     }
+
+    private sealed record PayMongoStatusMapping(
+        CanonicalPaymentOutcomeStatus Status,
+        bool IsTerminal,
+        bool IsSuccess,
+        bool Retryable,
+        bool ReportableToCentralPms,
+        bool Unknown);
 }
