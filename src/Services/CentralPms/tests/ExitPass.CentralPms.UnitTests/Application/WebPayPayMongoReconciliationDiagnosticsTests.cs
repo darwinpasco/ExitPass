@@ -63,6 +63,90 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         Assert.Contains("reconciliation.reconciliation_exceptions", persistSql, StringComparison.Ordinal);
         Assert.Contains("reconciliation.reconciliation_runs", readSql, StringComparison.Ordinal);
         Assert.DoesNotContain("AUB", script, StringComparison.OrdinalIgnoreCase);
+
+        Assert.DoesNotContain("INSERT INTO core.payment_confirmations", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO core.exit_authorizations", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO payments.provider_outcomes", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO payments.provider_status_queries", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.payment_attempts", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.payment_confirmations", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE payments.provider_sessions", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE payments.provider_outcomes", persistSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.exit_authorizations", persistSql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PayMongoStatusQueryRuntimePath_IsNotImplementedAsPlatformFinalityPath()
+    {
+        var providerAdapter = ReadRepoFile(
+            "src",
+            "Services",
+            "PaymentOrchestrator",
+            "src",
+            "ExitPass.PaymentOrchestrator.Application",
+            "Abstractions",
+            "Providers",
+            "IPaymentProviderAdapter.cs");
+        var payMongoClient = ReadRepoFile(
+            "src",
+            "Services",
+            "PaymentOrchestrator",
+            "src",
+            "ExitPass.PaymentOrchestrator.Infrastructure",
+            "Providers",
+            "PayMongo",
+            "PayMongoClient.cs");
+        var program = ReadRepoFile(
+            "src",
+            "Services",
+            "PaymentOrchestrator",
+            "src",
+            "ExitPass.PaymentOrchestrator.Api",
+            "Program.cs");
+
+        Assert.Contains("CreatePaymentSessionAsync", providerAdapter, StringComparison.Ordinal);
+        Assert.Contains("VerifyWebhookAsync", providerAdapter, StringComparison.Ordinal);
+        Assert.Contains("HttpMethod.Post", payMongoClient, StringComparison.Ordinal);
+        Assert.Contains("/v1/checkout_sessions", payMongoClient, StringComparison.Ordinal);
+        Assert.Contains("app.MapProviderWebhookEndpoints()", program, StringComparison.Ordinal);
+        Assert.Contains("app.MapInternalPaymentEndpoints()", program, StringComparison.Ordinal);
+        Assert.Contains("app.MapWebPayPaymentIntentEndpoints()", program, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("QueryStatusAsync", providerAdapter, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("GetStatusAsync", providerAdapter, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ProviderStatusQuery", providerAdapter, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("HttpMethod.Get", payMongoClient, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("/v1/payments/", payMongoClient, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RetrievePayment", payMongoClient, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("StatusQuery", payMongoClient, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("MapProviderStatus", program, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider-status", program, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("status-query", program, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void ReconciliationDiagnostics_TreatProviderStatusEvidenceAsReadOnlyEvidence()
+    {
+        var diagnosticsSql = ReadDiagnosticsSql();
+        var persistSql = ReadRepoFile("scripts", "dev-data", "persist-webpay-paymongo-reconciliation-run.sql");
+        var allSql = string.Join('\n', diagnosticsSql, persistSql);
+
+        Assert.Contains("payments.provider_sessions", diagnosticsSql, StringComparison.Ordinal);
+        Assert.Contains("payments.provider_outcomes", diagnosticsSql, StringComparison.Ordinal);
+        Assert.Contains("PROVIDER_PAID_EXITPASS_MISSING", diagnosticsSql, StringComparison.Ordinal);
+        Assert.Contains("PENDING_PROVIDER_SESSION", diagnosticsSql, StringComparison.Ordinal);
+        Assert.Contains("STALE_PENDING_ATTEMPT", diagnosticsSql, StringComparison.Ordinal);
+        Assert.Contains("No payment, provider, exit authorization, gate, audit, domain event, outbox,", persistSql, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("INSERT INTO core.payment_confirmations", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO core.exit_authorizations", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO payments.provider_outcomes", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INSERT INTO payments.provider_status_queries", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.payment_attempts", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.payment_confirmations", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE payments.provider_sessions", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE payments.provider_outcomes", allSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE core.exit_authorizations", allSql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -199,6 +283,25 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         yield return
         [
             new ReconciliationEvidence(
+                HasConfirmedAttempt: false,
+                HasPaidProviderSession: false,
+                HasConfirmedProviderOutcome: true,
+                PaymentConfirmationCount: 0,
+                ProviderCallbackCount: 0,
+                ExitAuthorizationCount: 0,
+                GateConsumedCount: 0,
+                DuplicateProviderEvent: false,
+                ConfirmedAmount: null,
+                ProviderAmount: 100m,
+                CurrencyCode: null,
+                ProviderCurrency: "PHP",
+                HasStalePendingAttempt: false),
+            "PROVIDER_PAID_EXITPASS_MISSING"
+        ];
+
+        yield return
+        [
+            new ReconciliationEvidence(
                 HasConfirmedAttempt: true,
                 HasPaidProviderSession: true,
                 HasConfirmedProviderOutcome: false,
@@ -251,6 +354,83 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
                 ProviderCurrency: "PHP",
                 HasStalePendingAttempt: false),
             "DUPLICATE_PROVIDER_EVENT"
+        ];
+
+        yield return
+        [
+            new ReconciliationEvidence(
+                HasConfirmedAttempt: true,
+                HasPaidProviderSession: true,
+                HasConfirmedProviderOutcome: false,
+                PaymentConfirmationCount: 2,
+                ProviderCallbackCount: 1,
+                ExitAuthorizationCount: 1,
+                GateConsumedCount: 0,
+                DuplicateProviderEvent: false,
+                ConfirmedAmount: 100m,
+                ProviderAmount: 100m,
+                CurrencyCode: "PHP",
+                ProviderCurrency: "PHP",
+                HasStalePendingAttempt: false),
+            "DUPLICATE_PAYMENT_CONFIRMATION"
+        ];
+
+        yield return
+        [
+            new ReconciliationEvidence(
+                HasConfirmedAttempt: true,
+                HasPaidProviderSession: false,
+                HasConfirmedProviderOutcome: false,
+                PaymentConfirmationCount: 0,
+                ProviderCallbackCount: 0,
+                ExitAuthorizationCount: 0,
+                GateConsumedCount: 0,
+                DuplicateProviderEvent: false,
+                ConfirmedAmount: null,
+                ProviderAmount: null,
+                CurrencyCode: "PHP",
+                ProviderCurrency: null,
+                HasStalePendingAttempt: true),
+            "STALE_PENDING_ATTEMPT"
+        ];
+
+        yield return
+        [
+            new ReconciliationEvidence(
+                HasConfirmedAttempt: false,
+                HasPaidProviderSession: false,
+                HasConfirmedProviderOutcome: false,
+                PaymentConfirmationCount: 0,
+                ProviderCallbackCount: 0,
+                ExitAuthorizationCount: 0,
+                GateConsumedCount: 0,
+                DuplicateProviderEvent: false,
+                ConfirmedAmount: null,
+                ProviderAmount: null,
+                CurrencyCode: null,
+                ProviderCurrency: null,
+                HasStalePendingAttempt: false,
+                HasProviderSession: true),
+            "PENDING_PROVIDER_SESSION"
+        ];
+
+        yield return
+        [
+            new ReconciliationEvidence(
+                HasConfirmedAttempt: false,
+                HasPaidProviderSession: false,
+                HasConfirmedProviderOutcome: false,
+                PaymentConfirmationCount: 0,
+                ProviderCallbackCount: 0,
+                ExitAuthorizationCount: 1,
+                GateConsumedCount: 0,
+                DuplicateProviderEvent: false,
+                ConfirmedAmount: null,
+                ProviderAmount: null,
+                CurrencyCode: null,
+                ProviderCurrency: null,
+                HasStalePendingAttempt: false),
+            "EXIT_AUTHORIZATION_WITHOUT_CONFIRMATION"
         ];
 
         yield return
@@ -334,6 +514,12 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
             return "STALE_PENDING_ATTEMPT";
         }
 
+        if (evidence.HasProviderSession &&
+            !(evidence.HasPaidProviderSession || evidence.HasConfirmedProviderOutcome))
+        {
+            return "PENDING_PROVIDER_SESSION";
+        }
+
         if (evidence.HasConfirmedAttempt &&
             evidence.PaymentConfirmationCount == 1 &&
             (evidence.HasPaidProviderSession || evidence.HasConfirmedProviderOutcome) &&
@@ -384,5 +570,6 @@ public sealed class WebPayPayMongoReconciliationDiagnosticsTests
         decimal? ProviderAmount,
         string? CurrencyCode,
         string? ProviderCurrency,
-        bool HasStalePendingAttempt);
+        bool HasStalePendingAttempt,
+        bool HasProviderSession = false);
 }
