@@ -299,6 +299,35 @@ td span {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.projectionMetricGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-bottom: 18px;
+}
+
+.projectionMetric {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  min-height: 74px;
+  padding: 14px;
+}
+
+.projectionMetric span {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.projectionMetric strong {
+  color: #1b252f;
+  font-size: 1.5rem;
+}
+
 .summaryList {
   display: grid;
   gap: 12px;

@@ -29,7 +29,13 @@ import type {
   VendorPaymentAcknowledgmentSearchInput,
   VendorPaymentAcknowledgmentSearchResult,
   VendorPaymentAcknowledgmentStatus,
-  VendorPaymentAcknowledgmentSummary
+  VendorPaymentAcknowledgmentSummary,
+  VendorSessionProjectionHealthConfig,
+  VendorSessionProjectionHealthLatestRecord,
+  VendorSessionProjectionHealthSummary,
+  VendorSessionProjectionHealthTarget,
+  VendorSessionProjectionHealthTargetDetail,
+  VendorSessionProjectionHealthTargetsResponse
 } from "./types";
 
 const routes = {
@@ -39,6 +45,7 @@ const routes = {
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/",
   vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
+  vendorProjectionHealth: "/operator-console/vendor-session-projections/health",
   policyImportReview: "/operator-console/production-policy-import-review"
 };
 
@@ -152,6 +159,13 @@ export function App({ apiClient, initialPath }: AppProps) {
               Vendor Acknowledgments
             </button>
             <button
+              className={`navLink ${path === routes.vendorProjectionHealth ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.vendorProjectionHealth)}
+            >
+              Projection Health
+            </button>
+            <button
               className={`navLink ${path === routes.policyImportReview ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.policyImportReview)}
@@ -188,6 +202,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             <AuditReportPage client={client} />
           ) : path === routes.vendorAcknowledgments ? (
             <VendorPaymentAcknowledgmentsPage client={client} />
+          ) : path === routes.vendorProjectionHealth ? (
+            <VendorSessionProjectionHealthPage client={client} />
           ) : path === routes.policyImportReview ? (
             <ProductionPolicyImportReviewPage client={client} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.home ? (
@@ -822,6 +838,459 @@ function VendorPaymentAcknowledgmentDetailPanel({ state }: { state: LoadState<Ve
         )}
       </details>
     </section>
+  );
+}
+
+function VendorSessionProjectionHealthPage({ client }: { client: OperatorConsoleApiClient }) {
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [summaryState, setSummaryState] = useState<LoadState<VendorSessionProjectionHealthSummary>>({ status: "loading" });
+  const [targetsState, setTargetsState] = useState<LoadState<VendorSessionProjectionHealthTargetsResponse>>({ status: "loading" });
+  const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [detailState, setDetailState] = useState<LoadState<VendorSessionProjectionHealthTargetDetail>>({ status: "idle" });
+
+  useEffect(() => {
+    let active = true;
+    setSummaryState({ status: "loading" });
+    setTargetsState({ status: "loading" });
+
+    client
+      .getVendorSessionProjectionHealthSummary()
+      .then((summary) => {
+        if (active) {
+          setSummaryState({ status: "loaded", data: summary });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setSummaryState({ status: "error", message: mapApiError(error).message });
+        }
+      });
+
+    client
+      .listVendorSessionProjectionHealthTargets()
+      .then((result) => {
+        if (active) {
+          setTargetsState(result.targets.length === 0 ? { status: "empty" } : { status: "loaded", data: result });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          const mapped = mapApiError(error);
+          setTargetsState(
+            mapped.status === "access-denied"
+              ? { status: "access-denied", message: mapped.message }
+              : { status: "error", message: mapped.message }
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, refreshToken]);
+
+  useEffect(() => {
+    if (!selectedTargetId) {
+      setDetailState({ status: "idle" });
+      return;
+    }
+
+    let active = true;
+    setDetailState({ status: "loading" });
+    client
+      .getVendorSessionProjectionHealthTarget(selectedTargetId)
+      .then((detail) => {
+        if (active) {
+          setDetailState({ status: "loaded", data: detail });
+        }
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        const mapped = mapApiError(error);
+        setDetailState(
+          mapped.status === "not-found"
+            ? { status: "not-found" }
+            : mapped.status === "access-denied"
+              ? { status: "access-denied", message: mapped.message }
+              : { status: "error", message: mapped.message }
+        );
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, selectedTargetId]);
+
+  const summary = summaryState.status === "loaded" ? summaryState.data : null;
+  const targets = targetsState.status === "loaded" ? targetsState.data.targets : [];
+  const hasStaleOrFailingTarget = targets.some((target) => target.isStale || target.healthStatus.toUpperCase() === "FAILING");
+  const config = summary?.config ?? (targetsState.status === "loaded" ? targetsState.data.config : null);
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Vendor PMS Monitoring</p>
+          <h2>HikCentral Projection Health</h2>
+          <p>Read-only continuity snapshot visibility for HikCentral vendor session projections.</p>
+        </div>
+        <button type="button" onClick={() => setRefreshToken((current) => current + 1)}>
+          Refresh
+        </button>
+      </section>
+
+      <section className="panel auditGuardrail" aria-labelledby="projection-health-boundaries-title">
+        <div className="panelHeader">
+          <h3 id="projection-health-boundaries-title">Read-only boundaries</h3>
+          <span className="statusPill">Non-authoritative projection</span>
+        </div>
+        <p>Projection data is continuity visibility only.</p>
+        <p>Vendor PMS remains parking-session and tariff authority. ExitPass remains payment authority.</p>
+        <p>No sync trigger, enable, disable, fallback toggle, payment, tariff, paid-state, or exit action is available here.</p>
+        <p>Raw HikCentral payloads, credentials, signatures, and database passwords are not displayed.</p>
+      </section>
+
+      {config?.degradedResolveFallbackEnabled && (
+        <p className="notice" role="alert">
+          Degraded resolve fallback is currently enabled. Confirm this is approved and freshness-bound before relying on
+          continuity visibility.
+        </p>
+      )}
+      {hasStaleOrFailingTarget && (
+        <p className="notice" role="alert">
+          One or more projection targets are stale or failing. Escalate if the state is unexpected for this environment.
+        </p>
+      )}
+
+      <VendorSessionProjectionSummaryPanel state={summaryState} />
+      <VendorSessionProjectionTargetsPanel
+        state={targetsState}
+        selectedTargetId={selectedTargetId}
+        onSelect={setSelectedTargetId}
+      />
+      <VendorSessionProjectionDetailPanel state={detailState} config={config} />
+    </>
+  );
+}
+
+function VendorSessionProjectionSummaryPanel({ state }: { state: LoadState<VendorSessionProjectionHealthSummary> }) {
+  if (state.status === "loading") {
+    return <StateMessage title="Loading projection health summary" message="Retrieving read-only projection health totals." />;
+  }
+
+  if (state.status === "error") {
+    return <StateMessage title="Unable to load projection health summary" message={state.message} />;
+  }
+
+  if (state.status !== "loaded") {
+    return null;
+  }
+
+  const summary = state.data;
+  return (
+    <section className="panel" aria-labelledby="projection-summary-title">
+      <div className="panelHeader">
+        <h3 id="projection-summary-title">Projection summary</h3>
+        <span className={`statusPill ${summary.staleTargets > 0 || summary.failingTargets > 0 ? "warningPill" : "readiness-ready"}`}>
+          {summary.staleTargets > 0 || summary.failingTargets > 0 ? "Review required" : "Fresh"}
+        </span>
+      </div>
+      <div className="projectionMetricGrid">
+        <ProjectionMetric label="Total targets" value={summary.totalTargets} />
+        <ProjectionMetric label="Enabled" value={summary.enabledTargets} />
+        <ProjectionMetric label="Disabled" value={summary.disabledTargets} />
+        <ProjectionMetric label="Healthy" value={summary.healthyTargets} />
+        <ProjectionMetric label="Degraded" value={summary.degradedTargets} />
+        <ProjectionMetric label="Failing" value={summary.failingTargets} emphasis={summary.failingTargets > 0 ? "blocked" : undefined} />
+        <ProjectionMetric label="Stale" value={summary.staleTargets} emphasis={summary.staleTargets > 0 ? "warningPill" : undefined} />
+        <ProjectionMetric label="Active projections" value={summary.totalActiveProjections} />
+        <ProjectionMetric label="Exited projections" value={summary.totalExitedProjections} />
+      </div>
+      <DescriptionList
+        items={[
+          ["Latest successful sync", formatOptionalDateTime(summary.latestSuccessfulProjectionSyncAt ?? undefined)],
+          ["Scheduler enabled", summary.config.schedulerEnabled ? "Yes" : "No"],
+          ["Degraded fallback enabled", summary.config.degradedResolveFallbackEnabled ? "Yes" : "No"],
+          ["Max projection age minutes", String(summary.config.maxProjectionAgeMinutes)],
+          ["Max parallel site jobs", String(summary.config.maxParallelSiteJobs)],
+          ["Scheduler scan interval seconds", String(summary.config.schedulerScanIntervalSeconds)]
+        ]}
+      />
+    </section>
+  );
+}
+
+function ProjectionMetric({ label, value, emphasis }: { label: string; value: number; emphasis?: string }) {
+  return (
+    <div className="projectionMetric">
+      <span>{label}</span>
+      <strong className={emphasis}>{value}</strong>
+    </div>
+  );
+}
+
+function VendorSessionProjectionTargetsPanel({
+  state,
+  selectedTargetId,
+  onSelect
+}: {
+  state: LoadState<VendorSessionProjectionHealthTargetsResponse>;
+  selectedTargetId: string | null;
+  onSelect: (projectionSyncTargetId: string) => void;
+}) {
+  return (
+    <section className="panel" aria-labelledby="projection-targets-title">
+      <div className="panelHeader">
+        <h3 id="projection-targets-title">Projection targets</h3>
+        {state.status === "loaded" && <span className="statusPill">{state.data.targets.length} targets</span>}
+      </div>
+
+      {state.status === "loading" && <StateMessage title="Loading projection targets" message="Retrieving sync target health." />}
+      {state.status === "empty" && <StateMessage title="No projection targets" message="No vendor session projection targets are configured." />}
+      {state.status === "access-denied" && <StateMessage title="Access denied" message={state.message} />}
+      {state.status === "error" && <StateMessage title="Unable to load projection targets" message={state.message} />}
+      {state.status === "loaded" && (
+        <div className="tableScroller">
+          <table>
+            <thead>
+              <tr>
+                <th>Parking lot</th>
+                <th>Site</th>
+                <th>Enabled</th>
+                <th>Health</th>
+                <th>Freshness</th>
+                <th>Last success</th>
+                <th>Last failure</th>
+                <th>Failures</th>
+                <th>Last error</th>
+                <th>Projection counts</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {state.data.targets.map((target) => (
+                <VendorSessionProjectionTargetRow
+                  key={target.projectionSyncTargetId}
+                  target={target}
+                  selected={selectedTargetId === target.projectionSyncTargetId}
+                  onSelect={() => onSelect(target.projectionSyncTargetId)}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function VendorSessionProjectionTargetRow({
+  target,
+  selected,
+  onSelect
+}: {
+  target: VendorSessionProjectionHealthTarget;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <tr>
+      <td>
+        <strong>{displayValue(target.parkingLotName ?? undefined)}</strong>
+        <span>Index {target.parkingLotIndexCode}</span>
+      </td>
+      <td>
+        <code>{shortId(target.siteId)}</code>
+        <span>Group {shortId(target.siteGroupId)}</span>
+      </td>
+      <td>
+        <span className={`statusPill ${target.enabledFlag ? "readiness-ready" : ""}`}>
+          {target.enabledFlag ? "Enabled" : "Disabled"}
+        </span>
+      </td>
+      <td>
+        <span className={`statusPill ${projectionHealthStatusClass(target.healthStatus)}`}>
+          {target.healthStatus}
+        </span>
+      </td>
+      <td>
+        <span className={`statusPill ${target.isStale ? "warningPill" : "readiness-ready"}`}>
+          {target.isStale ? "Stale" : "Fresh"}
+        </span>
+        <span>{formatFreshnessAge(target.freshnessAgeSeconds)}</span>
+      </td>
+      <td>{formatOptionalDateTime(target.lastSuccessAt ?? undefined)}</td>
+      <td>{formatOptionalDateTime(target.lastFailureAt ?? undefined)}</td>
+      <td>{target.failureCount}</td>
+      <td>
+        <strong>{displayValue(target.lastErrorCode ?? undefined)}</strong>
+        <span>{displayValue(target.lastErrorMessage ?? undefined)}</span>
+      </td>
+      <td>
+        <span>Active {target.activeProjectionCount}</span>
+        <span>Exited {target.exitedProjectionCount}</span>
+        <span>Cards {target.cardNumProjectionCount}</span>
+        <span>Plates {target.plateLicenseProjectionCount}</span>
+      </td>
+      <td>
+        <button type="button" onClick={onSelect}>
+          {selected ? "Selected" : "View details"}
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function VendorSessionProjectionDetailPanel({
+  state,
+  config
+}: {
+  state: LoadState<VendorSessionProjectionHealthTargetDetail>;
+  config: VendorSessionProjectionHealthConfig | null;
+}) {
+  if (state.status === "idle") {
+    return (
+      <section className="panel">
+        <StateMessage title="No projection target selected" message="Select a target to read safe projection detail." />
+      </section>
+    );
+  }
+
+  if (state.status === "loading") {
+    return <StateMessage title="Loading projection target detail" message="Retrieving latest safe projection rows." />;
+  }
+
+  if (state.status === "not-found") {
+    return <StateMessage title="Projection target not found" message="The selected projection target was not found." />;
+  }
+
+  if (state.status === "access-denied") {
+    return <StateMessage title="Access denied" message={state.message} />;
+  }
+
+  if (state.status === "error") {
+    return <StateMessage title="Unable to load projection target detail" message={state.message} />;
+  }
+
+  if (state.status !== "loaded") {
+    return null;
+  }
+
+  const detail = state.data;
+  const target = detail.target;
+  const effectiveConfig = config ?? detail.config;
+  return (
+    <section className="panel" aria-labelledby="projection-detail-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Projection target detail</p>
+          <h3 id="projection-detail-title">{displayValue(target.parkingLotName ?? undefined)}</h3>
+        </div>
+        <span className={`statusPill ${projectionHealthStatusClass(target.healthStatus)}`}>{target.healthStatus}</span>
+      </div>
+
+      <div className="detailGrid">
+        <section aria-labelledby="projection-target-metadata-heading">
+          <h4 id="projection-target-metadata-heading">Target metadata</h4>
+          <DescriptionList
+            items={[
+              ["Projection sync target ID", target.projectionSyncTargetId],
+              ["Site ID", target.siteId],
+              ["Site group ID", target.siteGroupId],
+              ["Vendor system ID", target.vendorSystemId],
+              ["Parking lot index code", target.parkingLotIndexCode],
+              ["Parking lot name", displayValue(target.parkingLotName ?? undefined)]
+            ]}
+          />
+        </section>
+        <section aria-labelledby="projection-target-health-heading">
+          <h4 id="projection-target-health-heading">Health and freshness</h4>
+          <DescriptionList
+            items={[
+              ["Enabled", target.enabledFlag ? "Yes" : "No"],
+              ["Health status", target.healthStatus],
+              ["Stale", target.isStale ? "Yes" : "No"],
+              ["Freshness age", formatFreshnessAge(target.freshnessAgeSeconds)],
+              ["Latest projection refreshed at", formatOptionalDateTime(target.latestProjectionLastRefreshedAt ?? undefined)],
+              ["Last success", formatOptionalDateTime(target.lastSuccessAt ?? undefined)],
+              ["Last failure", formatOptionalDateTime(target.lastFailureAt ?? undefined)],
+              ["Failure count", String(target.failureCount)]
+            ]}
+          />
+        </section>
+        <section aria-labelledby="projection-config-heading">
+          <h4 id="projection-config-heading">Safe config visibility</h4>
+          <DescriptionList
+            items={[
+              ["Scheduler enabled", effectiveConfig.schedulerEnabled ? "Yes" : "No"],
+              ["Degraded fallback enabled", effectiveConfig.degradedResolveFallbackEnabled ? "Yes" : "No"],
+              ["Max projection age minutes", String(effectiveConfig.maxProjectionAgeMinutes)],
+              ["Max parallel site jobs", String(effectiveConfig.maxParallelSiteJobs)],
+              ["Scheduler scan interval seconds", String(effectiveConfig.schedulerScanIntervalSeconds)]
+            ]}
+          />
+        </section>
+      </div>
+
+      <section aria-labelledby="projection-latest-records-title">
+        <div className="panelHeader">
+          <h4 id="projection-latest-records-title">Latest projected records</h4>
+          <span className="statusPill">Limited safe fields</span>
+        </div>
+        {detail.latestProjectedRecords.length === 0 ? (
+          <p className="placeholderCopy">No latest projection rows were returned for this target.</p>
+        ) : (
+          <div className="tableScroller">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Card/Plate</th>
+                  <th>Vendor record</th>
+                  <th>Enter/Exit</th>
+                  <th>Last refreshed</th>
+                  <th>Correlation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.latestProjectedRecords.map((record) => (
+                  <VendorSessionProjectionLatestRecordRow key={record.vendorSessionProjectionId} record={record} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function VendorSessionProjectionLatestRecordRow({ record }: { record: VendorSessionProjectionHealthLatestRecord }) {
+  return (
+    <tr>
+      <td>
+        <span className={`statusPill ${projectionStatusClass(record.projectionStatus)}`}>
+          {record.projectionStatus}
+        </span>
+      </td>
+      <td>
+        <strong>{displayValue(record.cardNum ?? undefined)}</strong>
+        <span>{displayPlateLicense(record.plateLicense ?? undefined)}</span>
+      </td>
+      <td>
+        <code>{shortId(record.vendorSessionProjectionId)}</code>
+        <span>{displayValue(record.vendorRecordGuid ?? undefined)}</span>
+      </td>
+      <td>
+        <span>Enter {formatOptionalDateTime(record.enterTime ?? undefined)}</span>
+        <span>Exit {formatOptionalDateTime(record.exitTime ?? undefined)}</span>
+      </td>
+      <td>{formatDateTime(record.lastRefreshedAt)}</td>
+      <td>{displayValue(record.correlationId ?? undefined)}</td>
+    </tr>
   );
 }
 
@@ -2611,6 +3080,28 @@ function formatSeconds(value?: number) {
   return value === undefined ? "Not available" : String(value);
 }
 
+function formatFreshnessAge(value?: number | null) {
+  if (value === undefined || value === null) {
+    return "Not available";
+  }
+
+  if (value < 60) {
+    return `${Math.round(value)} seconds`;
+  }
+
+  const minutes = value / 60;
+  if (minutes < 60) {
+    return `${Math.round(minutes)} minutes`;
+  }
+
+  const hours = minutes / 60;
+  if (hours < 48) {
+    return `${Math.round(hours)} hours`;
+  }
+
+  return `${Math.round(hours / 24)} days`;
+}
+
 function formatMinorUnits(value?: number) {
   return value === undefined ? "Not available" : String(value);
 }
@@ -2812,4 +3303,46 @@ function vendorAcknowledgmentStatusClass(status: string) {
   }
 
   return statusClass(status);
+}
+
+function projectionHealthStatusClass(status: string) {
+  const normalized = status.toUpperCase();
+  if (normalized === "HEALTHY") {
+    return "readiness-ready";
+  }
+
+  if (normalized === "DEGRADED") {
+    return "warningPill";
+  }
+
+  if (normalized === "FAILING") {
+    return "blocked";
+  }
+
+  if (normalized === "DISABLED") {
+    return "";
+  }
+
+  return "pending-review";
+}
+
+function projectionStatusClass(status: string) {
+  const normalized = status.toUpperCase();
+  if (normalized === "ACTIVE") {
+    return "readiness-ready";
+  }
+
+  if (normalized === "EXITED") {
+    return "";
+  }
+
+  if (normalized === "STALE") {
+    return "warningPill";
+  }
+
+  if (normalized === "INVALIDATED") {
+    return "blocked";
+  }
+
+  return "pending-review";
 }
