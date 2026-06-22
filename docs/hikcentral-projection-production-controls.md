@@ -236,6 +236,8 @@ The page was live-smoke-tested under #303. For local development smoke testing a
 VITE_OPERATOR_CONSOLE_API_PROXY_TARGET=http://localhost:56065
 ```
 
+Do not use `VITE_CENTRAL_PMS_BASE_URL` as the Vite proxy override. Leave it unset for local proxy-based smoke tests unless intentionally bypassing the Vite `/v1` proxy.
+
 See `docs/hikcentral-operator-console-projection-health-smoke.md` for the recorded smoke result and observed values.
 
 The page shows:
@@ -247,6 +249,8 @@ The page shows:
 - warnings when targets are stale or failing
 
 Operators may infer whether projection sync appears healthy, stale, failing, disabled, or needing escalation. Operators must not infer tariff finality, payment finality, parking-session authority, paid state, or exit authorization from projection data.
+
+The global Operator readiness panel evaluates controlled actions such as `SESSION_LOOKUP`. It may show blocked in local smoke when site, site-group, device, shift, or production-trust fixture data is absent. That blocked readiness state does not invalidate the read-only Projection Health page if the projection-health endpoints load through the required ops RBAC permission.
 
 Escalate to engineering or vendor support when the page shows failing targets, stale enabled targets, recurring HikCentral errors, unexpected zero projected rows after records are seen, or degraded fallback enabled outside an approved test window.
 

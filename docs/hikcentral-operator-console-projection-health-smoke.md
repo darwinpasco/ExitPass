@@ -41,6 +41,8 @@ VITE_OPERATOR_CONSOLE_API_PROXY_TARGET=http://localhost:56065
 
 The Operator Console page loaded successfully after starting the UI with the Vite proxy target above.
 
+Do not confuse this proxy variable with `VITE_CENTRAL_PMS_BASE_URL`. For local Vite smoke tests, leave `VITE_CENTRAL_PMS_BASE_URL` unset unless intentionally bypassing the Vite `/v1` proxy.
+
 ## Prerequisites
 
 - Central PMS API running at `http://localhost:56065`.
@@ -181,7 +183,23 @@ The smoke test confirmed:
 
 The Operator readiness panel showed a blocked local readiness state during the smoke test.
 
-That readiness state is separate from the Projection Health page and did not block the projection health smoke result. The Projection Health page itself loaded and displayed live backend data through the Vite proxy.
+Root cause: the shell readiness panel evaluates the controlled `SESSION_LOOKUP` action and requires operator, device, shift, site, site-group, workflow, and local-development boundary readiness. The Projection Health smoke route did not provide a site/site-group context for that controlled action, so the readiness panel could correctly show blocked even while read-only projection health endpoints succeeded.
+
+That readiness state is separate from the Projection Health page and did not block the projection health smoke result. The Projection Health page uses the read-only `operator-console.vendor-projection-health.view` permission and loaded live backend data through the Vite proxy.
+
+Future smoke testers should distinguish:
+
+- Projection Health page success: summary cards, target table, target detail, safe config values, and projection counts load.
+- Controlled action readiness success: the global readiness panel reports `READY` for controlled workflows that require site/device/shift fixtures.
+
+For Projection Health smoke screenshots, capture:
+
+- the Projection Health heading
+- the read-only boundary panel
+- the summary cards
+- the target table with `TEST SITE`
+- the safe configuration values
+- the readiness panel only as contextual shell state, not as pass/fail evidence for the read-only projection health page
 
 The target was disabled during the smoke result (`enabledTargets = 0`, `disabledTargets = 1`) while still reporting healthy historical projection sync state. This matches the safe post-UAT operating posture.
 
