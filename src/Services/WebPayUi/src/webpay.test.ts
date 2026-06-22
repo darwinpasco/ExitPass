@@ -60,8 +60,11 @@ describe("WebPay QR and payment intent helpers", () => {
     );
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
     expect(body.paymentMethod).toBe(paymentMethod);
     expect(body.ticketReference).toBe("TICKET-001");
+    expect(headers["X-Correlation-Id"]).toBe(body.correlationId);
+    expect(body.correlationId).toBeTruthy();
   });
 
   it("WebPay_WhenApprovedPayableBasisProvided_IncludesExpectedTariffAndAmount", () => {
@@ -74,6 +77,30 @@ describe("WebPay QR and payment intent helpers", () => {
 
     expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
     expect(body.expectedAmountMinorUnits).toBe(7500);
+  });
+
+  it("WebPay_WhenCorrelationIdIsProvided_PreservesItInPaymentIntentBodyAndHeader", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "PENDING_PROVIDER" })
+    });
+
+    await createPaymentIntent(
+      {
+        ticketReference: "TICKET-001",
+        paymentMethod: "QRPH",
+        vendorSystemId: "HIKCENTRAL",
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      },
+      fetchMock as never
+    );
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(request.body as string);
+    const headers = request.headers as Record<string, string>;
+
+    expect(body.correlationId).toBe("77777777-7777-7777-7777-777777777777");
+    expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
   });
 
   it("WebPay_WhenUnsupportedPaymentMethodIsForced_RejectsBeforeApiCall", async () => {
@@ -129,6 +156,11 @@ describe("WebPay QR and payment intent helpers", () => {
     );
 
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/parking-session");
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(request.body as string);
+    const headers = request.headers as Record<string, string>;
+    expect(headers["X-Correlation-Id"]).toBe(body.correlationId);
+    expect(body.correlationId).toBeTruthy();
     expect(result.siteName).toBe("Mactan Newtown Parking");
     expect(result.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
     expect(result.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");

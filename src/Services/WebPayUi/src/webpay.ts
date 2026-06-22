@@ -90,6 +90,27 @@ export function getApiBaseUrl(): string {
   return (import.meta.env.VITE_WEBPAY_API_BASE_URL ?? "").replace(/\/+$/, "");
 }
 
+export function createCorrelationId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `webpay-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function withCorrelationId<TRequest extends object>(request: TRequest): TRequest & { correlationId: string } {
+  const existing = (request as { correlationId?: unknown }).correlationId;
+  const correlationId = typeof existing === "string" && existing.trim() ? existing.trim() : createCorrelationId();
+
+  return {
+    ...request,
+    correlationId
+  };
+}
+
+function jsonHeaders(correlationId: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "X-Correlation-Id": correlationId
+  };
+}
+
 export function getDefaultSiteContext(): WebPaySiteContext {
   return {
     siteGroupId: (import.meta.env.VITE_WEBPAY_DEFAULT_SITE_GROUP_ID ?? "").trim() || undefined,
@@ -147,6 +168,10 @@ export function buildPaymentIntentBody(
     body.expectedAmountMinorUnits = request.expectedAmountMinorUnits;
   }
 
+  if (request.correlationId?.trim()) {
+    body.correlationId = request.correlationId.trim();
+  }
+
   return body;
 }
 
@@ -175,12 +200,12 @@ export async function resolveParkingSession(
     throw new Error("WebPay is missing vendor configuration. Set VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID for local testing.");
   }
 
+  const correlatedBody = withCorrelationId(body);
+
   const response = await fetchImpl(`${getApiBaseUrl()}${parkingSessionResolvePath}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
+    headers: jsonHeaders(correlatedBody.correlationId),
+    body: JSON.stringify(correlatedBody)
   });
 
   const payload = (await response.json().catch(() => ({}))) as ParkingSessionResolveResponse | ApiError;
@@ -215,12 +240,12 @@ export async function createPaymentIntent(
     throw new Error("WebPay is missing vendor configuration. Set VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID for local testing.");
   }
 
+  const correlatedBody = withCorrelationId(body);
+
   const response = await fetchImpl(`${getApiBaseUrl()}${paymentIntentPath}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
+    headers: jsonHeaders(correlatedBody.correlationId),
+    body: JSON.stringify(correlatedBody)
   });
 
   const payload = (await response.json().catch(() => ({}))) as PaymentIntentResponse | ApiError;

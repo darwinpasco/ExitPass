@@ -761,8 +761,9 @@ describe("ExitPass WebPay UI", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const intentCall = fetchMock.mock.calls[1];
     expect(intentCall).toBeDefined();
-    const body = JSON.parse((intentCall?.[1] as RequestInit).body as string);
-    expect(body).toEqual({
+    const request = intentCall?.[1] as RequestInit;
+    const body = JSON.parse(request.body as string);
+    expect(body).toMatchObject({
       plateNumber: "ABC 1234",
       paymentMethod: "QRPH",
       siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
@@ -771,6 +772,8 @@ describe("ExitPass WebPay UI", () => {
       tariffSnapshotId: "66666666-6666-6666-6666-666666666666",
       expectedAmountMinorUnits: 12500
     });
+    expect((request.headers as Record<string, string>)["X-Correlation-Id"]).toBe(body.correlationId);
+    expect(body.correlationId).toBeTruthy();
   });
 
   it("WebPayReturnPage_LoadsStatusByTicketReference", async () => {
