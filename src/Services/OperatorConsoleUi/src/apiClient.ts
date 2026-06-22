@@ -31,7 +31,13 @@ import type {
   VendorPaymentAcknowledgmentSearchInput,
   VendorPaymentAcknowledgmentSearchResult,
   VendorPaymentAcknowledgmentStatusBuckets,
-  VendorPaymentAcknowledgmentSummary
+  VendorPaymentAcknowledgmentSummary,
+  VendorSessionProjectionHealthConfig,
+  VendorSessionProjectionHealthLatestRecord,
+  VendorSessionProjectionHealthTarget,
+  VendorSessionProjectionHealthTargetDetail,
+  VendorSessionProjectionHealthTargetsResponse,
+  VendorSessionProjectionHealthSummary
 } from "./types";
 
 export interface OperatorConsoleApiClient {
@@ -53,6 +59,9 @@ export interface OperatorConsoleApiClient {
   getProductionPolicyImportReview(reviewId: string): Promise<ProductionPolicyImportReviewResult>;
   searchVendorPaymentAcknowledgments(input?: VendorPaymentAcknowledgmentSearchInput): Promise<VendorPaymentAcknowledgmentSearchResult>;
   getVendorPaymentAcknowledgment(vendorPaymentAcknowledgmentId: string): Promise<VendorPaymentAcknowledgmentDetail>;
+  listVendorSessionProjectionHealthTargets(): Promise<VendorSessionProjectionHealthTargetsResponse>;
+  getVendorSessionProjectionHealthTarget(projectionSyncTargetId: string): Promise<VendorSessionProjectionHealthTargetDetail>;
+  getVendorSessionProjectionHealthSummary(): Promise<VendorSessionProjectionHealthSummary>;
   canDecideProductionPolicyImportReview?(): boolean;
 }
 
@@ -356,7 +365,8 @@ const defaultOperatorPermissions = localFallback(
     "operator-console.policy-import-review.approve.legal",
     "operator-console.policy-import-review.approve.ops",
     "operator-console.policy-import-review.approve.qa",
-    "operator-console.policy-import-review.approve.db"
+    "operator-console.policy-import-review.approve.db",
+    "operator-console.vendor-projection-health.view"
   ].join(",")
 );
 
@@ -682,6 +692,34 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       return toVendorPaymentAcknowledgmentDetail(
         await parseResponse<VendorPaymentAcknowledgmentDetailResponseDto>(response)
       );
+    },
+
+    async listVendorSessionProjectionHealthTargets() {
+      const correlationId = newCorrelationId();
+      const response = await fetch(`${baseUrl}/v1/ops/vendor-session-projections/targets`, {
+        headers: operatorConsoleHeaders(correlationId)
+      });
+
+      return parseResponse<VendorSessionProjectionHealthTargetsResponse>(response);
+    },
+
+    async getVendorSessionProjectionHealthTarget(projectionSyncTargetId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/vendor-session-projections/targets/${encodeURIComponent(projectionSyncTargetId)}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return parseResponse<VendorSessionProjectionHealthTargetDetail>(response);
+    },
+
+    async getVendorSessionProjectionHealthSummary() {
+      const correlationId = newCorrelationId();
+      const response = await fetch(`${baseUrl}/v1/ops/vendor-session-projections/summary`, {
+        headers: operatorConsoleHeaders(correlationId)
+      });
+
+      return parseResponse<VendorSessionProjectionHealthSummary>(response);
     }
   };
 }
@@ -757,6 +795,11 @@ export function createMockOperatorConsoleApiClient(
     onVendorPaymentAcknowledgmentSearch?: (input: VendorPaymentAcknowledgmentSearchInput) => void;
     onVendorPaymentAcknowledgmentDetail?: (vendorPaymentAcknowledgmentId: string) => void;
     vendorPaymentAcknowledgments?: VendorPaymentAcknowledgmentDetail[];
+    vendorSessionProjectionHealthTargets?: VendorSessionProjectionHealthTarget[];
+    vendorSessionProjectionHealthConfig?: VendorSessionProjectionHealthConfig;
+    onVendorSessionProjectionHealthTargets?: () => void;
+    onVendorSessionProjectionHealthTargetDetail?: (projectionSyncTargetId: string) => void;
+    onVendorSessionProjectionHealthSummary?: () => void;
     productionPolicyReviewDecisionAuthorized?: boolean;
   } = {}
 ): OperatorConsoleApiClient {
@@ -764,6 +807,10 @@ export function createMockOperatorConsoleApiClient(
   const vendorPaymentAcknowledgments = (options.vendorPaymentAcknowledgments ?? mockVendorPaymentAcknowledgments()).map((item) => ({
     ...item,
     diagnostics: item.diagnostics.map((diagnostic) => ({ ...diagnostic }))
+  }));
+  const projectionHealthConfig = options.vendorSessionProjectionHealthConfig ?? mockVendorSessionProjectionHealthConfig();
+  const projectionHealthTargets = (options.vendorSessionProjectionHealthTargets ?? mockVendorSessionProjectionHealthTargets()).map((item) => ({
+    ...item
   }));
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
@@ -1165,6 +1212,40 @@ export function createMockOperatorConsoleApiClient(
         ...detail,
         diagnostics: detail.diagnostics.map((diagnostic) => ({ ...diagnostic }))
       };
+    },
+
+    async listVendorSessionProjectionHealthTargets() {
+      await delay();
+      options.onVendorSessionProjectionHealthTargets?.();
+      return {
+        targets: projectionHealthTargets.map((target) => ({ ...target })),
+        config: { ...projectionHealthConfig }
+      };
+    },
+
+    async getVendorSessionProjectionHealthTarget(projectionSyncTargetId) {
+      await delay();
+      options.onVendorSessionProjectionHealthTargetDetail?.(projectionSyncTargetId);
+      const target = projectionHealthTargets.find((item) => item.projectionSyncTargetId === projectionSyncTargetId);
+      if (!target) {
+        throw {
+          status: "not-found",
+          message: "Vendor session projection sync target was not found.",
+          errorCode: "VENDOR_SESSION_PROJECTION_TARGET_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      return {
+        target: { ...target },
+        latestProjectedRecords: mockVendorSessionProjectionLatestRecords(target.projectionSyncTargetId),
+        config: { ...projectionHealthConfig }
+      };
+    },
+
+    async getVendorSessionProjectionHealthSummary() {
+      await delay();
+      options.onVendorSessionProjectionHealthSummary?.();
+      return buildVendorSessionProjectionHealthSummary(projectionHealthTargets, projectionHealthConfig);
     }
   };
 }
@@ -1787,6 +1868,150 @@ function mockVendorPaymentAcknowledgments(): VendorPaymentAcknowledgmentDetail[]
       ]
     }
   ];
+}
+
+function mockVendorSessionProjectionHealthConfig(): VendorSessionProjectionHealthConfig {
+  return {
+    schedulerEnabled: true,
+    degradedResolveFallbackEnabled: true,
+    maxProjectionAgeMinutes: 1440,
+    maxParallelSiteJobs: 4,
+    schedulerScanIntervalSeconds: 60
+  };
+}
+
+function mockVendorSessionProjectionHealthTargets(): VendorSessionProjectionHealthTarget[] {
+  return [
+    {
+      projectionSyncTargetId: "abe7da56-1198-4d51-901f-87e8fb7cd40d",
+      siteId: "c9000000-0000-0000-0000-000000000001",
+      siteGroupId: "ce000000-0000-0000-0000-000000000001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
+      parkingLotIndexCode: "1",
+      parkingLotName: "TEST SITE",
+      enabledFlag: true,
+      healthStatus: "HEALTHY",
+      lastAttemptAt: "2026-06-22T02:05:00Z",
+      lastSuccessAt: "2026-06-22T02:05:00Z",
+      lastFailureAt: null,
+      failureCount: 0,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      pollIntervalSeconds: 60,
+      lookbackWindowMinutes: 10080,
+      pageSize: 50,
+      latestProjectionLastRefreshedAt: "2026-06-22T02:05:00Z",
+      freshnessAgeSeconds: 120,
+      isStale: false,
+      totalProjectionCount: 19,
+      activeProjectionCount: 12,
+      exitedProjectionCount: 7,
+      cardNumProjectionCount: 15,
+      plateLicenseProjectionCount: 2
+    },
+    {
+      projectionSyncTargetId: "abe7da56-1198-4d51-901f-87e8fb7cd41d",
+      siteId: "c9000000-0000-0000-0000-000000000002",
+      siteGroupId: "ce000000-0000-0000-0000-000000000001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
+      parkingLotIndexCode: "2",
+      parkingLotName: "STALE SITE",
+      enabledFlag: true,
+      healthStatus: "FAILING",
+      lastAttemptAt: "2026-06-22T01:30:00Z",
+      lastSuccessAt: "2026-06-20T01:30:00Z",
+      lastFailureAt: "2026-06-22T01:30:00Z",
+      failureCount: 3,
+      lastErrorCode: "HIKCENTRAL_UNAVAILABLE",
+      lastErrorMessage: "HikCentral connection timed out.",
+      pollIntervalSeconds: 60,
+      lookbackWindowMinutes: 1440,
+      pageSize: 50,
+      latestProjectionLastRefreshedAt: "2026-06-20T01:30:00Z",
+      freshnessAgeSeconds: 172800,
+      isStale: true,
+      totalProjectionCount: 5,
+      activeProjectionCount: 4,
+      exitedProjectionCount: 1,
+      cardNumProjectionCount: 3,
+      plateLicenseProjectionCount: 1
+    },
+    {
+      projectionSyncTargetId: "abe7da56-1198-4d51-901f-87e8fb7cd42d",
+      siteId: "c9000000-0000-0000-0000-000000000003",
+      siteGroupId: "ce000000-0000-0000-0000-000000000001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
+      parkingLotIndexCode: "3",
+      parkingLotName: "DISABLED SITE",
+      enabledFlag: false,
+      healthStatus: "DISABLED",
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      failureCount: 0,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      pollIntervalSeconds: 300,
+      lookbackWindowMinutes: 1440,
+      pageSize: 25,
+      latestProjectionLastRefreshedAt: null,
+      freshnessAgeSeconds: null,
+      isStale: false,
+      totalProjectionCount: 0,
+      activeProjectionCount: 0,
+      exitedProjectionCount: 0,
+      cardNumProjectionCount: 0,
+      plateLicenseProjectionCount: 0
+    }
+  ];
+}
+
+function mockVendorSessionProjectionLatestRecords(
+  projectionSyncTargetId: string
+): VendorSessionProjectionHealthLatestRecord[] {
+  if (projectionSyncTargetId !== "abe7da56-1198-4d51-901f-87e8fb7cd40d") {
+    return [];
+  }
+
+  return [
+    {
+      vendorSessionProjectionId: "b1000000-0000-0000-0000-000000000001",
+      vendorRecordGuid: "5BF30C478FE44C0D8432E549AF9FE0F7",
+      cardNum: "3519278781100",
+      plateLicense: null,
+      enterTime: "2026-06-16T09:30:04Z",
+      exitTime: null,
+      projectionStatus: "ACTIVE",
+      lastRefreshedAt: "2026-06-22T02:05:00Z",
+      sourceEventAt: "2026-06-16T09:30:04Z",
+      correlationId: "b2000000-0000-0000-0000-000000000001"
+    }
+  ];
+}
+
+function buildVendorSessionProjectionHealthSummary(
+  targets: VendorSessionProjectionHealthTarget[],
+  config: VendorSessionProjectionHealthConfig
+): VendorSessionProjectionHealthSummary {
+  return {
+    totalTargets: targets.length,
+    enabledTargets: targets.filter((target) => target.enabledFlag).length,
+    disabledTargets: targets.filter((target) => !target.enabledFlag).length,
+    healthyTargets: targets.filter((target) => target.healthStatus === "HEALTHY").length,
+    degradedTargets: targets.filter((target) => target.healthStatus === "DEGRADED").length,
+    failingTargets: targets.filter((target) => target.healthStatus === "FAILING").length,
+    unknownTargets: targets.filter((target) => target.healthStatus === "UNKNOWN").length,
+    staleTargets: targets.filter((target) => target.isStale).length,
+    targetsWithLastFailure: targets.filter((target) => Boolean(target.lastFailureAt)).length,
+    latestSuccessfulProjectionSyncAt: targets
+      .map((target) => target.lastSuccessAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null,
+    totalActiveProjections: targets.reduce((sum, target) => sum + target.activeProjectionCount, 0),
+    totalExitedProjections: targets.reduce((sum, target) => sum + target.exitedProjectionCount, 0),
+    config: { ...config }
+  };
 }
 
 function countVendorPaymentAcknowledgmentBuckets(

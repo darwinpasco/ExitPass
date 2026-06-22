@@ -359,6 +359,82 @@ export interface VendorPaymentAcknowledgmentSearchResult {
   hasMore: boolean;
 }
 
+export interface VendorSessionProjectionHealthConfig {
+  schedulerEnabled: boolean;
+  degradedResolveFallbackEnabled: boolean;
+  maxProjectionAgeMinutes: number;
+  maxParallelSiteJobs: number;
+  schedulerScanIntervalSeconds: number;
+}
+
+export interface VendorSessionProjectionHealthTarget {
+  projectionSyncTargetId: string;
+  siteId: string;
+  siteGroupId: string;
+  vendorSystemId: string;
+  parkingLotIndexCode: string;
+  parkingLotName?: string | null;
+  enabledFlag: boolean;
+  healthStatus: string;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastFailureAt?: string | null;
+  failureCount: number;
+  lastErrorCode?: string | null;
+  lastErrorMessage?: string | null;
+  pollIntervalSeconds: number;
+  lookbackWindowMinutes: number;
+  pageSize: number;
+  latestProjectionLastRefreshedAt?: string | null;
+  freshnessAgeSeconds?: number | null;
+  isStale: boolean;
+  totalProjectionCount: number;
+  activeProjectionCount: number;
+  exitedProjectionCount: number;
+  cardNumProjectionCount: number;
+  plateLicenseProjectionCount: number;
+}
+
+export interface VendorSessionProjectionHealthTargetsResponse {
+  targets: VendorSessionProjectionHealthTarget[];
+  config: VendorSessionProjectionHealthConfig;
+}
+
+export interface VendorSessionProjectionHealthLatestRecord {
+  vendorSessionProjectionId: string;
+  vendorRecordGuid?: string | null;
+  cardNum?: string | null;
+  plateLicense?: string | null;
+  enterTime?: string | null;
+  exitTime?: string | null;
+  projectionStatus: string;
+  lastRefreshedAt: string;
+  sourceEventAt?: string | null;
+  correlationId?: string | null;
+}
+
+export interface VendorSessionProjectionHealthTargetDetail {
+  target: VendorSessionProjectionHealthTarget;
+  latestProjectedRecords: VendorSessionProjectionHealthLatestRecord[];
+  config: VendorSessionProjectionHealthConfig;
+}
+
+export interface VendorSessionProjectionHealthSummary {
+  totalTargets: number;
+  enabledTargets: number;
+  disabledTargets: number;
+  healthyTargets: number;
+  degradedTargets: number;
+  failingTargets: number;
+  unknownTargets: number;
+  staleTargets: number;
+  targetsWithLastFailure: number;
+  latestSuccessfulProjectionSyncAt?: string | null;
+  totalActiveProjections: number;
+  totalExitedProjections: number;
+  config: VendorSessionProjectionHealthConfig;
+}
+
 export interface StatutoryDiscountDecisionInput {
   draftId: string;
   siteId?: string;

@@ -17,7 +17,10 @@ import type {
   StatutoryDiscountDraftDetail,
   StatutoryDiscountQueueItem,
   VendorPaymentAcknowledgmentDetail,
-  VendorPaymentAcknowledgmentSearchResult
+  VendorPaymentAcknowledgmentSearchResult,
+  VendorSessionProjectionHealthTargetDetail,
+  VendorSessionProjectionHealthTargetsResponse,
+  VendorSessionProjectionHealthSummary
 } from "./types";
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
@@ -69,7 +72,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       })),
       getProductionPolicyImportReview: vi.fn(),
       searchVendorPaymentAcknowledgments: vi.fn(async () => vendorAcknowledgmentSearchResponse()),
-      getVendorPaymentAcknowledgment: vi.fn(async () => vendorAcknowledgmentDetailResponse())
+      getVendorPaymentAcknowledgment: vi.fn(async () => vendorAcknowledgmentDetailResponse()),
+      listVendorSessionProjectionHealthTargets: vi.fn(async () => vendorProjectionHealthTargetsResponse()),
+      getVendorSessionProjectionHealthTarget: vi.fn(async () => vendorProjectionHealthDetailResponse()),
+      getVendorSessionProjectionHealthSummary: vi.fn(async () => vendorProjectionHealthSummaryResponse())
     };
 
     const { rerender } = render(
@@ -1215,6 +1221,91 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(document.body.innerHTML).not.toMatch(/appsecret|raw payload/i);
   });
 
+  it("VendorSessionProjectionHealth_RendersSummaryTargetsWarningsAndDetail", async () => {
+    const onTargets = vi.fn();
+    const onSummary = vi.fn();
+    const onDetail = vi.fn();
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          onVendorSessionProjectionHealthTargets: onTargets,
+          onVendorSessionProjectionHealthSummary: onSummary,
+          onVendorSessionProjectionHealthTargetDetail: onDetail
+        })}
+        initialPath="/operator-console/vendor-session-projections/health"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "HikCentral Projection Health" })).toBeInTheDocument();
+    expect(screen.getByText("Projection data is continuity visibility only.")).toBeInTheDocument();
+    expect(await screen.findByText(/Degraded resolve fallback is currently enabled/i)).toBeInTheDocument();
+    expect(await screen.findByText(/One or more projection targets are stale or failing/i)).toBeInTheDocument();
+    expect(await screen.findByText("TEST SITE")).toBeInTheDocument();
+    expect(await screen.findByText("STALE SITE")).toBeInTheDocument();
+    expect(screen.getAllByText("Stale").length).toBeGreaterThan(0);
+    expect(screen.getByText("HIKCENTRAL_UNAVAILABLE")).toBeInTheDocument();
+    expect(screen.getByText("Active projections")).toBeInTheDocument();
+    expect(screen.getByText("Exited projections")).toBeInTheDocument();
+
+    await userEvent.click((await screen.findAllByRole("button", { name: "View details" }))[0]);
+
+    await waitFor(() => expect(onDetail).toHaveBeenCalledWith("abe7da56-1198-4d51-901f-87e8fb7cd40d"));
+    expect(await screen.findByText("3519278781100")).toBeInTheDocument();
+    expect(screen.getByText("Limited safe fields")).toBeInTheDocument();
+    expect(screen.getAllByText("Max projection age minutes").length).toBeGreaterThan(0);
+    expect(onTargets).toHaveBeenCalled();
+    expect(onSummary).toHaveBeenCalled();
+  });
+
+  it("VendorSessionProjectionHealth_DoesNotExposeMutationControlsOrSecrets", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient()}
+        initialPath="/operator-console/vendor-session-projections/health"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "HikCentral Projection Health" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync now/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^enable$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^disable$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /fallback/i })).not.toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/appsecret|appkey|secret-value|raw payload json|credential reference/i);
+  });
+
+  it("OperatorConsoleApi_VendorSessionProjectionHealthEndpointsUseExpectedUrls", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(vendorProjectionHealthTargetsResponse()))
+      .mockResolvedValueOnce(jsonResponse(vendorProjectionHealthDetailResponse()))
+      .mockResolvedValueOnce(jsonResponse(vendorProjectionHealthSummaryResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const targets = await client.listVendorSessionProjectionHealthTargets();
+    const detail = await client.getVendorSessionProjectionHealthTarget(targets.targets[0].projectionSyncTargetId);
+    const summary = await client.getVendorSessionProjectionHealthSummary();
+
+    expect(detail.latestProjectedRecords[0].cardNum).toBe("3519278781100");
+    expect(summary.staleTargets).toBe(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/vendor-session-projections/targets",
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/vendor-session-projections/targets/abe7da56-1198-4d51-901f-87e8fb7cd40d",
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/vendor-session-projections/summary",
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(calledUrls).not.toMatch(/sync|enable|disable/i);
+    expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
+  });
+
   it("OperatorConsoleApi_VendorPaymentAcknowledgmentEndpointsUseExpectedUrls", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(vendorAcknowledgmentSearchResponse()))
@@ -1600,6 +1691,149 @@ function vendorAcknowledgmentSearchResponse(): VendorPaymentAcknowledgmentSearch
     pageSize: 25,
     hasMore: false
   };
+}
+
+function vendorProjectionHealthTargetsResponse(): VendorSessionProjectionHealthTargetsResponse {
+  return {
+    config: vendorProjectionHealthConfig(),
+    targets: vendorProjectionHealthTargets()
+  };
+}
+
+function vendorProjectionHealthSummaryResponse(): VendorSessionProjectionHealthSummary {
+  const targets = vendorProjectionHealthTargets();
+  return {
+    totalTargets: targets.length,
+    enabledTargets: 2,
+    disabledTargets: 1,
+    healthyTargets: 1,
+    degradedTargets: 0,
+    failingTargets: 1,
+    unknownTargets: 0,
+    staleTargets: 1,
+    targetsWithLastFailure: 1,
+    latestSuccessfulProjectionSyncAt: "2026-06-22T02:05:00Z",
+    totalActiveProjections: 16,
+    totalExitedProjections: 8,
+    config: vendorProjectionHealthConfig()
+  };
+}
+
+function vendorProjectionHealthDetailResponse(): VendorSessionProjectionHealthTargetDetail {
+  return {
+    target: vendorProjectionHealthTargets()[0],
+    config: vendorProjectionHealthConfig(),
+    latestProjectedRecords: [
+      {
+        vendorSessionProjectionId: "b1000000-0000-0000-0000-000000000001",
+        vendorRecordGuid: "5BF30C478FE44C0D8432E549AF9FE0F7",
+        cardNum: "3519278781100",
+        plateLicense: null,
+        enterTime: "2026-06-16T09:30:04Z",
+        exitTime: null,
+        projectionStatus: "ACTIVE",
+        lastRefreshedAt: "2026-06-22T02:05:00Z",
+        sourceEventAt: "2026-06-16T09:30:04Z",
+        correlationId: "b2000000-0000-0000-0000-000000000001"
+      }
+    ]
+  };
+}
+
+function vendorProjectionHealthConfig() {
+  return {
+    schedulerEnabled: true,
+    degradedResolveFallbackEnabled: true,
+    maxProjectionAgeMinutes: 1440,
+    maxParallelSiteJobs: 4,
+    schedulerScanIntervalSeconds: 60
+  };
+}
+
+function vendorProjectionHealthTargets() {
+  return [
+    {
+      projectionSyncTargetId: "abe7da56-1198-4d51-901f-87e8fb7cd40d",
+      siteId: "c9000000-0000-0000-0000-000000000001",
+      siteGroupId: "ce000000-0000-0000-0000-000000000001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
+      parkingLotIndexCode: "1",
+      parkingLotName: "TEST SITE",
+      enabledFlag: true,
+      healthStatus: "HEALTHY",
+      lastAttemptAt: "2026-06-22T02:05:00Z",
+      lastSuccessAt: "2026-06-22T02:05:00Z",
+      lastFailureAt: null,
+      failureCount: 0,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      pollIntervalSeconds: 60,
+      lookbackWindowMinutes: 10080,
+      pageSize: 50,
+      latestProjectionLastRefreshedAt: "2026-06-22T02:05:00Z",
+      freshnessAgeSeconds: 120,
+      isStale: false,
+      totalProjectionCount: 19,
+      activeProjectionCount: 12,
+      exitedProjectionCount: 7,
+      cardNumProjectionCount: 15,
+      plateLicenseProjectionCount: 2
+    },
+    {
+      projectionSyncTargetId: "abe7da56-1198-4d51-901f-87e8fb7cd41d",
+      siteId: "c9000000-0000-0000-0000-000000000002",
+      siteGroupId: "ce000000-0000-0000-0000-000000000001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
+      parkingLotIndexCode: "2",
+      parkingLotName: "STALE SITE",
+      enabledFlag: true,
+      healthStatus: "FAILING",
+      lastAttemptAt: "2026-06-22T01:30:00Z",
+      lastSuccessAt: "2026-06-20T01:30:00Z",
+      lastFailureAt: "2026-06-22T01:30:00Z",
+      failureCount: 3,
+      lastErrorCode: "HIKCENTRAL_UNAVAILABLE",
+      lastErrorMessage: "HikCentral connection timed out.",
+      pollIntervalSeconds: 60,
+      lookbackWindowMinutes: 1440,
+      pageSize: 50,
+      latestProjectionLastRefreshedAt: "2026-06-20T01:30:00Z",
+      freshnessAgeSeconds: 172800,
+      isStale: true,
+      totalProjectionCount: 5,
+      activeProjectionCount: 4,
+      exitedProjectionCount: 1,
+      cardNumProjectionCount: 3,
+      plateLicenseProjectionCount: 1
+    },
+    {
+      projectionSyncTargetId: "abe7da56-1198-4d51-901f-87e8fb7cd42d",
+      siteId: "c9000000-0000-0000-0000-000000000003",
+      siteGroupId: "ce000000-0000-0000-0000-000000000001",
+      vendorSystemId: "31bde78a-5dfc-45c3-a1f3-e48abaf90927",
+      parkingLotIndexCode: "3",
+      parkingLotName: "DISABLED SITE",
+      enabledFlag: false,
+      healthStatus: "DISABLED",
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      failureCount: 0,
+      lastErrorCode: null,
+      lastErrorMessage: null,
+      pollIntervalSeconds: 300,
+      lookbackWindowMinutes: 1440,
+      pageSize: 25,
+      latestProjectionLastRefreshedAt: null,
+      freshnessAgeSeconds: null,
+      isStale: false,
+      totalProjectionCount: 0,
+      activeProjectionCount: 0,
+      exitedProjectionCount: 0,
+      cardNumProjectionCount: 0,
+      plateLicenseProjectionCount: 0
+    }
+  ];
 }
 
 function vendorAcknowledgmentDetailResponse(): VendorPaymentAcknowledgmentDetail {

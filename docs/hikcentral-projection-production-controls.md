@@ -222,6 +222,26 @@ These endpoints require Central PMS ops/operator RBAC permission through the `Ve
 
 The endpoints are visibility only. They do not enable targets, disable targets, trigger sync, change scheduler settings, calculate tariff, create payment attempts, mark tickets paid, or issue exit authorization.
 
+### Operator Console Projection Health Page
+
+Operator Console includes a read-only page for the same projection health view:
+
+```text
+/operator-console/vendor-session-projections/health
+```
+
+The page shows:
+
+- aggregate target totals, health buckets, stale target count, and active/exited projection counts
+- target rows with site, site group, parking lot, enabled state, health status, freshness, last success/failure, failure count, safe last error fields, and projection counts
+- target detail with safe metadata, safe configuration visibility, and limited latest projected rows
+- warnings when degraded fallback is enabled
+- warnings when targets are stale or failing
+
+Operators may infer whether projection sync appears healthy, stale, failing, disabled, or needing escalation. Operators must not infer tariff finality, payment finality, parking-session authority, paid state, or exit authorization from projection data.
+
+Escalate to engineering or vendor support when the page shows failing targets, stale enabled targets, recurring HikCentral errors, unexpected zero projected rows after records are seen, or degraded fallback enabled outside an approved test window.
+
 Use the SQL helper to inspect:
 
 - target `enabled_flag`
