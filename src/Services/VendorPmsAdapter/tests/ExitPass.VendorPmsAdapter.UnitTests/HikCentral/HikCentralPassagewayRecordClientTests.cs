@@ -102,6 +102,80 @@ public sealed class HikCentralPassagewayRecordClientTests
         Assert.Null(record.ExitTime);
     }
 
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_MapsActualHikCentralPassagewayShape()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "total": 1,
+                "list": [
+                  {
+                    "guid": "5BF30C478FE44C0D8432E549AF9FE0F7",
+                    "parkingLotInfo": {
+                      "parkingLotIndexCode": "1",
+                      "parkingLotName": "TEST SITE"
+                    },
+                    "passagewayInfo": {
+                      "passagewayIndexCode": "1",
+                      "passagewayName": "ENTRANCE"
+                    },
+                    "laneInfo": {
+                      "laneIndexCode": "2",
+                      "laneName": "ENTRANCE",
+                      "direction": 1
+                    },
+                    "personInfo": {
+                      "cardNum": "3519278781100",
+                      "ownerName": "",
+                      "ownerPhoneNum": ""
+                    },
+                    "carInfo": {
+                      "plateLicense": "Unknown",
+                      "carType": 0,
+                      "ImageUrl": "",
+                      "EnterTime": "2026-06-16T17:30:04+08:00",
+                      "ExitTime": ""
+                    },
+                    "allowType": 1,
+                    "allowResult": 1
+                  }
+                ]
+              }
+            }
+            """)));
+
+        var page = await client.GetPassagewayRecordsAsync(
+            new HikCentralPassagewayRecordRequest(
+                "1",
+                DateTimeOffset.Parse("2026-06-16T00:00:00+08:00"),
+                DateTimeOffset.Parse("2026-06-17T00:00:00+08:00"),
+                1,
+                50,
+                Guid.NewGuid()),
+            CancellationToken.None);
+
+        var record = Assert.Single(page.Records);
+        Assert.Equal("5BF30C478FE44C0D8432E549AF9FE0F7", record.Guid);
+        Assert.Equal("1", record.ParkingLotInfo?.ParkingLotIndexCode);
+        Assert.Equal("TEST SITE", record.ParkingLotInfo?.ParkingLotName);
+        Assert.Equal("1", record.PassagewayInfo?.PassagewayIndexCode);
+        Assert.Equal("ENTRANCE", record.PassagewayInfo?.PassagewayName);
+        Assert.Equal("2", record.LaneInfo?.LaneIndexCode);
+        Assert.Equal("ENTRANCE", record.LaneInfo?.LaneName);
+        Assert.Equal("1", record.LaneInfo?.Direction);
+        Assert.Equal("3519278781100", record.PersonInfo?.CardNum);
+        Assert.Equal("Unknown", record.CarInfo?.PlateLicense);
+        Assert.Equal("0", record.CarInfo?.CarType);
+        Assert.Equal("", record.CarInfo?.ImageUrl);
+        Assert.Equal("2026-06-16T17:30:04+08:00", record.CarInfo?.EnterTime);
+        Assert.Equal("", record.CarInfo?.ExitTime);
+        Assert.Equal("1", record.AllowType);
+        Assert.Equal("1", record.AllowResult);
+    }
+
     private static HikCentralPassagewayRecordClient CreateClient(FakeHikCentralHandler handler)
     {
         var signer = new HikCentralRequestSigner(

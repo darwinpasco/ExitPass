@@ -36,11 +36,11 @@ public sealed class HikCentralPassagewayProjectionNormalizer
     {
         ArgumentNullException.ThrowIfNull(record);
 
-        var parkingLotIndexCode = Normalize(record.ParkingLotInfo?.IndexCode);
+        var parkingLotIndexCode = NamedIndexCode(record.ParkingLotInfo, preferParkingLotFields: true);
         var cardNum = Normalize(record.PersonInfo?.CardNum);
-        var plateLicense = Normalize(record.CarInfo?.PlateLicense);
-        var enterTime = ParseTimestamp(record.EnterTime);
-        var exitTime = ParseTimestamp(record.ExitTime);
+        var plateLicense = NormalizePlateLicense(record.CarInfo?.PlateLicense);
+        var enterTime = ParseTimestamp(record.CarInfo?.EnterTime) ?? ParseTimestamp(record.EnterTime);
+        var exitTime = ParseTimestamp(record.CarInfo?.ExitTime) ?? ParseTimestamp(record.ExitTime);
 
         if (!TryBuildStableIdentity(
             record,
@@ -63,11 +63,11 @@ public sealed class HikCentralPassagewayProjectionNormalizer
             siteId,
             siteGroupId,
             parkingLotIndexCode,
-            Normalize(record.ParkingLotInfo?.Name),
-            Normalize(record.PassagewayInfo?.IndexCode),
-            Normalize(record.PassagewayInfo?.Name),
-            Normalize(record.LaneInfo?.IndexCode),
-            Normalize(record.LaneInfo?.Name),
+            NamedIndexName(record.ParkingLotInfo, preferParkingLotFields: true),
+            NamedIndexCode(record.PassagewayInfo, preferParkingLotFields: false),
+            NamedIndexName(record.PassagewayInfo, preferParkingLotFields: false),
+            LaneIndexCode(record.LaneInfo),
+            LaneName(record.LaneInfo),
             Normalize(record.LaneInfo?.LaneDirection) ?? Normalize(record.LaneInfo?.Direction),
             Normalize(record.Guid),
             cardNum,
@@ -76,7 +76,7 @@ public sealed class HikCentralPassagewayProjectionNormalizer
             exitTime,
             Normalize(record.AllowType),
             Normalize(record.AllowResult),
-            Normalize(record.ImageUrl),
+            Normalize(record.CarInfo?.ImageUrl) ?? Normalize(record.ImageUrl),
             SourceApi,
             payloadHash,
             BuildPayloadReference(record, identityKey),
@@ -184,5 +184,47 @@ public sealed class HikCentralPassagewayProjectionNormalizer
     private static string? Normalize(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? NormalizePlateLicense(string? value)
+    {
+        var normalized = Normalize(value);
+        return string.Equals(normalized, "Unknown", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : normalized;
+    }
+
+    private static string? NamedIndexCode(HikCentralNamedIndex? value, bool preferParkingLotFields)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return preferParkingLotFields
+            ? Normalize(value.ParkingLotIndexCode) ?? Normalize(value.IndexCode)
+            : Normalize(value.PassagewayIndexCode) ?? Normalize(value.IndexCode);
+    }
+
+    private static string? NamedIndexName(HikCentralNamedIndex? value, bool preferParkingLotFields)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        return preferParkingLotFields
+            ? Normalize(value.ParkingLotName) ?? Normalize(value.Name)
+            : Normalize(value.PassagewayName) ?? Normalize(value.Name);
+    }
+
+    private static string? LaneIndexCode(HikCentralLaneInfo? value)
+    {
+        return Normalize(value?.LaneIndexCode) ?? Normalize(value?.IndexCode);
+    }
+
+    private static string? LaneName(HikCentralLaneInfo? value)
+    {
+        return Normalize(value?.LaneName) ?? Normalize(value?.Name);
     }
 }

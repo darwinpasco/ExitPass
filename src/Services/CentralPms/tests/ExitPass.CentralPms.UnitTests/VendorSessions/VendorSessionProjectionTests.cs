@@ -3,6 +3,7 @@ using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Text.Json;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.VendorSessions;
@@ -61,6 +62,92 @@ public sealed class VendorSessionProjectionTests
     }
 
     [Fact]
+    public void Normalize_ActualHikCentralShapeWithEmptyExitTime_CreatesActiveTicketProjection()
+    {
+        var normalizer = new HikCentralPassagewayProjectionNormalizer();
+
+        var normalized = normalizer.TryNormalize(
+            ActualHikCentralRecord(),
+            vendorSystemId: Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+            siteId: Guid.Parse("bbbbbbbb-0000-0000-0000-000000000001"),
+            siteGroupId: Guid.Parse("cccccccc-0000-0000-0000-000000000001"),
+            correlationId: Guid.Parse("dddddddd-0000-0000-0000-000000000001"),
+            ObservedAt,
+            out var projection);
+
+        Assert.True(normalized);
+        Assert.NotNull(projection);
+        Assert.Equal(VendorSessionProjectionStatus.Active, projection!.ProjectionStatus);
+        Assert.Equal("5BF30C478FE44C0D8432E549AF9FE0F7", projection.VendorRecordGuid);
+        Assert.Equal("1", projection.ParkingLotIndexCode);
+        Assert.Equal("TEST SITE", projection.ParkingLotName);
+        Assert.Equal("1", projection.PassagewayIndexCode);
+        Assert.Equal("ENTRANCE", projection.PassagewayName);
+        Assert.Equal("2", projection.LaneIndexCode);
+        Assert.Equal("ENTRANCE", projection.LaneName);
+        Assert.Equal("1", projection.LaneDirection);
+        Assert.Equal("3519278781100", projection.CardNum);
+        Assert.Null(projection.PlateLicense);
+        Assert.Equal(DateTimeOffset.Parse("2026-06-16T17:30:04+08:00"), projection.EnterTime);
+        Assert.Null(projection.ExitTime);
+        Assert.Null(projection.ImageUrl);
+        Assert.Equal("1", projection.AllowType);
+        Assert.Equal("1", projection.AllowResult);
+        Assert.Equal("VENDOR_RECORD_GUID", projection.StableIdentityType);
+        Assert.Equal("HIKCENTRAL|GUID|5BF30C478FE44C0D8432E549AF9FE0F7", projection.StableIdentityKey);
+        Assert.DoesNotContain("UNKNOWN", projection.StableIdentityKey, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Normalize_ActualHikCentralShapeWithExitTime_CreatesExitedProjection()
+    {
+        var normalizer = new HikCentralPassagewayProjectionNormalizer();
+
+        var normalized = normalizer.TryNormalize(
+            ActualHikCentralRecord(
+                cardNum: "3519278781100",
+                plateLicense: "ABC123",
+                imageUrl: "https://hikcentral.example/image.jpg",
+                exitTime: "2026-06-16T18:30:04+08:00"),
+            vendorSystemId: null,
+            siteId: null,
+            siteGroupId: null,
+            correlationId: Guid.NewGuid(),
+            ObservedAt,
+            out var projection);
+
+        Assert.True(normalized);
+        Assert.Equal(VendorSessionProjectionStatus.Exited, projection!.ProjectionStatus);
+        Assert.Equal("3519278781100", projection.CardNum);
+        Assert.Equal("ABC123", projection.PlateLicense);
+        Assert.Equal("https://hikcentral.example/image.jpg", projection.ImageUrl);
+        Assert.Equal(DateTimeOffset.Parse("2026-06-16T18:30:04+08:00"), projection.ExitTime);
+        Assert.Equal("VENDOR_RECORD_GUID", projection.StableIdentityType);
+    }
+
+    [Fact]
+    public void Normalize_ActualHikCentralPlateOnlyRecordWithGuid_CreatesProjectionWithoutCardLookup()
+    {
+        var normalizer = new HikCentralPassagewayProjectionNormalizer();
+
+        var normalized = normalizer.TryNormalize(
+            ActualHikCentralRecord(cardNum: "", plateLicense: "ABC123"),
+            vendorSystemId: null,
+            siteId: null,
+            siteGroupId: null,
+            correlationId: Guid.NewGuid(),
+            ObservedAt,
+            out var projection);
+
+        Assert.True(normalized);
+        Assert.NotNull(projection);
+        Assert.Null(projection!.CardNum);
+        Assert.Equal("ABC123", projection.PlateLicense);
+        Assert.Equal("VENDOR_RECORD_GUID", projection.StableIdentityType);
+        Assert.Equal("HIKCENTRAL|GUID|5BF30C478FE44C0D8432E549AF9FE0F7", projection.StableIdentityKey);
+    }
+
+    [Fact]
     public void Normalize_WhenGuidMissing_UsesParkingLotCardEnterTimeStableIdentity()
     {
         var normalizer = new HikCentralPassagewayProjectionNormalizer();
@@ -97,6 +184,26 @@ public sealed class VendorSessionProjectionTests
         Assert.Equal(1, second.RecordsProjected);
         Assert.Single(repository.Items);
         Assert.Equal(2, repository.UpsertCounts.Single().Value);
+    }
+
+    [Fact]
+    public async Task SyncAsync_ActualLiveSampleRecord_IsProjectedNotSkipped()
+    {
+        var repository = new InMemoryVendorSessionProjectionRepository();
+        var client = new FakePassagewayClient([
+            ActualHikCentralRecord()
+        ]);
+        var service = CreateSyncService(client, repository);
+
+        var result = await service.SyncAsync(SyncCommand(), CancellationToken.None);
+
+        Assert.Equal(1, result.RecordsSeen);
+        Assert.Equal(1, result.RecordsProjected);
+        Assert.Equal(0, result.RecordsSkipped);
+        var projection = Assert.Single(repository.Items);
+        Assert.Equal("3519278781100", projection.CardNum);
+        Assert.Equal(VendorSessionProjectionStatus.Active, projection.ProjectionStatus);
+        Assert.Equal("VENDOR_RECORD_GUID", projection.StableIdentityType);
     }
 
     [Fact]
@@ -247,6 +354,59 @@ public sealed class VendorSessionProjectionTests
             exitTime,
             AllowType: "TEMP",
             AllowResult: "ALLOW");
+    }
+
+    private static HikCentralPassagewayRecord ActualHikCentralRecord(
+        string cardNum = "3519278781100",
+        string plateLicense = "Unknown",
+        string imageUrl = "",
+        string exitTime = "")
+    {
+        const string jsonTemplate = """
+            {
+              "guid": "5BF30C478FE44C0D8432E549AF9FE0F7",
+              "parkingLotInfo": {
+                "parkingLotIndexCode": "1",
+                "parkingLotName": "TEST SITE"
+              },
+              "passagewayInfo": {
+                "passagewayIndexCode": "1",
+                "passagewayName": "ENTRANCE"
+              },
+              "laneInfo": {
+                "laneIndexCode": "2",
+                "laneName": "ENTRANCE",
+                "direction": 1
+              },
+              "personInfo": {
+                "cardNum": "__CARD_NUM__",
+                "ownerName": "",
+                "ownerPhoneNum": ""
+              },
+              "carInfo": {
+                "plateLicense": "__PLATE_LICENSE__",
+                "carType": 0,
+                "ImageUrl": "__IMAGE_URL__",
+                "EnterTime": "2026-06-16T17:30:04+08:00",
+                "ExitTime": "__EXIT_TIME__"
+              },
+              "allowType": 1,
+              "allowResult": 1
+            }
+            """;
+
+        var json = jsonTemplate
+            .Replace("__CARD_NUM__", cardNum, StringComparison.Ordinal)
+            .Replace("__PLATE_LICENSE__", plateLicense, StringComparison.Ordinal)
+            .Replace("__IMAGE_URL__", imageUrl, StringComparison.Ordinal)
+            .Replace("__EXIT_TIME__", exitTime, StringComparison.Ordinal);
+
+        return JsonSerializer.Deserialize<HikCentralPassagewayRecord>(
+            json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                PropertyNameCaseInsensitive = true
+            })!;
     }
 
     private static string FindRepoFile(string fileName)
