@@ -1,0 +1,66 @@
+@startuml
+title ExitPass + HikCentral Degraded Mode Flow\nProjection Snapshot Fallback
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam participantPadding 24
+skinparam boxPadding 12
+
+actor "Parker / WebPay\nor Operator Console" as User
+participant "Central PMS API" as Api
+participant "Resolve Vendor Parking\nUse Case" as Resolve
+participant "HikCentral Vendor PMS Adapter" as Adapter
+participant "HikCentral OpenAPI" as HikCentral
+participant "Projection Lookup Service" as ProjectionLookup
+database "ExitPass DB\nsessions.vendor_session_projections" as DB
+
+note over Api,Resolve
+DegradedResolveFallbackEnabled must be true.
+Fallback is guarded and should not be enabled by default.
+end note
+
+User -> Api: POST /v1/vendor-parking/resolve\nsiteId, siteGroupId, vendorSystemId,\nticketReference/cardNum
+Api -> Resolve: Execute resolve command
+
+Resolve -> Adapter: Attempt live vendor resolve
+Adapter -> HikCentral: Live lookup / fee calculation
+
+HikCentral -x Adapter: Unavailable\nconnection refused, timeout,\nor retryable vendor failure
+Adapter --> Resolve: RetryableUnavailable
+
+alt Projection fallback enabled
+    Resolve -> ProjectionLookup: Lookup latest projection snapshot\nby site + site group + vendor system + cardNum
+    ProjectionLookup -> DB: Query sessions.vendor_session_projections\ncard_num = ticketReference\nprojection_status = ACTIVE\nfreshness within threshold
+    DB --> ProjectionLookup: Fresh projection snapshot
+
+    ProjectionLookup --> Resolve: ProjectionSnapshotAvailable\nnon-authoritative=true
+
+    Resolve --> Api: Projection fallback result\nno tariff finality
+    Api --> User: 503 Service Unavailable\nerrorCode=VENDOR_UNAVAILABLE_PROJECTION_SNAPSHOT_AVAILABLE\ndetails.source=projection_snapshot\ndetails.non_authoritative=true\nfreshness metadata
+
+else Projection missing or stale
+    Resolve -> ProjectionLookup: Lookup latest projection snapshot
+    ProjectionLookup -> DB: Query projection by card/site/vendor
+    DB --> ProjectionLookup: No fresh usable snapshot
+
+    ProjectionLookup --> Resolve: No fallback available
+    Resolve --> Api: RetryableUnavailable
+    Api --> User: 503 Service Unavailable\nerrorCode=VENDOR_PMS_UNAVAILABLE\ndetails=null
+end
+
+note over Api,DB
+Fallback response is continuity visibility only.
+It must not be used as tariff finality,
+payment finality, parking-session authority,
+or exit authorization.
+end note
+
+note over Resolve
+No PaymentAttempt is created.
+No tariff calculation is performed from projection data.
+No PaymentConfirmation is recorded.
+No ExitAuthorization is issued.
+end note
+
+@enduml
+
