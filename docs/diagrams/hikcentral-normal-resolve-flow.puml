@@ -1,0 +1,70 @@
+@startuml
+title ExitPass + HikCentral Normal Flow\nProjection Sync + Live Vendor Resolve
+
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam participantPadding 24
+skinparam boxPadding 12
+
+actor "Parker / WebPay\nor Operator Console" as User
+participant "Central PMS API" as Api
+participant "Resolve Vendor Parking\nUse Case" as Resolve
+participant "HikCentral Vendor PMS Adapter" as Adapter
+participant "HikCentral OpenAPI" as HikCentral
+participant "Projection Scheduler" as Scheduler
+participant "Projection Sync Service" as Sync
+database "ExitPass DB\nsessions + core schemas" as DB
+
+box "Background projection path, non-authoritative read model" #EEF7FF
+    Scheduler -> DB: Load due enabled site-scoped sync targets
+    DB --> Scheduler: Target for site + parkingLotIndexCode = 1
+
+    Scheduler -> Sync: Run projection sync target
+    Sync -> Adapter: Get passageway records\nparkingLotIndexCode = 1
+    Adapter -> HikCentral: POST /artemis/api/vehicle/v1/parkinglot/passageway/record
+    HikCentral --> Adapter: 200, code=0,\npassageway records
+    Adapter --> Sync: Normalized records
+
+    Sync -> Sync: Normalize actual HikCentral fields\nparkingLotInfo.parkingLotIndexCode\npersonInfo.cardNum\ncarInfo.EnterTime/ExitTime
+    Sync -> Sync: Convert +08:00 timestamps to UTC\nbefore PostgreSQL timestamptz write
+
+    Sync -> DB: Upsert sessions.vendor_session_projections
+    Sync -> DB: Update sessions.vendor_session_projection_sync_targets\nhealth=HEALTHY, last_success_at
+    DB --> Scheduler: Projection sync completed
+end box
+
+note over DB
+Projection data is a latest-known continuity snapshot only.
+It is not parking-session authority, tariff authority,
+payment finality, or exit authorization authority.
+end note
+
+box "Normal live resolve path, vendor remains authority" #F3FFF3
+    User -> Api: POST /v1/vendor-parking/resolve\nsiteId, siteGroupId, vendorSystemId,\nticketReference/cardNum
+    Api -> Resolve: Execute resolve command
+
+    Resolve -> Adapter: Resolve live parking session and tariff\nusing ticket/card reference
+    Adapter -> HikCentral: Live vendor lookup / fee calculation
+    HikCentral --> Adapter: Parking session + tariff result
+    Adapter --> Resolve: Vendor-authoritative session/tariff data
+
+    Resolve -> Resolve: Validate and map vendor response
+    Resolve -> Resolve: Convert vendor +08:00 timestamps to UTC\nbefore DB persistence
+
+    Resolve -> DB: Insert/update core.parking_sessions
+    Resolve -> DB: Insert core.tariff_snapshots
+    DB --> Resolve: parking_session_id + tariff_snapshot_id
+
+    Resolve --> Api: Resolved result
+    Api --> User: 200 OK\nlookupOutcome=resolved\nparkingSessionId\ntariffSnapshotId\namount/currency
+end box
+
+note over Resolve,DB
+Normal resolve may persist a parking session and tariff snapshot.
+It must not create PaymentAttempt.
+It must not infer payment finality.
+It must not issue ExitAuthorization.
+end note
+
+@enduml
+
