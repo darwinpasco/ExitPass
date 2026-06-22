@@ -268,10 +268,32 @@ Central PMS contract tests:
 Recommended follow-up slices:
 
 - #314 Add PayMongo status-query adapter/client tests and mapping model. Completed baseline names: `ProviderStatusQueryCommand`, `ProviderStatusQueryResult`, `RetrieveCheckoutSessionStatusAsync`, and `QueryProviderSessionStatusAsync`.
-- #315 Add controlled Payment Orchestrator status-query handler.
+- #315 Add controlled Payment Orchestrator status-query handler. Completed baseline names: `IProviderStatusQueryAdapter`, `QueryProviderSessionStatusCommand`, and `QueryProviderSessionStatusHandler`.
 - #316 Add status-query persistence/evidence support if schema already supports it; otherwise design a DB change separately.
 - #317 Add Central PMS verified outcome contract tests for status-query source.
 - #318 Add reconciliation diagnostics visibility for status-query evidence.
+
+## #315 Controlled Handler Baseline
+
+#315 adds an application-level `QueryProviderSessionStatusHandler` in Payment Orchestrator.
+
+The handler:
+
+- loads a known provider session from `IProviderSessionRepository`
+- resolves a status-query-capable provider adapter through `IProviderStatusQueryAdapter`
+- calls the #314 provider status-query mapping path
+- preserves the command or persisted correlation id
+- returns `ProviderStatusQueryResult` as provider-neutral evidence
+
+#315 intentionally does not add:
+
+- public WebPay status-query behavior
+- HTTP endpoint exposure
+- scheduler or poller behavior
+- status-query persistence schema
+- Central PMS reporting
+
+Central PMS reporting remains deferred to a later slice. Until then, a terminal successful status-query result is only marked as eligible/reportable evidence; it is not platform payment finality, does not create `PaymentConfirmation`, and does not issue `ExitAuthorization`.
 
 ## Open Decisions
 
