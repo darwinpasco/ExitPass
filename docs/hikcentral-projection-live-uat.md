@@ -2,6 +2,8 @@
 
 This runbook validates the Central PMS vendor session projection scheduler against a live HikCentral environment. It is configuration and UAT only. It must not change payment, tariff, parking-session, or exit-authority behavior.
 
+For production deployment controls, safe scheduler ownership, and reusable sync-target operations, use `docs/hikcentral-projection-production-controls.md`. The UAT values in this file are examples for the TEST SITE UAT parking lot only and are not production defaults.
+
 ## Repository Findings
 
 - Central PMS base appsettings do not contain HikCentral live configuration.
@@ -13,6 +15,7 @@ This runbook validates the Central PMS vendor session projection scheduler again
 - The projection read model is `sessions.vendor_session_projections`.
 - Some existing dev/UAT databases may predate #280/#282 and may be missing the projection tables even when the repository DDL is current.
 - `docs/sql/HikCentralProjectionSchemaPatch.sql` applies only the missing HikCentral projection schema objects from the current state-based DDL.
+- `docs/sql/HikCentralProjectionSyncTargetOps.sql` contains reusable production/UAT helper queries for listing, creating, enabling, disabling, and verifying site-scoped sync targets.
 
 ## Required Order
 

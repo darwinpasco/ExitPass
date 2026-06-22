@@ -11,6 +11,96 @@ public sealed class VendorSessionProjectionOptions
     public const string SectionName = "CentralPms:VendorSessionProjections";
 
     /// <summary>
+    /// Minimum accepted poll interval for projection sync targets.
+    /// </summary>
+    public const int MinPollIntervalSeconds = 30;
+
+    /// <summary>
+    /// Maximum accepted poll interval for projection sync targets.
+    /// </summary>
+    public const int MaxPollIntervalSeconds = 86_400;
+
+    /// <summary>
+    /// Minimum accepted passageway lookback window.
+    /// </summary>
+    public const int MinLookbackWindowMinutes = 1;
+
+    /// <summary>
+    /// Maximum accepted passageway lookback window.
+    /// </summary>
+    public const int MaxLookbackWindowMinutes = 10_080;
+
+    /// <summary>
+    /// Minimum accepted HikCentral passageway page size.
+    /// </summary>
+    public const int MinPageSize = 1;
+
+    /// <summary>
+    /// Maximum accepted HikCentral passageway page size.
+    /// </summary>
+    public const int MaxPageSize = 500;
+
+    /// <summary>
+    /// Minimum accepted scheduler parallelism.
+    /// </summary>
+    public const int MinParallelSiteJobs = 1;
+
+    /// <summary>
+    /// Maximum accepted scheduler parallelism.
+    /// </summary>
+    public const int MaxParallelSiteJobsLimit = 16;
+
+    /// <summary>
+    /// Minimum accepted scheduler startup delay.
+    /// </summary>
+    public const int MinStartupDelaySeconds = 0;
+
+    /// <summary>
+    /// Maximum accepted scheduler startup delay.
+    /// </summary>
+    public const int MaxStartupDelaySeconds = 3_600;
+
+    /// <summary>
+    /// Minimum accepted scheduler scan interval.
+    /// </summary>
+    public const int MinSchedulerScanIntervalSeconds = 15;
+
+    /// <summary>
+    /// Maximum accepted scheduler scan interval.
+    /// </summary>
+    public const int MaxSchedulerScanIntervalSeconds = 3_600;
+
+    /// <summary>
+    /// Minimum accepted page limit for one target run.
+    /// </summary>
+    public const int MinPagesPerRun = 1;
+
+    /// <summary>
+    /// Maximum accepted page limit for one target run.
+    /// </summary>
+    public const int MaxPagesPerRunLimit = 100;
+
+    /// <summary>
+    /// Minimum accepted projection age threshold for fallback.
+    /// </summary>
+    public const int MinProjectionAgeMinutes = 1;
+
+    /// <summary>
+    /// Maximum accepted projection age threshold for fallback.
+    /// </summary>
+    public const int MaxProjectionAgeMinutesLimit = 10_080;
+
+    /// <summary>
+    /// Minimum consecutive failure count before target health can become FAILING.
+    /// </summary>
+    public const int MinFailingFailureCountThreshold = 1;
+
+    /// <summary>
+    /// Maximum consecutive failure count before target health can become FAILING.
+    /// </summary>
+    public const int MaxFailingFailureCountThreshold = 100;
+
+    /// <summary>
     /// Enables the centralized background scheduler.
     /// </summary>
     public bool SchedulerEnabled { get; set; }
@@ -69,30 +159,107 @@ public sealed class VendorSessionProjectionOptions
     /// <summary>
     /// Returns a bounded poll interval.
     /// </summary>
-    public int EffectivePollIntervalSeconds(int value) => value > 0 ? value : Math.Max(1, DefaultPollIntervalSeconds);
+    public int EffectivePollIntervalSeconds(int value) =>
+        Math.Clamp(value > 0 ? value : DefaultPollIntervalSeconds, MinPollIntervalSeconds, MaxPollIntervalSeconds);
 
     /// <summary>
     /// Returns a bounded lookback window.
     /// </summary>
-    public int EffectiveLookbackWindowMinutes(int value) => value > 0 ? value : Math.Max(1, DefaultLookbackWindowMinutes);
+    public int EffectiveLookbackWindowMinutes(int value) =>
+        Math.Clamp(value > 0 ? value : DefaultLookbackWindowMinutes, MinLookbackWindowMinutes, MaxLookbackWindowMinutes);
 
     /// <summary>
     /// Returns a bounded page size accepted by the HikCentral client.
     /// </summary>
-    public int EffectivePageSize(int value) => Math.Clamp(value > 0 ? value : DefaultPageSize, 1, 500);
+    public int EffectivePageSize(int value) =>
+        Math.Clamp(value > 0 ? value : DefaultPageSize, MinPageSize, MaxPageSize);
 
     /// <summary>
     /// Returns a bounded parallelism value.
     /// </summary>
-    public int EffectiveMaxParallelSiteJobs() => Math.Max(1, MaxParallelSiteJobs);
+    public int EffectiveMaxParallelSiteJobs() =>
+        Math.Clamp(MaxParallelSiteJobs, MinParallelSiteJobs, MaxParallelSiteJobsLimit);
+
+    /// <summary>
+    /// Returns a bounded scheduler startup delay.
+    /// </summary>
+    public TimeSpan EffectiveStartupDelay() =>
+        TimeSpan.FromSeconds(Math.Clamp(StartupDelaySeconds, MinStartupDelaySeconds, MaxStartupDelaySeconds));
+
+    /// <summary>
+    /// Returns a bounded scheduler scan interval.
+    /// </summary>
+    public TimeSpan EffectiveSchedulerScanInterval() =>
+        TimeSpan.FromSeconds(Math.Clamp(
+            SchedulerScanIntervalSeconds,
+            MinSchedulerScanIntervalSeconds,
+            MaxSchedulerScanIntervalSeconds));
 
     /// <summary>
     /// Returns a bounded page limit for one sync run.
     /// </summary>
-    public int EffectiveMaxPagesPerRun() => Math.Max(1, MaxPagesPerRun);
+    public int EffectiveMaxPagesPerRun() =>
+        Math.Clamp(MaxPagesPerRun, MinPagesPerRun, MaxPagesPerRunLimit);
 
     /// <summary>
     /// Returns a bounded fallback freshness threshold.
     /// </summary>
-    public TimeSpan EffectiveMaxProjectionAge() => TimeSpan.FromMinutes(Math.Max(1, MaxProjectionAgeMinutes));
+    public TimeSpan EffectiveMaxProjectionAge() =>
+        TimeSpan.FromMinutes(Math.Clamp(
+            MaxProjectionAgeMinutes,
+            MinProjectionAgeMinutes,
+            MaxProjectionAgeMinutesLimit));
+
+    /// <summary>
+    /// Returns a bounded consecutive failure threshold.
+    /// </summary>
+    public int EffectiveFailingFailureCountThreshold() =>
+        Math.Clamp(
+            FailingFailureCountThreshold,
+            MinFailingFailureCountThreshold,
+            MaxFailingFailureCountThreshold);
+
+    /// <summary>
+    /// Validates configured values before the scheduler or fallback path uses them.
+    /// </summary>
+    public IReadOnlyList<string> Validate()
+    {
+        var errors = new List<string>();
+        AddRangeError(errors, nameof(DefaultPollIntervalSeconds), DefaultPollIntervalSeconds, MinPollIntervalSeconds, MaxPollIntervalSeconds);
+        AddRangeError(errors, nameof(DefaultLookbackWindowMinutes), DefaultLookbackWindowMinutes, MinLookbackWindowMinutes, MaxLookbackWindowMinutes);
+        AddRangeError(errors, nameof(DefaultPageSize), DefaultPageSize, MinPageSize, MaxPageSize);
+        AddRangeError(errors, nameof(MaxParallelSiteJobs), MaxParallelSiteJobs, MinParallelSiteJobs, MaxParallelSiteJobsLimit);
+        AddRangeError(errors, nameof(StartupDelaySeconds), StartupDelaySeconds, MinStartupDelaySeconds, MaxStartupDelaySeconds);
+        AddRangeError(errors, nameof(SchedulerScanIntervalSeconds), SchedulerScanIntervalSeconds, MinSchedulerScanIntervalSeconds, MaxSchedulerScanIntervalSeconds);
+        AddRangeError(errors, nameof(MaxPagesPerRun), MaxPagesPerRun, MinPagesPerRun, MaxPagesPerRunLimit);
+        AddRangeError(errors, nameof(MaxProjectionAgeMinutes), MaxProjectionAgeMinutes, MinProjectionAgeMinutes, MaxProjectionAgeMinutesLimit);
+        AddRangeError(errors, nameof(FailingFailureCountThreshold), FailingFailureCountThreshold, MinFailingFailureCountThreshold, MaxFailingFailureCountThreshold);
+        return errors;
+    }
+
+    /// <summary>
+    /// Throws a clear configuration exception when validation fails.
+    /// </summary>
+    public void ThrowIfInvalid()
+    {
+        var errors = Validate();
+        if (errors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Invalid {SectionName} configuration: {string.Join(", ", errors)}.");
+        }
+    }
+
+    private static void AddRangeError(
+        List<string> errors,
+        string propertyName,
+        int value,
+        int minimum,
+        int maximum)
+    {
+        if (value < minimum || value > maximum)
+        {
+            errors.Add($"{propertyName} must be between {minimum} and {maximum}; actual value is {value}");
+        }
+    }
 }
