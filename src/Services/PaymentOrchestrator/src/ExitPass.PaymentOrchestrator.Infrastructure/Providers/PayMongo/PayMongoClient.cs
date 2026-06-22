@@ -130,6 +130,54 @@ public sealed class PayMongoClient
     }
 
     /// <summary>
+    /// Retrieves a PayMongo Checkout Session status by provider session reference.
+    /// </summary>
+    /// <param name="providerSessionReference">The PayMongo Checkout Session identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The normalized PayMongo Checkout Session status response.</returns>
+    /// <exception cref="ArgumentException">Thrown when the provider session reference is blank.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when required PayMongo configuration is missing or the provider returns an invalid response.
+    /// </exception>
+    public async Task<PayMongoCheckoutSessionStatusResponse> RetrieveCheckoutSessionStatusAsync(
+        string providerSessionReference,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(providerSessionReference))
+        {
+            throw new ArgumentException("Provider session reference is required.", nameof(providerSessionReference));
+        }
+
+        var validationErrors = _options.Validate();
+        if (validationErrors.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"PayMongo configuration is invalid: {string.Join(" ", validationErrors)}");
+        }
+
+        var trimmedReference = providerSessionReference.Trim();
+
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"{_options.BaseUrl.TrimEnd('/')}/v1/checkout_sessions/{Uri.EscapeDataString(trimmedReference)}");
+
+        request.Headers.Authorization = BuildBasicAuthorizationHeader(_options.SecretKey);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new PayMongoProviderApiException(
+                response.StatusCode,
+                ResolveProviderFailureReason(responseJson));
+        }
+
+        return ParseCheckoutSessionStatusResponse(responseJson);
+    }
+
+    /// <summary>
     /// Builds the PayMongo checkout session request payload.
     /// </summary>
     /// <param name="command">The normalized provider session creation command.</param>
@@ -173,6 +221,174 @@ public sealed class PayMongoClient
         }
 
         return $"EP-{command.PaymentAttemptId:N}"[..15].ToUpperInvariant();
+    }
+
+    private static PayMongoCheckoutSessionStatusResponse ParseCheckoutSessionStatusResponse(string responseJson)
+    {
+        using var document = JsonDocument.Parse(responseJson);
+        var root = document.RootElement;
+
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("PayMongo status response did not contain a valid data object.");
+        }
+
+        var checkoutSessionId = data.TryGetProperty("id", out var idProperty) && idProperty.ValueKind == JsonValueKind.String
+            ? idProperty.GetString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(checkoutSessionId))
+        {
+            throw new InvalidOperationException("PayMongo status response did not contain a checkout session id.");
+        }
+
+        if (!data.TryGetProperty("attributes", out var attributes) || attributes.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("PayMongo status response did not contain a valid attributes object.");
+        }
+
+        var sourceStatus = GetOptionalString(attributes, "status") ??
+            GetOptionalString(attributes, "payment_status") ??
+            GetFirstPaymentString(attributes, "status");
+        var providerReference = GetFirstPaymentId(attributes) ??
+            GetOptionalString(attributes, "payment_id") ??
+            GetOptionalString(attributes, "provider_reference");
+        var amountMinor = GetOptionalInt64(attributes, "amount") ??
+            GetFirstPaymentInt64(attributes, "amount");
+        var currencyCode = GetOptionalString(attributes, "currency") ??
+            GetFirstPaymentString(attributes, "currency");
+        var observedAtUtc =
+            GetOptionalDateTimeOffset(attributes, "paid_at") ??
+            GetOptionalDateTimeOffset(attributes, "completed_at") ??
+            GetOptionalDateTimeOffset(attributes, "updated_at") ??
+            GetOptionalDateTimeOffset(attributes, "created_at") ??
+            GetFirstPaymentDateTimeOffset(attributes, "paid_at") ??
+            GetFirstPaymentDateTimeOffset(attributes, "updated_at") ??
+            GetFirstPaymentDateTimeOffset(attributes, "created_at");
+
+        return new PayMongoCheckoutSessionStatusResponse(
+            checkoutSessionId,
+            providerReference,
+            sourceStatus,
+            amountMinor,
+            currencyCode,
+            observedAtUtc,
+            responseJson);
+    }
+
+    private static string? GetOptionalString(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(property.GetString())
+                ? property.GetString()
+                : null;
+    }
+
+    private static long? GetOptionalInt64(JsonElement element, string propertyName)
+    {
+        return element.TryGetProperty(propertyName, out var property) &&
+            property.ValueKind == JsonValueKind.Number &&
+            property.TryGetInt64(out var parsed)
+                ? parsed
+                : null;
+    }
+
+    private static DateTimeOffset? GetOptionalDateTimeOffset(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.String &&
+            DateTimeOffset.TryParse(property.GetString(), out var parsedString))
+        {
+            return parsedString.ToUniversalTime();
+        }
+
+        if (property.ValueKind == JsonValueKind.Number &&
+            property.TryGetInt64(out var unixSeconds))
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(unixSeconds);
+        }
+
+        return null;
+    }
+
+    private static string? GetFirstPaymentId(JsonElement checkoutAttributes)
+    {
+        if (!TryGetFirstPayment(checkoutAttributes, out var payment))
+        {
+            return null;
+        }
+
+        return GetOptionalString(payment, "id");
+    }
+
+    private static string? GetFirstPaymentString(JsonElement checkoutAttributes, string propertyName)
+    {
+        if (!TryGetFirstPaymentAttributes(checkoutAttributes, out var paymentAttributes))
+        {
+            return null;
+        }
+
+        return GetOptionalString(paymentAttributes, propertyName);
+    }
+
+    private static long? GetFirstPaymentInt64(JsonElement checkoutAttributes, string propertyName)
+    {
+        if (!TryGetFirstPaymentAttributes(checkoutAttributes, out var paymentAttributes))
+        {
+            return null;
+        }
+
+        return GetOptionalInt64(paymentAttributes, propertyName);
+    }
+
+    private static DateTimeOffset? GetFirstPaymentDateTimeOffset(JsonElement checkoutAttributes, string propertyName)
+    {
+        if (!TryGetFirstPaymentAttributes(checkoutAttributes, out var paymentAttributes))
+        {
+            return null;
+        }
+
+        return GetOptionalDateTimeOffset(paymentAttributes, propertyName);
+    }
+
+    private static bool TryGetFirstPaymentAttributes(JsonElement checkoutAttributes, out JsonElement paymentAttributes)
+    {
+        paymentAttributes = default;
+
+        if (!TryGetFirstPayment(checkoutAttributes, out var payment))
+        {
+            return false;
+        }
+
+        return payment.TryGetProperty("attributes", out paymentAttributes) &&
+            paymentAttributes.ValueKind == JsonValueKind.Object;
+    }
+
+    private static bool TryGetFirstPayment(JsonElement checkoutAttributes, out JsonElement payment)
+    {
+        payment = default;
+
+        if (!checkoutAttributes.TryGetProperty("payments", out var payments) ||
+            payments.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var candidate in payments.EnumerateArray())
+        {
+            if (candidate.ValueKind == JsonValueKind.Object)
+            {
+                payment = candidate;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

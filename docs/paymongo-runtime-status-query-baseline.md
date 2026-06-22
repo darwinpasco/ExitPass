@@ -10,7 +10,7 @@ The status-query path must not bypass PayMongo callback verification, Central PM
 
 ## Current State
 
-#312 confirmed the current runtime state:
+#312 confirmed the pre-implementation runtime state:
 
 - Payment Orchestrator has no PayMongo runtime status-query client method.
 - Payment Orchestrator has no runtime status-query endpoint.
@@ -22,6 +22,15 @@ The status-query path must not bypass PayMongo callback verification, Central PM
 - Current reconciliation diagnostics are read-only over persisted provider evidence such as `payments.provider_sessions`, `payments.provider_callbacks`, and `payments.provider_outcomes`.
 
 The baseline DDL already contains `payments.provider_status_queries`, but the current runtime code does not write or read that table for PayMongo status polling.
+
+#314 adds the first implementation baseline only:
+
+- `ProviderStatusQueryCommand`
+- `ProviderStatusQueryResult`
+- `PayMongoClient.RetrieveCheckoutSessionStatusAsync`
+- `PayMongoCheckoutAdapter.QueryProviderSessionStatusAsync`
+
+These are model/client/adapter foundations only. #314 does not add an endpoint, poller, scheduler, Central PMS reporting path, or schema change.
 
 ## Target Architecture
 
@@ -60,7 +69,7 @@ Exact PayMongo status names must be verified against PayMongo documentation and 
 | `failed`, `declined` | `Failed` | Yes | Only if Central PMS contract supports deterministic non-success outcome reports | No | No | No | Should not create successful payment finality. |
 | `expired` | `Expired` | Yes | Only if Central PMS contract supports deterministic non-success outcome reports | No | No | No | Should close or mark failure according to Central PMS contract, not confirm payment. |
 | `cancelled`, `canceled` | `Cancelled` | Yes | Only if Central PMS contract supports deterministic non-success outcome reports | No | No | No | Normalize spelling differences. |
-| `pending`, `awaiting_payment`, `processing` | `PendingProvider` | No | No | Yes | No | No | Keep as evidence/retry candidate only. |
+| `pending`, `awaiting_payment`, `processing`, `active`, `unpaid` | `PendingProvider` | No | No | Yes | No | No | Keep as evidence/retry candidate only. |
 | Unknown/unmapped status | `Unknown` or `PendingProvider` with failure code | No | No | Depends on provider HTTP result | No | No | Fail closed or route to reconciliation review. |
 | Malformed response | Rejected evidence | No | No | No until corrected | No | No | Response must not be accepted as provider truth. |
 | Timeout/network error | Query failure | No | No | Yes | No | No | Preserve retryable evidence; do not mutate finality. |
@@ -258,7 +267,7 @@ Central PMS contract tests:
 
 Recommended follow-up slices:
 
-- #314 Add PayMongo status-query adapter/client tests and mapping model.
+- #314 Add PayMongo status-query adapter/client tests and mapping model. Completed baseline names: `ProviderStatusQueryCommand`, `ProviderStatusQueryResult`, `RetrieveCheckoutSessionStatusAsync`, and `QueryProviderSessionStatusAsync`.
 - #315 Add controlled Payment Orchestrator status-query handler.
 - #316 Add status-query persistence/evidence support if schema already supports it; otherwise design a DB change separately.
 - #317 Add Central PMS verified outcome contract tests for status-query source.
