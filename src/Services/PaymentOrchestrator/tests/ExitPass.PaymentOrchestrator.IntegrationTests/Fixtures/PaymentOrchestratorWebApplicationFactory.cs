@@ -161,6 +161,50 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
         _centralPmsReporter.Clear();
     }
 
+    /// <summary>
+    /// Seeds a provider session into the in-memory persistence used by provider-webhook boundary tests.
+    ///
+    /// BRD implemented:
+    /// - Section 9.10, Payment Processing and Confirmation
+    /// - Section 12, Payment Orchestration
+    ///
+    /// System invariant enforced:
+    /// - Webhook tests can verify provider-session validation without relying on production database state.
+    /// </summary>
+    /// <param name="paymentAttemptId">The canonical payment attempt identifier bound to the provider session.</param>
+    /// <param name="providerSessionId">The provider checkout session identifier.</param>
+    /// <param name="amountMinorUnits">The expected payment amount in minor units, when the test needs amount validation.</param>
+    /// <param name="currencyCode">The expected currency code, when the test needs currency validation.</param>
+    public void SeedProviderSession(
+        Guid paymentAttemptId,
+        string providerSessionId,
+        long? amountMinorUnits = null,
+        string? currencyCode = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(providerSessionId);
+
+        _providerSessionRepository.AddAsync(
+            new ProviderSessionRecord(
+                Guid.NewGuid(),
+                paymentAttemptId,
+                "PAYMONGO",
+                "PAYMONGO_CHECKOUT_SESSION",
+                providerSessionId,
+                providerSessionId,
+                "PENDING",
+                null,
+                null,
+                null,
+                $"boundary:{providerSessionId}",
+                null,
+                "{}",
+                "{}",
+                DateTimeOffset.UtcNow,
+                amountMinorUnits,
+                currencyCode),
+            CancellationToken.None).GetAwaiter().GetResult();
+    }
+
     /// <inheritdoc />
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
