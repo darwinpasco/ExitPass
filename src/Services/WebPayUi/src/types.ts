@@ -9,6 +9,7 @@ export type PaymentIntentRequest = {
   vendorSystemId?: string;
   tariffSnapshotId?: string;
   expectedAmountMinorUnits?: number;
+  correlationId?: string;
 };
 
 export type ParkingSessionResolveRequest = Omit<PaymentIntentRequest, "paymentMethod">;
