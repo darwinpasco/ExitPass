@@ -572,6 +572,19 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         var session = request.ParkingSession;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
+        AddParkingSessionInsertParameters(command, session, siteGroupId, siteId, vendorSystemId, request.CorrelationId);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void AddParkingSessionInsertParameters(
+        NpgsqlCommand command,
+        ParkingSession session,
+        Guid siteGroupId,
+        Guid siteId,
+        Guid vendorSystemId,
+        Guid correlationId)
+    {
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = session.ParkingSessionId;
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
@@ -581,11 +594,9 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         command.Parameters.Add("plate_number_masked", NpgsqlDbType.Text).Value = DbValue(session.PlateNumber);
         command.Parameters.Add("ticket_number_hash", NpgsqlDbType.Text).Value = DbValue(HashIdentifier(session.TicketNumber));
         command.Parameters.Add("ticket_number_masked", NpgsqlDbType.Text).Value = DbValue(session.TicketNumber);
-        command.Parameters.Add("entry_at", NpgsqlDbType.TimestampTz).Value = session.EntryTimestamp;
-        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = request.CorrelationId;
+        command.Parameters.Add("entry_at", NpgsqlDbType.TimestampTz).Value = ToUtc(session.EntryTimestamp);
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = CentralPmsServiceIdentityId;
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task<TariffSnapshot?> FindExistingActiveTariffAsync(
@@ -955,6 +966,18 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
+        AddTariffSnapshotInsertParameters(command, tariffSnapshot, vendorSystemId, vendorTariffRef, correlationId);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static void AddTariffSnapshotInsertParameters(
+        NpgsqlCommand command,
+        TariffSnapshot tariffSnapshot,
+        Guid vendorSystemId,
+        string vendorTariffRef,
+        Guid correlationId)
+    {
         command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshot.TariffSnapshotId;
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = tariffSnapshot.ParkingSessionId;
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = vendorSystemId;
@@ -965,12 +988,10 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         command.Parameters.AddWithValue("statutory_discount_amount", tariffSnapshot.StatutoryDiscountAmount);
         command.Parameters.AddWithValue("coupon_discount_amount", tariffSnapshot.CouponDiscountAmount);
         command.Parameters.AddWithValue("net_amount", tariffSnapshot.NetPayable);
-        command.Parameters.Add("calculated_at", NpgsqlDbType.TimestampTz).Value = tariffSnapshot.CalculatedAt;
-        command.Parameters.Add("expires_at", NpgsqlDbType.TimestampTz).Value = tariffSnapshot.ExpiresAt;
+        command.Parameters.Add("calculated_at", NpgsqlDbType.TimestampTz).Value = ToUtc(tariffSnapshot.CalculatedAt);
+        command.Parameters.Add("expires_at", NpgsqlDbType.TimestampTz).Value = ToUtc(tariffSnapshot.ExpiresAt);
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = CentralPmsServiceIdentityId;
-
-        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static TariffSnapshot RebindTariffSnapshot(TariffSnapshot tariffSnapshot, Guid parkingSessionId)
@@ -1021,6 +1042,11 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
     {
         return string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
     }
+
+    private static object ToUtcOrDbNull(DateTimeOffset? value) =>
+        value.HasValue ? ToUtc(value.Value) : DBNull.Value;
+
+    private static DateTimeOffset ToUtc(DateTimeOffset value) => value.ToUniversalTime();
 
     private static ParkingSessionStatus MapParkingSessionStatus(string value)
     {
