@@ -84,6 +84,12 @@ Use:
 docs/sql/HikCentralProjectionSyncTargetOps.sql
 ```
 
+For a real-environment deployment checklist that ties identifier discovery, target setup, scheduler enablement, first sync validation, Operator Console smoke, rollback, and sign-off together, use:
+
+```text
+docs/hikcentral-real-sync-target-deployment-handoff.md
+```
+
 The helper supports:
 
 - Listing current targets.
