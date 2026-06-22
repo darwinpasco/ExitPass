@@ -333,6 +333,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByText(/this device, shift, or site is not ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/read-only monitoring pages may still load when their rbac checks allow access/i)).toBeInTheDocument();
     expect(screen.getByText(/contact a supervisor or support and provide the correlation id/i)).toBeInTheDocument();
     expect(screen.getAllByText("LOCAL_DEV_CONTEXT_NOT_ALLOWED_IN_PRODUCTION").length).toBeGreaterThan(0);
     expect(screen.getByText(/local\/dev fallback context is not accepted as production trust/i)).toBeInTheDocument();
@@ -1239,6 +1240,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "HikCentral Projection Health" })).toBeInTheDocument();
     expect(screen.getByText("Projection data is continuity visibility only.")).toBeInTheDocument();
+    expect(screen.getByText(/this page uses read-only projection-health rbac/i)).toBeInTheDocument();
     expect(await screen.findByText(/Degraded resolve fallback is currently enabled/i)).toBeInTheDocument();
     expect(await screen.findByText(/One or more projection targets are stale or failing/i)).toBeInTheDocument();
     expect(await screen.findByText("TEST SITE")).toBeInTheDocument();
@@ -1256,6 +1258,22 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText("Max projection age minutes").length).toBeGreaterThan(0);
     expect(onTargets).toHaveBeenCalled();
     expect(onSummary).toHaveBeenCalled();
+  });
+
+  it("VendorSessionProjectionHealth_RendersWhenControlledActionReadinessIsBlocked", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ readiness: blockedReadiness() })}
+        initialPath="/operator-console/vendor-session-projections/health"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "HikCentral Projection Health" })).toBeInTheDocument();
+    expect(await screen.findByText(/read-only monitoring pages may still load when their rbac checks allow access/i)).toBeInTheDocument();
+    expect(await screen.findByText("TEST SITE")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sync now/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^enable$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^disable$/i })).not.toBeInTheDocument();
   });
 
   it("VendorSessionProjectionHealth_DoesNotExposeMutationControlsOrSecrets", async () => {

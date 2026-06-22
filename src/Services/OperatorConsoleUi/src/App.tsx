@@ -950,6 +950,7 @@ function VendorSessionProjectionHealthPage({ client }: { client: OperatorConsole
         <p>Projection data is continuity visibility only.</p>
         <p>Vendor PMS remains parking-session and tariff authority. ExitPass remains payment authority.</p>
         <p>No sync trigger, enable, disable, fallback toggle, payment, tariff, paid-state, or exit action is available here.</p>
+        <p>This page uses read-only projection-health RBAC. Operator action readiness does not grant payment, tariff, sync, or exit controls.</p>
         <p>Raw HikCentral payloads, credentials, signatures, and database passwords are not displayed.</p>
       </section>
 
@@ -1989,7 +1990,12 @@ function AccessReadinessPanel({
 
       {state.status === "idle" && <StateMessage title="Readiness not checked" message="Check readiness before controlled actions." />}
       {state.status === "loading" && <StateMessage title="Checking readiness" message="Evaluating operator, device, shift, site, and workflow state." />}
-      {state.status === "error" && <StateMessage title="Unable to check readiness" message={state.message} />}
+      {state.status === "error" && (
+        <StateMessage
+          title="Unable to check readiness"
+          message={`${state.message} Read-only monitoring pages may still load when their RBAC checks allow access.`}
+        />
+      )}
 
       {readiness && (
         <>
@@ -2026,6 +2032,7 @@ function AccessReadinessPanel({
           {blocked && (
             <div className="readinessDenial" role="alert">
               <p>This device, shift, or site is not ready for controlled Operator Console actions.</p>
+              <p>Read-only monitoring pages may still load when their RBAC checks allow access.</p>
               <p>Contact a supervisor or support and provide the correlation ID.</p>
               {fallbackDenied && <p>Local/dev fallback context is not accepted as production trust.</p>}
               {readiness.nextOperatorAction && <p>Next action: {readiness.nextOperatorAction}</p>}
