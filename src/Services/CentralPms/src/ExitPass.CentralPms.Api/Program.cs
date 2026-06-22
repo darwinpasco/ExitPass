@@ -138,6 +138,7 @@ app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapTicketSessionSummaryEndpoints();
 app.MapVendorPaymentAcknowledgmentOpsEndpoints();
+app.MapVendorSessionProjectionHealthEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
@@ -225,6 +226,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup")
                 .AddSource("ExitPass.CentralPms.Api.TicketSessionSummary")
                 .AddSource("ExitPass.CentralPms.Api.VendorPaymentAcknowledgments")
+                .AddSource("ExitPass.CentralPms.Api.VendorSessionProjectionHealth")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
@@ -320,7 +322,10 @@ static void ConfigureApplicationServices(
         new PostgresVendorSessionProjectionRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionSyncTargetRepository>(_ =>
         new PostgresVendorSessionProjectionSyncTargetRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IVendorSessionProjectionHealthReadRepository>(_ =>
+        new PostgresVendorSessionProjectionHealthReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionLookupService, VendorSessionProjectionLookupService>();
+    builder.Services.AddScoped<IVendorSessionProjectionHealthService, VendorSessionProjectionHealthService>();
     builder.Services.AddScoped<IVendorSessionProjectionSyncOrchestrator, VendorSessionProjectionSyncOrchestrator>();
     builder.Services.AddHostedService<VendorSessionProjectionSchedulerHostedService>();
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();

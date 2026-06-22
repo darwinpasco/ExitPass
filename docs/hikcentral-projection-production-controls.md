@@ -207,6 +207,21 @@ Common UAT issue: using the wrong HTTP/HTTPS scheme or wrong port causes vendor 
 
 ## Health And Freshness Verification
 
+Operators and support users can inspect read-only projection health through protected ops endpoints:
+
+```http
+GET /v1/ops/vendor-session-projections/targets
+GET /v1/ops/vendor-session-projections/targets/{projectionSyncTargetId}
+GET /v1/ops/vendor-session-projections/summary
+```
+
+These endpoints require Central PMS ops/operator RBAC permission through the `VendorSessionProjectionHealthViewer` policy. Accepted permissions include:
+
+- `ops.vendor-session-projection-health.view`
+- `operator-console.vendor-projection-health.view`
+
+The endpoints are visibility only. They do not enable targets, disable targets, trigger sync, change scheduler settings, calculate tariff, create payment attempts, mark tickets paid, or issue exit authorization.
+
 Use the SQL helper to inspect:
 
 - target `enabled_flag`
@@ -221,6 +236,51 @@ Use the SQL helper to inspect:
 - projection freshness age
 
 Projection fallback must not silently use stale projection data. `MaxProjectionAgeMinutes` controls the freshness threshold for degraded fallback.
+
+### Health Status Meaning
+
+| Status | Meaning | Operator action |
+| --- | --- | --- |
+| `HEALTHY` | Last scheduler/manual sync for the target succeeded. | Continue monitoring freshness and projection counts. |
+| `DEGRADED` | Target has started failing or missing expected freshness but has not crossed the failing threshold. | Check `last_error_code`, `last_error_message`, HikCentral reachability, and DB connectivity. |
+| `FAILING` | Target has repeated sync failures. | Escalate to engineering and, when vendor errors are present, HikCentral/vendor support. |
+| `DISABLED` | Target is configured but not polling. | Confirm this is intentional before expecting fresh projection data. |
+| `UNKNOWN` | Target has not established health yet. | Run approved manual sync or wait for the scheduler if the target is enabled. |
+
+### Stale Meaning
+
+A target is stale when it is enabled and its latest projection `last_refreshed_at` is missing or older than `CentralPms:VendorSessionProjections:MaxProjectionAgeMinutes`.
+
+Stale projection data is continuity visibility only. Operators must not infer fee finality, payment finality, parking-session authority, or exit authorization from stale projection data.
+
+### Safe Configuration Visibility
+
+The summary and target responses expose only safe projection control flags:
+
+- `SchedulerEnabled`
+- `DegradedResolveFallbackEnabled`
+- `MaxProjectionAgeMinutes`
+- `MaxParallelSiteJobs`
+- `SchedulerScanIntervalSeconds`
+
+The endpoints do not expose HikCentral `AppKey`, `AppSecret`, database passwords, raw payloads, or raw credential reference values.
+
+### Escalation Guidance
+
+Escalate to engineering when:
+
+- `health_status = FAILING`
+- enabled targets are stale beyond the approved freshness window
+- `last_error_code` indicates database write/read failure
+- records are seen but projected counts unexpectedly drop to zero
+- projection fallback appears during normal live vendor success
+
+Escalate to HikCentral/vendor support when:
+
+- errors indicate HikCentral authentication failure
+- the parking lot list does not contain the expected `parkingLotIndexCode`
+- passageway record responses change shape or omit expected fields
+- HikCentral is unreachable from the Central PMS runtime network
 
 ## Authority Boundary Verification
 
