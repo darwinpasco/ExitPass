@@ -54,41 +54,76 @@ public sealed record HikCentralPassagewayRecord(
     [property: JsonPropertyName("laneInfo")] HikCentralLaneInfo? LaneInfo,
     [property: JsonPropertyName("personInfo")] HikCentralPersonInfo? PersonInfo,
     [property: JsonPropertyName("carInfo")] HikCentralCarInfo? CarInfo,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("imageUrl")] string? ImageUrl,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("enterTime")] string? EnterTime,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("exitTime")] string? ExitTime,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("allowType")] string? AllowType,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("allowResult")] string? AllowResult);
 
 /// <summary>
 /// HikCentral index/name pair.
 /// </summary>
 public sealed record HikCentralNamedIndex(
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("indexCode")] string? IndexCode,
-    [property: JsonPropertyName("name")] string? Name);
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("parkingLotIndexCode")] string? ParkingLotIndexCode = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("parkingLotName")] string? ParkingLotName = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("passagewayIndexCode")] string? PassagewayIndexCode = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("passagewayName")] string? PassagewayName = null);
 
 /// <summary>
 /// HikCentral lane information.
 /// </summary>
 public sealed record HikCentralLaneInfo(
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("indexCode")] string? IndexCode,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("name")] string? Name,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("laneDirection")] string? LaneDirection,
-    [property: JsonPropertyName("direction")] string? Direction);
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("direction")] string? Direction,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("laneIndexCode")] string? LaneIndexCode = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("laneName")] string? LaneName = null);
 
 /// <summary>
 /// HikCentral person/card information.
 /// </summary>
 public sealed record HikCentralPersonInfo(
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("cardNum")] string? CardNum,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("ownerName")] string? OwnerName,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
     [property: JsonPropertyName("ownerPhoneNum")] string? OwnerPhoneNum);
 
 /// <summary>
 /// HikCentral vehicle information.
 /// </summary>
 public sealed record HikCentralCarInfo(
-    [property: JsonPropertyName("plateLicense")] string? PlateLicense);
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("plateLicense")] string? PlateLicense,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("carType")] string? CarType = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("ImageUrl")] string? ImageUrl = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("EnterTime")] string? EnterTime = null,
+    [property: JsonConverter(typeof(HikCentralFlexibleStringJsonConverter))]
+    [property: JsonPropertyName("ExitTime")] string? ExitTime = null);
 
 /// <summary>
 /// Signed HikCentral client for the read-only passageway record API.
@@ -278,4 +313,39 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
         [property: JsonPropertyName("allowResult")] int AllowResult,
         [property: JsonPropertyName("sortField")] string SortField,
         [property: JsonPropertyName("orderType")] int OrderType);
+}
+
+internal sealed class HikCentralFlexibleStringJsonConverter : JsonConverter<string?>
+{
+    public override string? Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        return reader.TokenType switch
+        {
+            JsonTokenType.Null => null,
+            JsonTokenType.String => reader.GetString(),
+            JsonTokenType.Number => reader.TryGetInt64(out var integer)
+                ? integer.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : reader.GetDouble().ToString(System.Globalization.CultureInfo.InvariantCulture),
+            JsonTokenType.True => bool.TrueString,
+            JsonTokenType.False => bool.FalseString,
+            _ => null
+        };
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        string? value,
+        JsonSerializerOptions options)
+    {
+        if (value is null)
+        {
+            writer.WriteNullValue();
+            return;
+        }
+
+        writer.WriteStringValue(value);
+    }
 }
