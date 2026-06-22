@@ -11,6 +11,44 @@ This runbook validates the Central PMS vendor session projection scheduler again
 - The project does not currently define a Central PMS `UserSecretsId`, so environment variables or an approved secret store are the safest configuration path.
 - The sync target table is `sessions.vendor_session_projection_sync_targets`.
 - The projection read model is `sessions.vendor_session_projections`.
+- Some existing dev/UAT databases may predate #280/#282 and may be missing the projection tables even when the repository DDL is current.
+- `docs/sql/HikCentralProjectionSchemaPatch.sql` applies only the missing HikCentral projection schema objects from the current state-based DDL.
+
+## Required Order
+
+Run the UAT in this order:
+
+1. Verify the projection schema.
+2. Apply `docs/sql/HikCentralProjectionSchemaPatch.sql` if either projection table is missing.
+3. Verify or seed the HikCentral vendor system.
+4. Confirm site, site group, and vendor IDs.
+5. Confirm the parking lot from HikCentral parking lot list.
+6. Upsert one site-scoped sync target.
+7. Start Central PMS with environment variables.
+8. Run the manual sync endpoint.
+9. Run verification queries.
+10. Keep degraded fallback disabled unless separately approved.
+
+## Confirmed UAT Values
+
+These non-secret values are confirmed for the current live UAT setup:
+
+| Value | Confirmed value |
+| --- | --- |
+| `site_id` | `c9000000-0000-0000-0000-000000000001` |
+| `site_group_id` | `ce000000-0000-0000-0000-000000000001` |
+| `vendor_system_id` | `31bde78a-5dfc-45c3-a1f3-e48abaf90927` |
+| `vendor_code` | `HIKCENTRAL` |
+| `environment_code` | `UAT` |
+| `parking_lot_index_code` | `1` |
+| `parking_lot_name` | `TEST SITE` |
+| `service_identity_code` | `CENTRAL_PMS_API` |
+
+The parking lot values must still be confirmed from the HikCentral parking lot list API before running the sync target upsert:
+
+```http
+POST /artemis/api/vehicle/v1/parkinglot/list
+```
 
 ## Required Values
 
@@ -22,11 +60,11 @@ These values are required before live UAT can run:
 | HikCentral AppKey | `CentralPms__VendorPms__HikCentral__AppKey` | Yes | Vendor/secret store |
 | HikCentral AppSecret | `CentralPms__VendorPms__HikCentral__AppSecret` | Yes | Vendor/secret store |
 | Adapter provider | `CentralPms__VendorPms__Provider=HikCentral` | No | UAT runtime config |
-| Parking lot index code | `parking_lot_index_code` | No | HikCentral parking lot mapping |
-| Parking lot name | `parking_lot_name` | No | HikCentral parking lot mapping |
-| `site_id` | `sessions.vendor_session_projection_sync_targets.site_id` | No | Existing `sites.sites` row |
-| `site_group_id` | `sessions.vendor_session_projection_sync_targets.site_group_id` | No | Existing `sites.site_groups` row |
-| `vendor_system_id` | `sessions.vendor_session_projection_sync_targets.vendor_system_id` | No | Existing `integration.vendor_systems` row |
+| Parking lot index code | `parking_lot_index_code = 1` | No | Confirm from HikCentral parking lot list |
+| Parking lot name | `parking_lot_name = TEST SITE` | No | Confirm from HikCentral parking lot list |
+| `site_id` | `c9000000-0000-0000-0000-000000000001` | No | Existing `sites.sites` row |
+| `site_group_id` | `ce000000-0000-0000-0000-000000000001` | No | Existing `sites.site_groups` row |
+| `vendor_system_id` | `31bde78a-5dfc-45c3-a1f3-e48abaf90927` | No | Existing `integration.vendor_systems` row |
 | Poll interval | `poll_interval_seconds` | No | UAT choice; suggested `300` |
 | Lookback window | `lookback_window_minutes` | No | UAT choice; suggested `180` |
 | Page size | `page_size` | No | UAT choice; suggested `100` |
@@ -57,14 +95,69 @@ $env:CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled = "fal
 
 Do not set `HIKCENTRAL_CONFIRM_PAYMENT_ENABLED=true` for this UAT. This projection validation does not require payment confirmation, fee finality, or gate commands.
 
+## Verify Schema First
+
+Before seeding sync targets, confirm the current database has both projection tables:
+
+```sql
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema = 'sessions'
+  AND table_name IN (
+      'vendor_session_projections',
+      'vendor_session_projection_sync_targets'
+  )
+ORDER BY table_name;
+```
+
+Expected: 2 rows.
+
+If either table is missing, stop and apply:
+
+```text
+docs/sql/HikCentralProjectionSchemaPatch.sql
+```
+
+The patch is schema-only and idempotent. It adds the missing projection tables, constraints, indexes, and comments from `ExitPass_Full_Database_Creation_DDL_v1.2.sql`. It does not seed data.
+
+## Confirm Vendor And Site Scope
+
+Use `docs/sql/HikCentralProjectionLiveUat.sql` to confirm:
+
+- `sites.site_groups.site_group_id = ce000000-0000-0000-0000-000000000001`
+- `sites.sites.site_id = c9000000-0000-0000-0000-000000000001`
+- `integration.vendor_systems.vendor_system_id = 31bde78a-5dfc-45c3-a1f3-e48abaf90927`
+- `integration.vendor_systems.vendor_code = HIKCENTRAL`
+- `integration.vendor_systems.environment_code = UAT`
+- `identity.service_identities.service_identity_code = CENTRAL_PMS_API`
+
+If the HikCentral vendor system row is missing, seed or repair that vendor-system reference using the existing environment-specific reference data process before continuing. Do not create fake IDs in this UAT helper.
+
+## Confirm Parking Lot
+
+Confirm the parking lot directly from HikCentral before upserting the target:
+
+```http
+POST /artemis/api/vehicle/v1/parkinglot/list
+```
+
+Expected UAT mapping:
+
+- `parkingLotIndexCode = 1`
+- `parkingLotName = TEST SITE`
+
+Do not proceed with a different parking lot unless the UAT target is explicitly updated.
+
 ## Seed One Scoped Target
 
 Use `docs/sql/HikCentralProjectionLiveUat.sql`.
 
-1. Run the preflight queries to identify the correct `site_id`, `site_group_id`, and `vendor_system_id`.
-2. Replace the placeholders in the idempotent upsert.
-3. Run only one parking-lot-scoped target for this UAT.
-4. Confirm the target row is enabled and has the intended interval, lookback, and page size.
+1. Run the schema verification query in the file.
+2. Apply `docs/sql/HikCentralProjectionSchemaPatch.sql` if needed.
+3. Run the preflight queries to confirm the existing UAT site, vendor, and service identity records.
+4. Confirm parking lot `1` / `TEST SITE` from HikCentral.
+5. Run only one parking-lot-scoped target upsert for this UAT.
+6. Confirm the target row is enabled and has the intended interval, lookback, and page size.
 
 The upsert uses `ON CONFLICT (site_id, vendor_system_id, parking_lot_index_code)` and does not create a global sync target.
 
@@ -74,8 +167,8 @@ Start Central PMS with the live HikCentral adapter configuration and scheduler o
 
 ```powershell
 $body = @{
-    siteId = "<site-id>"
-    parkingLotIndexCode = "<parking-lot-index-code>"
+    siteId = "c9000000-0000-0000-0000-000000000001"
+    parkingLotIndexCode = "1"
     lookbackWindowMinutes = 180
     pageSize = 100
     force = $true

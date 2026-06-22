@@ -1,18 +1,61 @@
 -- HikCentral vendor session projection live UAT helper.
 --
--- This file is intentionally placeholder-based. Replace every <...> value in a
--- local copy or psql session before running. Do not commit real credentials,
--- local-only IDs, or vendor secrets.
+-- This file contains confirmed non-secret UAT identifiers. Keep HikCentral
+-- credentials and database passwords outside this file.
 --
 -- Authority boundary:
 -- - Projection rows are continuity snapshots/read models only.
 -- - Projection rows are not parking-session truth, tariff truth, payment truth,
 --   payment finality, or exit authority.
 
+-- Confirmed UAT values:
+-- - site_id = c9000000-0000-0000-0000-000000000001
+-- - site_group_id = ce000000-0000-0000-0000-000000000001
+-- - vendor_system_id = 31bde78a-5dfc-45c3-a1f3-e48abaf90927
+-- - vendor_code = HIKCENTRAL
+-- - environment_code = UAT
+-- - parking_lot_index_code = 1
+-- - parking_lot_name = TEST SITE
+-- - service_identity_code = CENTRAL_PMS_API
+--
+-- Before running the sync-target upsert, verify that the projection schema
+-- exists. If either required table is missing, run:
+--   docs/sql/HikCentralProjectionSchemaPatch.sql
+
+-- 0. Verify required projection schema objects exist.
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema = 'sessions'
+  AND table_name IN (
+      'vendor_session_projections',
+      'vendor_session_projection_sync_targets'
+  )
+ORDER BY table_name;
+
+-- Expected: 2 rows. If fewer than 2 rows are returned, stop and apply
+-- docs/sql/HikCentralProjectionSchemaPatch.sql before continuing.
+DO $$
+DECLARE
+    missing_table_count integer;
+BEGIN
+    SELECT 2 - count(*)
+    INTO missing_table_count
+    FROM information_schema.tables
+    WHERE table_schema = 'sessions'
+      AND table_name IN (
+          'vendor_session_projections',
+          'vendor_session_projection_sync_targets'
+      );
+
+    IF missing_table_count <> 0 THEN
+        RAISE EXCEPTION
+            'Missing HikCentral projection schema objects. Apply docs/sql/HikCentralProjectionSchemaPatch.sql before running this UAT helper.';
+    END IF;
+END $$;
+
 BEGIN;
 
--- 1. Preflight: identify existing site/vendor records.
--- Run these first if the UAT IDs are unknown.
+-- 1. Preflight: confirm existing site/vendor/service identity records.
 SELECT
     site_group_id,
     site_group_code,
@@ -20,6 +63,7 @@ SELECT
     site_group_status,
     timezone_name
 FROM sites.site_groups
+WHERE site_group_id = 'ce000000-0000-0000-0000-000000000001'::uuid
 ORDER BY created_at DESC
 LIMIT 25;
 
@@ -34,6 +78,8 @@ SELECT
 FROM sites.sites s
 JOIN sites.site_groups sg
   ON sg.site_group_id = s.site_group_id
+WHERE s.site_id = 'c9000000-0000-0000-0000-000000000001'::uuid
+  AND s.site_group_id = 'ce000000-0000-0000-0000-000000000001'::uuid
 ORDER BY s.created_at DESC
 LIMIT 25;
 
@@ -46,20 +92,38 @@ SELECT
     environment_code,
     base_url_ref
 FROM integration.vendor_systems
-WHERE vendor_code ILIKE '%hik%'
-   OR vendor_name ILIKE '%hik%'
+WHERE vendor_system_id = '31bde78a-5dfc-45c3-a1f3-e48abaf90927'::uuid
+  AND vendor_code = 'HIKCENTRAL'
+  AND environment_code = 'UAT'
 ORDER BY created_at DESC
 LIMIT 25;
 
--- 2. Idempotent sync-target upsert.
--- Replace placeholders before running this statement.
+SELECT
+    service_identity_id,
+    service_identity_code,
+    service_identity_name,
+    identity_status
+FROM identity.service_identities
+WHERE service_identity_code = 'CENTRAL_PMS_API'
+ORDER BY created_at DESC
+LIMIT 25;
+
+-- Confirm parking lot index code and name from HikCentral before running the
+-- upsert. Source API:
+--   POST /artemis/api/vehicle/v1/parkinglot/list
+--
+-- Expected live UAT mapping:
+--   parkingLotIndexCode = 1
+--   parkingLotName = TEST SITE
+
+-- 2. Idempotent sync-target upsert for the confirmed UAT site/parking lot.
 WITH desired AS (
     SELECT
-        '<site-id>'::uuid AS site_id,
-        '<site-group-id>'::uuid AS site_group_id,
-        '<vendor-system-id>'::uuid AS vendor_system_id,
-        '<parking-lot-index-code>'::text AS parking_lot_index_code,
-        NULLIF('<parking-lot-name>', '')::text AS parking_lot_name,
+        'c9000000-0000-0000-0000-000000000001'::uuid AS site_id,
+        'ce000000-0000-0000-0000-000000000001'::uuid AS site_group_id,
+        '31bde78a-5dfc-45c3-a1f3-e48abaf90927'::uuid AS vendor_system_id,
+        '1'::text AS parking_lot_index_code,
+        'TEST SITE'::text AS parking_lot_name,
         true::boolean AS enabled_flag,
         300::integer AS poll_interval_seconds,
         180::integer AS lookback_window_minutes,
@@ -152,9 +216,9 @@ SELECT
     last_error_message,
     updated_at
 FROM sessions.vendor_session_projection_sync_targets
-WHERE site_id = '<site-id>'::uuid
-  AND vendor_system_id = '<vendor-system-id>'::uuid
-  AND parking_lot_index_code = '<parking-lot-index-code>';
+WHERE site_id = 'c9000000-0000-0000-0000-000000000001'::uuid
+  AND vendor_system_id = '31bde78a-5dfc-45c3-a1f3-e48abaf90927'::uuid
+  AND parking_lot_index_code = '1';
 
 -- 4. Verify projection rows for the parking lot.
 SELECT
@@ -175,7 +239,7 @@ SELECT
     now() - last_refreshed_at AS freshness_age,
     correlation_id
 FROM sessions.vendor_session_projections
-WHERE parking_lot_index_code = '<parking-lot-index-code>'
+WHERE parking_lot_index_code = '1'
 ORDER BY last_refreshed_at DESC
 LIMIT 50;
 
@@ -187,7 +251,7 @@ SELECT
     max(enter_time) AS latest_enter_time,
     max(exit_time) AS latest_exit_time
 FROM sessions.vendor_session_projections
-WHERE parking_lot_index_code = '<parking-lot-index-code>'
+WHERE parking_lot_index_code = '1'
   AND card_num IS NOT NULL
 GROUP BY card_num
 ORDER BY latest_refreshed_at DESC
@@ -199,7 +263,7 @@ SELECT
     count(*) AS projection_count,
     max(last_refreshed_at) AS latest_refreshed_at
 FROM sessions.vendor_session_projections
-WHERE parking_lot_index_code = '<parking-lot-index-code>'
+WHERE parking_lot_index_code = '1'
 GROUP BY projection_status
 ORDER BY projection_status;
 
@@ -216,7 +280,7 @@ SELECT
     stable_identity_type,
     stable_identity_key
 FROM sessions.vendor_session_projections
-WHERE parking_lot_index_code = '<parking-lot-index-code>'
+WHERE parking_lot_index_code = '1'
   AND card_num IN (
       '3518855073102',
       '3518855085105',
@@ -234,7 +298,7 @@ SELECT
     max(last_seen_at) AS last_seen_at,
     max(last_refreshed_at) AS last_refreshed_at
 FROM sessions.vendor_session_projections
-WHERE parking_lot_index_code = '<parking-lot-index-code>'
+WHERE parking_lot_index_code = '1'
 GROUP BY stable_identity_type, stable_identity_key
 HAVING count(*) > 1
 ORDER BY duplicate_count DESC, last_refreshed_at DESC;
