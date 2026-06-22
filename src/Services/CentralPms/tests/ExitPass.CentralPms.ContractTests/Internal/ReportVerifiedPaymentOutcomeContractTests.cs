@@ -197,6 +197,324 @@ public sealed class ReportVerifiedPaymentOutcomeContractTests : IClassFixture<Cu
     }
 
     /// <summary>
+    /// Verifies BRD 9.13 and SDD 10.5.3 replay behavior for the same provider outcome and idempotency key.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_replay_with_same_provider_reference_and_idempotency_key_returns_existing_result()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ReportVerifiedPaymentOutcome_replay_with_same_provider_reference_and_idempotency_key_returns_existing_result));
+        var providerReference = $"prov-{Guid.NewGuid():N}";
+        var idempotencyKey = $"ctest-outcome-{Guid.NewGuid():N}";
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for verified payment outcome replay contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "verified-outcome-contract-test");
+
+            using var client = CreateClient();
+            using var first = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: idempotencyKey);
+
+            using var replay = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: idempotencyKey);
+
+            first.StatusCode.Should().Be(HttpStatusCode.OK);
+            replay.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var firstPayload = await first.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            var replayPayload = await replay.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            var persistedAttempt = await PaymentRoutineTestHelper.GetPaymentAttemptAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            replayPayload.Should().NotBeNull();
+            replayPayload!.PaymentConfirmationId.Should().Be(firstPayload!.PaymentConfirmationId);
+            replayPayload.PaymentAttemptId.Should().Be(firstPayload.PaymentAttemptId);
+            replayPayload.AttemptStatus.Should().Be(firstPayload.AttemptStatus);
+            replayPayload.ExitAuthorizationId.Should().Be(firstPayload.ExitAuthorizationId);
+            replayPayload.AuthorizationToken.Should().Be(firstPayload.AuthorizationToken);
+            replayPayload.AuthorizationStatus.Should().Be(firstPayload.AuthorizationStatus);
+            persistedAttempt.Should().NotBeNull();
+            persistedAttempt!.AttemptStatus.Should().Be("CONFIRMED");
+            confirmationCount.Should().Be(1, "same provider outcome replay must not double-confirm");
+            issuedAuthorizationCount.Should().Be(1, "same provider outcome replay must return the existing authorization, not issue another one");
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies BRD 9.13 and SDD 10.5.3 replay behavior for the same provider outcome with a new idempotency key.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_replay_with_same_provider_reference_and_new_idempotency_key_returns_existing_result()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ReportVerifiedPaymentOutcome_replay_with_same_provider_reference_and_new_idempotency_key_returns_existing_result));
+        var providerReference = $"prov-{Guid.NewGuid():N}";
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for verified payment outcome provider-reference replay contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "verified-outcome-contract-test");
+
+            using var client = CreateClient();
+            using var first = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            using var replay = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            first.StatusCode.Should().Be(HttpStatusCode.OK);
+            replay.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var firstPayload = await first.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            var replayPayload = await replay.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            replayPayload.Should().NotBeNull();
+            replayPayload!.PaymentConfirmationId.Should().Be(firstPayload!.PaymentConfirmationId);
+            replayPayload.ExitAuthorizationId.Should().Be(firstPayload.ExitAuthorizationId);
+            confirmationCount.Should().Be(1);
+            issuedAuthorizationCount.Should().Be(1);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies BRD 9.13 deterministic rejection for semantically mismatched replay after confirmation.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_replay_with_same_provider_reference_but_conflicting_final_status_is_rejected()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ReportVerifiedPaymentOutcome_replay_with_same_provider_reference_but_conflicting_final_status_is_rejected));
+        var providerReference = $"prov-{Guid.NewGuid():N}";
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for conflicting verified payment outcome replay contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "verified-outcome-contract-test");
+
+            using var client = CreateClient();
+            using var first = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            using var conflict = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference,
+                    providerStatus: "FAILED",
+                    finalAttemptStatus: "FAILED"),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            first.StatusCode.Should().Be(HttpStatusCode.OK);
+            conflict.StatusCode.Should().Be(HttpStatusCode.Conflict);
+
+            var payload = await conflict.Content.ReadFromJsonAsync<ErrorResponse>();
+            var persistedAttempt = await PaymentRoutineTestHelper.GetPaymentAttemptAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            payload.Should().NotBeNull();
+            payload!.ErrorCode.Should().Be("PAYMENT_ATTEMPT_ALREADY_FINAL");
+            payload.CorrelationId.Should().Be(context.CorrelationId);
+            persistedAttempt.Should().NotBeNull();
+            persistedAttempt!.AttemptStatus.Should().Be("CONFIRMED");
+            confirmationCount.Should().Be(1);
+            issuedAuthorizationCount.Should().Be(1);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies BRD 9.13 replay behavior for non-success provider outcomes.
+    /// </summary>
+    [Theory]
+    [InlineData("FAILED")]
+    [InlineData("CANCELLED")]
+    [InlineData("EXPIRED")]
+    public async Task ReportVerifiedPaymentOutcome_non_success_replay_is_deterministic_and_does_not_authorize_exit(
+        string providerStatus)
+    {
+        var context = PaymentTestContext.Create(
+            $"{nameof(ReportVerifiedPaymentOutcome_non_success_replay_is_deterministic_and_does_not_authorize_exit)}_{providerStatus}");
+        var providerReference = $"prov-{providerStatus.ToLowerInvariant()}-{Guid.NewGuid():N}";
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for non-success verified payment outcome replay contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "verified-outcome-contract-test");
+
+            using var client = CreateClient();
+            using var first = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference,
+                    providerStatus: providerStatus,
+                    finalAttemptStatus: "FAILED"),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            using var replay = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference,
+                    providerStatus: providerStatus,
+                    finalAttemptStatus: "FAILED"),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            first.StatusCode.Should().Be(HttpStatusCode.OK);
+            replay.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var firstPayload = await first.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            var replayPayload = await replay.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            var persistedAttempt = await PaymentRoutineTestHelper.GetPaymentAttemptAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            replayPayload.Should().NotBeNull();
+            replayPayload!.PaymentConfirmationId.Should().Be(firstPayload!.PaymentConfirmationId);
+            replayPayload.AttemptStatus.Should().Be("FAILED");
+            replayPayload.ExitAuthorizationId.Should().BeNull();
+            persistedAttempt.Should().NotBeNull();
+            persistedAttempt!.AttemptStatus.Should().Be("FAILED");
+            confirmationCount.Should().Be(1);
+            issuedAuthorizationCount.Should().Be(0);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Verifies provider evidence is not accepted as platform finality until Central PMS validation accepts it.
     /// </summary>
     [Fact]
@@ -313,9 +631,23 @@ public sealed class ReportVerifiedPaymentOutcomeContractTests : IClassFixture<Cu
             second.StatusCode.Should().Be(HttpStatusCode.Conflict);
 
             var payload = await second.Content.ReadFromJsonAsync<ErrorResponse>();
+            var firstConfirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                firstCreated.PaymentAttemptId);
+            var secondConfirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                secondCreated.PaymentAttemptId);
+            var secondAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                secondContext.ParkingSessionId,
+                issuedOnly: true);
+
             payload.Should().NotBeNull();
             payload!.ErrorCode.Should().Be("PROVIDER_REFERENCE_ALREADY_RECORDED");
             payload.CorrelationId.Should().Be(secondContext.CorrelationId);
+            firstConfirmationCount.Should().Be(1);
+            secondConfirmationCount.Should().Be(0, "cross-attempt provider reference replay must not confirm the second attempt");
+            secondAuthorizationCount.Should().Be(0, "cross-attempt provider reference replay must not authorize exit for the second attempt");
         }
         finally
         {
@@ -365,8 +697,18 @@ public sealed class ReportVerifiedPaymentOutcomeContractTests : IClassFixture<Cu
             second.StatusCode.Should().Be(HttpStatusCode.Conflict);
 
             var payload = await second.Content.ReadFromJsonAsync<ErrorResponse>();
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
             payload.Should().NotBeNull();
             payload!.ErrorCode.Should().Be("PAYMENT_CONFIRMATION_ALREADY_EXISTS");
+            confirmationCount.Should().Be(1);
+            issuedAuthorizationCount.Should().Be(1, "duplicate outcome conflict must not issue a second authorization");
         }
         finally
         {
