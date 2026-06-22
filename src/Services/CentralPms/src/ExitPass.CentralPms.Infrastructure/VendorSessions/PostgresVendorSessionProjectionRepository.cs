@@ -281,24 +281,24 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         command.Parameters.Add("vendor_record_guid", NpgsqlDbType.Text).Value = DbValue(projection.VendorRecordGuid);
         command.Parameters.Add("card_num", NpgsqlDbType.Text).Value = DbValue(projection.CardNum);
         command.Parameters.Add("plate_license", NpgsqlDbType.Text).Value = DbValue(projection.PlateLicense);
-        command.Parameters.Add("enter_time", NpgsqlDbType.TimestampTz).Value = DbValue(projection.EnterTime);
-        command.Parameters.Add("exit_time", NpgsqlDbType.TimestampTz).Value = DbValue(projection.ExitTime);
+        command.Parameters.Add("enter_time", NpgsqlDbType.TimestampTz).Value = DbTimestampValue(projection.EnterTime);
+        command.Parameters.Add("exit_time", NpgsqlDbType.TimestampTz).Value = DbTimestampValue(projection.ExitTime);
         command.Parameters.Add("allow_type", NpgsqlDbType.Text).Value = DbValue(projection.AllowType);
         command.Parameters.Add("allow_result", NpgsqlDbType.Text).Value = DbValue(projection.AllowResult);
         command.Parameters.Add("image_url", NpgsqlDbType.Text).Value = DbValue(projection.ImageUrl);
         command.Parameters.AddWithValue("source_api", projection.SourceApi);
         command.Parameters.AddWithValue("source_payload_hash", projection.SourcePayloadHash);
         command.Parameters.Add("source_payload_reference", NpgsqlDbType.Text).Value = DbValue(projection.SourcePayloadReference);
-        command.Parameters.Add("source_event_at", NpgsqlDbType.TimestampTz).Value = DbValue(projection.SourceEventAt);
+        command.Parameters.Add("source_event_at", NpgsqlDbType.TimestampTz).Value = DbTimestampValue(projection.SourceEventAt);
         command.Parameters.AddWithValue("stable_identity_type", projection.StableIdentityType);
         command.Parameters.AddWithValue("stable_identity_key", projection.StableIdentityKey);
-        command.Parameters.Add("first_seen_at", NpgsqlDbType.TimestampTz).Value = projection.FirstSeenAt;
-        command.Parameters.Add("last_seen_at", NpgsqlDbType.TimestampTz).Value = projection.LastSeenAt;
-        command.Parameters.Add("last_refreshed_at", NpgsqlDbType.TimestampTz).Value = projection.LastRefreshedAt;
+        command.Parameters.Add("first_seen_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.FirstSeenAt);
+        command.Parameters.Add("last_seen_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.LastSeenAt);
+        command.Parameters.Add("last_refreshed_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.LastRefreshedAt);
         command.Parameters.AddWithValue("projection_status", ToDatabaseStatus(projection.ProjectionStatus));
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = DbValue(projection.CorrelationId);
-        command.Parameters.Add("created_at", NpgsqlDbType.TimestampTz).Value = projection.CreatedAt;
-        command.Parameters.Add("updated_at", NpgsqlDbType.TimestampTz).Value = projection.UpdatedAt;
+        command.Parameters.Add("created_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.CreatedAt);
+        command.Parameters.Add("updated_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.UpdatedAt);
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = CentralPmsServiceIdentityId;
     }
 
@@ -383,7 +383,10 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
 
     private static object DbValue(Guid? value) => value.HasValue ? value.Value : DBNull.Value;
 
-    private static object DbValue(DateTimeOffset? value) => value.HasValue ? value.Value : DBNull.Value;
+    private static object DbTimestampValue(DateTimeOffset? value) =>
+        value.HasValue ? ToUtc(value.Value) : DBNull.Value;
+
+    private static DateTimeOffset ToUtc(DateTimeOffset value) => value.ToUniversalTime();
 
     private static object DbValue(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value.Trim();
 }

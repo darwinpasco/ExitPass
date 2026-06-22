@@ -1,9 +1,11 @@
+using System.Reflection;
+using System.Text.Json;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.Text.Json;
+using Npgsql;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.VendorSessions;
@@ -309,6 +311,61 @@ public sealed class VendorSessionProjectionTests
         Assert.Contains("not parking-session authority, tariff authority, payment finality, or exit authorization", ddl, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void PostgresRepositoryProjectionParameters_ConvertOffsetTimestampsToUtc()
+    {
+        var enterTime = DateTimeOffset.Parse("2026-06-18T10:16:07+08:00");
+        var exitTime = DateTimeOffset.Parse("2026-06-18T11:16:07+08:00");
+        var sourceEventAt = DateTimeOffset.Parse("2026-06-18T10:16:07+08:00");
+        var firstSeenAt = DateTimeOffset.Parse("2026-06-18T12:00:00+08:00");
+        var lastSeenAt = DateTimeOffset.Parse("2026-06-18T12:01:00+08:00");
+        var lastRefreshedAt = DateTimeOffset.Parse("2026-06-18T12:02:00+08:00");
+        var createdAt = DateTimeOffset.Parse("2026-06-18T12:03:00+08:00");
+        var updatedAt = DateTimeOffset.Parse("2026-06-18T12:04:00+08:00");
+        var projection = ProjectionForPersistence(
+            enterTime,
+            exitTime,
+            sourceEventAt,
+            firstSeenAt,
+            lastSeenAt,
+            lastRefreshedAt,
+            createdAt,
+            updatedAt);
+
+        using var command = BuildProjectionParameterCommand(projection);
+
+        Assert.Equal(enterTime.ToUniversalTime(), TimestampParameter(command, "enter_time"));
+        Assert.Equal(exitTime.ToUniversalTime(), TimestampParameter(command, "exit_time"));
+        Assert.Equal(sourceEventAt.ToUniversalTime(), TimestampParameter(command, "source_event_at"));
+        Assert.Equal(firstSeenAt.ToUniversalTime(), TimestampParameter(command, "first_seen_at"));
+        Assert.Equal(lastSeenAt.ToUniversalTime(), TimestampParameter(command, "last_seen_at"));
+        Assert.Equal(lastRefreshedAt.ToUniversalTime(), TimestampParameter(command, "last_refreshed_at"));
+        Assert.Equal(createdAt.ToUniversalTime(), TimestampParameter(command, "created_at"));
+        Assert.Equal(updatedAt.ToUniversalTime(), TimestampParameter(command, "updated_at"));
+        AssertNoNonUtcTimestampParameters(command);
+    }
+
+    [Fact]
+    public void PostgresRepositoryProjectionParameters_KeepNullExitTimeAsDbNull()
+    {
+        var enterTime = DateTimeOffset.Parse("2026-06-18T10:16:07+08:00");
+        var projection = ProjectionForPersistence(
+            enterTime,
+            exitTime: null,
+            sourceEventAt: enterTime,
+            firstSeenAt: DateTimeOffset.Parse("2026-06-18T12:00:00+08:00"),
+            lastSeenAt: DateTimeOffset.Parse("2026-06-18T12:01:00+08:00"),
+            lastRefreshedAt: DateTimeOffset.Parse("2026-06-18T12:02:00+08:00"),
+            createdAt: DateTimeOffset.Parse("2026-06-18T12:03:00+08:00"),
+            updatedAt: DateTimeOffset.Parse("2026-06-18T12:04:00+08:00"));
+
+        using var command = BuildProjectionParameterCommand(projection);
+
+        Assert.Equal(enterTime.ToUniversalTime(), TimestampParameter(command, "enter_time"));
+        Assert.Same(DBNull.Value, command.Parameters["exit_time"].Value);
+        AssertNoNonUtcTimestampParameters(command);
+    }
+
     private static HikCentralVendorSessionProjectionSyncService CreateSyncService(
         IHikCentralPassagewayRecordClient client,
         IVendorSessionProjectionRepository repository)
@@ -424,6 +481,91 @@ public sealed class VendorSessionProjectionTests
         }
 
         throw new FileNotFoundException($"Could not locate {fileName} from {AppContext.BaseDirectory}.");
+    }
+
+    private static NpgsqlCommand BuildProjectionParameterCommand(VendorSessionProjection projection)
+    {
+        var command = new NpgsqlCommand();
+        var method = typeof(PostgresVendorSessionProjectionRepository).GetMethod(
+            "AddProjectionParameters",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(method);
+
+        method!.Invoke(null, [command, projection]);
+        return command;
+    }
+
+    private static DateTimeOffset TimestampParameter(NpgsqlCommand command, string name)
+    {
+        var timestamp = Assert.IsType<DateTimeOffset>(command.Parameters[name].Value);
+        Assert.Equal(TimeSpan.Zero, timestamp.Offset);
+        return timestamp;
+    }
+
+    private static void AssertNoNonUtcTimestampParameters(NpgsqlCommand command)
+    {
+        foreach (var parameterName in new[]
+        {
+            "enter_time",
+            "exit_time",
+            "source_event_at",
+            "first_seen_at",
+            "last_seen_at",
+            "last_refreshed_at",
+            "created_at",
+            "updated_at"
+        })
+        {
+            if (command.Parameters[parameterName].Value is DateTimeOffset timestamp)
+            {
+                Assert.Equal(TimeSpan.Zero, timestamp.Offset);
+            }
+        }
+    }
+
+    private static VendorSessionProjection ProjectionForPersistence(
+        DateTimeOffset? enterTime,
+        DateTimeOffset? exitTime,
+        DateTimeOffset? sourceEventAt,
+        DateTimeOffset firstSeenAt,
+        DateTimeOffset lastSeenAt,
+        DateTimeOffset lastRefreshedAt,
+        DateTimeOffset createdAt,
+        DateTimeOffset updatedAt)
+    {
+        return new VendorSessionProjection(
+            VendorSessionProjectionId: Guid.Parse("99999999-0000-0000-0000-000000000001"),
+            VendorSystemId: Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+            SiteId: Guid.Parse("bbbbbbbb-0000-0000-0000-000000000001"),
+            SiteGroupId: Guid.Parse("cccccccc-0000-0000-0000-000000000001"),
+            ParkingLotIndexCode: "1",
+            ParkingLotName: "TEST SITE",
+            PassagewayIndexCode: "1",
+            PassagewayName: "ENTRANCE",
+            LaneIndexCode: "2",
+            LaneName: "ENTRANCE",
+            LaneDirection: "1",
+            VendorRecordGuid: "5BF30C478FE44C0D8432E549AF9FE0F7",
+            CardNum: "3519278781100",
+            PlateLicense: null,
+            enterTime,
+            exitTime,
+            AllowType: "1",
+            AllowResult: "1",
+            ImageUrl: null,
+            SourceApi: HikCentralPassagewayProjectionNormalizer.SourceApi,
+            SourcePayloadHash: new string('a', 64),
+            SourcePayloadReference: "hikcentral-passageway:5BF30C478FE44C0D8432E549AF9FE0F7",
+            sourceEventAt,
+            StableIdentityType: "VENDOR_RECORD_GUID",
+            StableIdentityKey: "HIKCENTRAL|GUID|5BF30C478FE44C0D8432E549AF9FE0F7",
+            firstSeenAt,
+            lastSeenAt,
+            lastRefreshedAt,
+            ProjectionStatus: exitTime.HasValue ? VendorSessionProjectionStatus.Exited : VendorSessionProjectionStatus.Active,
+            CorrelationId: Guid.Parse("dddddddd-0000-0000-0000-000000000001"),
+            createdAt,
+            updatedAt);
     }
 
     private sealed class FakePassagewayClient(IReadOnlyList<HikCentralPassagewayRecord> records)
