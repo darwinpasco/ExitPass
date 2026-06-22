@@ -112,6 +112,72 @@ public sealed class PayMongoCheckoutAdapterWebhookTests
     }
 
     /// <summary>
+    /// Verifies unsigned PayMongo callbacks fail closed before entering verified evidence handling.
+    /// </summary>
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenSignatureIsMissing_ReturnsNotAuthentic()
+    {
+        var adapter = CreateAdapter();
+        var payload = BuildWebhookPayload("evt_missing_signature_001", "checkout_session.payment.paid", "cs_missing_signature_001");
+
+        var result = await adapter.VerifyWebhookAsync(
+            new ProviderWebhookRequest(new Dictionary<string, string>(), payload),
+            CancellationToken.None);
+
+        Assert.False(result.IsAuthentic);
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.Equal("PAYMONGO_WEBHOOK_MISSING_SIGNATURE", result.EventId);
+    }
+
+    /// <summary>
+    /// Verifies a malformed PayMongo callback fails closed and is not treated as verified provider evidence.
+    /// </summary>
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenPayloadIsMalformed_ReturnsNotAuthentic()
+    {
+        var adapter = CreateAdapter();
+
+        var result = await adapter.VerifyWebhookAsync(
+            new ProviderWebhookRequest(
+                new Dictionary<string, string>
+                {
+                    ["Paymongo-Signature"] = "t=1775470400,te=not-a-real-signature"
+                },
+                "{ this is not valid json"),
+            CancellationToken.None);
+
+        Assert.False(result.IsAuthentic);
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.Equal("PAYMONGO_WEBHOOK_INVALID_JSON", result.EventId);
+    }
+
+    /// <summary>
+    /// Verifies PayMongo callbacks without a signature timestamp fail closed as unverifiable.
+    /// </summary>
+    [Fact]
+    public async Task VerifyWebhookAsync_WhenSignatureTimestampIsMissing_ReturnsNotAuthentic()
+    {
+        var adapter = CreateAdapter();
+        var payload = BuildWebhookPayload("evt_missing_timestamp_001", "checkout_session.payment.paid", "cs_missing_timestamp_001");
+
+        var result = await adapter.VerifyWebhookAsync(
+            new ProviderWebhookRequest(
+                new Dictionary<string, string>
+                {
+                    ["Paymongo-Signature"] = "te=not-a-real-signature"
+                },
+                payload),
+            CancellationToken.None);
+
+        Assert.False(result.IsAuthentic);
+        Assert.False(result.IsTerminal);
+        Assert.False(result.IsSuccess);
+        Assert.Equal("PAYMONGO_WEBHOOK_MISSING_SIGNATURE_TIMESTAMP", result.EventId);
+    }
+
+    /// <summary>
     /// Verifies stale signed callbacks fail closed as replay-window violations.
     /// </summary>
     [Fact]

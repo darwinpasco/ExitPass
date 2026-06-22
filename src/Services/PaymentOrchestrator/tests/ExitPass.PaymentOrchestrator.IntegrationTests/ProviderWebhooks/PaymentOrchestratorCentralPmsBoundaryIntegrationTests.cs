@@ -121,6 +121,138 @@ public sealed class PaymentOrchestratorCentralPmsBoundaryIntegrationTests
     }
 
     /// <summary>
+    /// Verifies that unsigned provider callbacks fail closed before any verified
+    /// outcome is reported to Central PMS.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_missing_signature_without_reporting_to_central_pms()
+    {
+        var payload = BuildWebhookPayload(
+            "evt_boundary_missing_signature_001",
+            "checkout_session.payment.paid",
+            "cs_boundary_missing_signature_001",
+            Guid.Parse("81000000-0000-0000-0000-000000000021"),
+            Guid.Parse("82000000-0000-0000-0000-000000000021"),
+            Guid.Parse("83000000-0000-0000-0000-000000000021"),
+            Guid.Parse("84000000-0000-0000-0000-000000000021"));
+
+        using var request = CreateUnsignedWebhookRequest(payload);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        _factory.CapturedCentralPmsReports.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies that stale signed provider callbacks fail closed before any verified
+    /// outcome is reported to Central PMS.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_stale_signature_without_reporting_to_central_pms()
+    {
+        var payload = BuildWebhookPayload(
+            "evt_boundary_stale_signature_001",
+            "checkout_session.payment.paid",
+            "cs_boundary_stale_signature_001",
+            Guid.Parse("81000000-0000-0000-0000-000000000022"),
+            Guid.Parse("82000000-0000-0000-0000-000000000022"),
+            Guid.Parse("83000000-0000-0000-0000-000000000022"),
+            Guid.Parse("84000000-0000-0000-0000-000000000022"));
+
+        using var request = CreateSignedWebhookRequest(
+            payload,
+            timestamp: DateTimeOffset.UtcNow.AddMinutes(-10));
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        _factory.CapturedCentralPmsReports.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies malformed provider callbacks fail closed before any verified outcome
+    /// is reported to Central PMS.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_malformed_payload_without_reporting_to_central_pms()
+    {
+        const string payload = "{ this is not valid json";
+
+        using var request = CreateSignedWebhookRequest(payload);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        _factory.CapturedCentralPmsReports.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies amount mismatches are rejected after authenticity verification but before
+    /// verified provider evidence is reported to Central PMS.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_amount_mismatch_without_reporting_to_central_pms()
+    {
+        var paymentAttemptId = Guid.Parse("81000000-0000-0000-0000-000000000023");
+        var providerSessionId = "cs_boundary_amount_mismatch_001";
+        _factory.SeedProviderSession(
+            paymentAttemptId,
+            providerSessionId,
+            amountMinorUnits: 12_500,
+            currencyCode: "PHP");
+
+        var payload = BuildWebhookPayload(
+            "evt_boundary_amount_mismatch_001",
+            "checkout_session.payment.paid",
+            providerSessionId,
+            paymentAttemptId,
+            Guid.Parse("82000000-0000-0000-0000-000000000023"),
+            Guid.Parse("83000000-0000-0000-0000-000000000023"),
+            Guid.Parse("84000000-0000-0000-0000-000000000023"),
+            amountMinor: 13_000);
+
+        using var request = CreateSignedWebhookRequest(payload);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("WEBHOOK_AMOUNT_MISMATCH");
+        _factory.CapturedCentralPmsReports.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Verifies currency mismatches are rejected after authenticity verification but before
+    /// verified provider evidence is reported to Central PMS.
+    /// </summary>
+    [Fact]
+    public async Task Rejects_currency_mismatch_without_reporting_to_central_pms()
+    {
+        var paymentAttemptId = Guid.Parse("81000000-0000-0000-0000-000000000024");
+        var providerSessionId = "cs_boundary_currency_mismatch_001";
+        _factory.SeedProviderSession(
+            paymentAttemptId,
+            providerSessionId,
+            amountMinorUnits: 12_500,
+            currencyCode: "PHP");
+
+        var payload = BuildWebhookPayload(
+            "evt_boundary_currency_mismatch_001",
+            "checkout_session.payment.paid",
+            providerSessionId,
+            paymentAttemptId,
+            Guid.Parse("82000000-0000-0000-0000-000000000024"),
+            Guid.Parse("83000000-0000-0000-0000-000000000024"),
+            Guid.Parse("84000000-0000-0000-0000-000000000024"),
+            currency: "USD");
+
+        using var request = CreateSignedWebhookRequest(payload);
+        var response = await _client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("WEBHOOK_CURRENCY_MISMATCH");
+        _factory.CapturedCentralPmsReports.Should().BeEmpty();
+    }
+
+    /// <summary>
     /// Verifies that provider failure, cancellation, and expiry are reported as
     /// provider-neutral non-success outcomes and do not create false successful finality.
     /// </summary>
@@ -201,7 +333,10 @@ public sealed class PaymentOrchestratorCentralPmsBoundaryIntegrationTests
             .NotContain(propertyName => propertyName.Contains("ExitAuthorization", StringComparison.OrdinalIgnoreCase));
     }
 
-    private HttpRequestMessage CreateSignedWebhookRequest(string payload, string? overrideSecretKey = null)
+    private HttpRequestMessage CreateSignedWebhookRequest(
+        string payload,
+        string? overrideSecretKey = null,
+        DateTimeOffset? timestamp = null)
     {
         var secretKey = string.IsNullOrWhiteSpace(overrideSecretKey)
             ? _factory.PayMongoWebhookSecretKey
@@ -214,20 +349,31 @@ public sealed class PaymentOrchestratorCentralPmsBoundaryIntegrationTests
 
         request.Headers.TryAddWithoutValidation(
             "paymongo-signature",
-            ComputePayMongoSignatureHeader(payload, secretKey));
+            ComputePayMongoSignatureHeader(payload, secretKey, timestamp));
 
         return request;
     }
 
-    private static string ComputePayMongoSignatureHeader(string payload, string secretKey)
+    private static HttpRequestMessage CreateUnsignedWebhookRequest(string payload)
     {
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
-        var signedPayload = $"{timestamp}.{payload}";
+        return new HttpRequestMessage(HttpMethod.Post, WebhookRoute)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private static string ComputePayMongoSignatureHeader(
+        string payload,
+        string secretKey,
+        DateTimeOffset? timestamp = null)
+    {
+        var timestampText = (timestamp ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString();
+        var signedPayload = $"{timestampText}.{payload}";
 
         using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secretKey));
         var signature = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(signedPayload))).ToLowerInvariant();
 
-        return $"t={timestamp},te={signature}";
+        return $"t={timestampText},te={signature}";
     }
 
     private static string BuildWebhookPayload(
@@ -238,12 +384,14 @@ public sealed class PaymentOrchestratorCentralPmsBoundaryIntegrationTests
         Guid parkingSessionId,
         Guid requestedByUserId,
         Guid correlationId,
-        string? checkoutSessionId = null)
+        string? checkoutSessionId = null,
+        long amountMinor = 12_500,
+        string currency = "PHP")
     {
         var attributes = new Dictionary<string, object?>
         {
-            ["amount"] = 12_500,
-            ["currency"] = "PHP",
+            ["amount"] = amountMinor,
+            ["currency"] = currency,
             ["metadata"] = new Dictionary<string, string>
             {
                 ["payment_attempt_id"] = paymentAttemptId.ToString(),
