@@ -25,6 +25,7 @@ namespace ExitPass.CentralPms.ContractTests.Internal;
 /// Invariants Enforced:
 /// - Verified provider outcomes must record payment confirmation evidence.
 /// - Confirmed outcomes must finalize the PaymentAttempt and issue ExitAuthorization.
+/// - Non-success provider outcomes must finalize deterministically without issuing ExitAuthorization.
 /// - Duplicate provider references must return deterministic conflict responses.
 /// - Required idempotency and correlation headers must fail closed.
 /// </summary>
@@ -118,6 +119,140 @@ public sealed class ReportVerifiedPaymentOutcomeContractTests : IClassFixture<Cu
             payload.VerifiedTimestamp.Should().BeAfter(DateTimeOffset.MinValue);
             payload.IssuedAt.Should().NotBeNull();
             payload.ExpirationTimestamp.Should().NotBeNull();
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies BRD 9.10 and SDD 10.5.3 terminal non-success provider outcomes do not issue exit authorization.
+    /// </summary>
+    [Theory]
+    [InlineData("FAILED")]
+    [InlineData("CANCELLED")]
+    [InlineData("EXPIRED")]
+    public async Task ReportVerifiedPaymentOutcome_returns_200_ok_without_exit_authorization_for_non_success_provider_outcome(
+        string providerStatus)
+    {
+        var context = PaymentTestContext.Create(
+            $"{nameof(ReportVerifiedPaymentOutcome_returns_200_ok_without_exit_authorization_for_non_success_provider_outcome)}_{providerStatus}");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for non-success verified payment outcome contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "verified-outcome-contract-test");
+
+            using var client = CreateClient();
+            using var response = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference: $"prov-{providerStatus.ToLowerInvariant()}-{Guid.NewGuid():N}",
+                    providerStatus: providerStatus,
+                    finalAttemptStatus: "FAILED"),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var payload = await response.Content.ReadFromJsonAsync<ReportVerifiedPaymentOutcomeResponse>();
+            payload.Should().NotBeNull();
+            payload!.PaymentAttemptId.Should().Be(created.PaymentAttemptId);
+            payload.PaymentConfirmationId.Should().NotBe(Guid.Empty);
+            payload.AttemptStatus.Should().Be("FAILED");
+            payload.ExitAuthorizationId.Should().BeNull();
+            payload.AuthorizationStatus.Should().BeNull();
+            payload.AuthorizationToken.Should().BeNull();
+            payload.IssuedAt.Should().BeNull();
+            payload.ExpirationTimestamp.Should().BeNull();
+
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            confirmationCount.Should().Be(1);
+            issuedAuthorizationCount.Should().Be(0, "non-success provider finality must not issue exit authorization");
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies provider evidence is not accepted as platform finality until Central PMS validation accepts it.
+    /// </summary>
+    [Fact]
+    public async Task ReportVerifiedPaymentOutcome_returns_400_and_does_not_finalize_when_provider_reference_missing()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(ReportVerifiedPaymentOutcome_returns_400_and_does_not_finalize_when_provider_reference_missing));
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for invalid verified payment outcome contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "verified-outcome-contract-test");
+
+            using var client = CreateClient();
+            using var response = await PostOutcomeAsync(
+                client,
+                BuildRequest(
+                    created.PaymentAttemptId,
+                    context.ParkingSessionId,
+                    context.RequestedByUserId,
+                    providerReference: " "),
+                includeCorrelationId: true,
+                correlationId: context.CorrelationId,
+                includeIdempotencyKey: true,
+                idempotencyKey: $"ctest-outcome-{Guid.NewGuid():N}");
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            var payload = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            payload.Should().NotBeNull();
+            payload!.ErrorCode.Should().Be("INVALID_REQUEST");
+            payload.CorrelationId.Should().Be(context.CorrelationId);
+
+            var persisted = await PaymentRoutineTestHelper.GetPaymentAttemptAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: true);
+
+            persisted.Should().NotBeNull();
+            persisted!.AttemptStatus.Should().Be(created.AttemptStatus);
+            persisted.FinalizedAt.Should().BeNull();
+            confirmationCount.Should().Be(0);
+            issuedAuthorizationCount.Should().Be(0);
         }
         finally
         {
@@ -286,14 +421,16 @@ public sealed class ReportVerifiedPaymentOutcomeContractTests : IClassFixture<Cu
         Guid paymentAttemptId,
         Guid parkingSessionId,
         Guid requestedByUserId,
-        string? providerReference = null)
+        string? providerReference = null,
+        string providerStatus = "SUCCESS",
+        string finalAttemptStatus = "CONFIRMED")
     {
         return new ReportVerifiedPaymentOutcomeRequest(
             PaymentAttemptId: paymentAttemptId,
             ParkingSessionId: parkingSessionId,
             ProviderReference: providerReference ?? $"prov-{Guid.NewGuid():N}",
-            ProviderStatus: "SUCCESS",
-            FinalAttemptStatus: "CONFIRMED",
+            ProviderStatus: providerStatus,
+            FinalAttemptStatus: finalAttemptStatus,
             RequestedBy: "payment-orchestrator",
             RequestedByUserId: requestedByUserId);
     }
