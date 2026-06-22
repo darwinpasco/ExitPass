@@ -99,6 +99,80 @@ public sealed class FinalizePaymentAttemptContractTests : IClassFixture<CustomWe
             payload.Should().NotBeNull();
             payload!.PaymentAttemptId.Should().Be(created.PaymentAttemptId);
             payload.AttemptStatus.Should().Be("CONFIRMED");
+
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                created.ParkingSessionId,
+                issuedOnly: true);
+
+            confirmationCount.Should().Be(0, "standalone finalization is not provider evidence recording");
+            issuedAuthorizationCount.Should().Be(0, "standalone finalization must not issue exit authorization");
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies BRD 9.10 and SDD 6.4 supported non-success terminal finalization behavior.
+    /// </summary>
+    [Theory]
+    [InlineData("FAILED")]
+    [InlineData("EXPIRED")]
+    [InlineData("CANCELLED")]
+    public async Task FinalizePaymentAttempt_returns_200_ok_for_supported_non_success_terminal_status(
+        string finalStatus)
+    {
+        var context = PaymentTestContext.Create(
+            $"{nameof(FinalizePaymentAttempt_returns_200_ok_for_supported_non_success_terminal_status)}_{finalStatus}");
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for non-success finalization contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "finalization-contract-test");
+
+            using var client = CreateClient();
+            using var response = await PostFinalizeAsync(
+                client,
+                created.PaymentAttemptId,
+                finalStatus,
+                context.CorrelationId,
+                $"ctest-finalize-{Guid.NewGuid():N}");
+
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var payload = await response.Content.ReadFromJsonAsync<FinalizePaymentAttemptResponse>();
+            payload.Should().NotBeNull();
+            payload!.PaymentAttemptId.Should().Be(created.PaymentAttemptId);
+            payload.AttemptStatus.Should().Be(finalStatus);
+
+            var persisted = await PaymentRoutineTestHelper.GetPaymentAttemptAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var confirmationCount = await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                created.ParkingSessionId,
+                issuedOnly: true);
+
+            persisted.Should().NotBeNull();
+            persisted!.AttemptStatus.Should().Be(finalStatus);
+            persisted.FinalizedAt.Should().NotBeNull();
+            confirmationCount.Should().Be(0, "standalone finalization is not provider evidence recording");
+            issuedAuthorizationCount.Should().Be(0, "non-confirmed finality must not issue exit authorization");
         }
         finally
         {
@@ -158,6 +232,58 @@ public sealed class FinalizePaymentAttemptContractTests : IClassFixture<CustomWe
     }
 
     /// <summary>
+    /// Verifies SDD 10.7.1 same-idempotency-key replay behavior.
+    /// </summary>
+    [Fact]
+    public async Task FinalizePaymentAttempt_returns_200_ok_for_same_idempotency_key_replay()
+    {
+        var context = PaymentTestContext.Create(nameof(FinalizePaymentAttempt_returns_200_ok_for_same_idempotency_key_replay));
+        var idempotencyKey = $"ctest-finalize-{Guid.NewGuid():N}";
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for finalization contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "finalization-contract-test");
+
+            using var client = CreateClient();
+            using var first = await PostFinalizeAsync(
+                client,
+                created.PaymentAttemptId,
+                "CONFIRMED",
+                context.CorrelationId,
+                idempotencyKey);
+
+            using var replay = await PostFinalizeAsync(
+                client,
+                created.PaymentAttemptId,
+                "CONFIRMED",
+                context.CorrelationId,
+                idempotencyKey);
+
+            first.StatusCode.Should().Be(HttpStatusCode.OK);
+            replay.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var firstPayload = await first.Content.ReadFromJsonAsync<FinalizePaymentAttemptResponse>();
+            var replayPayload = await replay.Content.ReadFromJsonAsync<FinalizePaymentAttemptResponse>();
+
+            replayPayload.Should().NotBeNull();
+            replayPayload!.PaymentAttemptId.Should().Be(firstPayload!.PaymentAttemptId);
+            replayPayload.AttemptStatus.Should().Be(firstPayload.AttemptStatus);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
     /// Verifies BRD 9.13 and SDD 6.4 conflicting terminal replay behavior.
     /// </summary>
     [Fact]
@@ -200,6 +326,47 @@ public sealed class FinalizePaymentAttemptContractTests : IClassFixture<CustomWe
             payload.Should().NotBeNull();
             payload!.ErrorCode.Should().Be("PAYMENT_ATTEMPT_ALREADY_FINAL");
             payload.CorrelationId.Should().Be(conflictCorrelationId);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies SDD 6.4 deterministic rejection for unsupported terminal statuses.
+    /// </summary>
+    [Fact]
+    public async Task FinalizePaymentAttempt_returns_400_bad_request_for_unsupported_terminal_status()
+    {
+        var context = PaymentTestContext.Create(nameof(FinalizePaymentAttempt_returns_400_bad_request_for_unsupported_terminal_status));
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for unsupported finalization contract tests");
+
+        try
+        {
+            var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
+                ConnectionString,
+                context,
+                $"ctest-create-{Guid.NewGuid():N}",
+                "finalization-contract-test");
+
+            using var client = CreateClient();
+            using var response = await PostFinalizeAsync(
+                client,
+                created.PaymentAttemptId,
+                "REJECTED",
+                context.CorrelationId,
+                $"ctest-finalize-{Guid.NewGuid():N}");
+
+            response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+            var payload = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            payload.Should().NotBeNull();
+            payload!.ErrorCode.Should().Be("INVALID_REQUEST");
+            payload.CorrelationId.Should().Be(context.CorrelationId);
         }
         finally
         {
