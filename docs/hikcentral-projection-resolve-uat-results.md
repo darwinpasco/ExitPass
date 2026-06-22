@@ -222,6 +222,7 @@ After UAT:
 
 ## Remaining Risks And Recommended Next Steps
 
+- Use `docs/hikcentral-projection-production-controls.md` before enabling projection scheduler behavior outside UAT.
 - Keep degraded fallback disabled by default until an operations runbook defines approval, monitoring, and stale-data thresholds.
 - Add dashboard or alert visibility for projection sync target health and freshness.
 - Add a controlled UAT case for stale projection behavior after operations approves the stale-data threshold.
