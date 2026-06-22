@@ -230,6 +230,14 @@ Operator Console includes a read-only page for the same projection health view:
 /operator-console/vendor-session-projections/health
 ```
 
+The page was live-smoke-tested under #303. For local development smoke testing against Central PMS, start the Operator Console with:
+
+```text
+VITE_OPERATOR_CONSOLE_API_PROXY_TARGET=http://localhost:56065
+```
+
+See `docs/hikcentral-operator-console-projection-health-smoke.md` for the recorded smoke result and observed values.
+
 The page shows:
 
 - aggregate target totals, health buckets, stale target count, and active/exited projection counts
