@@ -66,11 +66,33 @@ public sealed class PaymentToExitFlowIntegrationTests
 
         try
         {
+            Assert.Equal(0, await PaymentRoutineTestHelper.CountPaymentAttemptsForParkingSessionAsync(
+                ConnectionString,
+                context.ParkingSessionId));
+            Assert.Equal(0, await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: false));
+
             var created = await PaymentRoutineTestHelper.CreateAttemptAsync(
                 ConnectionString,
                 context,
                 $"idem-create-{Guid.NewGuid():N}",
                 "payment-to-exit-test");
+
+            Assert.Equal(context.ParkingSessionId, created.ParkingSessionId);
+            Assert.Equal(context.TariffSnapshotId, created.TariffSnapshotId);
+            Assert.Equal("REQUESTED", created.AttemptStatus);
+            Assert.Equal(1, await PaymentRoutineTestHelper.CountPaymentAttemptsForParkingSessionAsync(
+                ConnectionString,
+                context.ParkingSessionId));
+            Assert.Equal(0, await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId));
+            Assert.Equal(0, await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: false));
 
             using var client = CreateClient();
 
@@ -93,19 +115,52 @@ public sealed class PaymentToExitFlowIntegrationTests
             Assert.NotNull(outcomeBody);
             Assert.Equal(created.PaymentAttemptId, outcomeBody!.PaymentAttemptId);
             Assert.Equal("CONFIRMED", outcomeBody.AttemptStatus);
+            Assert.NotEqual(Guid.Empty, outcomeBody.PaymentConfirmationId);
             Assert.NotNull(outcomeBody.ExitAuthorizationId);
             Assert.Equal("ISSUED", outcomeBody.AuthorizationStatus);
             Assert.False(string.IsNullOrWhiteSpace(outcomeBody.AuthorizationToken));
             Assert.NotNull(outcomeBody.IssuedAt);
             Assert.NotNull(outcomeBody.ExpirationTimestamp);
 
+            var persistedAttempt = await PaymentRoutineTestHelper.GetPaymentAttemptAsync(
+                ConnectionString,
+                created.PaymentAttemptId);
+            var persistedConfirmation = await PaymentRoutineTestHelper.GetPaymentConfirmationByIdAsync(
+                ConnectionString,
+                outcomeBody.PaymentConfirmationId);
+
+            Assert.NotNull(persistedAttempt);
+            Assert.Equal("CONFIRMED", persistedAttempt!.AttemptStatus);
+            Assert.NotNull(persistedAttempt.FinalizedAt);
+            Assert.NotNull(persistedConfirmation);
+            Assert.Equal(outcomeBody.PaymentConfirmationId, persistedConfirmation!.PaymentConfirmationId);
+            Assert.Equal(created.PaymentAttemptId, persistedConfirmation.PaymentAttemptId);
+            Assert.Equal("RECORDED", persistedConfirmation.ConfirmationStatus);
+            Assert.Equal(100.00m, persistedConfirmation.AmountConfirmed);
+            Assert.Equal("PHP", persistedConfirmation.CurrencyCode);
+            Assert.Equal(1, await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                ConnectionString,
+                created.PaymentAttemptId));
+
             var exitAuthorizationId = outcomeBody.ExitAuthorizationId!.Value;
+            var persistedAuthorization = await PaymentRoutineTestHelper.GetExitAuthorizationByIdAsync(
+                ConnectionString,
+                exitAuthorizationId);
             var issuedAuthorizationCount = await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
                 ConnectionString,
                 context.ParkingSessionId,
                 issuedOnly: true);
 
+            Assert.NotNull(persistedAuthorization);
+            Assert.Equal(exitAuthorizationId, persistedAuthorization!.ExitAuthorizationId);
+            Assert.Equal(context.ParkingSessionId, persistedAuthorization.ParkingSessionId);
+            Assert.Equal(created.PaymentAttemptId, persistedAuthorization.PaymentAttemptId);
+            Assert.Equal("ISSUED", persistedAuthorization.AuthorizationStatus);
             Assert.Equal(1, issuedAuthorizationCount);
+            Assert.Equal(1, await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                context.ParkingSessionId,
+                issuedOnly: false));
 
             var firstConsumeResponse = await PostConsumeExitAuthorizationAsync(
                 client,
@@ -121,6 +176,9 @@ public sealed class PaymentToExitFlowIntegrationTests
             Assert.Equal(exitAuthorizationId, firstConsumeBody!.ExitAuthorizationId);
             Assert.Equal("CONSUMED", firstConsumeBody.AuthorizationStatus);
             Assert.NotNull(firstConsumeBody.ConsumedAt);
+            Assert.Equal(1, await PaymentRoutineTestHelper.CountGateAuthorizationConsumptionsAsync(
+                ConnectionString,
+                exitAuthorizationId));
 
             var secondConsumeResponse = await PostConsumeExitAuthorizationAsync(
                 client,
@@ -133,6 +191,17 @@ public sealed class PaymentToExitFlowIntegrationTests
 
             Assert.Equal(HttpStatusCode.Conflict, secondConsumeResponse.StatusCode);
             Assert.Contains("EXIT_AUTHORIZATION_ALREADY_CONSUMED", secondConsumeRaw, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(1, await PaymentRoutineTestHelper.CountGateAuthorizationConsumptionsAsync(
+                ConnectionString,
+                exitAuthorizationId));
+
+            var consumedAuthorization = await PaymentRoutineTestHelper.GetExitAuthorizationByIdAsync(
+                ConnectionString,
+                exitAuthorizationId);
+
+            Assert.NotNull(consumedAuthorization);
+            Assert.Equal("CONSUMED", consumedAuthorization!.AuthorizationStatus);
+            Assert.NotNull(consumedAuthorization.ConsumedAt);
         }
         finally
         {

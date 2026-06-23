@@ -560,6 +560,35 @@ public static class PaymentRoutineTestHelper
     }
 
     /// <summary>
+    /// Counts persisted payment attempts for a parking session.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="parkingSessionId">Canonical parking-session identifier.</param>
+    /// <returns>The matching payment-attempt count.</returns>
+    public static async Task<int> CountPaymentAttemptsForParkingSessionAsync(
+        string connectionString,
+        Guid parkingSessionId)
+    {
+        const string sql = """
+            SELECT COUNT(*)::int
+            FROM core.payment_attempts
+            WHERE parking_session_id = @parking_session_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+
+        return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    /// <summary>
     /// Counts payment confirmations for a payment attempt.
     /// </summary>
     /// <param name="connectionString">Integration database connection string.</param>
@@ -584,6 +613,35 @@ public static class PaymentRoutineTestHelper
         };
 
         command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+
+        return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    /// <summary>
+    /// Counts gate authorization consumption rows for an exit authorization.
+    /// </summary>
+    /// <param name="connectionString">Integration database connection string.</param>
+    /// <param name="exitAuthorizationId">Canonical exit-authorization identifier.</param>
+    /// <returns>The matching gate authorization consumption count.</returns>
+    public static async Task<int> CountGateAuthorizationConsumptionsAsync(
+        string connectionString,
+        Guid exitAuthorizationId)
+    {
+        const string sql = """
+            SELECT COUNT(*)::int
+            FROM gates.gate_authorization_consumptions
+            WHERE exit_authorization_id = @exit_authorization_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("exit_authorization_id", exitAuthorizationId);
 
         return (int)(await command.ExecuteScalarAsync() ?? 0);
     }
