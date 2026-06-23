@@ -264,6 +264,22 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                     effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId);
             }
 
+            if (tariffSnapshot.SnapshotStatus == TariffSnapshotStatus.Consumed &&
+                await _tariffSnapshotReadRepository.WasConsumedOnlyByFailedPaymentAttemptAsync(
+                    command.TariffSnapshotId,
+                    cancellationToken))
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Payable basis refresh required");
+                activity?.SetTag("rejection_reason", "PAYABLE_BASIS_REFRESH_REQUIRED");
+
+                _logger.LogWarning(
+                    "Payment attempt creation rejected because submitted tariff snapshot was consumed by a failed payment attempt and must be refreshed.");
+
+                throw new PayableBasisRefreshRequiredException(
+                    command.TariffSnapshotId,
+                    command.ParkingSessionId);
+            }
+
             return await InvokeCreateOrReuseRoutineAsync(command, provider, activity, cancellationToken);
         }
         catch (Exception ex) when (IsExpectedBusinessRejection(ex))
@@ -544,6 +560,7 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
             or TariffSnapshotNotFoundException
             or TariffSnapshotNotEligibleException
             or StaleTariffSnapshotException
+            or PayableBasisRefreshRequiredException
             or EffectivePayableBasisInvalidException
             or ActivePaymentAttemptAlreadyExistsException
             or IdempotencyConflictException

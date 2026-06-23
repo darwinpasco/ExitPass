@@ -412,6 +412,39 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     }
 
     /// <summary>
+    /// Verifies a consumed snapshot tied only to failed attempts is surfaced as a refresh-required basis.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_payable_basis_refresh_required_when_consumed_snapshot_was_only_failed_attempt()
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot(TariffSnapshotStatus.Consumed));
+
+        fixture.TariffSnapshotReadRepository
+            .WasConsumedOnlyByFailedPaymentAttemptAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-consumed-failed"), CancellationToken.None);
+
+        var assertion = await act.Should().ThrowAsync<PayableBasisRefreshRequiredException>();
+        assertion.Which.SubmittedTariffSnapshotId.Should().Be(TariffSnapshotId);
+        assertion.Which.ParkingSessionId.Should().Be(ParkingSessionId);
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Verifies that payment creation fails closed when APPLIED payable-basis state is invalid.
     /// </summary>
     [Fact]

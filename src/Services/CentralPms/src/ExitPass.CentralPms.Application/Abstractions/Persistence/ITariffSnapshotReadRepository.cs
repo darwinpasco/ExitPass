@@ -28,4 +28,14 @@ public interface ITariffSnapshotReadRepository
     Task<EffectiveTariffSnapshotResolution?> GetEffectiveAppliedTariffSnapshotAsync(
         Guid parkingSessionId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns whether a consumed tariff snapshot is tied exclusively to failed payment attempts.
+    /// </summary>
+    /// <param name="tariffSnapshotId">Submitted tariff snapshot identifier.</param>
+    /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
+    /// <returns><c>true</c> when the snapshot was consumed only by failed attempts; otherwise, <c>false</c>.</returns>
+    Task<bool> WasConsumedOnlyByFailedPaymentAttemptAsync(
+        Guid tariffSnapshotId,
+        CancellationToken cancellationToken);
 }

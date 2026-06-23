@@ -103,11 +103,20 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                     $"Parking session '{parkingSession.ParkingSessionId}' has an APPLIED statutory discount payable-basis application without a valid active applied tariff snapshot.");
             }
 
-            existingTariff = await FindLatestExistingTariffAsync(
+            var latestExistingTariff = await FindLatestExistingTariffAsync(
                 connection,
                 transaction,
                 parkingSession.ParkingSessionId,
                 cancellationToken);
+
+            existingTariff = latestExistingTariff is not null &&
+                await WasConsumedOnlyByFailedPaymentAttemptAsync(
+                    connection,
+                    transaction,
+                    latestExistingTariff.TariffSnapshotId,
+                    cancellationToken)
+                    ? null
+                    : latestExistingTariff;
         }
 
         var tariffSnapshotWasReused = existingTariff is not null;
@@ -717,6 +726,36 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             MapTariffSnapshotStatus(reader.GetString(reader.GetOrdinal("snapshot_status"))),
             reader.IsDBNull(reader.GetOrdinal("superseded_by_tariff_snapshot_id")) ? null : reader.GetGuid(reader.GetOrdinal("superseded_by_tariff_snapshot_id")),
             null);
+    }
+
+    private static async Task<bool> WasConsumedOnlyByFailedPaymentAttemptAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        Guid tariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM core.payment_attempts AS pa
+                    WHERE pa.tariff_snapshot_id = @tariff_snapshot_id
+                      AND pa.attempt_status = 'FAILED'::core.payment_attempt_status_enum
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM core.payment_attempts AS pa
+                    WHERE pa.tariff_snapshot_id = @tariff_snapshot_id
+                      AND pa.attempt_status <> 'FAILED'::core.payment_attempt_status_enum
+                )
+                AS consumed_by_failed_attempt_only;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is bool consumedByFailedAttemptOnly && consumedByFailedAttemptOnly;
     }
 
     private static async Task RetireExistingActiveTariffsAsync(

@@ -497,6 +497,132 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies a failed provider handoff does not trap WebPay on a consumed payable basis.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenLatestConsumedSnapshotBelongsOnlyToFailedAttempt_ReturnsFreshPayableBasis()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000024");
+        var ticketReference = UniqueLookup("PAY-FAILED-RETRY");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        using var firstPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey: $"idem-pay-failed-first-{Guid.NewGuid():N}",
+            correlationId);
+
+        var firstRaw = await firstPaymentResponse.Content.ReadAsStringAsync();
+        firstPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, firstRaw);
+        var firstPayment = await firstPaymentResponse.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+        firstPayment.Should().NotBeNull();
+
+        var failed = await PaymentRoutineTestHelper.FinalizeAttemptAsync(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+            firstPayment!.PaymentAttemptId,
+            "FAILED",
+            "CENTRAL_PMS_API",
+            correlationId);
+
+        failed.Should().NotBeNull();
+        failed!.AttemptStatus.Should().Be("FAILED");
+
+        using var stalePaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey: $"idem-pay-failed-stale-{Guid.NewGuid():N}",
+            correlationId);
+
+        var staleRaw = await stalePaymentResponse.Content.ReadAsStringAsync();
+        stalePaymentResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, staleRaw);
+
+        var staleError = await stalePaymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        staleError.Should().NotBeNull();
+        staleError!.ErrorCode.Should().Be("PAYABLE_BASIS_REFRESH_REQUIRED");
+        staleError.ErrorCode.Should().NotBe("TARIFF_SNAPSHOT_INVALID");
+
+        var refreshed = await ResolveAsync(client, request);
+        refreshed.ParkingSessionId.Should().Be(initial.ParkingSessionId);
+        refreshed.TariffSnapshotId.Should().NotBe(initial.TariffSnapshotId);
+        refreshed.NetPayableMinorUnits.Should().Be(initial.NetPayableMinorUnits);
+
+        using var retryPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            refreshed,
+            idempotencyKey: $"idem-pay-failed-retry-{Guid.NewGuid():N}",
+            correlationId);
+
+        var retryRaw = await retryPaymentResponse.Content.ReadAsStringAsync();
+        retryPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, retryRaw);
+        var retryPayment = await retryPaymentResponse.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+        retryPayment.Should().NotBeNull();
+        retryPayment!.PaymentAttemptId.Should().NotBe(firstPayment.PaymentAttemptId);
+
+        var persistedRetry = await ReadPaymentAttemptAsync(retryPayment.PaymentAttemptId);
+        persistedRetry.Should().NotBeNull();
+        persistedRetry!.TariffSnapshotId.Should().Be(refreshed.TariffSnapshotId);
+
+        (await CountPaymentAttemptsAsync(initial.ParkingSessionId)).Should().Be(2);
+        (await CountPaymentConfirmationsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountExitAuthorizationsAsync(initial.ParkingSessionId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies a consumed snapshot tied to confirmed payment finality remains protected from a new payment attempt.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenLatestConsumedSnapshotBelongsToConfirmedAttempt_DoesNotRefreshPayableBasis()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000025");
+        var ticketReference = UniqueLookup("PAY-CONFIRMED-PROTECT");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        using var paymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey: $"idem-pay-confirmed-first-{Guid.NewGuid():N}",
+            correlationId);
+
+        var paymentRaw = await paymentResponse.Content.ReadAsStringAsync();
+        paymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, paymentRaw);
+        var payment = await paymentResponse.Content.ReadFromJsonAsync<CreatePaymentAttemptResponse>();
+        payment.Should().NotBeNull();
+
+        var confirmed = await PaymentRoutineTestHelper.FinalizeAttemptAsync(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+            payment!.PaymentAttemptId,
+            "CONFIRMED",
+            "CENTRAL_PMS_API",
+            correlationId);
+
+        confirmed.Should().NotBeNull();
+        confirmed!.AttemptStatus.Should().Be("CONFIRMED");
+
+        var resolvedAfterConfirmation = await ResolveAsync(client, request);
+        resolvedAfterConfirmation.ParkingSessionId.Should().Be(initial.ParkingSessionId);
+        resolvedAfterConfirmation.TariffSnapshotId.Should().Be(initial.TariffSnapshotId);
+
+        using var secondPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            resolvedAfterConfirmation,
+            idempotencyKey: $"idem-pay-confirmed-second-{Guid.NewGuid():N}",
+            correlationId);
+
+        var secondRaw = await secondPaymentResponse.Content.ReadAsStringAsync();
+        secondPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, secondRaw);
+
+        var error = await secondPaymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        error.Should().NotBeNull();
+        error!.ErrorCode.Should().Be("TARIFF_SNAPSHOT_INVALID");
+
+        (await CountPaymentAttemptsAsync(initial.ParkingSessionId)).Should().Be(1);
+    }
+
+    /// <summary>
     /// Verifies payment creation rejects stale original tariff snapshots after a statutory discount is APPLIED.
     /// </summary>
     [Fact]
@@ -894,6 +1020,42 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         const string sql = """
             SELECT COUNT(*)
             FROM core.payment_attempts
+            WHERE parking_session_id = @parking_session_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
+    }
+
+    private static async Task<long> CountPaymentConfirmationsAsync(Guid parkingSessionId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM core.payment_confirmations AS pc
+            INNER JOIN core.payment_attempts AS pa
+                ON pa.payment_attempt_id = pc.payment_attempt_id
+            WHERE pa.parking_session_id = @parking_session_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
+    }
+
+    private static async Task<long> CountExitAuthorizationsAsync(Guid parkingSessionId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM core.exit_authorizations
             WHERE parking_session_id = @parking_session_id;
             """;
 

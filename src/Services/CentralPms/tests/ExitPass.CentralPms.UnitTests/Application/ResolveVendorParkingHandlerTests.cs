@@ -772,6 +772,13 @@ public sealed class ResolveVendorParkingHandlerTests
         {
             return Task.FromResult<EffectiveTariffSnapshotResolution?>(null);
         }
+
+        public Task<bool> WasConsumedOnlyByFailedPaymentAttemptAsync(
+            Guid tariffSnapshotId,
+            CancellationToken cancellationToken)
+        {
+            return Task.FromResult(false);
+        }
     }
 
     private sealed class RecordingIntegrationEventPublisher : IIntegrationEventPublisher
