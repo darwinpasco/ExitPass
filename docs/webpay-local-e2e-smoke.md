@@ -127,42 +127,32 @@ Open:
 http://localhost:5174
 ```
 
-## Optional Local PayMongo Checkout Stub
+## Local PayMongo Checkout Stub
 
-The bundled `mock-payment-provider` contains a legacy `/api/provider/payments` mapping. Current WebPay PayMongo checkout creation calls:
+The bundled `mock-payment-provider` includes committed WireMock mappings for both the legacy mock payment path and the PayMongo-compatible checkout-session path. Current WebPay PayMongo checkout creation calls:
 
 ```text
 POST /v1/checkout_sessions
 ```
 
-For local smoke without real PayMongo credentials, register a temporary WireMock mapping after the mock provider is running:
+The committed local mappings are:
+
+- `mocks/mock-payment-provider/mappings/paymongo-checkout-session-success.json`
+- `mocks/mock-payment-provider/mappings/paymongo-checkout-page.json`
+
+When the WireMock container mounts `mocks/mock-payment-provider` as `/home/wiremock`, these mappings are loaded automatically. For local smoke without real PayMongo credentials, set Payment Orchestrator to use the stub:
 
 ```powershell
-$mapping = @'
-{
-  "request": {
-    "method": "POST",
-    "urlPath": "/v1/checkout_sessions"
-  },
-  "response": {
-    "status": 200,
-    "headers": {
-      "Content-Type": "application/json"
-    },
-    "body": "{\"data\":{\"id\":\"cs_webpay_local_{{randomValue length=16 type='ALPHANUMERIC'}}\",\"type\":\"checkout_session\",\"attributes\":{\"checkout_url\":\"https://paymongo.local.test/checkout/cs_webpay_local\",\"checkout_url_expires_at\":\"2026-06-23T12:00:00Z\"}}}",
-    "transformers": ["response-template"]
-  }
-}
-'@
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://localhost:8084/__admin/mappings" `
-  -ContentType "application/json" `
-  -Body $mapping
+$env:Payments__Providers__PayMongo__BaseUrl = "http://localhost:8084"
 ```
 
-This stub is local-only. It does not settle a payment, verify a callback, create PaymentConfirmation, or issue ExitAuthorization.
+The checkout-session mapping returns:
+
+- provider checkout session id: `cs_test_exitpass_local`
+- checkout URL: `http://localhost:8084/mock-paymongo/checkout/cs_test_exitpass_local`
+- checkout URL expiry: `2026-06-23T12:00:00Z`
+
+The optional checkout page mapping lets the browser show `ExitPass Local PayMongo Checkout Stub` after handoff. This stub is local-only. It does not settle a payment, verify a callback, create PaymentConfirmation, issue ExitAuthorization, or simulate PayMongo webhook finality.
 
 ## Start Services
 
@@ -456,9 +446,21 @@ For invalid PayMongo settings:
 
 ### Provider handoff fails
 
-Confirm that `Payments__Providers__PayMongo__BaseUrl` points to a PayMongo-compatible endpoint. The bundled mock provider needs the temporary `/v1/checkout_sessions` WireMock mapping above for this smoke.
+Confirm that `Payments__Providers__PayMongo__BaseUrl` points to a PayMongo-compatible endpoint. The bundled mock provider includes a committed `/v1/checkout_sessions` WireMock mapping for this smoke.
 
 If fake PayMongo keys are used against `https://api.paymongo.com`, provider handoff failure is expected. Use real PayMongo test keys through the approved secret channel or a local PayMongo-compatible mock.
+
+If using the committed local WireMock mappings, set:
+
+```powershell
+$env:Payments__Providers__PayMongo__BaseUrl = "http://localhost:8084"
+```
+
+Then verify the mapping is available:
+
+```powershell
+Invoke-WebRequest -Uri "http://localhost:8084/mock-paymongo/checkout/cs_test_exitpass_local" -UseBasicParsing
+```
 
 ### Ticket returns vendor malformed
 
