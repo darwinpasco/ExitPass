@@ -270,6 +270,41 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
         };
     }
 
+    /// <inheritdoc />
+    public async Task<bool> WasConsumedOnlyByFailedPaymentAttemptAsync(
+        Guid tariffSnapshotId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                EXISTS (
+                    SELECT 1
+                    FROM core.payment_attempts AS pa
+                    WHERE pa.tariff_snapshot_id = @tariff_snapshot_id
+                      AND pa.attempt_status = 'FAILED'::core.payment_attempt_status_enum
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM core.payment_attempts AS pa
+                    WHERE pa.tariff_snapshot_id = @tariff_snapshot_id
+                      AND pa.attempt_status <> 'FAILED'::core.payment_attempt_status_enum
+                ) AS consumed_by_failed_attempt_only;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshotId;
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is bool consumedByFailedAttemptOnly && consumedByFailedAttemptOnly;
+    }
+
     /// <summary>
     /// Maps the compatibility source type projected from the v1.2 tariff snapshot amounts.
     ///

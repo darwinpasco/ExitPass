@@ -225,6 +225,22 @@ public sealed class PaymentAttemptsController : ControllerBase
                     ["statutory_discount_application_id"] = ex.StatutoryDiscountApplicationId
                 }));
         }
+        catch (PayableBasisRefreshRequiredException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+
+            _logger.LogWarning(ex, "CreatePaymentAttempt failed because the submitted payable basis must be refreshed.");
+            return Conflict(BuildError(
+                "PAYABLE_BASIS_REFRESH_REQUIRED",
+                ex.Message,
+                correlationIdRaw,
+                new Dictionary<string, object?>
+                {
+                    ["parking_session_id"] = ex.ParkingSessionId,
+                    ["submitted_tariff_snapshot_id"] = ex.SubmittedTariffSnapshotId
+                }));
+        }
         catch (EffectivePayableBasisInvalidException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);

@@ -578,6 +578,7 @@ public sealed class WebPayPaymentIntentHandlerTests
     public async Task WebPayPaymentIntent_WhenActivePaymentAttemptHasNoProviderSession_RecoversAndCreatesFreshHandoff()
     {
         var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var refreshedTariffSnapshotId = Guid.Parse("88888888-8888-8888-8888-888888888888");
         fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
             new CentralPmsWebPayError(
                 409,
@@ -588,14 +589,28 @@ public sealed class WebPayPaymentIntentHandlerTests
                 PaymentAttemptId)));
         fixture.CentralPms.EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
             new CentralPmsPaymentAttempt(Guid.Parse("77777777-7777-7777-7777-777777777777"), "PENDING_PROVIDER", "PAYMONGO_CHECKOUT_SESSION", false)));
+        fixture.CentralPms.EnqueueResolveResult(fixture.CentralPms.ResolveResult);
+        fixture.CentralPms.EnqueueResolveResult(CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                refreshedTariffSnapshotId,
+                12500,
+                "PHP",
+                "HIKCENTRAL",
+                CorrelationId,
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId)));
 
         var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
 
         Assert.True(result.Succeeded);
         Assert.Equal(Guid.Parse("77777777-7777-7777-7777-777777777777"), result.Response!.PaymentAttemptId);
+        Assert.Equal(refreshedTariffSnapshotId, result.Response.TariffSnapshotId);
         Assert.Equal(PaymentAttemptId, fixture.CentralPms.FinalizedPaymentAttemptId);
         Assert.Equal("FAILED", fixture.CentralPms.FinalAttemptStatus);
         Assert.Equal(2, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.Equal(2, fixture.CentralPms.ResolveVendorParkingCallCount);
+        Assert.Equal(new[] { TariffSnapshotId, refreshedTariffSnapshotId }, fixture.CentralPms.CapturedTariffSnapshotIds);
         Assert.NotNull(fixture.CapturedInitiateRequest);
     }
 
@@ -759,8 +774,12 @@ public sealed class WebPayPaymentIntentHandlerTests
         public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
 
         private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
+        private readonly Queue<CentralPmsWebPayResult<CentralPmsResolvedParking>> _resolveResults = new();
+        private readonly List<Guid> _capturedTariffSnapshotIds = new();
 
         public bool ResolveVendorParkingWasCalled { get; private set; }
+
+        public int ResolveVendorParkingCallCount { get; private set; }
 
         public bool CreatePaymentAttemptWasCalled { get; private set; }
 
@@ -778,9 +797,16 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public string? CapturedTicketReference { get; private set; }
 
+        public IReadOnlyList<Guid> CapturedTariffSnapshotIds => _capturedTariffSnapshotIds;
+
         public void EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt> result)
         {
             _createAttemptResults.Enqueue(result);
+        }
+
+        public void EnqueueResolveResult(CentralPmsWebPayResult<CentralPmsResolvedParking> result)
+        {
+            _resolveResults.Enqueue(result);
         }
 
         public Task<CentralPmsWebPayResult<CentralPmsResolvedParking>> ResolveVendorParkingAsync(
@@ -793,7 +819,13 @@ public sealed class WebPayPaymentIntentHandlerTests
             CancellationToken cancellationToken)
         {
             ResolveVendorParkingWasCalled = true;
+            ResolveVendorParkingCallCount++;
             CapturedTicketReference = ticketReference;
+            if (_resolveResults.Count > 0)
+            {
+                return Task.FromResult(_resolveResults.Dequeue());
+            }
+
             return Task.FromResult(ResolveResult);
         }
 
@@ -810,6 +842,7 @@ public sealed class WebPayPaymentIntentHandlerTests
             CreatePaymentAttemptCallCount++;
             CapturedPaymentProvider = paymentProvider;
             CapturedPaymentMethod = paymentMethod;
+            _capturedTariffSnapshotIds.Add(tariffSnapshotId);
 
             if (_createAttemptResults.Count > 0)
             {

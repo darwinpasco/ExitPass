@@ -197,6 +197,7 @@ public sealed class WebPayPaymentIntentHandler
 
         var attempt = attemptResolution.Attempt
             ?? throw new InvalidOperationException("Payment attempt recovery returned no attempt and no error.");
+        var resolvedParking = attemptResolution.Parking ?? parking.Value;
 
         string providerProduct;
         try
@@ -217,7 +218,7 @@ public sealed class WebPayPaymentIntentHandler
 
             return WebPayPaymentIntentResult.Failure(BuildProviderConfigurationError(
                 exception,
-                parking.Value,
+                resolvedParking,
                 paymentMethod,
                 route.SelectedProviderCode,
                 route.FallbackProviderCode,
@@ -234,11 +235,11 @@ public sealed class WebPayPaymentIntentHandler
             providerProduct,
             correlationId);
 
-        var customerDisplayName = BuildCustomerDisplayName(parking.Value);
-        var customerDescription = BuildCustomerDescription(parking.Value);
+        var customerDisplayName = BuildCustomerDisplayName(resolvedParking);
+        var customerDescription = BuildCustomerDescription(resolvedParking);
         var metadata = BuildProviderMetadata(
             attempt.PaymentAttemptId,
-            parking.Value,
+            resolvedParking,
             paymentMethod,
             correlationId);
         InitiateProviderPaymentResponse handoff;
@@ -247,14 +248,14 @@ public sealed class WebPayPaymentIntentHandler
             var successUrl = BuildReturnUrl(
                 _returnUrlOptions.PublicBaseUrl,
                 _returnUrlOptions.PaymentSuccessPath,
-                parking.Value,
+                resolvedParking,
                 attempt.PaymentAttemptId,
                 correlationId,
                 "success");
             var cancelUrl = BuildReturnUrl(
                 _returnUrlOptions.PublicBaseUrl,
                 _returnUrlOptions.PaymentCancelPath,
-                parking.Value,
+                resolvedParking,
                 attempt.PaymentAttemptId,
                 correlationId,
                 "cancelled");
@@ -266,8 +267,8 @@ public sealed class WebPayPaymentIntentHandler
                     attempt.PaymentAttemptId,
                     route.SelectedProviderCode,
                     providerProduct,
-                    parking.Value.NetPayableMinorUnits,
-                    parking.Value.Currency,
+                    resolvedParking.NetPayableMinorUnits,
+                    resolvedParking.Currency,
                     customerDescription,
                     idempotencyKey,
                     successUrl,
@@ -294,7 +295,7 @@ public sealed class WebPayPaymentIntentHandler
 
             return WebPayPaymentIntentResult.Failure(BuildProviderConfigurationError(
                 exception,
-                parking.Value,
+                resolvedParking,
                 paymentMethod,
                 route.SelectedProviderCode,
                 route.FallbackProviderCode,
@@ -308,23 +309,23 @@ public sealed class WebPayPaymentIntentHandler
         return WebPayPaymentIntentResult.Success(new WebPayPaymentIntentResponse
         {
             PaymentAttemptId = attempt.PaymentAttemptId,
-            ParkingSessionId = parking.Value.ParkingSessionId,
-            TariffSnapshotId = parking.Value.TariffSnapshotId,
-            SiteGroupId = parking.Value.SiteGroupId,
-            SiteId = parking.Value.SiteId,
-            VendorSystemId = BlankToNull(parking.Value.VendorSystemId),
-            SiteGroupName = BlankToNull(parking.Value.SiteGroupName),
-            AmountMinorUnits = parking.Value.NetPayableMinorUnits,
-            Currency = parking.Value.Currency,
-            SiteName = BlankToNull(parking.Value.SiteName),
-            TicketReference = BlankToNull(parking.Value.TicketReference),
-            PlateNumber = BlankToNull(parking.Value.PlateNumber),
-            EntryTime = parking.Value.EntryTime,
-            CurrentFeeCalculationTime = parking.Value.CurrentFeeCalculationTime,
-            TariffName = BlankToNull(parking.Value.TariffName),
-            ParkingStatus = BlankToNull(parking.Value.ParkingStatus),
+            ParkingSessionId = resolvedParking.ParkingSessionId,
+            TariffSnapshotId = resolvedParking.TariffSnapshotId,
+            SiteGroupId = resolvedParking.SiteGroupId,
+            SiteId = resolvedParking.SiteId,
+            VendorSystemId = BlankToNull(resolvedParking.VendorSystemId),
+            SiteGroupName = BlankToNull(resolvedParking.SiteGroupName),
+            AmountMinorUnits = resolvedParking.NetPayableMinorUnits,
+            Currency = resolvedParking.Currency,
+            SiteName = BlankToNull(resolvedParking.SiteName),
+            TicketReference = BlankToNull(resolvedParking.TicketReference),
+            PlateNumber = BlankToNull(resolvedParking.PlateNumber),
+            EntryTime = resolvedParking.EntryTime,
+            CurrentFeeCalculationTime = resolvedParking.CurrentFeeCalculationTime,
+            TariffName = BlankToNull(resolvedParking.TariffName),
+            ParkingStatus = BlankToNull(resolvedParking.ParkingStatus),
             PaymentStatus = MapPaymentStatusForDisplay(handoff.SessionStatus),
-            FeeValidUntil = parking.Value.FeeValidUntil,
+            FeeValidUntil = resolvedParking.FeeValidUntil,
             PaymentMethod = route.PaymentMethod,
             SelectedProviderCode = route.SelectedProviderCode,
             FallbackProviderCode = route.FallbackProviderCode,
@@ -580,7 +581,7 @@ public sealed class WebPayPaymentIntentHandler
 
         if (attempt.Succeeded && attempt.Value is not null)
         {
-            return PaymentAttemptResolution.Success(attempt.Value);
+            return PaymentAttemptResolution.Success(attempt.Value, parking);
         }
 
         if (!IsActivePaymentAttemptConflict(attempt.Error))
@@ -633,6 +634,22 @@ public sealed class WebPayPaymentIntentHandler
             return PaymentAttemptResolution.Failure(MapCentralPmsError(recovery.Error, correlationId));
         }
 
+        var refreshedParking = await _centralPmsClient.ResolveVendorParkingAsync(
+            parking.SiteGroupId,
+            parking.SiteId,
+            parking.VendorSystemId ?? string.Empty,
+            parking.PlateNumber,
+            parking.TicketReference,
+            correlationId,
+            cancellationToken);
+
+        if (!refreshedParking.Succeeded || refreshedParking.Value is null)
+        {
+            return PaymentAttemptResolution.Failure(MapCentralPmsError(refreshedParking.Error, correlationId));
+        }
+
+        parking = refreshedParking.Value;
+
         var retry = await _centralPmsClient.CreateOrReusePaymentAttemptAsync(
             parking.ParkingSessionId,
             parking.TariffSnapshotId,
@@ -644,7 +661,7 @@ public sealed class WebPayPaymentIntentHandler
 
         if (retry.Succeeded && retry.Value is not null)
         {
-            return PaymentAttemptResolution.Success(retry.Value);
+            return PaymentAttemptResolution.Success(retry.Value, parking);
         }
 
         return PaymentAttemptResolution.Failure(IsActivePaymentAttemptConflict(retry.Error)
@@ -950,16 +967,19 @@ public sealed class WebPayPaymentIntentHandler
 
     private sealed record PaymentAttemptResolution(
         CentralPmsPaymentAttempt? Attempt,
+        CentralPmsResolvedParking? Parking,
         WebPayPaymentIntentError? Error)
     {
-        public static PaymentAttemptResolution Success(CentralPmsPaymentAttempt attempt)
+        public static PaymentAttemptResolution Success(
+            CentralPmsPaymentAttempt attempt,
+            CentralPmsResolvedParking parking)
         {
-            return new PaymentAttemptResolution(attempt, null);
+            return new PaymentAttemptResolution(attempt, parking, null);
         }
 
         public static PaymentAttemptResolution Failure(WebPayPaymentIntentError error)
         {
-            return new PaymentAttemptResolution(null, error);
+            return new PaymentAttemptResolution(null, null, error);
         }
     }
 
