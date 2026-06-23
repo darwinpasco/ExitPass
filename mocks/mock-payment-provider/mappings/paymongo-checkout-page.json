@@ -1,0 +1,13 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/mock-paymongo/checkout/cs_test_exitpass_local"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+    },
+    "body": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>ExitPass Local PayMongo Checkout Stub</title></head><body><main><h1>ExitPass Local PayMongo Checkout Stub</h1><p>This local WireMock page proves checkout handoff only. It does not settle payment, verify a webhook, create PaymentConfirmation, or issue ExitAuthorization.</p></main></body></html>"
+  }
+}

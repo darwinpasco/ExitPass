@@ -1,0 +1,22 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/v1/checkout_sessions"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "data": {
+        "id": "cs_test_exitpass_local",
+        "type": "checkout_session",
+        "attributes": {
+          "checkout_url": "http://localhost:8084/mock-paymongo/checkout/cs_test_exitpass_local",
+          "checkout_url_expires_at": "2026-06-23T12:00:00Z"
+        }
+      }
+    }
+  }
+}
