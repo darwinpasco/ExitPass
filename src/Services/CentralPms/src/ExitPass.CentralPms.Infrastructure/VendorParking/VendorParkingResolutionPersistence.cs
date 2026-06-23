@@ -110,13 +110,14 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 cancellationToken);
 
             existingTariff = latestExistingTariff is not null &&
-                await WasConsumedOnlyByFailedPaymentAttemptAsync(
+                latestExistingTariff.ExpiresAt > DateTimeOffset.UtcNow &&
+                !await WasConsumedOnlyByFailedPaymentAttemptAsync(
                     connection,
                     transaction,
                     latestExistingTariff.TariffSnapshotId,
                     cancellationToken)
-                    ? null
-                    : latestExistingTariff;
+                    ? latestExistingTariff
+                    : null;
         }
 
         var tariffSnapshotWasReused = existingTariff is not null;
@@ -633,6 +634,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             WHERE parking_session_id = @parking_session_id
               AND (@vendor_tariff_ref IS NULL OR vendor_tariff_ref = @vendor_tariff_ref)
               AND snapshot_status = 'ACTIVE'
+              AND expires_at > NOW()
               AND consumed_at IS NULL
               AND superseded_by_tariff_snapshot_id IS NULL
             ORDER BY created_at DESC

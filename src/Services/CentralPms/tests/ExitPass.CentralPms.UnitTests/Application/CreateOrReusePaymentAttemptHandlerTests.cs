@@ -445,6 +445,36 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     }
 
     /// <summary>
+    /// Verifies an expired ACTIVE snapshot is surfaced as refresh-required instead of generic tariff invalid.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_payable_basis_refresh_required_when_active_snapshot_is_expired()
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot(TariffSnapshotStatus.Active, Now.AddMinutes(-1)));
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-expired-active"), CancellationToken.None);
+
+        var assertion = await act.Should().ThrowAsync<PayableBasisRefreshRequiredException>();
+        assertion.Which.SubmittedTariffSnapshotId.Should().Be(TariffSnapshotId);
+        assertion.Which.ParkingSessionId.Should().Be(ParkingSessionId);
+        assertion.Which.Message.Should().Contain("expired");
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Verifies that payment creation fails closed when APPLIED payable-basis state is invalid.
     /// </summary>
     [Fact]
@@ -766,7 +796,9 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     /// Creates a canonical rehydrated tariff snapshot for tests.
     /// </summary>
     /// <returns>A rehydrated <see cref="TariffSnapshot"/> instance.</returns>
-    private static TariffSnapshot CreateTariffSnapshot(TariffSnapshotStatus snapshotStatus = TariffSnapshotStatus.Active)
+    private static TariffSnapshot CreateTariffSnapshot(
+        TariffSnapshotStatus snapshotStatus = TariffSnapshotStatus.Active,
+        DateTimeOffset? expiresAt = null)
     {
         return TariffSnapshot.Rehydrate(
             tariffSnapshotId: TariffSnapshotId,
@@ -781,7 +813,7 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
             tariffVersionReference: "TVR-001",
             policyVersionReference: null,
             calculatedAt: Now,
-            expiresAt: Now.AddMinutes(30),
+            expiresAt: expiresAt ?? Now.AddMinutes(30),
             snapshotStatus: snapshotStatus,
             supersedesTariffSnapshotId: null,
             consumedByPaymentAttemptId: null);

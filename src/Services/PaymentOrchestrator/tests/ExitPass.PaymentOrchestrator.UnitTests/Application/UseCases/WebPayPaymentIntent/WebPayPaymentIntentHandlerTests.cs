@@ -185,6 +185,33 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies expired payable basis errors are surfaced as recoverable refresh-required results.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenCentralPmsRequiresPayableBasisRefresh_ReturnsRecoverableRefreshError()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "PAYABLE_BASIS_REFRESH_REQUIRED",
+                "Tariff snapshot has expired. Refresh the payable basis before retrying payment.",
+                true,
+                CorrelationId,
+                ParkingSessionId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("PAYABLE_BASIS_REFRESH_REQUIRED", result.Error.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.Contains("Refresh", result.Error.Message);
+        Assert.Equal("PAYMONGO_CHECKOUT_SESSION", fixture.CapturedPaymentProvider);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
     /// Verifies WebPay cannot create a payment attempt against a stale payable basis after coupon or statutory changes.
     /// </summary>
     [Fact]

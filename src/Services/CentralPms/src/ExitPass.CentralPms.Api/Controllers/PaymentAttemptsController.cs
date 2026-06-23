@@ -239,7 +239,8 @@ public sealed class PaymentAttemptsController : ControllerBase
                 {
                     ["parking_session_id"] = ex.ParkingSessionId,
                     ["submitted_tariff_snapshot_id"] = ex.SubmittedTariffSnapshotId
-                }));
+                },
+                retryable: true));
         }
         catch (EffectivePayableBasisInvalidException ex)
         {
@@ -291,19 +292,21 @@ public sealed class PaymentAttemptsController : ControllerBase
     /// <param name="message">Error message.</param>
     /// <param name="correlationIdRaw">Raw correlation ID header.</param>
     /// <param name="details">Optional structured error details.</param>
+    /// <param name="retryable">Whether the caller can retry after refreshing request state.</param>
     /// <returns>A standardized error response.</returns>
     private static ErrorResponse BuildError(
         string errorCode,
         string message,
         string? correlationIdRaw,
-        Dictionary<string, object?>? details = null)
+        Dictionary<string, object?>? details = null,
+        bool retryable = false)
     {
         return new ErrorResponse
         {
             ErrorCode = errorCode,
             Message = message,
             CorrelationId = Guid.TryParse(correlationIdRaw, out var correlationId) ? correlationId : Guid.Empty,
-            Retryable = false,
+            Retryable = retryable,
             Details = details
         };
     }

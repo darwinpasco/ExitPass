@@ -264,6 +264,21 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
                     effectiveAppliedTariffSnapshot.StatutoryDiscountApplicationId);
             }
 
+            if (tariffSnapshot.SnapshotStatus == TariffSnapshotStatus.Active &&
+                tariffSnapshot.IsExpired(_systemClock))
+            {
+                activity?.SetStatus(ActivityStatusCode.Error, "Payable basis refresh required");
+                activity?.SetTag("rejection_reason", "PAYABLE_BASIS_EXPIRED");
+
+                _logger.LogWarning(
+                    "Payment attempt creation rejected because submitted tariff snapshot has expired and must be refreshed.");
+
+                throw new PayableBasisRefreshRequiredException(
+                    command.TariffSnapshotId,
+                    command.ParkingSessionId,
+                    $"Tariff snapshot '{command.TariffSnapshotId}' has expired. Refresh the payable basis before retrying payment.");
+            }
+
             if (tariffSnapshot.SnapshotStatus == TariffSnapshotStatus.Consumed &&
                 await _tariffSnapshotReadRepository.WasConsumedOnlyByFailedPaymentAttemptAsync(
                     command.TariffSnapshotId,
@@ -277,7 +292,8 @@ public sealed class CreateOrReusePaymentAttemptHandler : ICreateOrReusePaymentAt
 
                 throw new PayableBasisRefreshRequiredException(
                     command.TariffSnapshotId,
-                    command.ParkingSessionId);
+                    command.ParkingSessionId,
+                    $"Tariff snapshot '{command.TariffSnapshotId}' was consumed by a failed payment attempt. Refresh the payable basis before retrying payment.");
             }
 
             return await InvokeCreateOrReuseRoutineAsync(command, provider, activity, cancellationToken);
