@@ -11,6 +11,7 @@ import type {
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
+const refreshRequiredErrorCode = "PAYABLE_BASIS_REFRESH_REQUIRED";
 
 export class ActivePaymentAttemptError extends Error {
   public readonly activePaymentAttempt: ActivePaymentAttemptState;
@@ -19,6 +20,18 @@ export class ActivePaymentAttemptError extends Error {
     super(activePaymentAttempt.message);
     this.name = "ActivePaymentAttemptError";
     this.activePaymentAttempt = activePaymentAttempt;
+  }
+}
+
+export class PayableBasisRefreshRequiredError extends Error {
+  public readonly errorCode?: string;
+  public readonly correlationId?: string;
+
+  public constructor(errorCode: string | undefined, message: string, correlationId?: string) {
+    super(message);
+    this.name = "PayableBasisRefreshRequiredError";
+    this.errorCode = errorCode;
+    this.correlationId = correlationId;
   }
 }
 
@@ -273,6 +286,13 @@ export async function createPaymentIntent(
       });
     }
 
+    if (isPayableBasisRefreshRequired(error)) {
+      throw new PayableBasisRefreshRequiredError(
+        error.errorCode,
+        toFriendlyError(error.errorCode, error.message),
+        error.correlationId);
+    }
+
     throw new Error(toFriendlyError(error.errorCode, error.message));
   }
 
@@ -305,6 +325,8 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
     case "TARIFF_SNAPSHOT_NOT_FOUND":
     case "TARIFF_SNAPSHOT_INVALID":
       return "We could not calculate the parking fee. Please try again shortly.";
+    case "PAYABLE_BASIS_REFRESH_REQUIRED":
+      return "Your parking fee quote has expired. Please recalculate the fee to continue.";
     case "WEBPAY_PAYMENT_INTENT_FAILED":
     case "PAYMENT_PROVIDER_CONFIGURATION_ERROR":
       return "We could not start payment. Please try again.";
@@ -323,6 +345,10 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
     default:
       return message?.trim() || "Payment intent creation failed. Please try again.";
   }
+}
+
+function isPayableBasisRefreshRequired(error: ApiError): boolean {
+  return (error.errorCode ?? "").toUpperCase() === refreshRequiredErrorCode;
 }
 
 export function formatAmount(amountMinorUnits: number, currency: string): string {

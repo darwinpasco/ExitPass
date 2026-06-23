@@ -2,6 +2,7 @@ import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
+  PayableBasisRefreshRequiredError,
   createPaymentIntent,
   extractPaymentIntentContext,
   formatAmount,
@@ -63,6 +64,7 @@ export function App() {
   const [activePaymentAttempt, setActivePaymentAttempt] = useState<ActivePaymentAttemptState | null>(null);
   const [error, setError] = useState("");
   const [resolveError, setResolveError] = useState("");
+  const [payableBasisRefreshRequired, setPayableBasisRefreshRequired] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [stage, setStage] = useState<WebPayStage>("INPUT");
@@ -80,6 +82,7 @@ export function App() {
     setScannedContext(context);
     setError("");
     setResolveError("");
+    setPayableBasisRefreshRequired(false);
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
@@ -89,6 +92,7 @@ export function App() {
   function clearLookupState() {
     setError("");
     setResolveError("");
+    setPayableBasisRefreshRequired(false);
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
@@ -181,6 +185,7 @@ export function App() {
         setActivePaymentAttempt(apiError.activePaymentAttempt);
         setStage("ACTIVE_ATTEMPT");
       } else {
+        setPayableBasisRefreshRequired(apiError instanceof PayableBasisRefreshRequiredError);
         setError(apiError instanceof Error ? apiError.message : "Payment intent creation failed. Please try again.");
         setStage("ERROR");
       }
@@ -229,6 +234,11 @@ export function App() {
     }
 
     await handleCreatePaymentIntent();
+  }
+
+  async function handleRecalculateFee() {
+    setPayableBasisRefreshRequired(false);
+    await handleResolveParkingSession();
   }
 
   const handoff = result?.handoff;
@@ -358,6 +368,19 @@ export function App() {
             <img src="/assets/icons/error.svg" alt="" aria-hidden="true" />
             <span>{error}</span>
           </div>
+        )}
+
+        {payableBasisRefreshRequired && (
+          <button
+            type="button"
+            className="ghost-button status-button"
+            onClick={() => {
+              void handleRecalculateFee();
+            }}
+            disabled={isResolving || isSubmitting}
+          >
+            Recalculate Fee
+          </button>
         )}
 
         {activePaymentAttempt && (

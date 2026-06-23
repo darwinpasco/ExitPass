@@ -6,6 +6,7 @@ import {
   extractPaymentIntentContext,
   getResumeUrl,
   normalizeTicketReference,
+  PayableBasisRefreshRequiredError,
   retrievePaymentStatus,
   resolveParkingSession,
   toFriendlyError
@@ -258,6 +259,26 @@ describe("WebPay QR and payment intent helpers", () => {
     });
   });
 
+  it("WebPay_WhenPayableBasisRefreshRequired_ReturnsTypedRefreshError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        errorCode: "PAYABLE_BASIS_REFRESH_REQUIRED",
+        message: "Tariff snapshot has expired. Refresh the payable basis before retrying payment.",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      createPaymentIntent(
+        { ticketReference: "TICKET-001", paymentMethod: "QRPH", vendorSystemId: "HIKCENTRAL" },
+        fetchMock as never
+      )
+    ).rejects.toBeInstanceOf(PayableBasisRefreshRequiredError);
+  });
+
   it("WebPay_GetResumeUrl_PrefersResumeThenHandoffThenCheckout", () => {
     expect(
       getResumeUrl({
@@ -332,6 +353,7 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(toFriendlyError("VENDOR_UNAVAILABLE")).toContain("temporarily unavailable");
     expect(toFriendlyError("NO_PAYMENT_ROUTE")).toContain("not available");
     expect(toFriendlyError("WEBPAY_PAYMENT_INTENT_FAILED")).toContain("could not start payment");
-    expect(toFriendlyError("PAYABLE_BASIS_LOCKED")).toContain("payable amount changed");
+    expect(toFriendlyError("PAYABLE_BASIS_REFRESH_REQUIRED")).toContain("expired");
+    expect(toFriendlyError("PAYABLE_BASIS_LOCKED")).toContain("payment has already started");
   });
 });

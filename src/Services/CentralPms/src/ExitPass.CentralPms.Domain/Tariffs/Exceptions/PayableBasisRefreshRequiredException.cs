@@ -1,7 +1,7 @@
 namespace ExitPass.CentralPms.Domain.Tariffs.Exceptions;
 
 /// <summary>
-/// Indicates that the submitted payable basis was consumed by a failed payment attempt and must be refreshed.
+/// Indicates that the submitted payable basis can no longer support payment initiation and must be refreshed.
 /// </summary>
 public sealed class PayableBasisRefreshRequiredException : Exception
 {
@@ -11,7 +11,21 @@ public sealed class PayableBasisRefreshRequiredException : Exception
     public PayableBasisRefreshRequiredException(
         Guid submittedTariffSnapshotId,
         Guid parkingSessionId)
-        : base($"Tariff snapshot '{submittedTariffSnapshotId}' was consumed by a failed payment attempt. Refresh the payable basis before retrying payment.")
+        : this(
+            submittedTariffSnapshotId,
+            parkingSessionId,
+            $"Tariff snapshot '{submittedTariffSnapshotId}' can no longer support payment initiation. Refresh the payable basis before retrying payment.")
+    {
+    }
+
+    /// <summary>
+    /// Creates the exception with a domain-specific refresh reason.
+    /// </summary>
+    public PayableBasisRefreshRequiredException(
+        Guid submittedTariffSnapshotId,
+        Guid parkingSessionId,
+        string message)
+        : base(message)
     {
         SubmittedTariffSnapshotId = submittedTariffSnapshotId;
         ParkingSessionId = parkingSessionId;

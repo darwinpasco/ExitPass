@@ -570,6 +570,53 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies an expired ACTIVE snapshot is not reused as the WebPay payable basis.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorParking_WhenLatestActiveSnapshotIsExpired_ReturnsFreshPayableBasis()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000026");
+        var ticketReference = UniqueLookup("PAY-EXPIRED-RETRY");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        await ExpireTariffSnapshotAsync(initial.TariffSnapshotId);
+
+        using var expiredPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey: $"idem-pay-expired-stale-{Guid.NewGuid():N}",
+            correlationId);
+
+        var expiredRaw = await expiredPaymentResponse.Content.ReadAsStringAsync();
+        expiredPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, expiredRaw);
+
+        var expiredError = await expiredPaymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        expiredError.Should().NotBeNull();
+        expiredError!.ErrorCode.Should().Be("PAYABLE_BASIS_REFRESH_REQUIRED");
+        expiredError.Retryable.Should().BeTrue();
+        expiredError.ErrorCode.Should().NotBe("TARIFF_SNAPSHOT_INVALID");
+
+        var refreshed = await ResolveAsync(client, request);
+        refreshed.ParkingSessionId.Should().Be(initial.ParkingSessionId);
+        refreshed.TariffSnapshotId.Should().NotBe(initial.TariffSnapshotId);
+        refreshed.NetPayableMinorUnits.Should().Be(initial.NetPayableMinorUnits);
+
+        using var retryPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            refreshed,
+            idempotencyKey: $"idem-pay-expired-retry-{Guid.NewGuid():N}",
+            correlationId);
+
+        var retryRaw = await retryPaymentResponse.Content.ReadAsStringAsync();
+        retryPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Created, retryRaw);
+
+        (await CountPaymentConfirmationsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountExitAuthorizationsAsync(initial.ParkingSessionId)).Should().Be(0);
+    }
+
+    /// <summary>
     /// Verifies a consumed snapshot tied to confirmed payment finality remains protected from a new payment attempt.
     /// </summary>
     [Fact]
@@ -1030,6 +1077,27 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
 
         return (long)(await command.ExecuteScalarAsync() ?? 0L);
+    }
+
+    private static async Task ExpireTariffSnapshotAsync(Guid tariffSnapshotId)
+    {
+        const string sql = """
+            UPDATE core.tariff_snapshots
+            SET
+                expires_at = NOW() - INTERVAL '1 minute',
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
+
+        var affected = await command.ExecuteNonQueryAsync();
+        affected.Should().Be(1);
     }
 
     private static async Task<long> CountPaymentConfirmationsAsync(Guid parkingSessionId)

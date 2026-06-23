@@ -424,6 +424,54 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByText(/Payment intent creation failed/i)).not.toBeInTheDocument();
   });
 
+  it("WebPay_WhenPayableBasisRefreshRequired_ShowsRecalculateFeeAction", async () => {
+    const refreshedResponse = {
+      ...successResponse,
+      tariffSnapshotId: "88888888-8888-8888-8888-888888888888",
+      amountMinorUnits: 12600
+    };
+    let resolveCount = 0;
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      const isResolve = url.includes("/v1/webpay/parking-session");
+      if (isResolve) {
+        resolveCount += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (resolveCount === 1 ? successResponse : refreshedResponse)
+        };
+      }
+
+      return {
+        ok: false,
+        status: 409,
+        json: async () => ({
+          errorCode: "PAYABLE_BASIS_REFRESH_REQUIRED",
+          message: "Tariff snapshot has expired. Refresh the payable basis before retrying payment.",
+          retryable: true,
+          correlationId: "77777777-7777-7777-7777-777777777777"
+        })
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await resolveTicket("TICKET-EXPIRED-001");
+    await continueToPayment();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Your parking fee quote has expired. Please recalculate the fee to continue.");
+    expect(screen.getByRole("button", { name: /recalculate fee/i })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment completed/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /recalculate fee/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2][0]).toContain("/v1/webpay/parking-session");
+    expect(screen.getAllByText("126.00").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /recalculate fee/i })).not.toBeInTheDocument();
+  });
+
   it("WebPay_WhenApiReturnsHandoff_DisplaysContinueToPayment", async () => {
     stubWebPayFetch();
 
