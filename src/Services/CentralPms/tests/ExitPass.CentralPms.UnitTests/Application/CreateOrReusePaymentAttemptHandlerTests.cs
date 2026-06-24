@@ -475,6 +475,36 @@ public sealed class CreateOrReusePaymentAttemptHandlerTests
     }
 
     /// <summary>
+    /// Verifies an EXPIRED unconsumed snapshot is surfaced as refresh-required instead of generic tariff invalid.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_throws_payable_basis_refresh_required_when_snapshot_status_is_expired_without_attempt()
+    {
+        var fixture = CreateFixture();
+
+        fixture.ParkingSessionReadRepository
+            .GetByIdAsync(ParkingSessionId, Arg.Any<CancellationToken>())
+            .Returns(CreateParkingSession(ParkingSessionStatus.PaymentRequired));
+
+        fixture.TariffSnapshotReadRepository
+            .GetByIdAsync(TariffSnapshotId, Arg.Any<CancellationToken>())
+            .Returns(CreateTariffSnapshot(TariffSnapshotStatus.Expired, Now.AddMinutes(-1)));
+
+        var sut = fixture.CreateSut();
+
+        var act = async () => await sut.ExecuteAsync(CreateCommand("idem-expired-status"), CancellationToken.None);
+
+        var assertion = await act.Should().ThrowAsync<PayableBasisRefreshRequiredException>();
+        assertion.Which.SubmittedTariffSnapshotId.Should().Be(TariffSnapshotId);
+        assertion.Which.ParkingSessionId.Should().Be(ParkingSessionId);
+        assertion.Which.Message.Should().Contain("expired");
+
+        await fixture.PaymentAttemptDbRoutineGateway
+            .DidNotReceive()
+            .CreateOrReusePaymentAttemptAsync(Arg.Any<CreateOrReusePaymentAttemptDbRequest>(), Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Verifies that payment creation fails closed when APPLIED payable-basis state is invalid.
     /// </summary>
     [Fact]

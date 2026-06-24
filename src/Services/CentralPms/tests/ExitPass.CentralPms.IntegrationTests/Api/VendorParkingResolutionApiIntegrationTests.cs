@@ -617,6 +617,40 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
     }
 
     /// <summary>
+    /// Verifies an EXPIRED unconsumed browser-held snapshot returns refresh-required instead of generic tariff invalid.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAttempt_WhenBrowserHeldSnapshotStatusIsExpiredWithoutAttempt_ReturnsRefreshRequired()
+    {
+        using var client = _factory.CreateClient();
+        var correlationId = Guid.Parse("10000000-0000-0000-0000-000000000027");
+        var ticketReference = UniqueLookup("PAY-EXPIRED-STATUS");
+        var request = Request(plateNumber: null, ticketReference: ticketReference, correlationId);
+
+        var initial = await ResolveAsync(client, request);
+        await ExpireTariffSnapshotStatusAsync(initial.TariffSnapshotId);
+
+        using var expiredPaymentResponse = await PostCreatePaymentAttemptAsync(
+            client,
+            initial,
+            idempotencyKey: $"idem-pay-expired-status-{Guid.NewGuid():N}",
+            correlationId);
+
+        var expiredRaw = await expiredPaymentResponse.Content.ReadAsStringAsync();
+        expiredPaymentResponse.StatusCode.Should().Be(HttpStatusCode.Conflict, expiredRaw);
+
+        var expiredError = await expiredPaymentResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+        expiredError.Should().NotBeNull();
+        expiredError!.ErrorCode.Should().Be("PAYABLE_BASIS_REFRESH_REQUIRED");
+        expiredError.Retryable.Should().BeTrue();
+        expiredError.ErrorCode.Should().NotBe("TARIFF_SNAPSHOT_INVALID");
+
+        (await CountPaymentAttemptsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountPaymentConfirmationsAsync(initial.ParkingSessionId)).Should().Be(0);
+        (await CountExitAuthorizationsAsync(initial.ParkingSessionId)).Should().Be(0);
+    }
+
+    /// <summary>
     /// Verifies a consumed snapshot tied to confirmed payment finality remains protected from a new payment attempt.
     /// </summary>
     [Fact]
@@ -1088,6 +1122,30 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
                 updated_at = NOW(),
                 row_version = row_version + 1
             WHERE tariff_snapshot_id = @tariff_snapshot_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("tariff_snapshot_id", tariffSnapshotId);
+
+        var affected = await command.ExecuteNonQueryAsync();
+        affected.Should().Be(1);
+    }
+
+    private static async Task ExpireTariffSnapshotStatusAsync(Guid tariffSnapshotId)
+    {
+        const string sql = """
+            UPDATE core.tariff_snapshots
+            SET
+                snapshot_status = 'EXPIRED'::core.tariff_snapshot_status_enum,
+                expires_at = NOW() - INTERVAL '1 minute',
+                consumed_at = NULL,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE tariff_snapshot_id = @tariff_snapshot_id
+              AND consumed_at IS NULL;
             """;
 
         await using var connection = new NpgsqlConnection(

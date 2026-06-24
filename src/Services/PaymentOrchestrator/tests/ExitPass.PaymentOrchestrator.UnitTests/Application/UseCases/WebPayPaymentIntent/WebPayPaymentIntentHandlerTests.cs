@@ -212,6 +212,38 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies a browser-held payable basis is submitted to Central PMS so expired snapshots surface as refresh-required.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenBrowserHeldSnapshotDiffersButAmountMatches_DelegatesEligibilityToCentralPms()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var browserHeldTariffSnapshotId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        var request = DefaultRequest("QRPH");
+        request.TariffSnapshotId = browserHeldTariffSnapshotId;
+        request.ExpectedAmountMinorUnits = 12500;
+        fixture.CentralPms.CreateAttemptResult = CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Failure(
+            new CentralPmsWebPayError(
+                409,
+                "PAYABLE_BASIS_REFRESH_REQUIRED",
+                "Tariff snapshot has expired. Refresh the payable basis before retrying payment.",
+                true,
+                CorrelationId,
+                ParkingSessionId));
+
+        var result = await fixture.Sut.HandleAsync(request, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("PAYABLE_BASIS_REFRESH_REQUIRED", result.Error.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.Equal(1, fixture.CentralPms.ResolveVendorParkingCallCount);
+        Assert.Equal(1, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.Equal(browserHeldTariffSnapshotId, fixture.CentralPms.CapturedTariffSnapshotIds.Single());
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
     /// Verifies WebPay cannot create a payment attempt against a stale payable basis after coupon or statutory changes.
     /// </summary>
     [Fact]

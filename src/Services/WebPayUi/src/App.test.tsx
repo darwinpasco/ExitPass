@@ -166,6 +166,30 @@ describe("ExitPass WebPay UI", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
     expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
+    const paymentIntentBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as Record<string, unknown>;
+    expect(paymentIntentBody.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
+    expect(paymentIntentBody.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
+  });
+
+  it("WebPay_WhenDisplayedPayableBasisExists_ContinueToPaymentDoesNotResolveAgain", async () => {
+    const displayedBasis = {
+      ...successResponse,
+      tariffSnapshotId: "99999999-9999-9999-9999-999999999999",
+      amountMinorUnits: 9900
+    };
+    const fetchMock = stubWebPayFetch({ resolvePayload: displayedBasis });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-DISPLAYED-001", "99.00");
+    await continueToPayment();
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
+    const paymentIntentBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as Record<string, unknown>;
+    expect(paymentIntentBody.tariffSnapshotId).toBe(displayedBasis.tariffSnapshotId);
+    expect(paymentIntentBody.expectedAmountMinorUnits).toBe(displayedBasis.amountMinorUnits);
   });
 
   it("WebPay_WhenSessionResolved_DoesNotRenderCouponEntryControls", async () => {
@@ -463,6 +487,11 @@ describe("ExitPass WebPay UI", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Your parking fee quote has expired. Please recalculate the fee to continue.");
     expect(screen.getByRole("button", { name: /recalculate fee/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment completed/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
+    const paymentIntentBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as Record<string, unknown>;
+    expect(paymentIntentBody.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
+    expect(paymentIntentBody.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
 
     await userEvent.click(screen.getByRole("button", { name: /recalculate fee/i }));
 
@@ -470,6 +499,28 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls[2][0]).toContain("/v1/webpay/parking-session");
     expect(screen.getAllByText("126.00").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /recalculate fee/i })).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenPayableBasisLocked_ShowsRestartOnlyMessage", async () => {
+    stubWebPayFetch({
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        errorCode: "PAYABLE_BASIS_LOCKED",
+        message: "The payable basis changed before payment initiation. Restart from parking lookup.",
+        retryable: false,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-LOCKED-001");
+    await continueToPayment();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The payable amount changed or payment has already started. Please restart from lookup.");
+    expect(screen.queryByRole("button", { name: /recalculate fee/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment completed/i })).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenApiReturnsHandoff_DisplaysContinueToPayment", async () => {
