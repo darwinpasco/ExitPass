@@ -106,12 +106,14 @@ public sealed class WebPayPaymentIntentHandler
             return WebPayPaymentIntentResult.Failure(payableBasisError);
         }
 
+        var payableBasis = ResolvePayableBasisForAttempt(request, parking.Value);
+
         var route = await _routingPolicyResolver.ResolveAsync(
             new ResolvePaymentProviderRouteRequest(
                 request.SiteId,
                 request.SiteGroupId,
                 paymentMethod,
-                parking.Value.NetPayableMinorUnits,
+                payableBasis.NetPayableMinorUnits,
                 parking.Value.Currency,
                 request.PreferredProviderCode,
                 correlationId),
@@ -126,7 +128,7 @@ public sealed class WebPayPaymentIntentHandler
                 false,
                 correlationId,
                 PaymentMethod: paymentMethod,
-                AmountMinorUnits: parking.Value.NetPayableMinorUnits,
+                AmountMinorUnits: payableBasis.NetPayableMinorUnits,
                 Currency: parking.Value.Currency,
                 SiteName: BlankToNull(parking.Value.SiteName),
                 TicketReference: BlankToNull(parking.Value.TicketReference),
@@ -145,7 +147,7 @@ public sealed class WebPayPaymentIntentHandler
                 correlationId,
                 parking.Value.ParkingSessionId,
                 PaymentMethod: paymentMethod,
-                AmountMinorUnits: parking.Value.NetPayableMinorUnits,
+                AmountMinorUnits: payableBasis.NetPayableMinorUnits,
                 Currency: parking.Value.Currency,
                 SiteName: BlankToNull(parking.Value.SiteName),
                 TicketReference: BlankToNull(parking.Value.TicketReference),
@@ -167,7 +169,7 @@ public sealed class WebPayPaymentIntentHandler
                 correlationId,
                 parking.Value.ParkingSessionId,
                 PaymentMethod: paymentMethod,
-                AmountMinorUnits: parking.Value.NetPayableMinorUnits,
+                AmountMinorUnits: payableBasis.NetPayableMinorUnits,
                 Currency: parking.Value.Currency,
                 SiteName: BlankToNull(parking.Value.SiteName),
                 TicketReference: BlankToNull(parking.Value.TicketReference),
@@ -176,9 +178,9 @@ public sealed class WebPayPaymentIntentHandler
                 FallbackProviderCode: route.FallbackProviderCode));
         }
 
-        var idempotencyKey = BuildIdempotencyKey(parking.Value.ParkingSessionId, paymentMethod, correlationId);
+        var idempotencyKey = BuildIdempotencyKey(payableBasis.ParkingSessionId, paymentMethod, correlationId);
         var attemptResolution = await CreatePaymentAttemptWithOrphanRecoveryAsync(
-            parking.Value,
+            payableBasis,
             centralPmsPaymentProviderRail,
             paymentMethod,
             idempotencyKey,
@@ -458,7 +460,7 @@ public sealed class WebPayPaymentIntentHandler
     }
 
     /// <summary>
-    /// Confirms WebPay payment initiation still targets the final approved payable basis returned by Central PMS.
+    /// Confirms WebPay payment initiation still targets the displayed payable amount and fails closed on amount changes.
     /// </summary>
     /// <param name="request">WebPay payment-intent request.</param>
     /// <param name="parking">Current server-resolved parking payable basis.</param>
@@ -472,27 +474,9 @@ public sealed class WebPayPaymentIntentHandler
         /*
          * ExitPass v1.2 BRD 9.9 Payment Initiation.
          * ExitPass v1.2 SDD 8.2 TariffSnapshot State Machine.
-         * Invariant: PaymentAttempt creation must use the final server-approved payable basis and must fail closed
-         * if WebPay submits a stale pre-coupon or pre-statutory tariff snapshot.
+         * Invariant: PaymentAttempt creation must fail closed if WebPay submits a stale pre-coupon or
+         * pre-statutory amount. Snapshot lifecycle eligibility remains owned by Central PMS.
          */
-        if (request.TariffSnapshotId.HasValue &&
-            request.TariffSnapshotId.Value != parking.TariffSnapshotId)
-        {
-            return new WebPayPaymentIntentError(
-                409,
-                "PAYABLE_BASIS_LOCKED",
-                "The payable basis changed before payment initiation. Restart from parking lookup.",
-                false,
-                correlationId,
-                parking.ParkingSessionId,
-                PaymentMethod: Normalize(request.PaymentMethod!),
-                AmountMinorUnits: parking.NetPayableMinorUnits,
-                Currency: parking.Currency,
-                SiteName: BlankToNull(parking.SiteName),
-                TicketReference: BlankToNull(parking.TicketReference),
-                PlateNumber: BlankToNull(parking.PlateNumber));
-        }
-
         if (request.ExpectedAmountMinorUnits.HasValue &&
             request.ExpectedAmountMinorUnits.Value != parking.NetPayableMinorUnits)
         {
@@ -512,6 +496,20 @@ public sealed class WebPayPaymentIntentHandler
         }
 
         return null;
+    }
+
+    private static CentralPmsResolvedParking ResolvePayableBasisForAttempt(
+        WebPayPaymentIntentRequest request,
+        CentralPmsResolvedParking parking)
+    {
+        var tariffSnapshotId = request.TariffSnapshotId.GetValueOrDefault(parking.TariffSnapshotId);
+        var amountMinorUnits = request.ExpectedAmountMinorUnits.GetValueOrDefault(parking.NetPayableMinorUnits);
+
+        return parking with
+        {
+            TariffSnapshotId = tariffSnapshotId,
+            NetPayableMinorUnits = amountMinorUnits
+        };
     }
 
     private static WebPayParkingSessionResolveResponse BuildResolveResponse(
