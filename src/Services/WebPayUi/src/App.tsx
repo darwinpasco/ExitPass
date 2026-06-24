@@ -792,9 +792,12 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
     feeValidUntil: result.sessionSummary?.feeValidUntil ?? result.feeValidUntil ?? result.tariffExpiresAt,
     tariffExpiresAt: result.sessionSummary?.tariffExpiresAt ?? result.tariffExpiresAt
   };
+  const siteGroupName = getParkerFacingSiteGroupName(summary.siteGroupName);
+  const siteName = getParkerFacingSiteName(summary.siteName);
 
   const rows = [
-    ["Site Name", displayValue(summary.siteName)],
+    ["Site Group", siteGroupName],
+    ["Site Name", siteName],
     ["Ticket", displayValue(summary.ticketReference)],
     ["Plate", displayValue(summary.plateNumber)],
     ["Entry Time", displayValue(formatDateTime(summary.entryTime))],
@@ -812,7 +815,7 @@ function ParkingSessionSummaryPanel({ result }: { result: ParkingSessionResolveR
       <div className="session-summary-header">
         <div>
           <p className="eyebrow">Parking Session Summary</p>
-          <h2 id="session-summary-heading">{summary.siteName || "Parking Session Summary"}</h2>
+          <h2 id="session-summary-heading">{siteName}</h2>
         </div>
         <div className="amount-due">
           <span>Amount Due</span>
@@ -1115,4 +1118,40 @@ function formatAdjustment(amountMinorUnits?: number | null, currency?: string | 
 
 function displayValue(value?: string | null): string {
   return value?.trim() || "Not available";
+}
+
+function getParkerFacingSiteName(value?: string | null): string {
+  return getParkerFacingDisplayName(value, "Parking Site");
+}
+
+function getParkerFacingSiteGroupName(value?: string | null): string {
+  return getParkerFacingDisplayName(value, "Parking Group");
+}
+
+function getParkerFacingDisplayName(value: string | null | undefined, fallback: string): string {
+  const normalized = value?.trim();
+  if (!normalized || isFallbackLookingDisplayName(normalized)) {
+    return fallback;
+  }
+
+  return normalized;
+}
+
+function isFallbackLookingDisplayName(value: string): boolean {
+  const normalized = value.trim();
+  const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  const uuidWithoutDashesPattern = /^[0-9a-fA-F]{32}$/;
+
+  if (uuidPattern.test(normalized) || uuidWithoutDashesPattern.test(normalized)) {
+    return true;
+  }
+
+  const lowered = normalized.toLowerCase();
+  for (const prefix of ["site ", "site group "]) {
+    if (lowered.startsWith(prefix) && isFallbackLookingDisplayName(normalized.slice(prefix.length))) {
+      return true;
+    }
+  }
+
+  return false;
 }

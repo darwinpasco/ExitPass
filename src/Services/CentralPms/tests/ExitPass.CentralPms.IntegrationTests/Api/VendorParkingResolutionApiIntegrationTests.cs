@@ -48,6 +48,10 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         payload!.ParkingSessionId.Should().NotBe(Guid.Empty);
         payload.TariffSnapshotId.Should().NotBe(Guid.Empty);
         payload.LookupOutcome.Should().Be("resolved");
+        payload.SiteGroupName.Should().Be("Parking Group");
+        payload.SiteName.Should().Be("Parking Site");
+        payload.SiteGroupName.Should().NotContain(payload.SiteGroupId.Replace("-", string.Empty));
+        payload.SiteName.Should().NotContain(payload.SiteId.Replace("-", string.Empty));
         payload.PlateNumber.Should().Be("ABC1234");
         payload.EntryTime.Should().NotBeNull();
         payload.CurrentFeeCalculationTime.Should().NotBeNull();

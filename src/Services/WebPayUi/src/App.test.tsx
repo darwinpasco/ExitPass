@@ -549,6 +549,8 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /mactan newtown parking/i })).toBeInTheDocument();
     expect(screen.getByText("Parking Session Summary")).toBeInTheDocument();
+    expect(screen.getByText("Site Group")).toBeInTheDocument();
+    expect(screen.getByText("WebPay Test Site Group 2026-05-19")).toBeInTheDocument();
     expect(screen.getByText("Site Name")).toBeInTheDocument();
     expect(screen.getAllByText("Ticket").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Plate").length).toBeGreaterThan(0);
@@ -597,15 +599,39 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("WebPay_WhenSiteNameMissing_HidesSiteNameInsteadOfShowingUuid", async () => {
+  it("WebPay_WhenSiteNameMissing_UsesSafeGenericSiteName", async () => {
     stubWebPayFetch({ resolvePayload: { ...successResponse, siteName: undefined } });
 
     render(<App />);
 
     await resolveTicket("TICKET-TEST-023");
 
-    expect(await screen.findByRole("heading", { name: /^parking session summary$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^parking site$/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Parking Site").length).toBeGreaterThan(0);
     expect(screen.queryByText("22222222-2222-2222-2222-222222222222")).not.toBeInTheDocument();
+  });
+
+  it("WebPay_WhenBackendReturnsGuidDerivedSiteNames_UsesSafeGenericNames", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        siteGroupName: "Site Group bca924a0a27f5b9dacca291bf1391b49",
+        siteName: "Site a153da55e9895cdbafb8373eccf589e0"
+      }
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-TEST-023");
+
+    expect(await screen.findByRole("heading", { name: /^parking site$/i })).toBeInTheDocument();
+    expect(screen.getByText("Site Group")).toBeInTheDocument();
+    expect(screen.getAllByText("Parking Group").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Parking Site").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/a153da55e9895cdbafb8373eccf589e0/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/bca924a0a27f5b9dacca291bf1391b49/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Site a153da55e9895cdbafb8373eccf589e0/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Site Group bca924a0a27f5b9dacca291bf1391b49/i)).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenSummaryRenders_DoesNotExposeInternalUuidFieldsInNormalUi", async () => {

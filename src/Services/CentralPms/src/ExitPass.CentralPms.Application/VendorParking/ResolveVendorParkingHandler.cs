@@ -270,8 +270,8 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
             persisted.TariffSnapshot,
             sessionResponse.CorrelationId,
             persisted.VendorSystemId,
-            persisted.SiteGroupName,
-            persisted.SiteName,
+            ParkingDisplayNameSanitizer.ResolveSiteGroupName(persisted.SiteGroupName),
+            ParkingDisplayNameSanitizer.ResolveSiteName(persisted.SiteName),
             persisted.PaymentStatus,
             persisted.EffectivePayableBasis);
     }

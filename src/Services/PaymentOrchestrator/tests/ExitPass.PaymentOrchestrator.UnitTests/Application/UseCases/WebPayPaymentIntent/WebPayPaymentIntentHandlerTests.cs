@@ -631,6 +631,46 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies fallback-looking backend site names are not exposed in the WebPay parking-session response.
+    /// </summary>
+    [Fact]
+    public async Task WebPayParkingSessionResolve_WhenCentralPmsReturnsGeneratedSiteNames_ReturnsSafeGenericNames()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.ResolveResult = CentralPmsWebPayResult<CentralPmsResolvedParking>.Success(
+            new CentralPmsResolvedParking(
+                ParkingSessionId,
+                TariffSnapshotId,
+                12500,
+                "PHP",
+                "HIKCENTRAL",
+                CorrelationId,
+                SiteName: "Site a153da55e9895cdbafb8373eccf589e0",
+                TicketReference: "TICKET-TEST-028",
+                PlateNumber: "ABC 1234",
+                SiteGroupId: SiteGroupId,
+                SiteId: SiteId,
+                SiteGroupName: "Site Group bca924a0a27f5b9dacca291bf1391b49"));
+
+        var result = await fixture.Sut.ResolveAsync(new WebPayParkingSessionResolveRequest
+        {
+            SiteGroupId = SiteGroupId,
+            SiteId = SiteId,
+            VendorSystemId = "HIKCENTRAL",
+            TicketReference = "TICKET-TEST-028",
+            CorrelationId = CorrelationId
+        }, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("Parking Group", result.Response!.SiteGroupName);
+        Assert.Equal("Parking Site", result.Response.SiteName);
+        Assert.DoesNotContain("bca924a0a27f5b9dacca291bf1391b49", result.Response.SiteGroupName);
+        Assert.DoesNotContain("a153da55e9895cdbafb8373eccf589e0", result.Response.SiteName);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
     /// Verifies orphan active attempts without provider session evidence are failed through Central PMS and retried once.
     /// </summary>
     [Fact]
