@@ -105,6 +105,44 @@ public sealed class ResolveVendorParkingHandlerTests
     }
 
     /// <summary>
+    /// Verifies configured friendly site metadata is preserved in resolved WebPay-facing context.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenFriendlySiteMetadataExists_ReturnsFriendlyNames()
+    {
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.FoundWithInlineQuote(),
+            persistence: new PassThroughVendorParkingResolutionPersistence(
+                "Mactan Newtown Group",
+                "Mactan Newtown Parking"));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.Resolved);
+        result.SiteGroupName.Should().Be("Mactan Newtown Group");
+        result.SiteName.Should().Be("Mactan Newtown Parking");
+    }
+
+    /// <summary>
+    /// Verifies generated UUID-based site metadata is replaced before it reaches public resolve callers.
+    /// </summary>
+    [Fact]
+    public async Task ResolveVendorSession_WhenSiteMetadataLooksGenerated_ReturnsSafeGenericNames()
+    {
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.FoundWithInlineQuote(),
+            persistence: new PassThroughVendorParkingResolutionPersistence(
+                "Site Group bca924a0a27f5b9dacca291bf1391b49",
+                "Site a153da55e9895cdbafb8373eccf589e0"));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.Resolved);
+        result.SiteGroupName.Should().Be("Parking Group");
+        result.SiteName.Should().Be("Parking Site");
+    }
+
+    /// <summary>
     /// Verifies that a vendor not-found response remains deterministic for Central PMS callers.
     /// </summary>
     [Fact]
@@ -426,11 +464,12 @@ public sealed class ResolveVendorParkingHandlerTests
         RecordingIntegrationEventPublisher? eventPublisher = null,
         IVendorSessionProjectionLookupService? projectionLookup = null,
         VendorSessionProjectionOptions? projectionOptions = null,
-        ISystemClock? clock = null)
+        ISystemClock? clock = null,
+        IVendorParkingResolutionPersistence? persistence = null)
     {
         return new ResolveVendorParkingHandler(
             vendorClient,
-            new PassThroughVendorParkingResolutionPersistence(),
+            persistence ?? new PassThroughVendorParkingResolutionPersistence(),
             eventPublisher ?? new RecordingIntegrationEventPublisher(),
             new CentralPmsMetrics(),
             NullLogger<ResolveVendorParkingHandler>.Instance,
@@ -716,7 +755,9 @@ public sealed class ResolveVendorParkingHandlerTests
         public DateTimeOffset UtcNow { get; } = utcNow;
     }
 
-    private sealed class PassThroughVendorParkingResolutionPersistence : IVendorParkingResolutionPersistence
+    private sealed class PassThroughVendorParkingResolutionPersistence(
+        string? siteGroupName = null,
+        string? siteName = null) : IVendorParkingResolutionPersistence
     {
         public Task<PersistVendorParkingResolutionResult> PersistAsync(
             PersistVendorParkingResolutionRequest request,
@@ -728,7 +769,9 @@ public sealed class ResolveVendorParkingHandlerTests
                 TariffSnapshot = request.TariffSnapshot,
                 ParkingSessionWasReused = false,
                 TariffSnapshotWasReused = false,
-                VendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f"
+                VendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f",
+                SiteGroupName = siteGroupName,
+                SiteName = siteName
             });
         }
     }

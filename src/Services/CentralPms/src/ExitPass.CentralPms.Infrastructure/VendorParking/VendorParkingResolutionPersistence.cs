@@ -359,10 +359,10 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = CentralPmsServiceIdentityId;
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
         command.Parameters.AddWithValue("site_group_code", $"SG-{siteGroupId:N}");
-        command.Parameters.AddWithValue("site_group_name", $"Site Group {siteGroupId:N}");
+        command.Parameters.AddWithValue("site_group_name", ParkingDisplayNameSanitizer.GenericSiteGroupName);
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
         command.Parameters.AddWithValue("site_code", $"SITE-{siteId:N}");
-        command.Parameters.AddWithValue("site_name", $"Site {siteId:N}");
+        command.Parameters.AddWithValue("site_name", ParkingDisplayNameSanitizer.GenericSiteName);
         command.Parameters.AddWithValue("vendor_system_code", request.ParkingSession.VendorSystemCode);
         command.Parameters.AddWithValue("vendor_system_name", request.ParkingSession.VendorSystemCode);
 

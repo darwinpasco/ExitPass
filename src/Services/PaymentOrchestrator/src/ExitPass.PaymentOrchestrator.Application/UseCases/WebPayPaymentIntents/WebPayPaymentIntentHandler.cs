@@ -130,7 +130,7 @@ public sealed class WebPayPaymentIntentHandler
                 PaymentMethod: paymentMethod,
                 AmountMinorUnits: payableBasis.NetPayableMinorUnits,
                 Currency: parking.Value.Currency,
-                SiteName: BlankToNull(parking.Value.SiteName),
+                SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(parking.Value.SiteName),
                 TicketReference: BlankToNull(parking.Value.TicketReference),
                 PlateNumber: BlankToNull(parking.Value.PlateNumber),
                 SelectedProviderCode: route.SelectedProviderCode,
@@ -149,7 +149,7 @@ public sealed class WebPayPaymentIntentHandler
                 PaymentMethod: paymentMethod,
                 AmountMinorUnits: payableBasis.NetPayableMinorUnits,
                 Currency: parking.Value.Currency,
-                SiteName: BlankToNull(parking.Value.SiteName),
+                SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(parking.Value.SiteName),
                 TicketReference: BlankToNull(parking.Value.TicketReference),
                 PlateNumber: BlankToNull(parking.Value.PlateNumber),
                 SelectedProviderCode: route.SelectedProviderCode,
@@ -171,7 +171,7 @@ public sealed class WebPayPaymentIntentHandler
                 PaymentMethod: paymentMethod,
                 AmountMinorUnits: payableBasis.NetPayableMinorUnits,
                 Currency: parking.Value.Currency,
-                SiteName: BlankToNull(parking.Value.SiteName),
+                SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(parking.Value.SiteName),
                 TicketReference: BlankToNull(parking.Value.TicketReference),
                 PlateNumber: BlankToNull(parking.Value.PlateNumber),
                 SelectedProviderCode: route.SelectedProviderCode,
@@ -316,10 +316,10 @@ public sealed class WebPayPaymentIntentHandler
             SiteGroupId = resolvedParking.SiteGroupId,
             SiteId = resolvedParking.SiteId,
             VendorSystemId = BlankToNull(resolvedParking.VendorSystemId),
-            SiteGroupName = BlankToNull(resolvedParking.SiteGroupName),
+            SiteGroupName = WebPayDisplayNameSanitizer.ResolveSiteGroupName(resolvedParking.SiteGroupName),
             AmountMinorUnits = resolvedParking.NetPayableMinorUnits,
             Currency = resolvedParking.Currency,
-            SiteName = BlankToNull(resolvedParking.SiteName),
+            SiteName = WebPayDisplayNameSanitizer.ResolveSiteName(resolvedParking.SiteName),
             TicketReference = BlankToNull(resolvedParking.TicketReference),
             PlateNumber = BlankToNull(resolvedParking.PlateNumber),
             EntryTime = resolvedParking.EntryTime,
@@ -490,7 +490,7 @@ public sealed class WebPayPaymentIntentHandler
                 PaymentMethod: Normalize(request.PaymentMethod!),
                 AmountMinorUnits: parking.NetPayableMinorUnits,
                 Currency: parking.Currency,
-                SiteName: BlankToNull(parking.SiteName),
+                SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
                 TicketReference: BlankToNull(parking.TicketReference),
                 PlateNumber: BlankToNull(parking.PlateNumber));
         }
@@ -523,10 +523,10 @@ public sealed class WebPayPaymentIntentHandler
             SiteGroupId = parking.SiteGroupId,
             SiteId = parking.SiteId,
             VendorSystemId = BlankToNull(parking.VendorSystemId),
-            SiteGroupName = BlankToNull(parking.SiteGroupName),
+            SiteGroupName = WebPayDisplayNameSanitizer.ResolveSiteGroupName(parking.SiteGroupName),
             AmountMinorUnits = parking.NetPayableMinorUnits,
             Currency = parking.Currency,
-            SiteName = BlankToNull(parking.SiteName),
+            SiteName = WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
             TicketReference = BlankToNull(parking.TicketReference),
             PlateNumber = BlankToNull(parking.PlateNumber),
             EntryTime = parking.EntryTime,
@@ -711,7 +711,7 @@ public sealed class WebPayPaymentIntentHandler
             paymentMethod,
             parking.NetPayableMinorUnits,
             parking.Currency,
-            BlankToNull(parking.SiteName),
+            WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
             BlankToNull(parking.TicketReference),
             BlankToNull(parking.PlateNumber));
     }
@@ -737,7 +737,7 @@ public sealed class WebPayPaymentIntentHandler
             PaymentMethod: paymentMethod,
             AmountMinorUnits: parking.NetPayableMinorUnits,
             Currency: parking.Currency,
-            SiteName: BlankToNull(parking.SiteName),
+            SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
             TicketReference: BlankToNull(parking.TicketReference),
             PlateNumber: BlankToNull(parking.PlateNumber),
             SelectedProviderCode: selectedProviderCode,
@@ -792,7 +792,7 @@ public sealed class WebPayPaymentIntentHandler
     {
         var parts = new List<string>();
 
-        AddDisplayPart(parts, "Site", parking.SiteName);
+        AddDisplayPart(parts, "Site", WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName));
         AddDisplayPart(parts, "Ticket", parking.TicketReference);
         AddDisplayPart(parts, "Plate", parking.PlateNumber);
 
@@ -817,7 +817,7 @@ public sealed class WebPayPaymentIntentHandler
             ["correlation_id"] = correlationId.ToString()
         };
 
-        AddMetadata(metadata, "site_name", parking.SiteName);
+        AddMetadata(metadata, "site_name", WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName));
         AddMetadata(metadata, "ticket_reference", parking.TicketReference);
         AddMetadata(metadata, "plate_number", parking.PlateNumber);
 
