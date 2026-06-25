@@ -382,8 +382,8 @@ If fiscal issuance fails or times out after payment finality:
 | ADJ-003 | Fiscal adjustment actions shall be restricted to authorized roles and workflows. |
 | ADJ-004 | Payment refund or reversal finality shall remain under Central PMS/payment provider authority. |
 | ADJ-005 | Workflow sequencing between payment refund/reversal and fiscal adjustment document remains open for design and compliance confirmation. |
-| ADJ-006 | POS Server shall support controlled Sales Invoice, X-read, Z-read, and EJ reprints. |
-| ADJ-007 | Reprints shall be labeled and audited. |
+| ADJ-006 | POS Server shall support controlled reprint coverage for Sales Invoice, X-read, Z-read, and Electronic Journal outputs where applicable. This requirement applies generally to ExitPass POS/Invoicing where the same BIR fiscal controls apply, not only to APM, unless a channel-specific exception is confirmed. |
+| ADJ-007 | Reprinted fiscal outputs shall show `REPRINT` and `DATE / TIME REPRINTED` at the bottom of the reprinted output where BIR requires them, and all reprint activity shall be logged and audited. |
 | ADJ-008 | Reprints shall not mutate the original fiscal document or original fiscal event. |
 | ADJ-009 | Fiscal adjustment documents shall reference the original Sales Invoice or fiscal document. |
 | ADJ-010 | Reversal or adjustment values shall be represented according to BIR/accounting confirmation. |
