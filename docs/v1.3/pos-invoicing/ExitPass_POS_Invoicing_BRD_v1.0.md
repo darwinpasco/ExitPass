@@ -259,6 +259,7 @@ If fiscal issuance fails or times out after payment finality:
 | CH-WP-003 | WebPay shall not issue or trigger ExitAuthorization except through Central PMS authority. |
 | CH-WP-004 | WebPay shall display or provide access to the Sales Invoice after POS Server issuance, according to approved user experience and fiscal output rules. |
 | CH-WP-005 | WebPay fiscal terminal identity remains open where there is no physical printer or hardware serial. |
+| CH-WP-006 | WebPay shall support digital Sales Invoice presentation using the POS Server-returned Sales Invoice URL where approved. |
 
 ### AutoPay Machine / APM
 
@@ -269,6 +270,7 @@ If fiscal issuance fails or times out after payment finality:
 | CH-APM-003 | APM shall present or print the POS Server-issued Sales Invoice according to the approved APM printing model. |
 | CH-APM-004 | APM printing of POS Server-issued Sales Invoice remains open for BIR/accounting and vendor confirmation. |
 | CH-APM-005 | APM shall not bypass Central PMS for payment finality or ExitAuthorization. |
+| CH-APM-006 | APM may display or print a QR code representing the digital Sales Invoice URL so the parker/customer can scan, view, and save the Sales Invoice on their phone. |
 
 ### Cashier POS
 
@@ -278,6 +280,7 @@ If fiscal issuance fails or times out after payment finality:
 | CH-CASH-002 | Cashier POS shall support cashier/session accountability where cash or attended tender handling occurs. |
 | CH-CASH-003 | Cashier POS shall support controlled reprint and adjustment actions only for authorized roles. |
 | CH-CASH-004 | Cashier POS shall not independently declare payment finality outside Central PMS authority. |
+| CH-CASH-005 | Cashier POS may display or print a QR code representing the digital Sales Invoice URL so the parker/customer can scan, view, and save the Sales Invoice on their phone. |
 
 ### EC Device / Continuity Terminal
 
@@ -287,6 +290,7 @@ If fiscal issuance fails or times out after payment finality:
 | CH-EC-002 | EC Device / Continuity Terminal shall be modeled as a terminal/channel under the Site POS Server. |
 | CH-EC-003 | EC Device / Continuity Terminal offline fiscal issuance shall remain restricted until BIR/accounting confirms an approved model. |
 | CH-EC-004 | EC Device / Continuity Terminal shall not bypass Central PMS authorization for gate/exit execution. |
+| CH-EC-005 | EC Device / Continuity Terminal may display or print a QR code representing the digital Sales Invoice URL when digital delivery is available under the approved continuity model. |
 
 ### Operator-assisted payment
 
@@ -296,6 +300,7 @@ If fiscal issuance fails or times out after payment finality:
 | CH-OP-002 | Operator-assisted payment shall preserve operator identity, Site context, and reason/context where required for fiscal audit. |
 | CH-OP-003 | Operator-assisted payment shall not allow the operator to declare platform payment finality outside Central PMS authority. |
 | CH-OP-004 | Manual release after fiscal issuance failure, if allowed, shall require supervisor approval, incident tagging, and reconciliation tagging. |
+| CH-OP-005 | Operator-assisted payment flows may display or print a QR code representing the digital Sales Invoice URL so the parker/customer can scan, view, and save the Sales Invoice on their phone. |
 
 ## 16. Sales Invoice Requirements
 
@@ -312,6 +317,11 @@ If fiscal issuance fails or times out after payment finality:
 | SI-009 | Sales Invoice identity/header/footer support shall include taxpayer or registered business name, registered address, TIN and VAT/non-VAT classification, Site or branch/location identity, POS Server fiscal identity, and terminal/channel identity where applicable. |
 | SI-010 | Sales Invoice identity/header/footer support shall include MIN, PTU or ATG details if applicable, serial number, terminal number, software name and version, supplier accreditation metadata, required BIR footer text, and required non-input-tax warning where applicable. |
 | SI-011 | The assignment of MIN, PTU, ATG, serial number, terminal number, software version, and supplier accreditation metadata between Site POS Server and terminals/channels remains an open compliance question. |
+| SI-012 | Sales Invoice issuance shall support both printed and digital presentation where the payment channel supports both forms. |
+| SI-013 | For digital Sales Invoice delivery, POS Server shall return a Sales Invoice URL that allows the parker/customer to view and save the issued Sales Invoice on their phone. |
+| SI-014 | The digital Sales Invoice shall correspond to the same issued Sales Invoice as the printed version. |
+| SI-015 | Printed and digital Sales Invoice forms shall not represent different fiscal documents or different fiscal facts. |
+| SI-016 | Reprints or repeated digital Sales Invoice access shall be controlled and auditable where required by BIR/accounting, security, privacy, or compliance policy. |
 
 ## 17. X-read, Z-read, Reset Counter, and Grand Total Requirements
 
@@ -394,6 +404,8 @@ If fiscal issuance fails or times out after payment finality:
 | AUD-009 | Fiscal export capabilities are expected to support BIR-confirmed formats and candidate outputs including Electronic Journal replica/export, printable/report exports, structured digital exports such as JSON or equivalent, and PDF or equivalent human-readable exports. |
 | AUD-010 | Fiscal export capabilities are expected to support POSLog, including ARTS POSLog if confirmed, and BIR Sales Summary and Annex E report exports. |
 | AUD-011 | Exact mandatory fiscal export formats remain open pending BIR/accounting confirmation. |
+| AUD-012 | Digital Sales Invoice access and repeated digital presentation shall remain reconcilable to the original issued Sales Invoice, EJ, POSLog, audit records, and retention controls. |
+| AUD-013 | Digital Sales Invoice records and access history shall be retained and auditable according to approved BIR, security, privacy, and compliance requirements. |
 
 ## 22. Exception and Failure Handling
 
@@ -442,6 +454,10 @@ If fiscal issuance fails or times out after payment finality:
 | PRIV-005 | Evidence access shall be logged and restricted to authorized roles. |
 | PRIV-006 | Fiscal retention and evidence retention may differ and must be explicitly confirmed before implementation. |
 | PRIV-007 | Candidate evidence for Diplomat VAT Privilege / VAT Exemption may include BIR-issued VAT Certificate, VAT Identification Card, DFA/BIR-issued documentation, or other approved supporting evidence, pending final confirmation. |
+| PRIV-008 | The Sales Invoice URL shall be governed by security, privacy, retention, and anti-tampering controls. |
+| PRIV-009 | The Sales Invoice URL shall not allow unauthorized modification of the Sales Invoice. |
+| PRIV-010 | The Sales Invoice URL shall not expose unnecessary sensitive data. |
+| PRIV-011 | Sales Invoice URL access policy, expiry policy, and authentication/access model remain subject to POS Server System Design and compliance confirmation. |
 
 ## 26. Reporting and Reconciliation
 
@@ -530,6 +546,7 @@ Only genuinely unresolved items are listed here.
 | OQ-014 | Should reset counter be printed separately, appended to the fiscal document number, or both? | BIR/accounting advisor, compliance |
 | OQ-015 | What approved X-read and Z-read scope should ExitPass support: Site-level only, terminal-level, cashier/session-level, or combined Site + terminal + cashier/session model? | BIR/accounting advisor, finance/accounting, operations |
 | OQ-016 | Who is the software supplier/applicant, who is the POS user / PTU applicant, and how are Hikvision, Pro Parking, PPMC/Park Secure, and ExitPass responsibilities split for footer text, manuals, source documentation, and accreditation package content? | BIR/accounting advisor, compliance, legal, vendor management |
+| OQ-017 | What Sales Invoice URL access policy, expiry policy, authentication/access model, and audit treatment are required for digital Sales Invoice delivery? | POS Server System Design, security, privacy, compliance |
 
 ## 32. Acceptance Criteria
 
@@ -561,6 +578,12 @@ Only genuinely unresolved items are listed here.
 | AC-024 | Fiscal outputs reconcile from canonical fiscal records so Sales Invoice, EJ, POSLog, X-read, Z-read, BIR Sales Summary, Annex E reports, exports, and audit records do not diverge. |
 | AC-025 | X-read and Z-read scope remains configurable or design-resolved according to BIR/accounting-approved fiscal scope. |
 | AC-026 | Adjustment documents reference the original fiscal document and are audited. |
+| AC-027 | A successful parking payment produces a Sales Invoice available in printed and digital form where the channel supports both. |
+| AC-028 | POS Server returns a digital Sales Invoice URL after successful Sales Invoice issuance. |
+| AC-029 | The parker/customer can open the digital Sales Invoice URL and save the Sales Invoice on their phone. |
+| AC-030 | APM can present a QR code for the digital Sales Invoice URL so the parker/customer can scan and save the Sales Invoice. |
+| AC-031 | Printed Sales Invoice and digital Sales Invoice represent the same fiscal document and fiscal facts. |
+| AC-032 | Digital Sales Invoice access is governed by approved security, privacy, retention, and anti-tampering controls. |
 
 ## 33. Requirements Traceability Matrix
 
@@ -571,6 +594,11 @@ Only genuinely unresolved items are listed here.
 | Future payment channels | FR-011, NFR-005, AC-022 | 10, 11, 27, 32 |
 | Sales Invoice as primary parking fiscal output | FR-003, SI-001, SI-002, AC-001 | 14, 16, 32 |
 | Sales Invoice identity/header/footer metadata | SI-003, SI-008 to SI-011, AC-023 | 16, 32 |
+| Sales Invoice printed and digital presentation | CH-WP-006, CH-APM-006, CH-CASH-005, CH-EC-005, CH-OP-005, SI-012, AC-027 | 15, 16, 32 |
+| Digital Sales Invoice URL | SI-013, PRIV-008 to PRIV-011, AC-028, AC-029, AC-032, OQ-017 | 16, 25, 31, 32 |
+| APM QR code for digital Sales Invoice URL | CH-APM-006, AC-030 | 15, 32 |
+| Printed/digital Sales Invoice consistency | SI-014, SI-015, AUD-012, AC-031 | 16, 21, 32 |
+| Digital Sales Invoice access control, retention, and audit | SI-016, AUD-012, AUD-013, PRIV-008 to PRIV-011, AC-032, OQ-017 | 16, 21, 25, 31, 32 |
 | Sales Invoice and adjustment numbering open question | SI-006, ADJ-013, OQ-012, OQ-013 | 16, 20, 31 |
 | Site-level POS Server model | FR-002, FR-011, CH-WP-001, CH-APM-001, CH-CASH-001, CH-EC-001 | 10, 11, 15 |
 | Central PMS authority model | FR-004, FR-005, FR-006, SEC-002, SEC-003, SEC-004 | 12, 14, 24 |
