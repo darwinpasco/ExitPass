@@ -5,17 +5,18 @@
 | Field | Value |
 | --- | --- |
 | Document title | ExitPass POS Server API Contract |
-| Version | v1.0 Markdown draft |
+| Version | v1.0 Markdown baseline |
 | Product scope | ExitPass v1.3 POS Server API |
-| Status | Draft for review |
+| Status | Approved baseline |
 | Generated | 2026-06-25 |
 | Output format | Markdown only |
 | BRD baseline | `docs/v1.3/pos-invoicing/ExitPass_POS_Invoicing_BRD_v1.0.md` |
 | System Design baseline | `docs/v1.3/pos-server/ExitPass_POS_Server_System_Design_v1.0.md` |
+| Approval note | `ExitPass_POS_Server_API_Contract_v1.0.md` is approved as the POS Server API Contract v1.0 baseline for ExitPass v1.3 documentation and downstream POS Server Database Design, Engineering Pack, Security/Privacy Review, BIR/accreditation package preparation, and implementation planning. |
 
 ## 2. Purpose and Scope
 
-This document defines the first API contract draft for the ExitPass Site-level POS Server. It translates the approved POS/Invoicing BRD and approved POS Server System Design into API ownership, route families, request/response semantics, status behavior, idempotency behavior, authentication/authorization expectations, error model, and integration responsibilities.
+This document defines the approved v1.0 API contract baseline for the ExitPass Site-level POS Server. It translates the approved POS/Invoicing BRD and approved POS Server System Design into API ownership, route families, request/response semantics, status behavior, idempotency behavior, authentication/authorization expectations, error model, and integration responsibilities.
 
 This contract covers API planning and contract semantics for:
 
