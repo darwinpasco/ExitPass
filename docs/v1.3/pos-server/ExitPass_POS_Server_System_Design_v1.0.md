@@ -112,16 +112,16 @@ The following are logical design components, not final code modules or database 
 | --- | --- |
 | Fiscal Issuance Service | Coordinates SI issuance, validates issuance eligibility, applies idempotency, coordinates numbering, creates canonical fiscal records, and returns fiscal identity/status. |
 | Sales Invoice Renderer | Produces approved printed and digital SI representations from canonical fiscal facts. |
-| Digital SI URL Service | Creates and manages digital SI URL access according to security, privacy, retention, expiry, and audit policy. Open for Security/Privacy Review and POS Server API Contract. |
-| QR Presentation Support boundary | Defines presentation rules and metadata needed by channels/terminals for QR code display/print. The channel/terminal performs QR presentation where supported; this boundary does not make the terminal fiscal authority. |
+| Digital SI URL Service | Creates and manages digital SI URL access according to security, privacy, retention, expiry, and audit policy. POS Server returns only the digital SI URL for QR presentation; it does not become the QR renderer. Open for Security/Privacy Review and POS Server API Contract. |
+| QR Presentation Support boundary | Defines the channel/terminal presentation responsibility for converting the POS Server-returned digital SI URL into a QR code where supported. The channel/terminal performs QR generation, display, or print; this boundary does not make the terminal fiscal authority. |
 | Numbering and Counter Service | Manages SI sequence, adjustment sequence, reset counter, Z-counter, Grand Total Amount accumulator, and related audit snapshots. |
 | X/Z Reporting Service | Produces X-read and Z-read for approved fiscal scopes. Open for BIR/accounting confirmation on scope. |
 | BIR Sales Summary Service | Produces required sales summary report from canonical fiscal facts. |
 | Annex E Reporting Service | Produces statutory sales book/report structures for Senior, PWD, NAAC, Solo Parent, and applicable VAT privilege/exemption categories. |
 | Electronic Journal Service | Maintains EJ records sufficient to reconstruct fiscal documents and required reports. |
-| POSLog Export Service | Produces POSLog exports in confirmed format. Open for BIR/accounting confirmation. |
+| POSLog Export Service | Produces structured POSLog exports with an ARTS POSLog 6.x-aligned posture where practical and where accepted by BIR/accreditation requirements, while preserving BIR terminology and local BIR-specific fields. Open for BIR/accounting confirmation. |
 | Fiscal Adjustment Service | Controls void/refund/cancel/return fiscal adjustment document lifecycle and reconciliation linkage. |
-| Reprint Control Service | Controls reprints, labels repeated output where required, and audits reprint activity. |
+| Reprint Control Service | Controls Sales Invoice, X-read, Z-read, and Electronic Journal reprints where applicable, labels repeated output where required, and audits reprint activity. |
 | Fiscal Audit Service | Records fiscal actions, privileged actions, configuration changes, recovery actions, URL access events where required, and export activity. |
 | Fiscal Retention/Export Service | Applies confirmed fiscal retention and export policies. |
 | Fiscal Identity / Terminal Registry | Manages Site POS Server, channel, terminal, software, supplier, MIN/PTU/serial, and accreditation metadata once confirmed. |
@@ -251,13 +251,13 @@ QR code presentation:
 - QR code presentation is a channel/terminal display or print capability.
 - QR code presentation is not APM-only.
 - APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted terminals, and future channels may present the QR where supported.
-- POS Server owns digital SI URL generation and the presentation rules/metadata needed by channels and terminals.
-- Channels and terminals perform QR code display or print where supported.
+- POS Server owns digital SI URL generation and returns only the digital SI URL for QR presentation.
+- The channel or terminal converts the POS Server-returned URL into a QR code where QR presentation is supported.
+- QR generation, display, and printing are channel/terminal presentation responsibilities.
 - QR presentation does not make the terminal/channel the fiscal issuer.
 - Site POS Server remains the fiscal issuer.
-- QR rendering may be implemented by the channel/terminal or another approved presentation component in later API/implementation design; this system design does not require QR rendering to be an internal POS Server implementation detail.
 
-Open for POS Server API Contract: final way channel/terminal receives URL or QR presentation payload.
+Open for POS Server API Contract: final contract for returning the digital SI URL and for channel/terminal receipt of that URL.
 
 Open for implementation planning: whether non-APM QR presentation is mandatory for specific assisted channels.
 
@@ -445,10 +445,15 @@ POSLog Export Service shall produce structured fiscal transaction logs aligned t
 Design rules:
 
 - POSLog shall not diverge from EJ or canonical fiscal records.
-- POSLog shall support confirmed export format, including ARTS POSLog if confirmed.
+- POSLog exports should use an ARTS POSLog 6.x-aligned export posture where practical and where accepted by BIR/accreditation requirements.
+- ARTS POSLog is a structured export and schema interoperability reference; it does not replace Philippine BIR fiscal document and report requirements.
+- POSLog shall preserve ExitPass and BIR terminology, including Sales Invoice, SI, and Sales Invoice Number.
+- POSLog shall coexist with BIR-required outputs including Sales Invoice, X-read, Z-read, EJ, POSLog, and BIR Sales Summary.
+- Local and BIR-specific fields may be represented as local extensions or mapped fields where needed.
+- POSLog local/BIR field support should include Sales Invoice Number, Ticket Number / Plate Number, Site / branch / business unit identity, channel / terminal / workstation identity, Business Day Date, MIN, PTU, Serial Number, supplier/accreditation metadata, Reset Counter, Z Counter, Grand Total Amount, Digital SI URL, parking session timestamps and duration, and fiscal audit references.
 - POSLog shall include fiscal events needed for SI, fiscal lines, reprints, adjustments, X/Z, reports, exports, and audit.
 
-Open for BIR/accounting confirmation: mandatory POSLog format and reconciliation expectations when EJ is text-oriented and POSLog is structured.
+Open for BIR/accounting confirmation: mandatory POSLog format, exact ARTS POSLog profile, local extension mapping, and reconciliation expectations when EJ is text-oriented and POSLog is structured.
 
 ## 22. Fiscal Exports
 
@@ -469,20 +474,30 @@ Candidate export formats include TXT, PDF, JSON, XML, and ARTS POSLog, but exact
 
 The implementation shall not treat export files as independent fiscal truth. Exports shall be generated from canonical fiscal records and shall remain reconcilable to EJ, POSLog, reports, and audit.
 
+Structured fiscal export posture:
+
+- JSON fiscal and audit records should remain complete even when printed outputs are simplified.
+- JSON and POSLog exports should be schema-versioned.
+- JSON and POSLog exports should support validation against approved BIR/ARTS-aligned schemas where applicable.
+- Validation failures should be auditable and visible to operational/support workflows.
+
+Open for Engineering Pack and POS Server Database Design: exact schema versioning, validation jobs, packaging, storage, and repair workflows.
+
 ## 23. Reprints
 
 Reprint Control Service shall support controlled reprints of fiscal outputs as required.
 
 Design rules:
 
+- Controlled reprint coverage shall include Sales Invoice, X-read, Z-read, and Electronic Journal outputs where applicable.
 - Reprints shall not mutate original fiscal document facts.
-- Reprints shall be labeled where required.
-- Reprints shall be audited.
+- Reprinted fiscal outputs shall show `REPRINT` and `DATE / TIME REPRINTED` at the bottom of the reprinted output where BIR requires them.
+- Reprints shall be controlled, authorized where required, and audited.
 - Reprints shall reference the original fiscal document.
 - Reprint permissions shall be governed by RBAC and audit policy.
 - Repeated digital access shall follow the same non-mutation principle and shall be audited where required.
 
-Open for BIR/accounting confirmation: exact reprint label text, placement, and output-specific layout rules.
+Open for BIR/accounting confirmation: output-specific reprint layout rules and any channel-specific exceptions.
 
 ## 24. Void/Refund/Cancel/Return Adjustment Documents
 
@@ -506,7 +521,7 @@ Fiscal Audit Service shall record audit events for:
 
 - SI issuance.
 - Digital SI URL creation/access where required.
-- QR presentation payload generation where required.
+- QR presentation-related URL delivery or presentation activity where required.
 - Reprints.
 - Void/refund/cancel/return fiscal adjustments.
 - X-read and Z-read.
@@ -693,7 +708,7 @@ WebPay shall not:
 
 Open for BIR/accounting confirmation: WebPay fiscal terminal identity where no physical printer or hardware serial exists.
 
-Open for POS Server API Contract: WebPay receipt of digital SI URL or presentation data.
+Open for POS Server API Contract: WebPay receipt of the digital SI URL.
 
 ## 34. Integration With APM
 
@@ -703,7 +718,7 @@ APM shall:
 
 - Route fiscal issuance to resolved Site POS Server.
 - Present or print POS Server-issued SI according to approved printing model.
-- Display or print QR code representing digital SI URL where supported.
+- Convert the POS Server-returned digital SI URL into a QR code and display or print that QR code where supported.
 - Preserve Central PMS payment finality and ExitAuthorization authority.
 
 APM shall not:
@@ -724,12 +739,12 @@ Cashier POS shall support:
 - Cashier/session accountability.
 - Controlled reprints and adjustment actions for authorized roles.
 - Printed SI presentation where applicable.
-- Digital SI URL and QR presentation where supported.
+- Digital SI URL presentation and channel-side QR generation/display/print where supported.
 - Fiscal status and exception messaging.
 
 Cashier POS shall not independently declare payment finality outside Central PMS authority.
 
-Open for POS Server API Contract: cashier/session context and presentation data contract.
+Open for POS Server API Contract: cashier/session context and digital SI URL receipt contract.
 
 ## 36. Integration With EC Device / Continuity Terminal
 
@@ -740,7 +755,7 @@ Design rules:
 - EC/continuity terminal is child terminal/channel under Site POS Server.
 - Offline fiscal issuance remains restricted until BIR/accounting confirms approved model.
 - Continuity mode shall preserve Central PMS payment finality and ExitAuthorization authority.
-- Digital SI URL and QR presentation may be supported under approved continuity model.
+- Digital SI URL presentation and channel-side QR generation/display/print may be supported under the approved continuity model.
 - Fiscal sequence and counter continuity must not be weakened by continuity mode.
 - EC Device / Continuity Terminal, APM, Cashier POS, and operator-assisted workflows shall not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
 - Degraded/continuity operation shall preserve Central PMS payment finality and ExitAuthorization authority.
@@ -756,7 +771,7 @@ Operator-assisted flows shall:
 - Preserve operator identity.
 - Preserve Site context.
 - Preserve reason/context where required.
-- Support SI presentation and digital SI URL/QR presentation where supported.
+- Support SI presentation, digital SI URL presentation, and operator-terminal QR generation/display/print where supported.
 - Preserve Central PMS payment finality and ExitAuthorization authority.
 
 Manual release after fiscal issuance failure, if allowed, shall require supervisor approval, incident tagging, and reconciliation tagging.
@@ -844,10 +859,11 @@ The POS Server API Contract shall explicitly define retry and idempotency semant
 POS Server operations shall support visibility into:
 
 - Fiscal issuance health.
+- POS Server ONLINE/OFFLINE status where required.
 - Pending issuance retries.
 - Failed/timed-out issuance.
 - Digital SI URL access health.
-- Terminal/channel registration and availability.
+- Terminal/channel registration, availability, and ONLINE/OFFLINE or equivalent reachability/health state where applicable.
 - X/Z close status.
 - Report/export generation status.
 - Counter and GTA continuity.
@@ -865,6 +881,12 @@ Operational alerts should be planned for:
 - Export/report failures.
 - Digital SI URL access failures.
 - Unauthorized or anomalous fiscal action attempts.
+
+ONLINE/OFFLINE indicator rules:
+
+- ONLINE/OFFLINE status is operational and observability information.
+- ONLINE/OFFLINE status does not approve offline fiscal issuance.
+- Offline fiscal issuance remains disabled or restricted unless BIR/accounting approves a compliant sequence, counter, evidence, reconciliation, and recovery model.
 
 Open for Engineering Pack: final metrics, logs, dashboards, alerts, runbooks, and operational SLOs.
 
