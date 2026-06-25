@@ -1,0 +1,55 @@
+@startuml
+title ExitPass POS Server Context and Authority Boundary
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+actor "Finance / audit /\ncompliance" as Finance
+
+rectangle "Payment channels / terminals" #F7FAFF {
+    component "WebPay" as WebPay
+    component "APM" as APM
+    component "Cashier POS" as Cashier
+    component "EC Device /\nContinuity Terminal" as EC
+    component "Operator-assisted\npayment" as Operator
+}
+
+component "Payment Orchestrator\nprovider outcome verification" as Orchestrator
+component "Central PMS\npayment finality + ExitAuthorization" as PMS
+component "Site POS Server\nfiscal issuance + reporting" as POS
+component "Gate Integration /\nExitAuthorization consumer" as Gate
+component "Vendor PMS /\nHikCentral" as Vendor
+database "BIR reporting outputs\nSI, X/Z, BIR Summary,\nAnnex E, EJ, POSLog" as BIR
+
+WebPay --> Orchestrator : payment flow
+APM --> Orchestrator : payment flow
+Cashier --> Orchestrator : payment flow
+EC --> Orchestrator : continuity payment flow
+Operator --> Orchestrator : assisted payment flow
+
+Orchestrator --> PMS : verified provider outcome
+PMS --> POS : request SI issuance\nfor resolved Site
+POS --> PMS : SI identity/status,\ndigital SI URL if applicable
+PMS --> Gate : ExitAuthorization
+PMS --> Vendor : synchronization only
+Vendor --> PMS : acknowledgment/status
+POS --> BIR : fiscal reports/exports
+Finance --> POS : audit/report review
+
+note bottom of PMS
+Central PMS owns payment finality,
+PaymentAttempt, PaymentConfirmation,
+site resolution, and ExitAuthorization.
+end note
+
+note bottom of POS
+POS Server owns fiscal issuance,
+fiscal counters, reports, EJ, POSLog,
+exports, audit, retention, and recovery.
+It does not issue ExitAuthorization.
+end note
+
+@enduml

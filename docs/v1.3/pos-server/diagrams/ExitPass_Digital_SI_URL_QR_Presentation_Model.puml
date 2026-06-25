@@ -1,0 +1,52 @@
+@startuml
+title ExitPass Digital SI URL and QR Code Presentation Model
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+actor "Parker /\ncustomer phone" as Phone
+
+rectangle "Site POS Server" #F3FFF3 {
+    component "Issued Sales Invoice\ncanonical fiscal facts" as SI
+    component "Digital SI URL\nService" as Url
+    component "Security / privacy /\naccess policy boundary" as Policy
+}
+
+rectangle "Channel / terminal presentation capability" #F7FAFF {
+    component "APM" as APM
+    component "Cashier POS" as Cashier
+    component "EC Device /\nContinuity Terminal" as EC
+    component "Operator-assisted\nterminal" as Operator
+    component "Future channels" as Future
+}
+
+SI --> Url : same issued SI
+Url --> Policy : access, expiry,\nauthentication, audit
+Url --> APM : SI URL / QR payload
+Url --> Cashier : SI URL / QR payload
+Url --> EC : SI URL / QR payload
+Url --> Operator : SI URL / QR payload
+Url --> Future : SI URL / QR payload
+
+APM --> Phone : display/print QR
+Cashier --> Phone : display/print QR
+EC --> Phone : display/print QR
+Operator --> Phone : display/print QR
+Future --> Phone : present QR/link
+Phone --> Url : view/save Sales Invoice
+
+note bottom of Url
+QR code presentation is a channel/terminal
+presentation capability. It is not APM-only
+and does not make the terminal fiscal authority.
+end note
+
+note bottom of SI
+Digital SI and printed SI must represent
+the same fiscal document and fiscal facts.
+end note
+
+@enduml

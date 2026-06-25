@@ -1,0 +1,49 @@
+@startuml
+title ExitPass POS Server Fiscal Issuance Failure and Retry Flow
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam participantPadding 24
+skinparam boxPadding 12
+
+participant "Central PMS" as PMS
+participant "Site POS Server" as POS
+participant "Retry queue /\ncontrolled retry" as Retry
+participant "Channel / terminal" as Channel
+participant "Supervisor" as Supervisor
+participant "Reconciliation" as Recon
+
+PMS -> PMS : Verified payment finality\nrecorded
+PMS -> POS : Request SI issuance
+POS -x PMS : Failure or timeout
+PMS -> PMS : Do not issue\nExitAuthorization yet
+PMS -> Retry : Create fiscal issuance\nexception/retry item
+Retry -> Channel : Message customer/operator:\npayment received,\nSI pending,\nexit not yet available
+
+loop Controlled retry
+    Retry -> POS : Retry SI issuance
+end
+
+alt SI issuance succeeds
+    POS --> Retry : SI identity/status\nand digital SI URL if applicable
+    Retry --> PMS : Fiscal reference
+    PMS -> PMS : Record fiscal reference\nthen authorization may proceed
+else Manual release allowed by policy
+    Retry -> Supervisor : Request approval
+    Supervisor --> Retry : Approve with reason
+    Retry -> Recon : Incident tag +\nreconciliation tag
+    Retry --> PMS : Controlled exception closure
+else No approved closure
+    Retry -> Channel : Continue pending\nor operational escalation
+end
+
+note over PMS,Retry
+Payment is not automatically reversed.
+ExitAuthorization is blocked until SI issuance succeeds
+or a controlled exception is approved.
+end note
+
+@enduml
