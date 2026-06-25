@@ -21,7 +21,7 @@ This contract covers API planning and contract semantics for:
 
 - Central PMS to POS Server fiscal issuance.
 - Sales Invoice issuance, status, lookup, print/digital consistency, and digital SI URL return.
-- Digital SI URL access and channel/terminal QR presentation metadata.
+- Digital SI URL access and channel/terminal QR presentation from the POS Server-returned URL.
 - Channel and terminal registration/status.
 - Fiscal identity configuration.
 - Reprints and repeated digital access.
@@ -59,7 +59,7 @@ The API contract shall preserve the approved authority model.
 | Fiscal issuance | Site POS Server | POS Server owns Sales Invoice issuance and fiscal document lifecycle for the resolved Site. |
 | Fiscal document numbering | Site POS Server | POS Server owns SI and adjustment numbering according to confirmed policy. |
 | Digital SI URL | Site POS Server | POS Server returns digital SI URL where digital delivery is enabled. |
-| Channel/terminal presentation | Channel/terminal under Site POS Server | Channels/terminals may display or print SI, digital SI URL, or QR presentation metadata without becoming fiscal issuer. |
+| Channel/terminal presentation | Channel/terminal under Site POS Server | Channels/terminals may display or print SI, present the digital SI URL, or convert the POS Server-returned URL into a QR code where supported without becoming fiscal issuer. |
 | Refund/reversal money movement | Central PMS/payment provider | POS Server owns related fiscal adjustment documents, not money movement finality. |
 | Gate/exit execution | Central PMS authorization chain | Gate/exit execution must not bypass Central PMS authorization. |
 
@@ -71,10 +71,10 @@ Payment Orchestrator and WebPay must not declare platform payment finality. Vend
 | --- | --- |
 | Central PMS | Primary trusted internal caller for payment-linked SI issuance, fiscal reference recording, exception status, and controlled fiscal workflow coordination. |
 | WebPay | Channel-facing consumer of digital SI presentation/status through approved Central PMS/POS Server flow; not finality authority. |
-| APM | Terminal/channel that may present or print POS Server-issued SI and QR where supported; not fiscal authority. |
+| APM | Terminal/channel that may present or print POS Server-issued SI and generate/display/print QR from the digital SI URL where supported; not fiscal authority. |
 | Cashier POS | Terminal/channel that may support SI presentation, reprint, adjustment, and cashier/session context under authorization. |
 | EC Device / Continuity Terminal | Continuity terminal/channel under Site POS Server authority; offline fiscal issuance remains restricted unless approved. |
-| Operator-assisted terminal/workflow | Assisted payment flow that may present SI/digital SI/QR and exception status; operator cannot declare platform finality. |
+| Operator-assisted terminal/workflow | Assisted payment flow that may present SI, digital SI URL, channel-side QR, and exception status; operator cannot declare platform finality. |
 | Future channels | Must register as child channels/terminals and follow the same fiscal authority pattern. |
 | Fiscal administrators | Privileged internal actors for fiscal identity, export, reset, recovery, and configuration workflows. |
 | Compliance auditors | Read/export/audit consumers according to RBAC and retention policy. |
@@ -197,6 +197,7 @@ Proposed contract error codes, pending review:
 | `DIGITAL_SI_ACCESS_DENIED` | Digital SI access request is denied. |
 | `REPORT_GENERATION_FAILED` | Report generation failed. |
 | `EXPORT_GENERATION_FAILED` | Export generation failed. |
+| `EXPORT_VALIDATION_FAILED` | Structured fiscal export validation failed against an approved schema or validation profile. |
 | `RESET_REQUIRES_APPROVAL` | Fiscal reset request requires approval. |
 | `RECOVERY_CONTINUITY_FAILED` | Recovery continuity check failed. |
 | `OFFLINE_FISCAL_ISSUANCE_NOT_ALLOWED` | Offline fiscal issuance is not approved for the requested operation. |
@@ -319,7 +320,7 @@ The API shall not allow fiscal document mutation except through approved side-ef
 
 Provisional route family: `/v1/pos/digital-si/*`
 
-This family covers digital SI URL retrieval, access status, and channel/terminal presentation metadata.
+This family covers digital SI URL retrieval, access status, and channel/terminal receipt of the POS Server-returned digital SI URL.
 
 ### Candidate Operations
 
@@ -327,26 +328,31 @@ This family covers digital SI URL retrieval, access status, and channel/terminal
 | --- | --- | --- |
 | Get digital SI URL | Retrieve or return the POS Server-issued digital SI URL for an issued SI. | Provisional |
 | Get digital SI access status | Determine whether URL is active, expired, revoked, or blocked. | Provisional |
-| Get presentation metadata | Provide channel/terminal display or print metadata, including QR presentation support. | Provisional |
+| Get digital SI presentation status | Provide status needed by trusted services/channels to present the issued digital SI URL according to approved policy. | Provisional |
 | Register digital SI re-access | Record repeated digital access where audit policy requires it. | Provisional |
 
 ### Contract Semantics
 
 - POS Server returns digital SI URL where digital delivery is enabled.
+- POS Server returns only the digital Sales Invoice URL for QR presentation.
+- POS Server does not generate the QR image as a required API responsibility.
 - Digital SI URL points to the same issued SI as the printed SI.
 - Digital SI URL shall not allow unauthorized modification of the SI.
 - Digital SI URL shall not expose unnecessary sensitive data.
 - URL access policy, expiry policy, authentication/access model, and audit treatment remain open for Security/Privacy Review and API Contract review.
 - Customer-facing digital SI URL access is a separate trust boundary from internal POS Server digital SI and presentation APIs.
-- Internal APIs may return URL or presentation metadata to trusted services, channels, or terminals.
+- Internal APIs may return the digital SI URL and digital SI status to trusted services, channels, or terminals.
 - Customer-facing access must follow the approved public/customer access model, expiry policy, authentication/access policy, privacy rules, and audit treatment.
-- Channels/terminals may receive URL and presentation metadata.
+- Channels/terminals may receive the digital SI URL.
 - QR presentation is a channel/terminal display or print capability.
 - QR presentation is not APM-only.
 - QR presentation does not make the terminal/channel the fiscal issuer.
+- The channel or terminal converts the POS Server-returned URL into a QR code where QR presentation is supported.
+- QR generation, display, and printing are channel/terminal presentation responsibilities.
+- Site POS Server remains the fiscal issuer.
 - APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted terminals, and future channels may support QR presentation where approved.
 
-Final QR rendering responsibility remains open for API/implementation design.
+Channel/terminal QR image rendering implementation details are channel/terminal implementation concerns. The API Contract shall not create a POS Server QR generation API as a required responsibility.
 
 ## 13. Channel and Terminal Registry API Family
 
@@ -359,7 +365,7 @@ This family covers channel/terminal registration, status, capability, and audit.
 | Candidate operation | Contract purpose | Status |
 | --- | --- | --- |
 | Register channel/terminal | Register a channel or terminal under a Site POS Server. | Provisional |
-| Update channel/terminal status | Set active, inactive, degraded, or continuity state. | Provisional |
+| Update channel/terminal status | Set active, inactive, degraded, continuity, ONLINE/OFFLINE, or equivalent reachability/health state. | Provisional |
 | Get channel/terminal status | Retrieve identity, Site association, capabilities, and state. | Provisional |
 | List channels/terminals for Site POS Server | Support operational lookup and configuration review. | Provisional |
 
@@ -378,6 +384,12 @@ Registry contract shall support:
 - Fiscal identity reference where applicable.
 - Cashier/session support where applicable.
 - Active/inactive/degraded/continuity state.
+- ONLINE/OFFLINE or equivalent reachability/health state where applicable.
+- POS Server administrative/status APIs should support ONLINE/OFFLINE status where required.
+- Channel/terminal status APIs should support ONLINE/OFFLINE or equivalent reachability/health state where applicable.
+- ONLINE/OFFLINE is operational and observability information.
+- ONLINE/OFFLINE does not approve offline fiscal issuance.
+- Offline fiscal issuance remains disabled/restricted unless BIR/accounting approves a compliant sequence, counter, evidence, reconciliation, and recovery model.
 - Audit of changes.
 
 Final registry field model remains open for POS Server API Contract and Database Design.
@@ -422,13 +434,13 @@ The contract shall not decide final MIN/PTU/serial/software/supplier assignment 
 
 Provisional route family: `/v1/pos/reprints/*`
 
-This family covers controlled Sales Invoice or fiscal document reprints.
+This family covers controlled reprints for Sales Invoice, X-read, Z-read, and Electronic Journal outputs where applicable.
 
 ### Candidate Operations
 
 | Candidate operation | Contract purpose | Status |
 | --- | --- | --- |
-| Request reprint | Request a controlled reprint for an issued fiscal document. | Provisional |
+| Request reprint | Request a controlled reprint for an issued fiscal document or report output. | Provisional |
 | Get reprint status | Retrieve reprint request status and audit reference. | Provisional |
 | Get reprint history | Retrieve authorized reprint history for a document. | Provisional |
 
@@ -436,16 +448,20 @@ This family covers controlled Sales Invoice or fiscal document reprints.
 
 Reprint contract shall support:
 
-- Original fiscal document linkage.
+- Original document, report, or fiscal output linkage.
+- Reprint type, including Sales Invoice, X-read, Z-read, or Electronic Journal where applicable.
 - Reprint reason.
 - Requesting actor/service identity.
 - Authorization and approval where required.
+- Reprint timestamp.
+- Reprint status/history.
 - Reprint label/audit behavior.
 - Audit reference.
 - No mutation of original fiscal document facts.
+- No mutation of original report or Electronic Journal facts.
 - Relationship to repeated digital access where required.
 
-Final label text, placement, output layout, and repeated digital access audit rules remain open for BIR/accounting and security/privacy confirmation.
+Where BIR requires it, reprinted fiscal outputs shall show `REPRINT` and `DATE / TIME REPRINTED` at the bottom of the reprinted output. POS Server shall preserve or return enough reprint metadata/status for the renderer, channel, or terminal to apply required labels and timestamps. Exact output layout and repeated digital access audit rules remain open for BIR/accounting and security/privacy confirmation.
 
 ## 16. Fiscal Adjustment API Family
 
@@ -531,8 +547,27 @@ Report contract shall support:
 - Diplomat VAT Privilege / VAT Exemption as active VAT privilege/exemption category.
 - VATable, VAT-exempt, zero-rated, non-VAT, statutory discount, VAT privilege/exemption, coupon, penalty, lost ticket, overstay, service charge, and adjustment classifications where applicable.
 - Reconciliation to canonical fiscal records.
+- BIR Sales Summary / Annex E-1 minimum content semantics:
+  - Report Date.
+  - Beginning SI Number.
+  - Ending SI Number.
+  - Previous Grand Total.
+  - Present Grand Total.
+  - Sales for the Day.
+  - Gross Sales.
+  - Net Sales.
+  - VATable Sales.
+  - VAT Amount.
+  - VAT Exempt Sales.
+  - Zero-Rated Sales.
+  - Discounts.
+  - Voids.
+  - Returns.
+  - Reset Counter.
+  - Z Counter.
+- Supported output/export mode semantics for BIR Sales Summary should include Print, PDF, and JSON.
 
-Exact Diplomat reporting treatment and report/export formats remain open for BIR/accounting confirmation.
+Exact Diplomat reporting treatment, mandatory formats, and final layouts remain open for BIR/accounting/accreditation confirmation.
 
 ## 19. EJ, POSLog, and Export API Family
 
@@ -551,6 +586,7 @@ This family covers EJ export, POSLog export, fiscal exports, report exports, and
 | Request POSLog export | Generate POSLog export in confirmed format. | Provisional |
 | Request fiscal export | Generate approved fiscal export package. | Provisional |
 | Get export status | Retrieve export generation state and output reference. | Provisional |
+| Get export validation status | Retrieve structured export validation state and audit reference where applicable. | Provisional |
 | Retrieve export | Retrieve export output according to authorization and retention policy. | Provisional |
 
 ### Contract Semantics
@@ -559,9 +595,19 @@ This family covers EJ export, POSLog export, fiscal exports, report exports, and
 - Export generation shall be auditable.
 - Export access shall be authorized and auditable.
 - Final mandatory formats remain open.
-- Candidate formats may include text replica, PDF or equivalent human-readable export, JSON or equivalent structured export, POSLog, ARTS POSLog if confirmed, BIR Sales Summary, and Annex E report exports.
+- Candidate formats may include text replica, PDF or equivalent human-readable export, JSON or equivalent structured export, POSLog, ARTS POSLog 6.x-aligned export where practical and accepted by BIR/accreditation requirements, BIR Sales Summary, and Annex E report exports.
+- ARTS POSLog is a structured export/schema interoperability reference.
+- ARTS POSLog does not replace Philippine BIR fiscal document/report requirements.
+- ExitPass shall preserve Sales Invoice, SI, and Sales Invoice Number terminology.
+- ExitPass shall preserve BIR-required outputs such as Sales Invoice, X-read, Z-read, EJ, POSLog, and BIR Sales Summary.
+- Local/BIR-specific fields may be represented as local extensions or mapped fields where needed.
+- Candidate local/BIR extension or mapping concepts include Sales Invoice Number, Ticket Number / Plate Number, Site / branch / business unit identity, channel / terminal / workstation identity, Business Day Date, MIN, PTU, Serial Number, supplier/accreditation metadata, Reset Counter, Z Counter, Grand Total Amount, Digital SI URL, parking session timestamps and duration, and fiscal audit references.
+- JSON fiscal and audit records should remain complete even when printed outputs are simplified.
+- JSON and POSLog exports should be schema-versioned.
+- JSON and POSLog exports should support validation against approved BIR/ARTS-aligned schemas where applicable.
+- Export validation success, failure, and pending states shall be auditable and visible to operational/support workflows.
 
-Final export formats and retention/access rules remain open for BIR/accounting, compliance, and security/privacy confirmation.
+Final ARTS POSLog profile, schema mapping, JSON schema versioning strategy, validation job implementation, storage model, packaging format, export formats, and retention/access rules remain open for BIR/accounting, compliance, security/privacy, Database Design, and Engineering Pack confirmation.
 
 ## 20. Fiscal Reset and Recovery API Family
 
@@ -638,13 +684,16 @@ Events or audit records may be needed for:
 - SI issuance failed/timed out.
 - Digital SI URL created.
 - Digital SI accessed where required.
-- Reprint requested/completed.
+- Reprint requested/completed/failed.
 - Adjustment requested/issued/rejected.
 - X-read generated.
 - Z-read generated.
 - BIR Summary generated.
 - Annex E generated.
 - EJ/POSLog/export generated.
+- Structured export validation pending/passed/failed.
+- POS Server ONLINE/OFFLINE status changed where required.
+- Channel/terminal ONLINE/OFFLINE or equivalent health status changed where applicable.
 - Fiscal reset requested/approved/completed.
 - Terminal/channel registered/updated.
 - Fiscal identity changed.
@@ -672,7 +721,7 @@ WebPay contract responsibilities:
 Open:
 
 - WebPay fiscal terminal identity without physical printer or hardware serial.
-- WebPay receipt of digital SI URL or presentation data.
+- WebPay receipt of the digital SI URL.
 - Public/customer SI URL access model.
 
 ## 24. APM Integration Contract
@@ -683,7 +732,7 @@ APM contract responsibilities:
 
 - Route fiscal issuance to resolved Site POS Server through approved flow.
 - Present or print POS Server-issued SI according to approved printing model.
-- Display or print QR code representing digital SI URL where supported.
+- Convert the POS Server-returned digital SI URL into a QR code and display or print that QR code where supported.
 - Preserve Central PMS payment finality and ExitAuthorization authority.
 - Not become independent fiscal authority for the Site.
 - Not issue ExitAuthorization.
@@ -692,7 +741,6 @@ APM contract responsibilities:
 Open:
 
 - Whether APM prints POS Server-issued payload or requires another approved printing arrangement.
-- APM-specific presentation payload needs.
 - APM hardware serial/fiscal identity assignment.
 
 ## 25. Cashier POS Integration Contract
@@ -705,7 +753,7 @@ Cashier POS contract responsibilities:
 - Preserve cashier/session accountability.
 - Support controlled reprint and adjustment requests only for authorized roles.
 - Present printed SI where applicable.
-- Present digital SI URL and QR where supported.
+- Present digital SI URL and perform channel-side QR generation/display/print where supported.
 - Display fiscal status and exception messaging.
 - Not independently declare payment finality outside Central PMS authority.
 - Not issue ExitAuthorization.
@@ -713,7 +761,6 @@ Cashier POS contract responsibilities:
 Open:
 
 - Cashier/session context contract.
-- Presentation payload format.
 - Role/permission matrix for cashier, supervisor, and fiscal administrator actions.
 
 ## 26. EC Device / Continuity Terminal Integration Contract
@@ -724,7 +771,7 @@ EC/continuity contract responsibilities:
 
 - Register as a child terminal/channel under Site POS Server.
 - Preserve Central PMS payment finality and ExitAuthorization authority.
-- Support digital SI URL and QR presentation where approved.
+- Support digital SI URL presentation and channel-side QR generation/display/print where approved.
 - Preserve fiscal sequence and counter continuity.
 - Not create offline fiscal documents unless a BIR/accounting-approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
 
@@ -744,7 +791,7 @@ Operator-assisted contract responsibilities:
 - Preserve operator identity.
 - Preserve Site context.
 - Preserve reason/context where required.
-- Support SI presentation and digital SI URL/QR where supported.
+- Support SI presentation, digital SI URL presentation, and operator-terminal QR generation/display/print where supported.
 - Preserve Central PMS payment finality and ExitAuthorization authority.
 - Not allow operator to declare platform payment finality outside Central PMS authority.
 - Not allow operator to issue ExitAuthorization through POS Server.
@@ -765,8 +812,8 @@ Future channel contract requirements:
 - Provide or reference resolved Site context through Central PMS authority.
 - Preserve Central PMS payment finality and ExitAuthorization authority.
 - Route fiscal issuance through the resolved Site POS Server.
-- Receive fiscal document identity/status and digital SI URL/presentation metadata where applicable.
-- Support QR presentation where channel capability and policy allow.
+- Receive fiscal document identity/status and digital SI URL where applicable.
+- Convert the POS Server-returned digital SI URL into a QR code where channel capability and policy allow.
 - Not become an independent POS system for the Site.
 
 Future channels shall not require a new fiscal authority model unless approved by BRD/System Design governance.
@@ -789,6 +836,7 @@ This section defines proposed status taxonomy at planning-contract level. Final 
 | Duplicate / idempotent replay | Duplicate request recognized under idempotency model. |
 | Reprint requested | Reprint request accepted or recorded. |
 | Reprint completed | Reprint completed and audited. |
+| Reprint failed | Reprint request failed or was blocked and requires handling. |
 | Adjustment requested | Adjustment request accepted or recorded. |
 | Adjustment issued | Adjustment fiscal document issued. |
 | Adjustment rejected | Adjustment request rejected. |
@@ -798,6 +846,9 @@ This section defines proposed status taxonomy at planning-contract level. Final 
 | Export requested | Export requested. |
 | Export generated | Export generated successfully. |
 | Export failed | Export generation failed. |
+| Export validation pending | Structured export validation is queued or in progress. |
+| Export validation passed | Structured export validation passed against the approved validation profile. |
+| Export validation failed | Structured export validation failed and requires operational/support handling. |
 | Reset requested | Fiscal reset requested. |
 | Reset approved | Fiscal reset approved. |
 | Reset completed | Fiscal reset completed. |
@@ -807,6 +858,10 @@ This section defines proposed status taxonomy at planning-contract level. Final 
 | Digital SI URL active | Digital SI URL is currently accessible according to policy. |
 | Digital SI URL expired | Digital SI URL has expired according to policy. |
 | Digital SI URL revoked | Digital SI URL has been revoked or blocked according to policy. |
+| POS Server online | POS Server is reachable/healthy according to approved operational status rules. |
+| POS Server offline | POS Server is unreachable/unhealthy according to approved operational status rules. This does not approve offline fiscal issuance. |
+| Channel/terminal online | Channel or terminal is reachable/healthy according to approved operational status rules. |
+| Channel/terminal offline | Channel or terminal is unreachable/unhealthy according to approved operational status rules. This does not approve offline fiscal issuance. |
 
 Timeout and completion-unknown states must not be treated as successful fiscal issuance. Central PMS shall not issue ExitAuthorization based only on timed-out or completion-unknown status. Idempotent status lookup and retry semantics must prevent duplicate Sales Invoice issuance.
 
@@ -823,21 +878,25 @@ Timeout and completion-unknown states must not be treated as successful fiscal i
 | API-OQ-007 | Digital SI URL expiry policy. | Security/privacy, compliance |
 | API-OQ-008 | Public/customer SI URL authentication/access model. | Security/privacy, compliance |
 | API-OQ-009 | Digital SI URL access and re-access audit treatment. | Security/privacy, compliance |
-| API-OQ-010 | QR presentation payload responsibility. | Architecture, channel owners |
-| API-OQ-011 | QR rendering by channel/terminal vs POS Server-provided artifact. | Architecture, channel owners |
-| API-OQ-012 | WebPay fiscal terminal identity. | BIR/accounting, architecture |
-| API-OQ-013 | APM printing model. | BIR/accounting, APM vendor, architecture |
-| API-OQ-014 | Terminal/channel registry fields. | Architecture, database design, security |
-| API-OQ-015 | Fiscal identity fields and change authorization. | BIR/accounting, security, compliance |
-| API-OQ-016 | X-read and Z-read scope. | BIR/accounting, finance, operations |
-| API-OQ-017 | Report/export formats. | BIR/accounting, compliance |
-| API-OQ-018 | Fiscal adjustment workflow sequencing. | Payments, finance, compliance, architecture |
-| API-OQ-019 | Refund/reversal relationship with Central PMS/provider. | Payments, finance, architecture |
-| API-OQ-020 | Recovery continuity API. | Architecture, security, operations, database design |
-| API-OQ-021 | Offline fiscal issuance restriction representation. | BIR/accounting, architecture, operations |
-| API-OQ-022 | Audit/event publication contracts. | Architecture, Engineering Pack, security |
-| API-OQ-023 | Canonical error/status model finalization. | Architecture/API owners |
-| API-OQ-024 | Security/RBAC model for high-risk APIs. | Security/privacy, compliance, operations |
+| API-OQ-010 | WebPay fiscal terminal identity. | BIR/accounting, architecture |
+| API-OQ-011 | APM printing model. | BIR/accounting, APM vendor, architecture |
+| API-OQ-012 | Terminal/channel registry fields. | Architecture, database design, security |
+| API-OQ-013 | Fiscal identity fields and change authorization. | BIR/accounting, security, compliance |
+| API-OQ-014 | X-read and Z-read scope. | BIR/accounting, finance, operations |
+| API-OQ-015 | Exact report/export formats and layouts. | BIR/accounting, compliance |
+| API-OQ-016 | Exact ARTS POSLog profile and schema mapping. | BIR/accreditation, architecture, database design, Engineering Pack |
+| API-OQ-017 | Exact JSON schema versioning strategy. | Architecture, database design, Engineering Pack |
+| API-OQ-018 | Exact accreditation sample package. | BIR/accreditation, compliance |
+| API-OQ-019 | Fiscal adjustment workflow sequencing. | Payments, finance, compliance, architecture |
+| API-OQ-020 | Refund/reversal relationship with Central PMS/provider. | Payments, finance, architecture |
+| API-OQ-021 | Recovery continuity API. | Architecture, security, operations, database design |
+| API-OQ-022 | Offline fiscal issuance approval and restriction representation, if any. | BIR/accounting, architecture, operations |
+| API-OQ-023 | Audit/event publication contracts. | Architecture, Engineering Pack, security |
+| API-OQ-024 | Canonical error/status model finalization. | Architecture/API owners |
+| API-OQ-025 | Security/RBAC model for high-risk APIs. | Security/privacy, compliance, operations |
+| API-OQ-026 | MIN/PTU/serial/software/supplier assignment. | BIR/accounting, compliance, architecture |
+| API-OQ-027 | VAT/tax treatment by Site, taxpayer, transaction type, entitlement, and line item. | BIR/accounting, finance |
+| API-OQ-028 | Diplomat VAT treatment, evidence, reporting, and retention. | BIR/accounting, security/privacy, compliance |
 
 ## 31. Risks and Mitigations
 
@@ -863,7 +922,7 @@ Timeout and completion-unknown states must not be treated as successful fiscal i
 | --- | --- | --- |
 | `/v1/pos/fiscal-issuance/*` | Sales Invoice issuance and issuance status. | Provisional |
 | `/v1/pos/fiscal-documents/*` | Fiscal document lookup/status and document references. | Provisional |
-| `/v1/pos/digital-si/*` | Digital SI URL, access status, and presentation metadata. | Provisional |
+| `/v1/pos/digital-si/*` | Digital SI URL and access status for channel/customer presentation. | Provisional |
 | `/v1/pos/channels/*` | Channel/terminal registration and status. | Provisional |
 | `/v1/pos/fiscal-identity/*` | Fiscal identity configuration and readiness. | Provisional |
 | `/v1/pos/reprints/*` | Reprint request/status/history. | Provisional |
@@ -905,7 +964,7 @@ This draft does not decide:
 - Final fiscal numbering pattern.
 - Final sequence-gap handling.
 - Final digital SI URL token/access/expiry/authentication model.
-- Final QR rendering implementation.
+- Final channel/terminal QR rendering implementation details.
 - Final MIN/PTU/serial/software/supplier assignment.
 - Final WebPay fiscal identity.
 - Final APM printing model.
