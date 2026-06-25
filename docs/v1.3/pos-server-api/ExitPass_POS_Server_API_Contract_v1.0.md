@@ -188,6 +188,8 @@ Proposed contract error codes, pending review:
 | `FISCAL_ISSUANCE_TIMEOUT` | Issuance request timed out or completion is unknown. |
 | `FISCAL_DOCUMENT_ALREADY_ISSUED` | Fiscal document already exists for the idempotent issuance intent. |
 | `IDEMPOTENCY_CONFLICT` | Same idempotency key conflicts with different request semantics. |
+| `UNAUTHORIZED_CALLER` | Internal service, channel, terminal, or user identity is not authorized to call the API. |
+| `FISCAL_ACTION_NOT_AUTHORIZED` | User, role, service, or approval context is not authorized for the requested fiscal action. |
 | `INVALID_SITE_POS_SERVER` | Request targets or resolves to an invalid Site POS Server. |
 | `FISCAL_IDENTITY_NOT_CONFIGURED` | Required fiscal identity is missing or inactive. |
 | `NUMBERING_POLICY_NOT_CONFIGURED` | Required fiscal numbering policy is missing or inactive. |
@@ -231,6 +233,31 @@ The issuance request shall include or reference:
 - Service identity and actor identity where applicable.
 
 Exact DTO fields remain pending API Contract review.
+
+### Validation Semantics
+
+Before issuing a Sales Invoice, POS Server shall validate:
+
+- Resolved Site and Site POS Server match.
+- Request is scoped to the correct Site POS Server.
+- Central PMS payment finality context is present and acceptable.
+- Channel/terminal registration is valid where applicable.
+- Channel/terminal is active or allowed for the requested operating mode.
+- Fiscal identity is configured and active.
+- Numbering policy is configured and available.
+- Fiscal line basis is present and eligible.
+- Entitlement/VAT privilege context is acceptable where applicable.
+- Digital SI delivery configuration is valid where digital delivery is requested.
+- No recovery, reset, fiscal lock, or continuity block prevents issuance.
+
+If validation fails:
+
+- POS Server shall return a blocked or failed semantic response.
+- Response shall identify the validation area at business/error-code level.
+- POS Server shall not issue the Sales Invoice.
+- Central PMS shall not issue ExitAuthorization on a failed or blocked fiscal issuance response.
+
+Final DTO fields for validation failures remain pending API Contract review.
 
 ### Response Semantics
 
@@ -310,6 +337,9 @@ This family covers digital SI URL retrieval, access status, and channel/terminal
 - Digital SI URL shall not allow unauthorized modification of the SI.
 - Digital SI URL shall not expose unnecessary sensitive data.
 - URL access policy, expiry policy, authentication/access model, and audit treatment remain open for Security/Privacy Review and API Contract review.
+- Customer-facing digital SI URL access is a separate trust boundary from internal POS Server digital SI and presentation APIs.
+- Internal APIs may return URL or presentation metadata to trusted services, channels, or terminals.
+- Customer-facing access must follow the approved public/customer access model, expiry policy, authentication/access policy, privacy rules, and audit treatment.
 - Channels/terminals may receive URL and presentation metadata.
 - QR presentation is a channel/terminal display or print capability.
 - QR presentation is not APM-only.
@@ -622,6 +652,8 @@ Events or audit records may be needed for:
 - Supervised recovery approved/completed.
 - Fiscal exception opened/retried/closed.
 
+POS/fiscal events are audit, integration, and observability signals. POS/fiscal event publication does not grant payment finality, does not issue or imply ExitAuthorization, and must not be treated by consumers as payment or exit authority.
+
 Final event names, payloads, outbox ownership, replay behavior, delivery guarantees, and retention remain open for API Contract Pack and Engineering Pack.
 
 ## 23. WebPay Integration Contract
@@ -748,6 +780,8 @@ This section defines proposed status taxonomy at planning-contract level. Final 
 | Fiscal issuance requested | Issuance request accepted or recorded. |
 | Issued | Fiscal document successfully issued. |
 | Failed | Operation failed and requires handling. |
+| Timed out | Caller did not receive a completion response within the expected window. This is not successful issuance. |
+| Completion unknown | Caller cannot safely determine whether issuance completed and must query status before retrying or authorizing exit. This is not successful issuance. |
 | Retry pending | Controlled retry is queued or expected. |
 | Pending recovery | Operation blocked by recovery/continuity state. |
 | Blocked | Operation cannot proceed due to policy, configuration, authorization, or fiscal state. |
@@ -773,6 +807,8 @@ This section defines proposed status taxonomy at planning-contract level. Final 
 | Digital SI URL active | Digital SI URL is currently accessible according to policy. |
 | Digital SI URL expired | Digital SI URL has expired according to policy. |
 | Digital SI URL revoked | Digital SI URL has been revoked or blocked according to policy. |
+
+Timeout and completion-unknown states must not be treated as successful fiscal issuance. Central PMS shall not issue ExitAuthorization based only on timed-out or completion-unknown status. Idempotent status lookup and retry semantics must prevent duplicate Sales Invoice issuance.
 
 ## 30. Open Questions
 
