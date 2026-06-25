@@ -1,0 +1,45 @@
+@startuml
+title ExitPass Payment-to-Exit Fiscal Sequence
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam participantPadding 24
+skinparam boxPadding 12
+
+actor "Parker / operator" as User
+participant "Payment channel\nWebPay / APM / Cashier /\nEC / operator-assisted" as Channel
+participant "Payment Orchestrator" as Orchestrator
+participant "Central PMS" as PMS
+participant "Resolved Site\nPOS Server" as POS
+participant "Gate / exit execution" as Gate
+participant "Vendor PMS /\nHikCentral" as Vendor
+
+User -> Channel : Initiate or complete\npayment flow
+Channel -> Orchestrator : Submit payment outcome /\nprovider reference
+Orchestrator -> Orchestrator : Verify provider outcome
+Orchestrator -> PMS : Report verified outcome
+PMS -> PMS : Record payment finality
+PMS -> POS : Request Sales Invoice issuance\nfor resolved Site
+POS -> POS : Issue Sales Invoice\nand fiscal records
+POS --> PMS : Fiscal document\nidentity / status
+PMS -> PMS : Record fiscal issuance reference
+PMS -> Gate : Issue ExitAuthorization
+Gate -> Gate : Consume ExitAuthorization
+PMS -> Vendor : Synchronize payment / exit state
+Vendor --> PMS : Acknowledgment / sync status
+
+note over PMS,POS
+No Sales Invoice, no ExitAuthorization,
+unless a supervised, incident-tagged exception
+is allowed by policy.
+end note
+
+note over Vendor
+Vendor acknowledgment is synchronization.
+It is not payment finality or exit authority.
+end note
+
+@enduml

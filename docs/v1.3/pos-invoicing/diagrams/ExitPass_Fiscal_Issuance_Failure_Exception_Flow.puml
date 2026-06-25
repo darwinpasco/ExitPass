@@ -1,0 +1,49 @@
+@startuml
+title ExitPass Fiscal Issuance Failure Exception Flow
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam participantPadding 24
+skinparam boxPadding 12
+
+actor "Parker / operator" as User
+participant "Channel / terminal" as Channel
+participant "Central PMS" as PMS
+participant "Site POS Server" as POS
+participant "Exception / retry workflow" as Exception
+participant "Supervisor" as Supervisor
+participant "Reconciliation" as Reconciliation
+
+PMS -> PMS : Verified payment finality\nis recorded
+PMS -> POS : Request Sales Invoice issuance
+POS -x PMS : Fiscal issuance failure\nor timeout
+PMS -> PMS : Block ExitAuthorization
+PMS -> Exception : Create fiscal issuance\nexception case
+Exception -> Channel : Customer/operator message:\npayment received,\nfiscal issuance pending,\nexit not yet available
+Exception -> POS : Retry Sales Invoice issuance
+
+alt Retry succeeds
+    POS --> Exception : Sales Invoice identity / status
+    Exception --> PMS : Fiscal issuance reference
+    PMS -> PMS : Record fiscal issuance reference
+    PMS -> Channel : ExitAuthorization may proceed
+else Manual release allowed by policy
+    Exception -> Supervisor : Request approval
+    Supervisor --> Exception : Approve with reason
+    Exception -> Reconciliation : Incident tag +\nreconciliation tag
+    Exception --> PMS : Controlled exception closure
+    PMS -> Channel : Manual release outcome\nper policy
+else No approved closure
+    Exception -> Channel : Continue pending / retry\nor operational escalation
+end
+
+note over PMS,Exception
+Payment is not automatically reversed.
+ExitAuthorization is blocked until fiscal issuance succeeds
+or a controlled supervisor-approved exception is allowed.
+end note
+
+@enduml

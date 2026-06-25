@@ -636,3 +636,53 @@ Only genuinely unresolved items are listed here.
 | RMO | Revenue Memorandum Order |
 | SI | Sales Invoice |
 | VAT | Value-Added Tax |
+
+## 36. Appendix C: Diagrams
+
+### C-01 POS/Invoicing Context Diagram
+
+Purpose: Shows the high-level POS/Invoicing context and the authority boundary between Central PMS and the Site POS Server.
+
+![POS/Invoicing Context Diagram](diagrams/ExitPass_POS_Invoicing_Context_Diagram.jpg)
+
+PlantUML source: `diagrams/ExitPass_POS_Invoicing_Context_Diagram.puml`
+
+### C-02 Site-level POS Server Model
+
+Purpose: Shows the Site-level POS Server as the fiscal authority for the resolved Site, with payment channels and terminals modeled as children under the Site POS Server.
+
+![Site-level POS Server Model](diagrams/ExitPass_Site_Level_POS_Server_Model.jpg)
+
+PlantUML source: `diagrams/ExitPass_Site_Level_POS_Server_Model.puml`
+
+### C-03 Payment-to-Exit Fiscal Sequence
+
+Purpose: Shows the required payment-to-exit sequence where verified payment finality is followed by Sales Invoice issuance before ExitAuthorization.
+
+![Payment-to-Exit Fiscal Sequence](diagrams/ExitPass_Payment_to_Exit_Fiscal_Sequence.jpg)
+
+PlantUML source: `diagrams/ExitPass_Payment_to_Exit_Fiscal_Sequence.puml`
+
+### C-04 Channel / Terminal Fiscal Routing Diagram
+
+Purpose: Shows that the payment channel does not decide fiscal authority; the resolved Site determines which Site POS Server issues the Sales Invoice.
+
+![Channel / Terminal Fiscal Routing Diagram](diagrams/ExitPass_Channel_Terminal_Fiscal_Routing.jpg)
+
+PlantUML source: `diagrams/ExitPass_Channel_Terminal_Fiscal_Routing.puml`
+
+### C-05 Fiscal Output and Reporting Model
+
+Purpose: Shows simplified printed outputs alongside complete canonical fiscal records, EJ, POSLog, reports, exports, counters, and audit records.
+
+![Fiscal Output and Reporting Model](diagrams/ExitPass_Fiscal_Output_Reporting_Model.jpg)
+
+PlantUML source: `diagrams/ExitPass_Fiscal_Output_Reporting_Model.puml`
+
+### C-06 Fiscal Issuance Failure Exception Flow
+
+Purpose: Shows the controlled exception path when payment finality exists but Sales Invoice issuance fails or times out.
+
+![Fiscal Issuance Failure Exception Flow](diagrams/ExitPass_Fiscal_Issuance_Failure_Exception_Flow.jpg)
+
+PlantUML source: `diagrams/ExitPass_Fiscal_Issuance_Failure_Exception_Flow.puml`

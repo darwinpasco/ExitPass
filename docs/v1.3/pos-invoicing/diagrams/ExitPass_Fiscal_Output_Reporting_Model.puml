@@ -1,0 +1,67 @@
+@startuml
+title ExitPass Fiscal Output and Reporting Model
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+component "Site POS Server\ncanonical fiscal records" as POS #F3FFF3
+
+rectangle "Customer and printed outputs" #F7FAFF {
+    component "Sales Invoice\nsimplified print" as SI
+    component "Reprints\nlabeled + audited" as Reprints
+    component "Void / refund / cancel /\nreturn adjustment documents" as Adjustments
+}
+
+rectangle "Fiscal records and logs" #FFF9E8 {
+    database "Electronic Journal" as EJ
+    database "POSLog" as POSLog
+    database "Audit records" as Audit
+}
+
+rectangle "Fiscal reports and exports" #F8F5FF {
+    component "X-read" as XRead
+    component "Z-read" as ZRead
+    component "BIR Sales Summary" as Summary
+    component "Annex E /\nstatutory sales books" as AnnexE
+    component "Fiscal exports" as Exports
+}
+
+rectangle "Fiscal counters and totals" #F3FFF3 {
+    component "Reset counter" as ResetCounter
+    component "Z-counter" as ZCounter
+    component "Grand Total Amount" as GTA
+}
+
+POS --> SI
+POS --> Reprints
+POS --> Adjustments
+POS --> EJ
+POS --> POSLog
+POS --> Audit
+POS --> XRead
+POS --> ZRead
+POS --> Summary
+POS --> AnnexE
+POS --> Exports
+POS --> ResetCounter
+POS --> ZCounter
+POS --> GTA
+
+ZRead --> ZCounter : advances per fiscal day close
+ResetCounter --> Audit : increments only on fiscal reset
+GTA --> Summary : reconciles fiscal totals
+EJ --> Exports
+POSLog --> Exports
+Audit --> Exports
+
+note bottom of POS
+Printed outputs are simplified.
+Complete canonical fiscal detail remains in
+digital records, EJ, POSLog, exports,
+reports, and audit.
+end note
+
+@enduml

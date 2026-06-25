@@ -1,0 +1,61 @@
+@startuml
+title ExitPass POS/Invoicing Context Diagram
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+actor "Parker" as Parker
+actor "Finance / audit /\ncompliance users" as Finance
+
+rectangle "Payment channels and terminals" #F7FAFF {
+    component "WebPay" as WebPay
+    component "AutoPay Machine /\nAPM" as APM
+    component "Cashier POS" as Cashier
+    component "EC Device /\nContinuity Terminal" as EC
+    component "Operator-assisted\npayment" as Operator
+}
+
+component "Payment Orchestrator\nprovider outcome verification" as Orchestrator
+component "Central PMS\npayment finality + ExitAuthorization authority" as PMS
+component "Site POS Server\nfiscal issuance + BIR reporting authority" as POS
+component "Vendor PMS /\nHikCentral" as Vendor
+database "BIR / accreditation\nreporting outputs" as BIR
+
+Parker --> WebPay : self-service payment
+Parker --> APM : self-service payment
+Parker --> Cashier : assisted cashier payment
+Parker --> EC : continuity payment
+Parker --> Operator : assisted payment if allowed
+
+WebPay --> Orchestrator : payment flow
+APM --> Orchestrator : payment flow
+Cashier --> Orchestrator : payment flow
+EC --> Orchestrator : payment flow
+Operator --> Orchestrator : payment flow
+
+Orchestrator --> PMS : verified provider outcome
+PMS --> POS : request Sales Invoice\nfor resolved Site
+POS --> PMS : fiscal document\nidentity / status
+PMS --> Vendor : exit synchronization /\nparking status update
+Vendor --> PMS : vendor acknowledgment /\nsync state
+
+POS --> BIR : Sales Invoice, X-read, Z-read,\nBIR Sales Summary, Annex E,\nEJ, POSLog, exports
+Finance --> POS : report review,\naudit, compliance
+Finance --> BIR : submission / review\nwhere required
+
+note bottom of PMS
+Central PMS owns payment finality,
+PaymentAttempt, PaymentConfirmation,
+and ExitAuthorization.
+end note
+
+note bottom of POS
+Site POS Server owns fiscal issuance,
+invoice numbering, counters, EJ,
+POSLog, and BIR reporting.
+end note
+
+@enduml
