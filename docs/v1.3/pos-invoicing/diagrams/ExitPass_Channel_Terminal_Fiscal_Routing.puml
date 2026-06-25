@@ -1,0 +1,47 @@
+@startuml
+title ExitPass Channel / Terminal Fiscal Routing
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+rectangle "Payment channels / terminals" #F7FAFF {
+    component "WebPay" as WebPay
+    component "APM" as APM
+    component "Cashier POS" as Cashier
+    component "EC Device /\nContinuity Terminal" as EC
+    component "Operator-assisted\npayment" as Operator
+    component "Future channels" as Future
+}
+
+component "Central PMS\nsite resolution + payment authority" as PMS
+component "Resolved Site" as Site
+component "Site POS Server\nfiscal authority" as POS
+database "Sales Invoice issuance" as SI
+
+WebPay --> PMS : payment context
+APM --> PMS : payment context
+Cashier --> PMS : payment context
+EC --> PMS : continuity payment context
+Operator --> PMS : assisted payment context
+Future --> PMS : registered channel context
+
+PMS --> Site : resolve Site
+Site --> POS : select Site POS Server
+PMS --> POS : request Sales Invoice
+POS --> SI : issue for resolved Site
+POS --> PMS : fiscal identity / status
+
+note bottom of PMS
+The channel does not decide fiscal authority.
+Central PMS resolves the Site used for fiscal routing.
+end note
+
+note bottom of POS
+The resolved Site decides which Site POS Server
+issues the Sales Invoice.
+end note
+
+@enduml

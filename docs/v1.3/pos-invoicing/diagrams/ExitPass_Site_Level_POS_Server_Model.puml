@@ -1,0 +1,45 @@
+@startuml
+title ExitPass Site-level POS Server Model
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+rectangle "Site Group\ncustomer lookup / payment scope" as SiteGroup #F7FAFF
+
+rectangle "Resolved Site\nreporting, contract, vendor,\nand POS boundary" as Site #F3FFF3 {
+    component "Site POS Server\nfiscal authority for this Site" as POS
+
+    rectangle "Child channels / terminals" #FFF9E8 {
+        component "WebPay" as WebPay
+        component "APM" as APM
+        component "Cashier POS" as Cashier
+        component "EC Device /\nContinuity Terminal" as EC
+        component "Operator-assisted\npayment" as Operator
+        component "Future channels" as Future
+    }
+}
+
+database "Sales Invoice issuance\nbound to resolved Site" as SI
+database "BIR reports scoped to\nSite POS Server" as Reports
+
+SiteGroup --> Site : resolves parking operation\nboundary
+
+WebPay --> POS : child channel
+APM --> POS : child terminal
+Cashier --> POS : child terminal
+EC --> POS : continuity child terminal
+Operator --> POS : child channel if allowed
+Future --> POS : future child channel
+
+POS --> SI : issues Sales Invoice
+POS --> Reports : X-read, Z-read,\nBIR Sales Summary,\nAnnex E, EJ, POSLog
+
+note bottom of POS
+The resolved Site determines the Site POS Server.
+Payment channels do not become independent POS systems.
+end note
+
+@enduml
