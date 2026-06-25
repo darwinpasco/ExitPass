@@ -7,9 +7,11 @@
 | Document title | ExitPass POS/Invoicing Business Requirements Document |
 | Version | v1.0 Markdown draft |
 | Product scope | ExitPass v1.3 POS/Invoicing |
-| Status | Draft for review |
+| Status | Approved baseline |
 | Generated | 2026-06-25 |
 | Output format | Markdown only |
+
+Approval note: `ExitPass_POS_Invoicing_BRD_v1.0.md` is approved as the POS/Invoicing business requirements baseline for ExitPass v1.3 documentation and downstream POS Server System Design work.
 
 ## 2. Executive Summary
 
