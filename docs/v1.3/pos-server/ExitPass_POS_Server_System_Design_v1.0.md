@@ -112,7 +112,7 @@ The following are logical design components, not final code modules or database 
 | Fiscal Issuance Service | Coordinates SI issuance, validates issuance eligibility, applies idempotency, coordinates numbering, creates canonical fiscal records, and returns fiscal identity/status. |
 | Sales Invoice Renderer | Produces approved printed and digital SI representations from canonical fiscal facts. |
 | Digital SI URL Service | Creates and manages digital SI URL access according to security, privacy, retention, expiry, and audit policy. Open for Security/Privacy Review and POS Server API Contract. |
-| QR Presentation Support boundary | Provides channel/terminal presentation data for QR code display/print without making the terminal fiscal authority. |
+| QR Presentation Support boundary | Defines presentation rules and metadata needed by channels/terminals for QR code display/print. The channel/terminal performs QR presentation where supported; this boundary does not make the terminal fiscal authority. |
 | Numbering and Counter Service | Manages SI sequence, adjustment sequence, reset counter, Z-counter, Grand Total Amount accumulator, and related audit snapshots. |
 | X/Z Reporting Service | Produces X-read and Z-read for approved fiscal scopes. Open for BIR/accounting confirmation on scope. |
 | BIR Sales Summary Service | Produces required sales summary report from canonical fiscal facts. |
@@ -204,6 +204,8 @@ The Sales Invoice lifecycle shall follow the approved authority sequence:
 
 Idempotent issuance behavior shall prevent duplicate fiscal documents for retried issuance requests. The final strategy for sequence reservation, failed attempts, abandoned issuance, and gaps is open for BIR/accounting confirmation and POS Server API Contract.
 
+Central PMS integration, eventing/outbox design, and POS Server API Contract shall explicitly account for idempotent SI issuance and retry semantics so that retries, timeouts, and sequence-gap cases do not create duplicate fiscal documents or silently skip required fiscal audit records. See Sections 14, 30, 31, 38, 40, and Open Question `PSD-OQ-018`.
+
 Reprints and repeated digital access shall not mutate the original fiscal document or fiscal event. They shall be controlled and audited where required.
 
 See Diagram PSD-D03 in Section 43.
@@ -248,8 +250,11 @@ QR code presentation:
 - QR code presentation is a channel/terminal display or print capability.
 - QR code presentation is not APM-only.
 - APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted terminals, and future channels may present the QR where supported.
+- POS Server owns digital SI URL generation and the presentation rules/metadata needed by channels and terminals.
+- Channels and terminals perform QR code display or print where supported.
 - QR presentation does not make the terminal/channel the fiscal issuer.
 - Site POS Server remains the fiscal issuer.
+- QR rendering may be implemented by the channel/terminal or another approved presentation component in later API/implementation design; this system design does not require QR rendering to be an internal POS Server implementation detail.
 
 Open for POS Server API Contract: final way channel/terminal receives URL or QR presentation payload.
 
@@ -282,6 +287,7 @@ Proposed design posture:
 - Keep sequence generation auditable and tied to canonical fiscal records.
 - Support idempotent issuance and controlled retry without duplicate fiscal documents.
 - Do not finalize sequence gap behavior until BIR/accounting confirms reserved, failed, voided, abandoned, or skipped number treatment.
+- Align numbering, sequence-gap, retry, and idempotency handling with Central PMS integration, eventing/outbox, and POS Server API Contract design. See Sections 30, 31, 38, 40, and Open Question `PSD-OQ-018`.
 
 ## 15. Fiscal Line Model
 
@@ -615,7 +621,13 @@ If SI issuance fails or times out after verified payment finality:
 - Manual release, if allowed, shall be supervisor-approved, incident-tagged, and reconciliation-tagged.
 - POS Server still shall not issue ExitAuthorization.
 
+Offline fiscal issuance is disabled or restricted by default until BIR/accounting approves a compliant model. APM, Cashier POS, EC Device / Continuity Terminal, and operator-assisted workflows must not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
+
+Central PMS integration, eventing/outbox, and POS Server API Contract shall account for retry idempotency, failed issuance, abandoned issuance, reserved numbers, and sequence-gap treatment without defining final endpoint paths, DTOs, database tables, or status codes in this document.
+
 Open for POS Server API Contract: final status model, retry contract, idempotency key/identity concept, and exception closure contract.
+
+Open for BIR/accounting confirmation: sequence-gap, reserved-number, failed-issuance, abandoned-issuance, and offline fiscal issuance treatment.
 
 Open for implementation: final retry queue/worker mechanism.
 
@@ -643,6 +655,8 @@ POS Server shall:
 - Return failure/timeout/error status without granting exit authority.
 
 Open for POS Server API Contract: final request/response shape and status model.
+
+Open for POS Server API Contract: issuance idempotency identity, retry behavior, duplicate-request handling, timeout handling, and sequence-gap treatment. See Section 40 and Open Question `PSD-OQ-018`.
 
 ## 32. Integration With Payment Orchestrator
 
@@ -727,6 +741,8 @@ Design rules:
 - Continuity mode shall preserve Central PMS payment finality and ExitAuthorization authority.
 - Digital SI URL and QR presentation may be supported under approved continuity model.
 - Fiscal sequence and counter continuity must not be weakened by continuity mode.
+- EC Device / Continuity Terminal, APM, Cashier POS, and operator-assisted workflows shall not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
+- Degraded/continuity operation shall preserve Central PMS payment finality and ExitAuthorization authority.
 
 Open for BIR/accounting confirmation: offline fiscal issuance allowance, sequence, counter, reconciliation, and evidence controls.
 
@@ -771,6 +787,8 @@ Candidate events/records:
 - Supervised recovery approved/completed.
 
 Open for API Contract Pack and Engineering Pack: final event names, payloads, delivery guarantees, outbox ownership, replay behavior, and retention.
+
+Eventing and outbox design shall explicitly account for idempotent SI issuance, retry semantics, failed issuance, abandoned issuance, reserved numbers, and sequence-gap auditability. These concerns shall be resolved with the POS Server API Contract and BIR/accounting confirmation; this document does not define final event schemas or payloads.
 
 ## 39. Database Design Impact
 
@@ -817,6 +835,8 @@ Future POS Server API Contract impact areas:
 - Fiscal identity configuration.
 
 Open for POS Server API Contract: final endpoint paths, DTOs, status codes, idempotency model, authentication/authorization, error model, event model, and versioning.
+
+The POS Server API Contract shall explicitly define retry and idempotency semantics for SI issuance, exception handling, fiscal document lookup/status, and Central PMS fiscal reference recording. It shall also define how sequence gaps, reserved numbers, failed issuance, and abandoned issuance are represented once BIR/accounting treatment is confirmed.
 
 ## 41. Observability and Operations
 
@@ -1010,3 +1030,30 @@ PlantUML source: `diagrams/ExitPass_POS_Server_Fiscal_Issuance_Failure_Retry_Flo
 | POS Server Engineering Pack v1.0 | Define implementation plan, test plan, runbooks, operations, certification support, and release controls. |
 | BIR/accreditation confirmation package | Resolve numbering, identity metadata, print/report layouts, export formats, sample outputs, and supplier/applicant responsibility. |
 | Security/Privacy review package | Resolve digital SI URL access, expiry, authentication, audit, evidence handling, retention, and privileged access controls. |
+
+### Appendix C: Compact BRD-to-System Design Traceability
+
+This appendix maps approved BRD decisions and acceptance themes to the main POS Server System Design sections, diagrams, and open questions. It is intentionally compact and is not a full requirements traceability matrix.
+
+| BRD decision / acceptance theme | System Design sections | Diagrams | Related open questions |
+| --- | --- | --- | --- |
+| Platform-wide POS/Invoicing scope | Sections 2, 5, 6, 9, 31-37 | PSD-D01, PSD-D03 | None |
+| Site-level POS Server model | Sections 4, 5, 6, 9, 31-37 | PSD-D01, PSD-D02 | PSD-OQ-004, PSD-OQ-015 |
+| Channels/terminals as children of Site POS Server | Sections 6, 9, 33-37 | PSD-D01, PSD-D04 | PSD-OQ-004, PSD-OQ-005, PSD-OQ-006, PSD-OQ-017 |
+| Central PMS payment finality authority | Sections 7, 11, 30, 31, 32 | PSD-D01, PSD-D03, PSD-D07 | PSD-OQ-009, PSD-OQ-018 |
+| Central PMS ExitAuthorization authority | Sections 7, 11, 30, 31, 34-37 | PSD-D01, PSD-D03, PSD-D07 | PSD-OQ-008, PSD-OQ-009 |
+| POS Server fiscal authority | Sections 6, 7, 8, 10, 11, 18-25, 28-29 | PSD-D01, PSD-D02, PSD-D05, PSD-D06 | PSD-OQ-001, PSD-OQ-002, PSD-OQ-004, PSD-OQ-018, PSD-OQ-019 |
+| Sales Invoice lifecycle | Sections 10, 11, 12, 13, 14, 31 | PSD-D03, PSD-D04, PSD-D05 | PSD-OQ-001, PSD-OQ-016, PSD-OQ-018 |
+| Fiscal issuance before ExitAuthorization | Sections 7, 11, 30, 31 | PSD-D03, PSD-D07 | PSD-OQ-009, PSD-OQ-018 |
+| Printed and digital Sales Invoice consistency | Sections 11, 12, 13, 15, 20, 25 | PSD-D04, PSD-D05 | PSD-OQ-016 |
+| Digital SI URL | Sections 8, 11, 12, 13, 25, 27, 40 | PSD-D04, PSD-D05 | PSD-OQ-016 |
+| QR code as channel/terminal presentation capability | Sections 8, 9, 13, 33-37 | PSD-D04 | PSD-OQ-017 |
+| Reset counter vs Z-counter | Sections 14, 17, 18, 28, 29 | PSD-D06 | PSD-OQ-003, PSD-OQ-007, PSD-OQ-020 |
+| Grand Total Amount, EJ hash, and recovery continuity | Sections 18, 20, 25, 28, 29, 39 | PSD-D06 | PSD-OQ-019, PSD-OQ-020, PSD-OQ-022 |
+| X-read and Z-read | Sections 17, 18, 41, 42 | PSD-D05, PSD-D06 | PSD-OQ-007 |
+| BIR Sales Summary and Annex E | Sections 15, 16, 19, 22, 42 | PSD-D05 | PSD-OQ-010, PSD-OQ-011, PSD-OQ-012, PSD-OQ-013, PSD-OQ-014 |
+| EJ and POSLog | Sections 11, 15, 20, 21, 22, 25, 28, 29 | PSD-D05, PSD-D06 | PSD-OQ-013, PSD-OQ-019 |
+| Reprints and adjustments | Sections 11, 23, 24, 25, 26, 40 | PSD-D05 | PSD-OQ-002, PSD-OQ-009 |
+| Security/RBAC and segregation of duties | Sections 26, 28, 29, 30, 41 | PSD-D02, PSD-D06, PSD-D07 | PSD-OQ-021 |
+| Privacy/evidence and digital SI URL access | Sections 13, 16, 25, 27, 40 | PSD-D04 | PSD-OQ-011, PSD-OQ-016, PSD-OQ-023 |
+| Open numbering, fiscal identity, export, X/Z scope, and recovery questions | Sections 10, 14, 17, 22, 28, 29, 38-40, 44 | PSD-D05, PSD-D06 | PSD-OQ-001, PSD-OQ-002, PSD-OQ-004, PSD-OQ-007, PSD-OQ-013, PSD-OQ-018, PSD-OQ-019, PSD-OQ-020 |
