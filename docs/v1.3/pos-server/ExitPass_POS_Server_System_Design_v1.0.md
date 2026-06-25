@@ -7,10 +7,11 @@
 | Document title | ExitPass POS Server System Design |
 | Version | v1.0 Markdown draft |
 | Product scope | ExitPass v1.3 POS Server |
-| Status | Draft for technical review |
+| Status | Approved baseline |
 | Generated | 2026-06-25 |
 | Output format | Markdown only |
 | BRD baseline | `docs/v1.3/pos-invoicing/ExitPass_POS_Invoicing_BRD_v1.0.md` |
+| Approval note | `ExitPass_POS_Server_System_Design_v1.0.md` is approved as the POS Server System Design baseline for ExitPass v1.3 documentation and downstream POS Server API Contract, POS Server Database Design, Engineering Pack, BIR/accreditation confirmation package, and implementation planning. |
 
 ## 2. Purpose and Scope
 
