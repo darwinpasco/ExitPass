@@ -9,7 +9,6 @@
 | Product scope | ExitPass v1.3 POS/Invoicing |
 | Status | Draft for review |
 | Generated | 2026-06-25 |
-| Branch | `docs/v1.3-pos-invoicing-brd` |
 | Output format | Markdown only |
 
 ## 2. Executive Summary
@@ -309,14 +308,18 @@ If fiscal issuance fails or times out after payment finality:
 | SI-005 | Detailed fiscal data shall remain available in backend fiscal records, EJ, POSLog, JSON/PDF/export, and audit records. |
 | SI-006 | Sales Invoice numbering pattern remains subject to BIR/accounting confirmation. |
 | SI-007 | The system shall not force long technical payloads into printed Sales Invoice output. |
+| SI-008 | POS Server shall support rendering all BIR-required Sales Invoice identity, header, and footer metadata once assignment is confirmed by BIR/accounting. |
+| SI-009 | Sales Invoice identity/header/footer support shall include taxpayer or registered business name, registered address, TIN and VAT/non-VAT classification, Site or branch/location identity, POS Server fiscal identity, and terminal/channel identity where applicable. |
+| SI-010 | Sales Invoice identity/header/footer support shall include MIN, PTU or ATG details if applicable, serial number, terminal number, software name and version, supplier accreditation metadata, required BIR footer text, and required non-input-tax warning where applicable. |
+| SI-011 | The assignment of MIN, PTU, ATG, serial number, terminal number, software version, and supplier accreditation metadata between Site POS Server and terminals/channels remains an open compliance question. |
 
 ## 17. X-read, Z-read, Reset Counter, and Grand Total Requirements
 
 | ID | Requirement |
 | --- | --- |
-| XZ-001 | POS Server shall support X-read for required cashier, terminal, and/or Site scope as confirmed by BIR/accounting. |
-| XZ-002 | POS Server shall support Z-read for applicable fiscal day close. |
-| XZ-003 | Z-read shall advance the Z-counter. |
+| XZ-001 | POS Server shall support X-read for BIR/accounting-approved operational scopes, potentially including cashier/session, terminal/channel, and Site POS Server scope. |
+| XZ-002 | POS Server shall support Z-read to close the applicable fiscal day for the approved fiscal scope. |
+| XZ-003 | Z-read shall advance the Z-counter per Z-reading / fiscal day close. |
 | XZ-004 | Z-counter shall be separate from reset counter. |
 | XZ-005 | Reset counter shall start from zero. |
 | XZ-006 | Reset counter shall increment only on fiscal reset. |
@@ -324,12 +327,14 @@ If fiscal issuance fails or times out after payment finality:
 | XZ-008 | POS Server shall preserve reset timestamp, reset reason, approving user, and recovery/reference notes when reset occurs. |
 | XZ-009 | POS Server shall maintain Grand Total Amount accumulator and audit references required for BIR Sales Summary and fiscal continuity. |
 | XZ-010 | X-read and Z-read printed outputs should be simplified and aligned to BIR-acceptable layouts. |
+| XZ-011 | Reset counter shall not advance per Z-read. |
+| XZ-012 | The exact X-read and Z-read aggregation model remains open for POS Server System Design and BIR/accounting confirmation. |
 
 ## 18. BIR Sales Summary and Annex E Reporting Requirements
 
 | ID | Requirement |
 | --- | --- |
-| REP-001 | POS Server shall treat BIR Sales Summary as a first-class required fiscal report. |
+| REP-001 | POS Server shall treat BIR Sales Summary as a first-class required fiscal report, not optional analytics. |
 | REP-002 | BIR Sales Summary shall reconcile to Sales Invoice sequence, Z-counter, reset counter, VAT and deductions, fiscal totals, and supporting fiscal records. |
 | REP-003 | POS Server shall support Annex E-1 BIR Sales Summary report requirements. |
 | REP-004 | POS Server shall support Annex E-2 Senior Citizen report requirements for applicable transactions. |
@@ -338,6 +343,9 @@ If fiscal issuance fails or times out after payment finality:
 | REP-007 | POS Server fiscal model shall provide for Annex E-5 Solo Parent report structures as future-supported category support. |
 | REP-008 | Whether NAAC and Solo Parent report structures must be active in v1.3 despite future operational workflows remains open. |
 | REP-009 | POS Server shall keep report source data reconcilable with EJ, POSLog, Sales Invoice, X-read, Z-read, and fiscal audit records. |
+| REP-010 | Annex E and statutory sales book structures shall be extensible for NAAC and Solo Parent even if operational entitlement workflows are future-supported. |
+| REP-011 | BIR Sales Summary and Annex E reporting shall preserve Diplomat VAT Privilege / VAT Exemption as an active VAT privilege / VAT exemption treatment, not an ordinary discount. |
+| REP-012 | Exact BIR Sales Summary, Annex E, and statutory sales book treatment for Diplomat VAT Privilege / VAT Exemption remains open pending BIR/accounting confirmation. |
 
 ## 19. Entitlement, Discount, and VAT Privilege Requirements
 
@@ -365,6 +373,11 @@ If fiscal issuance fails or times out after payment finality:
 | ADJ-006 | POS Server shall support controlled Sales Invoice, X-read, Z-read, and EJ reprints. |
 | ADJ-007 | Reprints shall be labeled and audited. |
 | ADJ-008 | Reprints shall not mutate the original fiscal document or original fiscal event. |
+| ADJ-009 | Fiscal adjustment documents shall reference the original Sales Invoice or fiscal document. |
+| ADJ-010 | Reversal or adjustment values shall be represented according to BIR/accounting confirmation. |
+| ADJ-011 | Required fiscal warnings, including non-input-tax warning where applicable, shall be supported for adjustment documents. |
+| ADJ-012 | Adjustment actions shall be restricted, reason-coded, auditable, and linked to payment, refund, or reversal evidence where applicable. |
+| ADJ-013 | Adjustment document numbering remains open pending BIR/accounting confirmation. |
 
 ## 21. Fiscal Audit, EJ, POSLog, Export, and Retention Requirements
 
@@ -377,6 +390,10 @@ If fiscal issuance fails or times out after payment finality:
 | AUD-005 | POS Server shall support required export formats once confirmed by BIR/accounting. |
 | AUD-006 | Fiscal records shall be retained and protected according to BIR and compliance requirements. |
 | AUD-007 | Fiscal records shall be protected against unauthorized deletion, mutation, rollback, duplication, and tampering. |
+| AUD-008 | Sales Invoice, Electronic Journal, POSLog, X-read, Z-read, BIR Sales Summary, Annex E reports / statutory sales books, fiscal exports, and audit records shall reconcile from canonical fiscal records and shall not diverge from each other. |
+| AUD-009 | Fiscal export capabilities are expected to support BIR-confirmed formats and candidate outputs including Electronic Journal replica/export, printable/report exports, structured digital exports such as JSON or equivalent, and PDF or equivalent human-readable exports. |
+| AUD-010 | Fiscal export capabilities are expected to support POSLog, including ARTS POSLog if confirmed, and BIR Sales Summary and Annex E report exports. |
+| AUD-011 | Exact mandatory fiscal export formats remain open pending BIR/accounting confirmation. |
 
 ## 22. Exception and Failure Handling
 
@@ -411,6 +428,8 @@ If fiscal issuance fails or times out after payment finality:
 | SEC-005 | Reprint, void/refund/cancel/return, export, reset, restore, recovery, and configuration actions shall require authorized roles. |
 | SEC-006 | Sensitive fiscal and evidence access shall be audited. |
 | SEC-007 | Supervisor approval shall be required for manual release after fiscal issuance failure if such release is allowed by policy. |
+| SEC-008 | The system shall support role separation expectations for cashier, supervisor, fiscal administrator, compliance auditor, recovery/DR approver, and system administrator responsibilities. |
+| SEC-009 | High-risk fiscal actions shall require appropriate authorization and audit, including Z-close, fiscal reset, reprint, void/refund/cancel/return, export, fiscal configuration changes, and recovery/restore actions. |
 
 ## 25. Data Privacy and Evidence Handling
 
@@ -422,6 +441,7 @@ If fiscal issuance fails or times out after payment finality:
 | PRIV-004 | The system shall support evidence references where appropriate rather than unnecessary duplication of sensitive evidence data. |
 | PRIV-005 | Evidence access shall be logged and restricted to authorized roles. |
 | PRIV-006 | Fiscal retention and evidence retention may differ and must be explicitly confirmed before implementation. |
+| PRIV-007 | Candidate evidence for Diplomat VAT Privilege / VAT Exemption may include BIR-issued VAT Certificate, VAT Identification Card, DFA/BIR-issued documentation, or other approved supporting evidence, pending final confirmation. |
 
 ## 26. Reporting and Reconciliation
 
@@ -481,6 +501,12 @@ If fiscal issuance fails or times out after payment finality:
 | Reset counter is confused with Z-counter | Fiscal counters and reports become inaccurate. | Separate reset counter and Z-counter requirements. |
 | Restore resumes from stale fiscal state | Fiscal sequences, EJ, Grand Total Amount, or counters may be rolled back. | Require tamper-evident append-only state and supervised recovery if continuity cannot be proven. |
 | Offline issuance creates duplicate sequence | Fiscal records may be duplicated or skipped. | Keep offline fiscal issuance restricted until approved. |
+| MIN/PTU/serial/software/supplier assignment is incorrect | Sales Invoice identity, footer, accreditation, and audit records may be non-compliant. | Keep assignment open until BIR/accounting confirms the Site POS Server and terminal/channel treatment. |
+| Fiscal numbering pattern is ambiguous | Sales Invoice and adjustment document sequences may be rejected or difficult to audit. | Confirm numbering patterns before POS Server System Design and implementation. |
+| X-read and Z-read scope is ambiguous | Cashier, terminal, and Site totals may not reconcile to BIR/accounting expectations. | Confirm approved fiscal aggregation scope and keep X/Z requirements scope-aware. |
+| Supplier/applicant responsibility is ambiguous | Accreditation package, manuals, source documentation, and footer metadata may identify the wrong responsible party. | Resolve software supplier/applicant, POS user/PTU applicant, and vendor/operator responsibility split before accreditation submission. |
+| Fiscal export format mismatches BIR expectation | EJ, POSLog, BIR Sales Summary, Annex E, or audit exports may require rework or fail review. | Keep export formats open and confirm mandatory formats before implementation. |
+| Diplomat VAT Privilege evidence is mishandled | Sensitive evidence may be over-collected, under-retained, or insufficient for VAT exemption support. | Confirm accepted evidence, retention, access, and reporting treatment with compliance/accounting. |
 
 ## 31. Open Questions
 
@@ -499,6 +525,11 @@ Only genuinely unresolved items are listed here.
 | OQ-009 | What exact implementation mechanism shall prove DR/restore and counter continuity for a Site-level POS Server? | POS Server System Design, security, compliance |
 | OQ-010 | What export formats are mandatory versus optional for EJ, Sales Invoice, X-read, Z-read, BIR Sales Summary, Annex E reports, and POSLog? | BIR/accounting advisor |
 | OQ-011 | What final accreditation sample set is required? | BIR/accounting advisor, compliance |
+| OQ-012 | What exact Sales Invoice numbering pattern is required? | BIR/accounting advisor, compliance |
+| OQ-013 | What exact adjustment document numbering pattern is required for void/refund/cancel/return or related fiscal adjustment documents? | BIR/accounting advisor, compliance |
+| OQ-014 | Should reset counter be printed separately, appended to the fiscal document number, or both? | BIR/accounting advisor, compliance |
+| OQ-015 | What approved X-read and Z-read scope should ExitPass support: Site-level only, terminal-level, cashier/session-level, or combined Site + terminal + cashier/session model? | BIR/accounting advisor, finance/accounting, operations |
+| OQ-016 | Who is the software supplier/applicant, who is the POS user / PTU applicant, and how are Hikvision, Pro Parking, PPMC/Park Secure, and ExitPass responsibilities split for footer text, manuals, source documentation, and accreditation package content? | BIR/accounting advisor, compliance, legal, vendor management |
 
 ## 32. Acceptance Criteria
 
@@ -524,25 +555,42 @@ Only genuinely unresolved items are listed here.
 | AC-018 | Payment Orchestrator and WebPay do not declare platform payment finality. |
 | AC-019 | Printed Sales Invoice, X-read, and Z-read outputs are simplified while detailed canonical data remains digitally available. |
 | AC-020 | POS Server preserves fiscal continuity across reset, restore, failover, repair, and recovery events or blocks issuance pending supervised recovery. |
+| AC-021 | Operator-assisted payment, if allowed, routes fiscal issuance to the resolved Site POS Server. |
+| AC-022 | Future payment channels register as child channels/terminals under the Site POS Server and do not become independent POS systems. |
+| AC-023 | POS Server supports required Sales Invoice identity, header, and footer metadata once BIR/accounting assignment is confirmed. |
+| AC-024 | Fiscal outputs reconcile from canonical fiscal records so Sales Invoice, EJ, POSLog, X-read, Z-read, BIR Sales Summary, Annex E reports, exports, and audit records do not diverge. |
+| AC-025 | X-read and Z-read scope remains configurable or design-resolved according to BIR/accounting-approved fiscal scope. |
+| AC-026 | Adjustment documents reference the original fiscal document and are audited. |
 
 ## 33. Requirements Traceability Matrix
 
 | Source / decision | BRD requirement IDs | BRD sections |
 | --- | --- | --- |
 | POS/Invoicing is platform-wide | FR-001, FR-002, CH-WP-001, CH-APM-001, CH-CASH-001, CH-EC-001, CH-OP-001 | 9, 10, 11, 14, 15 |
+| Operator-assisted payment channel | CH-OP-001 to CH-OP-004, AC-021 | 15, 32 |
+| Future payment channels | FR-011, NFR-005, AC-022 | 10, 11, 27, 32 |
 | Sales Invoice as primary parking fiscal output | FR-003, SI-001, SI-002, AC-001 | 14, 16, 32 |
+| Sales Invoice identity/header/footer metadata | SI-003, SI-008 to SI-011, AC-023 | 16, 32 |
+| Sales Invoice and adjustment numbering open question | SI-006, ADJ-013, OQ-012, OQ-013 | 16, 20, 31 |
 | Site-level POS Server model | FR-002, FR-011, CH-WP-001, CH-APM-001, CH-CASH-001, CH-EC-001 | 10, 11, 15 |
 | Central PMS authority model | FR-004, FR-005, FR-006, SEC-002, SEC-003, SEC-004 | 12, 14, 24 |
 | Fiscal issuance before ExitAuthorization | FR-007, FR-008, FR-009, EXC-001, AC-001, AC-002 | 13, 14, 22, 32 |
-| Reset counter and Z-counter distinction | FR-016, FR-017, FR-018, XZ-003, XZ-004, XZ-005, XZ-006, AC-008, AC-009 | 17, 32 |
+| Reset counter and Z-counter distinction | FR-016, FR-017, FR-018, XZ-003, XZ-004, XZ-005, XZ-006, XZ-011, AC-008, AC-009 | 17, 32 |
+| Reset audit snapshot and Grand Total Amount continuity | XZ-007, XZ-008, XZ-009, FR-026 to FR-029, BCP-005, AC-020 | 14, 17, 23, 32 |
+| Reset counter display/append behavior open question | OQ-014 | 31 |
+| X-read and Z-read scope and aggregation open question | XZ-001, XZ-002, XZ-012, OQ-015, AC-025 | 17, 31, 32 |
 | BIR Sales Summary first-class report | REP-001, REP-002, REP-003, REC-003, AC-010 | 18, 26, 32 |
 | Printed output simplification | FR-013, SI-004, SI-005, XZ-010, AC-019 | 16, 17, 32 |
 | Entitlement model | FR-023, FR-024, FR-025, ENT-001 to ENT-009, AC-011, AC-012, AC-013 | 19, 32 |
 | Fiscal line classification | FR-021, FR-022, SI-003, REP-002, REC-001 | 14, 16, 18, 26 |
-| Void/refund/cancel/return and reprint | FR-014, FR-015, ADJ-001 to ADJ-008, AC-014, AC-015 | 20, 32 |
-| EJ, POSLog, export, retention | AUD-001 to AUD-007, AC-016 | 21, 32 |
+| Diplomat VAT Privilege / VAT Exemption evidence handling | ENT-006 to ENT-009, PRIV-002, PRIV-003, PRIV-007, OQ-005, OQ-006 | 19, 25, 31 |
+| Void/refund/cancel/return and reprint | FR-014, FR-015, ADJ-001 to ADJ-013, AC-014, AC-015, AC-026 | 20, 32 |
+| EJ, POSLog, export, retention | AUD-001 to AUD-011, AC-016 | 21, 32 |
+| Canonical fiscal output reconciliation | AUD-004, AUD-008, REC-001, REC-003, AC-024 | 21, 26, 32 |
 | DR/restore and fiscal continuity | FR-026 to FR-029, BCP-005, AC-020 | 14, 23, 32 |
-| Open MIN/PTU/serial assignment | OQ-001, OQ-002, OQ-003 | 10, 11, 31 |
+| Accreditation sample package | OQ-011, OQ-016 | 31 |
+| Supplier/applicant responsibility | OQ-016 | 31 |
+| Open MIN/PTU/serial/software/supplier accreditation assignment | SI-011, OQ-001, OQ-002, OQ-003, OQ-016 | 10, 11, 16, 31 |
 | Open tax and Diplomat details | OQ-004, OQ-005, OQ-006 | 19, 25, 31 |
 | Open offline fiscal issuance | BCP-002, BCP-003, OQ-008 | 23, 31 |
 
@@ -575,7 +623,7 @@ Only genuinely unresolved items are listed here.
 | BIR | Bureau of Internal Revenue |
 | BRD | Business Requirements Document |
 | DR | Disaster Recovery |
-| EC | Emergency/Exception/Continuity, as applied to ExitPass continuity terminal context pending final naming |
+| EC | Emergency/Exception/Continuity, as applied to ExitPass continuity terminal context; final terminology remains pending |
 | EJ | Electronic Journal |
 | MIN | Machine Identification Number |
 | NAAC | National Athletes and Coaches |
