@@ -1,0 +1,61 @@
+@startuml
+title ExitPass POS Server Component Architecture
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+rectangle "Site POS Server\nlogical design boundary" #F3FFF3 {
+    rectangle "Security / RBAC boundary" #FFF3F3 {
+        component "Fiscal Issuance\nService" as Issuance
+        component "Sales Invoice\nRenderer" as Renderer
+        component "Digital SI URL\nService" as Url
+        component "Numbering and\nCounter Service" as Counter
+        component "Fiscal Identity /\nTerminal Registry" as Registry
+        component "Fiscal Audit\nService" as Audit
+    }
+
+    rectangle "Reporting and records" #F7FAFF {
+        component "X/Z Reporting\nService" as XZ
+        component "BIR Sales Summary\nService" as Summary
+        component "Annex E Reporting\nService" as Annex
+        component "Electronic Journal\nService" as EJ
+        component "POSLog Export\nService" as POSLog
+        component "Fiscal Retention /\nExport Service" as Export
+    }
+
+    rectangle "Controlled fiscal actions" #FFF9E8 {
+        component "Fiscal Adjustment\nService" as Adjustment
+        component "Reprint Control\nService" as Reprint
+    }
+}
+
+component "QR Presentation Support\nchannel/terminal boundary" as QR
+database "Canonical fiscal\nrecords" as Canonical
+
+Issuance --> Counter
+Issuance --> Registry
+Issuance --> Renderer
+Issuance --> Url
+Issuance --> Canonical
+Renderer --> QR : SI URL / QR payload\nwhere supported
+Canonical --> EJ
+Canonical --> POSLog
+Canonical --> XZ
+Canonical --> Summary
+Canonical --> Annex
+Canonical --> Export
+Adjustment --> Canonical
+Reprint --> Canonical
+Audit --> Canonical
+Counter --> Canonical
+
+note bottom of Canonical
+Logical components only.
+This diagram does not define final code modules,
+tables, DTOs, or endpoint paths.
+end note
+
+@enduml

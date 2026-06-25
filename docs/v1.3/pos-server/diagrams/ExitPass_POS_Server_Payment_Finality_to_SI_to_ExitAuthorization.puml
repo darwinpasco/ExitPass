@@ -1,0 +1,41 @@
+@startuml
+title ExitPass Payment Finality to Sales Invoice to ExitAuthorization
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+skinparam participantPadding 24
+skinparam boxPadding 12
+
+participant "Payment Orchestrator" as Orchestrator
+participant "Central PMS" as PMS
+participant "Resolved Site\nPOS Server" as POS
+participant "Gate Integration /\nExitAuthorization consumer" as Gate
+participant "Vendor PMS /\nHikCentral" as Vendor
+
+Orchestrator -> Orchestrator : Verify provider outcome
+Orchestrator -> PMS : Report verified outcome
+PMS -> PMS : Record payment finality
+PMS -> POS : Request Sales Invoice issuance\nfor resolved Site
+POS -> POS : Issue Sales Invoice\nand fiscal records
+POS --> PMS : SI identity/status\nand digital SI URL if applicable
+PMS -> PMS : Record fiscal reference
+PMS -> Gate : Issue ExitAuthorization
+Gate -> Gate : Consume ExitAuthorization
+PMS -> Vendor : Synchronize payment / exit state
+Vendor --> PMS : Acknowledgment / status
+
+note over PMS,POS
+Fiscal issuance happens after payment finality
+and before ExitAuthorization.
+POS Server never issues ExitAuthorization.
+end note
+
+note over Vendor
+Vendor PMS acknowledgment is synchronization only.
+It is not payment finality or exit authority.
+end note
+
+@enduml

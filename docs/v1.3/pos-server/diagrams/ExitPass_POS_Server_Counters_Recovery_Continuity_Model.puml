@@ -1,0 +1,51 @@
+@startuml
+title ExitPass POS Server Counters and Recovery Continuity Model
+
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 200
+skinparam defaultTextAlignment center
+
+rectangle "Fiscal state" #F3FFF3 {
+    component "Sales Invoice\nsequence" as SISeq
+    component "Adjustment document\nsequence" as AdjSeq
+    component "Reset counter" as Reset
+    component "Z-counter" as ZCounter
+    component "Grand Total Amount\naccumulator" as GTA
+    component "Latest EJ hash" as EJHash
+    component "Last fiscal event\ntimestamp" as LastEvent
+}
+
+database "Backup / restore /\nfailover input" as Backup
+component "Continuity check" as Check
+component "Supervised recovery\ngate" as Gate
+database "Recovery audit\nrecord" as Audit
+component "Fiscal issuance\nresume / block" as Resume
+
+SISeq --> Check
+AdjSeq --> Check
+Reset --> Check
+ZCounter --> Check
+GTA --> Check
+EJHash --> Check
+LastEvent --> Check
+Backup --> Check
+
+Check --> Resume : continuity proven
+Check --> Gate : continuity not proven
+Gate --> Audit : approval, reason,\nreference notes
+Audit --> Resume : controlled resume\nor continued block
+
+note bottom of Check
+POS Server must never resume from lower counters,
+lower Grand Total Amount, earlier SI sequence,
+or broken fiscal continuity.
+end note
+
+note bottom of Reset
+Reset counter increments only on fiscal reset.
+Z-counter advances per Z-reading / fiscal day close.
+end note
+
+@enduml
