@@ -1,0 +1,38 @@
+@startuml
+title D-02 Operator Console Module Boundary Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+rectangle "Operator Console\nnon-payment governance" as Console {
+  component "Session lookup display" as Lookup
+  component "Statutory discount review" as DiscountReview
+  component "Evidence review" as Evidence
+  component "Continuity approval / review" as ContinuityReview
+  component "Fiscal exception review" as FiscalReview
+  component "Manual release governance" as Manual
+  component "Operator reports" as Reports
+}
+
+component "Assisted Payment Terminal\ncashier / continuity payment workflow" as APT
+component "WebPay\ncustomer payment surface" as WebPay
+component "Payment Orchestrator\nprovider interaction" as Pay
+component "Site POS Server\nSales Invoice issuer" as POS
+component "Central PMS\npayment finality + ExitAuthorization" as Central
+component "Gate / Exit\nexecution" as Gate
+
+Console ..> APT : review / supervise, not replace
+Console ..> WebPay : status context only
+Console ..> Pay : no direct provider interaction
+Console ..> POS : fiscal status review only
+Console ..> Central : approved governance workflows
+Console ..> Gate : no direct gate execution
+
+note bottom of Console
+Operator Console may display states,
+but authority remains with Central PMS,
+Discount workflow, POS Server, and gate systems.
+end note
+
+@enduml

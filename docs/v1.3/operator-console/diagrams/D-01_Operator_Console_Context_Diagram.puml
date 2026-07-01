@@ -1,0 +1,45 @@
+@startuml
+title D-01 Operator Console Context Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Site Operator" as Operator
+actor "Site Supervisor" as Supervisor
+actor "Compliance Auditor" as Auditor
+actor "Support / Technical Ops" as Support
+
+component "Operator Console\ninternal non-payment governance console" as Console
+component "Central PMS\ncontrol state + finality + ExitAuthorization" as Central
+component "Central PMS /\nDiscount workflow" as Discount
+component "Vendor PMS / HCP\nnormal session + tariff authority" as Vendor
+component "Integration Health /\nProjection Freshness" as Health
+component "Assisted Payment Terminal\npayment-capable terminal app" as APT
+component "ExitPass Continuity\ncontrolled degraded operations" as Continuity
+component "Resolved Site POS Server\nfiscal issuer" as POS
+component "Gate / Exit System\nCentral PMS authorization consumer" as Gate
+
+Operator --> Console : lookup / review / evidence
+Supervisor --> Console : approval / override / continuity review
+Auditor --> Console : audit / evidence / reports
+Support --> Console : device / health support
+
+Console --> Central : approved backend flow
+Console --> Discount : statutory review context
+Console --> Health : connector and projection visibility
+Console --> Continuity : activation / review governance
+Console --> APT : review terminal actions
+Central --> Vendor : live normal authority
+Central --> POS : fiscal issuance request
+Central --> Gate : ExitAuthorization
+
+note right of Console
+No payment collection.
+No payment finality.
+No Sales Invoice issuance.
+No ExitAuthorization issuance.
+No direct gate opening.
+end note
+
+@enduml

@@ -1,0 +1,36 @@
+@startuml
+title D-04 Continuity Activation and Post-Restoration Review Governance Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Supervisor
+actor "Operations / Reconciliation" as Ops
+participant "Operator Console" as Console
+participant "ExitPass Continuity" as Continuity
+participant "Central PMS" as Central
+participant "Continuity Terminal" as Terminal
+participant "Dashboard / Reports" as Reports
+
+Supervisor -> Console : review degraded condition
+Console -> Continuity : approve activation where policy allows\nwith incident / BCP reference
+Continuity -> Central : set scoped degraded state
+Central -> Terminal : enable Continuity Terminal if allowed
+Continuity -> Reports : publish activation context
+
+... restoration ...
+
+Supervisor -> Console : review deactivation criteria
+Console -> Continuity : approve deactivation
+Continuity -> Central : close degraded state
+Central -> Terminal : disable continuity mode
+Ops -> Console : perform post-restoration review
+Console -> Reports : update reconciliation outcome
+
+note over Console
+Console governs and reviews continuity.
+It does not become the Continuity Terminal
+and does not collect payment.
+end note
+
+@enduml

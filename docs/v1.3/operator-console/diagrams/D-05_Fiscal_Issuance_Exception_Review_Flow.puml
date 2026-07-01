@@ -1,0 +1,30 @@
+@startuml
+title D-05 Fiscal Issuance Exception Review Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Operator
+actor Supervisor
+participant "Operator Console" as Console
+participant "Central PMS" as Central
+participant "Site POS Server" as POS
+participant "Exception / Reconciliation Workflow" as Exception
+
+Central -> POS : request Sales Invoice issuance
+POS --> Central : pending / failed / timeout
+Central -> Exception : create fiscal exception
+Operator -> Console : open fiscal exception
+Console -> Central : retrieve payment, fiscal,\nand ExitAuthorization context
+Central --> Console : payment received,\nfiscal pending, exit pending
+Supervisor -> Console : review / escalate
+Console -> Exception : add incident, audit,\nreconciliation context
+Exception -> POS : retry / recovery handled\nby approved backend flow
+
+note over Console
+Console reviews and escalates.
+It does not issue Sales Invoices,
+mutate fiscal records, or issue ExitAuthorization.
+end note
+
+@enduml
