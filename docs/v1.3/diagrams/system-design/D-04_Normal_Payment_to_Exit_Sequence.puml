@@ -1,0 +1,51 @@
+@startuml
+title D-04 Normal Payment-to-Exit Sequence
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam sequenceMessageAlign center
+skinparam wrapWidth 220
+
+actor "Parker / Cashier" as Actor
+participant "WebPay or Assisted Terminal" as Channel
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+participant "Payment Orchestrator" as POA
+participant "Payment Provider" as Provider
+participant "Resolved Site POS Server" as POS
+participant "Gate / Exit" as Gate
+participant "Audit / Events" as Audit
+
+Actor -> Channel : enter payment scope and session detail
+Channel -> Central : request scope/session resolution
+Central -> Vendor : resolve live session and normal tariff
+Vendor --> Central : raw session and tariff result
+Central -> Audit : record scope, Site, TariffSnapshot
+Central --> Channel : present payable basis
+
+Actor -> Channel : confirm payment
+Channel -> Central : initiate payment attempt
+Central -> POA : coordinate provider payment
+POA -> Provider : provider interaction
+Provider --> POA : provider outcome
+POA --> Central : verified provider outcome
+Central -> Audit : record platform payment finality
+
+Central -> POS : request Sales Invoice issuance
+POS --> Central : fiscal identity / status
+Central -> Audit : record fiscal reference
+
+Central -> Gate : issue ExitAuthorization
+Gate --> Central : consume authorization and report outcome
+Central -> Audit : record gate outcome
+Central --> Channel : display final status
+
+note over POA,Central
+Payment Orchestrator reports evidence.
+Central PMS declares platform finality.
+end note
+
+note over POS,Gate
+Normal ExitAuthorization follows successful
+fiscal issuance and Central PMS fiscal reference recording.
+end note
+@enduml

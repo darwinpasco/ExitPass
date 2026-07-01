@@ -1,0 +1,60 @@
+@startuml
+title D-03 Site Group / Site / VendorSystem / Connector Instance / POS Server Topology
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+actor "Customer / Channel" as Customer
+
+rectangle "Customer Lookup / Payment Scope" {
+  component "Site Group\nlookup + payment scope" as SG
+}
+
+rectangle "Resolved Operational Boundaries" {
+  component "Site A\nreporting, contract,\nVendor PMS mapping,\nPOS routing, operations" as SiteA
+  component "Site B\nspecial multi-Site case" as SiteB
+}
+
+rectangle "Vendor Integration Configuration" {
+  component "VendorSystem\nconfigured Vendor PMS / HCP instance" as VS
+  component "AdapterMapping\nSite to vendor object mapping" as Mapping
+  component "Adapter codebase\nreusable connector implementation" as Adapter
+  component "Connector instance\ndeployed runtime connector" as Connector
+}
+
+cloud "Vendor PMS / HCP\nvendor-side objects and sessions" as Vendor
+component "Resolved Site POS Server\nfiscal routing target" as POS
+component "Management Dashboard\nSite Group + Site views" as Dash
+
+Customer --> SG : chooses / enters payment scope
+SG --> SiteA : default one Site Group to one Site
+SG --> SiteB : optional multi-Site case
+
+SiteA --> Mapping : configured mapping
+SiteB --> Mapping : configured mapping
+Mapping --> VS : vendor object belongs to VendorSystem
+Connector --> VS : runtime connector for instance
+Connector --> Adapter : uses reusable implementation
+Connector --> Vendor : live session / tariff / projection
+
+SiteA --> POS : fiscal attribution + routing
+SiteB --> POS : fiscal attribution + routing
+SiteA --> Dash : operational + financial scope
+SiteB --> Dash : operational + financial scope
+
+note bottom of SG
+Site Group is customer lookup/payment scope.
+User-facing terminology remains open.
+end note
+
+note bottom of SiteA
+Physical parking lot is not automatically
+an ExitPass Site.
+end note
+
+note right of Mapping
+HCP ParkingLotIndexCode is vendor-side only.
+It must not be treated as ExitPass site_id.
+end note
+@enduml

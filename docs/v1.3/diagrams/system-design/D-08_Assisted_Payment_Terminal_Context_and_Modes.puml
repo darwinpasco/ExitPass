@@ -1,0 +1,53 @@
+@startuml
+title D-08 Assisted Payment Terminal Context and Modes
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+actor "Cashier" as Cashier
+actor "Parker" as Parker
+actor "Supervisor" as Supervisor
+
+rectangle "Assisted Payment Terminal App Family" {
+  component "Cashier-Assisted Terminal Mode\nnormal assisted payment" as CashierMode
+  component "Continuity Terminal Mode\nrestricted degraded / BCP" as ContinuityMode
+  component "Terminal Context\ncashier + device + shift + Site" as Context
+}
+
+component "Central PMS\npayment finality + ExitAuthorization authority" as Central
+component "Discount Workflow\npolicy resolution" as Discount
+component "Payment Orchestrator\nprovider outcome verification" as POA
+component "Resolved Site POS Server\nSales Invoice authority" as POS
+component "Operator Console\ngovernance and review" as Console
+component "Gate / Exit\nconsume authorization" as Gate
+
+Cashier --> CashierMode : assisted lookup / payment
+Parker --> CashierMode : customer interaction
+Supervisor --> ContinuityMode : activation context where approved
+CashierMode --> Context : capture context
+ContinuityMode --> Context : capture restricted context
+
+CashierMode --> Central : submit assisted workflow
+CashierMode --> Discount : submit statutory inputs
+ContinuityMode --> Central : restricted degraded workflow
+Central --> POA : payment coordination
+Central --> POS : fiscal routing after finality
+Central --> Gate : ExitAuthorization if eligible
+Console --> Central : review / governance
+Console --> Discount : evidence review context
+
+note bottom of CashierMode
+Captures inputs and displays backend status.
+Does not approve entitlement or mutate payable basis directly.
+end note
+
+note bottom of ContinuityMode
+Disabled by default.
+No silent fallback to degraded mode.
+end note
+
+note right of POS
+Terminal is not an independent POS or fiscal authority.
+end note
+@enduml

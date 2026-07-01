@@ -1,0 +1,50 @@
+@startuml
+title D-11 Audit, Event, and Outbox Conceptual Flow
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+rectangle "Authoritative Workflows" {
+  component "Central PMS\nscope, tariff, finality, authorization" as Central
+  component "Payment Orchestrator\nverified provider outcomes" as POA
+  component "Site POS Server\nfiscal issuance facts" as POS
+  component "Vendor Connector\nhealth, projection, acknowledgment" as Connector
+  component "Operator Console\ngovernance facts" as Console
+  component "Dashboard / Reporting\naccess and export facts" as Dash
+}
+
+component "Conceptual Outbox / Durable Event Boundary\nreliable publication posture" as Outbox
+component "Audit Store / Evidence Trail\nnon-repudiation posture" as Audit
+
+rectangle "Consumers" {
+  component "Management Dashboard\nread models with labels" as Report
+  component "Reconciliation Workflow\npayment/fiscal/vendor/gate comparison" as Recon
+  component "Operational Monitoring\nhealth and stale warnings" as Monitor
+  component "Compliance Review\nevidence and export audit" as Compliance
+}
+
+Central --> Outbox : completed platform facts
+POA --> Outbox : verified provider outcome facts
+POS --> Outbox : fiscal result facts
+Connector --> Outbox : projection / health / acknowledgment facts
+Console --> Outbox : governance facts
+Dash --> Outbox : report access / export facts
+
+Outbox --> Audit : durable audit trail
+Outbox --> Report : read model updates
+Outbox --> Recon : reconciliation inputs
+Outbox --> Monitor : operational signals
+Outbox --> Compliance : review evidence
+
+note right of Outbox
+Events communicate completed facts.
+They do not transfer authority to consumers.
+No queue names, payload fields, or schemas are defined here.
+end note
+
+note bottom of Report
+Consumers may build read models.
+They must preserve source and authority labels.
+end note
+@enduml

@@ -1,0 +1,42 @@
+@startuml
+title D-06 Vendor PMS Connector Projection and Freshness Flow
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+cloud "Vendor PMS / HCP\nraw session + normal tariff authority" as Vendor
+component "Connector Instance\nconfigured runtime connector" as Connector
+component "Central PMS Projection\noperational visibility" as Projection
+component "Freshness / Health Classifier\nconceptual status only" as Freshness
+component "Operator Console\nhealth visibility" as Console
+component "Management Dashboard\nfreshness labels" as Dashboard
+component "Continuity Workflow\ncontrolled degraded support" as Continuity
+component "Audit / Event Stream\nhealth + projection facts" as Audit
+
+Vendor --> Connector : passageway / session / tariff integration
+Connector --> Projection : update operational projection
+Connector --> Freshness : report poll outcome and health
+Projection --> Freshness : last known projection context
+Freshness --> Console : stale warnings / connector health
+Freshness --> Dashboard : source and freshness labels
+Freshness --> Continuity : degraded eligibility evidence
+Projection --> Continuity : allowed degraded support only
+Freshness --> Audit : health / freshness fact
+Projection --> Audit : projection update fact
+
+note right of Vendor
+Normal tariff and raw session authority
+remain with Vendor PMS / HCP.
+end note
+
+note bottom of Projection
+Projection is operational visibility and
+controlled degraded support only.
+It is not financial truth.
+end note
+
+note bottom of Freshness
+Exact thresholds and status model are open.
+end note
+@enduml
