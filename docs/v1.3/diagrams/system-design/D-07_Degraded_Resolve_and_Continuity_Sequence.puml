@@ -1,0 +1,57 @@
+@startuml
+title D-07 Degraded Resolve and Continuity Sequence
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam sequenceMessageAlign center
+skinparam wrapWidth 220
+
+actor "Operator / Supervisor" as Supervisor
+actor "Cashier / Parker" as User
+participant "Channel or Continuity Terminal" as Terminal
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+participant "Projection / Freshness Context" as Projection
+participant "Operator Console" as Console
+participant "Site POS Server" as POS
+participant "Gate / Exit" as Gate
+participant "Reconciliation / Audit" as Recon
+
+Terminal -> Central : request session resolve
+Central -> Vendor : live resolve attempt
+Vendor --> Central : unavailable / unsafe / stale response
+Central -> Projection : evaluate projection and freshness
+Projection --> Central : freshness and degraded-use evidence
+
+alt approved degraded policy permits resolve
+  Central -> Console : request/record continuity scope and governance
+  Supervisor -> Console : approve or confirm activation where policy requires
+  Console -> Recon : record incident, audit, reconciliation tags
+  Central -> Terminal : allow restricted continuity workflow
+  User -> Terminal : continue assisted degraded flow
+  Terminal -> Central : submit payment-capable workflow under controls
+  Central -> POS : request fiscal issuance if policy and POS path allow
+  POS --> Central : fiscal status
+  alt fiscal and exit eligibility satisfied
+    Central -> Gate : issue Central PMS authorization
+    Gate --> Central : gate outcome
+  else fiscal/exit unsafe
+    Central -> Console : fiscal exception or manual release governance
+    Console -> Recon : keep exception open
+  end
+else unsafe or stale
+  Central -> Terminal : fail closed / route to review
+  Central -> Recon : record blocked degraded attempt
+end
+
+Central -> Recon : post-restoration review required
+
+note over Terminal
+Continuity Terminal is disabled by default
+and restricted to approved degraded/BCP controls.
+end note
+
+note over Projection
+Projection supports degraded decisions only under policy.
+It does not become tariff, payment, fiscal, or exit truth.
+end note
+@enduml

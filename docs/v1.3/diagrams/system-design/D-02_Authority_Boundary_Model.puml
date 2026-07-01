@@ -1,0 +1,53 @@
+@startuml
+title D-02 Authority Boundary Model
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+rectangle "Authority Domains" {
+  component "Raw parking session lifecycle\nOwner: Vendor PMS / HCP" as A1
+  component "Normal tariff computation\nOwner: Vendor PMS / HCP" as A2
+  component "Payment-linked control state\nOwner: Central PMS" as A3
+  component "Platform payment finality\nOwner: Central PMS" as A4
+  component "Fiscal issuance\nOwner: Resolved Site POS Server" as A5
+  component "Fiscal reference recording\nOwner: Central PMS" as A6
+  component "ExitAuthorization\nOwner: Central PMS" as A7
+  component "Gate execution\nOwner: Gate system consuming Central PMS auth" as A8
+  component "Discount policy resolution\nOwner: Central PMS / Discount workflow" as A9
+  component "Continuity governance\nOwner: approved governance workflow" as A10
+  component "Reporting visibility\nOwner: Management Dashboard as consumer only" as A11
+}
+
+rectangle "Non-Authority Surfaces" {
+  component "WebPay\ncustomer payment surface" as WebPay
+  component "Payment Orchestrator\nverified outcome reporter" as POA
+  component "Assisted Payment Terminal\npayment-capable workflow surface" as APT
+  component "Operator Console\ngovernance / review only" as Console
+  component "Management Dashboard\nvisibility / export only" as Dash
+  component "Projection Data\noperational visibility only" as Projection
+}
+
+WebPay ..> A3 : submits channel flow
+POA ..> A4 : reports evidence, not finality
+APT ..> A3 : submits terminal workflow
+Console ..> A10 : records governance actions
+Dash ..> A11 : displays labeled reports
+Projection ..> A10 : may support degraded decisions
+
+note right of POA
+Provider success is evidence.
+Central PMS declares platform finality.
+end note
+
+note bottom of Projection
+Projection is not tariff truth, payment finality,
+fiscal truth, financial truth, discount approval,
+or exit authority.
+end note
+
+note bottom of A5
+Fiscal issuance must succeed before normal
+ExitAuthorization unless approved exception policy applies.
+end note
+@enduml

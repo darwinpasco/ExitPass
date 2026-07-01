@@ -1,0 +1,45 @@
+@startuml
+title D-05 Payment Finality to Fiscal Issuance to ExitAuthorization Sequence
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam sequenceMessageAlign center
+skinparam wrapWidth 220
+
+participant "Payment Orchestrator" as POA
+participant "Central PMS" as Central
+participant "Resolved Site POS Server" as POS
+participant "Gate / Exit Consumer" as Gate
+participant "Vendor PMS Connector" as Connector
+participant "Reconciliation / Audit" as Recon
+
+POA -> Central : report verified provider outcome
+Central -> Central : accept outcome and record platform payment finality
+Central -> Recon : emit payment finality fact
+
+Central -> POS : request fiscal issuance for resolved Site
+alt fiscal issuance succeeds
+  POS --> Central : Sales Invoice identity and fiscal status
+  Central -> Central : record fiscal issuance reference
+  Central -> Recon : emit fiscal reference fact
+  Central -> Central : evaluate ExitAuthorization eligibility
+  Central -> Gate : issue Central PMS ExitAuthorization
+  Gate --> Central : consume authorization / report outcome
+  Central -> Connector : acknowledge paid or eligible state where applicable
+  Connector --> Central : acknowledgment result or pending status
+  Central -> Recon : emit gate and vendor acknowledgment facts
+else fiscal issuance fails or times out
+  POS --> Central : failure / timeout status
+  Central -> Recon : open fiscal exception
+  Central -> Central : block normal ExitAuthorization
+end
+
+note right of POS
+POS Server is fiscal authority only.
+It does not declare payment finality or issue ExitAuthorization.
+end note
+
+note over Central
+Fiscal exception release, if any, requires
+separately approved policy and reconciliation tags.
+end note
+@enduml

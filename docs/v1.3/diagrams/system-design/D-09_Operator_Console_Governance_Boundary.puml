@@ -1,0 +1,48 @@
+@startuml
+title D-09 Operator Console Governance Boundary
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+actor "Site Operator" as Operator
+actor "Supervisor" as Supervisor
+actor "Compliance Auditor" as Auditor
+actor "Technical Support" as Support
+
+component "Operator Console\nnon-payment governance boundary" as Console
+component "Central PMS\ncontrol state authority" as Central
+component "Discount Workflow\nvalidation authority" as Discount
+component "Evidence References\nprivacy controlled" as Evidence
+component "Continuity Workflow\nactivation / review" as Continuity
+component "POS Fiscal Exception Context\nfrom Site POS Server" as Fiscal
+component "Manual Release Governance\nlast-resort review" as Manual
+component "Connector Health / Projection Freshness\nvisibility only" as Health
+component "Audit / Event Records\nnon-repudiation" as Audit
+
+Operator --> Console : session lookup / operational review
+Supervisor --> Console : governed approvals where policy allows
+Auditor --> Console : evidence and audit review
+Support --> Console : technical visibility
+
+Console --> Central : read context / submit governance decisions
+Console --> Discount : review statutory evidence
+Console --> Evidence : controlled evidence access
+Console --> Continuity : activation/deactivation governance
+Console --> Fiscal : fiscal exception review
+Console --> Manual : manual release governance
+Console --> Health : connector and freshness visibility
+Console --> Audit : audit all governance activity
+
+note right of Console
+Operator Console does not collect payment,
+issue Sales Invoices, declare finality,
+issue ExitAuthorization, or directly open gates.
+end note
+
+note bottom of Manual
+Manual release is last resort:
+incident-tagged, audit-tagged,
+reconciliation-tagged, and post-reviewed.
+end note
+@enduml

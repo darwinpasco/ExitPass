@@ -1,0 +1,60 @@
+@startuml
+title D-10 Management Dashboard Source-of-Truth Boundary
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+actor "Executive / Manager" as Exec
+actor "Finance / Revenue Assurance" as Finance
+actor "Compliance Auditor" as Auditor
+actor "Technical Operations" as Tech
+
+component "Management Dashboard and Reporting\nvisibility / reporting / export only" as Dashboard
+
+rectangle "Operational Visibility Sources" {
+  component "Projection and freshness labels" as Projection
+  component "Connector and Vendor PMS health" as ConnectorHealth
+  component "Terminal and gate health" as DeviceHealth
+  component "Continuity state visibility" as Continuity
+}
+
+rectangle "Canonical Financial / Fiscal / Audit Sources" {
+  component "Central PMS payment and finality records" as Payment
+  component "Payment provider outcome evidence" as Provider
+  component "Site POS Server fiscal records" as Fiscal
+  component "Central PMS fiscal references" as FiscalRef
+  component "Reconciliation records" as Recon
+  component "Audit and evidence access records" as Audit
+}
+
+Exec --> Dashboard : executive summaries
+Finance --> Dashboard : revenue / settlement views
+Auditor --> Dashboard : compliance / audit views
+Tech --> Dashboard : health / exception views
+
+Projection --> Dashboard : operational labels
+ConnectorHealth --> Dashboard : health status
+DeviceHealth --> Dashboard : device status
+Continuity --> Dashboard : degraded state
+Payment --> Dashboard : financial source
+Provider --> Dashboard : provider evidence
+Fiscal --> Dashboard : fiscal source
+FiscalRef --> Dashboard : platform linkage
+Recon --> Dashboard : reconciliation status
+Audit --> Dashboard : access / evidence audit
+
+note bottom of Projection
+Operational visibility is not financial truth.
+end note
+
+note bottom of Fiscal
+Fiscal truth originates from Site POS Server.
+Dashboard does not issue or mutate fiscal records.
+end note
+
+note right of Dashboard
+Exports require scope, RBAC, privacy controls,
+source labels, freshness labels, and audit.
+end note
+@enduml

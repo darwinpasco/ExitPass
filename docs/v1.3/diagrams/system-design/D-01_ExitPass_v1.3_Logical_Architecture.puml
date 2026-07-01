@@ -1,0 +1,85 @@
+@startuml
+title D-01 ExitPass v1.3 Logical Architecture
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam componentStyle rectangle
+skinparam wrapWidth 220
+
+actor "Parker" as Parker
+actor "Cashier" as Cashier
+actor "Operator / Supervisor" as Operator
+actor "Management / Auditor" as Management
+
+rectangle "Channel Layer" {
+  component "Centralized WebPay\ncustomer payment surface" as WebPay
+  component "Assisted Payment Terminal\nCashier + Continuity modes" as APT
+}
+
+rectangle "Governance and Visibility" {
+  component "Operator Console\nnon-payment governance" as Console
+  component "Management Dashboard\nvisibility / reporting only" as Dashboard
+}
+
+rectangle "Trusted Core Platform" {
+  component "Central PMS\npayment finality + ExitAuthorization authority" as Central
+  component "Discount Workflow\npolicy resolution + payable basis update" as Discount
+  component "Audit / Event Capability\noutbox-style durable facts" as Audit
+  component "Reconciliation Workflow\npost-restoration + exception closure" as Recon
+}
+
+rectangle "Integration Boundaries" {
+  component "Payment Orchestrator\nprovider outcome verification" as POA
+  component "Vendor PMS Connector Instance\nprojection + live tariff integration" as Connector
+  component "Gate / Exit Integration\nconsume authorization" as Gate
+}
+
+cloud "Payment Provider" as Provider
+cloud "Vendor PMS / HCP\nraw session + normal tariff authority" as Vendor
+component "Resolved Site POS Server\nSales Invoice fiscal authority" as POS
+
+Parker --> WebPay : lookup / pay / view status
+Cashier --> APT : assisted payment workflow
+Operator --> Console : review / approve / govern
+Management --> Dashboard : view / export / report
+
+WebPay --> Central : scope-bound payment flow
+APT --> Central : terminal workflow + status
+Console --> Central : governance actions and review
+Dashboard --> Central : labeled read models
+
+Central --> Discount : statutory validation policy
+Central --> POA : payment attempt coordination
+POA --> Provider : provider interaction
+POA --> Central : verified provider outcome
+
+Central --> Connector : session / tariff / projection boundary
+Connector --> Vendor : vendor-specific integration
+Central --> POS : fiscal issuance request
+POS --> Central : fiscal status / identity
+Central --> Gate : ExitAuthorization
+Gate --> Central : gate outcome
+
+Central --> Audit : authoritative state changes
+POA --> Audit : verified outcome facts
+POS --> Audit : fiscal result facts
+Connector --> Audit : health / freshness facts
+Console --> Audit : governance facts
+Dashboard --> Audit : access / export facts
+Audit --> Recon : reconciliation evidence
+
+note right of Central
+Central PMS owns platform payment finality,
+fiscal reference recording, degraded decisions
+under approved policy, and ExitAuthorization.
+end note
+
+note bottom of POS
+POS Server is fiscal authority only.
+It does not declare finality or authorize exit.
+end note
+
+note bottom of Dashboard
+Reporting consumes labeled sources.
+It is not financial, fiscal, or exit authority.
+end note
+@enduml
