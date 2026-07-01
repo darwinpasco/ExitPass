@@ -1,0 +1,34 @@
+@startuml
+title D-03 Vendor PMS / HCP Degraded Resolve Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Operator / Channel" as Operator
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+database "Session Projection" as Projection
+participant "ExitPass Continuity" as Continuity
+participant "Supervisor Review" as Supervisor
+
+Operator -> Central : request session resolve
+Central -> Vendor : live resolve / fee request
+Vendor --> Central : unavailable / degraded
+Central -> Projection : check latest projection
+
+alt projection fresh, unambiguous, and policy allows
+  Central -> Continuity : degraded resolve decision
+  Continuity -> Central : approved continuity basis
+  Central -> Central : use approved tariff configuration\nor approved continuity basis
+  Central --> Operator : payable basis / next action
+else stale, ambiguous, or insufficient
+  Central -> Central : fail closed
+  Central -> Supervisor : route to manual / supervisor review
+end
+
+note over Projection
+Passageway records and projection
+do not invent tariffs.
+end note
+
+@enduml

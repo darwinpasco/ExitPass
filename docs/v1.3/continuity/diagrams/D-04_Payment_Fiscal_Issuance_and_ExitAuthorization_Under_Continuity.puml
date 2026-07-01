@@ -1,0 +1,41 @@
+@startuml
+title D-04 Payment, Fiscal Issuance, and ExitAuthorization Under Continuity
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+participant "Continuity Terminal /\nApproved Channel" as Channel
+participant "Central PMS" as Central
+participant "Payment Orchestrator /\nPayment Integration" as Pay
+participant "Resolved Site POS Server" as POS
+participant "Gate / Exit System" as Gate
+participant "Exception / Reconciliation" as Exception
+
+Channel -> Central : payment request under continuity policy
+Central -> Pay : payment attempt where allowed
+Pay --> Central : verified outcome or uncertainty
+
+alt verified payment finality
+  Central -> Central : record payment finality
+  Central -> POS : request Sales Invoice issuance
+  alt fiscal issuance succeeds
+    POS --> Central : fiscal identity / status
+    Central -> Central : record fiscal reference
+    Central -> Gate : issue ExitAuthorization if eligible
+    Central --> Channel : authorized / customer instruction
+  else fiscal failed or timed out
+    POS --> Central : failed / timeout / unknown
+    Central -> Exception : create controlled fiscal exception
+    Central --> Channel : payment received,\nfiscal/exit pending
+  end
+else outcome uncertain
+  Central -> Exception : pending verification
+  Central --> Channel : payment verification pending
+end
+
+note right of Gate
+Gate does not bypass
+Central PMS authorization.
+end note
+
+@enduml

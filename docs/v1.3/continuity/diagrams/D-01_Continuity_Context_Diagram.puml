@@ -1,0 +1,46 @@
+@startuml
+title D-01 Continuity Context Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Parker" as Parker
+actor "Operator / Cashier" as Operator
+actor "Supervisor" as Supervisor
+actor "Operations / Reconciliation" as Recon
+
+component "ExitPass Continuity\ncontrolled degraded operations" as Continuity
+component "Central PMS\ncontrol state + finality + ExitAuthorization" as Central
+component "Vendor PMS / HCP\nnormal session + tariff authority" as Vendor
+component "Session Projection\noperational visibility" as Projection
+component "Continuity Terminal\nAssisted Payment Terminal mode" as Terminal
+component "Operator Console\nnon-payment governance" as Console
+component "Payment Orchestrator /\napproved payment integration" as Pay
+component "Resolved Site POS Server\nfiscal issuance" as POS
+component "Gate / Exit System\nCentral PMS authorization consumer" as Gate
+component "Dashboard / Reporting" as Dashboard
+
+Parker --> Terminal : assisted / continuity service
+Operator --> Terminal : controlled workflow
+Supervisor --> Console : activation / review
+Recon --> Dashboard : review and reconcile
+
+Continuity --> Central : degraded resolve policy
+Central --> Vendor : normal live resolve when available
+Central --> Projection : freshness / fallback check
+Terminal --> Central : continuity requests
+Central --> Pay : payment flow where allowed
+Central --> POS : fiscal issuance where available and allowed
+Central --> Gate : ExitAuthorization
+Console --> Continuity : approval / incident context
+Continuity --> Dashboard : activation, exceptions,\nreconciliation backlog
+
+note right of Projection
+Operational visibility only.
+Not financial truth.
+Not tariff authority.
+Not exit authority.
+end note
+
+@enduml
