@@ -1,0 +1,31 @@
+@startuml
+title D-06 Android-first Hardened Terminal Posture Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+component "Assisted Payment Terminal\nBRD posture" as APT
+component "Hardened terminal application" as Hardened
+component "Android-first preferred\nfield deployment posture" as Android
+component "Web-based workflow core\nwhere appropriate" as WebCore
+component "Native device integration\nwhere required" as Native
+component "Possible fixed cashier\nstation variant" as Fixed
+component "Assisted Payment Terminal\nSystem Design" as Design
+
+APT --> Hardened
+Hardened --> Android
+Hardened --> WebCore
+Hardened --> Native
+Hardened --> Fixed : may be evaluated later
+Android --> Design : final architecture deferred
+WebCore --> Design : final architecture deferred
+Native --> Design : scanner, camera, printer,\ncash drawer, kiosk, identity,\ncertificates / keys
+Fixed --> Design : must satisfy device trust,\naudit, POS, and security requirements
+
+note bottom of Android
+Android-first is preferred for field terminals.
+It is not an exclusive business requirement.
+end note
+
+@enduml

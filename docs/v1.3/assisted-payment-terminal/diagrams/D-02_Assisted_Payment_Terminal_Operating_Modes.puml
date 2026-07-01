@@ -1,0 +1,32 @@
+@startuml
+title D-02 Assisted Payment Terminal Operating Modes
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+component "Assisted Payment Terminal\none terminal app family" as APT
+component "Mode 1:\nCashier-Assisted Terminal" as Cashier
+component "Mode 2:\nContinuity Terminal" as Continuity
+component "Normal staffed operation" as Normal
+component "Approved degraded / BCP operation" as BCP
+component "Central PMS" as Central
+component "Resolved Site POS Server" as POS
+component "Operator Console /\napproved operations workflow" as Console
+
+APT --> Cashier
+APT --> Continuity
+Cashier --> Normal : enabled for staffed payment
+Continuity --> BCP : disabled by default
+Cashier --> Central : session, payable basis,\npayment status
+Cashier --> POS : fiscal routing through backend flow
+Continuity --> Central : controlled degraded workflow
+Continuity --> POS : fiscal routing where available and allowed
+Continuity --> Console : approval, incident,\naudit, reconciliation
+
+note bottom of APT
+Operator Console is a separate non-payment module.
+The terminal app family is payment-capable but not finality authority.
+end note
+
+@enduml

@@ -1,0 +1,41 @@
+@startuml
+title D-03 Cashier-Assisted Payment with Statutory Discount Validation Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Cashier
+participant "Cashier-Assisted Terminal" as Terminal
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+participant "Central PMS /\nDiscount workflow" as Discount
+participant "Payment Orchestrator /\nPayment Integration" as Pay
+participant "Site POS Server" as POS
+participant "Gate / Exit" as Gate
+
+Cashier -> Terminal : login and select assigned context
+Cashier -> Terminal : scan / enter ticket or card number
+Terminal -> Central : session lookup
+Central -> Vendor : live session / tariff resolve
+Vendor --> Central : session and payable basis
+Central --> Terminal : payable basis
+Cashier -> Terminal : initiate Senior/PWD validation
+Terminal -> Discount : submit entitlement details,\nevidence, attestation
+Discount --> Central : approved validation and payable effect
+Central --> Terminal : refreshed payable basis
+Cashier -> Terminal : collect payment
+Terminal -> Pay : payment flow
+Pay --> Central : verified provider outcome
+Central -> POS : request Sales Invoice issuance
+POS --> Central : fiscal document identity / status
+Central -> Gate : issue ExitAuthorization if eligible
+Central --> Terminal : payment, fiscal, and exit status
+
+note over Terminal
+Terminal captures and displays workflow state.
+It does not approve entitlement,
+mutate payable basis, declare finality,
+or issue ExitAuthorization.
+end note
+
+@enduml

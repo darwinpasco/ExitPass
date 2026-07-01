@@ -1,0 +1,35 @@
+@startuml
+title D-04 Payment, Fiscal Issuance, and ExitAuthorization Authority Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+participant "Assisted Payment Terminal" as Terminal
+participant "Payment Orchestrator /\nPayment Integration" as Pay
+participant "Central PMS" as Central
+participant "Resolved Site POS Server" as POS
+participant "Gate / Exit System" as Gate
+
+Terminal -> Central : request payment flow for resolved session
+Central -> Pay : create / process payment attempt
+Pay --> Central : verified provider outcome
+Central -> Central : record payment finality
+Central -> POS : request Sales Invoice issuance
+POS --> Central : Sales Invoice identity / status
+Central -> Central : record fiscal issuance reference
+Central -> Gate : issue ExitAuthorization
+Central --> Terminal : show receipt / pending / exit status
+
+note right of Terminal
+Payment-capable channel.
+Not payment finality authority.
+Not fiscal authority.
+Not exit authority.
+end note
+
+note right of POS
+Issues Sales Invoice.
+Does not issue ExitAuthorization.
+end note
+
+@enduml

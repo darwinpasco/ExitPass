@@ -1,0 +1,41 @@
+@startuml
+title D-05 Continuity Terminal Activation and Restricted Operation Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Supervisor
+actor Cashier
+participant "Continuity Terminal\n(disabled by default)" as Terminal
+participant "Operator Console /\nApproved Operations Workflow" as Console
+participant "Central PMS" as Central
+database "Session Projection /\nApproved Continuity Source" as Projection
+participant "Site POS Server" as POS
+participant "Gate / Exit" as Gate
+
+Supervisor -> Console : approve BCP / degraded activation
+Console -> Terminal : activation context,\nincident and policy controls
+Cashier -> Terminal : scan / enter ticket or card
+Terminal -> Central : degraded lookup request
+Central -> Projection : check freshness and ambiguity
+
+alt safe under approved degraded policy
+  Central --> Terminal : payable basis from approved source
+  Terminal -> Central : payment workflow where allowed
+  Central -> POS : fiscal issuance where available and allowed
+  POS --> Central : fiscal status
+  Central -> Gate : ExitAuthorization if eligible
+  Central --> Terminal : status for customer instruction
+else unsafe or insufficient
+  Central --> Terminal : fail closed / supervisor review
+  Terminal -> Console : manual review context
+end
+
+note over Terminal
+Discount handling is restricted.
+If entitlement, evidence, policy basis,
+projection freshness, or payable basis is unsafe,
+the terminal fails closed or routes to review.
+end note
+
+@enduml
