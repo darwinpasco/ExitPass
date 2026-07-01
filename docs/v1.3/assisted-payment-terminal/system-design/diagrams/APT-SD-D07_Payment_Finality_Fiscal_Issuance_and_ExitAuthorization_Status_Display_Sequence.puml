@@ -1,0 +1,31 @@
+@startuml
+title APT-SD-D07 Payment Finality, Fiscal Issuance, and ExitAuthorization Status Display Sequence
+skinparam shadowing false
+
+participant "Assisted Payment Terminal" as APT
+participant "Central PMS" as Central
+participant "Payment Orchestrator" as Pay
+participant "Site POS Server" as POS
+participant "Audit / Event" as Audit
+
+APT -> Central : request payment initiation
+Central -> Pay : provider workflow
+Pay --> Central : verified provider outcome
+Central -> Central : record payment finality
+Central --> APT : display Central PMS finality status
+Central -> POS : request Sales Invoice issuance
+POS --> Central : issued / failed / timeout status
+alt fiscal issued
+  Central -> Central : record fiscal reference
+  Central -> Central : issue ExitAuthorization if eligible
+  Central --> APT : display fiscal and exit status
+else fiscal pending or failed
+  Central --> APT : display fiscal pending/failed and exit pending
+end
+Central -> Audit : payment/fiscal/exit status context
+
+note bottom
+Provider outcome is evidence.
+APT displays backend status only.
+end note
+@enduml

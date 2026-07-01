@@ -1,0 +1,34 @@
+@startuml
+title APT-SD-D12 Terminal Observability and Audit Event Flow
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Assisted Payment Terminal" as APT
+component "Terminal health\nand device trust signals" as Health
+component "Cashier / shift /\nSite/Site Group context" as Context
+component "Workflow status events\nlookup / discount / payment / fiscal / exit" as Workflow
+component "Continuity and exception tags" as Tags
+component "Audit / Event capability" as Audit
+component "Central PMS" as Central
+component "Operator Console\ngovernance visibility" as OC
+component "Management Dashboard\nvisibility only" as Dash
+component "Reconciliation consumers" as Recon
+
+APT --> Health
+APT --> Context
+APT --> Workflow
+APT --> Tags
+Health --> Audit
+Context --> Audit
+Workflow --> Audit
+Tags --> Audit
+Audit --> Central : reconstruction context
+Audit --> OC : authorized review context
+Audit --> Dash : source-labeled visibility
+Audit --> Recon : reconciliation inputs
+
+note bottom
+Observability and reporting communicate facts for reconstruction.
+They do not transfer payment, fiscal, discount, or exit authority.
+end note
+@enduml

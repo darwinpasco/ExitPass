@@ -1,0 +1,34 @@
+@startuml
+title APT-SD-D03 Terminal Trust Boundary and Device Identity Model
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+package "Terminal boundary" {
+  component "Terminal device identity" as Device
+  component "Cashier/operator identity" as Cashier
+  component "Shift/session context" as Shift
+  component "Assigned Site/Site Group" as Scope
+  component "Workflow UI state" as UI
+  component "Peripheral boundary\nscanner / camera / printer / cash drawer" as Peripherals
+}
+
+package "Trusted core platform" {
+  component "Identity / RBAC / device trust" as Identity
+  component "Central PMS" as Central
+  component "Audit / Event" as Audit
+}
+
+Device --> Identity : trust evaluation
+Cashier --> Identity : authentication
+Shift --> Identity : shift validation
+Scope --> Central : scope binding
+UI --> Central : workflow request + context
+Peripherals --> UI : controlled input/output only
+Identity --> Audit : trust and identity events
+Central --> Audit : workflow context
+
+note bottom
+Device possession and cashier login are prerequisites.
+They do not transfer payment, fiscal, discount, or exit authority.
+end note
+@enduml

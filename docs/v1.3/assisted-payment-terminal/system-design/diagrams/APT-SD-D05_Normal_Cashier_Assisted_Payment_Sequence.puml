@@ -1,0 +1,40 @@
+@startuml
+title APT-SD-D05 Normal Cashier-Assisted Payment Sequence
+skinparam shadowing false
+
+actor Cashier
+participant "Assisted Payment Terminal" as APT
+participant "Central PMS" as Central
+participant "Vendor PMS Connector" as Connector
+participant "Vendor PMS / HCP" as Vendor
+participant "Payment Orchestrator" as Pay
+participant "Payment Provider" as Provider
+participant "Site POS Server" as POS
+
+Cashier -> APT : scan / enter ticket or card reference
+APT -> Central : lookup request with device/cashier/shift/scope
+Central -> Connector : live session / fee resolve
+Connector -> Vendor : vendor lookup + fee calculation
+Vendor --> Connector : session + fee facts
+Connector --> Central : normalized result
+Central -> Central : record payable basis
+Central --> APT : display payable basis
+Cashier -> APT : initiate payment
+APT -> Central : payment initiation request
+Central -> Pay : start provider workflow
+Pay -> Provider : provider interaction
+Provider --> Pay : provider outcome evidence
+Pay --> Central : verified provider outcome
+Central -> Central : record payment finality
+Central -> POS : request Sales Invoice issuance
+POS --> Central : fiscal identity/status
+Central -> Central : record fiscal reference
+Central -> Central : issue ExitAuthorization if eligible
+Central --> APT : display payment/fiscal/exit status
+
+note bottom
+APT initiates and displays.
+Central PMS owns finality and ExitAuthorization.
+POS Server owns Sales Invoice issuance.
+end note
+@enduml

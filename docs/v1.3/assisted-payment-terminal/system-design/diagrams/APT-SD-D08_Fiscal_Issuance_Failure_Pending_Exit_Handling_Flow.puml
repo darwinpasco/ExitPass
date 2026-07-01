@@ -1,0 +1,29 @@
+@startuml
+title APT-SD-D08 Fiscal Issuance Failure / Pending Exit Handling Flow
+skinparam shadowing false
+
+start
+:Central PMS payment finality recorded;
+:Central PMS requests fiscal issuance from Site POS Server;
+if (Sales Invoice issued?) then (yes)
+  :Central PMS records fiscal reference;
+  :Central PMS evaluates ExitAuthorization;
+  :APT displays fiscal complete and exit status;
+else (failed / timeout / pending)
+  :APT displays payment received but fiscal/exit pending;
+  :Case enters fiscal exception workflow;
+  :Operator Console or approved workflow reviews/escalates;
+  if (fiscal recovery succeeds?) then (yes)
+    :Central PMS records fiscal reference;
+    :Central PMS evaluates ExitAuthorization;
+  else (manual release policy applies?)
+    :Governed manual release handoff with incident/audit/reconciliation tags;
+  endif
+endif
+stop
+
+note right
+Fiscal failure blocks normal ExitAuthorization.
+Manual release is separate governance, not normal authorization.
+end note
+@enduml

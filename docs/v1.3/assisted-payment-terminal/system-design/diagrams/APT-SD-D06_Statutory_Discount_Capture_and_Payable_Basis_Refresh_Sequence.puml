@@ -1,0 +1,32 @@
+@startuml
+title APT-SD-D06 Statutory Discount Capture and Payable-Basis Refresh Sequence
+skinparam shadowing false
+
+actor Cashier
+participant "Assisted Payment Terminal" as APT
+participant "Central PMS / Discount workflow" as Discount
+participant "Central PMS" as Central
+participant "Operator Console\nnon-payment review" as OC
+participant "Audit / Event" as Audit
+
+Cashier -> APT : initiate statutory discount capture
+APT -> APT : capture entitlement details,\nevidence reference, attestation
+APT -> Discount : submit validation request
+Discount -> Discount : policy resolution + persistence
+alt approved
+  Discount -> Central : payable-basis effect
+  Central -> Central : refresh payable basis
+  Central --> APT : display updated payable basis
+else rejected / failed / expired
+  Discount --> APT : display non-approved result
+else pending review
+  Discount -> OC : supervisor/compliance review handoff
+  OC --> APT : review status via backend
+end
+Discount -> Audit : validation and evidence context
+
+note bottom
+APT captures inputs only.
+Central PMS / Discount workflow owns policy decision and payable-basis effect.
+end note
+@enduml

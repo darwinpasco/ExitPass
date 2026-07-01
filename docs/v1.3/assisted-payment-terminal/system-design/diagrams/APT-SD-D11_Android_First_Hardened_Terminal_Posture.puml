@@ -1,0 +1,35 @@
+@startuml
+title APT-SD-D11 Android-First Hardened Terminal Posture
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+package "Preferred field terminal reference posture" {
+  component "Android-first hardened terminal" as Android
+  component "Workflow core\nweb-based where appropriate" as Core
+  component "Native shell / container boundary" as Shell
+  component "Native bridge boundary\nconcept only" as Bridge
+  component "Peripheral boundaries\nscanner / camera / printer / cash drawer" as Peripherals
+  component "Kiosk / lockdown concept" as Kiosk
+  component "Device identity and trust" as Trust
+  component "Minimal local storage\nnon-authoritative" as Storage
+}
+
+package "Eligible fixed station variant" {
+  component "Browser/PWA or desktop-compatible station\nonly with equivalent controls" as Fixed
+}
+
+Android --> Core
+Android --> Shell
+Shell --> Bridge
+Bridge --> Peripherals
+Android --> Kiosk
+Android --> Trust
+Android --> Storage
+Fixed --> Trust : equivalent controls required
+Fixed --> Core : possible workflow core reuse
+
+note bottom
+Android-first means preferred field-terminal reference posture.
+It is not exclusive for every deployment and is not an implementation package design.
+end note
+@enduml
