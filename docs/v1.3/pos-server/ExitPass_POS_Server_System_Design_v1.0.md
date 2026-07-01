@@ -25,7 +25,7 @@ The design covers:
 - Printed and digital Sales Invoice delivery.
 - Digital Sales Invoice URL and QR code presentation model.
 - Fiscal numbering, counters, reporting, EJ, POSLog, exports, audit, reprints, adjustments, retention, and recovery continuity.
-- Integration impact for Central PMS, Payment Orchestrator, WebPay, APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted payment, and future channels.
+- Integration impact for Central PMS, Payment Orchestrator, WebPay, APM, Cashier-Assisted Terminal, Continuity Terminal, operator-assisted payment if allowed, and future channels.
 - Database, API, eventing, security, privacy, testing, and certification impacts at design-planning level.
 
 This document does not define final database tables, columns, indexes, migrations, API endpoint paths, DTOs, event schemas, or implementation internals. Those belong to follow-up POS Server Database Design, POS Server API Contract, API Contract Pack, and Engineering Pack tasks.
@@ -34,7 +34,9 @@ This document does not define final database tables, columns, indexes, migration
 
 | Reference | Role in this design |
 | --- | --- |
-| `ExitPass_POS_Invoicing_BRD_v1.0.md` | Approved business requirements baseline and authority model. |
+| `ExitPass_POS_Invoicing_BRD_v1.0.md` | Approved business requirements baseline, fiscal posture, and authority model. |
+| `ExitPass_System_Design_v1.3.md` | Approved v1.3 platform architecture baseline, Site/Site Group semantics, authority separation, and fiscal-before-exit sequence. |
+| Approved companion BRDs and technical designs | Alignment sources for Assisted Payment Terminal, Continuity, Operator Console, Management Dashboard, Vendor PMS Connector, and HikCentral Connector boundaries. |
 | POS Server System Design planning artifacts | Source analysis, decision log, open questions, impact map, outline, and diagram index. |
 | POS/Invoicing planning artifacts | Prior decision history, recommendations, open questions, and impact analysis. |
 | ExitPass v1.2 BRD/System Design/Database/API/Engineering Pack | Baseline platform authority, payment finality, ExitAuthorization, session, site, vendor, and integration concepts. |
@@ -48,7 +50,7 @@ This document does not define final database tables, columns, indexes, migration
 | --- | --- | --- |
 | AP-001 | Preserve approved BRD authority model | The design shall not move payment finality or ExitAuthorization authority into POS Server, Payment Orchestrator, WebPay, APM, or any terminal. |
 | AP-002 | Site-level fiscal boundary | The resolved Site determines the Site POS Server that issues the Sales Invoice. |
-| AP-003 | Channel-neutral fiscal issuance | WebPay, APM, Cashier POS, EC/continuity, operator-assisted, and future channels shall be children of the Site POS Server, not independent POS systems. |
+| AP-003 | Channel-neutral fiscal issuance | WebPay, APM, Cashier-Assisted Terminal, Continuity Terminal, operator-assisted payment if allowed, and future channels shall be children of the Site POS Server, not independent POS systems. |
 | AP-004 | Canonical fiscal facts | Printed SI, digital SI, EJ, POSLog, X/Z, BIR Sales Summary, Annex E, exports, and audit records shall derive from reconcilable canonical fiscal records. |
 | AP-005 | Fiscal issuance before exit | Central PMS shall not issue ExitAuthorization until POS Server successfully returns fiscal document identity/status, unless a controlled exception policy allows manual release. |
 | AP-006 | Open decisions remain visible | The design shall mark unresolved compliance/accounting/security/privacy decisions explicitly and shall not silently decide them. |
@@ -56,7 +58,7 @@ This document does not define final database tables, columns, indexes, migration
 
 ## 5. POS Server Context
 
-The Site POS Server is the Site-level fiscal authority for parking Sales Invoice issuance and fiscal reporting. It is not a payment provider, a parking session authority, a tariff authority by itself, or an ExitAuthorization issuer.
+The Site POS Server is the Site-level fiscal authority for parking Sales Invoice issuance and fiscal reporting. It is not a payment finality authority, payment provider authority, Vendor PMS authority, Central PMS authority, parking session authority, statutory entitlement authority, continuity decisioning authority, manual release approver, gate authority, or ExitAuthorization issuer.
 
 The POS Server receives a fiscal issuance request only after Central PMS has verified payment finality. It issues the Sales Invoice for the resolved Site, records canonical fiscal facts, returns fiscal document identity/status and digital SI URL if applicable, and supports fiscal reports, logs, exports, audit, reprints, adjustments, counters, retention, and recovery.
 
@@ -85,6 +87,11 @@ The boundary excludes:
 - Site resolution authority, except consuming the resolved Site from Central PMS.
 - Payment provider outcome verification.
 - Platform payment finality.
+- Statutory entitlement approval or Central PMS / Discount workflow policy resolution.
+- Central PMS payable-basis mutation.
+- Continuity activation or degraded resolve decisioning.
+- Manual release approval.
+- Central PMS fiscal reference recording.
 - ExitAuthorization creation or gate release authority.
 
 Open for BIR/accounting confirmation: exact mapping between ExitPass Site, taxpayer branch/location, POS Server fiscal identity, and BIR-registered operation boundary.
@@ -98,11 +105,14 @@ Open for BIR/accounting confirmation: exact mapping between ExitPass Site, taxpa
 | PaymentAttempt | Central PMS | POS Server does not create or finalize PaymentAttempt. |
 | PaymentConfirmation | Central PMS | POS Server consumes verified finality context. |
 | Payment finality | Central PMS | Payment Orchestrator and WebPay do not declare platform finality. |
+| Statutory discount policy resolution | Central PMS / Discount workflow | POS Server receives approved fiscal treatment; it does not approve entitlement. |
+| Payable-basis update after discount | Central PMS with Vendor PMS or approved degraded basis | POS Server applies fiscal treatment from approved upstream context; it does not mutate payable basis directly. |
 | ExitAuthorization | Central PMS | POS Server shall not issue ExitAuthorization. |
 | Gate/exit execution | Central PMS authorization chain | Gate execution shall not bypass Central PMS. |
 | Sales Invoice issuance | Site POS Server | POS Server issues SI only for the resolved Site. |
 | Fiscal reports/counters/logs | Site POS Server | POS Server owns fiscal records, counters, reports, EJ, POSLog, exports, and audit. |
 | Refund/reversal payment finality | Central PMS/payment provider | POS Server owns related fiscal adjustment documents, not money movement finality. |
+| Continuity activation and manual release governance | Operator Console / approved operations workflow with Central PMS controls | POS Server exposes fiscal status and exception context; it does not activate continuity or approve manual release. |
 
 ## 8. Component Architecture
 
@@ -137,8 +147,8 @@ Supported channel/terminal types:
 
 - WebPay.
 - AutoPay Machine / APM.
-- Cashier POS.
-- EC Device / Continuity Terminal.
+- Cashier-Assisted Terminal.
+- Continuity Terminal.
 - Operator-assisted payment terminal or workflow if allowed.
 - Future channels.
 
@@ -178,7 +188,7 @@ The fiscal identity model shall support, at minimum:
 - Required BIR footer text.
 - Required non-input-tax warning where applicable.
 
-Open for BIR/accounting confirmation: how these fields are assigned between Site POS Server, APM, Cashier POS, EC Device / Continuity Terminal, WebPay, operator-assisted channel, and future channels.
+Open for BIR/accounting confirmation: how these fields are assigned between Site POS Server, APM, Cashier-Assisted Terminal, Continuity Terminal, WebPay, operator-assisted channel, and future channels.
 
 Open for supplier/applicant confirmation: responsible software supplier/applicant, POS user/PTU applicant, and vendor responsibility split.
 
@@ -200,10 +210,10 @@ The Sales Invoice lifecycle shall follow the approved authority sequence:
 12. POS Server records EJ, POSLog, audit, and related fiscal state.
 13. POS Server returns SI identity/status and digital SI URL if applicable to Central PMS.
 14. Central PMS records fiscal reference.
-15. Central PMS issues ExitAuthorization.
+15. Central PMS issues ExitAuthorization if eligible.
 16. Channel/terminal presents printed SI, digital SI URL, QR code, and payment/exit status according to capability and policy.
 
-Idempotent issuance behavior shall prevent duplicate fiscal documents for retried issuance requests. The final strategy for sequence reservation, failed attempts, abandoned issuance, and gaps is open for BIR/accounting confirmation and POS Server API Contract.
+Idempotent issuance behavior shall prevent duplicate fiscal documents for retried issuance requests. Runtime fiscal number allocation is recommended inside the same durable transaction as fiscal document creation, using controlled sequence state that prevents duplicate fiscal numbers and returns the fiscal number only after durable commit. The final strategy for idempotency source/key behavior, semantic request hash, duplicate request behavior, timeout behavior, sequence reservation, failed attempts, abandoned issuance, and sequence gaps is open for BIR/accounting confirmation and POS Server API Contract.
 
 Central PMS integration, eventing/outbox design, and POS Server API Contract shall explicitly account for idempotent SI issuance and retry semantics so that retries, timeouts, and sequence-gap cases do not create duplicate fiscal documents or silently skip required fiscal audit records. See Sections 14, 30, 31, 38, 40, and Open Question `PSD-OQ-018`.
 
@@ -250,7 +260,7 @@ QR code presentation:
 
 - QR code presentation is a channel/terminal display or print capability.
 - QR code presentation is not APM-only.
-- APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted terminals, and future channels may present the QR where supported.
+- APM, Cashier-Assisted Terminal, Continuity Terminal, operator-assisted terminals, and future channels may present the QR where supported.
 - POS Server owns digital SI URL generation and returns only the digital SI URL for QR presentation.
 - The channel or terminal converts the POS Server-returned URL into a QR code where QR presentation is supported.
 - QR generation, display, and printing are channel/terminal presentation responsibilities.
@@ -335,6 +345,8 @@ Design rules:
 - NAAC and Solo Parent shall be represented in extensible report structures even if workflows are future-supported.
 - Diplomat VAT Privilege / VAT Exemption shall not be modeled as an ordinary commercial discount.
 - Diplomat treatment shall be modeled as VAT privilege / VAT exemption capability.
+- Central PMS / Discount workflow shall own statutory discount policy resolution, validation persistence, and payable-basis update.
+- POS Server shall apply fiscal treatment only from the approved upstream payable basis and fiscal instruction; it shall not approve statutory entitlement or mutate the Central PMS payable basis directly.
 
 Open for BIR/accounting confirmation:
 
@@ -637,7 +649,7 @@ If SI issuance fails or times out after verified payment finality:
 - Manual release, if allowed, shall be supervisor-approved, incident-tagged, and reconciliation-tagged.
 - POS Server still shall not issue ExitAuthorization.
 
-Offline fiscal issuance is disabled or restricted by default until BIR/accounting approves a compliant model. APM, Cashier POS, EC Device / Continuity Terminal, and operator-assisted workflows must not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
+Offline fiscal issuance is disabled or restricted by default until BIR/accounting approves a compliant model. APM, Cashier-Assisted Terminal, Continuity Terminal, and operator-assisted workflows must not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls. Continuity does not automatically approve offline fiscal issuance, and unmanaged offline fiscal issuance is not approved.
 
 Central PMS integration, eventing/outbox, and POS Server API Contract shall account for retry idempotency, failed issuance, abandoned issuance, reserved numbers, and sequence-gap treatment without defining final endpoint paths, DTOs, database tables, or status codes in this document.
 
@@ -729,11 +741,11 @@ APM shall not:
 
 Open for BIR/accounting and Hikvision/APM vendor confirmation: whether APM prints POS Server-issued payload or requires another approved printing arrangement.
 
-## 35. Integration With Cashier POS
+## 35. Integration With Cashier-Assisted Terminal
 
-Cashier POS shall be modeled as child terminal/channel under the Site POS Server.
+Cashier-Assisted Terminal shall be modeled as a child terminal/channel under the Site POS Server.
 
-Cashier POS shall support:
+Cashier-Assisted Terminal shall support:
 
 - Fiscal issuance through Site POS Server.
 - Cashier/session accountability.
@@ -742,29 +754,31 @@ Cashier POS shall support:
 - Digital SI URL presentation and channel-side QR generation/display/print where supported.
 - Fiscal status and exception messaging.
 
-Cashier POS shall not independently declare payment finality outside Central PMS authority.
+Cashier-Assisted Terminal shall not independently declare payment finality outside Central PMS authority, issue Sales Invoices independently, approve statutory entitlement, mutate payable basis, issue ExitAuthorization, or open gates.
 
 Open for POS Server API Contract: cashier/session context and digital SI URL receipt contract.
 
-## 36. Integration With EC Device / Continuity Terminal
+## 36. Integration With Continuity Terminal
 
-EC Device / Continuity Terminal shall use the same Site POS Server fiscal authority when activated.
+Continuity Terminal shall use the same Site POS Server fiscal authority when activated under approved continuity policy.
 
 Design rules:
 
-- EC/continuity terminal is child terminal/channel under Site POS Server.
+- Continuity Terminal is a restricted degraded/BCP mode of Assisted Payment Terminal and is disabled by default.
+- Continuity Terminal is a child terminal/channel under Site POS Server for fiscal routing when activated.
 - Offline fiscal issuance remains restricted until BIR/accounting confirms approved model.
+- Continuity does not create unmanaged offline fiscal issuance or unmanaged offline fiscal recovery.
 - Continuity mode shall preserve Central PMS payment finality and ExitAuthorization authority.
 - Digital SI URL presentation and channel-side QR generation/display/print may be supported under the approved continuity model.
 - Fiscal sequence and counter continuity must not be weakened by continuity mode.
-- EC Device / Continuity Terminal, APM, Cashier POS, and operator-assisted workflows shall not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
+- Continuity Terminal, APM, Cashier-Assisted Terminal, and operator-assisted workflows shall not create offline fiscal documents unless the approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
 - Degraded/continuity operation shall preserve Central PMS payment finality and ExitAuthorization authority.
 
 Open for BIR/accounting confirmation: offline fiscal issuance allowance, sequence, counter, reconciliation, and evidence controls.
 
 ## 37. Integration With Operator-assisted Payment
 
-Operator-assisted payment, if allowed, shall route fiscal issuance through resolved Site POS Server.
+Operator-assisted payment, if allowed, shall route fiscal issuance through resolved Site POS Server. Operator-assisted payment is not the Operator Console unless a later approved workflow explicitly defines the operating surface and permission boundary.
 
 Operator-assisted flows shall:
 
@@ -897,7 +911,7 @@ Testing should include:
 - Payment finality to SI to ExitAuthorization happy path.
 - SI issuance failure and retry.
 - No ExitAuthorization when SI issuance fails.
-- WebPay, APM, Cashier POS, EC/continuity, operator-assisted, and future channel routing.
+- WebPay, APM, Cashier-Assisted Terminal, Continuity Terminal, operator-assisted, and future channel routing.
 - Printed and digital SI consistency.
 - Digital SI URL access, expiry, privacy, and audit behavior.
 - QR presentation by APM and supported assisted channels.
@@ -1008,7 +1022,7 @@ PlantUML source: `diagrams/ExitPass_POS_Server_Fiscal_Issuance_Failure_Retry_Flo
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| POS Server scope becomes APM-only | WebPay, cashier, EC/continuity, operator-assisted, and future channels fragment fiscal behavior. | Preserve Site-level channel-neutral POS Server architecture. |
+| POS Server scope becomes APM-only | WebPay, cashier-assisted, continuity, operator-assisted, and future channels fragment fiscal behavior. | Preserve Site-level channel-neutral POS Server architecture. |
 | ExitAuthorization issued before SI | Paid vehicle may exit without fiscal issuance. | Enforce Central PMS sequence: payment finality, SI issuance, fiscal reference, ExitAuthorization. |
 | POS Server issues ExitAuthorization | Authority model violation. | Keep ExitAuthorization exclusive to Central PMS. |
 | Printed and digital SI diverge | Customer-facing fiscal facts conflict. | Use canonical fiscal records as source for both forms. |
@@ -1031,7 +1045,6 @@ PlantUML source: `diagrams/ExitPass_POS_Server_Fiscal_Issuance_Failure_Retry_Flo
 | BIR | Bureau of Internal Revenue |
 | BRD | Business Requirements Document |
 | DR | Disaster Recovery |
-| EC | Emergency/Exception/Continuity, pending final product terminology |
 | EJ | Electronic Journal |
 | GTA | Grand Total Amount |
 | MIN | Machine Identification Number |
