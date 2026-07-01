@@ -1,0 +1,28 @@
+@startuml
+title CON-SD-D02 Continuity Operating-State Model
+skinparam shadowing false
+
+state "Normal" as NormalState
+state "Degraded-watch" as DegradedWatch
+state "Degraded-active" as DegradedActive
+state "Continuity Terminal active" as ContinuityTerminalActive
+state "Restoration-in-progress" as RestorationInProgress
+state "Post-restoration review" as PostRestorationReview
+state "Closed / reconciled" as ClosedReconciled
+
+[*] --> NormalState
+NormalState --> DegradedWatch : dependency degraded / stale / unknown
+DegradedWatch --> NormalState : signal clears
+DegradedWatch --> DegradedActive : approved activation + scoped controls
+DegradedActive --> ContinuityTerminalActive : terminal mode enabled in scope
+ContinuityTerminalActive --> DegradedActive : terminal scope deactivated
+DegradedActive --> RestorationInProgress : restoration signal / deactivation
+RestorationInProgress --> PostRestorationReview : continuity-origin records prepared
+PostRestorationReview --> ClosedReconciled : approved closure
+ClosedReconciled --> NormalState
+
+note right
+Conceptual states only.
+Not database values, API statuses, event payloads, timers, thresholds, or runbook steps.
+end note
+@enduml

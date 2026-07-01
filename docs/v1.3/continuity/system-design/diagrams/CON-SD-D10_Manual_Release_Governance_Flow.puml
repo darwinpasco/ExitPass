@@ -1,0 +1,27 @@
+@startuml
+title CON-SD-D10 Manual Release Governance Flow
+skinparam shadowing false
+
+actor "Operator / cashier" as Op
+participant "Central PMS context" as Central
+participant "Operator Console /\napproved governance" as OC
+participant "Supervisor" as Sup
+participant "Audit / Reconciliation" as Audit
+participant "Gate / physical release boundary" as Gate
+
+Op -> OC : request manual release review
+OC -> Central : retrieve payment/fiscal/exit/incident context
+OC -> Sup : supervisor review where policy requires
+alt approved
+  Sup --> OC : approval + reason
+  OC -> Audit : incident/audit/reconciliation tags
+  OC --> Gate : physical release boundary only if separately approved
+else rejected / pending
+  OC -> Audit : rejection or pending review
+end
+
+note bottom
+Manual release is governed exception.
+It is not normal ExitAuthorization and does not close reconciliation by itself.
+end note
+@enduml

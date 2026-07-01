@@ -1,0 +1,33 @@
+@startuml
+title CON-SD-D08 Payment, Fiscal Issuance, and ExitAuthorization Under Continuity
+skinparam shadowing false
+
+participant "Continuity channel / terminal" as Channel
+participant "Central PMS" as Central
+participant "Payment Orchestrator" as Pay
+participant "Site POS Server" as POS
+participant "Gate / Exit" as Gate
+participant "Audit / Reconciliation" as Audit
+
+Channel -> Central : request allowed continuity payment workflow
+Central -> Central : validate activation scope + payable basis
+Central -> Pay : payment provider workflow
+Pay --> Central : verified provider outcome
+Central -> Central : record payment finality
+Central -> POS : request Sales Invoice issuance
+alt fiscal issued
+  POS --> Central : fiscal identity/status
+  Central -> Central : record fiscal reference
+  Central -> Central : issue ExitAuthorization if eligible
+  Central -> Gate : authorization consumed
+else fiscal pending / failed / timeout
+  POS --> Central : exception status
+  Central -> Central : block normal ExitAuthorization
+end
+Central -> Audit : continuity tags and outcomes
+
+note bottom
+POS Server issues fiscal documents.
+Central PMS owns finality, fiscal reference recording, and ExitAuthorization.
+end note
+@enduml

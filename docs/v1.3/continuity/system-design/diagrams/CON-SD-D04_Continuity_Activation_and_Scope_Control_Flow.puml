@@ -1,0 +1,29 @@
+@startuml
+title CON-SD-D04 Continuity Activation and Scope-Control Flow
+skinparam shadowing false
+
+actor "Supervisor / approved authority" as Sup
+participant "Operator Console /\napproved governance" as OC
+participant "Central PMS" as Central
+participant "Continuity Terminal" as CT
+participant "Audit / Reconciliation" as Audit
+
+Sup -> OC : request / approve activation
+OC -> Central : submit activation scope
+Central -> Central : validate Site/Site Group,\ndependency, incident, allowed workflows
+alt valid activation
+  Central -> Audit : record incident/audit/reconciliation tags
+  Central --> CT : enable restricted mode for approved scope
+  Central --> OC : degraded-active status
+else missing or unsafe scope
+  Central --> OC : activation blocked
+end
+OC -> Central : deactivation / restoration review
+Central --> CT : disable continuity-only workflows
+Central -> Audit : post-restoration review handoff
+
+note bottom
+Activation is explicit, scoped, approved where required, tagged, and reversible.
+No automatic fallback.
+end note
+@enduml

@@ -1,0 +1,31 @@
+@startuml
+title CON-SD-D11 Vendor Acknowledgment Failure and Reconciliation Flow
+skinparam shadowing false
+
+participant "Central PMS" as Central
+participant "Site POS Server" as POS
+participant "Vendor PMS Connector" as Connector
+participant "Vendor PMS / HCP" as Vendor
+participant "Reconciliation" as Recon
+participant "Audit / Event" as Audit
+
+Central -> Central : payment finality recorded
+Central -> POS : fiscal issuance where required
+POS --> Central : fiscal status
+Central -> Connector : vendor acknowledgment if approved
+Connector -> Vendor : acknowledgment attempt
+alt acknowledged
+  Vendor --> Connector : accepted / already paid
+  Connector --> Central : normalized outcome
+else failed / timeout / unavailable / unknown / conflict
+  Vendor --> Connector : unsafe or failed outcome
+  Connector --> Central : normalized failure context
+  Central -> Recon : backlog / escalation / review
+end
+Connector -> Audit : acknowledgment context
+
+note bottom
+Vendor acknowledgment is not ExitPass payment finality.
+Unknown outcome requires later-approved safe confirmation.
+end note
+@enduml

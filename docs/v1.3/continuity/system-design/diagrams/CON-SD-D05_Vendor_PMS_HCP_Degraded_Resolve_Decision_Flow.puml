@@ -1,0 +1,34 @@
+@startuml
+title CON-SD-D05 Vendor PMS / HCP Degraded Resolve Decision Flow
+skinparam shadowing false
+
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+participant "Vendor PMS Connector" as Connector
+participant "Projection context" as Projection
+participant "Operator Console /\ngovernance" as OC
+participant "Audit / Reconciliation" as Audit
+
+Central -> Connector : request live resolve / fee
+Connector -> Vendor : vendor interaction
+alt live result available
+  Vendor --> Connector : session + fee facts
+  Connector --> Central : normalized result
+  Central -> Central : record payable basis
+else unavailable / timeout / ambiguous
+  Connector --> Central : normalized failure + health/freshness facts
+  Central -> Projection : request projection support context
+  Projection --> Central : freshness / mapping / sufficiency context
+  alt approved policy + safe projection + approved degraded basis
+    Central -> Central : degraded resolve decision
+    Central -> Audit : incident/audit/reconciliation tags
+  else unsafe or outside policy
+    Central -> OC : fail closed or governance review
+  end
+end
+
+note bottom
+Connector reports facts only.
+Central PMS owns degraded resolve decisioning.
+end note
+@enduml

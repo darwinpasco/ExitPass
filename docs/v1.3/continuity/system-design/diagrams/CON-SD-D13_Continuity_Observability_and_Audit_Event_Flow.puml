@@ -1,0 +1,31 @@
+@startuml
+title CON-SD-D13 Continuity Observability and Audit Event Flow
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Central PMS\ncontinuity decisions" as Central
+component "Connector health /\nprojection freshness" as Connector
+component "Continuity Terminal\nrestricted activity" as CT
+component "POS fiscal outcomes" as POS
+component "Payment outcomes" as Pay
+component "Gate / manual release outcomes" as Gate
+component "Operator Console\ngovernance actions" as OC
+component "Audit / Event capability" as Audit
+component "Management Dashboard\nvisibility only" as Dash
+component "Reconciliation consumers" as Recon
+
+Central --> Audit
+Connector --> Audit
+CT --> Audit
+POS --> Audit
+Pay --> Audit
+Gate --> Audit
+OC --> Audit
+Audit --> Dash : source/freshness/authority labels
+Audit --> Recon : review and closure inputs
+
+note bottom
+Audit, events, dashboards, and reports communicate facts.
+They do not transfer authority or close reconciliation by themselves.
+end note
+@enduml
