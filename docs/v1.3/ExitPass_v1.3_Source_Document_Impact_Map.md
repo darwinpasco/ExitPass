@@ -1,0 +1,51 @@
+# ExitPass v1.3 Source Document Impact Map
+
+Version: v1.3 planning artifact  
+Status: Draft for documentation planning only  
+Generated: 2026-07-01
+
+## Purpose
+
+This map links major v1.3 decisions to affected source baselines and target documents. It is a planning artifact only. It does not propose final schema, endpoint, DTO, implementation, diagram, or BRD/System Design prose.
+
+## Source Baselines
+
+| Source area | Local reference |
+| --- | --- |
+| Core v1.2 baseline | `D:\Docs\ExitPass\v1.2` |
+| POS/BIR references | `D:\Docs\ExitPass\POS` |
+| Existing v1.3 POS planning and drafts | `docs/v1.3/pos-invoicing`, `docs/v1.3/pos-server`, `docs/v1.3/pos-server-api`, `docs/v1.3/pos-server-db` |
+
+## Impact Map
+
+| Decision area | Source baseline impacted | Target v1.3 document impacted | Companion document impacted | Expected update type | Risk if not updated |
+| --- | --- | --- | --- | --- | --- |
+| Centralized WebPay and site-specific URLs | ExitPass BRD v1.2; System Design v1.2; API Contract Pack v1.2 | ExitPass BRD v1.3; System Design v1.3; API Contract Pack v1.3 | Management Dashboard and Reporting BRD; POS/Invoicing BRD | Clarify centralized WebPay service with site-specific public URL entry points and unresolved slug registry. | Implementers may treat WebPay as per-site deployments or let URL routing bypass Site/Site Group resolution. |
+| Site Group vs Site semantic clarification | ExitPass BRD v1.2; Database Design v1.2; DDL Data Dictionary; API Contract Pack v1.2 | ExitPass BRD v1.3; Database Design v1.3; API Contract Pack v1.3 | Management Dashboard and Reporting BRD; POS/Invoicing BRD; Operator Console BRD update | Define Site Group as lookup/payment scope and Site as reporting, contract, vendor mapping, POS Server, and operational boundary. | Reporting, POS routing, vendor mapping, and WebPay lookup may use inconsistent scopes. |
+| Physical parking lot vs Site modeling | ExitPass BRD v1.2; Database Design v1.2; DDL Data Dictionary | ExitPass BRD v1.3; Database Design v1.3 | Vendor PMS Connector System Design; HikCentral Connector Profile | State that physical lots are not automatically ExitPass Sites and may remain metadata unless the vendor/operation boundary requires first-class modeling. | Vendor lot identifiers could be misused as platform Site identifiers. |
+| VendorSystem / AdapterMapping / connector instance model | System Design v1.2; Database Design v1.2; API Contract Pack v1.2; Engineering Pack v1.2 | System Design v1.3; Database Design v1.3; API Contract Pack v1.3; Engineering Pack v1.3 | Vendor PMS Connector System Design | Separate VendorSystem instance, AdapterMapping, adapter codebase, and deployed connector instance. | Connector deployments may be underspecified, causing unclear ownership, monitoring, and routing per vendor instance. |
+| HikCentral parking lot mapping | System Design v1.2; Database Design v1.2; HCP-related engineering references | System Design v1.3; Database Design v1.3 | HikCentral Connector Profile | Clarify that HCP ParkingLotIndexCode maps through AdapterMapping and is not `site_id`. | HCP vendor identifiers could leak into core IDs and break multi-site or multi-vendor operation. |
+| One-minute HCP polling and session projection | System Design v1.2; Engineering Pack v1.2 | System Design v1.3; Engineering Pack v1.3 | HikCentral Connector Profile; Operator Console BRD update | Add one-minute polling baseline, projection freshness, and operational projection language. | Operators may mistake projection feed for financial truth or fail to detect stale connector data. |
+| Normal resolve mode | BRD v1.2; System Design v1.2; API Contract Pack v1.2 | BRD v1.3; System Design v1.3; API Contract Pack v1.3 | Vendor PMS Connector System Design | Preserve live Vendor PMS/HCP tariff calculation in normal mode. | Central PMS projection could be incorrectly used as fee authority during normal operation. |
+| Degraded resolve mode | BRD v1.2; System Design v1.2; Engineering Pack v1.2 | BRD v1.3; System Design v1.3; Engineering Pack v1.3 | Continuity BRD; Continuity System Design; Operator Console BRD update | Define degraded mode as controlled use of Central PMS projection with explicit freshness, activation, audit, and recovery controls. | Degraded operation may be treated as an unrestricted fallback, creating tariff, audit, and customer dispute risk. |
+| Centralized dashboard/reporting | BRD v1.2; Operator Console BRD v1.0; Engineering Pack v1.2 | BRD v1.3; Engineering Pack v1.3 | Management Dashboard and Reporting BRD | Split management dashboard/reporting into its own companion BRD with a concise core BRD anchor. | Reporting scope may sprawl across core BRD, Operator Console, POS, and Engineering Pack without ownership. |
+| POS/Invoicing platform-wide model | BRD v1.2; POS/BIR references; existing POS/Invoicing v1.3 docs | BRD v1.3; System Design v1.3 | POS/Invoicing BRD; POS Server System Design; POS Server API Contract | Carry platform-wide fiscal issuance model across WebPay, APM, Cashier POS, EC Device, operator-assisted, and future channels. | APM-only fiscal design could exclude other payment channels from compliant issuance. |
+| Site-level POS Server | POS/BIR references; existing POS/Invoicing and POS Server docs; Database Design v1.2 | System Design v1.3; Database Design v1.3; API Contract Pack v1.3 | POS/Invoicing BRD; POS Server System Design; POS Server API Contract | Model one Site or parking operation boundary with one Site-level POS Server. | Fiscal counters, reports, and channel routing may be scoped inconsistently. |
+| Fiscal issuance before ExitAuthorization | BRD v1.2; System Design v1.2; API Contract Pack v1.2; POS/BIR references | BRD v1.3; System Design v1.3; API Contract Pack v1.3; Engineering Pack v1.3 | POS/Invoicing BRD; POS Server System Design; POS Server API Contract; Continuity BRD | Preserve sequence: payment finality, POS fiscal issuance, Central PMS fiscal reference recording, ExitAuthorization. | Paid exits may be released without fiscal issuance or POS Server may be incorrectly treated as exit authority. |
+| Assisted Payment Terminal model | Operator Console BRD v1.0; POS/Invoicing docs; Engineering Pack v1.2 | BRD v1.3; System Design v1.3 | Assisted Payment Terminal BRD; Assisted Payment Terminal System Design; POS/Invoicing BRD | Model Cashier POS and EC Device as one app family with different operating modes. | Duplicate product models may create inconsistent terminal identity, fiscal routing, and continuity behavior. |
+| Operator Console module positioning | Operator Console BRD v1.0; BRD v1.2; System Design v1.2 | BRD v1.3; System Design v1.3 | Operator Console BRD update; Continuity BRD; Management Dashboard and Reporting BRD | Treat Operator Console as a formal platform module with updated v1.3 responsibilities. | Operator actions, projection health, fiscal exceptions, and continuity controls may be scattered across documents. |
+| ExitPass Continuity module positioning | BRD v1.2; System Design v1.2; Engineering Pack v1.2 | BRD v1.3; System Design v1.3; Engineering Pack v1.3 | Continuity BRD; Continuity System Design; Assisted Payment Terminal BRD | Treat Continuity as a formal platform capability covering degraded mode, activation, audit, recovery, and continuity terminal operations. | Degraded mode and BCP behavior may remain implicit and unsafe for implementation. |
+| Companion document split | v1.2 core documents; Operator Console BRD v1.0; POS planning docs | Documentation Outline; BRD v1.3 | All companion BRDs and companion technical designs | Keep core BRD concise while moving POS, Continuity, Operator Console, Assisted Terminal, Reporting, connector, and POS Server depth into companion docs. | Core BRD may become overloaded or companion documents may drift from core authority model. |
+| Database delta strategy | Database Design v1.2; DDL Data Dictionary; Constraint Matrix and Index Inventory | Database Design v1.3; v1.3 Database Delta Design; Data Dictionary / Constraint Matrix Refresh Plan | POS Server Database Design; Vendor PMS Connector System Design; Continuity System Design | Plan deltas only after BRD/System Design acceptance; refresh dictionary and constraints after approved schema direction. | Schema may be designed before business and authority boundaries are stable. |
+| API Contract Pack v1.3 impact | API Contract Pack v1.2; POS Server API Contract planning docs | API Contract Pack v1.3 | POS Server API Contract; Vendor PMS Connector System Design; HikCentral Connector Profile; Assisted Payment Terminal System Design | Identify impacts without final endpoint/DTO details until service boundaries are accepted. | API contracts may encode premature ownership or allow WebPay, POS, or connectors to declare authority they do not own. |
+| Engineering Pack v1.3 impact | Engineering Pack v1.2; existing v1.3 POS planning docs | Engineering Pack v1.3 | Continuity System Design; Vendor PMS Connector System Design; POS Server System Design; Operations Runbook Pack | Add rollout, observability, connector health, projection freshness, fiscal exception, degraded mode, and runbook planning after designs stabilize. | Implementation teams may lack operational controls for connector staleness, fiscal issuance failures, and degraded operations. |
+| Test/UAT Pack need | Engineering Pack v1.2; UAT/smoke docs in repo; POS planning docs | ExitPass v1.3 Test and UAT Pack | POS/Invoicing BRD; Continuity BRD; Vendor PMS Connector System Design; Operator Console BRD update | Define scenario coverage after document baselines are accepted. | Authority model and failure modes may ship without explicit acceptance coverage. |
+
+## Planning Constraints
+
+| Constraint | Planning effect |
+| --- | --- |
+| Preserve v1.2 authority model | No document may shift payment finality, tariff authority, fiscal authority, or exit authorization ownership without explicit approval. |
+| Do not invent schema or API details in planning artifacts | Database and API details are deferred to the correct locked writing-order stage. |
+| Do not rewrite approved baseline documents in this task | Source baselines are impact references only. |
+| Do not create diagrams in this task | Diagram work belongs to later BRD/System Design or companion design tasks if needed. |
