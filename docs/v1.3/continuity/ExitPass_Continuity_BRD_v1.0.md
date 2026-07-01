@@ -1,9 +1,9 @@
 # ExitPass Continuity BRD v1.0
 
-Version: v1.0  
-Status: Draft for review  
-Generated: 2026-07-01  
-Document type: Companion Business Requirements Document  
+Version: v1.0
+Status: Approved for v1.3 System Design baseline
+Generated: 2026-07-01
+Document type: Companion Business Requirements Document
 Product scope: ExitPass Continuity capability
 
 ## 1. Document Control
@@ -18,11 +18,13 @@ Product scope: ExitPass Continuity capability
 
 | Role | Name | Approval status | Date |
 | --- | --- | --- | --- |
-| Product owner | TBD | Pending review | TBD |
-| Parking operations owner | TBD | Pending review | TBD |
-| Finance / revenue assurance owner | TBD | Pending review | TBD |
-| Technical architecture owner | TBD | Pending review | TBD |
-| Compliance / audit owner | TBD | Pending review | TBD |
+| Product owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Parking operations owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Finance / revenue assurance owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Technical architecture owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Compliance / audit owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+
+Approval note: This document is approved as part of the ExitPass v1.3 BRD baseline for use in ExitPass System Design v1.3. Approval does not close downstream implementation, API, database, finance/accounting, BIR/accreditation, or technical design questions explicitly listed in the Open Questions section.
 
 ### 1.3 Document Ownership
 

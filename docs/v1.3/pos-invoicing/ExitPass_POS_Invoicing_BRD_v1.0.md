@@ -1,7 +1,7 @@
 # ExitPass POS/Invoicing BRD v1.0
 
 Version: v1.0
-Status: Finalized draft for business review
+Status: Approved for v1.3 System Design baseline
 Date: 2026-07-01
 Document type: Companion Business Requirements Document
 Product scope: ExitPass POS/Invoicing
@@ -18,11 +18,13 @@ Product scope: ExitPass POS/Invoicing
 
 | Role | Name | Status | Date |
 | --- | --- | --- | --- |
-| Product Owner | TBD | Pending business review | TBD |
-| Finance / Accounting Owner | TBD | Pending business review | TBD |
-| Compliance / BIR Advisor | TBD | Pending business review | TBD |
-| Operations Owner | TBD | Pending business review | TBD |
-| Technical Owner | TBD | Pending downstream design | TBD |
+| Product Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Finance / Accounting Owner | ExitPass documentation stream | Pending downstream finance/accounting confirmation for tax/fiscal details explicitly left open | 2026-07-01 |
+| Compliance / BIR Advisor | ExitPass documentation stream | Pending downstream BIR/accreditation confirmation for BIR/accreditation details explicitly left open | 2026-07-01 |
+| Operations Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Technical Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline; downstream technical design still required | 2026-07-01 |
+
+Approval note: This document is approved as part of the ExitPass v1.3 BRD baseline for use in ExitPass System Design v1.3. Approval does not mean BIR accreditation approval, final accounting/tax treatment approval, or implementation-ready API/database design. Approval does not close downstream implementation, API, database, finance/accounting, BIR/accreditation, or technical design questions explicitly listed in the Open Questions section.
 
 ### 1.3 Document Ownership
 
