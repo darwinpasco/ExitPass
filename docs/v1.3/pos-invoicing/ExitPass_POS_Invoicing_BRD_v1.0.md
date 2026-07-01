@@ -1,718 +1,684 @@
 # ExitPass POS/Invoicing BRD v1.0
 
+Version: v1.0
+Status: Finalized draft for business review
+Date: 2026-07-01
+Document type: Companion Business Requirements Document
+Product scope: ExitPass POS/Invoicing
+
 ## 1. Document Control
 
-| Field | Value |
-| --- | --- |
-| Document title | ExitPass POS/Invoicing Business Requirements Document |
-| Version | v1.0 Markdown draft |
-| Product scope | ExitPass v1.3 POS/Invoicing |
-| Status | Approved baseline |
-| Generated | 2026-06-25 |
-| Output format | Markdown only |
+### 1.1 Version History
 
-Approval note: `ExitPass_POS_Invoicing_BRD_v1.0.md` is approved as the POS/Invoicing business requirements baseline for ExitPass v1.3 documentation and downstream POS Server System Design work.
+| Version | Date | Owner | Summary |
+| --- | --- | --- | --- |
+| v1.0 | 2026-07-01 | ExitPass documentation stream | Finalized companion BRD for platform-wide POS/Invoicing aligned with ExitPass BRD v1.3, companion BRDs, BIR/POS references, Site-level POS Server fiscal authority, Sales Invoice issuance, fiscal reporting, entitlement/tax treatment, audit, continuity, and reconciliation boundaries. |
+
+### 1.2 Approvals
+
+| Role | Name | Status | Date |
+| --- | --- | --- | --- |
+| Product Owner | TBD | Pending business review | TBD |
+| Finance / Accounting Owner | TBD | Pending business review | TBD |
+| Compliance / BIR Advisor | TBD | Pending business review | TBD |
+| Operations Owner | TBD | Pending business review | TBD |
+| Technical Owner | TBD | Pending downstream design | TBD |
+
+### 1.3 Document Ownership
+
+This BRD is owned by the ExitPass product and documentation stream. It defines business and compliance requirements for POS/Invoicing in the ExitPass v1.3 documentation stream.
+
+This document is not a POS Server System Design, POS Server API Contract, Database Design, Engineering Pack, BIR accreditation submission pack, Hikvision APM-only document, ARTS POSLog technical schema guide, or implementation specification.
 
 ## 2. Executive Summary
 
-ExitPass shall provide a BIR-authorized POS/Invoicing capability for applicable parking payment channels across the platform. The capability is not limited to AutoPay Machines. WebPay, AutoPay Machines, Cashier POS, EC Device / Continuity Terminal, operator-assisted payment where allowed, and future payment channels shall route fiscal issuance through the resolved Site-level POS Server.
+ExitPass POS/Invoicing is a platform-wide business and compliance capability. It applies to all applicable parking payment channels, including WebPay, AutoPay Machine / APM, Cashier-Assisted Terminal, Continuity Terminal when activated under approved policy, operator-assisted payment if allowed, and future payment channels.
 
-Parking payment fiscal output for ExitPass v1.3 shall be Sales Invoice. Related fiscal workflows may require adjustment documents, void/refund/cancel/return documents, credit memo/debit memo equivalents, or other BIR-required fiscal documents, but the primary parking payment output is Sales Invoice.
+Parking fiscal output for ExitPass v1.3 shall be Sales Invoice. Sales Invoice, SI, and Sales Invoice Number are the primary parking fiscal-output terms for this BRD. Official Receipt / OR terminology shall not be used as the primary parking fiscal output unless a future BIR/accounting decision explicitly changes the fiscal document model.
 
-BIR recommended the Site-level POS Server model. Each Site or parking operation boundary shall have one Site-level POS Server. The resolved Site determines which POS Server issues the Sales Invoice. Payment channels and terminals are children of the Site POS Server and must not be modeled as separate independent POS systems.
+The fiscal authority model is Site-level. Each Site or parking operation boundary should have one Site-level POS Server. The resolved Site determines which Site POS Server issues the Sales Invoice. Payment channels and terminals are channels/terminals under the resolved Site POS Server and are not independent fiscal authorities.
 
-Central PMS remains the authority for parking session control state, site resolution, payment finality, PaymentAttempt, PaymentConfirmation, ExitAuthorization, and the payment-linked platform authority chain. POS Server owns fiscal issuance and fiscal reporting. Fiscal issuance must succeed before Central PMS issues ExitAuthorization.
+Central PMS remains payment finality and ExitAuthorization authority. POS Server remains fiscal issuance authority. Fiscal issuance must succeed before Central PMS issues ExitAuthorization unless a separately approved supervisor-controlled exception policy applies.
 
 ## 3. Business Context
 
-ExitPass v1.2 established core parking session, tariff, payment, provider outcome, and ExitAuthorization authority boundaries. It also introduced Operator Console controls for site, device, shift, statutory discount validation, audit, and operational reporting.
+ExitPass v1.3 clarifies Site Group/Site semantics, centralized WebPay, Vendor PMS connector projection, Assisted Payment Terminal, Continuity, Operator Console, Management Dashboard and Reporting, and platform-wide POS/Invoicing. POS/Invoicing must align with those companion domains without taking over their authority.
 
-ExitPass v1.3 POS/Invoicing extends the platform with fiscal capabilities required for BIR-aligned parking payment operations. The platform must issue Sales Invoices and produce supporting fiscal reports for all applicable payment channels while preserving the existing v1.2 authority model.
-
-The BIR and Hikvision APM materials are important source references for fiscal output, X-read, Z-read, Electronic Journal, POSLog, BIR Sales Summary, Annex E reports, reprint, void/refund/cancel/return, and accreditation controls. They are not the target architecture by themselves. The target architecture is platform-wide Site-level POS/Invoicing.
+The POS/BIR reference materials provide required fiscal context for Sales Invoice, X-read, Z-read, BIR Sales Summary, Electronic Journal, POSLog, reprint, void/refund/cancel/return, counters, reset, accreditation identity, and evaluation controls. Those references do not make the target architecture APM-only or Hikvision-specific. The target business model is platform-wide POS/Invoicing through a resolved Site POS Server.
 
 ## 4. Problem Statement
 
-ExitPass currently has platform authority for parking sessions, payment finality, and ExitAuthorization, but does not yet define a platform-wide POS/Invoicing business capability. Without this capability:
+ExitPass requires a consistent fiscal issuance and reporting model across all applicable payment channels. Without a platform-wide POS/Invoicing BRD:
 
-- Fiscal issuance can become fragmented by payment channel.
-- WebPay, APM, cashier, EC/continuity, and operator-assisted flows may diverge in fiscal behavior.
-- BIR Sales Summary, X-read, Z-read, Annex E reporting, EJ, POSLog, and fiscal audit controls may be incomplete or channel-specific.
-- ExitAuthorization could be issued without a completed fiscal issuance reference if the payment-to-exit workflow is not controlled.
-- Tax, entitlement, discount, VAT privilege, and adjustment treatment may be buried inside tariff/payment data rather than explicit fiscal lines and reports.
+- WebPay, APM, cashier-assisted, continuity, and future channels may diverge in fiscal behavior.
+- Sales Invoice issuance could be incorrectly treated as channel-local or APM-only.
+- Central PMS payment finality and ExitAuthorization authority could be blurred with POS Server fiscal authority.
+- BIR Sales Summary, X-read, Z-read, Annex E reporting, Electronic Journal, POSLog, reprint, reset, and fiscal audit controls may be incomplete or inconsistently scoped.
+- Tax, entitlement, discount, VAT privilege, coupon, penalty, lost ticket, overstay, and service-charge treatment may be buried in tariff/payment data rather than explicit fiscal classifications.
 
 ## 5. Product Purpose
 
-The purpose of ExitPass POS/Invoicing is to provide a platform-wide fiscal issuance and reporting capability for parking payments. The capability shall:
+ExitPass POS/Invoicing shall:
 
-- Issue Sales Invoices for successful parking payments.
-- Route fiscal issuance through the resolved Site-level POS Server.
-- Preserve Central PMS as payment finality and ExitAuthorization authority.
-- Produce required fiscal reports, fiscal audit records, exports, EJ, POSLog, X-read, Z-read, and BIR Sales Summary.
-- Support entitlement and fiscal treatment categories including Senior Citizen, PWD, NAAC, Solo Parent, and Diplomat VAT Privilege / VAT Exemption.
-- Maintain tamper-evident fiscal records and counter continuity.
+- Provide BIR-authorized POS/Invoicing capability for applicable parking payment channels.
+- Issue Sales Invoices through the resolved Site POS Server.
+- Preserve Central PMS authority for payment finality and ExitAuthorization.
+- Preserve POS Server authority for fiscal issuance, fiscal numbering, fiscal counters, fiscal reports, Electronic Journal, POSLog, fiscal exports, and fiscal audit trail.
+- Support BIR-aligned reporting, including X-read, Z-read, BIR Sales Summary / Annex E-1, and extensible Annex E-2 to E-5 reporting.
+- Support entitlement and fiscal-treatment categories including Senior Citizen, PWD, NAAC, Solo Parent, and Diplomat VAT Privilege / VAT Exemption.
+- Support audit, reprint, void/refund/cancel/return, reset, recovery, continuity exception, and reconciliation controls.
 
-## 6. Scope
+## 6. Product Boundary
 
-### In Scope
+POS/Invoicing is:
 
-- Platform-wide POS/Invoicing business requirements for ExitPass v1.3.
-- Sales Invoice issuance for parking payments.
-- Site-level POS Server model.
-- Channel and terminal model for WebPay, APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted payment if allowed, and future channels.
-- Central PMS and POS Server authority split.
-- Payment-to-exit choreography requiring fiscal issuance before ExitAuthorization.
-- X-read, Z-read, reset counter, Z-counter, and Grand Total Amount business requirements.
-- BIR Sales Summary and Annex E reporting requirements.
-- Entitlement, discount, VAT privilege, and fiscal line classification requirements.
-- Void, refund, cancel, return, and reprint business control requirements.
-- Fiscal audit, EJ, POSLog, export, retention, privacy, and reconciliation requirements.
-- Open questions requiring BIR/accounting, compliance, or POS Server System Design resolution.
+- A platform-wide fiscal issuance and fiscal reporting capability.
+- A Site-level fiscal model.
+- A business and compliance requirements domain.
+- A consumer of Central PMS payment finality and resolved Site context.
+- A producer of Sales Invoice, fiscal references, fiscal reports, Electronic Journal, POSLog, exports, and fiscal audit records.
 
-### Out of Scope
+POS/Invoicing is not:
 
-- POS Server technical system design.
-- Database schema design or migration.
-- API endpoint, DTO, event, or contract design.
-- Source code changes.
-- Payment provider integration redesign.
-- Gate integration redesign.
-- Final print layout pixel-perfect design.
-- Final BIR submission package.
-- DOCX generation.
-- Hikvision APM-only design.
+- AutoPay Machine-only.
+- Hikvision-specific.
+- A separate independent POS system per payment channel.
+- A payment provider.
+- Payment finality authority.
+- ExitAuthorization authority.
+- Gate-control authority.
+- Normal tariff authority.
+- Statutory discount policy authority.
+- Management dashboard or BI implementation.
 
-## 7. Stakeholders and Users
+## 7. Explicit Non-Authority Scope
 
-| Stakeholder / user | Role in POS/Invoicing |
+POS/Invoicing must not:
+
+- Declare payment finality.
+- Issue ExitAuthorization.
+- Open gates.
+- Replace Central PMS authority.
+- Replace Vendor PMS normal tariff authority.
+- Make APM, WebPay, Cashier-Assisted Terminal, Continuity Terminal, or future channels independent fiscal authorities.
+- Treat projection data as financial truth.
+- Approve statutory entitlement outside Central PMS / Discount workflow.
+- Turn POS Server into payment authority.
+- Turn POS Server into gate authority.
+
+## 8. Stakeholders and Users
+
+| Stakeholder / User | Business Interest |
 | --- | --- |
-| Parking customer | Receives Sales Invoice and payment/exit status messaging. |
-| Site cashier | Processes cashier POS payments, reprints, controlled adjustments, and cashier accountability actions if authorized. |
-| Site operator | Supports customer payment or entitlement workflows where allowed, without bypassing Central PMS authority. |
-| Supervisor | Approves controlled exceptions, manual release if allowed, fiscal reset/recovery, void/refund/cancel/return controls, and sensitive fiscal actions. |
-| Finance/accounting | Owns fiscal treatment, VAT/tax configuration, reports, and reconciliation signoff. |
-| Compliance/audit | Reviews fiscal records, EJ, POSLog, reports, evidence, exports, and retention controls. |
-| Operations | Manages site-level workflows, terminals, cashier sessions, business continuity, and degraded operation procedures. |
-| Engineering | Designs and implements POS Server, channel integrations, controls, and supporting platform changes after BRD approval. |
-| BIR/accreditation advisor | Confirms fiscal document, report, numbering, layout, identity, evidence, and compliance treatment. |
-| Hikvision/APM vendor | Supports APM printing, hardware behavior, fiscal payload rendering, and APM integration under the Site POS Server model. |
-
-## 8. Business Objectives
-
-| ID | Objective |
-| --- | --- |
-| BO-001 | Provide a BIR-authorized POS/Invoicing capability for applicable parking payments across all ExitPass payment channels. |
-| BO-002 | Ensure Sales Invoice issuance is controlled by the resolved Site POS Server. |
-| BO-003 | Preserve the Central PMS authority model for parking session state, payment finality, and ExitAuthorization. |
-| BO-004 | Ensure fiscal issuance succeeds before ExitAuthorization is issued. |
-| BO-005 | Produce BIR-required and business-required fiscal reports, including BIR Sales Summary, X-read, Z-read, EJ, POSLog, and Annex E reports. |
-| BO-006 | Support immediate and future entitlement categories without redesigning the fiscal model. |
-| BO-007 | Preserve fiscal counter, sequence, Grand Total Amount, and EJ continuity across reset, failover, restore, repair, and recovery events. |
-| BO-008 | Provide auditable controls for reprints, void/refund/cancel/return actions, exports, fiscal resets, and recovery. |
+| Parking customer | Receives Sales Invoice access and accurate payment/fiscal/exit messaging. |
+| WebPay user | Receives digital Sales Invoice access after successful fiscal issuance. |
+| APM user | Receives printed or digital Sales Invoice presentation where supported. |
+| Cashier / assisted terminal user | Processes assisted payment and fiscal presentation under Site POS Server authority. |
+| Continuity operator | Performs restricted continuity-mode fiscal handling only under approved policy. |
+| Site supervisor | Reviews fiscal exceptions, reprints, adjustments, continuity events, and manual-release cases where policy allows. |
+| Finance / accounting | Owns fiscal treatment, tax treatment, BIR reporting, reconciliation, and accounting signoff. |
+| Compliance / BIR advisor | Confirms BIR interpretation, accreditation details, retention, identity, and reporting posture. |
+| Operations / reconciliation user | Reviews fiscal exception, settlement, continuity, and post-restoration reconciliation items. |
+| Technical owner | Designs POS Server, integrations, API, database, security, and recovery after BRD approval. |
 
 ## 9. POS/Invoicing Concept Overview
 
-ExitPass POS/Invoicing is a fiscal capability that sits beside, not inside, Central PMS payment finality. Central PMS determines that payment finality has occurred. POS Server issues the Sales Invoice and fiscal records for the resolved Site. Central PMS records the fiscal issuance reference and then issues ExitAuthorization.
+ExitPass POS/Invoicing sits beside Central PMS payment authority. Central PMS determines verified payment finality and resolves the Site. POS Server issues the Sales Invoice and fiscal records for that resolved Site. Central PMS records the fiscal issuance reference and then issues ExitAuthorization if eligible.
 
-The POS Server is not a payment provider. It is not a gate authorization service. It is not a tariff authority by itself. It is the fiscal authority for the Site.
-
-The POS Server shall maintain the fiscal facts required to reconstruct, audit, export, and report parking fiscal transactions, including Sales Invoice payloads, fiscal lines, counters, reports, EJ, POSLog, reprints, adjustments, and fiscal audit events.
+POS Server shall maintain fiscal facts required to reconstruct, audit, export, and report parking fiscal transactions, including Sales Invoice data, fiscal lines, fiscal identity, counters, X-read, Z-read, BIR Sales Summary, Annex E reports, Electronic Journal, POSLog, reprints, adjustments, exports, and fiscal audit events.
 
 ## 10. Site-level POS Server Model
 
-The system shall use one Site-level POS Server per Site or parking operation boundary.
+Each Site or parking operation boundary should have one Site-level POS Server.
 
-The Site POS Server shall be the fiscal authority for the resolved Site.
+The resolved Site determines:
 
-The resolved Site shall determine which Site POS Server issues the Sales Invoice.
+- Which POS Server issues the Sales Invoice.
+- Which fiscal numbering and counters apply.
+- Which BIR/fiscal reporting scope applies.
+- Which POS Server owns fiscal issuance, Electronic Journal, POSLog, export, retention, and audit records.
 
-The Site POS Server shall own fiscal numbering, reset counter, Z-counter, Grand Total Amount, X-read, Z-read, BIR Sales Summary, Annex E reporting, EJ, POSLog, fiscal audit, reprint controls, fiscal adjustment controls, retention, and export.
+Payment channels and terminals are under the Site POS Server. A channel or terminal may present, print, or display fiscal output, but it does not become fiscal authority.
 
-The system shall not model WebPay, APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted payment, or future channels as separate independent POS systems for the same Site.
-
-The exact assignment of MIN, PTU, serial number, terminal number, software version, supplier accreditation metadata, and related fiscal identity fields between Site POS Server and channels/terminals remains open for BIR/accounting confirmation.
+The exact assignment of MIN, PTU, serial number, terminal number, software version, supplier accreditation metadata, and taxpayer/fiscal identity fields across Site, branch, Site POS Server, channel, and terminal remains open for BIR/accounting/accreditation confirmation.
 
 ## 11. Payment Channel and Terminal Model
 
-Payment channels and terminals shall be modeled as children of the Site POS Server.
+The POS/Invoicing capability shall support:
 
-The following channel/terminal types shall be supported in the model:
+- WebPay.
+- AutoPay Machine / APM.
+- Cashier-Assisted Terminal.
+- Continuity Terminal when activated under approved policy.
+- Operator-assisted payment if allowed.
+- Future payment channels.
 
-- WebPay
-- AutoPay Machine / APM
-- Cashier POS
-- EC Device / Continuity Terminal
-- Operator-assisted payment if allowed
-- Future payment channels
+Each channel/terminal shall provide enough business context for fiscal issuance to be associated with resolved Site, Site POS Server, parking session, payment confirmation, channel, terminal, responsible actor where applicable, and fiscal line basis.
 
-Each channel or terminal shall provide enough context for the Site POS Server to associate fiscal issuance with the resolved Site, payment, parking session, channel, terminal, and responsible actor where applicable.
-
-The system shall support future channel registration without creating a separate fiscal authority for each new channel.
+The channel/terminal shall not independently issue fiscal documents, declare payment finality, approve entitlement, or authorize exit.
 
 ## 12. Authority Model
 
-| Authority area | Owner | Business rule |
-| --- | --- | --- |
-| Parking session control state | Central PMS | Central PMS remains the platform source of truth for canonical parking session state. |
-| Site resolution | Central PMS | Central PMS owns or provides the authoritative resolved Site used for POS Server routing. |
-| PaymentAttempt | Central PMS | Payment attempts remain part of the Central PMS payment authority chain. |
-| PaymentConfirmation | Central PMS | Verified payment finality is recorded under Central PMS authority. |
-| Payment finality | Central PMS | Payment Orchestrator and WebPay must not declare platform payment finality. |
-| ExitAuthorization | Central PMS | POS Server must not issue ExitAuthorization. Gate/exit execution must not bypass Central PMS authorization. |
-| Sales Invoice issuance | Site POS Server | POS Server issues Sales Invoice after Central PMS verified payment finality. |
-| Fiscal reports and counters | Site POS Server | POS Server owns fiscal numbering, reset counter, Z-counter, Grand Total Amount, X/Z reports, BIR summary, EJ, and POSLog. |
-| Fiscal adjustments | Site POS Server and Central PMS | POS Server owns fiscal adjustment documents. Central PMS owns payment reversal/refund finality. Workflow sequencing remains open. |
+| Function | Owner |
+| --- | --- |
+| Parking session lifecycle in normal mode | Vendor PMS / HCP |
+| Normal tariff computation | Vendor PMS / HCP |
+| Session projection and control state | Central PMS |
+| TariffSnapshot / payable basis | Central PMS |
+| PaymentAttempt | Central PMS |
+| PaymentConfirmation / payment finality | Central PMS |
+| Payment provider interaction | Payment Orchestrator or approved payment channel integration |
+| Statutory discount policy resolution | Central PMS / Discount workflow |
+| Statutory validation record | Central PMS / Discount workflow |
+| Payable-basis update after discount | Central PMS with Vendor PMS or approved degraded-mode tariff basis |
+| Fiscal treatment and Sales Invoice issuance | Resolved Site POS Server |
+| Fiscal numbering / counters / X-read / Z-read / BIR Sales Summary / EJ / POSLog | Resolved Site POS Server |
+| Fiscal issuance reference recording | Central PMS |
+| ExitAuthorization | Central PMS |
+| Gate/exit execution | Gate/exit system consuming Central PMS authorization |
+| Cashier-facing payment workflow | Assisted Payment Terminal |
+| Continuity Terminal UI | Assisted Payment Terminal in Continuity Terminal mode |
+| Supervisor/compliance review | Operator Console / approved operations workflow |
+| Reporting visibility | Management Dashboard and Reporting |
+| Reconciliation and post-restoration review | Operations / Reconciliation workflow |
 
-## 13. Business Process Overview
+## 13. Relationship to ExitPass BRD v1.3
 
-### Standard Payment-To-Exit Flow
+ExitPass BRD v1.3 anchors the platform-wide POS/Invoicing requirement, Site-level POS Server routing, fiscal issuance before ExitAuthorization, and preserved authority model. This BRD expands those requirements into POS/Invoicing-specific business and compliance requirements.
 
-1. A customer or operator initiates payment through an applicable channel.
-2. The platform resolves the parking session and Site through Central PMS authority.
-3. Central PMS manages or receives verified payment finality.
-4. Central PMS requests Sales Invoice issuance from the resolved Site POS Server.
-5. POS Server validates fiscal issuance eligibility and issues the Sales Invoice.
-6. POS Server returns fiscal document identity/status to Central PMS.
-7. Central PMS records the fiscal issuance reference.
-8. Central PMS issues ExitAuthorization.
-9. The channel or terminal presents the Sales Invoice and exit/payment status according to its user experience.
+ExitPass BRD v1.3 remains the core business baseline. This BRD does not change Central PMS, Vendor PMS, Payment Orchestrator, WebPay, POS Server, or gate authority boundaries.
 
-### Fiscal Issuance Failure Flow
+## 14. Relationship to Assisted Payment Terminal
 
-If fiscal issuance fails or times out after payment finality:
+Assisted Payment Terminal is the payment-capable terminal app family. It supports Cashier-Assisted Terminal mode and Continuity Terminal mode.
 
-- Central PMS shall not reverse payment finality automatically.
-- Central PMS shall not issue ExitAuthorization yet.
-- The case shall enter a controlled fiscal issuance exception/retry workflow.
-- The customer/operator message shall indicate that payment was received but fiscal issuance is pending and exit authorization is not yet available.
-- Manual release, if allowed, shall require supervisor approval, incident tagging, and reconciliation tagging.
-- POS Server shall not issue ExitAuthorization.
-- Payment Orchestrator and WebPay shall not bypass Central PMS.
+Cashier-Assisted Terminal may capture statutory discount validation inputs during assisted payment, but Central PMS / Discount workflow remains the authority for validation persistence, policy resolution, and payable-basis update.
 
-## 14. Functional Requirements
+Continuity Terminal is restricted degraded/BCP mode and is disabled by default. It may use POS/Invoicing only under approved continuity policy and shall route fiscal issuance through the resolved Site POS Server or an approved continuity variant.
 
-### Platform Scope
+Assisted Payment Terminal shall not declare payment finality, issue Sales Invoices independently, or issue ExitAuthorization.
+
+## 15. Relationship to Continuity
+
+ExitPass Continuity is the controlled degraded-operation capability. Continuity does not create a silent alternate fiscal mode.
+
+Continuity-mode fiscal handling shall be explicit, approved, audited, incident-tagged, reconciliation-tagged, and subject to post-restoration review. Continuity does not automatically permit offline fiscal issuance.
+
+If fiscal issuance fails or times out during continuity or normal operation, payment finality is not automatically reversed and ExitAuthorization is not issued yet unless a separately approved exception/manual-release policy applies.
+
+## 16. Relationship to Operator Console
+
+Operator Console is a non-payment governance and review module.
+
+Operator Console may review statutory discount evidence, fiscal exceptions, continuity activation, manual release governance, audit trails, and post-restoration review records. It shall not collect payment, issue Sales Invoices, mutate fiscal records, declare payment finality, or issue ExitAuthorization.
+
+## 17. Relationship to Management Dashboard and Reporting
+
+Management Dashboard and Reporting is visibility/reporting only. Operational visibility is not financial truth.
+
+Fiscal dashboards shall reconcile to POS Server fiscal records and Central PMS fiscal issuance references. Management Dashboard shall not issue fiscal documents, mutate fiscal records, declare payment finality, or issue ExitAuthorization.
+
+## 18. Business Process Overview
+
+### 18.1 Standard Payment-to-Exit Choreography
+
+1. Central PMS receives verified payment finality.
+2. Central PMS requests Sales Invoice issuance from the resolved Site POS Server.
+3. POS Server successfully issues the Sales Invoice and returns fiscal document identity/status.
+4. Central PMS records the fiscal issuance reference.
+5. Central PMS issues ExitAuthorization if eligible.
+
+### 18.2 Fiscal Issuance Failure or Timeout
+
+If fiscal issuance fails or times out:
+
+- Payment finality is not automatically reversed.
+- ExitAuthorization is not issued yet.
+- The case enters a controlled fiscal issuance exception/retry workflow.
+- Customer/operator messaging must state that payment was received but fiscal issuance or exit authorization is pending.
+- Manual release, if allowed, must be supervisor-approved, incident-tagged, audit-tagged, and reconciliation-tagged.
+
+## 19. Functional Requirements
 
 | ID | Requirement |
 | --- | --- |
-| FR-001 | The system shall provide platform-wide POS/Invoicing for applicable parking payment channels. |
-| FR-002 | The system shall route fiscal issuance through the resolved Site POS Server. |
-| FR-003 | The system shall treat Sales Invoice as the primary fiscal output for parking payments. |
-| FR-004 | The system shall preserve Central PMS as authority for payment finality and ExitAuthorization. |
-| FR-005 | The POS Server shall not issue ExitAuthorization. |
-| FR-006 | Payment Orchestrator and WebPay shall not declare platform payment finality. |
+| POS-FR-001 | ExitPass shall provide BIR-authorized POS/Invoicing capability for all applicable parking payment channels. |
+| POS-FR-002 | The POS/Invoicing capability shall be platform-wide and shall not be APM-only or Hikvision-specific. |
+| POS-FR-003 | The system shall use Sales Invoice as the primary parking fiscal output. |
+| POS-FR-004 | The resolved Site shall determine the Site POS Server for fiscal issuance. |
+| POS-FR-005 | Payment channels and terminals shall be modeled under the resolved Site POS Server. |
+| POS-FR-006 | Central PMS shall remain payment finality authority. |
+| POS-FR-007 | POS Server shall remain fiscal issuance authority. |
+| POS-FR-008 | POS Server shall not issue ExitAuthorization. |
+| POS-FR-009 | Fiscal issuance shall succeed before Central PMS issues ExitAuthorization under normal flow. |
+| POS-FR-010 | POS Server shall own fiscal numbering, counters, X-read, Z-read, BIR Sales Summary, EJ, POSLog, reprint controls, adjustment controls, fiscal retention, and fiscal export. |
+| POS-FR-011 | Fiscal reports shall reconcile to Sales Invoice sequence, fiscal counters, EJ, POSLog, audit records, and Central PMS fiscal issuance references. |
+| POS-FR-012 | The system shall support fiscal treatment for VATable, VAT-exempt, zero-rated, non-VAT, statutory discount, VAT privilege/exemption, coupon, penalty, lost ticket fee, overstay charge, service charge, and other fiscal adjustment lines. |
+| POS-FR-013 | POS/Invoicing shall support Senior Citizen and PWD as immediate statutory entitlement workflows. |
+| POS-FR-014 | POS/Invoicing shall support NAAC and Solo Parent as future-supported statutory entitlement categories. |
+| POS-FR-015 | POS/Invoicing shall support Diplomat VAT Privilege / VAT Exemption as an active VAT privilege/exemption category, not an ordinary commercial discount. |
+| POS-FR-016 | POS Server shall support controlled reprints for Sales Invoice, X-read, Z-read, and Electronic Journal where applicable. |
+| POS-FR-017 | POS Server shall support controlled void, refund, cancel, return, and related fiscal adjustment workflows as required by BIR/accounting. |
+| POS-FR-018 | Fiscal state shall be tamper-evident, append-only, and recoverable without silent rollback. |
+| POS-FR-019 | POS Server shall return only the digital Sales Invoice URL for QR-capable channels; channel/terminal presentation shall generate or render the QR code. |
+| POS-FR-020 | POS/Invoicing shall support audited fiscal exports, reporting, retention, and reconciliation. |
 
-### Fiscal Issuance
+## 20. Channel-Specific Requirements
 
-| ID | Requirement |
+### 20.1 WebPay
+
+WebPay is the centralized customer payment surface with site-specific/payment-scope URLs. WebPay shall route fiscal issuance through the resolved Site POS Server. WebPay shall not declare payment finality, act as fiscal authority, or issue ExitAuthorization.
+
+### 20.2 AutoPay Machine / APM
+
+APM shall be a channel/terminal under the resolved Site POS Server. APM may print or display the Site POS Server-issued Sales Invoice where supported. APM shall not become an independent fiscal authority, payment finality authority, or exit authority.
+
+### 20.3 Cashier-Assisted Terminal
+
+Cashier-Assisted Terminal shall route fiscal issuance through the resolved Site POS Server. It may capture statutory discount validation inputs as part of assisted payment, but it shall not independently approve entitlement, mutate payable basis, issue fiscal documents independently, declare payment finality, or issue ExitAuthorization.
+
+### 20.4 Continuity Terminal
+
+Continuity Terminal shall support fiscal handling only under approved degraded/BCP policy. Offline fiscal issuance remains restricted/open until BIR/accounting and POS Server design approve the sequence/counter model. Continuity Terminal shall not silently replace the Site POS Server fiscal model.
+
+### 20.5 Operator-assisted Payment, If Allowed
+
+Operator-assisted payment, if allowed, shall route fiscal issuance through the resolved Site POS Server and shall preserve Central PMS payment finality and ExitAuthorization authority. Operator Console itself remains non-payment and non-fiscal.
+
+### 20.6 Future Payment Channels
+
+Future payment channels shall register as channels/terminals under the resolved Site POS Server and shall preserve the same authority boundaries, fiscal routing, audit, privacy, and reporting controls.
+
+## 21. Sales Invoice Requirements
+
+POS Server shall issue Sales Invoice as the primary fiscal output for successful parking payments.
+
+Sales Invoice shall support:
+
+- Sales Invoice Number.
+- Resolved Site and Site POS Server identity.
+- Payment/session/fiscal reference correlation.
+- Channel/terminal identity where applicable.
+- Fiscal line basis.
+- VAT/tax/discount/entitlement/coupon/adjustment classification.
+- Printed and digital presentation where supported.
+- Required BIR/accreditation identity details once confirmed.
+
+Sales Invoice and fiscal outputs must support taxpayer/fiscal identity details required by BIR/accreditation materials, including where applicable:
+
+- Registered name.
+- Trade name.
+- Business address.
+- VAT REG TIN / NON-VAT REG TIN.
+- MIN.
+- Serial number.
+- PTU number and date issued.
+- Supplier name.
+- Supplier address.
+- Supplier TIN.
+- Accreditation number.
+- Accreditation date issued.
+- Accreditation valid until.
+
+Exact assignment across taxpayer, Site, branch, Site POS Server, channel, and terminal remains a downstream BIR/accounting/accreditation confirmation item.
+
+## 22. Fiscal Issuance Before ExitAuthorization
+
+Central PMS shall request Sales Invoice issuance only after verified payment finality.
+
+POS Server shall issue the Sales Invoice and return fiscal document identity/status to Central PMS. Central PMS shall record the fiscal issuance reference before issuing ExitAuthorization if eligible.
+
+If fiscal issuance fails or times out, Central PMS shall not issue normal ExitAuthorization yet. The case shall enter controlled exception/retry workflow.
+
+## 23. X-read, Z-read, Reset Counter, and Grand Total Requirements
+
+POS Server shall support X-read and Z-read for BIR/accounting-approved scopes.
+
+The following counter rules apply:
+
+- Reset counter starts from zero.
+- Reset counter increments by one for each fiscal reset.
+- Z-counter advances per Z-reading / fiscal day close.
+- Reset counter and Z-counter are different controls.
+- POS Server must save the last Grand Total Amount and reset counter for audit reference.
+- Reset activity must preserve previous Grand Total Amount, previous reset counter, reset timestamp, reset reason, approving user, and recovery/reference notes.
+
+Exact X-read and Z-read aggregation scope remains open for BIR/accounting confirmation. Candidate scopes include Site-level, terminal-level, cashier/session-level, or combined Site + terminal + cashier/session model.
+
+## 24. BIR Sales Summary and Annex E Reporting Requirements
+
+BIR Sales Summary / Annex E-1 shall be first-class required fiscal reporting, not optional analytics.
+
+BIR Sales Summary / Annex E-1 must reconcile to:
+
+- Sales Invoice sequence.
+- Z-counter.
+- Reset counter.
+- VAT and deductions.
+- Fiscal totals.
+- Supporting fiscal records.
+- Electronic Journal.
+- POSLog.
+- Fiscal audit records.
+
+Annex E-2 to E-5 support must remain in the extensible model for Senior Citizen, PWD, NAAC, and Solo Parent reporting where applicable. Annex E-2 to E-5 shall not be permanently excluded solely because an APM-specific gap analysis treated them as not applicable to that APM scope.
+
+## 25. Entitlement, Discount, and VAT Privilege Requirements
+
+POS/Invoicing shall support an extensible entitlement and fiscal treatment model.
+
+Immediate statutory entitlement workflows:
+
+- Senior Citizen.
+- PWD.
+
+Future-supported statutory entitlement categories:
+
+- NAAC.
+- Solo Parent.
+
+Active VAT privilege / exemption category:
+
+- Diplomat VAT Privilege / VAT Exemption.
+
+Diplomat VAT Privilege / VAT Exemption shall not be modeled as an ordinary commercial discount. It shall be modeled as a VAT privilege / VAT exemption entitlement based on BIR Revenue Memorandum Order No. 10-2019, with exact implementation details open for accounting/BIR confirmation.
+
+Central PMS / Discount workflow remains the authority for statutory policy resolution, validation persistence, and payable-basis update. POS Server owns fiscal treatment on the Sales Invoice and fiscal reports.
+
+ExitPass shall not apply a generic nationwide parking free/discount rule blindly. Local parking statutory benefits must be resolved by Site jurisdiction and active policy. Each ordinance or policy should be represented separately at the business-rule level by entitlement type, jurisdiction, residency scope, benefit type, exclusions, verification status, effective date, and source review status. Production application requires official ordinance/policy review.
+
+## 26. VAT, Tax Treatment, and Fiscal Line Classification Requirements
+
+At business level, POS/Invoicing shall support fiscal classification for:
+
+- VATable sales.
+- VAT-exempt sales.
+- Zero-rated sales.
+- Non-VAT sales.
+- Statutory discounts.
+- VAT privileges / VAT exemptions.
+- Coupons.
+- Penalties.
+- Lost ticket fees.
+- Overstay charges.
+- Service charges.
+- Other fiscal adjustments.
+
+Exact tax treatment by Site, taxpayer, transaction type, entitlement type, and line item remains a finance/accounting/BIR confirmation item.
+
+Fiscal tax treatment shall not be buried only inside tariff snapshots. Fiscal line classification shall remain visible to POS Server fiscal records, reports, audit, and exports.
+
+## 27. Void, Refund, Cancel, Return, and Reprint Requirements
+
+POS Server shall support controlled fiscal actions for void, refund, cancel, return, and related adjustment documents as required by BIR/accounting.
+
+These actions shall:
+
+- Preserve the original Sales Invoice reference.
+- Preserve Central PMS payment finality authority for payment reversal/refund outcomes.
+- Be role-restricted.
+- Be reason-coded.
+- Be audited.
+- Reconcile to fiscal reports and exports.
+
+The system shall support reprint of:
+
+- Sales Invoice.
+- X-read.
+- Z-read.
+- Electronic Journal, where applicable.
+
+Reprints must show `REPRINT` and `DATE / TIME REPRINTED`. All reprint activity must be logged.
+
+## 28. Fiscal Audit, Electronic Journal, POSLog, Export, and Retention Requirements
+
+POS Server shall maintain fiscal audit and Electronic Journal records sufficient to reconstruct fiscal documents, fiscal reports, counters, exports, adjustments, and privileged actions.
+
+Audit/evidence requirements shall cover:
+
+- Fiscal issuance.
+- Failed/timeout fiscal issuance.
+- Reprints.
+- Void/refund/cancel/return.
+- X-read.
+- Z-read.
+- BIR Sales Summary.
+- Fiscal exports.
+- Reset/recovery.
+- Taxpayer/fiscal identity changes.
+- Terminal/channel changes.
+- Privileged actions.
+- Statutory discount / entitlement / VAT privilege evidence.
+- Continuity-mode fiscal exceptions.
+- Manual release under fiscal exception.
+
+POS Server should support POSLog export structure aligned to ARTS POSLog 6.x where practical and where BIR/local requirements allow. ARTS supports structured transaction/export modeling, transaction identity, line sequences, tender/tax/discount/totals, statuses, and extension points. ARTS does not override Philippine BIR fiscal document/report requirements. The exact submitted schema/profile and export packaging remain open for BIR/accreditation and technical design.
+
+## 29. Digital Sales Invoice URL and QR Presentation Requirements
+
+POS Server returns only the digital Sales Invoice URL.
+
+The channel or terminal converts the URL into a QR code when QR presentation is supported. QR generation, display, or printing is a channel/terminal presentation responsibility.
+
+POS Server remains fiscal issuer. QR presentation does not make the channel/terminal fiscal authority.
+
+Digital Sales Invoice URL token, access, expiry, authentication, privacy, and anti-tampering controls remain open for POS Server System Design and compliance confirmation.
+
+## 30. Exception and Failure Handling
+
+If Sales Invoice issuance fails after verified payment finality:
+
+- Central PMS shall not issue normal ExitAuthorization yet.
+- Payment finality shall not be automatically reversed.
+- The fiscal issuance exception shall be retryable or escalated according to approved policy.
+- Customer/operator messaging shall state that payment was received but fiscal issuance or exit authorization is pending.
+- Operator Console may support governance/review, but shall not issue Sales Invoice or ExitAuthorization.
+
+If manual release is allowed under fiscal exception, it must be supervisor-approved, incident-tagged, audit-tagged, and reconciliation-tagged.
+
+## 31. Business Continuity and Degraded Operation
+
+Offline fiscal issuance remains restricted/open until BIR/accounting/POS Server design approves the sequence/counter model. Unmanaged offline fiscal issuance is not approved. Continuity does not automatically permit offline fiscal issuance.
+
+Fiscal state must be tamper-evident, append-only, and recoverable without silent rollback. Restore/failover must not resume from lower fiscal counters, lower Grand Total Amount, lower Z-counter, or earlier Sales Invoice sequence than the last externally anchored fiscal state.
+
+Inability to prove continuity requires supervised recovery and a recovery audit record before fiscal issuance resumes. Implementation details are deferred to POS Server System Design.
+
+## 32. Security, RBAC, and Segregation of Duties
+
+The system shall enforce segregation of duties across:
+
+- Payment finality.
+- Fiscal issuance.
+- Fiscal adjustment.
+- Reprint.
+- Reset.
+- Recovery.
+- Export.
+- ExitAuthorization.
+- Manual release.
+- Tax/fiscal configuration.
+
+Privileged fiscal actions shall require appropriate authorization and audit. POS Server shall not be able to issue ExitAuthorization. Payment channels shall not be able to bypass POS Server fiscal issuance.
+
+## 33. Data Privacy and Evidence Handling
+
+Evidence and personal data required for Senior Citizen, PWD, NAAC, Solo Parent, and Diplomat VAT Privilege / VAT Exemption shall be handled according to approved privacy, retention, access, and audit policy.
+
+Diplomat VAT Privilege / VAT Exemption evidence requirements remain open for compliance/accounting confirmation. Candidate evidence may include BIR-issued VAT Certificate, VAT Identification Card, DFA/BIR-issued documentation, or other approved supporting evidence, pending final confirmation.
+
+The Sales Invoice URL shall not allow unauthorized modification of the Sales Invoice and shall not expose unnecessary sensitive data.
+
+## 34. Reporting and Reconciliation
+
+POS Server fiscal reports shall reconcile with Sales Invoice records, fiscal lines, counters, Electronic Journal, POSLog, and audit records.
+
+Central PMS shall retain payment and ExitAuthorization authority records that reconcile to POS Server fiscal issuance references.
+
+Management Dashboard and Reporting may consume fiscal summaries or references where authorized, but it is not fiscal authority and must reconcile fiscal dashboards to POS Server fiscal records and Central PMS fiscal references.
+
+## 35. Non-Functional Requirements
+
+| Category | Requirement |
 | --- | --- |
-| FR-007 | Central PMS shall request Sales Invoice issuance only after verified payment finality. |
-| FR-008 | POS Server shall issue a Sales Invoice for a successful parking payment before ExitAuthorization is issued. |
-| FR-009 | Central PMS shall record the fiscal issuance reference before issuing ExitAuthorization. |
-| FR-010 | POS Server shall return fiscal document identity and issuance status to Central PMS. |
-| FR-011 | The system shall prevent channel-level bypass of Site POS Server fiscal issuance. |
+| Integrity | Fiscal state shall be tamper-evident, append-only, and protected from silent rollback. |
+| Traceability | The system shall preserve traceability from payment finality to Sales Invoice to fiscal reference to ExitAuthorization where applicable. |
+| Availability | POS/Invoicing should meet later-defined operating availability targets by Site and channel. |
+| Recoverability | Recovery/failover shall preserve fiscal counters, Grand Total Amount, Sales Invoice sequence, and audit evidence. |
+| Auditability | Fiscal issuance, failure, reprint, adjustment, reset, export, and privileged actions shall be auditable. |
+| Privacy | Sensitive entitlement and VAT privilege evidence shall be minimized, access-controlled, and retained only under approved policy. |
+| Reconciliation | Fiscal outputs, reports, exports, EJ, POSLog, and Central PMS references shall reconcile. |
 
-### Fiscal Records And Reports
+## 36. Assumptions
 
-| ID | Requirement |
-| --- | --- |
-| FR-012 | POS Server shall maintain fiscal records sufficient to support Sales Invoice rendering, audit, EJ, POSLog, BIR Sales Summary, X-read, Z-read, and Annex E reporting. |
-| FR-013 | POS Server shall support simplified printed output and detailed canonical digital fiscal records. |
-| FR-014 | POS Server shall support fiscal reprint controls that label and audit reprints. |
-| FR-015 | POS Server shall support controlled fiscal adjustment workflows for void, refund, cancel, and return documents. |
+- Sales Invoice is the primary parking fiscal document for v1.3.
+- Site-level POS Server is the target fiscal authority model.
+- Central PMS remains payment finality and ExitAuthorization authority.
+- POS Server remains fiscal issuance authority.
+- BIR/accounting confirmation will be required before implementation of taxpayer identity, MIN/PTU/serial/software assignment, tax treatment, and accreditation details.
+- POS Server System Design will define technical architecture after this BRD is approved.
 
-### Fiscal Counters
+## 37. Constraints
 
-| ID | Requirement |
-| --- | --- |
-| FR-016 | POS Server shall maintain a reset counter that starts from zero. |
-| FR-017 | POS Server shall increment reset counter only when a fiscal reset event occurs. |
-| FR-018 | POS Server shall maintain a Z-counter that advances per Z-reading / fiscal day close. |
-| FR-019 | POS Server shall maintain Grand Total Amount accumulator and audit references. |
-| FR-020 | POS Server shall preserve previous Grand Total Amount, previous reset counter, reset timestamp, reset reason, approving user, and recovery/reference notes when reset occurs. |
+- This BRD shall not define endpoint paths, DTOs, database tables, SQL routines, event payloads, or deployment scripts.
+- This BRD shall not approve unmanaged offline fiscal issuance.
+- This BRD shall not treat APM, WebPay, Cashier-Assisted Terminal, Continuity Terminal, or future channels as independent fiscal authorities.
+- This BRD shall not treat projection data as financial truth.
+- This BRD shall not override Philippine BIR fiscal document/report requirements with ARTS POSLog references.
 
-### Fiscal Lines And Entitlements
-
-| ID | Requirement |
-| --- | --- |
-| FR-021 | POS Server shall support explicit fiscal line classification independent of tariff snapshots alone. |
-| FR-022 | POS Server shall support VATable sales, VAT-exempt sales, zero-rated sales, non-VAT sales, statutory discounts, VAT privileges/exemptions, coupons, penalties, lost ticket fees, overstay charges, service charges, and other fiscal adjustments. |
-| FR-023 | POS Server shall support Senior Citizen and PWD as immediate operational entitlement workflows. |
-| FR-024 | POS Server shall represent NAAC and Solo Parent as future-supported statutory entitlement categories. |
-| FR-025 | POS Server shall represent Diplomat VAT Privilege / VAT Exemption as an active VAT privilege / VAT exemption fiscal treatment category, not as an ordinary commercial discount. |
-
-### Integrity And Recovery
-
-| ID | Requirement |
-| --- | --- |
-| FR-026 | POS Server fiscal state shall be tamper-evident, append-only, and recoverable without silent rollback. |
-| FR-027 | POS Server shall not resume from lower fiscal counter, lower Grand Total Amount, lower Z-counter, or earlier Sales Invoice sequence than the last externally anchored fiscal state. |
-| FR-028 | POS Server shall preserve last Grand Total Amount, reset counter, Z-counter, latest Sales Invoice number, latest EJ hash, and last fiscal event timestamp as audit reference. |
-| FR-029 | Any restore that cannot prove continuity shall require supervised recovery and a recovery audit record before fiscal issuance resumes. |
-
-## 15. Channel-Specific Requirements
-
-### WebPay
-
-| ID | Requirement |
-| --- | --- |
-| CH-WP-001 | WebPay shall route parking payment fiscal issuance to the resolved Site POS Server. |
-| CH-WP-002 | WebPay shall not declare platform payment finality. |
-| CH-WP-003 | WebPay shall not issue or trigger ExitAuthorization except through Central PMS authority. |
-| CH-WP-004 | WebPay shall display or provide access to the Sales Invoice after POS Server issuance, according to approved user experience and fiscal output rules. |
-| CH-WP-005 | WebPay fiscal terminal identity remains open where there is no physical printer or hardware serial. |
-| CH-WP-006 | WebPay shall support digital Sales Invoice presentation using the POS Server-returned Sales Invoice URL where approved. |
-
-### AutoPay Machine / APM
-
-| ID | Requirement |
-| --- | --- |
-| CH-APM-001 | APM payment shall route fiscal issuance to the resolved Site POS Server. |
-| CH-APM-002 | APM shall be modeled as a terminal/channel under the Site POS Server, not as an independent POS authority for the Site. |
-| CH-APM-003 | APM shall present or print the POS Server-issued Sales Invoice according to the approved APM printing model. |
-| CH-APM-004 | APM printing of POS Server-issued Sales Invoice remains open for BIR/accounting and vendor confirmation. |
-| CH-APM-005 | APM shall not bypass Central PMS for payment finality or ExitAuthorization. |
-| CH-APM-006 | APM may display or print a QR code representing the digital Sales Invoice URL so the parker/customer can scan, view, and save the Sales Invoice on their phone. |
-
-### Cashier POS
-
-| ID | Requirement |
-| --- | --- |
-| CH-CASH-001 | Cashier POS payment shall use the same Site POS Server fiscal authority for the resolved Site. |
-| CH-CASH-002 | Cashier POS shall support cashier/session accountability where cash or attended tender handling occurs. |
-| CH-CASH-003 | Cashier POS shall support controlled reprint and adjustment actions only for authorized roles. |
-| CH-CASH-004 | Cashier POS shall not independently declare payment finality outside Central PMS authority. |
-| CH-CASH-005 | Cashier POS may display or print a QR code representing the digital Sales Invoice URL so the parker/customer can scan, view, and save the Sales Invoice on their phone. |
-
-### EC Device / Continuity Terminal
-
-| ID | Requirement |
-| --- | --- |
-| CH-EC-001 | EC Device / Continuity Terminal payment shall use the same Site POS Server fiscal authority when activated. |
-| CH-EC-002 | EC Device / Continuity Terminal shall be modeled as a terminal/channel under the Site POS Server. |
-| CH-EC-003 | EC Device / Continuity Terminal offline fiscal issuance shall remain restricted until BIR/accounting confirms an approved model. |
-| CH-EC-004 | EC Device / Continuity Terminal shall not bypass Central PMS authorization for gate/exit execution. |
-| CH-EC-005 | EC Device / Continuity Terminal may display or print a QR code representing the digital Sales Invoice URL when digital delivery is available under the approved continuity model. |
-
-### Operator-assisted payment
-
-| ID | Requirement |
-| --- | --- |
-| CH-OP-001 | Operator-assisted payment, if allowed, shall route fiscal issuance through the resolved Site POS Server. |
-| CH-OP-002 | Operator-assisted payment shall preserve operator identity, Site context, and reason/context where required for fiscal audit. |
-| CH-OP-003 | Operator-assisted payment shall not allow the operator to declare platform payment finality outside Central PMS authority. |
-| CH-OP-004 | Manual release after fiscal issuance failure, if allowed, shall require supervisor approval, incident tagging, and reconciliation tagging. |
-| CH-OP-005 | Operator-assisted payment flows may display or print a QR code representing the digital Sales Invoice URL so the parker/customer can scan, view, and save the Sales Invoice on their phone. |
-
-## 16. Sales Invoice Requirements
-
-| ID | Requirement |
-| --- | --- |
-| SI-001 | POS Server shall issue Sales Invoice as the primary fiscal output for successful parking payments. |
-| SI-002 | Sales Invoice shall be associated with the resolved Site, Site POS Server, parking session, payment confirmation, channel/terminal, and fiscal line basis. |
-| SI-003 | Sales Invoice shall include required business, taxpayer, Site, fiscal identity, transaction, amount, tax, and tender information as confirmed by BIR/accounting. |
-| SI-004 | Sales Invoice print output should be simplified and BIR-acceptable. |
-| SI-005 | Detailed fiscal data shall remain available in backend fiscal records, EJ, POSLog, JSON/PDF/export, and audit records. |
-| SI-006 | Sales Invoice numbering pattern remains subject to BIR/accounting confirmation. |
-| SI-007 | The system shall not force long technical payloads into printed Sales Invoice output. |
-| SI-008 | POS Server shall support rendering all BIR-required Sales Invoice identity, header, and footer metadata once assignment is confirmed by BIR/accounting. |
-| SI-009 | Sales Invoice identity/header/footer support shall include taxpayer or registered business name, registered address, TIN and VAT/non-VAT classification, Site or branch/location identity, POS Server fiscal identity, and terminal/channel identity where applicable. |
-| SI-010 | Sales Invoice identity/header/footer support shall include MIN, PTU or ATG details if applicable, serial number, terminal number, software name and version, supplier accreditation metadata, required BIR footer text, and required non-input-tax warning where applicable. |
-| SI-011 | The assignment of MIN, PTU, ATG, serial number, terminal number, software version, and supplier accreditation metadata between Site POS Server and terminals/channels remains an open compliance question. |
-| SI-012 | Sales Invoice issuance shall support both printed and digital presentation where the payment channel supports both forms. |
-| SI-013 | For digital Sales Invoice delivery, POS Server shall return a Sales Invoice URL that allows the parker/customer to view and save the issued Sales Invoice on their phone. |
-| SI-014 | The digital Sales Invoice shall correspond to the same issued Sales Invoice as the printed version. |
-| SI-015 | Printed and digital Sales Invoice forms shall not represent different fiscal documents or different fiscal facts. |
-| SI-016 | Reprints or repeated digital Sales Invoice access shall be controlled and auditable where required by BIR/accounting, security, privacy, or compliance policy. |
-
-## 17. X-read, Z-read, Reset Counter, and Grand Total Requirements
-
-| ID | Requirement |
-| --- | --- |
-| XZ-001 | POS Server shall support X-read for BIR/accounting-approved operational scopes, potentially including cashier/session, terminal/channel, and Site POS Server scope. |
-| XZ-002 | POS Server shall support Z-read to close the applicable fiscal day for the approved fiscal scope. |
-| XZ-003 | Z-read shall advance the Z-counter per Z-reading / fiscal day close. |
-| XZ-004 | Z-counter shall be separate from reset counter. |
-| XZ-005 | Reset counter shall start from zero. |
-| XZ-006 | Reset counter shall increment only on fiscal reset. |
-| XZ-007 | POS Server shall preserve the previous Grand Total Amount and previous reset counter when reset occurs. |
-| XZ-008 | POS Server shall preserve reset timestamp, reset reason, approving user, and recovery/reference notes when reset occurs. |
-| XZ-009 | POS Server shall maintain Grand Total Amount accumulator and audit references required for BIR Sales Summary and fiscal continuity. |
-| XZ-010 | X-read and Z-read printed outputs should be simplified and aligned to BIR-acceptable layouts. |
-| XZ-011 | Reset counter shall not advance per Z-read. |
-| XZ-012 | The exact X-read and Z-read aggregation model remains open for POS Server System Design and BIR/accounting confirmation. |
-
-## 18. BIR Sales Summary and Annex E Reporting Requirements
-
-| ID | Requirement |
-| --- | --- |
-| REP-001 | POS Server shall treat BIR Sales Summary as a first-class required fiscal report, not optional analytics. |
-| REP-002 | BIR Sales Summary shall reconcile to Sales Invoice sequence, Z-counter, reset counter, VAT and deductions, fiscal totals, and supporting fiscal records. |
-| REP-003 | POS Server shall support Annex E-1 BIR Sales Summary report requirements. |
-| REP-004 | POS Server shall support Annex E-2 Senior Citizen report requirements for applicable transactions. |
-| REP-005 | POS Server shall support Annex E-3 PWD report requirements for applicable transactions. |
-| REP-006 | POS Server fiscal model shall provide for Annex E-4 NAAC report structures as future-supported category support. |
-| REP-007 | POS Server fiscal model shall provide for Annex E-5 Solo Parent report structures as future-supported category support. |
-| REP-008 | Whether NAAC and Solo Parent report structures must be active in v1.3 despite future operational workflows remains open. |
-| REP-009 | POS Server shall keep report source data reconcilable with EJ, POSLog, Sales Invoice, X-read, Z-read, and fiscal audit records. |
-| REP-010 | Annex E and statutory sales book structures shall be extensible for NAAC and Solo Parent even if operational entitlement workflows are future-supported. |
-| REP-011 | BIR Sales Summary and Annex E reporting shall preserve Diplomat VAT Privilege / VAT Exemption as an active VAT privilege / VAT exemption treatment, not an ordinary discount. |
-| REP-012 | Exact BIR Sales Summary, Annex E, and statutory sales book treatment for Diplomat VAT Privilege / VAT Exemption remains open pending BIR/accounting confirmation. |
-
-## 19. Entitlement, Discount, and VAT Privilege Requirements
-
-| ID | Requirement |
-| --- | --- |
-| ENT-001 | POS/Invoicing shall support an extensible entitlement and fiscal treatment model. |
-| ENT-002 | Senior Citizen shall be supported as an immediate operational entitlement workflow. |
-| ENT-003 | PWD shall be supported as an immediate operational entitlement workflow. |
-| ENT-004 | NAAC shall be represented as a future-supported statutory entitlement category. |
-| ENT-005 | Solo Parent shall be represented as a future-supported statutory entitlement category. |
-| ENT-006 | Diplomat VAT Privilege / VAT Exemption shall be represented as an active VAT privilege / VAT exemption fiscal treatment category. |
-| ENT-007 | Diplomat VAT Privilege / VAT Exemption shall not be modeled as an ordinary commercial discount. |
-| ENT-008 | POS Server shall support entitlement and fiscal treatment data sufficient for Sales Invoice, BIR Sales Summary, Annex E reports, EJ, POSLog, audit, and reconciliation. |
-| ENT-009 | Exact Diplomat VAT Privilege / VAT Exemption evidence, buyer/customer identity fields, applicability scope, Sales Invoice wording, report treatment, EJ/POSLog treatment, evidence retention, and operator validation workflow remain open for compliance/accounting confirmation. |
-
-## 20. Void, Refund, Cancel, Return, and Reprint Requirements
-
-| ID | Requirement |
-| --- | --- |
-| ADJ-001 | POS Server shall support controlled fiscal actions for void, refund, cancel, return, and related adjustment documents as required by BIR/accounting. |
-| ADJ-002 | Fiscal adjustment actions shall be auditable and linked to the original fiscal document. |
-| ADJ-003 | Fiscal adjustment actions shall be restricted to authorized roles and workflows. |
-| ADJ-004 | Payment refund or reversal finality shall remain under Central PMS/payment provider authority. |
-| ADJ-005 | Workflow sequencing between payment refund/reversal and fiscal adjustment document remains open for design and compliance confirmation. |
-| ADJ-006 | POS Server shall support controlled reprint coverage for Sales Invoice, X-read, Z-read, and Electronic Journal outputs where applicable. This requirement applies generally to ExitPass POS/Invoicing where the same BIR fiscal controls apply, not only to APM, unless a channel-specific exception is confirmed. |
-| ADJ-007 | Reprinted fiscal outputs shall show `REPRINT` and `DATE / TIME REPRINTED` at the bottom of the reprinted output where BIR requires them, and all reprint activity shall be logged and audited. |
-| ADJ-008 | Reprints shall not mutate the original fiscal document or original fiscal event. |
-| ADJ-009 | Fiscal adjustment documents shall reference the original Sales Invoice or fiscal document. |
-| ADJ-010 | Reversal or adjustment values shall be represented according to BIR/accounting confirmation. |
-| ADJ-011 | Required fiscal warnings, including non-input-tax warning where applicable, shall be supported for adjustment documents. |
-| ADJ-012 | Adjustment actions shall be restricted, reason-coded, auditable, and linked to payment, refund, or reversal evidence where applicable. |
-| ADJ-013 | Adjustment document numbering remains open pending BIR/accounting confirmation. |
-
-## 21. Fiscal Audit, EJ, POSLog, Export, and Retention Requirements
-
-| ID | Requirement |
-| --- | --- |
-| AUD-001 | POS Server shall maintain fiscal audit records for fiscal issuance, reprint, adjustment, export, X-read, Z-read, reset, recovery, and configuration actions. |
-| AUD-002 | POS Server shall maintain Electronic Journal records sufficient to reconstruct fiscal documents and required fiscal reports. |
-| AUD-003 | POS Server shall support POSLog export aligned to the approved fiscal event model. |
-| AUD-004 | EJ and POSLog shall reconcile to Sales Invoice, X-read, Z-read, BIR Sales Summary, Annex E reports, and fiscal audit records. |
-| AUD-005 | POS Server shall support required export formats once confirmed by BIR/accounting. |
-| AUD-006 | Fiscal records shall be retained and protected according to BIR and compliance requirements. |
-| AUD-007 | Fiscal records shall be protected against unauthorized deletion, mutation, rollback, duplication, and tampering. |
-| AUD-008 | Sales Invoice, Electronic Journal, POSLog, X-read, Z-read, BIR Sales Summary, Annex E reports / statutory sales books, fiscal exports, and audit records shall reconcile from canonical fiscal records and shall not diverge from each other. |
-| AUD-009 | Fiscal export capabilities are expected to support BIR-confirmed formats and candidate outputs including Electronic Journal replica/export, printable/report exports, structured digital exports such as JSON or equivalent, and PDF or equivalent human-readable exports. |
-| AUD-010 | Fiscal export capabilities are expected to support POSLog, including ARTS POSLog if confirmed, and BIR Sales Summary and Annex E report exports. |
-| AUD-011 | Exact mandatory fiscal export formats remain open pending BIR/accounting confirmation. |
-| AUD-012 | Digital Sales Invoice access and repeated digital presentation shall remain reconcilable to the original issued Sales Invoice, EJ, POSLog, audit records, and retention controls. |
-| AUD-013 | Digital Sales Invoice records and access history shall be retained and auditable according to approved BIR, security, privacy, and compliance requirements. |
-
-## 22. Exception and Failure Handling
-
-| ID | Requirement |
-| --- | --- |
-| EXC-001 | If Sales Invoice issuance fails after verified payment finality, Central PMS shall not issue ExitAuthorization until controlled handling is completed. |
-| EXC-002 | The system shall not automatically reverse payment finality because fiscal issuance failed. |
-| EXC-003 | The system shall enter controlled fiscal issuance exception/retry workflow when fiscal issuance fails or times out. |
-| EXC-004 | Customer/operator messaging shall show that payment was received, fiscal issuance is pending, and exit authorization is not yet available. |
-| EXC-005 | Manual release, if allowed, shall require supervisor approval, incident tagging, and reconciliation tagging. |
-| EXC-006 | POS Server fiscal outage shall not grant any channel authority to bypass Central PMS ExitAuthorization. |
-
-## 23. Business Continuity and Degraded Operation
-
-| ID | Requirement |
-| --- | --- |
-| BCP-001 | The system shall identify POS Server, channel, terminal, and fiscal issuance health states needed for operations. |
-| BCP-002 | Offline fiscal issuance policy remains open and shall not be finalized in this BRD. |
-| BCP-003 | Offline fiscal issuance shall remain restricted until BIR/accounting confirms the approved model. |
-| BCP-004 | Degraded operation procedures shall preserve Central PMS payment finality authority and ExitAuthorization authority. |
-| BCP-005 | Degraded operation procedures shall preserve fiscal sequence, counter, Grand Total Amount, EJ, and audit continuity. |
-| BCP-006 | Any continuity mode using EC Device / Continuity Terminal shall route fiscal issuance through the Site POS Server model or an approved continuity variant. |
-
-## 24. Security, RBAC, and Segregation of Duties
-
-| ID | Requirement |
-| --- | --- |
-| SEC-001 | Fiscal actions shall be protected by role-based access control. |
-| SEC-002 | The system shall segregate payment finality authority from fiscal issuance authority and ExitAuthorization authority. |
-| SEC-003 | POS Server shall not be able to issue ExitAuthorization. |
-| SEC-004 | Payment Orchestrator and WebPay shall not be able to declare platform payment finality. |
-| SEC-005 | Reprint, void/refund/cancel/return, export, reset, restore, recovery, and configuration actions shall require authorized roles. |
-| SEC-006 | Sensitive fiscal and evidence access shall be audited. |
-| SEC-007 | Supervisor approval shall be required for manual release after fiscal issuance failure if such release is allowed by policy. |
-| SEC-008 | The system shall support role separation expectations for cashier, supervisor, fiscal administrator, compliance auditor, recovery/DR approver, and system administrator responsibilities. |
-| SEC-009 | High-risk fiscal actions shall require appropriate authorization and audit, including Z-close, fiscal reset, reprint, void/refund/cancel/return, export, fiscal configuration changes, and recovery/restore actions. |
-
-## 25. Data Privacy and Evidence Handling
-
-| ID | Requirement |
-| --- | --- |
-| PRIV-001 | The system shall collect only fiscal, entitlement, and evidence data required for approved business, compliance, and BIR purposes. |
-| PRIV-002 | Personal data required for Senior Citizen, PWD, NAAC, Solo Parent, and Diplomat VAT Privilege / VAT Exemption shall be handled according to approved privacy and retention policy. |
-| PRIV-003 | Diplomat VAT Privilege / VAT Exemption evidence requirements remain open for compliance/accounting confirmation. |
-| PRIV-004 | The system shall support evidence references where appropriate rather than unnecessary duplication of sensitive evidence data. |
-| PRIV-005 | Evidence access shall be logged and restricted to authorized roles. |
-| PRIV-006 | Fiscal retention and evidence retention may differ and must be explicitly confirmed before implementation. |
-| PRIV-007 | Candidate evidence for Diplomat VAT Privilege / VAT Exemption may include BIR-issued VAT Certificate, VAT Identification Card, DFA/BIR-issued documentation, or other approved supporting evidence, pending final confirmation. |
-| PRIV-008 | The Sales Invoice URL shall be governed by security, privacy, retention, and anti-tampering controls. |
-| PRIV-009 | The Sales Invoice URL shall not allow unauthorized modification of the Sales Invoice. |
-| PRIV-010 | The Sales Invoice URL shall not expose unnecessary sensitive data. |
-| PRIV-011 | Sales Invoice URL access policy, expiry policy, and authentication/access model remain subject to POS Server System Design and compliance confirmation. |
-
-## 26. Reporting and Reconciliation
-
-| ID | Requirement |
-| --- | --- |
-| REC-001 | POS Server fiscal reports shall reconcile with Sales Invoice records, fiscal lines, counters, EJ, POSLog, and audit records. |
-| REC-002 | Central PMS shall retain payment and ExitAuthorization authority records that can be reconciled to POS Server fiscal issuance references. |
-| REC-003 | BIR Sales Summary shall reconcile to Sales Invoice sequence, Z-counter, reset counter, Grand Total Amount, VAT, deductions, and fiscal totals. |
-| REC-004 | Fiscal issuance exceptions shall be visible for reconciliation review. |
-| REC-005 | Manual release after fiscal issuance failure, if allowed, shall be incident-tagged and reconciliation-tagged. |
-| REC-006 | Void/refund/cancel/return workflows shall produce reconciliation links between payment/provider outcomes and fiscal adjustment documents. |
-
-## 27. Non-Functional Requirements
-
-| ID | Requirement |
-| --- | --- |
-| NFR-001 | POS/Invoicing shall preserve fiscal integrity across normal, degraded, and recovery operations. |
-| NFR-002 | POS Server fiscal state shall be tamper-evident and append-only from a business control perspective. |
-| NFR-003 | POS/Invoicing shall support auditability sufficient for BIR, finance, and compliance review. |
-| NFR-004 | POS/Invoicing shall support long-term retention of BIR-relevant fiscal records according to confirmed compliance requirements. |
-| NFR-005 | POS/Invoicing shall support channel extensibility without creating independent fiscal authorities per channel. |
-| NFR-006 | POS/Invoicing shall support clear customer/operator messaging during fiscal issuance exceptions. |
-| NFR-007 | POS/Invoicing shall maintain traceability from payment finality to Sales Invoice to ExitAuthorization where applicable. |
-
-## 28. Assumptions
-
-- BIR recommended the Site-level POS Server model for the target ExitPass architecture.
-- Parking payment fiscal output for ExitPass v1.3 is Sales Invoice.
-- Central PMS v1.2 authority boundaries for payment finality and ExitAuthorization remain valid.
-- WebPay, APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted payment, and future channels can be modeled as channels/terminals under a Site POS Server.
-- Senior Citizen and PWD are immediate operational entitlement workflows.
-- NAAC and Solo Parent are future-supported categories, not permanently unsupported categories.
-- Diplomat VAT Privilege / VAT Exemption is active and must be modeled as VAT privilege / VAT exemption, not ordinary discount.
-- Exact VAT/tax treatment will be confirmed by finance/accounting or BIR advisor before implementation.
-
-## 29. Constraints
-
-- This BRD shall not define database tables, columns, indexes, or migrations.
-- This BRD shall not define API endpoints, DTOs, event schemas, or service contracts.
-- This BRD shall not modify source code.
-- This BRD shall not modify existing database schema.
-- This BRD shall not create DOCX output.
-- This BRD shall not treat Hikvision APM documents as the sole fiscal architecture source of truth.
-- Offline fiscal issuance shall remain restricted until confirmed by BIR/accounting.
-- MIN/PTU/serial/software version/supplier accreditation assignment remains open.
-
-## 30. Risks and Mitigations
+## 38. Risks and Mitigations
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |
-| Fiscal issuance is treated as APM-only | WebPay, cashier, EC/continuity, and future channels diverge from fiscal controls. | Use Site-level POS Server model across all channels. |
-| ExitAuthorization is issued before Sales Invoice | Paid vehicle may exit without completed fiscal issuance. | Require fiscal issuance before Central PMS issues ExitAuthorization. |
-| POS Server issues ExitAuthorization | Authority model is violated. | Keep ExitAuthorization exclusively under Central PMS. |
-| Payment Orchestrator or WebPay declares finality | Payment authority chain is weakened. | Preserve Central PMS payment finality authority. |
-| Tax treatment is buried in tariff snapshots | BIR reports and fiscal outputs cannot classify sales correctly. | Require explicit fiscal line classification. |
-| Diplomat VAT Privilege is treated as a discount | VAT exemption may be reported incorrectly. | Model as active VAT privilege / VAT exemption entitlement. |
-| Reset counter is confused with Z-counter | Fiscal counters and reports become inaccurate. | Separate reset counter and Z-counter requirements. |
-| Restore resumes from stale fiscal state | Fiscal sequences, EJ, Grand Total Amount, or counters may be rolled back. | Require tamper-evident append-only state and supervised recovery if continuity cannot be proven. |
-| Offline issuance creates duplicate sequence | Fiscal records may be duplicated or skipped. | Keep offline fiscal issuance restricted until approved. |
-| MIN/PTU/serial/software/supplier assignment is incorrect | Sales Invoice identity, footer, accreditation, and audit records may be non-compliant. | Keep assignment open until BIR/accounting confirms the Site POS Server and terminal/channel treatment. |
-| Fiscal numbering pattern is ambiguous | Sales Invoice and adjustment document sequences may be rejected or difficult to audit. | Confirm numbering patterns before POS Server System Design and implementation. |
-| X-read and Z-read scope is ambiguous | Cashier, terminal, and Site totals may not reconcile to BIR/accounting expectations. | Confirm approved fiscal aggregation scope and keep X/Z requirements scope-aware. |
-| Supplier/applicant responsibility is ambiguous | Accreditation package, manuals, source documentation, and footer metadata may identify the wrong responsible party. | Resolve software supplier/applicant, POS user/PTU applicant, and vendor/operator responsibility split before accreditation submission. |
-| Fiscal export format mismatches BIR expectation | EJ, POSLog, BIR Sales Summary, Annex E, or audit exports may require rework or fail review. | Keep export formats open and confirm mandatory formats before implementation. |
-| Diplomat VAT Privilege evidence is mishandled | Sensitive evidence may be over-collected, under-retained, or insufficient for VAT exemption support. | Confirm accepted evidence, retention, access, and reporting treatment with compliance/accounting. |
+| Fiscal issuance is treated as APM-only | WebPay, cashier, continuity, and future channels diverge. | Preserve platform-wide Site POS Server model. |
+| Sales Invoice is confused with another fiscal output | Incorrect fiscal document, reporting, or customer output. | Use Sales Invoice/SI terminology as primary parking fiscal output. |
+| ExitAuthorization is issued before fiscal issuance | Paid exit may occur without completed fiscal issuance. | Require fiscal issuance reference before normal ExitAuthorization. |
+| POS Server is treated as payment or exit authority | Authority model violation. | Explicitly preserve Central PMS payment finality and ExitAuthorization authority. |
+| Diplomat VAT Privilege is treated as commercial discount | VAT exemption may be reported incorrectly. | Model as VAT privilege/exemption entitlement, with details open for BIR/accounting. |
+| Local ordinance rules are applied generically | Wrong statutory benefit by Site jurisdiction. | Use Site jurisdiction and active policy registry, with official ordinance review before production application. |
+| Offline issuance creates duplicate sequence or counter gaps | Fiscal compliance and audit risk. | Keep offline issuance restricted until approved sequence/counter model exists. |
+| Restore resumes from stale fiscal state | Fiscal rollback or duplicate fiscal sequence. | Require external anchoring, supervised recovery, and recovery audit record. |
 
-## 31. Open Questions
+## 39. Open Questions
 
-Only genuinely unresolved items are listed here.
-
-| ID | Open question | Needed from |
-| --- | --- | --- |
-| OQ-001 | How should MIN, PTU, serial number, terminal number, software version, and supplier accreditation metadata be assigned between Site POS Server and terminals/channels? | BIR/accounting advisor, compliance, architecture |
-| OQ-002 | What fiscal terminal identity should WebPay use when there is no physical printer or hardware serial? | BIR/accounting advisor |
-| OQ-003 | Can APM print a POS Server-issued Sales Invoice payload, or must the APM itself be treated as the issuing fiscal machine for printing purposes? | BIR/accounting advisor, Hikvision/APM vendor |
-| OQ-004 | What exact VAT/tax treatment applies to parking fees, lost ticket fees, penalties, overstay charges, service charges, coupons, statutory discounts, VAT privileges, and other fiscal adjustments? | Finance/accounting, BIR advisor |
-| OQ-005 | What exact treatment applies to Diplomat VAT Privilege / VAT Exemption under RMO No. 10-2019? | Finance/accounting, compliance, BIR advisor |
-| OQ-006 | What supporting evidence and retention policy are required for Diplomat VAT Privilege / VAT Exemption? | Compliance, finance/accounting, privacy |
-| OQ-007 | Should NAAC and Solo Parent report structures be active in v1.3 even if operational workflows are future-supported? | Product, finance/accounting, compliance |
-| OQ-008 | Is offline fiscal issuance allowed? If yes, what sequence, counter, reconciliation, and evidence controls are required? | BIR/accounting advisor, operations, architecture |
-| OQ-009 | What exact implementation mechanism shall prove DR/restore and counter continuity for a Site-level POS Server? | POS Server System Design, security, compliance |
-| OQ-010 | What export formats are mandatory versus optional for EJ, Sales Invoice, X-read, Z-read, BIR Sales Summary, Annex E reports, and POSLog? | BIR/accounting advisor |
-| OQ-011 | What final accreditation sample set is required? | BIR/accounting advisor, compliance |
-| OQ-012 | What exact Sales Invoice numbering pattern is required? | BIR/accounting advisor, compliance |
-| OQ-013 | What exact adjustment document numbering pattern is required for void/refund/cancel/return or related fiscal adjustment documents? | BIR/accounting advisor, compliance |
-| OQ-014 | Should reset counter be printed separately, appended to the fiscal document number, or both? | BIR/accounting advisor, compliance |
-| OQ-015 | What approved X-read and Z-read scope should ExitPass support: Site-level only, terminal-level, cashier/session-level, or combined Site + terminal + cashier/session model? | BIR/accounting advisor, finance/accounting, operations |
-| OQ-016 | Who is the software supplier/applicant, who is the POS user / PTU applicant, and how are Hikvision, Pro Parking, PPMC/Park Secure, and ExitPass responsibilities split for footer text, manuals, source documentation, and accreditation package content? | BIR/accounting advisor, compliance, legal, vendor management |
-| OQ-017 | What Sales Invoice URL access policy, expiry policy, authentication/access model, and audit treatment are required for digital Sales Invoice delivery? | POS Server System Design, security, privacy, compliance |
-
-## 32. Acceptance Criteria
-
-| ID | Acceptance criterion |
+| ID | Open Question |
 | --- | --- |
-| AC-001 | Sales Invoice is issued for a successful parking payment before ExitAuthorization is issued. |
-| AC-002 | If Sales Invoice issuance fails, ExitAuthorization is not issued and the case enters a controlled exception/retry workflow. |
-| AC-003 | WebPay payment for a resolved Site routes fiscal issuance to that Site's POS Server. |
-| AC-004 | APM payment for a resolved Site routes fiscal issuance to that Site's POS Server. |
-| AC-005 | Cashier POS payment uses the same Site POS Server fiscal authority. |
-| AC-006 | EC Device / Continuity Terminal payment uses the same Site POS Server fiscal authority when activated. |
-| AC-007 | X-read can be produced for the required cashier, terminal, and/or Site scope. |
-| AC-008 | Z-read closes the applicable fiscal day and advances the Z-counter. |
-| AC-009 | Reset counter starts at zero and increments only on fiscal reset. |
-| AC-010 | BIR Sales Summary can be produced and reconciled to Sales Invoice sequence, Z-counter, reset counter, and Grand Total Amount. |
-| AC-011 | Senior Citizen and PWD are supported as immediate entitlement workflows. |
-| AC-012 | NAAC and Solo Parent are represented as future-supported entitlement categories. |
-| AC-013 | Diplomat VAT Privilege / VAT Exemption is represented as an active VAT privilege / VAT exemption fiscal treatment. |
-| AC-014 | Reprints are labeled and audited. |
-| AC-015 | Void/refund/cancel/return fiscal actions are controlled, auditable, and linked to the original fiscal document. |
-| AC-016 | Fiscal records are retained and protected according to BIR and compliance requirements. |
-| AC-017 | POS Server does not issue ExitAuthorization. |
-| AC-018 | Payment Orchestrator and WebPay do not declare platform payment finality. |
-| AC-019 | Printed Sales Invoice, X-read, and Z-read outputs are simplified while detailed canonical data remains digitally available. |
-| AC-020 | POS Server preserves fiscal continuity across reset, restore, failover, repair, and recovery events or blocks issuance pending supervised recovery. |
-| AC-021 | Operator-assisted payment, if allowed, routes fiscal issuance to the resolved Site POS Server. |
-| AC-022 | Future payment channels register as child channels/terminals under the Site POS Server and do not become independent POS systems. |
-| AC-023 | POS Server supports required Sales Invoice identity, header, and footer metadata once BIR/accounting assignment is confirmed. |
-| AC-024 | Fiscal outputs reconcile from canonical fiscal records so Sales Invoice, EJ, POSLog, X-read, Z-read, BIR Sales Summary, Annex E reports, exports, and audit records do not diverge. |
-| AC-025 | X-read and Z-read scope remains configurable or design-resolved according to BIR/accounting-approved fiscal scope. |
-| AC-026 | Adjustment documents reference the original fiscal document and are audited. |
-| AC-027 | A successful parking payment produces a Sales Invoice available in printed and digital form where the channel supports both. |
-| AC-028 | POS Server returns a digital Sales Invoice URL after successful Sales Invoice issuance. |
-| AC-029 | The parker/customer can open the digital Sales Invoice URL and save the Sales Invoice on their phone. |
-| AC-030 | APM can present a QR code for the digital Sales Invoice URL so the parker/customer can scan and save the Sales Invoice. |
-| AC-031 | Printed Sales Invoice and digital Sales Invoice represent the same fiscal document and fiscal facts. |
-| AC-032 | Digital Sales Invoice access is governed by approved security, privacy, retention, and anti-tampering controls. |
+| POS-OQ-001 | What is the exact MIN/PTU/serial/software/supplier assignment across Site POS Server, APM terminal, Cashier-Assisted Terminal, Continuity Terminal, WebPay channel, and operator-assisted channel? |
+| POS-OQ-002 | What is the exact taxpayer/Site/branch/Site POS Server/channel fiscal identity assignment? |
+| POS-OQ-003 | What is the WebPay fiscal terminal identity, if any, for BIR/accreditation purposes? |
+| POS-OQ-004 | What is the exact Sales Invoice numbering pattern? |
+| POS-OQ-005 | What is the exact adjustment document numbering pattern? |
+| POS-OQ-006 | How are sequence gaps, reserved numbers, failed issuance, and abandoned issuance handled? |
+| POS-OQ-007 | What is the exact X-read and Z-read aggregation scope? |
+| POS-OQ-008 | What exact VAT/tax treatment applies by Site, taxpayer, transaction type, entitlement type, and line item? |
+| POS-OQ-009 | What exact Diplomat VAT treatment, evidence, wording, reporting, and retention rules apply? |
+| POS-OQ-010 | What is the digital SI URL token/access/expiry/authentication model? |
+| POS-OQ-011 | What is the final ARTS POSLog export profile/schema mapping? |
+| POS-OQ-012 | What is the final JSON schema versioning and validation strategy? |
+| POS-OQ-013 | What is the final accreditation sample package? |
+| POS-OQ-014 | What tamper-evident anchoring/recovery mechanism is required? |
+| POS-OQ-015 | What are the final endpoint names? Deferred to API Contract. |
+| POS-OQ-016 | What are the final DTO boundaries? Deferred to API Contract. |
+| POS-OQ-017 | What are the final database tables/columns? Deferred to Database Design / Database Delta. |
+| POS-OQ-018 | What are the final event payloads? Deferred to System Design / Engineering Pack. |
+| POS-OQ-019 | What is the final permission matrix/RBAC? |
 
-## 33. Requirements Traceability Matrix
+## 40. Acceptance Criteria
 
-| Source / decision | BRD requirement IDs | BRD sections |
+| ID | Acceptance Criterion |
+| --- | --- |
+| POS-AC-001 | POS/Invoicing applies across WebPay, APM, Cashier-Assisted Terminal, Continuity Terminal where approved, operator-assisted payment if allowed, and future payment channels. |
+| POS-AC-002 | Sales Invoice is the primary parking fiscal output. |
+| POS-AC-003 | Each Site or parking operation boundary uses a Site-level POS Server model. |
+| POS-AC-004 | The resolved Site determines fiscal issuance and fiscal reporting. |
+| POS-AC-005 | Payment channels and terminals are not independent fiscal authorities. |
+| POS-AC-006 | Central PMS remains payment finality authority. |
+| POS-AC-007 | POS Server remains fiscal issuance authority. |
+| POS-AC-008 | POS Server does not issue ExitAuthorization. |
+| POS-AC-009 | Fiscal issuance succeeds before Central PMS issues normal ExitAuthorization. |
+| POS-AC-010 | Fiscal issuance failure prevents normal ExitAuthorization and starts controlled exception/retry workflow. |
+| POS-AC-011 | Senior Citizen and PWD are supported as immediate statutory entitlement workflows. |
+| POS-AC-012 | NAAC and Solo Parent remain in the extensible future-supported entitlement model. |
+| POS-AC-013 | Diplomat VAT Privilege / VAT Exemption is represented as active VAT privilege/exemption, not commercial discount. |
+| POS-AC-014 | BIR Sales Summary / Annex E-1 is first-class required fiscal reporting. |
+| POS-AC-015 | Annex E-2 to E-5 remain in the extensible model where applicable. |
+| POS-AC-016 | Reset counter and Z-counter are separate controls. |
+| POS-AC-017 | POS Server preserves Grand Total Amount and reset audit references. |
+| POS-AC-018 | Reprints show REPRINT and DATE / TIME REPRINTED and are audited. |
+| POS-AC-019 | POS Server returns only the digital Sales Invoice URL; QR presentation is channel/terminal responsibility. |
+| POS-AC-020 | Offline fiscal issuance remains restricted until approved. |
+| POS-AC-021 | ARTS POSLog is captured as supporting structured export posture, not fiscal authority. |
+| POS-AC-022 | Fiscal outputs reconcile across Sales Invoice, X-read, Z-read, BIR Sales Summary, Annex E, EJ, POSLog, exports, audit, and Central PMS fiscal references. |
+
+## 41. Requirements Traceability Matrix
+
+| Business Need | Requirement / Section | Source / Driver |
 | --- | --- | --- |
-| POS/Invoicing is platform-wide | FR-001, FR-002, CH-WP-001, CH-APM-001, CH-CASH-001, CH-EC-001, CH-OP-001 | 9, 10, 11, 14, 15 |
-| Operator-assisted payment channel | CH-OP-001 to CH-OP-004, AC-021 | 15, 32 |
-| Future payment channels | FR-011, NFR-005, AC-022 | 10, 11, 27, 32 |
-| Sales Invoice as primary parking fiscal output | FR-003, SI-001, SI-002, AC-001 | 14, 16, 32 |
-| Sales Invoice identity/header/footer metadata | SI-003, SI-008 to SI-011, AC-023 | 16, 32 |
-| Sales Invoice printed and digital presentation | CH-WP-006, CH-APM-006, CH-CASH-005, CH-EC-005, CH-OP-005, SI-012, AC-027 | 15, 16, 32 |
-| Digital Sales Invoice URL | SI-013, PRIV-008 to PRIV-011, AC-028, AC-029, AC-032, OQ-017 | 16, 25, 31, 32 |
-| APM QR code for digital Sales Invoice URL | CH-APM-006, AC-030 | 15, 32 |
-| Printed/digital Sales Invoice consistency | SI-014, SI-015, AUD-012, AC-031 | 16, 21, 32 |
-| Digital Sales Invoice access control, retention, and audit | SI-016, AUD-012, AUD-013, PRIV-008 to PRIV-011, AC-032, OQ-017 | 16, 21, 25, 31, 32 |
-| Sales Invoice and adjustment numbering open question | SI-006, ADJ-013, OQ-012, OQ-013 | 16, 20, 31 |
-| Site-level POS Server model | FR-002, FR-011, CH-WP-001, CH-APM-001, CH-CASH-001, CH-EC-001 | 10, 11, 15 |
-| Central PMS authority model | FR-004, FR-005, FR-006, SEC-002, SEC-003, SEC-004 | 12, 14, 24 |
-| Fiscal issuance before ExitAuthorization | FR-007, FR-008, FR-009, EXC-001, AC-001, AC-002 | 13, 14, 22, 32 |
-| Reset counter and Z-counter distinction | FR-016, FR-017, FR-018, XZ-003, XZ-004, XZ-005, XZ-006, XZ-011, AC-008, AC-009 | 17, 32 |
-| Reset audit snapshot and Grand Total Amount continuity | XZ-007, XZ-008, XZ-009, FR-026 to FR-029, BCP-005, AC-020 | 14, 17, 23, 32 |
-| Reset counter display/append behavior open question | OQ-014 | 31 |
-| X-read and Z-read scope and aggregation open question | XZ-001, XZ-002, XZ-012, OQ-015, AC-025 | 17, 31, 32 |
-| BIR Sales Summary first-class report | REP-001, REP-002, REP-003, REC-003, AC-010 | 18, 26, 32 |
-| Printed output simplification | FR-013, SI-004, SI-005, XZ-010, AC-019 | 16, 17, 32 |
-| Entitlement model | FR-023, FR-024, FR-025, ENT-001 to ENT-009, AC-011, AC-012, AC-013 | 19, 32 |
-| Fiscal line classification | FR-021, FR-022, SI-003, REP-002, REC-001 | 14, 16, 18, 26 |
-| Diplomat VAT Privilege / VAT Exemption evidence handling | ENT-006 to ENT-009, PRIV-002, PRIV-003, PRIV-007, OQ-005, OQ-006 | 19, 25, 31 |
-| Void/refund/cancel/return and reprint | FR-014, FR-015, ADJ-001 to ADJ-013, AC-014, AC-015, AC-026 | 20, 32 |
-| EJ, POSLog, export, retention | AUD-001 to AUD-011, AC-016 | 21, 32 |
-| Canonical fiscal output reconciliation | AUD-004, AUD-008, REC-001, REC-003, AC-024 | 21, 26, 32 |
-| DR/restore and fiscal continuity | FR-026 to FR-029, BCP-005, AC-020 | 14, 23, 32 |
-| Accreditation sample package | OQ-011, OQ-016 | 31 |
-| Supplier/applicant responsibility | OQ-016 | 31 |
-| Open MIN/PTU/serial/software/supplier accreditation assignment | SI-011, OQ-001, OQ-002, OQ-003, OQ-016 | 10, 11, 16, 31 |
-| Open tax and Diplomat details | OQ-004, OQ-005, OQ-006 | 19, 25, 31 |
-| Open offline fiscal issuance | BCP-002, BCP-003, OQ-008 | 23, 31 |
+| Platform-wide POS/Invoicing | Sections 2, 5, 11, 20, POS-AC-001 | ExitPass BRD v1.3; planning decisions |
+| Sales Invoice primary output | Sections 2, 21, POS-AC-002 | POS/BIR references; v1.3 product decision |
+| Site-level POS Server | Sections 10, 12, POS-AC-003 to POS-AC-005 | ExitPass BRD v1.3; companion BRDs |
+| Fiscal issuance before ExitAuthorization | Sections 18, 22, 30, POS-AC-009 to POS-AC-010 | ExitPass BRD v1.3; Continuity BRD |
+| Channel alignment | Sections 14 to 17, 20 | Assisted Payment Terminal, Operator Console, Continuity, Management Dashboard BRDs |
+| Entitlement and VAT privilege | Sections 25, 26, 33, POS-AC-011 to POS-AC-013 | Statutory discount references; RMO No. 10-2019 |
+| Local ordinance policy registry | Section 38; POS-OQ-008 to POS-OQ-009 | Philippine parking statutory discount local ordinance reference |
+| Fiscal reporting | Sections 23, 24, 28, 34 | BIR POS references; RMO 24-2023 Annex references |
+| Reprint and adjustment controls | Section 27 | BIR/POS references |
+| ARTS POSLog posture | Section 28, POS-AC-021 | ARTS POSLog v6.0 references |
+| Digital SI URL and QR presentation | Section 29, POS-AC-019 | v1.3 POS/Invoicing decision |
+| Open implementation questions | Section 39 | Deferred System Design, API, Database, Engineering Pack |
 
-## 34. Appendix A: Glossary
+## 42. Appendix A: Glossary
 
 | Term | Definition |
 | --- | --- |
 | Sales Invoice | Primary fiscal document for ExitPass v1.3 parking payment output. |
-| Site POS Server | Site-level fiscal authority that issues Sales Invoices and owns fiscal reports, counters, EJ, POSLog, audit, and retention for the resolved Site. |
-| Central PMS | ExitPass platform authority for parking session state, site resolution, payment finality, PaymentAttempt, PaymentConfirmation, and ExitAuthorization. |
-| PaymentAttempt | Central PMS-controlled payment attempt record or lifecycle concept. |
-| PaymentConfirmation | Central PMS-controlled record of verified payment finality. |
-| ExitAuthorization | Central PMS-controlled authority allowing exit processing after required conditions are met. |
-| X-read | Interim fiscal/cashier accountability report, scope to be confirmed by BIR/accounting. |
+| Sales Invoice Number | Fiscal identifier assigned to an issued Sales Invoice. |
+| Site POS Server | Site-level fiscal authority that issues Sales Invoices and owns fiscal reports, counters, EJ, POSLog, audit, retention, and export for the resolved Site. |
+| Central PMS | ExitPass platform authority for session projection/control state, payment finality, fiscal reference recording, and ExitAuthorization. |
+| Fiscal issuance reference | Central PMS record linking payment/session context to POS Server-issued fiscal document identity/status. |
+| X-read | Interim fiscal reading/report that does not close the fiscal day unless BIR/accounting confirms otherwise. |
 | Z-read | Fiscal day close report that advances the Z-counter. |
 | Reset counter | Fiscal reset counter that starts at zero and increments only on fiscal reset. |
 | Z-counter | Counter that advances per Z-reading / fiscal day close. |
 | Grand Total Amount | Fiscal accumulated total requiring preservation and audit continuity. |
-| Electronic Journal | Fiscal ledger/replica records used to reconstruct fiscal documents and reports. |
-| POSLog | Structured fiscal transaction log/export, expected to reconcile with EJ and fiscal reports. |
-| Fiscal line | Explicit fiscal classification of charge, discount, privilege, exemption, tax, fee, or adjustment. |
-| Diplomat VAT Privilege / VAT Exemption | Active VAT privilege / VAT exemption entitlement category based on BIR RMO No. 10-2019, not an ordinary discount. |
-| EC Device / Continuity Terminal | Continuity or exceptional payment terminal/channel that must follow Site POS Server fiscal authority when activated. |
+| Electronic Journal | Fiscal record used to reconstruct fiscal documents and reports. |
+| POSLog | Structured fiscal transaction log/export expected to reconcile with EJ and fiscal reports. |
+| Diplomat VAT Privilege / VAT Exemption | Active VAT privilege / VAT exemption entitlement category based on BIR RMO No. 10-2019, not an ordinary commercial discount. |
+| Continuity Terminal | Restricted degraded/BCP mode of Assisted Payment Terminal. |
 
-## 35. Appendix B: Acronyms
+## 43. Appendix B: Acronyms
 
 | Acronym | Meaning |
 | --- | --- |
 | APM | AutoPay Machine |
+| ARTS | Association for Retail Technology Standards |
+| BCP | Business Continuity Plan |
 | BIR | Bureau of Internal Revenue |
 | BRD | Business Requirements Document |
-| DR | Disaster Recovery |
-| EC | Emergency/Exception/Continuity, as applied to ExitPass continuity terminal context; final terminology remains pending |
 | EJ | Electronic Journal |
+| HCP | HikCentral Professional |
 | MIN | Machine Identification Number |
 | NAAC | National Athletes and Coaches |
-| OR | Official Receipt |
 | PMS | Parking Management System |
 | POS | Point of Sale |
+| POSLog | Point-of-Sale Log |
 | PTU | Permit to Use |
-| PWD | Persons with Disability |
+| PWD | Person with Disability |
+| QR | Quick Response code |
 | RBAC | Role-Based Access Control |
 | RMO | Revenue Memorandum Order |
 | SI | Sales Invoice |
 | VAT | Value-Added Tax |
 
-## 36. Appendix C: Diagrams
+## 44. Appendix C: Diagrams
 
-### C-01 POS/Invoicing Context Diagram
+Existing POS/Invoicing BRD-level diagrams were verified as having both PlantUML source and JPEG exports under `docs/v1.3/pos-invoicing/diagrams/`.
 
-Purpose: Shows the high-level POS/Invoicing context and the authority boundary between Central PMS and the Site POS Server.
-
-![POS/Invoicing Context Diagram](diagrams/ExitPass_POS_Invoicing_Context_Diagram.jpg)
-
-PlantUML source: `diagrams/ExitPass_POS_Invoicing_Context_Diagram.puml`
-
-### C-02 Site-level POS Server Model
-
-Purpose: Shows the Site-level POS Server as the fiscal authority for the resolved Site, with payment channels and terminals modeled as children under the Site POS Server.
-
-![Site-level POS Server Model](diagrams/ExitPass_Site_Level_POS_Server_Model.jpg)
-
-PlantUML source: `diagrams/ExitPass_Site_Level_POS_Server_Model.puml`
-
-### C-03 Payment-to-Exit Fiscal Sequence
-
-Purpose: Shows the required payment-to-exit sequence where verified payment finality is followed by Sales Invoice issuance before ExitAuthorization.
-
-![Payment-to-Exit Fiscal Sequence](diagrams/ExitPass_Payment_to_Exit_Fiscal_Sequence.jpg)
-
-PlantUML source: `diagrams/ExitPass_Payment_to_Exit_Fiscal_Sequence.puml`
-
-### C-04 Channel / Terminal Fiscal Routing Diagram
-
-Purpose: Shows that the payment channel does not decide fiscal authority; the resolved Site determines which Site POS Server issues the Sales Invoice.
-
-![Channel / Terminal Fiscal Routing Diagram](diagrams/ExitPass_Channel_Terminal_Fiscal_Routing.jpg)
-
-PlantUML source: `diagrams/ExitPass_Channel_Terminal_Fiscal_Routing.puml`
-
-### C-05 Fiscal Output and Reporting Model
-
-Purpose: Shows simplified printed outputs alongside complete canonical fiscal records, EJ, POSLog, reports, exports, counters, and audit records.
-
-![Fiscal Output and Reporting Model](diagrams/ExitPass_Fiscal_Output_Reporting_Model.jpg)
-
-PlantUML source: `diagrams/ExitPass_Fiscal_Output_Reporting_Model.puml`
-
-### C-06 Fiscal Issuance Failure Exception Flow
-
-Purpose: Shows the controlled exception path when payment finality exists but Sales Invoice issuance fails or times out.
-
-![Fiscal Issuance Failure Exception Flow](diagrams/ExitPass_Fiscal_Issuance_Failure_Exception_Flow.jpg)
-
-PlantUML source: `diagrams/ExitPass_Fiscal_Issuance_Failure_Exception_Flow.puml`
+| Diagram ID | Diagram | PlantUML Source |
+| --- | --- | --- |
+| D-01 | [POS/Invoicing Context Diagram](diagrams/ExitPass_POS_Invoicing_Context_Diagram.jpg) | [ExitPass_POS_Invoicing_Context_Diagram.puml](diagrams/ExitPass_POS_Invoicing_Context_Diagram.puml) |
+| D-02 | [Site-level POS Server Model](diagrams/ExitPass_Site_Level_POS_Server_Model.jpg) | [ExitPass_Site_Level_POS_Server_Model.puml](diagrams/ExitPass_Site_Level_POS_Server_Model.puml) |
+| D-03 | [Payment-to-Exit Fiscal Sequence](diagrams/ExitPass_Payment_to_Exit_Fiscal_Sequence.jpg) | [ExitPass_Payment_to_Exit_Fiscal_Sequence.puml](diagrams/ExitPass_Payment_to_Exit_Fiscal_Sequence.puml) |
+| D-04 | [Channel / Terminal Fiscal Routing](diagrams/ExitPass_Channel_Terminal_Fiscal_Routing.jpg) | [ExitPass_Channel_Terminal_Fiscal_Routing.puml](diagrams/ExitPass_Channel_Terminal_Fiscal_Routing.puml) |
+| D-05 | [Fiscal Output and Reporting Model](diagrams/ExitPass_Fiscal_Output_Reporting_Model.jpg) | [ExitPass_Fiscal_Output_Reporting_Model.puml](diagrams/ExitPass_Fiscal_Output_Reporting_Model.puml) |
+| D-06 | [Fiscal Issuance Failure Exception Flow](diagrams/ExitPass_Fiscal_Issuance_Failure_Exception_Flow.jpg) | [ExitPass_Fiscal_Issuance_Failure_Exception_Flow.puml](diagrams/ExitPass_Fiscal_Issuance_Failure_Exception_Flow.puml) |
