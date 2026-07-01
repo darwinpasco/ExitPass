@@ -1,9 +1,9 @@
 # ExitPass Management Dashboard and Reporting BRD v1.0
 
-Version: v1.0  
-Status: Draft  
-Date: 2026-07-01  
-Document type: Companion Business Requirements Document  
+Version: v1.0
+Status: Approved for v1.3 System Design baseline
+Date: 2026-07-01
+Document type: Companion Business Requirements Document
 Product scope: ExitPass Management Dashboard and Reporting
 
 ## 1. Document Control
@@ -18,11 +18,13 @@ Product scope: ExitPass Management Dashboard and Reporting
 
 | Role | Name | Status | Date |
 | --- | --- | --- | --- |
-| Product Owner | TBD | Pending | TBD |
-| Operations Owner | TBD | Pending | TBD |
-| Finance / Revenue Assurance Owner | TBD | Pending | TBD |
-| Compliance / Audit Owner | TBD | Pending | TBD |
-| Technical Owner | TBD | Pending | TBD |
+| Product Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Operations Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Finance / Revenue Assurance Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Compliance / Audit Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Technical Owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+
+Approval note: This document is approved as part of the ExitPass v1.3 BRD baseline for use in ExitPass System Design v1.3. Approval does not close downstream implementation, API, database, finance/accounting, BIR/accreditation, or technical design questions explicitly listed in the Open Questions section.
 
 ### 1.3 Document Ownership
 

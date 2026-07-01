@@ -1,9 +1,9 @@
 # ExitPass Business Requirements Document v1.3
 
-Version: v1.3  
-Status: Draft for review  
-Generated: 2026-07-01  
-Document type: Business Requirements Document  
+Version: v1.3
+Status: Approved for v1.3 System Design baseline
+Generated: 2026-07-01
+Document type: Business Requirements Document
 Product scope: ExitPass core platform
 
 ## 1. Document Control
@@ -19,11 +19,13 @@ Product scope: ExitPass core platform
 
 | Role | Name | Approval status | Date |
 | --- | --- | --- | --- |
-| Product owner | TBD | Pending review | TBD |
-| Parking operations owner | TBD | Pending review | TBD |
-| Finance / revenue assurance owner | TBD | Pending review | TBD |
-| Technical architecture owner | TBD | Pending review | TBD |
-| Compliance / audit owner | TBD | Pending review | TBD |
+| Product owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Parking operations owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Finance / revenue assurance owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Technical architecture owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+| Compliance / audit owner | ExitPass documentation stream | Approved for v1.3 System Design baseline | 2026-07-01 |
+
+Approval note: This document is approved as part of the ExitPass v1.3 BRD baseline for use in ExitPass System Design v1.3. Approval does not close downstream implementation, API, database, finance/accounting, BIR/accreditation, or technical design questions explicitly listed in the Open Issues and Future Enhancements section.
 
 ### 1.3 Document Ownership
 
