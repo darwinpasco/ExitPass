@@ -1,0 +1,38 @@
+@startuml
+title CON-SD-D01 Continuity Logical Architecture
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Central PMS\n<<degraded resolve + payment finality + fiscal reference + ExitAuthorization authority>>" as Central
+component "Vendor PMS / HCP\n<<normal session + tariff authority>>" as Vendor
+component "Vendor PMS / HikCentral Connector\nfacts + health + freshness only" as Connector
+component "Projection\noperational visibility / degraded support only" as Projection
+component "Payment Orchestrator\nverified provider outcome reporter" as Pay
+component "Site POS Server\n<<Sales Invoice authority>>" as POS
+component "Continuity Terminal\nrestricted APT mode, disabled by default" as CT
+component "Operator Console\n<<non-payment governance>>" as OC
+component "Management Dashboard\n<<visibility only>>" as Dash
+component "Gate / Exit\nconsumes Central PMS authorization" as Gate
+component "Audit / Event" as Audit
+component "Reconciliation workflow" as Recon
+
+Connector --> Vendor : vendor interaction
+Connector --> Projection : projection inputs
+Projection --> Central : freshness/support context
+Central --> Connector : live resolve / degraded context request
+Central --> Pay : payment workflow
+Central --> POS : fiscal issuance request
+Central --> CT : restricted status / allowed workflow context
+OC --> Central : governance decisions where approved
+Central --> Gate : ExitAuthorization when eligible
+Central --> Audit
+CT --> Audit
+OC --> Audit
+Audit --> Recon
+Central --> Dash : source-labeled visibility
+
+note bottom
+Continuity is explicit controlled degraded operation.
+It is not silent fallback or automatic fallback.
+end note
+@enduml

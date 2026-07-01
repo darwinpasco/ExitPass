@@ -1,0 +1,26 @@
+@startuml
+title CON-SD-D03 Dependency Degradation Detection and Degraded-Watch Flow
+skinparam shadowing false
+
+start
+:Dependency signal received\nvendor / connector / projection / payment / POS / gate;
+:Connector or platform reports facts and health context;
+:Central PMS / approved policy classifies impact;
+if (Normal authority prerequisites still safe?) then (yes)
+  :Remain normal with visibility;
+else (degraded signal)
+  :Enter degraded-watch visibility;
+  :Operator Console and Dashboard show warnings;
+  if (Activation approved?) then (yes)
+    :Route to continuity activation;
+  else (no)
+    :Block unsafe workflows / fail closed;
+  endif
+endif
+stop
+
+note right
+Degraded-watch is observation and restriction posture.
+It does not permit degraded payment, fiscal bypass, manual release, or exit.
+end note
+@enduml

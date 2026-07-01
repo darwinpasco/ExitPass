@@ -1,0 +1,27 @@
+@startuml
+title CON-SD-D09 Fiscal Issuance Failure / Pending Exit Exception Flow
+skinparam shadowing false
+
+start
+:Central PMS payment finality recorded;
+:Central PMS requests fiscal issuance from Site POS Server;
+if (Fiscal issuance succeeds?) then (yes)
+  :Central PMS records fiscal reference;
+  :Central PMS evaluates ExitAuthorization;
+else (failed / timeout / pending / unknown)
+  :Payment finality is not automatically reversed;
+  :Normal ExitAuthorization remains blocked;
+  :Customer/operator message shows fiscal or exit pending;
+  :Route to fiscal exception review;
+  if (Approved manual release policy applies?) then (yes)
+    :Governed manual release handoff;
+  else (no)
+    :Remain pending / retry / review per later design;
+  endif
+endif
+stop
+
+note right
+Fiscal failure does not authorize exit automatically.
+end note
+@enduml

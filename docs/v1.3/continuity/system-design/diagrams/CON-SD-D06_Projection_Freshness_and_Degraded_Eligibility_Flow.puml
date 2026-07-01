@@ -1,0 +1,28 @@
+@startuml
+title CON-SD-D06 Projection Freshness and Degraded Eligibility Flow
+skinparam shadowing false
+
+start
+:Connector reports projection facts,\nhealth, mapping, and freshness context;
+:Central PMS evaluates active continuity scope;
+if (Projection fresh enough by approved policy?) then (yes)
+  if (Mapping unambiguous and sufficient?) then (yes)
+    if (Approved degraded tariff basis exists?) then (yes)
+      :Central PMS may allow controlled degraded evaluation;
+    else (no)
+      :Fail closed / governance review;
+    endif
+  else (no)
+    :Fail closed / ambiguity review;
+  endif
+else (no)
+  :Fail closed / stale warning;
+endif
+:Audit and reconciliation context recorded where used or rejected;
+stop
+
+note right
+Projection is operational visibility and degraded support only.
+It is not financial, fiscal, tariff, payment, discount, or exit truth.
+end note
+@enduml

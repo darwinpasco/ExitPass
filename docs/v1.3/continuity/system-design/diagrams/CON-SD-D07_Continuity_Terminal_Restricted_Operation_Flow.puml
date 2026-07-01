@@ -1,0 +1,26 @@
+@startuml
+title CON-SD-D07 Continuity Terminal Restricted Operation Flow
+skinparam shadowing false
+
+start
+:Continuity Terminal disabled by default;
+if (Approved activation includes terminal scope?) then (yes)
+  :Validate terminal, cashier, shift, Site/Site Group, allowed workflows;
+  :Display restricted continuity mode;
+  :Request backend context from Central PMS;
+  if (Backend allows workflow?) then (yes)
+    :Display degraded context / payment / fiscal / exit status;
+  else (no)
+    :Block and route to supervisor/manual review;
+  endif
+else (no)
+  :Continuity Terminal remains unavailable;
+endif
+:Record terminal activity with incident/audit/reconciliation tags;
+stop
+
+note right
+The terminal displays backend state and submits allowed input.
+It does not declare finality, issue fiscal documents, approve discounts, authorize exit, or open gates.
+end note
+@enduml

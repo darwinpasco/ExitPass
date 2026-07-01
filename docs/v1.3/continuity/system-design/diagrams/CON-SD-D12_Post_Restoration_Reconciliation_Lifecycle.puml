@@ -1,0 +1,26 @@
+@startuml
+title CON-SD-D12 Post-Restoration Reconciliation Lifecycle
+skinparam shadowing false
+
+start
+:Restoration signal or deactivation decision;
+:Disable or limit continuity-only workflows;
+:Collect continuity-origin activity set;
+:Review activation/deactivation and incident scope;
+:Compare payment/provider/fiscal/fiscal-reference records;
+:Review projection/degraded basis and vendor acknowledgment outcomes;
+:Review gate outcomes, manual releases, and discount activity;
+:Operator Console governance review;
+:Management Dashboard visibility / backlog labels;
+if (All required items reconciled and approved?) then (yes)
+  :Close / reconciled under approved authority;
+else (no)
+  :Keep open / escalate unresolved items;
+endif
+stop
+
+note right
+Returning to normal operation does not close continuity-origin records.
+Projection cannot close financial or fiscal reconciliation.
+end note
+@enduml
