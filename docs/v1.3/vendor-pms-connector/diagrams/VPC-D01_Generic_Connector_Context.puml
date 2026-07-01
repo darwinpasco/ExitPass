@@ -1,0 +1,38 @@
+@startuml
+title VPC-D01 Generic Connector Context
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+actor "Payment channel /\nterminal / operator flow" as Channel
+component "Central PMS\nplatform control authority" as Central
+component "Vendor PMS connector\nintegration boundary" as Connector
+component "Vendor PMS / HCP\nraw session + normal tariff authority" as Vendor
+component "Payment Orchestrator\nprovider interaction" as Pay
+component "Resolved Site POS Server\nSales Invoice authority" as POS
+component "Operator Console\noperations visibility" as OC
+component "Management Dashboard\noperational reporting" as MDR
+component "Continuity workflow\napproved degraded controls" as Cont
+component "Audit / Event /\nReconciliation" as Audit
+component "Gate / exit system\nconsumes Central PMS authorization" as Gate
+
+Channel --> Central : lookup / payment flow request
+Central --> Connector : live resolve / fee / projection request
+Connector --> Vendor : vendor API interaction
+Vendor --> Connector : vendor facts / outcomes
+Connector --> Central : normalized facts + health
+Central --> Pay : payment provider workflow
+Central --> POS : fiscal issuance request
+POS --> Central : Sales Invoice status
+Central --> Gate : ExitAuthorization when eligible
+Connector --> OC : health + freshness via approved backend
+Connector --> MDR : operational visibility via approved backend
+Connector --> Cont : freshness evidence via Central PMS
+Connector --> Audit : vendor facts / health / outcomes
+
+note bottom
+Connector is an integration boundary only.
+Central PMS owns payment finality and ExitAuthorization.
+POS Server owns fiscal issuance.
+Projection is operational visibility only.
+end note
+@enduml

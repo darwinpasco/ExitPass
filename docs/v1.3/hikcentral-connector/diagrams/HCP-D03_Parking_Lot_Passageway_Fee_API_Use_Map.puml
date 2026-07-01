@@ -1,0 +1,26 @@
+@startuml
+title HCP-D03 Parking Lot / Passageway / Fee API Use Map
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "HikCentral connector profile" as Profile
+component "Parking object discovery\nconfirmed API area" as Discovery
+component "Passageway records\nprojection source" as Passageway
+component "Live fee calculation\nnormal tariff source" as Fee
+component "Payment acknowledgment\nconditional mutating capability" as Confirm
+component "Central PMS" as Central
+
+Profile --> Discovery : support mapping validation
+Profile --> Passageway : operational projection
+Profile --> Fee : live fee resolve where identifiers confirmed
+Profile --> Confirm : disabled until approved
+Discovery --> Central : mapping evidence
+Passageway --> Central : projection input
+Fee --> Central : vendor fee fact for TariffSnapshot
+Confirm --> Central : vendor acknowledgment result
+
+note bottom
+Capability map only. Endpoint contracts, request bodies, response DTOs,
+and implementation details are deferred.
+end note
+@enduml

@@ -1,0 +1,26 @@
+@startuml
+title HCP-D04 Passageway Projection Flow
+skinparam shadowing false
+
+participant "HikCentral connector" as Connector
+participant "HCP passageway records" as HCP
+participant "Central PMS projection" as Central
+participant "Operator Console" as OC
+participant "Management Dashboard" as MDR
+participant "Continuity workflow" as Cont
+participant "Audit / Event" as Audit
+
+Connector -> HCP : poll passageway records\n(one-minute planning baseline)
+HCP --> Connector : passageway facts
+Connector -> Connector : normalize + apply AdapterMapping
+Connector --> Central : projection input + freshness context
+Central --> OC : health / stale warnings where authorized
+Central --> MDR : operational visibility with freshness labels
+Central --> Cont : degraded evidence only under policy
+Central --> Audit : projection and freshness context
+
+note bottom
+Passageway projection is operational visibility.
+It must not invent tariff or payment/exit status.
+end note
+@enduml

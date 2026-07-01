@@ -1,0 +1,30 @@
+@startuml
+title VPC-D07 Degraded Resolve Handoff to Central PMS / Continuity
+skinparam shadowing false
+
+actor "Channel / Continuity Terminal" as Channel
+participant "Central PMS" as Central
+participant "Vendor PMS connector" as Connector
+participant "Vendor PMS / HCP" as Vendor
+participant "Continuity governance" as Cont
+participant "Operator Console" as OC
+participant "Audit / Reconciliation" as Audit
+
+Channel -> Central : request resolve
+Central -> Connector : request live resolve / fee
+Connector -> Vendor : vendor interaction
+alt live result available
+  Vendor --> Connector : live facts
+  Connector --> Central : normalized result
+else unavailable / timeout / unsafe
+  Connector --> Central : unavailable + freshness context
+  Central -> Cont : evaluate approved degraded policy
+  Cont -> OC : supervisor/governance visibility where required
+  alt projection fresh and policy allows
+    Cont --> Central : controlled degraded path allowed
+  else stale / ambiguous / insufficient
+    Cont --> Central : fail closed or manual review
+  end
+end
+Central -> Audit : incident / audit / reconciliation context
+@enduml

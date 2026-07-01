@@ -1,0 +1,32 @@
+@startuml
+title VPC-D06 Vendor Payment Acknowledgment Flow
+skinparam shadowing false
+
+participant "Central PMS\npayment finality authority" as Central
+participant "Resolved Site POS Server\nfiscal authority" as POS
+participant "Vendor PMS connector" as Connector
+participant "Vendor PMS / HCP" as Vendor
+participant "Reconciliation" as Recon
+participant "Audit / Event" as Audit
+
+Central -> Central : record platform payment finality
+Central -> POS : request Sales Invoice issuance
+POS --> Central : fiscal document identity/status
+Central -> Central : record fiscal reference
+Central -> Connector : request vendor acknowledgment if policy allows
+Connector -> Vendor : notify vendor payment outcome
+alt acknowledged
+  Vendor --> Connector : accepted / already paid
+  Connector --> Central : normalized acknowledgment result
+else failed / timeout / unavailable / unknown
+  Vendor --> Connector : failure or no safe result
+  Connector --> Central : normalized failure context
+  Central -> Recon : queue / escalate per later policy
+end
+Connector -> Audit : record acknowledgment context
+
+note bottom
+Acknowledgment is downstream of Central PMS finality and fiscal handling.
+Retry and exit-block policy remain open.
+end note
+@enduml

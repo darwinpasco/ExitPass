@@ -1,0 +1,22 @@
+@startuml
+title HCP-D02 HikCentral Authentication Boundary
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Central PMS\nplatform service identity" as Central
+component "HikCentral connector\ntrust boundary" as Connector
+database "Approved secret channel\n(no secrets in repo/docs/logs)" as Secrets
+component "HCP OpenAPI boundary\nsigned request integration" as HCP
+component "Audit / Event\nredacted records" as Audit
+
+Central --> Connector : service-to-service trust
+Connector --> Secrets : retrieve credential at runtime
+Connector --> HCP : signed API request
+HCP --> Connector : vendor response
+Connector --> Audit : redacted security + outcome facts
+
+note bottom
+HCP credentials are not platform authority.
+No AppKey/AppSecret, AK/SK, signature, or auth header values are documented.
+end note
+@enduml
