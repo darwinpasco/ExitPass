@@ -1,0 +1,41 @@
+@startuml
+title D-01 Assisted Payment Terminal Context Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Parker" as Parker
+actor "Cashier" as Cashier
+actor "Supervisor" as Supervisor
+
+component "Assisted Payment Terminal\nhardened terminal app family" as APT
+component "Central PMS\npayment finality + control state" as Central
+component "Central PMS /\nDiscount workflow" as Discount
+component "Payment Orchestrator /\napproved payment integration" as Pay
+component "Vendor PMS / HCP\nnormal session + tariff authority" as Vendor
+component "Resolved Site POS Server\nSales Invoice issuer" as POS
+component "Operator Console\nnon-payment governance" as Console
+component "Gate / Exit System\nExitAuthorization consumer" as Gate
+
+Parker --> Cashier : assisted payment request
+Cashier --> APT : terminal workflow
+Supervisor --> Console : review / approval
+APT --> Central : session lookup, payable basis,\npayment and authorization status
+APT --> Discount : statutory validation request
+Central --> Vendor : normal session / tariff resolve
+Central --> Pay : payment attempt
+Pay --> Central : verified provider outcome
+Central --> POS : fiscal issuance request\nfor resolved Site
+POS --> Central : Sales Invoice identity / status
+Central --> Gate : ExitAuthorization
+APT --> Console : supervisor escalation context
+
+note right of APT
+Does not declare payment finality.
+Does not issue ExitAuthorization.
+Does not own discount policy.
+Does not act as independent fiscal authority.
+end note
+
+@enduml
