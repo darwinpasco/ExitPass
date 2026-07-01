@@ -1,0 +1,39 @@
+@startuml
+title D-02 Site Group, Site, Vendor System, and POS Server Relationship
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+rectangle "Site Group\ncustomer lookup / payment scope" as SiteGroup {
+  component "Site A\nreporting + contract +\nVendor PMS mapping + POS boundary" as SiteA
+  component "Site B\noptional special-case\nsecond operational Site" as SiteB
+}
+
+component "Centralized WebPay\n/s/{slug}" as WebPay
+component "VendorSystem\nconfigured Vendor PMS/HCP instance" as VendorSystem
+component "Adapter codebase\nreusable vendor integration" as Adapter
+component "Connector instance\nruntime deployment for VendorSystem" as Connector
+component "AdapterMapping\nSite to vendor object" as Mapping
+component "Site POS Server\nfiscal authority for Site" as POS
+
+WebPay --> SiteGroup : URL resolves to payment scope
+SiteGroup --> SiteA : default one Site
+SiteGroup --> SiteB : special case multiple Sites
+SiteA --> Mapping : mapped through
+SiteB --> Mapping : mapped through
+Mapping --> VendorSystem : vendorSystemId
+Adapter --> Connector : implemented by
+Connector --> VendorSystem : connects to
+Mapping --> Connector : vendorObjectType + vendorObjectRef
+SiteA --> POS : resolved Site routes fiscal issuance
+SiteB --> POS : each Site has its own boundary
+
+note bottom of Mapping
+HCP ParkingLotIndexCode maps through AdapterMapping.
+It is not ExitPass site_id.
+Runtime vendor object key:
+vendorSystemId + vendorObjectType + vendorObjectRef.
+end note
+
+@enduml

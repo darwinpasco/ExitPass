@@ -1,0 +1,69 @@
+@startuml
+title D-01 ExitPass v1.3 Context Diagram
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Parker" as Parker
+actor "Operator / Supervisor" as Operator
+actor "Management / Finance" as Management
+
+rectangle "ExitPass Platform" {
+  component "Central PMS\npayment finality + ExitAuthorization authority" as Central
+  component "Centralized WebPay\nsite-specific URLs" as WebPay
+  component "Payment Orchestrator\nprovider interaction" as Orchestrator
+  component "Operator Console\nplatform module" as Console
+  component "Management Dashboard\nand Reporting" as Dashboard
+  component "ExitPass Continuity\nplatform capability" as Continuity
+}
+
+component "Vendor PMS / HCP\nsession lifecycle + tariff authority" as Vendor
+component "Site POS Server\nfiscal issuance authority" as POS
+component "Assisted Payment Terminal\ncashier / continuity modes" as Terminal
+component "Payment Provider" as Provider
+component "Gate / Exit Controller" as Gate
+
+Parker --> WebPay : lookup / pay
+Parker --> Terminal : assisted payment
+Operator --> Console : review / exception handling
+Management --> Dashboard : operational and financial reporting
+
+WebPay --> Central : session lookup and payment context
+Terminal --> Central : assisted payment context
+Console --> Central : controlled actions
+Dashboard --> Central : canonical platform records
+Continuity --> Central : degraded operation controls
+
+Central --> Vendor : live session / fee in normal mode
+Vendor --> Central : session and tariff result
+Central --> Orchestrator : payment attempt
+Orchestrator --> Provider : provider interaction
+Provider --> Orchestrator : verified provider outcome
+Orchestrator --> Central : verified outcome only
+Central --> POS : request Sales Invoice
+POS --> Central : fiscal document identity / status
+Central --> Gate : issue ExitAuthorization
+
+note right of Orchestrator
+Does not declare
+platform payment finality.
+end note
+
+note right of WebPay
+Does not declare
+payment finality.
+end note
+
+note right of POS
+Does not issue
+ExitAuthorization.
+end note
+
+note bottom of Central
+Central PMS owns payment-linked control state,
+PaymentConfirmation, fiscal reference recording,
+and ExitAuthorization.
+end note
+
+@enduml
