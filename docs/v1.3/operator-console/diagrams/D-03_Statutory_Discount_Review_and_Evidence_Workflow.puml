@@ -1,0 +1,30 @@
+@startuml
+title D-03 Statutory Discount Review and Evidence Workflow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Operator
+actor Supervisor
+participant "Operator Console" as Console
+participant "Central PMS /\nDiscount workflow" as Discount
+participant "Evidence Store /\nReference" as Evidence
+participant "Central PMS" as Central
+
+Operator -> Console : open discount case
+Console -> Discount : retrieve validation request/status
+Discount --> Console : policy state, required evidence,\npayable-basis effect
+Console -> Evidence : view/capture evidence where authorized
+Evidence --> Console : evidence reference / hash
+Operator -> Console : submit review / validation input
+Console -> Discount : submit review through approved workflow
+Discount -> Central : persist validation result\nand payable-basis effect
+Supervisor -> Console : review override / escalation where allowed
+Console -> Discount : supervisor decision through workflow
+
+note over Console
+Console is not the discount policy engine.
+It does not mutate payable basis directly.
+end note
+
+@enduml

@@ -1,0 +1,33 @@
+@startuml
+title D-06 Manual Release Governance Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Operator
+actor Supervisor
+participant "Operator Console" as Console
+participant "Central PMS" as Central
+participant "Approved Manual Emergency Process" as Manual
+participant "Reconciliation Workflow" as Recon
+participant "Gate / Exit System" as Gate
+
+Operator -> Console : request manual release review
+Console -> Central : retrieve session, payment,\nfiscal, authorization state
+Central --> Console : context and restrictions
+Supervisor -> Console : approve / reject where policy allows
+alt approved formal emergency process
+  Console -> Manual : record reason, incident,\naudit, reconciliation tags
+  Manual -> Gate : controlled release if assigned by policy
+  Manual -> Recon : create reconciliation item
+else not approved
+  Console --> Operator : release denied / continue escalation
+end
+
+note over Console
+Manual release is last resort.
+Console does not silently convert it
+to payment finality or normal ExitAuthorization.
+end note
+
+@enduml
