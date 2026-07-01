@@ -1,0 +1,28 @@
+@startuml
+title APT-SD-D09 Continuity Terminal Activation and Restricted Operation Flow
+skinparam shadowing false
+
+start
+:Continuity Terminal disabled by default;
+if (Approved continuity activation exists?) then (yes)
+  :Record Site/Site Group, dependency, incident, approval, scope;
+  :Enable restricted Continuity Terminal workflows for authorized context;
+  :Cashier authenticates on trusted terminal;
+  :Central PMS evaluates degraded resolve policy;
+  if (projection/context fresh and policy allows?) then (yes)
+    :APT displays restricted degraded context and allowed actions;
+  else (no)
+    :Fail closed or route to supervisor/manual review;
+  endif
+  :All activity incident/audit/reconciliation tagged;
+  :Deactivate and send activity to post-restoration review;
+else (no)
+  :Continuity workflows remain unavailable;
+endif
+stop
+
+note right
+Projection is operational visibility only.
+APT does not approve degraded tariff, discount, fiscal, or exit decisions.
+end note
+@enduml

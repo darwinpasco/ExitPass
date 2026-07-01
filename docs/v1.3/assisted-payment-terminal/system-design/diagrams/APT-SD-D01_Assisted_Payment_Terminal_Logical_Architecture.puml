@@ -1,0 +1,39 @@
+@startuml
+title APT-SD-D01 Assisted Payment Terminal Logical Architecture
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Assisted Payment Terminal\n<<channel / terminal workflow surface>>" as APT
+component "Cashier-Assisted Terminal mode\nnormal staffed mode" as CAT
+component "Continuity Terminal mode\nrestricted, disabled by default" as CT
+component "Central PMS\n<<payment finality + ExitAuthorization authority>>" as Central
+component "Central PMS / Discount workflow\n<<discount policy authority>>" as Discount
+component "Payment Orchestrator\nprovider outcome reporting" as Pay
+component "Payment Provider\nexternal rail" as Provider
+component "Resolved Site POS Server\n<<Sales Invoice authority>>" as POS
+component "Vendor PMS Connector\nintegration boundary" as Connector
+component "Vendor PMS / HCP\nnormal session + tariff authority" as Vendor
+component "Operator Console\n<<non-payment governance>>" as OC
+component "Management Dashboard\n<<visibility only>>" as Dash
+component "Audit / Event / Reconciliation" as Audit
+component "Gate / Exit\nconsumes Central PMS authorization" as Gate
+
+APT --> CAT
+APT --> CT
+APT --> Central : lookup / capture / payment initiation / status display
+Central --> Discount : statutory validation workflow
+Central --> Pay : payment workflow
+Pay --> Provider : provider-controlled interaction
+Central --> POS : fiscal issuance request
+Central --> Connector : vendor lookup / fee / projection context
+Connector --> Vendor : vendor interaction
+APT --> OC : supervisor / exception handoff
+APT --> Audit : terminal activity context
+Central --> Gate : ExitAuthorization when eligible
+Central --> Dash : status and visibility facts
+
+note bottom
+APT captures and displays workflow state only.
+Projection is operational visibility and controlled degraded support only.
+end note
+@enduml

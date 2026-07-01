@@ -1,0 +1,28 @@
+@startuml
+title APT-SD-D04 Cashier Authentication, Shift, Site/Site Group Binding Flow
+skinparam shadowing false
+
+actor Cashier
+participant "Assisted Payment Terminal" as APT
+participant "Identity / RBAC / Device Trust" as Identity
+participant "Central PMS" as Central
+participant "Audit / Event" as Audit
+
+Cashier -> APT : start terminal session
+APT -> Identity : validate device identity and trust
+APT -> Identity : authenticate cashier
+APT -> Central : validate Site/Site Group assignment
+APT -> Central : validate active shift/session
+alt all prerequisites valid
+  Central --> APT : workflow access allowed
+  APT -> Audit : session start context
+else invalid device / cashier / scope / shift
+  Central --> APT : block or route to authorized correction
+  APT -> Audit : denied access context
+end
+
+note bottom
+Lookup, discount capture, payment, fiscal display, and exit status
+are blocked until required context is valid.
+end note
+@enduml

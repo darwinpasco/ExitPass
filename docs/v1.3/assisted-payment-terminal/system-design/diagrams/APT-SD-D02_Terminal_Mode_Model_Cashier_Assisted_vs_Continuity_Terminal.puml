@@ -1,0 +1,25 @@
+@startuml
+title APT-SD-D02 Terminal Mode Model: Cashier-Assisted vs Continuity Terminal
+skinparam shadowing false
+
+[*] --> Unassigned : terminal provisioned
+Unassigned --> Assigned : device assigned to Site/Site Group
+Assigned --> CashierReady : trusted device + cashier + shift
+CashierReady --> CashierWorkflow : normal staffed transaction
+CashierWorkflow --> CashierReady : completion / governed cancel
+
+Assigned --> ContinuityEligible : approved continuity scope exists
+ContinuityEligible --> ContinuityActive : authorized activation
+ContinuityActive --> RestrictedOperation : cashier confirms incident scope
+RestrictedOperation --> ContinuityActive : transaction complete / exception handoff
+ContinuityActive --> RestorationReview : deactivation
+RestorationReview --> CashierReady : post-restoration review complete
+
+Assigned --> Blocked : untrusted device / invalid scope / no shift
+Blocked --> Assigned : authorized correction
+
+note right of ContinuityEligible
+Continuity Terminal is disabled by default.
+It is not an implicit fallback from normal failure.
+end note
+@enduml
