@@ -1,0 +1,33 @@
+@startuml
+title D-02 Continuity Activation and Deactivation Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Supervisor / Authorized Role" as Supervisor
+participant "Operator Console /\nApproved Operations Workflow" as Console
+participant "ExitPass Continuity" as Continuity
+participant "Central PMS" as Central
+participant "Continuity Terminal" as Terminal
+participant "Dashboard / Reporting" as Dashboard
+
+Supervisor -> Console : request / approve activation
+Console -> Continuity : Site/Site Group, dependency,\nincident, reason, scope
+Continuity -> Central : declare degraded mode and allowed workflows
+Central -> Terminal : enable continuity mode if allowed
+Continuity -> Dashboard : publish activation visibility
+
+... periodic review interval ...
+
+Supervisor -> Console : review restoration criteria
+Console -> Continuity : approve deactivation / restoration
+Continuity -> Central : close degraded mode
+Central -> Terminal : disable continuity mode
+Continuity -> Dashboard : move to post-restoration review
+
+note over Continuity
+Activation is explicit, audited,
+reconciliation-tagged, and time-bound.
+end note
+
+@enduml

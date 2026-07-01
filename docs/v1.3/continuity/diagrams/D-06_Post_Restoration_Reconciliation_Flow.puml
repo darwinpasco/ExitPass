@@ -1,0 +1,30 @@
+@startuml
+title D-06 Post-Restoration Reconciliation Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor "Operations / Reconciliation" as Ops
+participant "ExitPass Continuity" as Continuity
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+participant "Site POS Server" as POS
+participant "Dashboard / Reporting" as Dashboard
+participant "Operator Console /\nApproved Workflow" as Console
+
+Continuity -> Dashboard : continuity-origin activity list
+Ops -> Dashboard : review backlog and exceptions
+Dashboard -> Central : payment, tariff, fiscal,\nexit, manual release records
+Dashboard -> Vendor : vendor acknowledgment / session status
+Dashboard -> POS : fiscal issuance / exception status
+Ops -> Console : resolve exception, add notes,\nrequest correction where allowed
+Console -> Central : reconciliation outcome
+Central -> Continuity : mark reviewed / reconciled
+
+note over Dashboard
+Financial review uses canonical payment,
+fiscal, and reconciliation records.
+Projection is operational visibility only.
+end note
+
+@enduml

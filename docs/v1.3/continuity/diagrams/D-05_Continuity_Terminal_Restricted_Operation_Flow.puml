@@ -1,0 +1,41 @@
+@startuml
+title D-05 Continuity Terminal Restricted Operation Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Cashier
+actor Supervisor
+participant "Continuity Terminal\n(disabled by default)" as Terminal
+participant "Operator Console /\nApproved Workflow" as Console
+participant "Central PMS" as Central
+participant "Central PMS /\nDiscount Workflow" as Discount
+participant "Site POS Server" as POS
+
+Supervisor -> Console : approve activation where required
+Console -> Terminal : enable scoped continuity workflow
+Cashier -> Terminal : scan / enter ticket or card
+Terminal -> Central : continuity lookup
+Central --> Terminal : approved basis or fail-closed result
+
+opt statutory discount requested
+  Terminal -> Discount : submit only if policy allows
+  alt safe validation possible
+    Discount --> Central : validation result and payable effect
+    Central --> Terminal : updated payable basis
+  else unsafe validation
+    Discount --> Terminal : route to supervisor / fail closed
+  end
+end
+
+Terminal -> Central : payment workflow where allowed
+Central -> POS : fiscal issuance where available and allowed
+POS --> Central : fiscal status
+Central --> Terminal : customer instruction / pending status
+
+note over Terminal
+All activity is incident-tagged,
+audit-tagged, and reconciliation-tagged.
+end note
+
+@enduml
