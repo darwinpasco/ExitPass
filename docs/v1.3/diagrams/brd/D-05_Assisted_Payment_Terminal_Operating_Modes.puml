@@ -1,0 +1,39 @@
+@startuml
+title D-05 Assisted Payment Terminal Operating Modes
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+component "Assisted Payment Terminal\none app family / codebase" as APT
+component "Mode 1:\nCashier-Assisted Terminal" as Cashier
+component "Mode 2:\nContinuity Terminal" as ContinuityMode
+component "Central PMS\npayment finality + exit authority" as Central
+component "Site POS Server\nfiscal issuance authority" as POS
+component "Operator Console\nsupervisor and audit controls" as Console
+component "ExitPass Continuity\nBCP controls" as Continuity
+
+APT --> Cashier : normal cashier-assisted operation
+APT --> ContinuityMode : disabled by default
+
+Cashier --> Central : payment context / assisted workflow
+Cashier --> POS : fiscal issuance through resolved Site POS Server
+Cashier --> Console : cashier accountability and audit
+
+ContinuityMode --> Continuity : BCP activation required
+ContinuityMode --> Console : supervisor approval / incident reference
+ContinuityMode --> Central : controlled degraded operation
+ContinuityMode --> POS : fiscal issuance when allowed
+
+note right of ContinuityMode
+Requires supervisor approval,
+incident or BCP reference,
+audit tagging, and reconciliation.
+end note
+
+note bottom of APT
+Cashier POS and EC Device are not separate product families.
+They are operating modes of one Assisted Payment Terminal family.
+end note
+
+@enduml

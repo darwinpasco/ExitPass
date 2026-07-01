@@ -1,0 +1,44 @@
+@startuml
+title D-03 Normal Payment-to-Exit Flow with Fiscal Issuance
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Parker
+participant "WebPay / Channel" as Channel
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+participant "Payment Orchestrator" as Orchestrator
+participant "Payment Provider" as Provider
+participant "Resolved Site\nPOS Server" as POS
+participant "Gate / Exit" as Gate
+
+Parker -> Channel : open site-specific URL or payment channel
+Channel -> Central : submit lookup / payment context
+Central -> Central : resolve Site Group and Site
+Central -> Vendor : request live session and fee
+Vendor --> Central : session result and tariff computation
+Central -> Central : create immutable TariffSnapshot
+Central -> Orchestrator : initiate payment attempt
+Orchestrator -> Provider : provider interaction
+Provider --> Orchestrator : verified provider outcome
+Orchestrator --> Central : report verified outcome
+Central -> Central : record PaymentConfirmation
+Central -> POS : request Sales Invoice issuance
+POS --> Central : fiscal document identity / status
+Central -> Central : record fiscal issuance reference
+Central -> Gate : issue ExitAuthorization
+Gate -> Gate : consume authorization
+Central -> Vendor : payment acknowledgment where supported / required
+
+note right of Central
+Central PMS declares platform finality
+and issues ExitAuthorization.
+end note
+
+note right of POS
+Fiscal issuance succeeds before
+ExitAuthorization is issued.
+end note
+
+@enduml

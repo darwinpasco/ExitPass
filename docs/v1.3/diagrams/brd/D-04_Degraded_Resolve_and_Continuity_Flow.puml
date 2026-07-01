@@ -1,0 +1,44 @@
+@startuml
+title D-04 Degraded Resolve and Continuity Flow
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+
+actor Parker
+actor "Supervisor / Operator" as Supervisor
+participant "Payment Channel" as Channel
+participant "Central PMS" as Central
+participant "Vendor PMS / HCP" as Vendor
+database "Parking Session Projection" as Projection
+participant "ExitPass Continuity" as Continuity
+participant "Assisted Payment Terminal\nContinuity Mode" as Terminal
+participant "Site POS Server" as POS
+participant "Gate / Exit" as Gate
+
+Parker -> Channel : lookup / payment attempt
+Channel -> Central : request resolve
+Central -> Vendor : live resolve attempt
+Vendor --> Central : unavailable / degraded
+Central -> Projection : check latest projection and freshness
+
+alt projection fresh, unambiguous, and controls active
+  Central -> Continuity : enter degraded resolve with audit tag
+  Continuity -> Supervisor : require activation / recognition policy
+  Supervisor --> Continuity : approve where required
+  Continuity -> Central : approved degraded context
+  Central -> Central : use approved tariff configuration
+  Central -> POS : request fiscal issuance if payment finality exists
+  POS --> Central : fiscal document identity / status
+  Central -> Gate : issue ExitAuthorization if eligible
+else stale, ambiguous, or insufficient data
+  Central -> Central : fail closed
+  Central --> Channel : payment / exit not available; escalate
+  Supervisor -> Terminal : optional controlled continuity process
+end
+
+note over Projection
+Projection is operational visibility and degraded support.
+It is not financial truth, payment finality, or exit authorization.
+end note
+
+@enduml

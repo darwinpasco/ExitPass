@@ -66,6 +66,7 @@ ExitPass v1.3 is a controlled minor-version documentation update. It preserves t
 | V13-D030 | WebPay, APM, Cashier POS, EC Device, operator-assisted payment, and future channels route fiscal issuance through the resolved Site POS Server. | Approved | Payment channel docs must treat channels/terminals as children of the Site POS Server. |
 | V13-D031 | Fiscal issuance must succeed before Central PMS issues ExitAuthorization. | Approved | Payment-to-exit flow must require verified payment finality, fiscal issuance, fiscal reference recording, then ExitAuthorization. |
 | V13-D032 | Cashier POS and EC Device should be modeled as one Assisted Payment Terminal app family with different operating modes. | Approved | Companion BRD and technical design should avoid separate product families unless future requirements justify it. |
+| V13-D036 | Cashier-Assisted Terminal mode supports statutory discount validation as part of the assisted payment workflow. Assisted Payment Terminal captures and submits validation data, but Central PMS / Discount workflow owns policy resolution, validation persistence, and payable-basis update. Operator Console and Assisted Payment Terminal remain separate modules/apps. | Approved | BRD v1.3 must document cashier-facing capture, backend validation authority, non-payment Operator Console boundary, and separate permission boundaries. Companion documents must not make the terminal an independent statutory discount policy engine. |
 
 ## Platform Module Decisions
 
