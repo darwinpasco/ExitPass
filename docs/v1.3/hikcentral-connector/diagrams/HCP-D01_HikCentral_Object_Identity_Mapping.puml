@@ -1,0 +1,25 @@
+@startuml
+title HCP-D01 HikCentral Object Identity Mapping
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "VendorSystem\nconfigured HCP instance" as VS
+component "HikCentral connector instance" as CI
+component "HCP parking object\nParkingLotIndexCode" as PLIC
+component "AdapterMapping" as Mapping
+component "ExitPass Site\nreporting/vendor/POS boundary" as Site
+component "Site Group\nlookup/payment scope" as SG
+component "Site POS Server\nfiscal authority" as POS
+
+SG --> Site : resolves to
+Site --> Mapping : platform-to-vendor mapping
+Mapping --> PLIC : vendor-side object reference
+CI --> VS : configured for
+CI --> PLIC : interacts with
+Site --> POS : resolved Site fiscal routing
+
+note right of PLIC
+ParkingLotIndexCode is vendor-side identity only.
+It is not ExitPass site_id.
+end note
+@enduml

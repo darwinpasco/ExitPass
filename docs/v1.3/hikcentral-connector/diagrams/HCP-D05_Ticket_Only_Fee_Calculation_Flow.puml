@@ -1,0 +1,29 @@
+@startuml
+title HCP-D05 Ticket-only Fee Calculation Flow
+skinparam shadowing false
+
+actor "Customer / cashier channel" as Channel
+participant "Central PMS" as Central
+participant "HikCentral connector" as Connector
+participant "HCP fee calculation capability" as HCP
+participant "Audit / Event" as Audit
+
+Channel -> Central : submit ticket/card reference
+Central -> Central : resolve Site + AdapterMapping
+Central -> Connector : request live fee calculation
+Connector -> HCP : calculate fee using confirmed identifier
+alt identifier confirmed and fee returned
+  HCP --> Connector : fee result
+  Connector --> Central : normalized fee result
+  Central -> Central : record TariffSnapshot
+else cardNum/ticket key unresolved or fee unavailable
+  HCP --> Connector : not found / unavailable / unknown
+  Connector --> Central : normalized exception
+  Central -> Central : fail closed or approved review
+end
+Central -> Audit : fee resolve context
+
+note bottom
+Ticket-only support is not confirmed until vendor/deployment validates the lookup key.
+end note
+@enduml

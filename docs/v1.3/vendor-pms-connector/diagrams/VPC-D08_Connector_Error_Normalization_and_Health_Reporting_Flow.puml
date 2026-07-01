@@ -1,0 +1,29 @@
+@startuml
+title VPC-D08 Connector Error Normalization and Health Reporting Flow
+skinparam shadowing false
+
+start
+:Vendor interaction occurs;
+if (Usable vendor result?) then (yes)
+  :Normalize success or vendor business state;
+else (no)
+  if (Authentication or permission failure?) then (yes)
+    :Normalize auth/permission failure;
+  elseif (Timeout or unavailable?) then (yes)
+    :Normalize timeout / unavailable;
+  elseif (Mapping or data ambiguity?) then (yes)
+    :Normalize ambiguous / insufficient;
+  else
+    :Normalize unknown / unexpected response;
+  endif
+endif
+:Report normalized state to Central PMS;
+:Expose health to Operator Console and Management Dashboard where authorized;
+:Record audit and reconciliation context;
+stop
+
+note right
+Normalization supports operations.
+It does not decide payment, fiscal, tariff, discount, or exit authority.
+end note
+@enduml

@@ -1,0 +1,25 @@
+@startuml
+title VPC-D03 Normal Live Resolve Sequence
+skinparam shadowing false
+
+actor "Channel / terminal" as Channel
+participant "Central PMS" as Central
+participant "Vendor PMS connector" as Connector
+participant "Vendor PMS / HCP" as Vendor
+participant "Audit / Event" as Audit
+
+Channel -> Central : request session lookup
+Central -> Central : resolve Site Group and Site
+Central -> Central : select VendorSystem + AdapterMapping
+Central -> Connector : request live resolve
+Connector -> Vendor : query live session facts
+Vendor --> Connector : live session result or vendor exception
+Connector --> Central : normalized result
+Central -> Central : update projection if appropriate
+Central -> Audit : record resolve context
+
+note over Central,Connector
+Normal resolve does not create payment finality,
+fiscal issuance, or ExitAuthorization.
+end note
+@enduml

@@ -1,0 +1,28 @@
+@startuml
+title VPC-D02 VendorSystem / AdapterMapping / Connector Instance Model
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+component "Site Group\nlookup/payment scope" as SG
+component "ExitPass Site\nreporting + vendor + POS boundary" as Site
+component "AdapterMapping\nSite to vendor object" as Mapping
+component "VendorSystem\nconfigured Vendor PMS/HCP instance" as VS
+component "Adapter codebase\nreusable vendor implementation" as Codebase
+component "Connector instance\ndeployed runtime for VendorSystem" as CI
+component "Vendor object reference\nvendorSystemId + vendorObjectType + vendorObjectRef" as VObj
+component "Site POS Server\nfiscal authority for resolved Site" as POS
+
+SG --> Site : may resolve to one or more Sites
+Site --> Mapping : mapped for vendor integration
+Mapping --> VS : uses configured vendor system
+Mapping --> VObj : stores vendor-side object reference
+CI --> VS : configured for
+CI --> Codebase : runs
+CI --> VObj : interacts with vendor object
+Site --> POS : resolved Site determines fiscal routing
+
+note right of VObj
+HCP ParkingLotIndexCode is vendor-side identity only.
+It maps through AdapterMapping and is not ExitPass site_id.
+end note
+@enduml

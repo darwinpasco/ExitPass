@@ -1,0 +1,30 @@
+@startuml
+title HCP-D07 HCP Connector Health and Stale Projection Flow
+skinparam shadowing false
+
+start
+:HCP connector checks availability, auth, permissions, and polling;
+if (HCP reachable and poll succeeds?) then (yes)
+  :Record last successful poll and freshness inputs;
+  :Expose operational projection with freshness labels;
+else (no)
+  :Normalize unavailable / auth failure / timeout / poll failure;
+  :Mark projection stale or unavailable as appropriate;
+endif
+:Report health to Central PMS;
+:Display warnings in Operator Console and Management Dashboard where authorized;
+if (Continuity evaluation requested?) then (yes)
+  :Central PMS applies approved Continuity policy;
+  if (fresh and unambiguous under policy?) then (yes)
+    :Controlled degraded evaluation may continue;
+  else (no)
+    :Fail closed or route to supervisor/manual review;
+  endif
+endif
+stop
+
+note right
+Health and freshness signals are operational context.
+They do not authorize payment, fiscal issuance, discount approval, or exit.
+end note
+@enduml

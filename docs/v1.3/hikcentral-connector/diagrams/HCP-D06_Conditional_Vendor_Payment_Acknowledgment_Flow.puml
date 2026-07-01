@@ -1,0 +1,30 @@
+@startuml
+title HCP-D06 Conditional Vendor Payment Acknowledgment Flow
+skinparam shadowing false
+
+participant "Central PMS" as Central
+participant "Resolved Site POS Server" as POS
+participant "HikCentral connector" as Connector
+participant "HCP payment acknowledgment capability" as HCP
+participant "Reconciliation" as Recon
+participant "Audit / Event" as Audit
+
+Central -> Central : platform payment finality recorded
+Central -> POS : Sales Invoice issuance
+POS --> Central : fiscal identity/status
+Central -> Central : fiscal reference recorded
+alt HCP confirmation approved and enabled
+  Central -> Connector : request HCP acknowledgment
+  Connector -> HCP : mutating confirmation call
+  HCP --> Connector : acknowledgment / failure / unknown
+  Connector --> Central : normalized vendor outcome
+else not approved or not confirmed
+  Central -> Recon : keep acknowledgment disabled / open
+end
+Central -> Audit : conditional acknowledgment context
+
+note bottom
+parkingfee/confirm is mutating and disabled until approved.
+HCP acknowledgment is not ExitPass payment finality.
+end note
+@enduml

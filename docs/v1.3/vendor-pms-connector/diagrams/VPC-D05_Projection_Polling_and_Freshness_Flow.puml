@@ -1,0 +1,23 @@
+@startuml
+title VPC-D05 Projection Polling and Freshness Flow
+skinparam shadowing false
+
+start
+:Connector polls or receives vendor projection facts;
+:Apply VendorSystem and AdapterMapping context;
+:Normalize projection facts;
+if (Mapping unambiguous and data sufficient?) then (yes)
+  :Report projection inputs to Central PMS;
+  :Classify freshness context\n(fresh / aging / stale concepts);
+else (no)
+  :Report ambiguous or insufficient projection;
+endif
+:Expose health and freshness to authorized views;
+:Record audit and reconciliation context;
+stop
+
+note right
+Projection is operational visibility and controlled degraded evidence only.
+It is not financial, fiscal, payment, discount, tariff, or exit authority.
+end note
+@enduml

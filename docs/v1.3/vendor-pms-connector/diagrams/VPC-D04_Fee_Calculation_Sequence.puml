@@ -1,0 +1,27 @@
+@startuml
+title VPC-D04 Fee Calculation Sequence
+skinparam shadowing false
+
+participant "Central PMS" as Central
+participant "Vendor PMS connector" as Connector
+participant "Vendor PMS / HCP\nnormal tariff authority" as Vendor
+participant "Discount workflow\nwhere applicable" as Discount
+participant "Audit / Event" as Audit
+
+Central -> Connector : request live fee calculation
+Connector -> Vendor : vendor fee calculation
+Vendor --> Connector : fee result or fee exception
+Connector --> Central : normalized fee outcome
+alt fee result usable
+  Central -> Discount : apply approved discount workflow if needed
+  Discount --> Central : payable-basis effect
+  Central -> Central : record TariffSnapshot
+else fee unavailable / timeout / ambiguous
+  Central -> Central : fail closed or route to approved degraded evaluation
+end
+Central -> Audit : record fee calculation context
+
+note bottom
+Projection and passageway records must not invent normal tariffs.
+end note
+@enduml
