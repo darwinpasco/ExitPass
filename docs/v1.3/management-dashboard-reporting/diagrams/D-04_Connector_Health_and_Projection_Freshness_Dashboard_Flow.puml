@@ -1,0 +1,27 @@
+@startuml
+title D-04 Connector Health and Projection Freshness Dashboard Flow
+
+actor "Technical Operations /\nSupport User" as Support
+participant "Vendor PMS / HCP" as Vendor
+participant "Connector Instance" as Connector
+participant "Central PMS /\nIntegration Health" as Health
+participant "Management Dashboard" as Dash
+
+Connector -> Vendor : Poll passageway/session data
+Vendor --> Connector : Session/projection input or error
+Connector -> Health : Publish status, last poll,\nlatency, failures, projection freshness
+Health -> Dash : Authorized operational health view
+Support -> Dash : Review connector status,\nfreshness, stale warnings
+
+alt Projection fresh
+  Dash --> Support : Show current operational visibility
+else Projection stale or ambiguous
+  Dash --> Support : Show stale warning and affected Site/Site Group
+end
+
+note over Dash
+Freshness display is operational awareness.
+It does not approve payment, tariff, fiscal,
+discount, or exit decisions.
+end note
+@enduml
