@@ -1,0 +1,24 @@
+@startuml
+title D-06 Continuity and Exception Reporting Flow
+
+actor "Operations Manager" as Ops
+participant "Operator Console /\nContinuity Workflow" as OC
+participant "Assisted Payment Terminal\nContinuity Terminal Mode" as CT
+participant "Central PMS" as CPMS
+participant "Site POS Server" as POS
+participant "Reconciliation Workflow" as Recon
+participant "Management Dashboard" as Dash
+
+OC -> Dash : Continuity activation,\ndeactivation,\npost-restoration review state
+CT -> Dash : Continuity Terminal\nactivation visibility
+CPMS -> Dash : Payment uncertainty,\nExitAuthorization status,\nmanual release records
+POS -> Dash : Fiscal exception\npending/failed/succeeded status
+Recon -> Dash : Reconciliation backlog\nand closure status
+Ops -> Dash : Review degraded state,\nexceptions, backlog, SLA
+
+note over Dash
+Dashboard visibility does not activate continuity,
+approve manual release, close reconciliation,
+or bypass Operator Console / Continuity controls.
+end note
+@enduml

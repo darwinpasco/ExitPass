@@ -1,0 +1,43 @@
+@startuml
+title D-02 Operational Visibility vs Financial Truth Boundary
+left to right direction
+
+rectangle "Operational Visibility\nmay use projection/health data" as Ops {
+  rectangle "Active sessions"
+  rectangle "Occupancy approximation"
+  rectangle "Entry age / long stay"
+  rectangle "Connector health"
+  rectangle "Last poll / freshness"
+  rectangle "Degraded state"
+}
+
+rectangle "Financial Truth\nmust use canonical records" as Fin {
+  rectangle "TariffSnapshot"
+  rectangle "PaymentAttempt"
+  rectangle "PaymentConfirmation"
+  rectangle "ProviderOutcome"
+  rectangle "POS fiscal documents"
+  rectangle "Reconciliation records"
+}
+
+rectangle "Management Dashboard\nand Reporting" as MDR
+
+Ops --> MDR : displayed with\nfreshness/stale labels
+Fin --> MDR : displayed as\ncanonical financial/fiscal data
+
+MDR -[hidden]-> Ops
+MDR -[hidden]-> Fin
+
+note bottom of Ops
+Projection and occupancy approximation
+are operational visibility only.
+They are not payment, fiscal, settlement,
+exit, discount, or revenue truth.
+end note
+
+note bottom of Fin
+Financial and revenue dashboards
+must reconcile to canonical payment,
+fiscal, and reconciliation sources.
+end note
+@enduml

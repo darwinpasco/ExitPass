@@ -1,0 +1,45 @@
+@startuml
+title D-01 Management Dashboard Context Diagram
+left to right direction
+
+actor "Executive /\nManagement Viewer" as Exec
+actor "Operations Manager" as Ops
+actor "Finance /\nRevenue Assurance" as Finance
+actor "Compliance Auditor" as Auditor
+actor "Technical Operations /\nSupport" as Support
+actor "Administrator" as Admin
+
+rectangle "Management Dashboard\nand Reporting\n(read-only visibility,\nreporting, export, audit)" as MDR
+
+rectangle "Central PMS\ncanonical control records" as CPMS
+rectangle "Connector / Projection\nHealth Workflow" as Health
+rectangle "Payment Orchestrator /\nPayments Domain" as Pay
+rectangle "Site POS Server\nfiscal records/reports" as POS
+rectangle "Operator Console /\nContinuity Workflow" as OC
+rectangle "Vendor PMS / HCP\nnormal session authority" as Vendor
+rectangle "Reconciliation Workflow" as Recon
+rectangle "Audit / Evidence Workflow" as Audit
+
+Exec --> MDR
+Ops --> MDR
+Finance --> MDR
+Auditor --> MDR
+Support --> MDR
+Admin --> MDR
+
+MDR --> CPMS : TariffSnapshot,\nPaymentAttempt,\nPaymentConfirmation,\nfiscal references,\nExitAuthorization status
+MDR --> Health : connector status,\nlast poll,\nfreshness
+MDR --> Pay : provider outcomes
+MDR --> POS : authorized fiscal\nreferences/reports
+MDR --> OC : governance and\ncontinuity review state
+MDR --> Vendor : availability context\nthrough approved integrations
+MDR --> Recon : reconciliation and\nsettlement status
+MDR --> Audit : report access,\nevidence access logs
+
+note bottom of MDR
+Management Dashboard does not collect payment,
+declare payment finality, issue Sales Invoices,
+issue ExitAuthorization, open gates, approve discounts,
+or mutate fiscal/payment records.
+end note
+@enduml

@@ -1,0 +1,42 @@
+@startuml
+title D-03 Site Group and Site Reporting View Diagram
+left to right direction
+
+rectangle "Site Group\nLookup / Payment Scope" as SG {
+  rectangle "WebPay/APM entry scope"
+  rectangle "Customer search scope"
+  rectangle "Channel experience metrics"
+}
+
+rectangle "Site\nReporting / Contract /\nVendor / POS / Operations Boundary" as SiteA {
+  rectangle "Revenue attribution"
+  rectangle "Vendor PMS mapping"
+  rectangle "Site POS Server"
+  rectangle "Operational exceptions"
+}
+
+rectangle "Site\nReporting / Contract /\nVendor / POS / Operations Boundary" as SiteB {
+  rectangle "Revenue attribution"
+  rectangle "Vendor PMS mapping"
+  rectangle "Site POS Server"
+  rectangle "Operational exceptions"
+}
+
+rectangle "Dashboard Views" as Dash {
+  rectangle "Site Group view:\ncustomer channel scope"
+  rectangle "Site view:\nfinancial/fiscal/operations attribution"
+  rectangle "Portfolio view:\nauthorized aggregation"
+}
+
+SG --> SiteA : may resolve to
+SG --> SiteB : special case may include
+SiteA --> Dash
+SiteB --> Dash
+SG --> Dash
+
+note bottom
+Default case: one Site Group has one Site.
+Special case: one Site Group may contain multiple Sites.
+Financial and fiscal reporting uses resolved Site as primary attribution boundary.
+end note
+@enduml
