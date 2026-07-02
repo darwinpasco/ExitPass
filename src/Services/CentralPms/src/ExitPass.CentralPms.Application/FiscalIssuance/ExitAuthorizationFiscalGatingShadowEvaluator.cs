@@ -11,7 +11,14 @@ public sealed class ExitAuthorizationFiscalGatingShadowEvaluator : IExitAuthoriz
 {
     public static readonly ExitAuthorizationFiscalGatingShadowEvaluator Instance = new();
 
-    public Task<FiscalGatingShadowEvaluation> EvaluateAsync(
+    private readonly IFiscalIssuanceReferenceRepository? _repository;
+
+    public ExitAuthorizationFiscalGatingShadowEvaluator(IFiscalIssuanceReferenceRepository? repository = null)
+    {
+        _repository = repository;
+    }
+
+    public async Task<FiscalGatingShadowEvaluation> EvaluateAsync(
         ExitAuthorizationFiscalGatingShadowContext context,
         CancellationToken cancellationToken)
     {
@@ -21,22 +28,30 @@ public sealed class ExitAuthorizationFiscalGatingShadowEvaluator : IExitAuthoriz
 
         if (context.IsFiscalIssuanceNotRequiredByPolicy)
         {
-            return Task.FromResult(FiscalGatingShadowEvaluation.NotEvaluatedNotRequired());
+            return FiscalGatingShadowEvaluation.NotEvaluatedNotRequired();
         }
 
-        if (context.FiscalReference is null)
+        var fiscalReference = context.FiscalReference;
+        if (fiscalReference is null && _repository is not null && context.PaymentAttemptId != Guid.Empty)
         {
-            return Task.FromResult(FiscalGatingShadowEvaluation.NotEvaluatedMissingFiscalContext());
+            fiscalReference = await _repository.FindLatestByPaymentAttemptIdAsync(
+                context.PaymentAttemptId,
+                cancellationToken);
+        }
+
+        if (fiscalReference is null)
+        {
+            return FiscalGatingShadowEvaluation.NotEvaluatedMissingFiscalContext();
         }
 
         var evaluation = FiscalIssuanceExitAuthorizationGateEvaluator.Evaluate(
-            context.FiscalReference,
+            fiscalReference,
             new FiscalIssuanceGatingEvaluationContext(
                 IsPaymentFinalityVerified: context.IsPaymentFinalityVerified,
                 IsNoFiscalRequiredPolicyApproved: context.IsNoFiscalRequiredPolicyApproved,
                 IsReconciledFiscalEvidencePolicyApproved: context.IsReconciledFiscalEvidencePolicyApproved));
 
-        return Task.FromResult(FiscalGatingShadowEvaluation.FromGatingEvaluation(evaluation));
+        return FiscalGatingShadowEvaluation.FromGatingEvaluation(evaluation);
     }
 }
 

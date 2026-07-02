@@ -251,6 +251,77 @@ public sealed class IssueExitAuthorizationHandlerTests
             FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalLookupFindsReadyReference_StillIssuesAndRecordsReadyDiagnostic()
+    {
+        using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
+        var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
+
+        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        AssertShadowActivity(
+            listener,
+            FiscalGatingShadowEvaluationStatuses.EvaluatedReady);
+        await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
+            command.PaymentAttemptId,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalLookupFindsBlockedReference_StillIssuesAndRecordsBlockedDiagnostic()
+    {
+        using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(MinimalFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceUnknown));
+        var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
+
+        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        var activity = AssertShadowActivity(
+            listener,
+            FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked);
+        AssertTag(activity, "fiscal_gating_shadow.blocked_reason", "fiscal_issuance_unknown");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalLookupFails_StillIssuesAndRecordsNonBlockingFailure()
+    {
+        using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns<Task<FiscalIssuanceReferenceRecord?>>(_ => throw new InvalidOperationException("lookup failed"));
+        var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
+
+        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        var activity = AssertShadowActivity(
+            listener,
+            FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking);
+        AssertTag(activity, "fiscal_gating_shadow.blocked_reason", nameof(InvalidOperationException));
+    }
+
     /// <summary>
     /// Verifies that an empty parking session identifier is rejected before DB execution.
     /// </summary>
@@ -366,6 +437,76 @@ public sealed class IssueExitAuthorizationHandlerTests
             PaymentAttemptId: Guid.Parse("10000000-0000-0000-0000-000000000002"),
             RequestedByUserId: Guid.Parse("10000000-0000-0000-0000-000000000003"),
             CorrelationId: Guid.Parse("10000000-0000-0000-0000-000000000004"));
+
+    private static FiscalIssuanceReferenceRecord CompleteFiscalReference(
+        IssueExitAuthorizationCommand command,
+        FiscalIssuanceIntegrationState state) =>
+        MinimalFiscalReference(command, state) with
+        {
+            PosServerFiscalDocumentId = Guid.NewGuid(),
+            FiscalIdentityId = Guid.NewGuid(),
+            FiscalSequencePolicyId = Guid.NewGuid(),
+            FiscalSequenceValue = 101,
+            FiscalDocumentNumber = "SI-000101",
+            FiscalSeries = "SI",
+            FiscalNumberPrefixText = "SI-",
+            FiscalNumberAssignedAt = DateTimeOffset.Parse("2026-07-02T10:30:00+08:00"),
+            FiscalNumberAssignedByRef = "pos-server",
+            FiscalDocumentStatusCodeId = Guid.NewGuid(),
+            ResultClassification = state == FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalIssuanceResultClassification.IdempotentReplay
+                : FiscalIssuanceResultClassification.NewlyCreated,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned
+        };
+
+    private static FiscalIssuanceReferenceRecord MinimalFiscalReference(
+        IssueExitAuthorizationCommand command,
+        FiscalIssuanceIntegrationState state) =>
+        new(
+            FiscalIssuanceReferenceId: Guid.NewGuid(),
+            PaymentConfirmationId: Guid.NewGuid(),
+            PaymentAttemptId: command.PaymentAttemptId,
+            ParkingSessionId: command.ParkingSessionId,
+            TariffSnapshotId: Guid.NewGuid(),
+            SiteId: Guid.NewGuid(),
+            SitePosServerId: Guid.NewGuid(),
+            SitePosServerRef: "site-pos-server-main",
+            PayableBasisRef: "tariff-snapshot-ref",
+            UpstreamFinalityReference: $"pay-final-{Guid.NewGuid():N}",
+            PosServerFiscalDocumentId: null,
+            FiscalIdentityId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            FiscalDocumentStatusCodeId: null,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIssuanceState: state,
+            LatestExceptionReason: null,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            CorrelationId: command.CorrelationId,
+            PosServerResponseTimestamp: null,
+            FirstRecordedAt: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
+            LastUpdatedAt: DateTimeOffset.Parse("2026-07-02T10:30:02+08:00"),
+            RecordedByServiceIdentityId: command.RequestedByUserId);
+
+    private static Activity AssertShadowActivity(ActivityCapture listener, string expectedStatus)
+    {
+        var activity = Assert.Single(
+            listener.StoppedActivities,
+            x => x.OperationName == "IssueExitAuthorization" &&
+                HasTag(x, "fiscal_gating_shadow.status", expectedStatus));
+        AssertTag(activity, "fiscal_gating_shadow.status", expectedStatus);
+        return activity;
+    }
 
     private static void AssertTag(Activity activity, string key, object expected)
     {

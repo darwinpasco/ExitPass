@@ -258,6 +258,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceR
             command => command.Parameters.AddWithValue("payment_confirmation_id", paymentConfirmationId),
             cancellationToken);
 
+    public Task<FiscalIssuanceReferenceRecord?> FindLatestByPaymentAttemptIdAsync(
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken) =>
+        QuerySingleAsync(
+            "WHERE payment_attempt_id = @payment_attempt_id AND is_active = true",
+            command => command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId),
+            cancellationToken);
+
     public Task<FiscalIssuanceReferenceRecord?> FindByUpstreamFinalityReferenceAsync(
         string upstreamFinalityReference,
         Guid? sitePosServerId,

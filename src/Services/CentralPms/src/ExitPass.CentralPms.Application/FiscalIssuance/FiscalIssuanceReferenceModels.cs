@@ -276,6 +276,10 @@ public interface IFiscalIssuanceReferenceRepository
         Guid paymentConfirmationId,
         CancellationToken cancellationToken);
 
+    Task<FiscalIssuanceReferenceRecord?> FindLatestByPaymentAttemptIdAsync(
+        Guid paymentAttemptId,
+        CancellationToken cancellationToken);
+
     Task<FiscalIssuanceReferenceRecord?> FindByUpstreamFinalityReferenceAsync(
         string upstreamFinalityReference,
         Guid? sitePosServerId,
