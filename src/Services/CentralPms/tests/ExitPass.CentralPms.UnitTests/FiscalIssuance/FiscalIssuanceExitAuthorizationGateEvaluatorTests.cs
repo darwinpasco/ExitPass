@@ -3,6 +3,7 @@ using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using FluentAssertions;
+using NSubstitute;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
@@ -233,6 +234,80 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
         result.IsReadyForNormalExitAuthorization.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task ShadowEvaluator_WhenRepositoryFindsReadyFiscalReference_ReturnsEvaluatedReady()
+    {
+        var reference = CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(reference.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(reference);
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator(repository);
+
+        var result = await sut.EvaluateAsync(
+            ShadowContext(null, reference.PaymentAttemptId),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.EvaluatedReady);
+        result.IsReadyForNormalExitAuthorization.Should().BeTrue();
+        await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
+            reference.PaymentAttemptId,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ShadowEvaluator_WhenRepositoryFindsBlockedFiscalReference_ReturnsEvaluatedBlocked()
+    {
+        var reference = MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(reference.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(reference);
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator(repository);
+
+        var result = await sut.EvaluateAsync(
+            ShadowContext(null, reference.PaymentAttemptId),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked);
+        result.BlockedReason.Should().Be("fiscal_issuance_unknown");
+        result.RequiresManualReview.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ShadowEvaluator_WhenRepositoryDoesNotFindFiscalReference_ReturnsMissingContext()
+    {
+        var paymentAttemptId = Guid.NewGuid();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator(repository);
+
+        var result = await sut.EvaluateAsync(
+            ShadowContext(null, paymentAttemptId),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext);
+        await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
+            paymentAttemptId,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ShadowEvaluator_WhenContextAlreadyHasFiscalReference_DoesNotQueryRepository()
+    {
+        var reference = CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator(repository);
+
+        var result = await sut.EvaluateAsync(
+            ShadowContext(reference, reference.PaymentAttemptId),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.EvaluatedReady);
+        _ = repository.DidNotReceiveWithAnyArgs().FindLatestByPaymentAttemptIdAsync(
+            default,
+            default);
+    }
+
     private static FiscalIssuanceGatingEvaluation Evaluate(
         FiscalIssuanceReferenceRecord reference,
         FiscalIssuanceGatingEvaluationContext? context = null) =>
@@ -307,10 +382,11 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
             RecordedByServiceIdentityId: Guid.NewGuid());
 
     private static ExitAuthorizationFiscalGatingShadowContext ShadowContext(
-        FiscalIssuanceReferenceRecord? reference) =>
+        FiscalIssuanceReferenceRecord? reference,
+        Guid? paymentAttemptId = null) =>
         new(
             ParkingSessionId: Guid.NewGuid(),
-            PaymentAttemptId: Guid.NewGuid(),
+            PaymentAttemptId: paymentAttemptId ?? Guid.NewGuid(),
             CorrelationId: Guid.NewGuid(),
             IsPaymentFinalityVerified: true,
             FiscalReference: reference);

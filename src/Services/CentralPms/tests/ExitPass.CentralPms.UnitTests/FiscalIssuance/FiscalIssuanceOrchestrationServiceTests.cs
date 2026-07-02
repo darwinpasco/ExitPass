@@ -1032,6 +1032,14 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(_records.Values.SingleOrDefault(record => record.PaymentConfirmationId == paymentConfirmationId));
 
+        public Task<FiscalIssuanceReferenceRecord?> FindLatestByPaymentAttemptIdAsync(
+            Guid paymentAttemptId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_records.Values
+                .Where(record => record.PaymentAttemptId == paymentAttemptId)
+                .OrderByDescending(record => record.LastUpdatedAt)
+                .FirstOrDefault());
+
         public Task<FiscalIssuanceReferenceRecord?> FindByUpstreamFinalityReferenceAsync(
             string upstreamFinalityReference,
             Guid? sitePosServerId,
