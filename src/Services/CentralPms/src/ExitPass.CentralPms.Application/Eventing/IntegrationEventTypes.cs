@@ -41,6 +41,11 @@ public static class IntegrationEventTypes
     public const string ExitAuthorizationIssued = "ExitAuthorizationIssued";
 
     /// <summary>
+    /// Emitted as non-enforcing diagnostic evidence when Central PMS evaluates fiscal gating shadow posture during ExitAuthorization issuance.
+    /// </summary>
+    public const string ExitAuthorizationFiscalGatingShadowObserved = "ExitAuthorizationFiscalGatingShadowObserved";
+
+    /// <summary>
     /// Emitted when Central PMS consumes an exit authorization.
     /// </summary>
     public const string GateAuthorizationConsumed = "GateAuthorizationConsumed";

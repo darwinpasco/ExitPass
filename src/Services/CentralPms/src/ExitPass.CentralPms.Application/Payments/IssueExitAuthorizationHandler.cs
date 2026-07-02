@@ -224,6 +224,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         activity?.SetTag("fiscal_gating_shadow.ready", evaluation.IsReadyForNormalExitAuthorization);
         activity?.SetTag("fiscal_gating_shadow.blocked_reason", evaluation.BlockedReason ?? string.Empty);
         activity?.SetTag("fiscal_gating_shadow.state", evaluation.State?.ToString() ?? string.Empty);
+        SetFiscalGatingShadowReferenceTags(activity, evaluation.FiscalReference);
 
         _metrics.ExitAuthorizationFiscalGatingShadowEvaluated(
             evaluation.Status,
@@ -235,6 +236,10 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             evaluation.IsReadyForNormalExitAuthorization,
             evaluation.BlockedReason,
             evaluation.State);
+
+        await PublishFiscalGatingShadowObservationBestEffortAsync(
+            CreateFiscalGatingShadowObservationEvent(command, evaluation),
+            cancellationToken);
     }
 
     /// <summary>
@@ -286,6 +291,85 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 ExpirationTimestampUtc = dbResult.ExpirationTimestamp
             }
         };
+    }
+
+    private IntegrationEventEnvelope CreateFiscalGatingShadowObservationEvent(
+        IssueExitAuthorizationCommand command,
+        FiscalGatingShadowEvaluation evaluation)
+    {
+        var reference = evaluation.FiscalReference;
+
+        return new IntegrationEventEnvelope
+        {
+            EventType = IntegrationEventTypes.ExitAuthorizationFiscalGatingShadowObserved,
+            OccurredAtUtc = _systemClock.UtcNow,
+            CorrelationId = command.CorrelationId,
+            AggregateId = command.PaymentAttemptId.ToString(),
+            AggregateType = "PaymentAttempt",
+            Payload = new ExitAuthorizationFiscalGatingShadowObservedPayload
+            {
+                ParkingSessionId = command.ParkingSessionId,
+                PaymentAttemptId = command.PaymentAttemptId,
+                PaymentConfirmationId = reference?.PaymentConfirmationId,
+                FiscalIssuanceReferenceId = reference?.FiscalIssuanceReferenceId,
+                PosServerFiscalDocumentId = reference?.PosServerFiscalDocumentId,
+                FiscalDocumentNumber = reference?.FiscalDocumentNumber,
+                FiscalIssuanceState = reference?.FiscalIssuanceState.ToString() ?? evaluation.State?.ToString(),
+                FiscalIssuanceEvidenceStatus = reference?.FiscalIssuanceEvidenceStatus?.ToString(),
+                FiscalNumberAssignmentState = reference?.FiscalNumberAssignmentState.ToString(),
+                ShadowEvaluationStatus = evaluation.Status,
+                BlockedReason = evaluation.BlockedReason,
+                ExceptionReason = reference?.LatestExceptionReason?.ToString(),
+                ErrorPosture = reference?.LatestErrorPosture?.ToString(),
+                SiteId = reference?.SiteId,
+                SitePosServerId = reference?.SitePosServerId,
+                SitePosServerRef = reference?.SitePosServerRef,
+                CorrelationId = command.CorrelationId,
+                Source = nameof(IssueExitAuthorizationHandler),
+                ObservedAtUtc = _systemClock.UtcNow
+            }
+        };
+    }
+
+    private static void SetFiscalGatingShadowReferenceTags(
+        Activity? activity,
+        FiscalIssuanceReferenceRecord? reference)
+    {
+        if (activity is null || reference is null)
+        {
+            return;
+        }
+
+        activity.SetTag("fiscal_gating_shadow.payment_confirmation_id", reference.PaymentConfirmationId);
+        activity.SetTag("fiscal_gating_shadow.fiscal_issuance_reference_id", reference.FiscalIssuanceReferenceId);
+        activity.SetTag("fiscal_gating_shadow.pos_server_fiscal_document_id", reference.PosServerFiscalDocumentId);
+        activity.SetTag("fiscal_gating_shadow.fiscal_document_number", reference.FiscalDocumentNumber ?? string.Empty);
+        activity.SetTag("fiscal_gating_shadow.evidence_status", reference.FiscalIssuanceEvidenceStatus?.ToString() ?? string.Empty);
+        activity.SetTag("fiscal_gating_shadow.assignment_state", reference.FiscalNumberAssignmentState.ToString());
+        activity.SetTag("fiscal_gating_shadow.exception_reason", reference.LatestExceptionReason?.ToString() ?? string.Empty);
+        activity.SetTag("fiscal_gating_shadow.error_posture", reference.LatestErrorPosture?.ToString() ?? string.Empty);
+        activity.SetTag("fiscal_gating_shadow.site_id", reference.SiteId);
+        activity.SetTag("fiscal_gating_shadow.site_pos_server_id", reference.SitePosServerId);
+        activity.SetTag("fiscal_gating_shadow.site_pos_server_ref", reference.SitePosServerRef ?? string.Empty);
+    }
+
+    private async Task PublishFiscalGatingShadowObservationBestEffortAsync(
+        IntegrationEventEnvelope envelope,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _eventPublisher.PublishAsync(envelope, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "Non-enforcing fiscal gating shadow observation publication failed. ExitAuthorization issuance will continue unchanged. event_type={EventType} event_id={EventId} correlation_id={CorrelationId}",
+                envelope.EventType,
+                envelope.EventId,
+                envelope.CorrelationId);
+        }
     }
 
     private async Task PublishBestEffortAsync(
