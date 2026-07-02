@@ -3,6 +3,9 @@ using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using FluentAssertions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -180,6 +183,147 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
         constructorParameters.Should().NotContain(type =>
             type == typeof(HttpClient) ||
             type == typeof(IPosServerFiscalDocumentClient));
+    }
+
+    [Fact]
+    public void GatingOptions_DefaultToEnforcementOffAndShadowOn()
+    {
+        var options = new FiscalIssuanceExitAuthorizationGatingOptions();
+
+        options.EnableFiscalBeforeExitAuthorizationEnforcement.Should().BeFalse();
+        options.EnableShadowEvaluation.Should().BeTrue();
+        options.ReadinessMode.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessModes.ReadinessOnly);
+    }
+
+    [Fact]
+    public void GatingOptions_WhenBoundFromEmptyConfiguration_DoNotRequireConfiguration()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder().Build();
+        services.Configure<FiscalIssuanceExitAuthorizationGatingOptions>(
+            configuration.GetSection(FiscalIssuanceExitAuthorizationGatingOptions.SectionName));
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider
+            .GetRequiredService<IOptions<FiscalIssuanceExitAuthorizationGatingOptions>>()
+            .Value;
+
+        options.EnableFiscalBeforeExitAuthorizationEnforcement.Should().BeFalse();
+        options.EnableShadowEvaluation.Should().BeTrue();
+        options.ReadinessMode.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessModes.ReadinessOnly);
+    }
+
+    [Fact]
+    public void GatingReadiness_WhenOptionsAreDefault_ReportsDefaultOffAndReadinessOnly()
+    {
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded),
+            Context());
+
+        readiness.EnforcementConfigured.Should().BeFalse();
+        readiness.EnforcementWiredForBlocking.Should().BeFalse();
+        readiness.ShadowEvaluationEnabled.Should().BeTrue();
+        readiness.ConfigurationStatus.Should().Be(
+            FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementOffDefault);
+        readiness.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldAllow);
+        readiness.WouldAllowNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void GatingReadiness_WhenFutureEnforcementFlagIsConfigured_RemainsReadinessOnly()
+    {
+        var options = new FiscalIssuanceExitAuthorizationGatingOptions
+        {
+            EnableFiscalBeforeExitAuthorizationEnforcement = true
+        };
+
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown),
+            Context(),
+            options);
+
+        readiness.EnforcementConfigured.Should().BeTrue();
+        readiness.EnforcementWiredForBlocking.Should().BeFalse();
+        readiness.ConfigurationStatus.Should().Be(
+            FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredReadinessOnly);
+        readiness.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock);
+        readiness.BlockedReason.Should().Be("fiscal_issuance_unknown");
+        readiness.WouldAllowNormalExitAuthorization.Should().BeFalse();
+    }
+
+    [Fact]
+    public void GatingReadiness_WhenRecordedEvidenceIsComplete_ReportsWouldAllow()
+    {
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded),
+            Context());
+
+        readiness.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldAllow);
+        readiness.WouldAllowNormalExitAuthorization.Should().BeTrue();
+        readiness.BlockedReason.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(FiscalIssuanceIntegrationState.PendingFiscalIssuance)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceRequested)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceConflict)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview)]
+    public void GatingReadiness_WhenFiscalStateWouldBlock_ReportsWouldBlock(
+        FiscalIssuanceIntegrationState state)
+    {
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            MinimalReference(state),
+            Context());
+
+        readiness.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock);
+        readiness.WouldAllowNormalExitAuthorization.Should().BeFalse();
+        readiness.EnforcementWiredForBlocking.Should().BeFalse();
+    }
+
+    [Fact]
+    public void GatingReadiness_WhenNotRequiredPolicyIsApproved_ReportsNotRequiredPosture()
+    {
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.NotRequired),
+            Context(isNoFiscalRequiredPolicyApproved: true));
+
+        readiness.ReadinessStatus.Should().Be(
+            FiscalIssuanceExitAuthorizationGatingReadinessStatuses.NotRequiredPolicyPosture);
+        readiness.WouldAllowNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void GatingReadiness_WhenExceptionReleased_ReportsExceptionReleaseOnly()
+    {
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceExceptionReleased),
+            Context());
+
+        readiness.ReadinessStatus.Should().Be(
+            FiscalIssuanceExitAuthorizationGatingReadinessStatuses.ExceptionReleaseOnly);
+        readiness.WouldAllowNormalExitAuthorization.Should().BeFalse();
+        readiness.IsExceptionReleaseOnly.Should().BeTrue();
+    }
+
+    [Fact]
+    public void GatingReadiness_WhenShadowEvaluationIsDisabled_ReportsShadowDisabledWithoutEnforcement()
+    {
+        var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded),
+            Context(),
+            new FiscalIssuanceExitAuthorizationGatingOptions
+            {
+                EnableShadowEvaluation = false
+            });
+
+        readiness.ReadinessStatus.Should().Be(
+            FiscalIssuanceExitAuthorizationGatingReadinessStatuses.ShadowEvaluationDisabled);
+        readiness.WouldAllowNormalExitAuthorization.Should().BeTrue();
+        readiness.EnforcementWiredForBlocking.Should().BeFalse();
     }
 
     [Fact]

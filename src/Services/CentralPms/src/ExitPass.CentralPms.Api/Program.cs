@@ -360,6 +360,8 @@ static void ConfigureApplicationServices(
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
     builder.Services.AddScoped<IExitAuthorizationFiscalGatingShadowEvaluator, ExitAuthorizationFiscalGatingShadowEvaluator>();
+    builder.Services.Configure<FiscalIssuanceExitAuthorizationGatingOptions>(
+        builder.Configuration.GetSection(FiscalIssuanceExitAuthorizationGatingOptions.SectionName));
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRepository>(_ =>
