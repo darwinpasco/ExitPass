@@ -55,6 +55,7 @@ using ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -359,6 +360,33 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
+    builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
+        builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));
+    builder.Services.AddScoped<IPosServerFiscalDocumentRequestMapper, PosServerFiscalDocumentRequestMapper>();
+    builder.Services.AddScoped<IFiscalIssuancePosServerLiveIntegrationService>(serviceProvider =>
+        new FiscalIssuancePosServerLiveIntegrationService(
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>().Value,
+            serviceProvider.GetRequiredService<IPosServerFiscalDocumentRequestMapper>(),
+            serviceProvider.GetRequiredService<IPosServerFiscalDocumentClient>(),
+            serviceProvider.GetRequiredService<IFiscalIssuanceOrchestrationService>()));
+    builder.Services
+        .AddHttpClient<IPosServerFiscalDocumentClient, HttpPosServerFiscalDocumentClient>(
+            (serviceProvider, httpClient) =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>()
+                    .Value;
+
+                if (Uri.TryCreate(options.PosServerBaseUrl, UriKind.Absolute, out var baseUri))
+                {
+                    httpClient.BaseAddress = baseUri;
+                }
+
+                if (options.TimeoutSeconds > 0)
+                {
+                    httpClient.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                }
+            });
     builder.Services.AddScoped<IExitAuthorizationFiscalGatingShadowEvaluator, ExitAuthorizationFiscalGatingShadowEvaluator>();
     builder.Services.Configure<FiscalIssuanceExitAuthorizationGatingOptions>(
         builder.Configuration.GetSection(FiscalIssuanceExitAuthorizationGatingOptions.SectionName));
