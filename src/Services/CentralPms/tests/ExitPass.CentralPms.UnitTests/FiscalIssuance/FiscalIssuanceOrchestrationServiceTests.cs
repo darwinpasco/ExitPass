@@ -584,6 +584,155 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task MarkUnknownOutcomeAsync_WhenPostTimeout_MapsToUnknownAndPreservesUpstreamFinalityReference()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.MarkUnknownOutcomeAsync(
+            reference.FiscalIssuanceReferenceId,
+            UnknownOutcomeContext(FiscalIssuanceExceptionReason.PostTimeout),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.PostTimeout);
+        result.LatestErrorCode.Should().Be("post_timeout");
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
+        result.UpstreamFinalityReference.Should().Be(reference.UpstreamFinalityReference);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MarkUnknownOutcomeAsync_WhenNetworkDisconnectAfterPossibleCommit_MapsToUnknown()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.MarkUnknownOutcomeAsync(
+            reference.FiscalIssuanceReferenceId,
+            UnknownOutcomeContext(FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit);
+        result.LatestErrorCode.Should().Be("network_disconnect_after_possible_commit");
+    }
+
+    [Fact]
+    public async Task MarkReadbackRequestedAsync_WhenFiscalDocumentIdKnown_RemainsUnknownAndDoesNotMarkSuccess()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.MarkReadbackRequestedAsync(
+            reference.FiscalIssuanceReferenceId,
+            ReadbackPlanningContext(PosServerFiscalDocumentId),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        result.LatestErrorCode.Should().Be("get_readback_requested");
+        result.PosServerFiscalDocumentId.Should().BeNull();
+        result.FiscalNumberAssignmentState.Should().Be(FiscalNumberAssignmentState.NotAssigned);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MarkReadbackRequestedAsync_WhenFiscalDocumentIdMissing_FailsValidation()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.MarkReadbackRequestedAsync(
+                reference.FiscalIssuanceReferenceId,
+                ReadbackPlanningContext(null),
+                CancellationToken.None));
+
+        ex.Message.Should().Contain("Known POS Server fiscal document id is required");
+    }
+
+    [Fact]
+    public async Task ApplyReadbackPlanningResultAsync_WhenReadbackInconclusive_RemainsUnknown()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyReadbackPlanningResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            ReadbackPlanningResult(FiscalIssuanceReadbackPlanningOutcome.Inconclusive),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.GetReadbackInconclusive);
+        result.LatestErrorCode.Should().Be("get_readback_inconclusive");
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplyReadbackPlanningResultAsync_WhenReadbackMismatch_MapsToManualReview()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyReadbackPlanningResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            ReadbackPlanningResult(
+                FiscalIssuanceReadbackPlanningOutcome.Mismatch,
+                FiscalIssuanceExceptionReason.FiscalReferenceMismatch,
+                "fiscal_reference_mismatch"),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.FiscalReferenceMismatch);
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplyReadbackPlanningResultAsync_WhenReadbackServiceFailed_RemainsUnknown()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyReadbackPlanningResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            ReadbackPlanningResult(FiscalIssuanceReadbackPlanningOutcome.ServiceFailed),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.GetReadbackServiceFailed);
+        result.LatestErrorCode.Should().Be("get_readback_service_failed");
+    }
+
+    [Fact]
+    public async Task MarkUnknownOutcomeAsync_WhenRecoveredWithCompleteLocalEvidence_CanUseExistingSuccessHandler()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        await sut.MarkUnknownOutcomeAsync(
+            reference.FiscalIssuanceReferenceId,
+            UnknownOutcomeContext(FiscalIssuanceExceptionReason.PostTimeout),
+            CancellationToken.None);
+
+        var result = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        result.FiscalIssuanceEvidenceStatus.Should().Be(FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeTrue();
+    }
+
+    [Fact]
+    public void FiscalIssuanceOrchestrationService_DoesNotIntroduceReadbackWorkerOrScheduler()
+    {
+        var fiscalIssuanceTypes = typeof(FiscalIssuanceOrchestrationService).Assembly
+            .GetTypes()
+            .Where(type => type.Namespace == typeof(FiscalIssuanceOrchestrationService).Namespace)
+            .Select(type => type.Name)
+            .ToArray();
+
+        fiscalIssuanceTypes.Should().NotContain(typeName =>
+            typeName.Contains("Worker", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("Scheduler", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("BackgroundService", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task IsNormalExitAuthorizationGatingReady_WhenEvidenceIsIncomplete_ReturnsFalse()
     {
         var repository = new InMemoryFiscalIssuanceReferenceRepository();
@@ -740,6 +889,37 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             FiscalNumberAssignedAt: null,
             FiscalNumberAssignedByRef: null,
             ErrorPosture: errorPosture);
+
+    private static FiscalIssuanceUnknownOutcomeContext UnknownOutcomeContext(
+        FiscalIssuanceExceptionReason reason) =>
+        new(
+            ExceptionReason: reason,
+            ErrorCode: null,
+            ErrorPosture: null,
+            KnownPosServerFiscalDocumentId: PosServerFiscalDocumentId,
+            CorrelationId: Guid.NewGuid(),
+            ServiceIdentityId: Guid.NewGuid());
+
+    private static FiscalIssuanceReadbackPlanningContext ReadbackPlanningContext(
+        Guid? knownPosServerFiscalDocumentId) =>
+        new(
+            KnownPosServerFiscalDocumentId: knownPosServerFiscalDocumentId,
+            ExceptionReason: null,
+            ErrorCode: null,
+            CorrelationId: Guid.NewGuid(),
+            ServiceIdentityId: Guid.NewGuid());
+
+    private static FiscalIssuanceReadbackPlanningResult ReadbackPlanningResult(
+        FiscalIssuanceReadbackPlanningOutcome outcome,
+        FiscalIssuanceExceptionReason? reason = null,
+        string? errorCode = null) =>
+        new(
+            Outcome: outcome,
+            KnownPosServerFiscalDocumentId: PosServerFiscalDocumentId,
+            ExceptionReason: reason,
+            ErrorCode: errorCode,
+            CorrelationId: Guid.NewGuid(),
+            ServiceIdentityId: Guid.NewGuid());
 
     private static PosServerCreateResultRecordingContext RecordingContext(
         FiscalIssuanceReferenceRecord reference) =>
