@@ -220,10 +220,17 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 "Non-enforcing fiscal gating shadow evaluation failed. ExitAuthorization issuance will continue unchanged.");
         }
 
+        var enforcementDecision = FiscalIssuanceExitAuthorizationEnforcementPolicy.FromShadowEvaluation(evaluation);
+
         activity?.SetTag("fiscal_gating_shadow.status", evaluation.Status);
         activity?.SetTag("fiscal_gating_shadow.ready", evaluation.IsReadyForNormalExitAuthorization);
         activity?.SetTag("fiscal_gating_shadow.blocked_reason", evaluation.BlockedReason ?? string.Empty);
         activity?.SetTag("fiscal_gating_shadow.state", evaluation.State?.ToString() ?? string.Empty);
+        activity?.SetTag("fiscal_gating_shadow.enforcement_decision", enforcementDecision.Decision);
+        activity?.SetTag("fiscal_gating_shadow.would_allow_normal_exit_authorization", enforcementDecision.WouldAllowNormalExitAuthorization);
+        activity?.SetTag("fiscal_gating_shadow.would_block_normal_exit_authorization", enforcementDecision.WouldBlockNormalExitAuthorization);
+        activity?.SetTag("fiscal_gating_shadow.enforcement_enabled", enforcementDecision.EnforcementEnabled);
+        activity?.SetTag("fiscal_gating_shadow.enforcement_wired_for_blocking", enforcementDecision.EnforcementWiredForBlocking);
         SetFiscalGatingShadowReferenceTags(activity, evaluation.FiscalReference);
 
         _metrics.ExitAuthorizationFiscalGatingShadowEvaluated(
@@ -238,7 +245,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
             evaluation.State);
 
         await PublishFiscalGatingShadowObservationBestEffortAsync(
-            CreateFiscalGatingShadowObservationEvent(command, evaluation),
+            CreateFiscalGatingShadowObservationEvent(command, evaluation, enforcementDecision),
             cancellationToken);
     }
 
@@ -295,7 +302,8 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
 
     private IntegrationEventEnvelope CreateFiscalGatingShadowObservationEvent(
         IssueExitAuthorizationCommand command,
-        FiscalGatingShadowEvaluation evaluation)
+        FiscalGatingShadowEvaluation evaluation,
+        FiscalIssuanceExitAuthorizationEnforcementDecision enforcementDecision)
     {
         var reference = evaluation.FiscalReference;
 
@@ -321,6 +329,16 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
                 BlockedReason = evaluation.BlockedReason,
                 ExceptionReason = reference?.LatestExceptionReason?.ToString(),
                 ErrorPosture = reference?.LatestErrorPosture?.ToString(),
+                EnforcementDecision = enforcementDecision.Decision,
+                WouldAllowNormalExitAuthorization = enforcementDecision.WouldAllowNormalExitAuthorization,
+                WouldBlockNormalExitAuthorization = enforcementDecision.WouldBlockNormalExitAuthorization,
+                IsNotRequiredByPolicy = enforcementDecision.IsNotRequiredByPolicy,
+                IsExceptionReleaseOnly = enforcementDecision.IsExceptionReleaseOnly,
+                RequiresManualReview = enforcementDecision.RequiresManualReview,
+                IsNotEvaluable = enforcementDecision.Decision ==
+                    FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable,
+                EnforcementEnabled = enforcementDecision.EnforcementEnabled,
+                EnforcementWiredForBlocking = enforcementDecision.EnforcementWiredForBlocking,
                 SiteId = reference?.SiteId,
                 SitePosServerId = reference?.SitePosServerId,
                 SitePosServerRef = reference?.SitePosServerRef,
