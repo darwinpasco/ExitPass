@@ -15,6 +15,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         var options = new FiscalIssuancePosServerIntegrationOptions();
 
         options.EnablePosServerFiscalIssuanceLiveCall.Should().BeFalse();
+        options.EnableControlledUatDiagnosticPath.Should().BeFalse();
         options.EnableLiveFiscalIssuanceFromPaymentFlow.Should().BeFalse();
         options.EnableLiveFiscalIssuanceFromExitFlow.Should().BeFalse();
         options.PosServerBaseUrl.Should().BeNull();
@@ -337,6 +338,207 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     [Fact]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenLiveCallDisabled_ReturnsDisabledAndDoesNotCallMapperClientOrchestration()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions(),
+            mapper,
+            client,
+            orchestration);
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.Disabled);
+        result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.Disabled);
+        result.RequestMapped.Should().BeFalse();
+        result.ClientCalled.Should().BeFalse();
+        result.NoPaymentFinalityChanged.Should().BeTrue();
+        result.NoExitAuthorizationIssued.Should().BeTrue();
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenDiagnosticGuardDisabled_ReturnsDiagnosticDisabledAndDoesNotCallClient()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            EnabledOptions(),
+            mapper,
+            client,
+            orchestration);
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.DiagnosticDisabled);
+        result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledReady);
+        result.RequestMapped.Should().BeFalse();
+        result.ClientCalled.Should().BeFalse();
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenEnabledWithMissingBaseUrl_FailsSafely()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions
+            {
+                EnablePosServerFiscalIssuanceLiveCall = true,
+                EnableControlledUatDiagnosticPath = true
+            },
+            mapper,
+            client);
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.ConfigurationInvalid);
+        result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledMissingBaseUrl);
+        result.Errors.Should().Contain("pos_server_base_url_required");
+        result.ClientCalled.Should().BeFalse();
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenEnabledWithInvalidBaseUrl_FailsSafely()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions
+            {
+                EnablePosServerFiscalIssuanceLiveCall = true,
+                EnableControlledUatDiagnosticPath = true,
+                PosServerBaseUrl = "not-a-url"
+            },
+            mapper,
+            client);
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.ConfigurationInvalid);
+        result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl);
+        result.Errors.Should().Contain("pos_server_base_url_invalid");
+        result.ClientCalled.Should().BeFalse();
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenEnabledAndGuarded_MapsRequestAndCallsMockedClient()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServerResult = CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated);
+        client.CreateFiscalDocumentAsync(Arg.Any<PosServerFiscalDocumentCreateRequest>(), Arg.Any<CancellationToken>())
+            .Returns(posServerResult);
+        orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        orchestration.ApplyPosServerCreateResultAsync(
+                FiscalIssuanceReferenceId,
+                posServerResult,
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
+        var sut = CreateSut(
+            DiagnosticEnabledOptions(),
+            client: client,
+            orchestration: orchestration);
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.NewlyCreatedRecorded);
+        result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledReady);
+        result.RequestMapped.Should().BeTrue();
+        result.ClientCalled.Should().BeTrue();
+        result.PosServerResponseClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
+        result.FiscalIssuanceStateApplied.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        result.FiscalDocumentId.Should().Be(PosServerFiscalDocumentId);
+        result.FiscalDocumentNumber.Should().Be("SI-010001");
+        result.NoPaymentFinalityChanged.Should().BeTrue();
+        result.NoExitAuthorizationIssued.Should().BeTrue();
+        await client.Received(1).CreateFiscalDocumentAsync(
+            Arg.Is<PosServerFiscalDocumentCreateRequest>(request =>
+                request.PayableBasis.UpstreamFinalityRef == "upstream-finality-ref"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [MemberData(nameof(DiagnosticResultCases))]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenMockedResultReturned_ReportsDiagnosticStatus(
+        PosServerFiscalDocumentCreateResult posServerResult,
+        FiscalIssuanceIntegrationState expectedAppliedState,
+        string expectedDiagnosticStatus)
+    {
+        var result = await ExecuteDiagnosticWithPosServerResultAsync(posServerResult, expectedAppliedState);
+
+        result.Status.Should().Be(expectedDiagnosticStatus);
+        result.FiscalIssuanceStateApplied.Should().Be(expectedAppliedState);
+        result.RequestMapped.Should().BeTrue();
+        result.ClientCalled.Should().BeTrue();
+        result.NoPaymentFinalityChanged.Should().BeTrue();
+        result.NoExitAuthorizationIssued.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunPosServerFiscalIssuanceDiagnosticAsync_WhenSensitiveReferenceIsPresent_FailsClosedWithoutClientCall()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            DiagnosticEnabledOptions(),
+            client: client,
+            orchestration: orchestration);
+        var context = PosServerFiscalDocumentRequestMapperTests.ValidContext() with
+        {
+            ReferenceContext = new Dictionary<string, string> { ["raw_payload"] = "not-allowed" }
+        };
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            context,
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.LocalContextInvalid);
+        result.Errors.Should().Contain(error => error.Contains("sensitive_payload_reference_rejected", StringComparison.Ordinal));
+        result.RequestMapped.Should().BeFalse();
+        result.ClientCalled.Should().BeFalse();
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
+    }
+
+    [Fact]
     public async Task OperationalPaymentAndExitFlows_DoNotDependOnLivePosServerIntegrationSeam()
     {
         var operationalTypes = new[]
@@ -413,12 +615,117 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         return result;
     }
 
+    private static async Task<FiscalIssuancePosServerDiagnosticResult> ExecuteDiagnosticWithPosServerResultAsync(
+        PosServerFiscalDocumentCreateResult posServerResult,
+        FiscalIssuanceIntegrationState expectedAppliedState)
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        client.CreateFiscalDocumentAsync(Arg.Any<PosServerFiscalDocumentCreateRequest>(), Arg.Any<CancellationToken>())
+            .Returns(posServerResult);
+        orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+
+        if (posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted && posServerResult.Succeeded)
+        {
+            orchestration.ApplyPosServerCreateResultAsync(
+                    FiscalIssuanceReferenceId,
+                    posServerResult,
+                    Arg.Any<PosServerCreateResultRecordingContext>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(Reference(expectedAppliedState));
+        }
+        else
+        {
+            orchestration.ApplyPosServerFailureResultAsync(
+                    FiscalIssuanceReferenceId,
+                    posServerResult,
+                    Arg.Any<PosServerCreateResultRecordingContext>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(Reference(expectedAppliedState));
+        }
+
+        var sut = CreateSut(DiagnosticEnabledOptions(), client: client, orchestration: orchestration);
+
+        var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        await client.Received(1).CreateFiscalDocumentAsync(
+            Arg.Any<PosServerFiscalDocumentCreateRequest>(),
+            Arg.Any<CancellationToken>());
+
+        return result;
+    }
+
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
         new()
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
             PosServerBaseUrl = "https://pos-server.local",
             TimeoutSeconds = 10
+        };
+
+    private static FiscalIssuancePosServerIntegrationOptions DiagnosticEnabledOptions() =>
+        new()
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            EnableControlledUatDiagnosticPath = true,
+            PosServerBaseUrl = "https://pos-server.local",
+            TimeoutSeconds = 10
+        };
+
+    public static TheoryData<PosServerFiscalDocumentCreateResult, FiscalIssuanceIntegrationState, string> DiagnosticResultCases() =>
+        new()
+        {
+            {
+                CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+                FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+                FiscalIssuancePosServerDiagnosticStatuses.NewlyCreatedRecorded
+            },
+            {
+                CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay),
+                FiscalIssuanceIntegrationState.FiscalIssuanceReplayed,
+                FiscalIssuancePosServerDiagnosticStatuses.ReplayRecorded
+            },
+            {
+                FailurePosServerCreateResult(
+                    PosServerFiscalDocumentOutcome.Conflict,
+                    409,
+                    "fiscal_document_idempotency_conflict",
+                    FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange),
+                FiscalIssuanceIntegrationState.FiscalIssuanceConflict,
+                FiscalIssuancePosServerDiagnosticStatuses.ConflictFailureMapped
+            },
+            {
+                FailurePosServerCreateResult(
+                    PosServerFiscalDocumentOutcome.FailedRequest,
+                    400,
+                    "missing_payable_basis",
+                    FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange),
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest,
+                FiscalIssuancePosServerDiagnosticStatuses.RequestFailureMapped
+            },
+            {
+                FailurePosServerCreateResult(
+                    PosServerFiscalDocumentOutcome.FailedConfiguration,
+                    400,
+                    "fiscal_sequence_policy_not_found",
+                    FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection),
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration,
+                FiscalIssuancePosServerDiagnosticStatuses.ConfigurationFailureMapped
+            },
+            {
+                FailurePosServerCreateResult(
+                    PosServerFiscalDocumentOutcome.FailedService,
+                    503,
+                    "persistence_write_failed",
+                    FiscalIssuanceErrorPosture.RetryAfterServiceRecovery),
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedService,
+                FiscalIssuancePosServerDiagnosticStatuses.ServiceFailureMapped
+            }
         };
 
     private static PosServerCreateResultRecordingContext RecordingContext() =>

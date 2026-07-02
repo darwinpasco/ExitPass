@@ -1,8 +1,16 @@
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+
 namespace ExitPass.CentralPms.Application.FiscalIssuance;
 
 public interface IFiscalIssuancePosServerLiveIntegrationService
 {
     Task<FiscalIssuancePosServerLiveIntegrationResult> TryIssueFiscalDocumentViaPosServerAsync(
+        Guid fiscalIssuanceReferenceId,
+        CentralPmsFiscalDocumentMappingContext fiscalContext,
+        PosServerCreateResultRecordingContext recordingContext,
+        CancellationToken cancellationToken);
+
+    Task<FiscalIssuancePosServerDiagnosticResult> RunPosServerFiscalIssuanceDiagnosticAsync(
         Guid fiscalIssuanceReferenceId,
         CentralPmsFiscalDocumentMappingContext fiscalContext,
         PosServerCreateResultRecordingContext recordingContext,
@@ -90,6 +98,58 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
             posServerResult,
             appliedReference);
     }
+
+    public async Task<FiscalIssuancePosServerDiagnosticResult> RunPosServerFiscalIssuanceDiagnosticAsync(
+        Guid fiscalIssuanceReferenceId,
+        CentralPmsFiscalDocumentMappingContext fiscalContext,
+        PosServerCreateResultRecordingContext recordingContext,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(fiscalContext);
+        ArgumentNullException.ThrowIfNull(recordingContext);
+
+        if (fiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(fiscalIssuanceReferenceId));
+        }
+
+        var readiness = _options.EvaluateReadiness();
+
+        if (!_options.EnablePosServerFiscalIssuanceLiveCall)
+        {
+            return FiscalIssuancePosServerDiagnosticResult.NotAttempted(
+                FiscalIssuancePosServerDiagnosticStatuses.Disabled,
+                readiness,
+                recordingContext.CorrelationId);
+        }
+
+        if (!_options.EnableControlledUatDiagnosticPath)
+        {
+            return FiscalIssuancePosServerDiagnosticResult.NotAttempted(
+                FiscalIssuancePosServerDiagnosticStatuses.DiagnosticDisabled,
+                readiness,
+                recordingContext.CorrelationId);
+        }
+
+        if (!readiness.IsReady)
+        {
+            return FiscalIssuancePosServerDiagnosticResult.NotAttempted(
+                FiscalIssuancePosServerDiagnosticStatuses.ConfigurationInvalid,
+                readiness,
+                recordingContext.CorrelationId);
+        }
+
+        var result = await TryIssueFiscalDocumentViaPosServerAsync(
+            fiscalIssuanceReferenceId,
+            fiscalContext,
+            recordingContext,
+            cancellationToken);
+
+        return FiscalIssuancePosServerDiagnosticResult.FromLiveIntegrationResult(
+            readiness,
+            result,
+            recordingContext.CorrelationId);
+    }
 }
 
 public sealed class FiscalIssuancePosServerIntegrationOptions
@@ -97,6 +157,8 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
     public const string SectionName = "FiscalIssuance:PosServerIntegration";
 
     public bool EnablePosServerFiscalIssuanceLiveCall { get; set; }
+
+    public bool EnableControlledUatDiagnosticPath { get; set; }
 
     public string? PosServerBaseUrl { get; set; }
 
@@ -281,4 +343,119 @@ public sealed record FiscalIssuancePosServerLiveIntegrationResult(
             mappedRequest,
             posServerResult,
             fiscalIssuanceReference);
+}
+
+public static class FiscalIssuancePosServerDiagnosticStatuses
+{
+    public const string Disabled = "disabled";
+    public const string DiagnosticDisabled = "diagnostic_disabled";
+    public const string ConfigurationInvalid = "config_invalid";
+    public const string LocalContextInvalid = "local_context_invalid";
+    public const string NewlyCreatedRecorded = "newly_created_recorded";
+    public const string ReplayRecorded = "replay_recorded";
+    public const string ConflictFailureMapped = "conflict_failure_mapped";
+    public const string RequestFailureMapped = "request_failure_mapped";
+    public const string ConfigurationFailureMapped = "configuration_failure_mapped";
+    public const string ServiceFailureMapped = "service_failure_mapped";
+    public const string UnknownFailClosed = "unknown_fail_closed";
+}
+
+public sealed record FiscalIssuancePosServerDiagnosticResult(
+    string Status,
+    string ReadinessStatus,
+    bool RequestMapped,
+    bool ClientCalled,
+    FiscalIssuanceResultClassification? PosServerResponseClassification,
+    FiscalIssuanceIntegrationState? FiscalIssuanceStateApplied,
+    Guid? FiscalDocumentId,
+    string? FiscalDocumentNumber,
+    string? ErrorCode,
+    FiscalIssuanceErrorPosture? ErrorPosture,
+    bool NoPaymentFinalityChanged,
+    bool NoExitAuthorizationIssued,
+    Guid? CorrelationId,
+    IReadOnlyList<string> Errors)
+{
+    public static FiscalIssuancePosServerDiagnosticResult NotAttempted(
+        string status,
+        FiscalIssuancePosServerIntegrationReadiness readiness,
+        Guid? correlationId) =>
+        new(
+            Status: status,
+            ReadinessStatus: readiness.Status,
+            RequestMapped: false,
+            ClientCalled: false,
+            PosServerResponseClassification: null,
+            FiscalIssuanceStateApplied: null,
+            FiscalDocumentId: null,
+            FiscalDocumentNumber: null,
+            ErrorCode: null,
+            ErrorPosture: null,
+            NoPaymentFinalityChanged: true,
+            NoExitAuthorizationIssued: true,
+            CorrelationId: correlationId,
+            Errors: readiness.Errors);
+
+    public static FiscalIssuancePosServerDiagnosticResult FromLiveIntegrationResult(
+        FiscalIssuancePosServerIntegrationReadiness readiness,
+        FiscalIssuancePosServerLiveIntegrationResult result,
+        Guid? correlationId) =>
+        new(
+            Status: ResolveStatus(result),
+            ReadinessStatus: readiness.Status,
+            RequestMapped: result.MappedRequest is not null,
+            ClientCalled: result.MappedRequest is not null && result.PosServerResult is not null,
+            PosServerResponseClassification: result.PosServerResult?.ResultClassification,
+            FiscalIssuanceStateApplied: result.FiscalIssuanceReference?.FiscalIssuanceState,
+            FiscalDocumentId: result.PosServerResult?.FiscalDocumentId ?? result.FiscalIssuanceReference?.PosServerFiscalDocumentId,
+            FiscalDocumentNumber: result.PosServerResult?.FiscalDocumentNumber ?? result.FiscalIssuanceReference?.FiscalDocumentNumber,
+            ErrorCode: result.PosServerResult?.Succeeded == false
+                ? result.PosServerResult.Code
+                : null,
+            ErrorPosture: result.PosServerResult?.ErrorPosture,
+            NoPaymentFinalityChanged: true,
+            NoExitAuthorizationIssued: true,
+            CorrelationId: correlationId,
+            Errors: result.Errors);
+
+    private static string ResolveStatus(FiscalIssuancePosServerLiveIntegrationResult result)
+    {
+        if (result.Status == FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid)
+        {
+            return FiscalIssuancePosServerDiagnosticStatuses.ConfigurationInvalid;
+        }
+
+        if (result.Status == FiscalIssuancePosServerLiveIntegrationStatus.LocalContextInvalid)
+        {
+            return FiscalIssuancePosServerDiagnosticStatuses.LocalContextInvalid;
+        }
+
+        if (result.PosServerResult is null)
+        {
+            return result.Status == FiscalIssuancePosServerLiveIntegrationStatus.Disabled
+                ? FiscalIssuancePosServerDiagnosticStatuses.Disabled
+                : FiscalIssuancePosServerDiagnosticStatuses.UnknownFailClosed;
+        }
+
+        if (result.PosServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted &&
+            result.PosServerResult.ResultClassification == FiscalIssuanceResultClassification.NewlyCreated)
+        {
+            return FiscalIssuancePosServerDiagnosticStatuses.NewlyCreatedRecorded;
+        }
+
+        if (result.PosServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted &&
+            result.PosServerResult.ResultClassification == FiscalIssuanceResultClassification.IdempotentReplay)
+        {
+            return FiscalIssuancePosServerDiagnosticStatuses.ReplayRecorded;
+        }
+
+        return result.PosServerResult.Outcome switch
+        {
+            PosServerFiscalDocumentOutcome.Conflict => FiscalIssuancePosServerDiagnosticStatuses.ConflictFailureMapped,
+            PosServerFiscalDocumentOutcome.FailedRequest => FiscalIssuancePosServerDiagnosticStatuses.RequestFailureMapped,
+            PosServerFiscalDocumentOutcome.FailedConfiguration => FiscalIssuancePosServerDiagnosticStatuses.ConfigurationFailureMapped,
+            PosServerFiscalDocumentOutcome.FailedService => FiscalIssuancePosServerDiagnosticStatuses.ServiceFailureMapped,
+            _ => FiscalIssuancePosServerDiagnosticStatuses.UnknownFailClosed
+        };
+    }
 }
