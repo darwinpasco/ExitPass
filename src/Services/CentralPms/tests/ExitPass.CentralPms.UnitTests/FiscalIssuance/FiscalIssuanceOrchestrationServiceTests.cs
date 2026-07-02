@@ -395,6 +395,195 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenIdempotencyConflict_MapsToConflict()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.Conflict,
+                409,
+                "fiscal_document_idempotency_conflict",
+                FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceConflict);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict);
+        result.LatestErrorCode.Should().Be("fiscal_document_idempotency_conflict");
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenRequestDataFailure_MapsToFailedRequest()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.FailedRequest,
+                400,
+                "missing_payable_basis",
+                FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.MissingPayableBasis);
+        result.LatestErrorCode.Should().Be("missing_payable_basis");
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange);
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenConfigurationFailure_MapsToFailedConfiguration()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.FailedConfiguration,
+                400,
+                "fiscal_identity_not_found",
+                FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.FiscalIdentityNotFound);
+        result.LatestErrorCode.Should().Be("fiscal_identity_not_found");
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection);
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenServiceFailure_MapsToFailedService()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.FailedService,
+                503,
+                "persistence_write_failed",
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.PersistenceWriteFailed);
+        result.LatestErrorCode.Should().Be("persistence_write_failed");
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenFiscalNumberAssignmentIncompleteWithoutDocumentId_FailsClosedAsServiceFailure()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.FailedService,
+                503,
+                "fiscal_number_assignment_incomplete",
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete);
+        result.PosServerFiscalDocumentId.Should().BeNull();
+        result.FiscalIssuanceEvidenceStatus.Should().BeNull();
+        result.FiscalNumberAssignmentState.Should().Be(FiscalNumberAssignmentState.NotAssigned);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenFiscalNumberAssignmentIncompleteWithDocumentId_MapsToUnknownWithoutEvidence()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.InvalidResponse,
+                202,
+                "fiscal_number_assignment_incomplete",
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                PosServerFiscalDocumentId),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete);
+        result.LatestErrorPosture.Should().Be(FiscalIssuanceErrorPosture.RetryAfterServiceRecovery);
+        result.PosServerFiscalDocumentId.Should().BeNull();
+        result.FiscalDocumentNumber.Should().BeNull();
+        result.FiscalNumberAssignmentState.Should().Be(FiscalNumberAssignmentState.NotAssigned);
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenUnknownMalformedFailure_MapsToManualReview()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.InvalidResponse,
+                502,
+                "unexpected_gateway_response",
+                null),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.ManualReviewRequired);
+        result.LatestErrorCode.Should().Be("unexpected_gateway_response");
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenResultIsAccepted_RejectsSuccessPathResult()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.ApplyPosServerFailureResultAsync(
+                reference.FiscalIssuanceReferenceId,
+                CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+                RecordingContext(reference),
+                CancellationToken.None));
+
+        ex.Message.Should().Contain("Accepted POS Server create results must be handled");
+    }
+
+    [Fact]
+    public async Task ApplyPosServerFailureResultAsync_WhenFailureHasFiscalDocumentId_DoesNotRecordItAsFiscalEvidence()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var result = await sut.ApplyPosServerFailureResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.FailedService,
+                503,
+                "persistence_write_failed",
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                PosServerFiscalDocumentId),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService);
+        result.PosServerFiscalDocumentId.Should().BeNull();
+        result.FiscalIssuanceEvidenceStatus.Should().BeNull();
+    }
+
+    [Fact]
     public async Task IsNormalExitAuthorizationGatingReady_WhenEvidenceIsIncomplete_ReturnsFalse()
     {
         var repository = new InMemoryFiscalIssuanceReferenceRepository();
@@ -523,6 +712,34 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             FiscalNumberAssignedAt: DateTimeOffset.Parse("2026-07-02T10:30:00+08:00"),
             FiscalNumberAssignedByRef: "pos-server-runtime",
             ErrorPosture: null);
+
+    private static PosServerFiscalDocumentCreateResult FailurePosServerCreateResult(
+        PosServerFiscalDocumentOutcome outcome,
+        int httpStatusCode,
+        string code,
+        FiscalIssuanceErrorPosture? errorPosture,
+        Guid? fiscalDocumentId = null) =>
+        new(
+            Outcome: outcome,
+            Succeeded: false,
+            HttpStatusCode: httpStatusCode,
+            Code: code,
+            Message: code,
+            FiscalDocumentId: fiscalDocumentId,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIdentityId: null,
+            FiscalDocumentStatusCodeId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            ErrorPosture: errorPosture);
 
     private static PosServerCreateResultRecordingContext RecordingContext(
         FiscalIssuanceReferenceRecord reference) =>
