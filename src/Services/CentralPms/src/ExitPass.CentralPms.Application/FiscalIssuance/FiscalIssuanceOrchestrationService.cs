@@ -58,6 +58,12 @@ public interface IFiscalIssuanceOrchestrationService
         PosServerFiscalDocumentCreateResult result,
         PosServerCreateResultRecordingContext context,
         CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> ApplyPosServerFailureResultAsync(
+        Guid fiscalIssuanceReferenceId,
+        PosServerFiscalDocumentCreateResult result,
+        PosServerCreateResultRecordingContext context,
+        CancellationToken cancellationToken);
 }
 
 public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestrationService
@@ -281,6 +287,113 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
         };
     }
 
+    public Task<FiscalIssuanceReferenceRecord> ApplyPosServerFailureResultAsync(
+        Guid fiscalIssuanceReferenceId,
+        PosServerFiscalDocumentCreateResult result,
+        PosServerCreateResultRecordingContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (fiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(fiscalIssuanceReferenceId));
+        }
+
+        if (string.IsNullOrWhiteSpace(context.UpstreamFinalityReference))
+        {
+            throw new ArgumentException("Upstream finality reference is required.", nameof(context));
+        }
+
+        if (result.Outcome == PosServerFiscalDocumentOutcome.Accepted && result.Succeeded)
+        {
+            throw new ArgumentException(
+                "Accepted POS Server create results must be handled by ApplyPosServerCreateResultAsync.",
+                nameof(result));
+        }
+
+        var normalizedCode = NormalizeFailureCode(result.Code);
+
+        if (IsFiscalDocumentIdempotencyConflict(result, normalizedCode))
+        {
+            return MarkConflictAsync(
+                fiscalIssuanceReferenceId,
+                FailureContextFromPosServerResult(
+                    result,
+                    context,
+                    FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict,
+                    FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+                    normalizedCode),
+                cancellationToken);
+        }
+
+        if (IsFiscalNumberAssignmentIncomplete(normalizedCode))
+        {
+            var transitionContext = FailureContextFromPosServerResult(
+                result,
+                context,
+                FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete,
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                normalizedCode);
+
+            return result.FiscalDocumentId is null || result.FiscalDocumentId == Guid.Empty
+                ? MarkFailedServiceAsync(fiscalIssuanceReferenceId, transitionContext, cancellationToken)
+                : MarkUnknownAsync(fiscalIssuanceReferenceId, transitionContext, cancellationToken);
+        }
+
+        var exceptionReason = MapExceptionReason(normalizedCode);
+
+        if (ShouldMapToFailedConfiguration(result, exceptionReason))
+        {
+            return MarkFailedConfigurationAsync(
+                fiscalIssuanceReferenceId,
+                FailureContextFromPosServerResult(
+                    result,
+                    context,
+                    exceptionReason ?? FiscalIssuanceExceptionReason.FiscalIdentityNotFound,
+                    FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection,
+                    normalizedCode),
+                cancellationToken);
+        }
+
+        if (ShouldMapToFailedRequest(result, exceptionReason))
+        {
+            return MarkFailedRequestAsync(
+                fiscalIssuanceReferenceId,
+                FailureContextFromPosServerResult(
+                    result,
+                    context,
+                    exceptionReason ?? FiscalIssuanceExceptionReason.RequestConstructionError,
+                    FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+                    normalizedCode),
+                cancellationToken);
+        }
+
+        if (ShouldMapToFailedService(result, exceptionReason))
+        {
+            return MarkFailedServiceAsync(
+                fiscalIssuanceReferenceId,
+                FailureContextFromPosServerResult(
+                    result,
+                    context,
+                    exceptionReason ?? FiscalIssuanceExceptionReason.PersistenceWriteFailed,
+                    FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                    normalizedCode),
+                cancellationToken);
+        }
+
+        return MarkManualReviewRequiredAsync(
+            fiscalIssuanceReferenceId,
+            FailureContextFromPosServerResult(
+                result,
+                context,
+                exceptionReason ?? FiscalIssuanceExceptionReason.ManualReviewRequired,
+                FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+                normalizedCode),
+            cancellationToken);
+    }
+
     public static bool IsNormalExitAuthorizationGatingReady(FiscalIssuanceReferenceRecord record) =>
         record.FiscalIssuanceState is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
             or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
@@ -499,6 +612,126 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
         string.IsNullOrWhiteSpace(recorded) ||
         string.IsNullOrWhiteSpace(incoming) ||
         string.Equals(recorded, incoming, StringComparison.Ordinal);
+
+    private static FiscalIssuanceFailureTransitionContext FailureContextFromPosServerResult(
+        PosServerFiscalDocumentCreateResult result,
+        PosServerCreateResultRecordingContext context,
+        FiscalIssuanceExceptionReason exceptionReason,
+        FiscalIssuanceErrorPosture defaultErrorPosture,
+        string normalizedCode) =>
+        new(
+            ExceptionReason: exceptionReason,
+            ErrorCode: normalizedCode,
+            ErrorPosture: result.ErrorPosture ?? defaultErrorPosture,
+            CorrelationId: context.CorrelationId,
+            ServiceIdentityId: context.ServiceIdentityId);
+
+    private static string NormalizeFailureCode(string? code) =>
+        string.IsNullOrWhiteSpace(code) ? "pos_server_failure" : code;
+
+    private static bool IsFiscalDocumentIdempotencyConflict(
+        PosServerFiscalDocumentCreateResult result,
+        string normalizedCode) =>
+        result.Outcome == PosServerFiscalDocumentOutcome.Conflict ||
+        result.HttpStatusCode == 409 ||
+        string.Equals(normalizedCode, "fiscal_document_idempotency_conflict", StringComparison.Ordinal);
+
+    private static bool IsFiscalNumberAssignmentIncomplete(string normalizedCode) =>
+        string.Equals(normalizedCode, "fiscal_number_assignment_incomplete", StringComparison.Ordinal);
+
+    private static bool ShouldMapToFailedConfiguration(
+        PosServerFiscalDocumentCreateResult result,
+        FiscalIssuanceExceptionReason? exceptionReason) =>
+        result.Outcome == PosServerFiscalDocumentOutcome.FailedConfiguration ||
+        (result.HttpStatusCode != 503 &&
+            result.ErrorPosture == FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection) ||
+        (result.HttpStatusCode == 400 && IsConfigurationReason(exceptionReason));
+
+    private static bool ShouldMapToFailedRequest(
+        PosServerFiscalDocumentCreateResult result,
+        FiscalIssuanceExceptionReason? exceptionReason) =>
+        result.Outcome == PosServerFiscalDocumentOutcome.FailedRequest ||
+        (result.HttpStatusCode == 400 && !IsConfigurationReason(exceptionReason)) ||
+        (result.HttpStatusCode != 503 &&
+            result.Outcome != PosServerFiscalDocumentOutcome.FailedService &&
+            result.ErrorPosture == FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange);
+
+    private static bool ShouldMapToFailedService(
+        PosServerFiscalDocumentCreateResult result,
+        FiscalIssuanceExceptionReason? exceptionReason) =>
+        result.Outcome == PosServerFiscalDocumentOutcome.FailedService ||
+        result.HttpStatusCode == 503 ||
+        result.ErrorPosture == FiscalIssuanceErrorPosture.RetryAfterServiceRecovery ||
+        IsServiceOrUnknownReason(exceptionReason);
+
+    private static FiscalIssuanceExceptionReason? MapExceptionReason(string normalizedCode) =>
+        normalizedCode switch
+        {
+            "missing_payable_basis" => FiscalIssuanceExceptionReason.MissingPayableBasis,
+            "missing_upstream_finality_reference" => FiscalIssuanceExceptionReason.MissingUpstreamFinalityReference,
+            "unapproved_discount_reference" => FiscalIssuanceExceptionReason.UnapprovedDiscountReference,
+            "unsupported_fiscal_document_request" => FiscalIssuanceExceptionReason.UnsupportedFiscalDocumentRequest,
+            "invalid_fiscal_tender" => FiscalIssuanceExceptionReason.InvalidFiscalTender,
+            "missing_fiscal_tender" => FiscalIssuanceExceptionReason.MissingFiscalTender,
+            "invalid_fiscal_tax_detail" => FiscalIssuanceExceptionReason.InvalidFiscalTaxDetail,
+            "invalid_fiscal_discount_privilege_detail" => FiscalIssuanceExceptionReason.InvalidFiscalDiscountPrivilegeDetail,
+            "invalid_fiscal_total" => FiscalIssuanceExceptionReason.InvalidFiscalTotal,
+            "sensitive_payload_rejected" => FiscalIssuanceExceptionReason.SensitivePayloadRejected,
+            "request_construction_error" => FiscalIssuanceExceptionReason.RequestConstructionError,
+            "fiscal_identity_not_found" => FiscalIssuanceExceptionReason.FiscalIdentityNotFound,
+            "fiscal_identity_ambiguous" => FiscalIssuanceExceptionReason.FiscalIdentityAmbiguous,
+            "fiscal_identity_not_effective" => FiscalIssuanceExceptionReason.FiscalIdentityNotEffective,
+            "fiscal_sequence_policy_not_found" => FiscalIssuanceExceptionReason.FiscalSequencePolicyNotFound,
+            "fiscal_sequence_policy_ambiguous" => FiscalIssuanceExceptionReason.FiscalSequencePolicyAmbiguous,
+            "fiscal_sequence_policy_not_effective" => FiscalIssuanceExceptionReason.FiscalSequencePolicyNotEffective,
+            "fiscal_sequence_state_not_found" => FiscalIssuanceExceptionReason.FiscalSequenceStateNotFound,
+            "fiscal_sequence_state_not_effective" => FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective,
+            "fiscal_number_allocation_failed" => FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed,
+            "fiscal_document_number_format_failed" => FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed,
+            "fiscal_document_idempotency_conflict" => FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict,
+            "replay_mismatch" => FiscalIssuanceExceptionReason.ReplayMismatch,
+            "duplicate_reference_detected" => FiscalIssuanceExceptionReason.DuplicateReferenceDetected,
+            "persistence_not_configured" => FiscalIssuanceExceptionReason.PersistenceNotConfigured,
+            "invalid_persistence_configuration" => FiscalIssuanceExceptionReason.InvalidPersistenceConfiguration,
+            "persistence_write_failed" => FiscalIssuanceExceptionReason.PersistenceWriteFailed,
+            "fiscal_number_assignment_incomplete" => FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete,
+            "post_timeout" => FiscalIssuanceExceptionReason.PostTimeout,
+            "network_disconnect_after_possible_commit" => FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit,
+            "get_readback_not_found" => FiscalIssuanceExceptionReason.GetReadbackNotFound,
+            "get_readback_service_failed" => FiscalIssuanceExceptionReason.GetReadbackServiceFailed,
+            "get_readback_inconclusive" => FiscalIssuanceExceptionReason.GetReadbackInconclusive,
+            "central_pms_reference_persistence_failed" => FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed,
+            "manual_review_required" => FiscalIssuanceExceptionReason.ManualReviewRequired,
+            "manual_release_requested_after_fiscal_failure" => FiscalIssuanceExceptionReason.ManualReleaseRequestedAfterFiscalFailure,
+            "fiscal_reference_mismatch" => FiscalIssuanceExceptionReason.FiscalReferenceMismatch,
+            "reconciliation_required" => FiscalIssuanceExceptionReason.ReconciliationRequired,
+            "reconciliation_closed" => FiscalIssuanceExceptionReason.ReconciliationClosed,
+            _ => null
+        };
+
+    private static bool IsConfigurationReason(FiscalIssuanceExceptionReason? reason) =>
+        reason is FiscalIssuanceExceptionReason.FiscalIdentityNotFound
+            or FiscalIssuanceExceptionReason.FiscalIdentityAmbiguous
+            or FiscalIssuanceExceptionReason.FiscalIdentityNotEffective
+            or FiscalIssuanceExceptionReason.FiscalSequencePolicyNotFound
+            or FiscalIssuanceExceptionReason.FiscalSequencePolicyAmbiguous
+            or FiscalIssuanceExceptionReason.FiscalSequencePolicyNotEffective
+            or FiscalIssuanceExceptionReason.FiscalSequenceStateNotFound
+            or FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective
+            or FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed
+            or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed;
+
+    private static bool IsServiceOrUnknownReason(FiscalIssuanceExceptionReason? reason) =>
+        reason is FiscalIssuanceExceptionReason.PersistenceNotConfigured
+            or FiscalIssuanceExceptionReason.InvalidPersistenceConfiguration
+            or FiscalIssuanceExceptionReason.PersistenceWriteFailed
+            or FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete
+            or FiscalIssuanceExceptionReason.PostTimeout
+            or FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit
+            or FiscalIssuanceExceptionReason.GetReadbackNotFound
+            or FiscalIssuanceExceptionReason.GetReadbackServiceFailed
+            or FiscalIssuanceExceptionReason.GetReadbackInconclusive
+            or FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed;
 }
 
 public sealed record PrepareFiscalIssuanceCommand(
