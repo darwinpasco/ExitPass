@@ -5,971 +5,700 @@
 | Field | Value |
 | --- | --- |
 | Document title | ExitPass POS Server API Contract |
-| Version | v1.0 Markdown baseline |
-| Product scope | ExitPass v1.3 POS Server API |
-| Status | Approved baseline |
-| Generated | 2026-06-25 |
+| Version | v1.0, v1.3 runtime-aligned |
+| Product scope | ExitPass v1.3 POS Server |
+| Status | Aligned to current POS Server runtime inspection |
 | Output format | Markdown only |
-| BRD baseline | `docs/v1.3/pos-invoicing/ExitPass_POS_Invoicing_BRD_v1.0.md` |
-| System Design baseline | `docs/v1.3/pos-server/ExitPass_POS_Server_System_Design_v1.0.md` |
-| Approval note | `ExitPass_POS_Server_API_Contract_v1.0.md` is approved as the POS Server API Contract v1.0 baseline for ExitPass v1.3 documentation and downstream POS Server Database Design, Engineering Pack, Security/Privacy Review, BIR/accreditation package preparation, and implementation planning. |
+| Runtime baseline inspected | `D:\SourceCodes\ExitPass-PoSServer` on branch `dev` |
+| Primary implementation scope | Fiscal document create/read API |
 
 ## 2. Purpose and Scope
 
-This document defines the approved v1.0 API contract baseline for the ExitPass Site-level POS Server. It translates the approved POS/Invoicing BRD and approved POS Server System Design into API ownership, route families, request/response semantics, status behavior, idempotency behavior, authentication/authorization expectations, error model, and integration responsibilities.
+This API Contract documents the current supported POS Server runtime API behavior for ExitPass v1.3.
 
-This contract covers API planning and contract semantics for:
+The current runtime-supported API surface is:
 
-- Central PMS to POS Server fiscal issuance.
-- Sales Invoice issuance, status, lookup, print/digital consistency, and digital SI URL return.
-- Digital SI URL access and channel/terminal QR presentation from the POS Server-returned URL.
-- Channel and terminal registration/status.
-- Fiscal identity configuration.
-- Reprints and repeated digital access.
-- Void/refund/cancel/return fiscal adjustments.
-- X-read, Z-read, BIR Sales Summary, Annex E, EJ, POSLog, and fiscal exports.
-- Fiscal reset, recovery continuity check, supervised recovery, exception/retry status, and audit/event impact.
-- WebPay, APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted payment, and future channel integration responsibilities.
+| Method | Route | Status |
+| --- | --- | --- |
+| `POST` | `/v1/fiscal-documents/` | Implemented |
+| `GET` | `/v1/fiscal-documents/{fiscalDocumentId}` | Implemented |
 
-This document does not define final database tables, columns, indexes, constraints, migrations, final DTO schemas, final event schemas, final status-code enum storage, or implementation internals.
+This contract distinguishes:
 
-Route names and endpoint candidates in this document are provisional until API contract review.
+- currently implemented runtime behavior
+- contract behavior Central PMS may depend on now
+- planned or deferred API families
+- explicit non-authority boundaries
 
-## 3. Reference Baseline
+This document does not define database schema, SQL implementation, source code, generated artifacts, tests, deployment scripts, UAT scripts, or runbook procedures.
 
-| Reference | Role in this contract |
+## 3. Approved Baseline Inputs
+
+| Reference | Role |
 | --- | --- |
-| `ExitPass_POS_Invoicing_BRD_v1.0.md` | Approved business requirements and authority model. |
-| `ExitPass_POS_Server_System_Design_v1.0.md` | Approved technical design and API impact baseline. |
-| POS Server API Contract planning artifacts | Source analysis, decision log, outline, open questions, and impact map. |
-| POS Server System Design technical and approval-readiness reviews | Confirms design readiness and non-blocking cleanup closure. |
-| ExitPass API Contract Pack v1.2 | Supporting baseline for platform authority and integration conventions. |
-| ExitPass BRD/System Design/Database/Engineering Pack v1.2 | Supporting baseline for Central PMS, payment, session, site, vendor, and ExitAuthorization authority. |
-| RMO No. 24-2023 and Annex D/E/F/G references | Supporting fiscal reporting, X/Z, BIR Sales Summary, sales books, evaluation, and accreditation inputs. |
-| Hikvision APM gap analysis and developer checklist | Supporting APM print/presentation, POSLog/EJ/export, and terminal behavior inputs. |
-| BIR RMO No. 10-2019 | Supporting Diplomat VAT Privilege / VAT Exemption inputs. |
+| `docs/v1.3/ExitPass_BRD_v1.3.md` | Platform authority and business baseline. |
+| `docs/v1.3/ExitPass_System_Design_v1.3.md` | v1.3 platform architecture baseline. |
+| `docs/v1.3/ExitPass_v1.3_BRD_Approval_Baseline.md` | Approved BRD baseline status. |
+| `docs/v1.3/pos-invoicing/ExitPass_POS_Invoicing_BRD_v1.0.md` | POS/Invoicing business and fiscal baseline. |
+| `docs/v1.3/pos-server/ExitPass_POS_Server_System_Design_v1.0.md` | POS Server system design baseline. |
+| `docs/v1.3/pos-server/ExitPass_POS_Server_Repo_Inspection_Report.md` | Prior implementation reality-check. |
+| `D:\SourceCodes\ExitPass-PoSServer\src\ExitPass.PosServer.Api\FiscalDocuments` | Current API DTO and endpoint source. |
+| `D:\SourceCodes\ExitPass-PoSServer\src\ExitPass.PosServer.Runtime\FiscalDocuments` | Current runtime behavior source. |
+| `D:\SourceCodes\ExitPass-PoSServer\src\ExitPass.PosServer.Persistence.Postgres\FiscalDocuments` | Current persistence behavior source. |
+| `D:\SourceCodes\ExitPass-PoSServer\docs\v1.3\runtime` | Runtime implementation slice notes. |
 
-## 4. API Ownership and Authority Model
+## 4. Authority Boundaries
 
-The API contract shall preserve the approved authority model.
+POS Server is the resolved Site fiscal issuance authority only.
 
-| Authority area | Owner | API rule |
+POS Server owns, within current implemented scope:
+
+- fiscal document creation for the resolved Site POS Server
+- server-side fiscal identity resolution
+- server-side fiscal sequence policy resolution
+- fiscal sequence allocation
+- fiscal document number formatting
+- fiscal document persistence and readback
+- fiscal document child facts accepted by the current runtime
+- idempotent fiscal issuance replay/conflict behavior
+
+POS Server does not:
+
+- declare platform payment finality
+- interact with payment providers as payment authority
+- own Vendor PMS session lifecycle or tariff computation
+- approve statutory entitlement
+- mutate Central PMS payable basis directly
+- record Central PMS fiscal issuance reference on behalf of Central PMS
+- issue `ExitAuthorization`
+- open gates
+- activate continuity
+- approve manual release
+- operate as Operator Console, Management Dashboard, Assisted Payment Terminal, WebPay, APM, or Central PMS
+
+Central PMS remains authority for:
+
+- payment finality
+- payment-linked platform state
+- payable-basis readiness before fiscal issuance
+- recording returned POS Server fiscal issuance reference
+- normal `ExitAuthorization` after fiscal prerequisites are satisfied
+- degraded resolve and continuity decisioning under approved policy
+
+## 5. Authentication and Authorization Placeholder
+
+Current inspected runtime wiring focuses on fiscal document create/read behavior and persistence configuration.
+
+Authentication and authorization are not finalized in this API Contract. Until a later security/API contract task confirms the model:
+
+- Central PMS should be treated as the intended trusted caller for fiscal issuance.
+- Public clients, payment channels, terminals, dashboards, and Operator Console must not call POS Server as fiscal authority directly unless a later approved gateway/service boundary permits it.
+- Final caller authentication, service identity, mTLS/token model, role claims, and network trust controls remain deferred.
+
+## 6. Common Headers and Transport Metadata
+
+Current runtime behavior verified from code does not require a separate `Idempotency-Key` HTTP header.
+
+Recommended but not currently enforced headers:
+
+| Header | Current status | Notes |
 | --- | --- | --- |
-| Payment finality | Central PMS | POS Server APIs consume verified payment finality context from Central PMS but do not declare platform payment finality. |
-| ExitAuthorization | Central PMS | POS Server APIs must not issue, approve, create, mutate, or bypass ExitAuthorization. |
-| Fiscal issuance | Site POS Server | POS Server owns Sales Invoice issuance and fiscal document lifecycle for the resolved Site. |
-| Fiscal document numbering | Site POS Server | POS Server owns SI and adjustment numbering according to confirmed policy. |
-| Digital SI URL | Site POS Server | POS Server returns digital SI URL where digital delivery is enabled. |
-| Channel/terminal presentation | Channel/terminal under Site POS Server | Channels/terminals may display or print SI, present the digital SI URL, or convert the POS Server-returned URL into a QR code where supported without becoming fiscal issuer. |
-| Refund/reversal money movement | Central PMS/payment provider | POS Server owns related fiscal adjustment documents, not money movement finality. |
-| Gate/exit execution | Central PMS authorization chain | Gate/exit execution must not bypass Central PMS authorization. |
+| `X-Correlation-Id` | Recommended / not verified as enforced | For traceability across Central PMS, POS Server, and operations logs. |
+| `X-Request-Id` | Recommended / not verified as enforced | For caller-side diagnostics. |
+| `Idempotency-Key` | Not currently the runtime source of idempotency | Current runtime derives idempotency key from upstream finality reference. Do not document this as required until implemented. |
 
-Payment Orchestrator and WebPay must not declare platform payment finality. Vendor PMS / HikCentral acknowledgment remains synchronization only and is not payment finality or exit authority.
+The implemented idempotency source is request-body data, not an HTTP header.
 
-## 5. API Consumers and Trust Boundaries
+## 7. Current Response Envelope
 
-| Consumer / boundary | Contract posture |
+The current API uses endpoint-specific JSON response records.
+
+### 7.1 Create Response Envelope
+
+Current `CreateFiscalDocumentResponse` shape:
+
+```json
+{
+  "succeeded": true,
+  "code": "accepted",
+  "message": "Fiscal document creation accepted for persistence.",
+  "fiscalDocumentId": "00000000-0000-0000-0000-000000000000",
+  "fiscalIdentityId": "00000000-0000-0000-0000-000000000000",
+  "fiscalSequencePolicyId": "00000000-0000-0000-0000-000000000000",
+  "fiscalSequenceValue": 1,
+  "fiscalDocumentNumber": "SI-00000001",
+  "fiscalSeries": "SI",
+  "fiscalNumberPrefixText": "SI-",
+  "fiscalNumberSuffixText": null,
+  "fiscalNumberAssignedAt": "2026-07-01T00:00:00Z",
+  "fiscalNumberAssignedByRef": "pos-server:system"
+}
+```
+
+`httpStatusCode` exists in the runtime response record as a server-side JSON-ignored field and is not part of the JSON body.
+
+### 7.2 Read Response Envelope
+
+Current `GetFiscalDocumentResponse` shape:
+
+```json
+{
+  "succeeded": true,
+  "code": "found",
+  "message": "Fiscal document found.",
+  "document": {
+    "fiscalDocumentId": "00000000-0000-0000-0000-000000000000"
+  }
+}
+```
+
+The `document` object is the current `FiscalDocumentReadModel` and includes header fields plus child collections.
+
+## 8. Idempotency Contract
+
+### 8.1 Current Runtime Idempotency Source
+
+Current runtime derives idempotency internally:
+
+| Element | Current runtime source |
 | --- | --- |
-| Central PMS | Primary trusted internal caller for payment-linked SI issuance, fiscal reference recording, exception status, and controlled fiscal workflow coordination. |
-| WebPay | Channel-facing consumer of digital SI presentation/status through approved Central PMS/POS Server flow; not finality authority. |
-| APM | Terminal/channel that may present or print POS Server-issued SI and generate/display/print QR from the digital SI URL where supported; not fiscal authority. |
-| Cashier POS | Terminal/channel that may support SI presentation, reprint, adjustment, and cashier/session context under authorization. |
-| EC Device / Continuity Terminal | Continuity terminal/channel under Site POS Server authority; offline fiscal issuance remains restricted unless approved. |
-| Operator-assisted terminal/workflow | Assisted payment flow that may present SI, digital SI URL, channel-side QR, and exception status; operator cannot declare platform finality. |
-| Future channels | Must register as child channels/terminals and follow the same fiscal authority pattern. |
-| Fiscal administrators | Privileged internal actors for fiscal identity, export, reset, recovery, and configuration workflows. |
-| Compliance auditors | Read/export/audit consumers according to RBAC and retention policy. |
-| Customer digital SI URL access | Separate public/customer access boundary, open for Security/Privacy Review and final API design. |
+| Idempotency scope | `fiscal_document_creation:{sitePosServerId:N}:{fiscalDocumentTypeCodeId:N}` |
+| Idempotency key | `payableBasis.upstreamFinalityRef` after trimming |
+| Semantic request hash | Server-computed SHA-256 over normalized fiscal issuance request fields |
 
-Internal APIs and public/customer digital SI access must be treated as separate trust boundaries.
+The caller does not currently supply an `Idempotency-Key` header as the runtime source of idempotency.
 
-## 6. Common Contract Rules
+### 8.2 Caller Contract
 
-All route families shall follow these common contract rules unless a later approved exception is documented.
+Central PMS shall:
 
-### Common Headers and Metadata
+- use a stable `payableBasis.upstreamFinalityRef` for the same fiscal issuance attempt
+- retry uncertain network outcomes with the same semantic request body and upstream finality reference
+- not reuse the same upstream finality reference for a semantically different fiscal issuance request
+- treat an idempotency conflict as fail-closed
 
-| Semantic item | Required use |
+### 8.3 Replay Behavior
+
+Same idempotency scope + same idempotency key + same semantic request hash:
+
+- replays the original fiscal document result
+- returns the original fiscal document id and fiscal numbering fields
+- does not allocate a new fiscal number
+- does not advance the fiscal sequence again
+
+Current runtime response code for replay is still `accepted` with HTTP `202 Accepted`; the message distinguishes replay as `Fiscal document creation replayed from idempotency record.`
+
+### 8.4 Conflict Behavior
+
+Same idempotency scope + same idempotency key + different semantic request hash:
+
+- fails closed
+- returns code `fiscal_document_idempotency_conflict`
+- returns HTTP `409 Conflict`
+- does not create a new fiscal document
+- does not allocate a new fiscal number
+- does not advance sequence state
+
+## 9. Semantic Request Hash Posture
+
+The semantic request hash is server-computed and deterministic.
+
+The current hash normalizes request content including:
+
+- Site POS Server id/ref
+- fiscal document type/status ids and type key
+- channel terminal id
+- business day date
+- Central PMS parking/payment references
+- payable basis
+- discount references
+- document links
+- document lines
+- tenders
+- tax details
+- discount privilege details
+- totals
+- reference context
+- payment finality reference
+- vendor acknowledgment reference
+
+The current hash excludes transport headers and does not rely on JSON field order supplied by the caller.
+
+Central PMS must treat semantically different fiscal issuance requests as requiring different upstream finality/idempotency identity.
+
+## 10. Fiscal Document Creation Endpoint
+
+### 10.1 Endpoint
+
+| Field | Value |
 | --- | --- |
-| `X-Correlation-Id` | Required for traceability across Central PMS, POS Server, channel/terminal, and audit flows. |
-| `Idempotency-Key` | Required for side-effecting operations, including issuance, reprint, adjustment, report/export generation, reset, recovery, and exception closure where applicable. |
-| Site context / resolved Site POS Server context | Required for fiscal operations that depend on Site-level fiscal authority. |
-| Service identity / actor identity | Required to distinguish system callers, users, operators, supervisors, fiscal admins, auditors, and recovery approvers. |
-| Channel/terminal identity | Required where fiscal issuance, presentation, cashier/session accountability, print, display, QR, or terminal status is involved. |
-| Request timestamp | Required for audit and replay analysis. Final clock authority and rollback controls remain open. |
-| Audit reference | Required in responses where a fiscal or privileged action is accepted, completed, rejected, or blocked. |
+| Method | `POST` |
+| Route | `/v1/fiscal-documents/` |
+| Current success HTTP status | `202 Accepted` |
+| Current success code | `accepted` |
+| Current conflict HTTP status | `409 Conflict` |
+| Current validation failure HTTP status | `400 Bad Request` |
+| Current persistence/configuration failure HTTP status | `503 Service Unavailable` |
 
-Exact field names beyond `X-Correlation-Id` and `Idempotency-Key` remain subject to API Contract review.
+### 10.2 Purpose
 
-### Common Behavioral Rules
+Creates a numbered fiscal document for the resolved Site POS Server after Central PMS has verified payment finality and prepared the approved payable basis.
 
-- POS Server APIs shall not issue ExitAuthorization.
-- POS Server APIs shall not declare platform payment finality.
-- Side-effecting operations shall be idempotent.
-- Responses shall distinguish accepted, completed, failed, blocked, pending, duplicate/idempotent replay, and unauthorized outcomes at semantic level.
-- All fiscal outputs shall reconcile to canonical fiscal records.
-- Printed and digital SI output shall represent the same fiscal document and fiscal facts.
-- Fiscal identity, numbering, export, X/Z scope, offline issuance, digital SI URL access, and security/RBAC open questions shall remain visible.
+The endpoint performs fiscal issuance work. It is not payment confirmation and is not exit authorization.
 
-## 7. Authentication and Authorization
+### 10.3 Central PMS Preconditions
 
-The final authentication and authorization model remains open for Security/Privacy Review and API Contract review. The contract shall support these control requirements:
+Before calling this endpoint, Central PMS shall have:
 
-- Internal service authentication for Central PMS, POS Server, and approved channel/terminal systems.
-- Separate access treatment for public/customer digital SI URL access.
-- RBAC for privileged fiscal operations.
-- Strong authorization for high-risk fiscal actions:
-  - Reprints.
-  - Void/refund/cancel/return fiscal adjustments.
-  - Fiscal identity configuration changes.
-  - X/Z close operations where required.
-  - Fiscal reset.
-  - Recovery continuity override or supervised recovery.
-  - Fiscal exports and compliance access.
-- Audit capture for privileged actions, approval decisions, denial outcomes, and configuration changes.
+- resolved the Site
+- determined the Site POS Server context
+- verified and recorded platform payment finality
+- established approved payable basis
+- completed discount validation through Central PMS / Discount workflow where statutory discount treatment applies
+- prepared fiscal facts needed by POS Server
 
-Role concepts to support at contract level:
+### 10.4 Request Body Shape
 
-- Cashier.
-- Supervisor.
-- Fiscal administrator.
-- Compliance auditor.
-- Recovery/DR approver.
-- System administrator.
-- Service caller.
-- Channel/terminal service identity.
+Current `CreateFiscalDocumentRequest` fields:
 
-Final permission matrix, auth mechanism, token format, claims model, and policy enforcement details remain open.
+| Field | Type | Required by runtime validation | Notes |
+| --- | --- | --- | --- |
+| `sitePosServerRef` | string | Yes | Local fiscal context reference; nonblank required. |
+| `fiscalDocumentTypeCodeKey` | string | Yes | Fiscal document type key; nonblank required. |
+| `payableBasis` | object | Yes | Contains approved upstream payable-basis and finality reference. |
+| `sitePosServerId` | UUID | Yes | Used for fiscal identity, policy, and idempotency scope. |
+| `channelTerminalId` | UUID/null | No | Channel/terminal reference under Site POS Server. |
+| `fiscalDocumentTypeCodeId` | UUID | Yes | Used for policy resolution and idempotency scope. |
+| `fiscalDocumentStatusCodeId` | UUID | Yes | Initial fiscal document status code. |
+| `businessDayDate` | date/null | No | Business day context. |
+| `centralPmsParkingSessionRef` | string/null | No | Central PMS reference only. |
+| `centralPmsPaymentAttemptRef` | string/null | No | Central PMS reference only. |
+| `centralPmsPaymentConfirmationRef` | string/null | No | Central PMS reference only. |
+| `upstreamFinalityRef` | string/null | Conditionally | Used as payable basis upstream finality fallback. |
+| `paymentFinalityRef` | string/null | No | Stored fiscal reference context only. |
+| `vendorAckRef` | string/null | No | Vendor acknowledgment context only. |
+| `documentLinks` | array/null | No | Fiscal document links. |
+| `documentLines` | array/null | Yes, unless `lines` used | At least one line required after alias resolution. |
+| `lines` | array/null | Yes, unless `documentLines` used | Alias supported by current runtime. |
+| `tenders` | array/null | Yes | At least one tender required. |
+| `taxDetails` | array/null | No | Tax detail facts. |
+| `discountPrivilegeDetails` | array/null | No | Fiscal discount/VAT privilege details. |
+| `totals` | array/null | No | Fiscal totals. |
+| `referenceContext` | object/null | No | Key/value reference context only. |
 
-## 8. Idempotency and Retry Model
+### 10.5 Payable Basis Object
 
-Idempotency is required to prevent duplicate fiscal documents during retries, timeouts, and network failures.
+Current `FiscalizationPayableBasisRequest` fields:
 
-### Required Semantics
+| Field | Type | Required by runtime validation | Notes |
+| --- | --- | --- | --- |
+| `payableBasisRef` | string | Yes | Approved upstream payable-basis reference. |
+| `upstreamFinalityRef` | string/null | Yes, directly or via top-level fallback | Idempotency key source after mapping. |
+| `currencyCode` | string | Yes | Three uppercase letters after normalization. |
+| `payableAmountMinorUnits` | integer | Yes | Minor units. |
+| `discountReferences` | array/null | No | Used to validate statutory discount treatment. |
+| `referenceContext` | object/null | No | Reference context only. |
 
-- Side-effecting requests shall include an `Idempotency-Key`.
-- POS Server shall detect duplicate requests for the same fiscal operation according to the final idempotency key scope.
-- A successful idempotent replay shall return the same fiscal document identity/status where safe and applicable.
-- An idempotency conflict shall be distinguishable from a retry of the same request.
-- Timeout handling shall allow Central PMS to query issuance status before retrying or authorizing exit.
-- Retry behavior shall not create duplicate fiscal documents.
-- Sequence gaps, reserved numbers, failed issuance, and abandoned issuance handling remain open for BIR/accounting confirmation and API Contract review.
+If `payableBasis.upstreamFinalityRef` is blank, the current mapper uses top-level `upstreamFinalityRef`.
 
-### Open Idempotency Decisions
+### 10.6 Fiscal Document Facts Accepted
 
-- Final idempotency key scope.
-- Duplicate issuance response behavior.
-- Handling of request payload mismatch under same idempotency key.
-- Sequence reservation timing.
-- Failed issuance and abandoned issuance representation.
-- Retention period for idempotency records.
-- Relationship to database design and event/outbox replay.
+Current runtime accepts and persists:
 
-## 9. Canonical Error Model
+- fiscal document header context
+- document status history
+- document links
+- fiscal lines
+- fiscal tenders
+- fiscal tax details
+- fiscal discount privilege details
+- fiscal totals
 
-The API shall use a canonical error envelope at semantic level. Final DTO fields and exact status codes remain pending API Contract review.
+Current runtime rejects:
 
-The error response should support:
+- missing payable basis
+- missing upstream finality reference
+- statutory discount treatment without approved discount reference
+- invalid fiscal line data
+- missing or invalid fiscal tender data
+- invalid fiscal tax detail data
+- invalid fiscal discount privilege detail data
+- invalid fiscal total data
+- raw sensitive evidence markers, credential markers, token/secret markers, card number/CVV markers, raw payment payload markers, or provider callback markers in accepted text/context fields
 
-- Business error code.
-- Human-readable message safe for operator/system use.
-- Retryable flag.
-- Correlation ID.
-- Audit reference where applicable.
-- Fiscal document reference where applicable.
-- Channel/terminal reference where applicable.
-- Recovery or exception reference where applicable.
+### 10.7 Server-Side Fiscal Identity and Policy Resolution
 
-Proposed contract error codes, pending review:
+The caller provides Site POS Server and fiscal document type context, but the runtime resolves fiscal identity and sequence policy server-side.
 
-| Proposed error code | Intended meaning |
+Current runtime behavior:
+
+- selects exactly one eligible fiscal identity for the Site POS Server
+- fails closed if no fiscal identity exists
+- fails closed if fiscal identity relationship exists but none is currently eligible/effective
+- fails closed if more than one eligible fiscal identity is found
+- selects exactly one eligible fiscal sequence policy for Site POS Server and fiscal document type
+- fails closed if no sequence policy exists
+- fails closed if sequence policy exists but none is currently eligible/effective
+- fails closed if more than one eligible fiscal sequence policy is found
+
+Current failure codes include:
+
+- `fiscal_identity_not_found`
+- `fiscal_identity_not_effective`
+- `fiscal_identity_ambiguous`
+- `fiscal_sequence_policy_not_found`
+- `fiscal_sequence_policy_not_effective`
+- `fiscal_sequence_policy_ambiguous`
+
+### 10.8 Sequence Allocation Behavior
+
+Current runtime behavior:
+
+- selects the eligible `pos.fiscal_sequence_states` row for the resolved policy
+- locks the sequence-state row with row-level locking using `FOR UPDATE`
+- computes next sequence value from the locked current sequence value
+- formats the fiscal document number using resolved policy code/prefix/suffix/padding
+- persists fiscal document number fields on `pos.fiscal_documents`
+- updates sequence state after fiscal document child facts are inserted and before commit
+- completes the idempotency record in the same transaction
+- returns fiscal number fields only after durable commit
+
+Current failure codes include:
+
+- `fiscal_sequence_state_not_found`
+- `fiscal_sequence_state_not_effective`
+- `fiscal_number_allocation_failed`
+- `fiscal_document_number_format_failed`
+
+Pre-commit rollback does not durably advance sequence state. Committed fiscal numbers must not be reused.
+
+Durable post-commit gap/recovery policy remains deferred for BIR/accounting and downstream recovery design.
+
+### 10.9 Successful Response
+
+Success and replay both currently return HTTP `202 Accepted` and code `accepted`.
+
+Successful response fields:
+
+| Field | Meaning |
 | --- | --- |
-| `POS_SERVER_UNAVAILABLE` | POS Server cannot be reached or cannot process the request. |
-| `FISCAL_ISSUANCE_FAILED` | Sales Invoice issuance failed. |
-| `FISCAL_ISSUANCE_TIMEOUT` | Issuance request timed out or completion is unknown. |
-| `FISCAL_DOCUMENT_ALREADY_ISSUED` | Fiscal document already exists for the idempotent issuance intent. |
-| `IDEMPOTENCY_CONFLICT` | Same idempotency key conflicts with different request semantics. |
-| `UNAUTHORIZED_CALLER` | Internal service, channel, terminal, or user identity is not authorized to call the API. |
-| `FISCAL_ACTION_NOT_AUTHORIZED` | User, role, service, or approval context is not authorized for the requested fiscal action. |
-| `INVALID_SITE_POS_SERVER` | Request targets or resolves to an invalid Site POS Server. |
-| `FISCAL_IDENTITY_NOT_CONFIGURED` | Required fiscal identity is missing or inactive. |
-| `NUMBERING_POLICY_NOT_CONFIGURED` | Required fiscal numbering policy is missing or inactive. |
-| `DIGITAL_SI_URL_UNAVAILABLE` | Digital SI URL cannot be generated or retrieved. |
-| `DIGITAL_SI_ACCESS_DENIED` | Digital SI access request is denied. |
-| `REPORT_GENERATION_FAILED` | Report generation failed. |
-| `EXPORT_GENERATION_FAILED` | Export generation failed. |
-| `EXPORT_VALIDATION_FAILED` | Structured fiscal export validation failed against an approved schema or validation profile. |
-| `RESET_REQUIRES_APPROVAL` | Fiscal reset request requires approval. |
-| `RECOVERY_CONTINUITY_FAILED` | Recovery continuity check failed. |
-| `OFFLINE_FISCAL_ISSUANCE_NOT_ALLOWED` | Offline fiscal issuance is not approved for the requested operation. |
-
-## 10. Fiscal Issuance API Family
-
-Provisional route family: `/v1/pos/fiscal-issuance/*`
-
-This family covers Sales Invoice issuance requested by Central PMS after verified payment finality.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Issue Sales Invoice | Central PMS requests SI issuance for a resolved Site after verified payment finality. | Provisional |
-| Get issuance status | Central PMS checks the state of an issuance request after timeout, retry, or pending exception. | Provisional |
-| Retry issuance | Central PMS or controlled retry workflow requests retry without duplicate fiscal document creation. | Provisional |
-
-### Request Semantics
-
-The issuance request shall include or reference:
-
-- Resolved Site POS Server context.
-- Central PMS payment finality reference.
-- Parking session reference.
-- Payment confirmation reference.
-- Channel/terminal identity where applicable.
-- Customer/buyer context where applicable and approved.
-- Fiscal lines or fiscal line basis.
-- Entitlement/VAT privilege context where applicable.
-- Presentation preference/capability context for printed/digital/QR output.
-- `X-Correlation-Id`.
-- `Idempotency-Key`.
-- Service identity and actor identity where applicable.
-
-Exact DTO fields remain pending API Contract review.
-
-### Validation Semantics
-
-Before issuing a Sales Invoice, POS Server shall validate:
-
-- Resolved Site and Site POS Server match.
-- Request is scoped to the correct Site POS Server.
-- Central PMS payment finality context is present and acceptable.
-- Channel/terminal registration is valid where applicable.
-- Channel/terminal is active or allowed for the requested operating mode.
-- Fiscal identity is configured and active.
-- Numbering policy is configured and available.
-- Fiscal line basis is present and eligible.
-- Entitlement/VAT privilege context is acceptable where applicable.
-- Digital SI delivery configuration is valid where digital delivery is requested.
-- No recovery, reset, fiscal lock, or continuity block prevents issuance.
-
-If validation fails:
-
-- POS Server shall return a blocked or failed semantic response.
-- Response shall identify the validation area at business/error-code level.
-- POS Server shall not issue the Sales Invoice.
-- Central PMS shall not issue ExitAuthorization on a failed or blocked fiscal issuance response.
-
-Final DTO fields for validation failures remain pending API Contract review.
-
-### Response Semantics
-
-Successful issuance response shall return:
-
-- Fiscal document identity.
-- Fiscal document type: Sales Invoice.
-- Issuance status.
-- Sales Invoice number or confirmed fiscal identity reference according to final numbering policy.
-- Site POS Server identity.
-- Digital SI URL where digital delivery is enabled.
-- Presentation metadata where applicable.
-- Audit reference.
-- Correlation ID.
-
-Failure or pending response shall return:
-
-- Status indicating failed, retry pending, pending recovery, blocked, or unknown/timeout state.
-- Business error code where applicable.
-- Retryable flag.
-- Exception or recovery reference where applicable.
-- Audit reference where applicable.
-
-### Authority Rules
-
-- POS Server shall not issue ExitAuthorization.
-- Central PMS records the returned fiscal reference and then issues ExitAuthorization.
-- If fiscal issuance fails or times out, Central PMS shall not issue ExitAuthorization until controlled handling is completed.
-
-## 11. Fiscal Document API Family
-
-Provisional route family: `/v1/pos/fiscal-documents/*`
-
-This family covers fiscal document lookup, status, and document-level references.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Get fiscal document status | Retrieve fiscal document state and references. | Provisional |
-| Get Sales Invoice presentation references | Retrieve print/digital presentation references for the same issued SI. | Provisional |
-| Get original document linkage | Retrieve original document references for reprint or adjustment workflows. | Provisional |
-
-### Contract Semantics
-
-The Fiscal Document API shall support:
-
-- Sales Invoice identity/status.
-- Printed/digital consistency.
-- Original fiscal document reference.
-- Adjustment document linkage.
-- Reprint status and audit visibility.
-- Digital SI URL status where applicable.
-- Canonical fiscal document state for reconciliation.
-
-The API shall not allow fiscal document mutation except through approved side-effecting families such as reprint, adjustment, reset/recovery, or fiscal identity configuration where applicable.
-
-## 12. Digital SI URL and Presentation API Family
-
-Provisional route family: `/v1/pos/digital-si/*`
-
-This family covers digital SI URL retrieval, access status, and channel/terminal receipt of the POS Server-returned digital SI URL.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Get digital SI URL | Retrieve or return the POS Server-issued digital SI URL for an issued SI. | Provisional |
-| Get digital SI access status | Determine whether URL is active, expired, revoked, or blocked. | Provisional |
-| Get digital SI presentation status | Provide status needed by trusted services/channels to present the issued digital SI URL according to approved policy. | Provisional |
-| Register digital SI re-access | Record repeated digital access where audit policy requires it. | Provisional |
-
-### Contract Semantics
-
-- POS Server returns digital SI URL where digital delivery is enabled.
-- POS Server returns only the digital Sales Invoice URL for QR presentation.
-- POS Server does not generate the QR image as a required API responsibility.
-- Digital SI URL points to the same issued SI as the printed SI.
-- Digital SI URL shall not allow unauthorized modification of the SI.
-- Digital SI URL shall not expose unnecessary sensitive data.
-- URL access policy, expiry policy, authentication/access model, and audit treatment remain open for Security/Privacy Review and API Contract review.
-- Customer-facing digital SI URL access is a separate trust boundary from internal POS Server digital SI and presentation APIs.
-- Internal APIs may return the digital SI URL and digital SI status to trusted services, channels, or terminals.
-- Customer-facing access must follow the approved public/customer access model, expiry policy, authentication/access policy, privacy rules, and audit treatment.
-- Channels/terminals may receive the digital SI URL.
-- QR presentation is a channel/terminal display or print capability.
-- QR presentation is not APM-only.
-- QR presentation does not make the terminal/channel the fiscal issuer.
-- The channel or terminal converts the POS Server-returned URL into a QR code where QR presentation is supported.
-- QR generation, display, and printing are channel/terminal presentation responsibilities.
-- Site POS Server remains the fiscal issuer.
-- APM, Cashier POS, EC Device / Continuity Terminal, operator-assisted terminals, and future channels may support QR presentation where approved.
-
-Channel/terminal QR image rendering implementation details are channel/terminal implementation concerns. The API Contract shall not create a POS Server QR generation API as a required responsibility.
-
-## 13. Channel and Terminal Registry API Family
-
-Provisional route family: `/v1/pos/channels/*`
-
-This family covers channel/terminal registration, status, capability, and audit.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Register channel/terminal | Register a channel or terminal under a Site POS Server. | Provisional |
-| Update channel/terminal status | Set active, inactive, degraded, continuity, ONLINE/OFFLINE, or equivalent reachability/health state. | Provisional |
-| Get channel/terminal status | Retrieve identity, Site association, capabilities, and state. | Provisional |
-| List channels/terminals for Site POS Server | Support operational lookup and configuration review. | Provisional |
-
-### Contract Semantics
-
-Registry contract shall support:
-
-- Resolved Site association.
-- Channel/terminal type.
-- Channel/terminal identity.
-- Presentation capability flags:
-  - Print support.
-  - Display support.
-  - Digital SI URL support.
-  - QR presentation support.
-- Fiscal identity reference where applicable.
-- Cashier/session support where applicable.
-- Active/inactive/degraded/continuity state.
-- ONLINE/OFFLINE or equivalent reachability/health state where applicable.
-- POS Server administrative/status APIs should support ONLINE/OFFLINE status where required.
-- Channel/terminal status APIs should support ONLINE/OFFLINE or equivalent reachability/health state where applicable.
-- ONLINE/OFFLINE is operational and observability information.
-- ONLINE/OFFLINE does not approve offline fiscal issuance.
-- Offline fiscal issuance remains disabled/restricted unless BIR/accounting approves a compliant sequence, counter, evidence, reconciliation, and recovery model.
-- Audit of changes.
-
-Final registry field model remains open for POS Server API Contract and Database Design.
-
-## 14. Fiscal Identity Configuration API Family
-
-Provisional route family: `/v1/pos/fiscal-identity/*`
-
-This family covers fiscal identity configuration and status. It must be privileged and auditable.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Configure fiscal identity | Configure taxpayer/Site/branch/POS Server/channel/terminal fiscal identity metadata. | Provisional |
-| Get fiscal identity status | Retrieve active/inactive/missing fiscal identity state. | Provisional |
-| Validate fiscal identity readiness | Determine whether issuance/reporting can proceed for a Site POS Server or terminal/channel. | Provisional |
-
-### Contract Semantics
-
-Fiscal identity contract shall support:
-
-- Taxpayer / registered business name.
-- Registered address.
-- TIN and VAT/non-VAT classification.
-- Site or branch/location identity.
-- Site POS Server fiscal identity.
-- Terminal/channel identity where applicable.
-- MIN.
-- PTU or ATG details if applicable.
-- Serial number.
-- Terminal number.
-- Software name and version.
-- Supplier accreditation metadata.
-- Required BIR footer text.
-- Required non-input-tax warning where applicable.
-- Status and effective dates.
-
-The contract shall not decide final MIN/PTU/serial/software/supplier assignment between Site POS Server and channels/terminals. That remains open for BIR/accounting and accreditation confirmation.
-
-## 15. Reprint API Family
-
-Provisional route family: `/v1/pos/reprints/*`
-
-This family covers controlled reprints for Sales Invoice, X-read, Z-read, and Electronic Journal outputs where applicable.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Request reprint | Request a controlled reprint for an issued fiscal document or report output. | Provisional |
-| Get reprint status | Retrieve reprint request status and audit reference. | Provisional |
-| Get reprint history | Retrieve authorized reprint history for a document. | Provisional |
-
-### Contract Semantics
-
-Reprint contract shall support:
-
-- Original document, report, or fiscal output linkage.
-- Reprint type, including Sales Invoice, X-read, Z-read, or Electronic Journal where applicable.
-- Reprint reason.
-- Requesting actor/service identity.
-- Authorization and approval where required.
-- Reprint timestamp.
-- Reprint status/history.
-- Reprint label/audit behavior.
-- Audit reference.
-- No mutation of original fiscal document facts.
-- No mutation of original report or Electronic Journal facts.
-- Relationship to repeated digital access where required.
-
-Where BIR requires it, reprinted fiscal outputs shall show `REPRINT` and `DATE / TIME REPRINTED` at the bottom of the reprinted output. POS Server shall preserve or return enough reprint metadata/status for the renderer, channel, or terminal to apply required labels and timestamps. Exact output layout and repeated digital access audit rules remain open for BIR/accounting and security/privacy confirmation.
-
-## 16. Fiscal Adjustment API Family
-
-Provisional route family: `/v1/pos/adjustments/*`
-
-This family covers void, refund, cancel, return, and related fiscal adjustment document workflows.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Request fiscal adjustment | Request void/refund/cancel/return fiscal adjustment linked to an original document. | Provisional |
-| Get adjustment status | Retrieve adjustment request/document status. | Provisional |
-| Link payment reversal context | Associate Central PMS/provider refund or reversal context where applicable. | Provisional |
-
-### Contract Semantics
-
-Fiscal adjustment contract shall support:
-
-- Adjustment type concept: void, refund, cancel, return, or other confirmed fiscal adjustment.
-- Original fiscal document linkage.
-- Adjustment document identity/status.
-- Reason code.
-- Requesting actor/service identity.
-- Approval where required.
-- Payment refund/reversal reference where applicable.
-- Reconciliation reference.
-- Audit reference.
-
-POS Server owns fiscal adjustment documents. Central PMS/payment provider owns payment refund/reversal finality.
-
-Workflow sequencing remains open for POS Server API Contract, finance/compliance, and payment architecture confirmation.
-
-## 17. X-read and Z-read API Family
-
-Provisional route family: `/v1/pos/reports/xz/*`
-
-This family covers X-read and Z-read generation, status, and export semantics.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Request X-read | Generate X-read for approved scope. | Provisional |
-| Request Z-read | Generate Z-read and close applicable fiscal day/scope. | Provisional |
-| Get X/Z status | Retrieve report generation state and references. | Provisional |
-| Export X/Z report | Retrieve report output in confirmed format. | Provisional |
-
-### Contract Semantics
-
-- X-read shall be producible for BIR/accounting-approved operational scopes.
-- Potential scopes include Site POS Server, terminal/channel, cashier/session, or combined scope.
-- Z-read shall close the applicable fiscal day for approved fiscal scope.
-- Z-read advances Z-counter.
-- Z-read does not advance reset counter.
-- X/Z reports shall reconcile to canonical fiscal records, SI sequence, counters, GTA, EJ, POSLog, BIR Sales Summary, and audit records as applicable.
-
-Final X/Z scope and aggregation model remains open for BIR/accounting confirmation.
-
-## 18. BIR Sales Summary and Annex E Report API Family
-
-Provisional route family: `/v1/pos/reports/bir/*`
-
-This family covers BIR Sales Summary and Annex E report request/status/export.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Request BIR Sales Summary | Generate BIR Sales Summary for approved period/scope. | Provisional |
-| Request Annex E report | Generate Annex E-1 to E-5 report structures where applicable. | Provisional |
-| Get report status | Retrieve report generation status. | Provisional |
-| Export report | Retrieve report output in confirmed format. | Provisional |
-
-### Contract Semantics
-
-Report contract shall support:
-
-- BIR Sales Summary as a first-class required report.
-- Annex E-1 to E-5 support.
-- Senior Citizen and PWD immediate workflows.
-- NAAC and Solo Parent future-supported categories.
-- Diplomat VAT Privilege / VAT Exemption as active VAT privilege/exemption category.
-- VATable, VAT-exempt, zero-rated, non-VAT, statutory discount, VAT privilege/exemption, coupon, penalty, lost ticket, overstay, service charge, and adjustment classifications where applicable.
-- Reconciliation to canonical fiscal records.
-- BIR Sales Summary / Annex E-1 minimum content semantics:
-  - Report Date.
-  - Beginning SI Number.
-  - Ending SI Number.
-  - Previous Grand Total.
-  - Present Grand Total.
-  - Sales for the Day.
-  - Gross Sales.
-  - Net Sales.
-  - VATable Sales.
-  - VAT Amount.
-  - VAT Exempt Sales.
-  - Zero-Rated Sales.
-  - Discounts.
-  - Voids.
-  - Returns.
-  - Reset Counter.
-  - Z Counter.
-- Supported output/export mode semantics for BIR Sales Summary should include Print, PDF, and JSON.
-
-Exact Diplomat reporting treatment, mandatory formats, and final layouts remain open for BIR/accounting/accreditation confirmation.
-
-## 19. EJ, POSLog, and Export API Family
-
-Provisional route families:
-
-- `/v1/pos/exports/*`
-- `/v1/pos/reports/exports/*`
-
-This family covers EJ export, POSLog export, fiscal exports, report exports, and export status.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Request EJ export | Generate EJ export for approved period/scope. | Provisional |
-| Request POSLog export | Generate POSLog export in confirmed format. | Provisional |
-| Request fiscal export | Generate approved fiscal export package. | Provisional |
-| Get export status | Retrieve export generation state and output reference. | Provisional |
-| Get export validation status | Retrieve structured export validation state and audit reference where applicable. | Provisional |
-| Retrieve export | Retrieve export output according to authorization and retention policy. | Provisional |
-
-### Contract Semantics
-
-- EJ, POSLog, reports, exports, audit records, printed SI, and digital SI shall reconcile to canonical fiscal records.
-- Export generation shall be auditable.
-- Export access shall be authorized and auditable.
-- Final mandatory formats remain open.
-- Candidate formats may include text replica, PDF or equivalent human-readable export, JSON or equivalent structured export, POSLog, ARTS POSLog 6.x-aligned export where practical and accepted by BIR/accreditation requirements, BIR Sales Summary, and Annex E report exports.
-- ARTS POSLog is a structured export/schema interoperability reference.
-- ARTS POSLog does not replace Philippine BIR fiscal document/report requirements.
-- ExitPass shall preserve Sales Invoice, SI, and Sales Invoice Number terminology.
-- ExitPass shall preserve BIR-required outputs such as Sales Invoice, X-read, Z-read, EJ, POSLog, and BIR Sales Summary.
-- Local/BIR-specific fields may be represented as local extensions or mapped fields where needed.
-- Candidate local/BIR extension or mapping concepts include Sales Invoice Number, Ticket Number / Plate Number, Site / branch / business unit identity, channel / terminal / workstation identity, Business Day Date, MIN, PTU, Serial Number, supplier/accreditation metadata, Reset Counter, Z Counter, Grand Total Amount, Digital SI URL, parking session timestamps and duration, and fiscal audit references.
-- JSON fiscal and audit records should remain complete even when printed outputs are simplified.
-- JSON and POSLog exports should be schema-versioned.
-- JSON and POSLog exports should support validation against approved BIR/ARTS-aligned schemas where applicable.
-- Export validation success, failure, and pending states shall be auditable and visible to operational/support workflows.
-
-Final ARTS POSLog profile, schema mapping, JSON schema versioning strategy, validation job implementation, storage model, packaging format, export formats, and retention/access rules remain open for BIR/accounting, compliance, security/privacy, Database Design, and Engineering Pack confirmation.
-
-## 20. Fiscal Reset and Recovery API Family
-
-Provisional route family: `/v1/pos/recovery/*`
-
-This family covers fiscal reset request/approval/status, recovery continuity check/status, and supervised recovery workflow.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Request fiscal reset | Request a fiscal reset event. | Provisional |
-| Approve fiscal reset | Supervisor/fiscal admin approval workflow where required. | Provisional |
-| Get reset status | Retrieve reset request/completion status and audit reference. | Provisional |
-| Run recovery continuity check | Check counters, GTA, SI sequence, EJ hash, and last event timestamp continuity. | Provisional |
-| Request supervised recovery | Initiate controlled recovery where continuity cannot be proven. | Provisional |
-| Get recovery status | Retrieve recovery state and audit reference. | Provisional |
-
-### Contract Semantics
-
-Fiscal reset contract shall support:
-
-- Previous Grand Total Amount.
-- Previous reset counter.
-- Reset timestamp.
-- Reset reason.
-- Approving user.
-- Recovery/reference notes.
-- Audit reference.
-
-Recovery contract shall enforce:
-
-- No resume from lower fiscal counter.
-- No resume from lower Grand Total Amount.
-- No resume from lower Z-counter.
-- No resume from earlier Sales Invoice sequence.
-- No resume from broken EJ hash continuity.
-- No resume from earlier last fiscal event timestamp.
-- Supervised recovery and recovery audit record when continuity cannot be proven.
-
-Offline fiscal issuance remains disabled or restricted by default until BIR/accounting approves a compliant model.
-
-## 21. Exception and Retry Status API Family
-
-Provisional route family: `/v1/pos/exceptions/*`
-
-This family covers fiscal issuance failure/timeout, controlled retry, exception status, and controlled closure.
-
-### Candidate Operations
-
-| Candidate operation | Contract purpose | Status |
-| --- | --- | --- |
-| Create fiscal issuance exception | Record controlled exception when SI issuance fails or times out. | Provisional |
-| Get exception/retry status | Retrieve pending, retrying, failed, closed, or recovery-blocked status. | Provisional |
-| Request retry | Trigger controlled retry without duplicate fiscal document creation. | Provisional |
-| Close exception | Close with successful SI issuance or controlled exception closure. | Provisional |
-
-### Contract Semantics
-
-- Payment finality is not automatically reversed.
-- Central PMS shall not issue ExitAuthorization while fiscal issuance remains failed, timed out, or pending unless controlled exception policy allows release.
-- Manual release, if allowed by policy, requires supervisor approval, incident tag, and reconciliation tag.
-- POS Server still shall not issue ExitAuthorization.
-- Exception closure shall be auditable.
-
-## 22. Audit and Event API Impact
-
-This contract identifies audit/event impact but does not define final event schemas.
-
-Events or audit records may be needed for:
-
-- SI issuance requested.
-- SI issued.
-- SI issuance failed/timed out.
-- Digital SI URL created.
-- Digital SI accessed where required.
-- Reprint requested/completed/failed.
-- Adjustment requested/issued/rejected.
-- X-read generated.
-- Z-read generated.
-- BIR Summary generated.
-- Annex E generated.
-- EJ/POSLog/export generated.
-- Structured export validation pending/passed/failed.
-- POS Server ONLINE/OFFLINE status changed where required.
-- Channel/terminal ONLINE/OFFLINE or equivalent health status changed where applicable.
-- Fiscal reset requested/approved/completed.
-- Terminal/channel registered/updated.
-- Fiscal identity changed.
-- Recovery continuity check passed/failed.
-- Supervised recovery approved/completed.
-- Fiscal exception opened/retried/closed.
-
-POS/fiscal events are audit, integration, and observability signals. POS/fiscal event publication does not grant payment finality, does not issue or imply ExitAuthorization, and must not be treated by consumers as payment or exit authority.
-
-Final event names, payloads, outbox ownership, replay behavior, delivery guarantees, and retention remain open for API Contract Pack and Engineering Pack.
-
-## 23. WebPay Integration Contract
-
-WebPay shall route fiscal issuance through Central PMS and the resolved Site POS Server.
-
-WebPay contract responsibilities:
-
-- Must not declare platform payment finality.
-- Must not issue ExitAuthorization.
-- Must not act as an independent POS system.
-- May display/provide access to issued SI after POS Server issuance.
-- May support digital SI URL presentation.
-- Must preserve Central PMS payment finality and ExitAuthorization authority.
-
-Open:
-
-- WebPay fiscal terminal identity without physical printer or hardware serial.
-- WebPay receipt of the digital SI URL.
-- Public/customer SI URL access model.
-
-## 24. APM Integration Contract
-
-APM shall be modeled as a child terminal/channel under the Site POS Server.
-
-APM contract responsibilities:
-
-- Route fiscal issuance to resolved Site POS Server through approved flow.
-- Present or print POS Server-issued SI according to approved printing model.
-- Convert the POS Server-returned digital SI URL into a QR code and display or print that QR code where supported.
-- Preserve Central PMS payment finality and ExitAuthorization authority.
-- Not become independent fiscal authority for the Site.
-- Not issue ExitAuthorization.
-- Not bypass Central PMS.
-
-Open:
-
-- Whether APM prints POS Server-issued payload or requires another approved printing arrangement.
-- APM hardware serial/fiscal identity assignment.
-
-## 25. Cashier POS Integration Contract
-
-Cashier POS shall be modeled as a child terminal/channel under the Site POS Server.
-
-Cashier POS contract responsibilities:
-
-- Use Site POS Server fiscal APIs for issuance presentation where applicable.
-- Preserve cashier/session accountability.
-- Support controlled reprint and adjustment requests only for authorized roles.
-- Present printed SI where applicable.
-- Present digital SI URL and perform channel-side QR generation/display/print where supported.
-- Display fiscal status and exception messaging.
-- Not independently declare payment finality outside Central PMS authority.
-- Not issue ExitAuthorization.
-
-Open:
-
-- Cashier/session context contract.
-- Role/permission matrix for cashier, supervisor, and fiscal administrator actions.
-
-## 26. EC Device / Continuity Terminal Integration Contract
-
-EC Device / Continuity Terminal shall use the same Site POS Server fiscal authority when activated.
-
-EC/continuity contract responsibilities:
-
-- Register as a child terminal/channel under Site POS Server.
-- Preserve Central PMS payment finality and ExitAuthorization authority.
-- Support digital SI URL presentation and channel-side QR generation/display/print where approved.
-- Preserve fiscal sequence and counter continuity.
-- Not create offline fiscal documents unless a BIR/accounting-approved model defines sequence, counter, evidence, reconciliation, and recovery controls.
-
-Open:
-
-- Offline fiscal issuance allowance, if any.
-- Continuity sequence/counter model.
-- Evidence and reconciliation controls.
-- Continuity presentation contract.
-
-## 27. Operator-assisted Integration Contract
-
-Operator-assisted payment, if allowed, shall route fiscal issuance through the resolved Site POS Server.
-
-Operator-assisted contract responsibilities:
-
-- Preserve operator identity.
-- Preserve Site context.
-- Preserve reason/context where required.
-- Support SI presentation, digital SI URL presentation, and operator-terminal QR generation/display/print where supported.
-- Preserve Central PMS payment finality and ExitAuthorization authority.
-- Not allow operator to declare platform payment finality outside Central PMS authority.
-- Not allow operator to issue ExitAuthorization through POS Server.
-
-Open:
-
-- Operator terminal presentation rules.
-- Whether QR presentation is mandatory for assisted channels.
-- Manual release policy integration after fiscal issuance failure.
-
-## 28. Future Channel Contract Pattern
-
-Future payment channels shall follow the same Site POS Server pattern.
-
-Future channel contract requirements:
-
-- Register as child channel/terminal under Site POS Server.
-- Provide or reference resolved Site context through Central PMS authority.
-- Preserve Central PMS payment finality and ExitAuthorization authority.
-- Route fiscal issuance through the resolved Site POS Server.
-- Receive fiscal document identity/status and digital SI URL where applicable.
-- Convert the POS Server-returned digital SI URL into a QR code where channel capability and policy allow.
-- Not become an independent POS system for the Site.
-
-Future channels shall not require a new fiscal authority model unless approved by BRD/System Design governance.
-
-## 29. Status Model
-
-This section defines proposed status taxonomy at planning-contract level. Final status values remain pending API Contract review and future Database Design alignment.
-
-| Status concept | Intended use |
+| `succeeded` | `true` for created or replayed fiscal document result. |
+| `code` | Current value `accepted`. |
+| `message` | Creation or replay message. |
+| `fiscalDocumentId` | POS Server fiscal document id. |
+| `fiscalIdentityId` | Resolved fiscal identity id. |
+| `fiscalSequencePolicyId` | Resolved fiscal sequence policy id. |
+| `fiscalSequenceValue` | Allocated sequence value. |
+| `fiscalDocumentNumber` | Formatted Sales Invoice/fiscal document number. |
+| `fiscalSeries` | Fiscal series/policy code used for numbering. |
+| `fiscalNumberPrefixText` | Prefix used at assignment time. |
+| `fiscalNumberSuffixText` | Suffix used at assignment time. |
+| `fiscalNumberAssignedAt` | Assignment timestamp from database context. |
+| `fiscalNumberAssignedByRef` | Current runtime value such as `pos-server:system`. |
+
+### 10.10 Error Response Codes
+
+Current create failure codes include:
+
+| Code | HTTP status |
 | --- | --- |
-| Fiscal issuance requested | Issuance request accepted or recorded. |
-| Issued | Fiscal document successfully issued. |
-| Failed | Operation failed and requires handling. |
-| Timed out | Caller did not receive a completion response within the expected window. This is not successful issuance. |
-| Completion unknown | Caller cannot safely determine whether issuance completed and must query status before retrying or authorizing exit. This is not successful issuance. |
-| Retry pending | Controlled retry is queued or expected. |
-| Pending recovery | Operation blocked by recovery/continuity state. |
-| Blocked | Operation cannot proceed due to policy, configuration, authorization, or fiscal state. |
-| Cancelled | Request cancelled according to allowed workflow. |
-| Duplicate / idempotent replay | Duplicate request recognized under idempotency model. |
-| Reprint requested | Reprint request accepted or recorded. |
-| Reprint completed | Reprint completed and audited. |
-| Reprint failed | Reprint request failed or was blocked and requires handling. |
-| Adjustment requested | Adjustment request accepted or recorded. |
-| Adjustment issued | Adjustment fiscal document issued. |
-| Adjustment rejected | Adjustment request rejected. |
-| Report requested | Report generation requested. |
-| Report generated | Report generated successfully. |
-| Report failed | Report generation failed. |
-| Export requested | Export requested. |
-| Export generated | Export generated successfully. |
-| Export failed | Export generation failed. |
-| Export validation pending | Structured export validation is queued or in progress. |
-| Export validation passed | Structured export validation passed against the approved validation profile. |
-| Export validation failed | Structured export validation failed and requires operational/support handling. |
-| Reset requested | Fiscal reset requested. |
-| Reset approved | Fiscal reset approved. |
-| Reset completed | Fiscal reset completed. |
-| Reset rejected | Fiscal reset rejected. |
-| Recovery check passed | Fiscal continuity check passed. |
-| Recovery check failed | Fiscal continuity check failed. |
-| Digital SI URL active | Digital SI URL is currently accessible according to policy. |
-| Digital SI URL expired | Digital SI URL has expired according to policy. |
-| Digital SI URL revoked | Digital SI URL has been revoked or blocked according to policy. |
-| POS Server online | POS Server is reachable/healthy according to approved operational status rules. |
-| POS Server offline | POS Server is unreachable/unhealthy according to approved operational status rules. This does not approve offline fiscal issuance. |
-| Channel/terminal online | Channel or terminal is reachable/healthy according to approved operational status rules. |
-| Channel/terminal offline | Channel or terminal is unreachable/unhealthy according to approved operational status rules. This does not approve offline fiscal issuance. |
+| `missing_payable_basis` | `400` |
+| `missing_upstream_finality_reference` | `400` |
+| `unapproved_discount_reference` | `400` |
+| `sensitive_evidence_payload_not_allowed` | `400` |
+| `unsupported_fiscal_document_request` | `400` |
+| `missing_fiscal_tender` | `400` |
+| `invalid_fiscal_tender` | `400` |
+| `sensitive_tender_payload_not_allowed` | `400` |
+| `invalid_fiscal_tax_detail` | `400` |
+| `sensitive_tax_detail_payload_not_allowed` | `400` |
+| `invalid_fiscal_discount_privilege_detail` | `400` |
+| `sensitive_discount_privilege_payload_not_allowed` | `400` |
+| `invalid_fiscal_total` | `400` |
+| `sensitive_total_payload_not_allowed` | `400` |
+| `fiscal_document_idempotency_conflict` | `409` |
+| `fiscal_identity_not_found` | `400` |
+| `fiscal_identity_ambiguous` | `400` |
+| `fiscal_identity_not_effective` | `400` |
+| `fiscal_sequence_policy_not_found` | `400` |
+| `fiscal_sequence_policy_ambiguous` | `400` |
+| `fiscal_sequence_policy_not_effective` | `400` |
+| `fiscal_sequence_state_not_found` | `400` |
+| `fiscal_sequence_state_not_effective` | `400` |
+| `fiscal_number_allocation_failed` | `400` |
+| `fiscal_document_number_format_failed` | `400` |
+| `persistence_not_configured` | `503` |
+| `invalid_persistence_configuration` | `503` |
+| `persistence_write_failed` | `503` |
 
-Timeout and completion-unknown states must not be treated as successful fiscal issuance. Central PMS shall not issue ExitAuthorization based only on timed-out or completion-unknown status. Idempotent status lookup and retry semantics must prevent duplicate Sales Invoice issuance.
+### 10.11 What This Endpoint Does Not Do
 
-## 30. Open Questions
+`POST /v1/fiscal-documents/` does not:
 
-| ID | Open question | Owner / dependency |
+- declare payment finality
+- verify payment provider outcome
+- approve statutory entitlement
+- mutate Central PMS payable basis
+- issue `ExitAuthorization`
+- open gates
+- activate continuity
+- approve manual release
+- generate Digital SI URL
+- render printable Sales Invoice output
+- generate QR code
+- generate X-read or Z-read
+- generate BIR Sales Summary or Annex E reports
+- generate Electronic Journal records at runtime
+- generate POSLog/export output at runtime
+- process reprints
+- process void/refund/cancel/return fiscal adjustments
+- execute reset counter, Z-counter, Grand Total Amount, failover, or recovery workflows
+
+## 11. Fiscal Document Read Endpoint
+
+### 11.1 Endpoint
+
+| Field | Value |
+| --- | --- |
+| Method | `GET` |
+| Route | `/v1/fiscal-documents/{fiscalDocumentId}` |
+| Success HTTP status | `200 OK` |
+| Not found HTTP status | `404 Not Found` |
+| Persistence/configuration failure HTTP status | `503 Service Unavailable` |
+
+### 11.2 Path Parameter
+
+| Parameter | Type | Notes |
 | --- | --- | --- |
-| API-OQ-001 | Final endpoint route family naming. | Architecture/API owners |
-| API-OQ-002 | Request/response DTO boundaries and shared metadata conventions. | Architecture/API owners |
-| API-OQ-003 | Idempotency key scope for Sales Invoice issuance. | Architecture, Central PMS owners, BIR/accounting |
-| API-OQ-004 | Duplicate issuance handling. | Architecture/API owners |
-| API-OQ-005 | Sequence-gap, reserved-number, failed-issuance, and abandoned-issuance behavior. | BIR/accounting, architecture |
-| API-OQ-006 | Digital SI URL token/access model. | Security/privacy, architecture |
-| API-OQ-007 | Digital SI URL expiry policy. | Security/privacy, compliance |
-| API-OQ-008 | Public/customer SI URL authentication/access model. | Security/privacy, compliance |
-| API-OQ-009 | Digital SI URL access and re-access audit treatment. | Security/privacy, compliance |
-| API-OQ-010 | WebPay fiscal terminal identity. | BIR/accounting, architecture |
-| API-OQ-011 | APM printing model. | BIR/accounting, APM vendor, architecture |
-| API-OQ-012 | Terminal/channel registry fields. | Architecture, database design, security |
-| API-OQ-013 | Fiscal identity fields and change authorization. | BIR/accounting, security, compliance |
-| API-OQ-014 | X-read and Z-read scope. | BIR/accounting, finance, operations |
-| API-OQ-015 | Exact report/export formats and layouts. | BIR/accounting, compliance |
-| API-OQ-016 | Exact ARTS POSLog profile and schema mapping. | BIR/accreditation, architecture, database design, Engineering Pack |
-| API-OQ-017 | Exact JSON schema versioning strategy. | Architecture, database design, Engineering Pack |
-| API-OQ-018 | Exact accreditation sample package. | BIR/accreditation, compliance |
-| API-OQ-019 | Fiscal adjustment workflow sequencing. | Payments, finance, compliance, architecture |
-| API-OQ-020 | Refund/reversal relationship with Central PMS/provider. | Payments, finance, architecture |
-| API-OQ-021 | Recovery continuity API. | Architecture, security, operations, database design |
-| API-OQ-022 | Offline fiscal issuance approval and restriction representation, if any. | BIR/accounting, architecture, operations |
-| API-OQ-023 | Audit/event publication contracts. | Architecture, Engineering Pack, security |
-| API-OQ-024 | Canonical error/status model finalization. | Architecture/API owners |
-| API-OQ-025 | Security/RBAC model for high-risk APIs. | Security/privacy, compliance, operations |
-| API-OQ-026 | MIN/PTU/serial/software/supplier assignment. | BIR/accounting, compliance, architecture |
-| API-OQ-027 | VAT/tax treatment by Site, taxpayer, transaction type, entitlement, and line item. | BIR/accounting, finance |
-| API-OQ-028 | Diplomat VAT treatment, evidence, reporting, and retention. | BIR/accounting, security/privacy, compliance |
+| `fiscalDocumentId` | UUID | POS Server fiscal document id. |
 
-## 31. Risks and Mitigations
+### 11.3 Successful Response
 
-| Risk | Impact | Mitigation |
-| --- | --- | --- |
-| API contract grants ExitAuthorization authority to POS Server | Core authority violation. | Keep ExitAuthorization outside all POS Server route families. |
-| POS Server API declares payment finality | Central PMS authority violation. | Treat payment finality as Central PMS context only. |
-| Weak idempotency | Duplicate SI or inconsistent fiscal reference. | Require `Idempotency-Key` for side-effecting operations and define retry semantics. |
-| Sequence gaps handled incorrectly | BIR/accreditation or audit failure. | Keep sequence-gap behavior open for BIR/accounting and API review. |
-| Digital SI URL overexposes data | Privacy/security breach. | Keep public/customer access model separate and subject to Security/Privacy Review. |
-| QR presentation becomes APM-only | Future channels diverge from platform model. | Treat QR as channel/terminal capability. |
-| APM printing model conflicts with Site POS Server authority | Split fiscal authority or failed certification. | Keep POS Server as issuer and resolve APM print behavior with BIR/vendor confirmation. |
-| Offline issuance is implied by continuity APIs | Duplicate/skipped fiscal sequences. | Keep offline issuance disabled/restricted until approved. |
-| Adjustment API owns refund finality | Payment authority confusion. | Keep Central PMS/provider as refund/reversal finality authority. |
-| Database details leak into API contract too early | Overcoupled design. | Define contract semantics without tables/columns/migrations. |
-| Export format is finalized prematurely | Compliance mismatch. | Keep export formats open until BIR/accounting confirmation. |
+Current `document` fields include:
 
-## 32. Appendices
+- `fiscalDocumentId`
+- `sitePosServerId`
+- `channelTerminalId`
+- `fiscalIdentityId`
+- `fiscalDocumentTypeCodeId`
+- `fiscalDocumentStatusCodeId`
+- `fiscalSequencePolicyId`
+- `fiscalSequenceValue`
+- `fiscalDocumentNumber`
+- `fiscalSeries`
+- `fiscalNumberPrefixText`
+- `fiscalNumberSuffixText`
+- `fiscalNumberAssignedAt`
+- `fiscalNumberAssignedByRef`
+- `centralPmsParkingSessionRef`
+- `centralPmsPaymentAttemptRef`
+- `centralPmsPaymentConfirmationRef`
+- `paymentFinalityRef`
+- `vendorAckRef`
+- `businessDayDate`
+- `documentContextJson`
+- `isActive`
+- `createdAt`
+- `updatedAt`
+- `statusHistory`
+- `documentLinks`
+- `lines`
+- `tenders`
+- `taxDetails`
+- `discountPrivilegeDetails`
+- `totals`
 
-### Appendix A: Provisional Route Family Summary
+### 11.4 GET Meaning
 
-| Route family | Purpose | Status |
-| --- | --- | --- |
-| `/v1/pos/fiscal-issuance/*` | Sales Invoice issuance and issuance status. | Provisional |
-| `/v1/pos/fiscal-documents/*` | Fiscal document lookup/status and document references. | Provisional |
-| `/v1/pos/digital-si/*` | Digital SI URL and access status for channel/customer presentation. | Provisional |
-| `/v1/pos/channels/*` | Channel/terminal registration and status. | Provisional |
-| `/v1/pos/fiscal-identity/*` | Fiscal identity configuration and readiness. | Provisional |
-| `/v1/pos/reprints/*` | Reprint request/status/history. | Provisional |
-| `/v1/pos/adjustments/*` | Void/refund/cancel/return fiscal adjustment workflows. | Provisional |
-| `/v1/pos/reports/*` | X/Z, BIR Summary, Annex E, and report status/export. | Provisional |
-| `/v1/pos/exports/*` | EJ, POSLog, fiscal export, and export retrieval. | Provisional |
-| `/v1/pos/recovery/*` | Fiscal reset, continuity check, and supervised recovery. | Provisional |
-| `/v1/pos/exceptions/*` | Fiscal exception/retry status and controlled closure. | Provisional |
+`GET` returns POS Server persisted fiscal document facts and numbering fields.
 
-### Appendix B: Acronyms
+`GET` does not:
+
+- create payment finality
+- prove provider settlement
+- record Central PMS fiscal reference
+- issue `ExitAuthorization`
+- authorize gate opening
+- approve statutory entitlement
+- approve manual release
+- activate continuity
+
+Central PMS should use `GET` as fiscal document readback/reconciliation support, not as payment authority.
+
+## 12. Fiscal Numbering Fields
+
+Current runtime create response and read model expose:
+
+| Field | Current behavior |
+| --- | --- |
+| `fiscalIdentityId` | Resolved server-side from active Site POS Server fiscal identity relationship. |
+| `fiscalSequencePolicyId` | Resolved server-side from active Site POS Server/document type policy. |
+| `fiscalSequenceValue` | Allocated server-side from locked sequence state. |
+| `fiscalDocumentNumber` | Formatted server-side from policy prefix, sequence value, and suffix. |
+| `fiscalSeries` | Current policy code copied at assignment time. |
+| `fiscalNumberPrefixText` | Policy prefix copied at assignment time. |
+| `fiscalNumberSuffixText` | Policy suffix copied at assignment time. |
+| `fiscalNumberAssignedAt` | Database timestamp used during allocation. |
+| `fiscalNumberAssignedByRef` | Current runtime assignment actor reference, e.g. `pos-server:system`. |
+
+Central PMS may depend on these fields being present in successful current create responses and persisted GET readbacks when runtime fiscal issuance succeeds.
+
+## 13. Central PMS Integration Contract
+
+Central PMS shall:
+
+- call `POST /v1/fiscal-documents/` only after verified platform payment finality
+- provide approved payable-basis reference and upstream finality reference
+- provide Central PMS payment/session references as reference values only
+- preserve the returned fiscal document id and fiscal numbering fields as fiscal issuance evidence
+- record the fiscal issuance reference in Central PMS
+- withhold normal `ExitAuthorization` until fiscal issuance succeeds and Central PMS records the fiscal reference, unless a separately approved manual/exception policy applies
+- retry uncertain network outcomes using the same upstream finality reference and same semantic request body
+- treat `409` idempotency conflict as fail-closed and investigate
+
+Central PMS must not treat POS Server response as:
+
+- provider payment confirmation
+- platform payment finality creation
+- exit authorization
+- gate instruction
+- discount entitlement approval
+- continuity activation
+- manual release approval
+
+## 14. Payment Channel and Terminal Posture
+
+Payment channels and terminals are not independent POS systems.
+
+Supported v1.3 terminology:
+
+- WebPay
+- APM
+- Cashier-Assisted Terminal
+- Continuity Terminal
+- operator-assisted payment if later approved
+- future channels
+
+Channels/terminals may display, print, or present fiscal information only according to approved downstream design. They do not issue fiscal documents independently.
+
+## 15. Deferred API Surface
+
+The following are not currently runtime-supported API contracts and must not be treated as implemented:
+
+- Digital SI URL creation
+- printable Sales Invoice rendering
+- QR generation/presentation contract
+- X-read
+- Z-read
+- BIR Sales Summary / Annex E-1
+- Annex E-2 to E-5
+- Electronic Journal runtime generation
+- POSLog generation/export
+- fiscal export packaging
+- reprints
+- void/refund/cancel/return fiscal adjustment APIs
+- reset counter runtime mechanics
+- Z-counter runtime mechanics
+- Grand Total Amount runtime mechanics
+- fiscal recovery/failover runtime behavior
+- statutory discount entitlement validation
+- payment finality ownership
+- `ExitAuthorization`
+- gate opening
+- continuity activation
+- manual release approval
+- Operator Console fiscal mutation
+- Management Dashboard fiscal mutation
+
+Future API design may define placeholders for these areas, but this v1.0 runtime-aligned contract does not create endpoint contracts for them.
+
+## 16. Open Questions and Deferred Decisions
+
+| ID | Open question / deferred decision |
+| --- | --- |
+| API-OQ-001 | Final service authentication and authorization model. |
+| API-OQ-002 | Whether a future external `Idempotency-Key` header should be added or whether upstream finality reference remains the canonical key. |
+| API-OQ-003 | Exact response distinction between newly created and replayed fiscal document results. Runtime currently uses code `accepted` for both and differentiates by message. |
+| API-OQ-004 | Final durable post-commit sequence gap, recovery, and audit policy. |
+| API-OQ-005 | Final timeout, unknown completion, and retry status endpoint behavior. |
+| API-OQ-006 | Central PMS fiscal reference recording callback or reconciliation endpoint, if any. |
+| API-OQ-007 | Digital SI URL API and access security model. |
+| API-OQ-008 | Printable Sales Invoice render/download API. |
+| API-OQ-009 | X-read, Z-read, BIR Sales Summary, Annex E, EJ, POSLog, export, reprint, adjustment, reset, and recovery API contracts. |
+| API-OQ-010 | Final error envelope standard across all POS Server APIs. |
+| API-OQ-011 | Final API versioning and backward compatibility policy. |
+
+## 17. Alignment Notes Against Current Runtime
+
+Confirmed current runtime behavior:
+
+- `POST /v1/fiscal-documents/` exists.
+- `GET /v1/fiscal-documents/{fiscalDocumentId}` exists.
+- POST creates fiscal document header and child fiscal facts transactionally.
+- POST computes deterministic semantic request hash server-side.
+- POST uses idempotency scope/key derived from Site POS Server id, fiscal document type id, and upstream finality reference.
+- POST inserts or locks `pos.idempotency_records`.
+- Same key/same hash replays original fiscal document result.
+- Same key/different hash fails as `fiscal_document_idempotency_conflict` with HTTP `409`.
+- POST resolves fiscal identity server-side.
+- POST resolves fiscal sequence policy server-side.
+- POST locks selected `pos.fiscal_sequence_states` row with `FOR UPDATE`.
+- POST allocates fiscal sequence value.
+- POST formats and persists fiscal document number fields.
+- POST response includes fiscal numbering fields after durable commit.
+- GET returns persisted fiscal numbering fields.
+- POS Server does not declare payment finality.
+- POS Server does not issue `ExitAuthorization`.
+- POS Server does not open gates.
+- POS Server does not approve entitlement.
+- POS Server does not activate continuity.
+- POS Server does not approve manual release.
+
+Runtime-specific caveat:
+
+- Current POST success and replay both return code `accepted` and HTTP `202 Accepted`; replay is differentiated by message, not a distinct response code.
+
+## 18. Requirements Traceability Summary
+
+| Requirement area | Current contract section |
+| --- | --- |
+| Authority boundary | Sections 4, 13, 14 |
+| Implemented endpoints | Sections 2, 10, 11 |
+| Idempotency | Sections 8, 9, 10 |
+| Sequence allocation | Sections 10, 12 |
+| Fiscal identity/policy resolution | Section 10 |
+| Central PMS integration | Section 13 |
+| Deferred API features | Section 15 |
+| Open questions | Section 16 |
+
+## Appendix A: Acronyms
 
 | Acronym | Meaning |
 | --- | --- |
+| API | Application Programming Interface |
 | APM | AutoPay Machine |
 | BIR | Bureau of Internal Revenue |
-| BRD | Business Requirements Document |
-| DR | Disaster Recovery |
-| EC | Emergency/Exception/Continuity, pending final product terminology |
 | EJ | Electronic Journal |
-| GTA | Grand Total Amount |
-| MIN | Machine Identification Number |
-| PMS | Parking Management System |
 | POS | Point of Sale |
-| PTU | Permit to Use |
-| QR | Quick Response code |
-| RBAC | Role-Based Access Control |
 | SI | Sales Invoice |
-| VAT | Value-Added Tax |
+| UUID | Universally Unique Identifier |
 
-### Appendix C: Non-Decisions
+## Appendix B: Current Runtime Files Used
 
-This draft does not decide:
-
-- Final endpoint paths.
-- Final DTO schemas.
-- Final database tables, columns, indexes, constraints, or migrations.
-- Final event schemas or outbox design.
-- Final idempotency persistence model.
-- Final fiscal numbering pattern.
-- Final sequence-gap handling.
-- Final digital SI URL token/access/expiry/authentication model.
-- Final channel/terminal QR rendering implementation details.
-- Final MIN/PTU/serial/software/supplier assignment.
-- Final WebPay fiscal identity.
-- Final APM printing model.
-- Final X/Z scope.
-- Final report/export formats.
-- Final security/RBAC matrix.
-- Offline fiscal issuance approval.
+- `src/ExitPass.PosServer.Api/FiscalDocuments/FiscalDocumentEndpointRouteBuilderExtensions.cs`
+- `src/ExitPass.PosServer.Api/FiscalDocuments/FiscalDocumentCreationEndpoint.cs`
+- `src/ExitPass.PosServer.Api/FiscalDocuments/FiscalDocumentReadEndpoint.cs`
+- `src/ExitPass.PosServer.Api/FiscalDocuments/CreateFiscalDocumentRequest.cs`
+- `src/ExitPass.PosServer.Api/FiscalDocuments/CreateFiscalDocumentResponse.cs`
+- `src/ExitPass.PosServer.Api/FiscalDocuments/GetFiscalDocumentResponse.cs`
+- `src/ExitPass.PosServer.Runtime/FiscalDocuments/FiscalDocumentCreationService.cs`
+- `src/ExitPass.PosServer.Runtime/FiscalDocuments/FiscalIssuanceIdempotencyResolver.cs`
+- `src/ExitPass.PosServer.Runtime/FiscalDocuments/FiscalDocumentSemanticRequestHasher.cs`
+- `src/ExitPass.PosServer.Runtime/FiscalDocuments/FiscalDocumentDraft.cs`
+- `src/ExitPass.PosServer.Runtime/FiscalDocuments/IFiscalDocumentRepository.cs`
+- `src/ExitPass.PosServer.Persistence.Postgres/FiscalDocuments/PostgresFiscalDocumentRepository.cs`
+- `src/ExitPass.PosServer.Persistence.Postgres/FiscalDocuments/PostgresFiscalDocumentSql.cs`
+- `src/ExitPass.PosServer.Persistence.Postgres/FiscalDocuments/PostgresFiscalDocumentReader.cs`
+- `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Issuance_Idempotency_Slice.md`
+- `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Policy_Identity_Resolution_Slice.md`
+- `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Sequence_Allocation_Slice.md`
