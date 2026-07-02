@@ -359,6 +359,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
+    builder.Services.AddSingleton<IExitAuthorizationFiscalGatingShadowEvaluator, ExitAuthorizationFiscalGatingShadowEvaluator>();
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRepository>(_ =>

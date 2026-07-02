@@ -182,7 +182,7 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
     }
 
     [Fact]
-    public void IssueExitAuthorizationHandler_DoesNotDependOnFiscalGatingEvaluatorYet()
+    public void IssueExitAuthorizationHandler_UsesOnlyShadowFiscalGatingAbstraction()
     {
         var constructorParameters = typeof(IssueExitAuthorizationHandler)
             .GetConstructors()
@@ -190,9 +190,47 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
             .Select(parameter => parameter.ParameterType)
             .ToArray();
 
-        constructorParameters.Should().NotContain(typeof(FiscalIssuanceGatingEvaluation));
-        constructorParameters.Should().NotContain(typeof(FiscalIssuanceGatingEvaluationContext));
+        constructorParameters.Should().Contain(typeof(IExitAuthorizationFiscalGatingShadowEvaluator));
         constructorParameters.Should().NotContain(typeof(IFiscalIssuanceReferenceRepository));
+        constructorParameters.Should().NotContain(typeof(IPosServerFiscalDocumentClient));
+    }
+
+    [Fact]
+    public async Task ShadowEvaluator_WhenFiscalReferenceIsReady_ReturnsEvaluatedReady()
+    {
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator();
+
+        var result = await sut.EvaluateAsync(
+            ShadowContext(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded)),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.EvaluatedReady);
+        result.IsReadyForNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ShadowEvaluator_WhenFiscalReferenceIsBlocked_ReturnsEvaluatedBlockedReason()
+    {
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator();
+
+        var result = await sut.EvaluateAsync(
+            ShadowContext(MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown)),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked);
+        result.BlockedReason.Should().Be("fiscal_issuance_unknown");
+        result.RequiresManualReview.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ShadowEvaluator_WhenFiscalReferenceIsMissing_ReturnsNotEvaluatedMissingContext()
+    {
+        var sut = new ExitAuthorizationFiscalGatingShadowEvaluator();
+
+        var result = await sut.EvaluateAsync(ShadowContext(null), CancellationToken.None);
+
+        result.Status.Should().Be(FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext);
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
     }
 
     private static FiscalIssuanceGatingEvaluation Evaluate(
@@ -267,4 +305,13 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
             FirstRecordedAt: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
             LastUpdatedAt: DateTimeOffset.Parse("2026-07-02T10:30:02+08:00"),
             RecordedByServiceIdentityId: Guid.NewGuid());
+
+    private static ExitAuthorizationFiscalGatingShadowContext ShadowContext(
+        FiscalIssuanceReferenceRecord? reference) =>
+        new(
+            ParkingSessionId: Guid.NewGuid(),
+            PaymentAttemptId: Guid.NewGuid(),
+            CorrelationId: Guid.NewGuid(),
+            IsPaymentFinalityVerified: true,
+            FiscalReference: reference);
 }

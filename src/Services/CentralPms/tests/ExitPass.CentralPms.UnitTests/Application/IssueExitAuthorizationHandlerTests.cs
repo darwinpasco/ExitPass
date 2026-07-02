@@ -1,6 +1,9 @@
+using System.Diagnostics;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -133,6 +136,121 @@ public sealed class IssueExitAuthorizationHandlerTests
         Assert.Equal("ISSUED", result.AuthorizationStatus);
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalContextIsMissing_StillIssuesAndRecordsShadowDiagnostic()
+    {
+        using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+
+        ConfigureGatewaySuccess(now);
+
+        var sut = CreateSut();
+
+        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+
+        var activity = Assert.Single(
+            listener.StoppedActivities,
+            x => x.OperationName == "IssueExitAuthorization" &&
+                HasTag(
+                    x,
+                    "fiscal_gating_shadow.status",
+                    FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext));
+        AssertTag(
+            activity,
+            "fiscal_gating_shadow.status",
+            FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenShadowFiscalGatingIsBlocked_StillIssuesAuthorization()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+
+        var shadowEvaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+        shadowEvaluator
+            .EvaluateAsync(Arg.Any<ExitAuthorizationFiscalGatingShadowContext>(), Arg.Any<CancellationToken>())
+            .Returns(FiscalGatingShadowEvaluation.FromGatingEvaluation(new FiscalIssuanceGatingEvaluation(
+                IsReadyForNormalExitAuthorization: false,
+                BlockedReason: "fiscal_issuance_unknown",
+                State: FiscalIssuanceIntegrationState.FiscalIssuanceUnknown,
+                RequiresManualReview: true,
+                IsExceptionReleaseOnly: false)));
+
+        var sut = CreateSut(shadowEvaluator);
+
+        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        await shadowEvaluator.Received(1).EvaluateAsync(
+            Arg.Is<ExitAuthorizationFiscalGatingShadowContext>(context =>
+                context.PaymentAttemptId == ValidCommand().PaymentAttemptId &&
+                context.FiscalReference == null &&
+                context.IsPaymentFinalityVerified),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenShadowFiscalGatingIsReady_StillReturnsExistingAuthorizationResult()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+
+        var shadowEvaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+        shadowEvaluator
+            .EvaluateAsync(Arg.Any<ExitAuthorizationFiscalGatingShadowContext>(), Arg.Any<CancellationToken>())
+            .Returns(FiscalGatingShadowEvaluation.FromGatingEvaluation(new FiscalIssuanceGatingEvaluation(
+                IsReadyForNormalExitAuthorization: true,
+                BlockedReason: null,
+                State: FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+                RequiresManualReview: false,
+                IsExceptionReleaseOnly: false)));
+
+        var sut = CreateSut(shadowEvaluator);
+
+        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("AUTH-TOKEN-001", result.AuthorizationToken);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenShadowFiscalGatingFails_StillIssuesAuthorization()
+    {
+        using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+
+        var shadowEvaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+        shadowEvaluator
+            .EvaluateAsync(Arg.Any<ExitAuthorizationFiscalGatingShadowContext>(), Arg.Any<CancellationToken>())
+            .Returns<Task<FiscalGatingShadowEvaluation>>(_ => throw new InvalidOperationException("shadow unavailable"));
+
+        var sut = CreateSut(shadowEvaluator);
+
+        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+
+        var activity = Assert.Single(
+            listener.StoppedActivities,
+            x => x.OperationName == "IssueExitAuthorization" &&
+                HasTag(
+                    x,
+                    "fiscal_gating_shadow.status",
+                    FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking));
+        AssertTag(
+            activity,
+            "fiscal_gating_shadow.status",
+            FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking);
+    }
+
     /// <summary>
     /// Verifies that an empty parking session identifier is rejected before DB execution.
     /// </summary>
@@ -217,13 +335,88 @@ public sealed class IssueExitAuthorizationHandlerTests
     /// Creates the system under test with no-op logging and shared metrics dependencies.
     /// </summary>
     /// <returns>A configured <see cref="IssueExitAuthorizationHandler"/> instance.</returns>
-    private IssueExitAuthorizationHandler CreateSut()
+    private IssueExitAuthorizationHandler CreateSut(
+        IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null)
     {
         return new IssueExitAuthorizationHandler(
             _gateway,
             _eventPublisher,
             _systemClock,
             _metrics,
-            NullLogger<IssueExitAuthorizationHandler>.Instance);
+            NullLogger<IssueExitAuthorizationHandler>.Instance,
+            fiscalGatingShadowEvaluator);
+    }
+
+    private void ConfigureGatewaySuccess(DateTimeOffset now)
+    {
+        _gateway.IssueAsync(Arg.Any<IssueExitAuthorizationDbRequest>(), Arg.Any<CancellationToken>())
+            .Returns(new IssueExitAuthorizationDbResult(
+                ExitAuthorizationId: Guid.NewGuid(),
+                ParkingSessionId: ValidCommand().ParkingSessionId,
+                PaymentAttemptId: ValidCommand().PaymentAttemptId,
+                AuthorizationToken: "AUTH-TOKEN-001",
+                AuthorizationStatus: "ISSUED",
+                IssuedAt: now,
+                ExpirationTimestamp: now.AddMinutes(15)));
+    }
+
+    private static IssueExitAuthorizationCommand ValidCommand() =>
+        new(
+            ParkingSessionId: Guid.Parse("10000000-0000-0000-0000-000000000001"),
+            PaymentAttemptId: Guid.Parse("10000000-0000-0000-0000-000000000002"),
+            RequestedByUserId: Guid.Parse("10000000-0000-0000-0000-000000000003"),
+            CorrelationId: Guid.Parse("10000000-0000-0000-0000-000000000004"));
+
+    private static void AssertTag(Activity activity, string key, object expected)
+    {
+        Assert.Equal(expected.ToString(), activity.TagObjects.Single(x => x.Key == key).Value?.ToString());
+    }
+
+    private static bool HasTag(Activity activity, string key, object expected)
+    {
+        return activity.TagObjects.Any(x => x.Key == key && x.Value?.ToString() == expected.ToString());
+    }
+
+    private sealed class ActivityCapture : IDisposable
+    {
+        private readonly ActivityListener _listener;
+        private readonly object _sync = new();
+        private readonly List<Activity> _stoppedActivities = new();
+
+        public ActivityCapture(string sourceName)
+        {
+            _listener = new ActivityListener
+            {
+                ShouldListenTo = source => source.Name == sourceName,
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+                ActivityStopped = Capture
+            };
+
+            ActivitySource.AddActivityListener(_listener);
+        }
+
+        public IReadOnlyCollection<Activity> StoppedActivities
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _stoppedActivities.ToArray();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            _listener.Dispose();
+        }
+
+        private void Capture(Activity activity)
+        {
+            lock (_sync)
+            {
+                _stoppedActivities.Add(activity);
+            }
+        }
     }
 }

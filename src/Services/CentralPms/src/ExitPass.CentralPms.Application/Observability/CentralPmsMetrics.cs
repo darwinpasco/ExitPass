@@ -20,6 +20,7 @@ public sealed class CentralPmsMetrics : IDisposable
     private readonly Counter<long> _paymentConfirmationsRecordedTotal;
     private readonly Counter<long> _exitAuthorizationsIssuedTotal;
     private readonly Counter<long> _exitAuthorizationIssuanceFailuresTotal;
+    private readonly Counter<long> _exitAuthorizationFiscalGatingShadowEvaluationsTotal;
     private readonly Counter<long> _exitAuthorizationConsumeOutcomesTotal;
     private readonly Counter<long> _durableEventPersistenceTotal;
     private readonly Counter<long> _exceptionsTotal;
@@ -65,6 +66,11 @@ public sealed class CentralPmsMetrics : IDisposable
             name: "exitpass_exit_authorization_issuance_failures_total",
             unit: "{failure}",
             description: "Total ExitAuthorization issuance failures observed by Central PMS.");
+
+        _exitAuthorizationFiscalGatingShadowEvaluationsTotal = _meter.CreateCounter<long>(
+            name: "exitpass_exit_authorization_fiscal_gating_shadow_evaluations_total",
+            unit: "{evaluation}",
+            description: "Total non-enforcing fiscal gating shadow evaluations observed during ExitAuthorization issuance.");
 
         _exitAuthorizationConsumeOutcomesTotal = _meter.CreateCounter<long>(
             name: "exitpass_exit_authorization_consume_outcomes_total",
@@ -152,6 +158,17 @@ public sealed class CentralPmsMetrics : IDisposable
         _exitAuthorizationIssuanceFailuresTotal.Add(
             1,
             new KeyValuePair<string, object?>("failure_reason", Normalize(failureReason)));
+    }
+
+    /// <summary>
+    /// Records a non-enforcing fiscal gating shadow evaluation observed during ExitAuthorization issuance.
+    /// </summary>
+    public void ExitAuthorizationFiscalGatingShadowEvaluated(string status, string blockedReason = "")
+    {
+        _exitAuthorizationFiscalGatingShadowEvaluationsTotal.Add(
+            1,
+            new KeyValuePair<string, object?>("status", Normalize(status)),
+            new KeyValuePair<string, object?>("blocked_reason", Normalize(blockedReason)));
     }
 
     /// <summary>
