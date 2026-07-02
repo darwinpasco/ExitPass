@@ -55,6 +55,7 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
             decision: ResolveDecision(
                 evaluation.IsReadyForNormalExitAuthorization,
                 evaluation.BlockedReason,
+                evaluation.State,
                 evaluation.RequiresManualReview,
                 evaluation.IsExceptionReleaseOnly,
                 isNotRequiredByPolicyPosture: false),
@@ -92,6 +93,7 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
         return ResolveDecision(
             readiness.WouldAllowNormalExitAuthorization,
             readiness.BlockedReason,
+            readiness.State,
             readiness.RequiresManualReview,
             readiness.IsExceptionReleaseOnly,
             isNotRequiredByPolicyPosture);
@@ -100,6 +102,7 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
     private static string ResolveDecision(
         bool wouldAllowNormalExitAuthorization,
         string? blockedReason,
+        FiscalIssuanceIntegrationState? evidenceState,
         bool requiresManualReview,
         bool isExceptionReleaseOnly,
         bool isNotRequiredByPolicyPosture)
@@ -116,7 +119,8 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
                 : FiscalIssuanceExitAuthorizationEnforcementDecisions.Block;
         }
 
-        if (requiresManualReview)
+        if (requiresManualReview &&
+            evidenceState == FiscalIssuanceIntegrationState.FiscalIssuanceManualReview)
         {
             return FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired;
         }

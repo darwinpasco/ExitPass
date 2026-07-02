@@ -416,11 +416,11 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
     [Theory]
     [InlineData(FiscalIssuanceIntegrationState.PendingFiscalIssuance, "fiscal_issuance_pending", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceRequested, "fiscal_issuance_requested", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
-    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceConflict, "fiscal_issuance_conflict", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
-    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest, "fiscal_issuance_failed_request", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
-    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, "fiscal_issuance_failed_configuration", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
-    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, "fiscal_issuance_failed_service", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
-    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown, "fiscal_issuance_unknown", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceConflict, "fiscal_issuance_conflict", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest, "fiscal_issuance_failed_request", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, "fiscal_issuance_failed_configuration", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, "fiscal_issuance_failed_service", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown, "fiscal_issuance_unknown", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview, "fiscal_issuance_manual_review", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
     public void EnforcementDecision_WhenStateIsNotEligible_WouldBlock(
         FiscalIssuanceIntegrationState state,
