@@ -11,6 +11,7 @@
 | Output format | Markdown only |
 | Runtime baseline inspected | `D:\SourceCodes\ExitPass-PoSServer` on branch `dev` |
 | Primary implementation scope | Fiscal document create/read API |
+| Latest runtime slice reflected | `runtime/fiscal-issuance-response-status-hardening` merged to `dev` |
 
 ## 2. Purpose and Scope
 
@@ -123,7 +124,11 @@ Current `CreateFiscalDocumentResponse` shape:
   "code": "accepted",
   "message": "Fiscal document creation accepted for persistence.",
   "fiscalDocumentId": "00000000-0000-0000-0000-000000000000",
+  "resultClassification": "newly_created",
+  "fiscalIssuanceEvidenceStatus": "fiscal_document_number_assigned",
+  "fiscalNumberAssignmentState": "assigned",
   "fiscalIdentityId": "00000000-0000-0000-0000-000000000000",
+  "fiscalDocumentStatusCodeId": "00000000-0000-0000-0000-000000000000",
   "fiscalSequencePolicyId": "00000000-0000-0000-0000-000000000000",
   "fiscalSequenceValue": 1,
   "fiscalDocumentNumber": "SI-00000001",
@@ -131,7 +136,8 @@ Current `CreateFiscalDocumentResponse` shape:
   "fiscalNumberPrefixText": "SI-",
   "fiscalNumberSuffixText": null,
   "fiscalNumberAssignedAt": "2026-07-01T00:00:00Z",
-  "fiscalNumberAssignedByRef": "pos-server:system"
+  "fiscalNumberAssignedByRef": "pos-server:system",
+  "errorPosture": null
 }
 ```
 
@@ -148,7 +154,10 @@ Current `GetFiscalDocumentResponse` shape:
   "message": "Fiscal document found.",
   "document": {
     "fiscalDocumentId": "00000000-0000-0000-0000-000000000000"
-  }
+  },
+  "fiscalIssuanceEvidenceStatus": "fiscal_document_number_assigned",
+  "fiscalNumberAssignmentState": "assigned",
+  "fiscalDocumentStatusCodeId": "00000000-0000-0000-0000-000000000000"
 }
 ```
 
@@ -186,7 +195,17 @@ Same idempotency scope + same idempotency key + same semantic request hash:
 - does not allocate a new fiscal number
 - does not advance the fiscal sequence again
 
-Current runtime response code for replay is still `accepted` with HTTP `202 Accepted`; the message distinguishes replay as `Fiscal document creation replayed from idempotency record.`
+Current runtime response code for replay is still `accepted` with HTTP `202 Accepted`, but replay is explicitly classified by `resultClassification = idempotent_replay`.
+
+After the response/status hardening slice, replay is also explicitly identified by:
+
+- `resultClassification = idempotent_replay`
+- original `fiscalDocumentId`
+- original fiscal identity and fiscal numbering fields
+- `fiscalIssuanceEvidenceStatus = fiscal_document_number_assigned`
+- `fiscalNumberAssignmentState = assigned`
+
+Replay must not allocate another fiscal number or advance sequence state.
 
 ### 8.4 Conflict Behavior
 
@@ -378,6 +397,22 @@ Durable post-commit gap/recovery policy remains deferred for BIR/accounting and 
 
 Success and replay both currently return HTTP `202 Accepted` and code `accepted`.
 
+First-time successful creation returns:
+
+- `resultClassification = newly_created`
+- `fiscalIssuanceEvidenceStatus = fiscal_document_number_assigned`
+- `fiscalNumberAssignmentState = assigned`
+
+Duplicate same-key/same-hash replay returns:
+
+- `resultClassification = idempotent_replay`
+- original `fiscalDocumentId`
+- original fiscal identity and fiscal numbering fields
+- `fiscalIssuanceEvidenceStatus = fiscal_document_number_assigned`
+- `fiscalNumberAssignmentState = assigned`
+
+Replay does not allocate a new fiscal number and does not advance sequence state.
+
 Successful response fields:
 
 | Field | Meaning |
@@ -386,7 +421,11 @@ Successful response fields:
 | `code` | Current value `accepted`. |
 | `message` | Creation or replay message. |
 | `fiscalDocumentId` | POS Server fiscal document id. |
+| `resultClassification` | `newly_created` for first-time creation; `idempotent_replay` for same-key/same-hash replay. |
+| `fiscalIssuanceEvidenceStatus` | Current success value `fiscal_document_number_assigned`. |
+| `fiscalNumberAssignmentState` | Current success/replay value `assigned`. |
 | `fiscalIdentityId` | Resolved fiscal identity id. |
+| `fiscalDocumentStatusCodeId` | Fiscal document status code id persisted on the document. |
 | `fiscalSequencePolicyId` | Resolved fiscal sequence policy id. |
 | `fiscalSequenceValue` | Allocated sequence value. |
 | `fiscalDocumentNumber` | Formatted Sales Invoice/fiscal document number. |
@@ -395,8 +434,28 @@ Successful response fields:
 | `fiscalNumberSuffixText` | Suffix used at assignment time. |
 | `fiscalNumberAssignedAt` | Assignment timestamp from database context. |
 | `fiscalNumberAssignedByRef` | Current runtime value such as `pos-server:system`. |
+| `errorPosture` | Null/absent for success; populated on supported failure responses. |
 
-### 10.10 Error Response Codes
+### 10.10 Fiscal Numbering Completeness Fail-Closed Behavior
+
+If runtime persistence reports success but the API mapper cannot verify complete fiscal numbering evidence, the API fails closed instead of returning a misleading success.
+
+Current fail-closed response:
+
+| Field | Current behavior |
+| --- | --- |
+| `succeeded` | `false` |
+| `code` | `fiscal_number_assignment_incomplete` |
+| HTTP status | `503 Service Unavailable` |
+| `resultClassification` | `newly_created` or `idempotent_replay`, based on the underlying result. |
+| `fiscalDocumentId` | Included if available from the underlying result. |
+| `fiscalNumberAssignmentState` | `not_assigned` |
+| `fiscalDocumentStatusCodeId` | Included if available from the underlying result. |
+| `errorPosture` | `retry_after_service_recovery` |
+
+Central PMS must not record fiscal issuance evidence from `fiscal_number_assignment_incomplete`.
+
+### 10.11 Error Response Codes
 
 Current create failure codes include:
 
@@ -427,11 +486,24 @@ Current create failure codes include:
 | `fiscal_sequence_state_not_effective` | `400` |
 | `fiscal_number_allocation_failed` | `400` |
 | `fiscal_document_number_format_failed` | `400` |
+| `fiscal_number_assignment_incomplete` | `503` |
 | `persistence_not_configured` | `503` |
 | `invalid_persistence_configuration` | `503` |
 | `persistence_write_failed` | `503` |
 
-### 10.11 What This Endpoint Does Not Do
+### 10.12 Error Posture
+
+Current create failures include conservative `errorPosture` values where useful.
+
+| `errorPosture` | Central PMS interpretation |
+| --- | --- |
+| `do_not_retry_without_request_change` | Request is semantically invalid, conflicting, unsupported, or unsafe. Central PMS must correct the request or investigate before retry. |
+| `retry_after_configuration_correction` | Fiscal configuration/state is missing, ambiguous, inactive, unsafe, or not effective. Operator/configuration correction is required before retry. |
+| `retry_after_service_recovery` | Persistence, service configuration, availability, or fiscal numbering completeness problem. Retry only after service recovery or operational investigation. |
+
+Central PMS retry automation is not finalized in this API Contract. The later Central PMS to POS Server integration contract shall define retry timing, escalation, and reconciliation behavior.
+
+### 10.13 What This Endpoint Does Not Do
 
 `POST /v1/fiscal-documents/` does not:
 
@@ -508,6 +580,14 @@ Current `document` fields include:
 - `discountPrivilegeDetails`
 - `totals`
 
+The top-level GET response now also derives/exposes:
+
+| Field | Current behavior |
+| --- | --- |
+| `fiscalIssuanceEvidenceStatus` | `fiscal_document_number_assigned` when the persisted read model has complete fiscal numbering evidence; otherwise null. |
+| `fiscalNumberAssignmentState` | `assigned` when complete fiscal numbering evidence is present; otherwise `not_assigned`. |
+| `fiscalDocumentStatusCodeId` | Copied from the persisted read model when available. |
+
 ### 11.4 GET Meaning
 
 `GET` returns POS Server persisted fiscal document facts and numbering fields.
@@ -531,7 +611,11 @@ Current runtime create response and read model expose:
 
 | Field | Current behavior |
 | --- | --- |
+| `resultClassification` | Create response classification: `newly_created` or `idempotent_replay`. Not a GET read-model field. |
+| `fiscalIssuanceEvidenceStatus` | `fiscal_document_number_assigned` only when complete fiscal numbering evidence is present. |
+| `fiscalNumberAssignmentState` | `assigned` or `not_assigned`, based on numbering completeness. |
 | `fiscalIdentityId` | Resolved server-side from active Site POS Server fiscal identity relationship. |
+| `fiscalDocumentStatusCodeId` | Fiscal document status code id persisted on the document. |
 | `fiscalSequencePolicyId` | Resolved server-side from active Site POS Server/document type policy. |
 | `fiscalSequenceValue` | Allocated server-side from locked sequence state. |
 | `fiscalDocumentNumber` | Formatted server-side from policy prefix, sequence value, and suffix. |
@@ -541,7 +625,21 @@ Current runtime create response and read model expose:
 | `fiscalNumberAssignedAt` | Database timestamp used during allocation. |
 | `fiscalNumberAssignedByRef` | Current runtime assignment actor reference, e.g. `pos-server:system`. |
 
-Central PMS may depend on these fields being present in successful current create responses and persisted GET readbacks when runtime fiscal issuance succeeds.
+Central PMS may depend on `fiscalIssuanceEvidenceStatus = fiscal_document_number_assigned` only as POS Server fiscal issuance evidence. It means POS Server created or replayed a persisted numbered fiscal document record and returned fiscal document identity and number fields that Central PMS may record as fiscal issuance reference evidence.
+
+It does not mean:
+
+- payment finality
+- `ExitAuthorization`
+- gate permission
+- entitlement approval
+- manual release approval
+- continuity activation
+- BIR report finality
+- X/Z finality
+- Annex E finality
+- Digital SI issuance
+- recovery completion
 
 ## 13. Central PMS Integration Contract
 
@@ -551,6 +649,7 @@ Central PMS shall:
 - provide approved payable-basis reference and upstream finality reference
 - provide Central PMS payment/session references as reference values only
 - preserve the returned fiscal document id and fiscal numbering fields as fiscal issuance evidence
+- treat `fiscalIssuanceEvidenceStatus = fiscal_document_number_assigned` as POS Server fiscal issuance evidence only
 - record the fiscal issuance reference in Central PMS
 - withhold normal `ExitAuthorization` until fiscal issuance succeeds and Central PMS records the fiscal reference, unless a separately approved manual/exception policy applies
 - retry uncertain network outcomes using the same upstream finality reference and same semantic request body
@@ -614,11 +713,14 @@ Future API design may define placeholders for these areas, but this v1.0 runtime
 
 ## 16. Open Questions and Deferred Decisions
 
+Resolved prior open item:
+
+- Replay is now explicitly identified by `resultClassification = idempotent_replay`; first-time creation uses `resultClassification = newly_created`. Both still use HTTP `202 Accepted` and code `accepted`.
+
 | ID | Open question / deferred decision |
 | --- | --- |
 | API-OQ-001 | Final service authentication and authorization model. |
 | API-OQ-002 | Whether a future external `Idempotency-Key` header should be added or whether upstream finality reference remains the canonical key. |
-| API-OQ-003 | Exact response distinction between newly created and replayed fiscal document results. Runtime currently uses code `accepted` for both and differentiates by message. |
 | API-OQ-004 | Final durable post-commit sequence gap, recovery, and audit policy. |
 | API-OQ-005 | Final timeout, unknown completion, and retry status endpoint behavior. |
 | API-OQ-006 | Central PMS fiscal reference recording callback or reconciliation endpoint, if any. |
@@ -646,7 +748,13 @@ Confirmed current runtime behavior:
 - POST allocates fiscal sequence value.
 - POST formats and persists fiscal document number fields.
 - POST response includes fiscal numbering fields after durable commit.
+- POST response includes `resultClassification`, `fiscalIssuanceEvidenceStatus`, `fiscalNumberAssignmentState`, and `fiscalDocumentStatusCodeId`.
+- POST first-time success returns `resultClassification = newly_created`.
+- POST idempotent replay returns `resultClassification = idempotent_replay`.
+- POST fail-closed incomplete fiscal numbering evidence returns `fiscal_number_assignment_incomplete`.
+- POST supported failures include conservative `errorPosture` values.
 - GET returns persisted fiscal numbering fields.
+- GET derives `fiscalIssuanceEvidenceStatus`, `fiscalNumberAssignmentState`, and `fiscalDocumentStatusCodeId` from the persisted read model.
 - POS Server does not declare payment finality.
 - POS Server does not issue `ExitAuthorization`.
 - POS Server does not open gates.
@@ -654,9 +762,11 @@ Confirmed current runtime behavior:
 - POS Server does not activate continuity.
 - POS Server does not approve manual release.
 
-Runtime-specific caveat:
+Runtime-specific response/status posture:
 
-- Current POST success and replay both return code `accepted` and HTTP `202 Accepted`; replay is differentiated by message, not a distinct response code.
+- Current POST success and replay both return code `accepted` and HTTP `202 Accepted`.
+- Replay is explicitly identified by `resultClassification = idempotent_replay`.
+- Successful first-time creation is explicitly identified by `resultClassification = newly_created`.
 
 ## 18. Requirements Traceability Summary
 
