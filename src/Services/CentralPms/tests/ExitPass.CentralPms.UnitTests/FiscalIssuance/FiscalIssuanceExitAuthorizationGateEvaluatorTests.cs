@@ -1,0 +1,270 @@
+using System.Net.Http;
+using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+using FluentAssertions;
+using Xunit;
+
+namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
+
+public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
+{
+    [Fact]
+    public void Evaluate_WhenRecordedEvidenceIsComplete_IsReady()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeTrue();
+        result.BlockedReason.Should().BeNull();
+    }
+
+    [Fact]
+    public void Evaluate_WhenReplayedEvidenceIsComplete_IsReady()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_WhenReconciledEvidenceIsCompleteAndPolicyApproved_IsReady()
+    {
+        var result = Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceReconciled),
+            Context(isReconciledFiscalEvidencePolicyApproved: true));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_WhenReconciledPolicyIsNotApproved_Blocks()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceReconciled));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_issuance_reconciled_policy_required");
+    }
+
+    [Fact]
+    public void Evaluate_WhenNotRequiredPolicyIsApproved_IsReady()
+    {
+        var result = Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.NotRequired),
+            Context(isNoFiscalRequiredPolicyApproved: true));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_WhenNotRequiredPolicyIsNotApproved_Blocks()
+    {
+        var result = Evaluate(MinimalReference(FiscalIssuanceIntegrationState.NotRequired));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_issuance_not_required_policy_required");
+    }
+
+    [Theory]
+    [InlineData(FiscalIssuanceIntegrationState.PendingFiscalIssuance, "fiscal_issuance_pending", false)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceRequested, "fiscal_issuance_requested", false)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceConflict, "fiscal_issuance_conflict", true)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest, "fiscal_issuance_failed_request", true)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, "fiscal_issuance_failed_configuration", true)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, "fiscal_issuance_failed_service", true)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown, "fiscal_issuance_unknown", true)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview, "fiscal_issuance_manual_review", true)]
+    public void Evaluate_WhenStateIsNotNormalExitReady_BlocksWithReason(
+        FiscalIssuanceIntegrationState state,
+        string blockedReason,
+        bool requiresManualReview)
+    {
+        var result = Evaluate(MinimalReference(state));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be(blockedReason);
+        result.RequiresManualReview.Should().Be(requiresManualReview);
+    }
+
+    [Fact]
+    public void Evaluate_WhenExceptionReleased_IsExceptionReleaseOnlyAndNotNormalReady()
+    {
+        var result = Evaluate(MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceExceptionReleased));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_issuance_exception_release_only");
+        result.IsExceptionReleaseOnly.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Evaluate_WhenEvidenceStatusIsMissing_Blocks()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            FiscalIssuanceEvidenceStatus = null
+        });
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_issuance_evidence_incomplete");
+    }
+
+    [Fact]
+    public void Evaluate_WhenFiscalNumberIsNotAssigned_Blocks()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.NotAssigned
+        });
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_number_not_assigned");
+    }
+
+    [Fact]
+    public void Evaluate_WhenFiscalDocumentNumberIsMissing_Blocks()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            FiscalDocumentNumber = null
+        });
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_issuance_evidence_incomplete");
+    }
+
+    [Fact]
+    public void Evaluate_WhenPosServerFiscalDocumentIdIsMissing_BlocksAsReferenceNotRecorded()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            PosServerFiscalDocumentId = null
+        });
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_reference_not_recorded");
+    }
+
+    [Fact]
+    public void Evaluate_WhenFirstRecordedAtIsMissing_BlocksAsReferenceNotRecorded()
+    {
+        var result = Evaluate(CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            FirstRecordedAt = default
+        });
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("fiscal_reference_not_recorded");
+    }
+
+    [Fact]
+    public void Evaluate_WhenPaymentFinalityIsNotVerified_Blocks()
+    {
+        var result = Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded),
+            Context(isPaymentFinalityVerified: false));
+
+        result.IsReadyForNormalExitAuthorization.Should().BeFalse();
+        result.BlockedReason.Should().Be("payment_finality_not_verified");
+    }
+
+    [Fact]
+    public void Evaluator_DoesNotIntroducePosServerNetworkDependencies()
+    {
+        var constructorParameters = typeof(FiscalIssuanceExitAuthorizationGateEvaluator)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        constructorParameters.Should().BeEmpty();
+        constructorParameters.Should().NotContain(type =>
+            type == typeof(HttpClient) ||
+            type == typeof(IPosServerFiscalDocumentClient));
+    }
+
+    [Fact]
+    public void IssueExitAuthorizationHandler_DoesNotDependOnFiscalGatingEvaluatorYet()
+    {
+        var constructorParameters = typeof(IssueExitAuthorizationHandler)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        constructorParameters.Should().NotContain(typeof(FiscalIssuanceGatingEvaluation));
+        constructorParameters.Should().NotContain(typeof(FiscalIssuanceGatingEvaluationContext));
+        constructorParameters.Should().NotContain(typeof(IFiscalIssuanceReferenceRepository));
+    }
+
+    private static FiscalIssuanceGatingEvaluation Evaluate(
+        FiscalIssuanceReferenceRecord reference,
+        FiscalIssuanceGatingEvaluationContext? context = null) =>
+        FiscalIssuanceExitAuthorizationGateEvaluator.Evaluate(reference, context ?? Context());
+
+    private static FiscalIssuanceGatingEvaluationContext Context(
+        bool isPaymentFinalityVerified = true,
+        bool isNoFiscalRequiredPolicyApproved = false,
+        bool isReconciledFiscalEvidencePolicyApproved = false) =>
+        new(
+            IsPaymentFinalityVerified: isPaymentFinalityVerified,
+            IsNoFiscalRequiredPolicyApproved: isNoFiscalRequiredPolicyApproved,
+            IsReconciledFiscalEvidencePolicyApproved: isReconciledFiscalEvidencePolicyApproved);
+
+    private static FiscalIssuanceReferenceRecord CompleteReference(
+        FiscalIssuanceIntegrationState state) =>
+        MinimalReference(state) with
+        {
+            PosServerFiscalDocumentId = Guid.NewGuid(),
+            FiscalIdentityId = Guid.NewGuid(),
+            FiscalSequencePolicyId = Guid.NewGuid(),
+            FiscalSequenceValue = 101,
+            FiscalDocumentNumber = "SI-000101",
+            FiscalSeries = "SI",
+            FiscalNumberPrefixText = "SI-",
+            FiscalNumberSuffixText = null,
+            FiscalNumberAssignedAt = DateTimeOffset.Parse("2026-07-02T10:30:00+08:00"),
+            FiscalNumberAssignedByRef = "pos-server",
+            FiscalDocumentStatusCodeId = Guid.NewGuid(),
+            ResultClassification = state == FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalIssuanceResultClassification.IdempotentReplay
+                : FiscalIssuanceResultClassification.NewlyCreated,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned
+        };
+
+    private static FiscalIssuanceReferenceRecord MinimalReference(
+        FiscalIssuanceIntegrationState state) =>
+        new(
+            FiscalIssuanceReferenceId: Guid.NewGuid(),
+            PaymentConfirmationId: Guid.NewGuid(),
+            PaymentAttemptId: Guid.NewGuid(),
+            ParkingSessionId: Guid.NewGuid(),
+            TariffSnapshotId: Guid.NewGuid(),
+            SiteId: Guid.NewGuid(),
+            SitePosServerId: Guid.NewGuid(),
+            SitePosServerRef: "site-pos-server-main",
+            PayableBasisRef: "tariff-snapshot-ref",
+            UpstreamFinalityReference: $"pay-final-{Guid.NewGuid():N}",
+            PosServerFiscalDocumentId: null,
+            FiscalIdentityId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            FiscalDocumentStatusCodeId: null,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIssuanceState: state,
+            LatestExceptionReason: null,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            CorrelationId: Guid.NewGuid(),
+            PosServerResponseTimestamp: null,
+            FirstRecordedAt: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
+            LastUpdatedAt: DateTimeOffset.Parse("2026-07-02T10:30:02+08:00"),
+            RecordedByServiceIdentityId: Guid.NewGuid());
+}
