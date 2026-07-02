@@ -47,10 +47,10 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
             return FiscalIssuancePosServerLiveIntegrationResult.Disabled();
         }
 
-        var configurationErrors = _options.ValidateForLiveCall();
-        if (configurationErrors.Count > 0)
+        var readiness = _options.EvaluateReadiness();
+        if (!readiness.IsReady)
         {
-            return FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(configurationErrors);
+            return FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(readiness.Errors);
         }
 
         PosServerFiscalDocumentCreateRequest request;
@@ -106,28 +106,123 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
 
     public bool EnableLiveFiscalIssuanceFromExitFlow { get; set; }
 
-    public IReadOnlyList<string> ValidateForLiveCall()
+    public FiscalIssuancePosServerIntegrationReadiness EvaluateReadiness()
     {
-        var errors = new List<string>();
+        var baseUrlConfigured = !string.IsNullOrWhiteSpace(PosServerBaseUrl);
+        var timeoutConfigured = TimeoutSeconds > 0;
+        var liveFlowConfigured = EnableLiveFiscalIssuanceFromPaymentFlow || EnableLiveFiscalIssuanceFromExitFlow;
 
-        if (string.IsNullOrWhiteSpace(PosServerBaseUrl))
+        if (!EnablePosServerFiscalIssuanceLiveCall)
         {
-            errors.Add("pos_server_base_url_required");
+            return new FiscalIssuancePosServerIntegrationReadiness(
+                Status: baseUrlConfigured
+                    ? FiscalIssuancePosServerIntegrationReadinessStatuses.DisabledConfigPresent
+                    : FiscalIssuancePosServerIntegrationReadinessStatuses.Disabled,
+                IsEnabled: false,
+                IsReady: false,
+                Reason: baseUrlConfigured
+                    ? "pos_server_fiscal_issuance_live_call_disabled_config_present"
+                    : "pos_server_fiscal_issuance_live_call_disabled",
+                BaseUrlConfigured: baseUrlConfigured,
+                TimeoutConfigured: timeoutConfigured,
+                LiveCallsAllowedFromPaymentFlow: EnableLiveFiscalIssuanceFromPaymentFlow,
+                LiveCallsAllowedFromExitFlow: EnableLiveFiscalIssuanceFromExitFlow,
+                Errors: Array.Empty<string>());
         }
-        else if (!Uri.TryCreate(PosServerBaseUrl, UriKind.Absolute, out var uri) ||
+
+        if (!baseUrlConfigured)
+        {
+            return InvalidReadiness(
+                FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledMissingBaseUrl,
+                "pos_server_base_url_required",
+                baseUrlConfigured,
+                timeoutConfigured);
+        }
+
+        if (!Uri.TryCreate(PosServerBaseUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
-            errors.Add("pos_server_base_url_invalid");
+            return InvalidReadiness(
+                FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl,
+                "pos_server_base_url_invalid",
+                baseUrlConfigured,
+                timeoutConfigured);
         }
 
-        if (TimeoutSeconds <= 0)
+        if (!timeoutConfigured)
         {
-            errors.Add("pos_server_timeout_seconds_must_be_positive");
+            return InvalidReadiness(
+                FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidTimeout,
+                "pos_server_timeout_seconds_must_be_positive",
+                baseUrlConfigured,
+                timeoutConfigured);
         }
 
-        return errors;
+        if (liveFlowConfigured)
+        {
+            return InvalidReadiness(
+                FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring,
+                "payment_exit_live_flow_flags_must_remain_disabled",
+                baseUrlConfigured,
+                timeoutConfigured);
+        }
+
+        return new FiscalIssuancePosServerIntegrationReadiness(
+            Status: FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledReady,
+            IsEnabled: true,
+            IsReady: true,
+            Reason: "pos_server_fiscal_issuance_live_call_configuration_ready",
+            BaseUrlConfigured: true,
+            TimeoutConfigured: true,
+            LiveCallsAllowedFromPaymentFlow: false,
+            LiveCallsAllowedFromExitFlow: false,
+            Errors: Array.Empty<string>());
     }
+
+    public IReadOnlyList<string> ValidateForLiveCall()
+    {
+        var readiness = EvaluateReadiness();
+        return readiness.IsReady ? Array.Empty<string>() : readiness.Errors;
+    }
+
+    private FiscalIssuancePosServerIntegrationReadiness InvalidReadiness(
+        string status,
+        string error,
+        bool baseUrlConfigured,
+        bool timeoutConfigured) =>
+        new(
+            Status: status,
+            IsEnabled: true,
+            IsReady: false,
+            Reason: error,
+            BaseUrlConfigured: baseUrlConfigured,
+            TimeoutConfigured: timeoutConfigured,
+            LiveCallsAllowedFromPaymentFlow: EnableLiveFiscalIssuanceFromPaymentFlow,
+            LiveCallsAllowedFromExitFlow: EnableLiveFiscalIssuanceFromExitFlow,
+            Errors: [error]);
 }
+
+public static class FiscalIssuancePosServerIntegrationReadinessStatuses
+{
+    public const string Disabled = "disabled";
+    public const string DisabledConfigPresent = "disabled_config_present";
+    public const string EnabledMissingBaseUrl = "enabled_missing_base_url";
+    public const string EnabledInvalidBaseUrl = "enabled_invalid_base_url";
+    public const string EnabledInvalidTimeout = "enabled_invalid_timeout";
+    public const string EnabledReady = "enabled_ready";
+    public const string EnabledUnsafeFlowWiring = "enabled_unsafe_flow_wiring";
+}
+
+public sealed record FiscalIssuancePosServerIntegrationReadiness(
+    string Status,
+    bool IsEnabled,
+    bool IsReady,
+    string Reason,
+    bool BaseUrlConfigured,
+    bool TimeoutConfigured,
+    bool LiveCallsAllowedFromPaymentFlow,
+    bool LiveCallsAllowedFromExitFlow,
+    IReadOnlyList<string> Errors);
 
 public enum FiscalIssuancePosServerLiveIntegrationStatus
 {

@@ -22,6 +22,98 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     [Fact]
+    public void EvaluateReadiness_WhenDefaultOptions_ReportsDisabledWithoutRequiredBaseUrl()
+    {
+        var readiness = new FiscalIssuancePosServerIntegrationOptions().EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.Disabled);
+        readiness.IsEnabled.Should().BeFalse();
+        readiness.IsReady.Should().BeFalse();
+        readiness.BaseUrlConfigured.Should().BeFalse();
+        readiness.TimeoutConfigured.Should().BeTrue();
+        readiness.Errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EvaluateReadiness_WhenDisabledWithBaseUrl_ReportsDisabledConfigPresent()
+    {
+        var readiness = new FiscalIssuancePosServerIntegrationOptions
+        {
+            PosServerBaseUrl = "https://pos-server.local"
+        }.EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.DisabledConfigPresent);
+        readiness.IsEnabled.Should().BeFalse();
+        readiness.IsReady.Should().BeFalse();
+        readiness.BaseUrlConfigured.Should().BeTrue();
+        readiness.Errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void EvaluateReadiness_WhenEnabledWithoutBaseUrl_ReportsMissingBaseUrl()
+    {
+        var readiness = new FiscalIssuancePosServerIntegrationOptions
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true
+        }.EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledMissingBaseUrl);
+        readiness.IsEnabled.Should().BeTrue();
+        readiness.IsReady.Should().BeFalse();
+        readiness.Errors.Should().Contain("pos_server_base_url_required");
+    }
+
+    [Fact]
+    public void EvaluateReadiness_WhenEnabledWithInvalidBaseUrl_ReportsInvalidBaseUrl()
+    {
+        var readiness = new FiscalIssuancePosServerIntegrationOptions
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            PosServerBaseUrl = "not-a-url"
+        }.EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl);
+        readiness.IsReady.Should().BeFalse();
+        readiness.BaseUrlConfigured.Should().BeTrue();
+        readiness.Errors.Should().Contain("pos_server_base_url_invalid");
+    }
+
+    [Fact]
+    public void EvaluateReadiness_WhenEnabledWithValidBaseUrl_ReportsReady()
+    {
+        var readiness = EnabledOptions().EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledReady);
+        readiness.IsEnabled.Should().BeTrue();
+        readiness.IsReady.Should().BeTrue();
+        readiness.BaseUrlConfigured.Should().BeTrue();
+        readiness.TimeoutConfigured.Should().BeTrue();
+        readiness.LiveCallsAllowedFromPaymentFlow.Should().BeFalse();
+        readiness.LiveCallsAllowedFromExitFlow.Should().BeFalse();
+        readiness.Errors.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void EvaluateReadiness_WhenPaymentOrExitLiveFlowFlagIsEnabled_ReportsUnsafeFlowWiring(
+        bool paymentFlowEnabled,
+        bool exitFlowEnabled)
+    {
+        var readiness = new FiscalIssuancePosServerIntegrationOptions
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            PosServerBaseUrl = "https://pos-server.local",
+            EnableLiveFiscalIssuanceFromPaymentFlow = paymentFlowEnabled,
+            EnableLiveFiscalIssuanceFromExitFlow = exitFlowEnabled
+        }.EvaluateReadiness();
+
+        readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring);
+        readiness.IsReady.Should().BeFalse();
+        readiness.Errors.Should().Contain("payment_exit_live_flow_flags_must_remain_disabled");
+    }
+
+    [Fact]
     public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenDisabled_DoesNotCallClientOrMapper()
     {
         var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
@@ -69,6 +161,64 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
 
         result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
         result.Errors.Should().Contain("pos_server_base_url_required");
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenEnabledWithInvalidBaseUrl_DoesNotCallClient()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions
+            {
+                EnablePosServerFiscalIssuanceLiveCall = true,
+                PosServerBaseUrl = "not-a-url"
+            },
+            mapper,
+            client,
+            orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
+        result.Errors.Should().Contain("pos_server_base_url_invalid");
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+        await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenUnsafeFlowFlagsAreEnabled_DoesNotCallClient()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions
+            {
+                EnablePosServerFiscalIssuanceLiveCall = true,
+                PosServerBaseUrl = "https://pos-server.local",
+                EnableLiveFiscalIssuanceFromPaymentFlow = true
+            },
+            mapper,
+            client,
+            orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
+        result.Errors.Should().Contain("payment_exit_live_flow_flags_must_remain_disabled");
         await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
         mapper.DidNotReceiveWithAnyArgs().Map(default!);
     }
