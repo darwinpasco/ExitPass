@@ -197,6 +197,204 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenNewlyCreatedEvidenceIsComplete_RecordsFiscalReferenceEvidence()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        await sut.MarkRequestedAsync(reference.FiscalIssuanceReferenceId, TransitionContext(), CancellationToken.None);
+
+        var result = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        result.ResultClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
+        result.PosServerFiscalDocumentId.Should().Be(PosServerFiscalDocumentId);
+        result.FiscalIdentityId.Should().Be(FiscalIdentityId);
+        result.FiscalSequencePolicyId.Should().Be(FiscalSequencePolicyId);
+        result.FiscalSequenceValue.Should().Be(10001);
+        result.FiscalDocumentNumber.Should().Be("SI-010001");
+        result.FiscalDocumentStatusCodeId.Should().Be(FiscalDocumentStatusCodeId);
+        result.FiscalIssuanceEvidenceStatus.Should().Be(FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned);
+        result.FiscalNumberAssignmentState.Should().Be(FiscalNumberAssignmentState.Assigned);
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenReplayEvidenceIsComplete_TransitionsRequestedToReplayed()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        await sut.MarkRequestedAsync(reference.FiscalIssuanceReferenceId, TransitionContext(), CancellationToken.None);
+
+        var result = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed);
+        result.ResultClassification.Should().Be(FiscalIssuanceResultClassification.IdempotentReplay);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenReplayEvidenceIsComplete_TransitionsUnknownToReplayed()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        await sut.MarkUnknownAsync(
+            reference.FiscalIssuanceReferenceId,
+            FailureContext(
+                FiscalIssuanceExceptionReason.PostTimeout,
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery),
+            CancellationToken.None);
+
+        var result = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed);
+        result.LatestExceptionReason.Should().BeNull();
+        result.LatestErrorPosture.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenReplayMatchesRecordedReference_DoesNotCreateDuplicateReference()
+    {
+        var repository = new InMemoryFiscalIssuanceReferenceRepository();
+        var sut = new FiscalIssuanceOrchestrationService(repository);
+        var reference = await sut.PreparePendingAsync(ValidPrepareCommand(), CancellationToken.None);
+
+        await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        var replayed = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        replayed.FiscalIssuanceReferenceId.Should().Be(reference.FiscalIssuanceReferenceId);
+        replayed.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed);
+        repository.CreatedRequests.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenReplayMismatchesRecordedReference_MarksManualReviewAndPreservesRecordedEvidence()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+
+        var recorded = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+            RecordingContext(reference),
+            CancellationToken.None);
+
+        var mismatchedReplay = CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay) with
+        {
+            FiscalDocumentNumber = "SI-099999"
+        };
+
+        var result = await sut.ApplyPosServerCreateResultAsync(
+            reference.FiscalIssuanceReferenceId,
+            mismatchedReplay,
+            RecordingContext(recorded),
+            CancellationToken.None);
+
+        result.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview);
+        result.LatestExceptionReason.Should().Be(FiscalIssuanceExceptionReason.ReplayMismatch);
+        result.FiscalDocumentNumber.Should().Be("SI-010001");
+        result.PosServerFiscalDocumentId.Should().Be(PosServerFiscalDocumentId);
+        FiscalIssuanceOrchestrationService.IsNormalExitAuthorizationGatingReady(result).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenDuplicateActiveReferenceExists_FailsClosed()
+    {
+        var repository = new InMemoryFiscalIssuanceReferenceRepository();
+        var sut = new FiscalIssuanceOrchestrationService(repository);
+        var first = await sut.PreparePendingAsync(ValidPrepareCommand(), CancellationToken.None);
+        var second = await sut.PreparePendingAsync(
+            ValidPrepareCommand() with
+            {
+                UpstreamFinalityReference = first.UpstreamFinalityReference,
+                SitePosServerId = first.SitePosServerId
+            },
+            CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            sut.ApplyPosServerCreateResultAsync(
+                second.FiscalIssuanceReferenceId,
+                CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay),
+                RecordingContext(second),
+                CancellationToken.None));
+
+        ex.Message.Should().Contain("duplicate_active_fiscal_reference_detected");
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenNewlyCreatedEvidenceIsIncomplete_RejectsResult()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        var incompleteResult = CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated) with
+        {
+            FiscalDocumentStatusCodeId = null
+        };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.ApplyPosServerCreateResultAsync(
+                reference.FiscalIssuanceReferenceId,
+                incompleteResult,
+                RecordingContext(reference),
+                CancellationToken.None));
+
+        ex.Message.Should().Contain("fiscal_document_status_code_id_required");
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenReplayEvidenceIsIncomplete_RejectsResult()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        var incompleteResult = CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay) with
+        {
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.NotAssigned
+        };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.ApplyPosServerCreateResultAsync(
+                reference.FiscalIssuanceReferenceId,
+                incompleteResult,
+                RecordingContext(reference),
+                CancellationToken.None));
+
+        ex.Message.Should().Contain("fiscal_number_assignment_state_assigned_required");
+    }
+
+    [Fact]
+    public async Task ApplyPosServerCreateResultAsync_WhenResultIsFailure_DoesNotHandleFailureSlice()
+    {
+        var (sut, reference) = await CreatePreparedServiceAsync();
+        var failureResult = CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated) with
+        {
+            Outcome = PosServerFiscalDocumentOutcome.FailedService,
+            Succeeded = false
+        };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            sut.ApplyPosServerCreateResultAsync(
+                reference.FiscalIssuanceReferenceId,
+                failureResult,
+                RecordingContext(reference),
+                CancellationToken.None));
+
+        ex.Message.Should().Contain("Only accepted POS Server create results are handled");
+    }
+
+    [Fact]
     public async Task IsNormalExitAuthorizationGatingReady_WhenEvidenceIsIncomplete_ReturnsFalse()
     {
         var repository = new InMemoryFiscalIssuanceReferenceRepository();
@@ -286,6 +484,52 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             FiscalNumberAssignedAt: DateTimeOffset.Parse("2026-07-02T10:30:00+08:00"),
             FiscalNumberAssignedByRef: "pos-server-runtime",
             FiscalDocumentStatusCodeId: Guid.NewGuid(),
+            CorrelationId: Guid.NewGuid(),
+            PosServerResponseTimestamp: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
+            ServiceIdentityId: Guid.NewGuid());
+
+    private static readonly Guid PosServerFiscalDocumentId =
+        Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    private static readonly Guid FiscalIdentityId =
+        Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+    private static readonly Guid FiscalSequencePolicyId =
+        Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+    private static readonly Guid FiscalDocumentStatusCodeId =
+        Guid.Parse("44444444-4444-4444-4444-444444444444");
+
+    private static PosServerFiscalDocumentCreateResult CompletePosServerCreateResult(
+        FiscalIssuanceResultClassification resultClassification) =>
+        new(
+            Outcome: PosServerFiscalDocumentOutcome.Accepted,
+            Succeeded: true,
+            HttpStatusCode: 202,
+            Code: "accepted",
+            Message: "accepted",
+            FiscalDocumentId: PosServerFiscalDocumentId,
+            ResultClassification: resultClassification,
+            FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+            FiscalIdentityId: FiscalIdentityId,
+            FiscalDocumentStatusCodeId: FiscalDocumentStatusCodeId,
+            FiscalSequencePolicyId: FiscalSequencePolicyId,
+            FiscalSequenceValue: 10001,
+            FiscalDocumentNumber: "SI-010001",
+            FiscalSeries: "SI",
+            FiscalNumberPrefixText: "SI-",
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: DateTimeOffset.Parse("2026-07-02T10:30:00+08:00"),
+            FiscalNumberAssignedByRef: "pos-server-runtime",
+            ErrorPosture: null);
+
+    private static PosServerCreateResultRecordingContext RecordingContext(
+        FiscalIssuanceReferenceRecord reference) =>
+        new(
+            UpstreamFinalityReference: reference.UpstreamFinalityReference,
+            SitePosServerId: reference.SitePosServerId,
+            FiscalDocumentTypeCodeId: null,
             CorrelationId: Guid.NewGuid(),
             PosServerResponseTimestamp: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
             ServiceIdentityId: Guid.NewGuid());
@@ -396,7 +640,7 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             Guid? sitePosServerId,
             Guid? fiscalDocumentTypeCodeId,
             CancellationToken cancellationToken) =>
-            Task.FromResult(_records.Values.SingleOrDefault(record =>
+            Task.FromResult(_records.Values.FirstOrDefault(record =>
                 record.UpstreamFinalityReference == upstreamFinalityReference &&
                 (sitePosServerId is null || record.SitePosServerId == sitePosServerId)));
 
