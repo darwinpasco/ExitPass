@@ -327,6 +327,209 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
     }
 
     [Fact]
+    public void EnforcementDecision_WhenOptionsAreDefault_IsDisabledAndNotWiredForBlocking()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded),
+            Context());
+
+        decision.EnforcementEnabled.Should().BeFalse();
+        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow);
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenFutureFlagIsConfigured_IsStillNotWiredForBlocking()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.PendingFiscalIssuance),
+            Context(),
+            new FiscalIssuanceExitAuthorizationGatingOptions
+            {
+                EnableFiscalBeforeExitAuthorizationEnforcement = true
+            });
+
+        decision.EnforcementEnabled.Should().BeTrue();
+        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenRecordedEvidenceIsComplete_WouldAllow()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded),
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow);
+        decision.WouldAllowNormalExitAuthorization.Should().BeTrue();
+        decision.WouldBlockNormalExitAuthorization.Should().BeFalse();
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenReplayedEvidenceIsComplete_WouldAllow()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed),
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow);
+        decision.WouldAllowNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenReconciledEvidenceIsCompleteAndPolicyApproved_WouldAllow()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceReconciled),
+            Context(isReconciledFiscalEvidencePolicyApproved: true));
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow);
+        decision.WouldAllowNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenNotRequiredPolicyIsApproved_WouldAllowAsNotRequiredByPolicy()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.NotRequired),
+            Context(isNoFiscalRequiredPolicyApproved: true));
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy);
+        decision.WouldAllowNormalExitAuthorization.Should().BeTrue();
+        decision.IsNotRequiredByPolicy.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenNotRequiredPolicyIsMissing_WouldBlock()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.NotRequired),
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
+        decision.BlockedReason.Should().Be("fiscal_issuance_not_required_policy_required");
+    }
+
+    [Theory]
+    [InlineData(FiscalIssuanceIntegrationState.PendingFiscalIssuance, "fiscal_issuance_pending", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceRequested, "fiscal_issuance_requested", FiscalIssuanceExitAuthorizationEnforcementDecisions.Block)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceConflict, "fiscal_issuance_conflict", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest, "fiscal_issuance_failed_request", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, "fiscal_issuance_failed_configuration", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, "fiscal_issuance_failed_service", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown, "fiscal_issuance_unknown", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceManualReview, "fiscal_issuance_manual_review", FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired)]
+    public void EnforcementDecision_WhenStateIsNotEligible_WouldBlock(
+        FiscalIssuanceIntegrationState state,
+        string blockedReason,
+        string expectedDecision)
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            MinimalReference(state),
+            Context());
+
+        decision.Decision.Should().Be(expectedDecision);
+        decision.WouldAllowNormalExitAuthorization.Should().BeFalse();
+        decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
+        decision.BlockedReason.Should().Be(blockedReason);
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenExceptionReleased_IsExceptionReleaseOnly()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            MinimalReference(FiscalIssuanceIntegrationState.FiscalIssuanceExceptionReleased),
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.ExceptionReleaseOnly);
+        decision.WouldAllowNormalExitAuthorization.Should().BeFalse();
+        decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
+        decision.IsExceptionReleaseOnly.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenFiscalEvidenceIsMissing_WouldBlock()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+            {
+                FiscalIssuanceEvidenceStatus = null
+            },
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        decision.BlockedReason.Should().Be("fiscal_issuance_evidence_incomplete");
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenAssignmentStateIsNotAssigned_WouldBlock()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+            {
+                FiscalNumberAssignmentState = FiscalNumberAssignmentState.NotAssigned
+            },
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        decision.BlockedReason.Should().Be("fiscal_number_not_assigned");
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenDurableFiscalReferenceIsMissing_WouldBlock()
+    {
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
+            CompleteReference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+            {
+                FirstRecordedAt = default
+            },
+            Context());
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        decision.BlockedReason.Should().Be("fiscal_reference_not_recorded");
+    }
+
+    [Fact]
+    public void EnforcementDecision_WhenReadinessCannotEvaluate_ReportsNotEvaluable()
+    {
+        var readiness = new FiscalIssuanceExitAuthorizationGatingReadiness(
+            EnforcementConfigured: false,
+            EnforcementWiredForBlocking: false,
+            ShadowEvaluationEnabled: true,
+            ReadinessMode: FiscalIssuanceExitAuthorizationGatingReadinessModes.ReadinessOnly,
+            ConfigurationStatus: FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementOffDefault,
+            ReadinessStatus: FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock,
+            WouldAllowNormalExitAuthorization: false,
+            BlockedReason: null,
+            State: null,
+            RequiresManualReview: false,
+            IsExceptionReleaseOnly: false);
+
+        var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.FromReadiness(readiness);
+
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable);
+        decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
+    }
+
+    [Fact]
+    public void EnforcementPolicy_DoesNotIntroducePosServerNetworkDependencies()
+    {
+        var constructorParameters = typeof(FiscalIssuanceExitAuthorizationEnforcementPolicy)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        constructorParameters.Should().BeEmpty();
+        constructorParameters.Should().NotContain(type =>
+            type == typeof(HttpClient) ||
+            type == typeof(IPosServerFiscalDocumentClient));
+    }
+
+    [Fact]
     public void IssueExitAuthorizationHandler_UsesOnlyShadowFiscalGatingAbstraction()
     {
         var constructorParameters = typeof(IssueExitAuthorizationHandler)
@@ -338,6 +541,7 @@ public sealed class FiscalIssuanceExitAuthorizationGateEvaluatorTests
         constructorParameters.Should().Contain(typeof(IExitAuthorizationFiscalGatingShadowEvaluator));
         constructorParameters.Should().NotContain(typeof(IFiscalIssuanceReferenceRepository));
         constructorParameters.Should().NotContain(typeof(IPosServerFiscalDocumentClient));
+        constructorParameters.Should().NotContain(typeof(FiscalIssuanceExitAuthorizationGatingOptions));
     }
 
     [Fact]
