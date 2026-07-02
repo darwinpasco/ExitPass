@@ -71,6 +71,51 @@ public sealed class ExitAuthorizationFiscalGatingShadowObservedPayload
     public string? ErrorPosture { get; init; }
 
     /// <summary>
+    /// Gets the future fiscal gating enforcement decision computed in shadow-only mode.
+    /// </summary>
+    public string EnforcementDecision { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets a value indicating whether the future decision would allow normal ExitAuthorization.
+    /// </summary>
+    public bool WouldAllowNormalExitAuthorization { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the future decision would block normal ExitAuthorization.
+    /// </summary>
+    public bool WouldBlockNormalExitAuthorization { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the future decision is based on an explicit not-required-by-policy posture.
+    /// </summary>
+    public bool IsNotRequiredByPolicy { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the future decision is exception/manual-release only.
+    /// </summary>
+    public bool IsExceptionReleaseOnly { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the future decision requires manual review.
+    /// </summary>
+    public bool RequiresManualReview { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether the future decision could not be evaluated from local fiscal context.
+    /// </summary>
+    public bool IsNotEvaluable { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether fiscal-before-ExitAuthorization enforcement is configured.
+    /// </summary>
+    public bool EnforcementEnabled { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether enforcement is wired to block production ExitAuthorization.
+    /// </summary>
+    public bool EnforcementWiredForBlocking { get; init; }
+
+    /// <summary>
     /// Gets the Site identifier when available.
     /// </summary>
     public Guid? SiteId { get; init; }

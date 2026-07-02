@@ -17,12 +17,148 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
         return FromReadiness(readiness);
     }
 
+    public static FiscalIssuanceExitAuthorizationEnforcementDecision FromShadowEvaluation(
+        FiscalGatingShadowEvaluation evaluation,
+        FiscalIssuanceExitAuthorizationGatingOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(evaluation);
+
+        var effectiveOptions = options ?? new FiscalIssuanceExitAuthorizationGatingOptions();
+
+        if (evaluation.Status == FiscalGatingShadowEvaluationStatuses.NotEvaluatedNotRequired)
+        {
+            return Create(
+                decision: FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy,
+                blockedReason: null,
+                requiresManualReview: false,
+                isExceptionReleaseOnly: false,
+                isNotRequiredByPolicy: true,
+                evidenceState: evaluation.State,
+                options: effectiveOptions);
+        }
+
+        if (evaluation.Status is
+            FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext or
+            FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking)
+        {
+            return Create(
+                decision: FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable,
+                blockedReason: evaluation.BlockedReason,
+                requiresManualReview: evaluation.RequiresManualReview,
+                isExceptionReleaseOnly: evaluation.IsExceptionReleaseOnly,
+                isNotRequiredByPolicy: false,
+                evidenceState: evaluation.State,
+                options: effectiveOptions);
+        }
+
+        return Create(
+            decision: ResolveDecision(
+                evaluation.IsReadyForNormalExitAuthorization,
+                evaluation.BlockedReason,
+                evaluation.RequiresManualReview,
+                evaluation.IsExceptionReleaseOnly,
+                isNotRequiredByPolicyPosture: false),
+            blockedReason: evaluation.BlockedReason,
+            requiresManualReview: evaluation.RequiresManualReview,
+            isExceptionReleaseOnly: evaluation.IsExceptionReleaseOnly,
+            isNotRequiredByPolicy: false,
+            evidenceState: evaluation.State,
+            options: effectiveOptions);
+    }
+
     public static FiscalIssuanceExitAuthorizationEnforcementDecision FromReadiness(
         FiscalIssuanceExitAuthorizationGatingReadiness readiness)
     {
         ArgumentNullException.ThrowIfNull(readiness);
 
         var decision = ResolveDecision(readiness);
+
+        return Create(
+            decision,
+            readiness.BlockedReason,
+            readiness.RequiresManualReview,
+            readiness.IsExceptionReleaseOnly,
+            decision == FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy,
+            readiness.State,
+            readiness.EnforcementConfigured,
+            readiness.EnforcementWiredForBlocking);
+    }
+
+    private static string ResolveDecision(FiscalIssuanceExitAuthorizationGatingReadiness readiness)
+    {
+        var isNotRequiredByPolicyPosture = readiness.ReadinessStatus ==
+            FiscalIssuanceExitAuthorizationGatingReadinessStatuses.NotRequiredPolicyPosture;
+
+        return ResolveDecision(
+            readiness.WouldAllowNormalExitAuthorization,
+            readiness.BlockedReason,
+            readiness.RequiresManualReview,
+            readiness.IsExceptionReleaseOnly,
+            isNotRequiredByPolicyPosture);
+    }
+
+    private static string ResolveDecision(
+        bool wouldAllowNormalExitAuthorization,
+        string? blockedReason,
+        bool requiresManualReview,
+        bool isExceptionReleaseOnly,
+        bool isNotRequiredByPolicyPosture)
+    {
+        if (isExceptionReleaseOnly)
+        {
+            return FiscalIssuanceExitAuthorizationEnforcementDecisions.ExceptionReleaseOnly;
+        }
+
+        if (isNotRequiredByPolicyPosture)
+        {
+            return wouldAllowNormalExitAuthorization
+                ? FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy
+                : FiscalIssuanceExitAuthorizationEnforcementDecisions.Block;
+        }
+
+        if (requiresManualReview)
+        {
+            return FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired;
+        }
+
+        if (wouldAllowNormalExitAuthorization)
+        {
+            return FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow;
+        }
+
+        return string.IsNullOrWhiteSpace(blockedReason)
+            ? FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable
+            : FiscalIssuanceExitAuthorizationEnforcementDecisions.Block;
+    }
+
+    private static FiscalIssuanceExitAuthorizationEnforcementDecision Create(
+        string decision,
+        string? blockedReason,
+        bool requiresManualReview,
+        bool isExceptionReleaseOnly,
+        bool isNotRequiredByPolicy,
+        FiscalIssuanceIntegrationState? evidenceState,
+        FiscalIssuanceExitAuthorizationGatingOptions options) =>
+        Create(
+            decision,
+            blockedReason,
+            requiresManualReview,
+            isExceptionReleaseOnly,
+            isNotRequiredByPolicy,
+            evidenceState,
+            options.EnableFiscalBeforeExitAuthorizationEnforcement,
+            enforcementWiredForBlocking: false);
+
+    private static FiscalIssuanceExitAuthorizationEnforcementDecision Create(
+        string decision,
+        string? blockedReason,
+        bool requiresManualReview,
+        bool isExceptionReleaseOnly,
+        bool isNotRequiredByPolicy,
+        FiscalIssuanceIntegrationState? evidenceState,
+        bool enforcementEnabled,
+        bool enforcementWiredForBlocking)
+    {
         var wouldBlock = decision is not
             FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow and not
             FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy;
@@ -31,43 +167,13 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
             WouldAllowNormalExitAuthorization: !wouldBlock,
             WouldBlockNormalExitAuthorization: wouldBlock,
             Decision: decision,
-            BlockedReason: readiness.BlockedReason,
-            RequiresManualReview: readiness.RequiresManualReview,
-            IsExceptionReleaseOnly: readiness.IsExceptionReleaseOnly,
-            IsNotRequiredByPolicy: decision == FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy,
-            EvidenceState: readiness.State,
-            EnforcementEnabled: readiness.EnforcementConfigured,
-            EnforcementWiredForBlocking: readiness.EnforcementWiredForBlocking);
-    }
-
-    private static string ResolveDecision(FiscalIssuanceExitAuthorizationGatingReadiness readiness)
-    {
-        if (readiness.IsExceptionReleaseOnly)
-        {
-            return FiscalIssuanceExitAuthorizationEnforcementDecisions.ExceptionReleaseOnly;
-        }
-
-        if (readiness.ReadinessStatus ==
-            FiscalIssuanceExitAuthorizationGatingReadinessStatuses.NotRequiredPolicyPosture)
-        {
-            return readiness.WouldAllowNormalExitAuthorization
-                ? FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy
-                : FiscalIssuanceExitAuthorizationEnforcementDecisions.Block;
-        }
-
-        if (readiness.RequiresManualReview)
-        {
-            return FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired;
-        }
-
-        if (readiness.WouldAllowNormalExitAuthorization)
-        {
-            return FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow;
-        }
-
-        return string.IsNullOrWhiteSpace(readiness.BlockedReason)
-            ? FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable
-            : FiscalIssuanceExitAuthorizationEnforcementDecisions.Block;
+            BlockedReason: blockedReason,
+            RequiresManualReview: requiresManualReview,
+            IsExceptionReleaseOnly: isExceptionReleaseOnly,
+            IsNotRequiredByPolicy: isNotRequiredByPolicy,
+            EvidenceState: evidenceState,
+            EnforcementEnabled: enforcementEnabled,
+            EnforcementWiredForBlocking: enforcementWiredForBlocking);
     }
 }
 
