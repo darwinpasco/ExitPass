@@ -64,6 +64,21 @@ public interface IFiscalIssuanceOrchestrationService
         PosServerFiscalDocumentCreateResult result,
         PosServerCreateResultRecordingContext context,
         CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> MarkUnknownOutcomeAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceUnknownOutcomeContext context,
+        CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> MarkReadbackRequestedAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceReadbackPlanningContext context,
+        CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> ApplyReadbackPlanningResultAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceReadbackPlanningResult result,
+        CancellationToken cancellationToken);
 }
 
 public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestrationService
@@ -392,6 +407,102 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
                 FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
                 normalizedCode),
             cancellationToken);
+    }
+
+    public Task<FiscalIssuanceReferenceRecord> MarkUnknownOutcomeAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceUnknownOutcomeContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ValidateUnknownOutcomeReason(context.ExceptionReason);
+
+        return MarkUnknownAsync(
+            fiscalIssuanceReferenceId,
+            new FiscalIssuanceFailureTransitionContext(
+                ExceptionReason: context.ExceptionReason,
+                ErrorCode: string.IsNullOrWhiteSpace(context.ErrorCode)
+                    ? ToErrorCode(context.ExceptionReason)
+                    : context.ErrorCode,
+                ErrorPosture: context.ErrorPosture ?? FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                CorrelationId: context.CorrelationId,
+                ServiceIdentityId: context.ServiceIdentityId),
+            cancellationToken);
+    }
+
+    public Task<FiscalIssuanceReferenceRecord> MarkReadbackRequestedAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceReadbackPlanningContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (context.KnownPosServerFiscalDocumentId is null || context.KnownPosServerFiscalDocumentId == Guid.Empty)
+        {
+            throw new ArgumentException("Known POS Server fiscal document id is required for readback planning.", nameof(context));
+        }
+
+        return MarkUnknownAsync(
+            fiscalIssuanceReferenceId,
+            new FiscalIssuanceFailureTransitionContext(
+                ExceptionReason: context.ExceptionReason ?? FiscalIssuanceExceptionReason.GetReadbackInconclusive,
+                ErrorCode: string.IsNullOrWhiteSpace(context.ErrorCode) ? "get_readback_requested" : context.ErrorCode,
+                ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+                CorrelationId: context.CorrelationId,
+                ServiceIdentityId: context.ServiceIdentityId),
+            cancellationToken);
+    }
+
+    public Task<FiscalIssuanceReferenceRecord> ApplyReadbackPlanningResultAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceReadbackPlanningResult result,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        return result.Outcome switch
+        {
+            FiscalIssuanceReadbackPlanningOutcome.Requested => MarkReadbackRequestedAsync(
+                fiscalIssuanceReferenceId,
+                new FiscalIssuanceReadbackPlanningContext(
+                    KnownPosServerFiscalDocumentId: result.KnownPosServerFiscalDocumentId,
+                    ExceptionReason: result.ExceptionReason,
+                    ErrorCode: result.ErrorCode,
+                    CorrelationId: result.CorrelationId,
+                    ServiceIdentityId: result.ServiceIdentityId),
+                cancellationToken),
+            FiscalIssuanceReadbackPlanningOutcome.Inconclusive => MarkUnknownOutcomeAsync(
+                fiscalIssuanceReferenceId,
+                UnknownOutcomeContextFromReadbackResult(
+                    result,
+                    FiscalIssuanceExceptionReason.GetReadbackInconclusive,
+                    "get_readback_inconclusive"),
+                cancellationToken),
+            FiscalIssuanceReadbackPlanningOutcome.NotFound => MarkUnknownOutcomeAsync(
+                fiscalIssuanceReferenceId,
+                UnknownOutcomeContextFromReadbackResult(
+                    result,
+                    FiscalIssuanceExceptionReason.GetReadbackNotFound,
+                    "get_readback_not_found"),
+                cancellationToken),
+            FiscalIssuanceReadbackPlanningOutcome.ServiceFailed => MarkUnknownOutcomeAsync(
+                fiscalIssuanceReferenceId,
+                UnknownOutcomeContextFromReadbackResult(
+                    result,
+                    FiscalIssuanceExceptionReason.GetReadbackServiceFailed,
+                    "get_readback_service_failed"),
+                cancellationToken),
+            FiscalIssuanceReadbackPlanningOutcome.Mismatch => MarkManualReviewRequiredAsync(
+                fiscalIssuanceReferenceId,
+                new FiscalIssuanceFailureTransitionContext(
+                    ExceptionReason: result.ExceptionReason ?? FiscalIssuanceExceptionReason.FiscalReferenceMismatch,
+                    ErrorCode: string.IsNullOrWhiteSpace(result.ErrorCode) ? "fiscal_reference_mismatch" : result.ErrorCode,
+                    ErrorPosture: FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+                    CorrelationId: result.CorrelationId,
+                    ServiceIdentityId: result.ServiceIdentityId),
+                cancellationToken),
+            _ => throw new ArgumentException("Readback planning outcome is not supported.", nameof(result))
+        };
     }
 
     public static bool IsNormalExitAuthorizationGatingReady(FiscalIssuanceReferenceRecord record) =>
@@ -732,6 +843,45 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
             or FiscalIssuanceExceptionReason.GetReadbackServiceFailed
             or FiscalIssuanceExceptionReason.GetReadbackInconclusive
             or FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed;
+
+    private static FiscalIssuanceUnknownOutcomeContext UnknownOutcomeContextFromReadbackResult(
+        FiscalIssuanceReadbackPlanningResult result,
+        FiscalIssuanceExceptionReason defaultReason,
+        string defaultErrorCode) =>
+        new(
+            ExceptionReason: result.ExceptionReason ?? defaultReason,
+            ErrorCode: string.IsNullOrWhiteSpace(result.ErrorCode) ? defaultErrorCode : result.ErrorCode,
+            ErrorPosture: FiscalIssuanceErrorPosture.RetryAfterServiceRecovery,
+            KnownPosServerFiscalDocumentId: result.KnownPosServerFiscalDocumentId,
+            CorrelationId: result.CorrelationId,
+            ServiceIdentityId: result.ServiceIdentityId);
+
+    private static void ValidateUnknownOutcomeReason(FiscalIssuanceExceptionReason reason)
+    {
+        if (reason is not (FiscalIssuanceExceptionReason.PostTimeout
+            or FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit
+            or FiscalIssuanceExceptionReason.GetReadbackInconclusive
+            or FiscalIssuanceExceptionReason.GetReadbackNotFound
+            or FiscalIssuanceExceptionReason.GetReadbackServiceFailed
+            or FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed
+            or FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete))
+        {
+            throw new ArgumentException("Fiscal issuance exception reason is not an unknown/readback reason.", nameof(reason));
+        }
+    }
+
+    private static string ToErrorCode(FiscalIssuanceExceptionReason reason) =>
+        reason switch
+        {
+            FiscalIssuanceExceptionReason.PostTimeout => "post_timeout",
+            FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit => "network_disconnect_after_possible_commit",
+            FiscalIssuanceExceptionReason.GetReadbackInconclusive => "get_readback_inconclusive",
+            FiscalIssuanceExceptionReason.GetReadbackNotFound => "get_readback_not_found",
+            FiscalIssuanceExceptionReason.GetReadbackServiceFailed => "get_readback_service_failed",
+            FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed => "central_pms_reference_persistence_failed",
+            FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete => "fiscal_number_assignment_incomplete",
+            _ => "fiscal_issuance_unknown"
+        };
 }
 
 public sealed record PrepareFiscalIssuanceCommand(
@@ -855,4 +1005,36 @@ public sealed record PosServerCreateResultRecordingContext(
     Guid? FiscalDocumentTypeCodeId,
     Guid? CorrelationId,
     DateTimeOffset? PosServerResponseTimestamp,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalIssuanceUnknownOutcomeContext(
+    FiscalIssuanceExceptionReason ExceptionReason,
+    string? ErrorCode,
+    FiscalIssuanceErrorPosture? ErrorPosture,
+    Guid? KnownPosServerFiscalDocumentId,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalIssuanceReadbackPlanningContext(
+    Guid? KnownPosServerFiscalDocumentId,
+    FiscalIssuanceExceptionReason? ExceptionReason,
+    string? ErrorCode,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId);
+
+public enum FiscalIssuanceReadbackPlanningOutcome
+{
+    Requested = 1,
+    Inconclusive = 2,
+    NotFound = 3,
+    ServiceFailed = 4,
+    Mismatch = 5
+}
+
+public sealed record FiscalIssuanceReadbackPlanningResult(
+    FiscalIssuanceReadbackPlanningOutcome Outcome,
+    Guid? KnownPosServerFiscalDocumentId,
+    FiscalIssuanceExceptionReason? ExceptionReason,
+    string? ErrorCode,
+    Guid? CorrelationId,
     Guid? ServiceIdentityId);
