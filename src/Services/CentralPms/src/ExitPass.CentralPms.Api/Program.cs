@@ -26,6 +26,7 @@ using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Operations;
@@ -40,6 +41,7 @@ using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.Eventing;
+using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
@@ -354,6 +356,8 @@ static void ConfigureApplicationServices(
 
     builder.Services.AddScoped<IRecordPaymentConfirmationGateway>(_ =>
         new RecordPaymentConfirmationGateway(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
+        new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRepository>(_ =>
