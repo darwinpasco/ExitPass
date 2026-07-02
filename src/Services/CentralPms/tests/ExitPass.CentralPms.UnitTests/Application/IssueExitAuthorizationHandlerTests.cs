@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
@@ -162,6 +163,9 @@ public sealed class IssueExitAuthorizationHandlerTests
             activity,
             "fiscal_gating_shadow.status",
             FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext);
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => IsMissingContextShadowObservation(x)),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -249,6 +253,9 @@ public sealed class IssueExitAuthorizationHandlerTests
             activity,
             "fiscal_gating_shadow.status",
             FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking);
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => IsFailureShadowObservation(x, nameof(InvalidOperationException))),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -260,19 +267,26 @@ public sealed class IssueExitAuthorizationHandlerTests
         ConfigureGatewaySuccess(now);
         var command = ValidCommand();
         var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var fiscalReference = CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
         repository
             .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
-            .Returns(CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
+            .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
         var result = await sut.ExecuteAsync(command, CancellationToken.None);
 
         Assert.Equal("ISSUED", result.AuthorizationStatus);
-        AssertShadowActivity(
+        var activity = AssertShadowActivity(
             listener,
             FiscalGatingShadowEvaluationStatuses.EvaluatedReady);
+        AssertTag(activity, "fiscal_gating_shadow.payment_confirmation_id", fiscalReference.PaymentConfirmationId);
+        AssertTag(activity, "fiscal_gating_shadow.fiscal_issuance_reference_id", fiscalReference.FiscalIssuanceReferenceId);
+        AssertTag(activity, "fiscal_gating_shadow.fiscal_document_number", fiscalReference.FiscalDocumentNumber!);
         await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
             command.PaymentAttemptId,
+            Arg.Any<CancellationToken>());
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => IsReadyShadowObservation(x, command, fiscalReference)),
             Arg.Any<CancellationToken>());
     }
 
@@ -297,6 +311,12 @@ public sealed class IssueExitAuthorizationHandlerTests
             listener,
             FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked);
         AssertTag(activity, "fiscal_gating_shadow.blocked_reason", "fiscal_issuance_unknown");
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => IsBlockedShadowObservation(
+                x,
+                "fiscal_issuance_unknown",
+                FiscalIssuanceIntegrationState.FiscalIssuanceUnknown.ToString())),
+            Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -320,6 +340,86 @@ public sealed class IssueExitAuthorizationHandlerTests
             listener,
             FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking);
         AssertTag(activity, "fiscal_gating_shadow.blocked_reason", nameof(InvalidOperationException));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalReferenceHasFailureMetadata_ShadowObservationIncludesExceptionAndErrorPosture()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var fiscalReference = MinimalFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration) with
+        {
+            LatestExceptionReason = FiscalIssuanceExceptionReason.FiscalSequencePolicyNotFound,
+            LatestErrorPosture = FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection
+        };
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(fiscalReference);
+        var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
+
+        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => IsFailureMetadataShadowObservation(x)),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenShadowObservationPublicationFails_StillIssuesAuthorization()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        _eventPublisher
+            .PublishAsync(
+                Arg.Is<IntegrationEventEnvelope>(x =>
+                    x.EventType == IntegrationEventTypes.ExitAuthorizationFiscalGatingShadowObserved),
+                Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("shadow observation unavailable"));
+
+        var sut = CreateSut();
+
+        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+
+        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        await _eventPublisher.Received(1).PublishAsync(
+            Arg.Is<IntegrationEventEnvelope>(x => x.EventType == IntegrationEventTypes.ExitAuthorizationIssued),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ShadowObservationPayload_ExcludesSensitiveRawPayloadFields()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+        var command = ValidCommand();
+        var fiscalReference = CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository
+            .FindLatestByPaymentAttemptIdAsync(command.PaymentAttemptId, Arg.Any<CancellationToken>())
+            .Returns(fiscalReference);
+        var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
+
+        await sut.ExecuteAsync(command, CancellationToken.None);
+
+        var shadowEvent = _eventPublisher
+            .ReceivedCalls()
+            .Select(call => call.GetArguments().FirstOrDefault())
+            .OfType<IntegrationEventEnvelope>()
+            .Single(envelope => envelope.EventType == IntegrationEventTypes.ExitAuthorizationFiscalGatingShadowObserved);
+        var serializedPayload = JsonSerializer.Serialize(shadowEvent.Payload).ToLowerInvariant();
+
+        Assert.DoesNotContain("raw_payload", serializedPayload);
+        Assert.DoesNotContain("callback_payload", serializedPayload);
+        Assert.DoesNotContain("pan", serializedPayload);
+        Assert.DoesNotContain("cvv", serializedPayload);
+        Assert.DoesNotContain("secret", serializedPayload);
+        Assert.DoesNotContain("token", serializedPayload);
     }
 
     /// <summary>
@@ -506,6 +606,89 @@ public sealed class IssueExitAuthorizationHandlerTests
                 HasTag(x, "fiscal_gating_shadow.status", expectedStatus));
         AssertTag(activity, "fiscal_gating_shadow.status", expectedStatus);
         return activity;
+    }
+
+    private static bool IsMissingContextShadowObservation(IntegrationEventEnvelope envelope)
+    {
+        var command = ValidCommand();
+        var payload = GetShadowPayload(envelope);
+
+        return payload is not null &&
+            envelope.AggregateId == command.PaymentAttemptId.ToString() &&
+            envelope.CorrelationId == command.CorrelationId &&
+            payload.ShadowEvaluationStatus == FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext &&
+            payload.PaymentAttemptId == command.PaymentAttemptId &&
+            payload.ParkingSessionId == command.ParkingSessionId &&
+            payload.PaymentConfirmationId == null;
+    }
+
+    private static bool IsFailureShadowObservation(IntegrationEventEnvelope envelope, string blockedReason)
+    {
+        var payload = GetShadowPayload(envelope);
+
+        return payload is not null &&
+            payload.ShadowEvaluationStatus == FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking &&
+            payload.BlockedReason == blockedReason;
+    }
+
+    private static bool IsReadyShadowObservation(
+        IntegrationEventEnvelope envelope,
+        IssueExitAuthorizationCommand command,
+        FiscalIssuanceReferenceRecord fiscalReference)
+    {
+        var payload = GetShadowPayload(envelope);
+
+        return payload is not null &&
+            envelope.AggregateId == command.PaymentAttemptId.ToString() &&
+            envelope.AggregateType == "PaymentAttempt" &&
+            envelope.CorrelationId == command.CorrelationId &&
+            payload.ShadowEvaluationStatus == FiscalGatingShadowEvaluationStatuses.EvaluatedReady &&
+            payload.PaymentAttemptId == command.PaymentAttemptId &&
+            payload.ParkingSessionId == command.ParkingSessionId &&
+            payload.PaymentConfirmationId == fiscalReference.PaymentConfirmationId &&
+            payload.FiscalIssuanceReferenceId == fiscalReference.FiscalIssuanceReferenceId &&
+            payload.PosServerFiscalDocumentId == fiscalReference.PosServerFiscalDocumentId &&
+            payload.FiscalDocumentNumber == fiscalReference.FiscalDocumentNumber &&
+            payload.FiscalIssuanceState == fiscalReference.FiscalIssuanceState.ToString() &&
+            payload.FiscalIssuanceEvidenceStatus == fiscalReference.FiscalIssuanceEvidenceStatus.ToString() &&
+            payload.FiscalNumberAssignmentState == fiscalReference.FiscalNumberAssignmentState.ToString() &&
+            payload.SiteId == fiscalReference.SiteId &&
+            payload.SitePosServerId == fiscalReference.SitePosServerId &&
+            payload.SitePosServerRef == fiscalReference.SitePosServerRef &&
+            payload.Source == nameof(IssueExitAuthorizationHandler);
+    }
+
+    private static bool IsBlockedShadowObservation(
+        IntegrationEventEnvelope envelope,
+        string blockedReason,
+        string fiscalIssuanceState)
+    {
+        var payload = GetShadowPayload(envelope);
+
+        return payload is not null &&
+            payload.ShadowEvaluationStatus == FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked &&
+            payload.BlockedReason == blockedReason &&
+            payload.FiscalIssuanceState == fiscalIssuanceState;
+    }
+
+    private static bool IsFailureMetadataShadowObservation(IntegrationEventEnvelope envelope)
+    {
+        var payload = GetShadowPayload(envelope);
+
+        return payload is not null &&
+            payload.ShadowEvaluationStatus == FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked &&
+            payload.ExceptionReason == FiscalIssuanceExceptionReason.FiscalSequencePolicyNotFound.ToString() &&
+            payload.ErrorPosture == FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection.ToString();
+    }
+
+    private static ExitAuthorizationFiscalGatingShadowObservedPayload? GetShadowPayload(IntegrationEventEnvelope envelope)
+    {
+        if (envelope.EventType != IntegrationEventTypes.ExitAuthorizationFiscalGatingShadowObserved)
+        {
+            return null;
+        }
+
+        return envelope.Payload as ExitAuthorizationFiscalGatingShadowObservedPayload;
     }
 
     private static void AssertTag(Activity activity, string key, object expected)

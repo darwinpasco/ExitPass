@@ -51,7 +51,7 @@ public sealed class ExitAuthorizationFiscalGatingShadowEvaluator : IExitAuthoriz
                 IsNoFiscalRequiredPolicyApproved: context.IsNoFiscalRequiredPolicyApproved,
                 IsReconciledFiscalEvidencePolicyApproved: context.IsReconciledFiscalEvidencePolicyApproved));
 
-        return FiscalGatingShadowEvaluation.FromGatingEvaluation(evaluation);
+        return FiscalGatingShadowEvaluation.FromGatingEvaluation(evaluation, fiscalReference);
     }
 }
 
@@ -71,9 +71,12 @@ public sealed record FiscalGatingShadowEvaluation(
     string? BlockedReason,
     Domain.FiscalIssuance.FiscalIssuanceIntegrationState? State,
     bool RequiresManualReview,
-    bool IsExceptionReleaseOnly)
+    bool IsExceptionReleaseOnly,
+    FiscalIssuanceReferenceRecord? FiscalReference = null)
 {
-    public static FiscalGatingShadowEvaluation FromGatingEvaluation(FiscalIssuanceGatingEvaluation evaluation) =>
+    public static FiscalGatingShadowEvaluation FromGatingEvaluation(
+        FiscalIssuanceGatingEvaluation evaluation,
+        FiscalIssuanceReferenceRecord? fiscalReference = null) =>
         new(
             Status: evaluation.IsReadyForNormalExitAuthorization
                 ? FiscalGatingShadowEvaluationStatuses.EvaluatedReady
@@ -82,7 +85,8 @@ public sealed record FiscalGatingShadowEvaluation(
             BlockedReason: evaluation.BlockedReason,
             State: evaluation.State,
             RequiresManualReview: evaluation.RequiresManualReview,
-            IsExceptionReleaseOnly: evaluation.IsExceptionReleaseOnly);
+            IsExceptionReleaseOnly: evaluation.IsExceptionReleaseOnly,
+            FiscalReference: fiscalReference);
 
     public static FiscalGatingShadowEvaluation NotEvaluatedMissingFiscalContext() =>
         new(
