@@ -4,17 +4,17 @@
 
 This review aligns `ExitPass_POS_Server_API_Contract_v1.0.md` with the current implemented POS Server runtime in `D:\SourceCodes\ExitPass-PoSServer`.
 
-The prior API contract was broader and described many provisional API families. The aligned contract now documents the currently implemented fiscal document create/read endpoints and clearly marks the remaining API families as deferred.
+The prior API contract was broader and described many provisional API families. The aligned contract now documents the currently implemented fiscal document create/read endpoints, the response/status hardening semantics merged to `dev`, and clearly marks the remaining API families as deferred.
 
 ## 2. Runtime Repository Inspected
 
 | Item | Value |
 | --- | --- |
 | Runtime repository | `D:\SourceCodes\ExitPass-PoSServer` |
-| Runtime branch at read-only inspection | `dev` |
-| Runtime branch at final validation | `runtime/fiscal-issuance-response-status-hardening` |
+| Runtime branch inspected | `dev` |
+| Runtime slice reflected | `runtime/fiscal-issuance-response-status-hardening`, merged to `dev` |
 | Documentation repository | `D:\SourceCodes\ExitPass` |
-| Documentation branch | `docs/v1.3-pos-server-api-contract-alignment` |
+| Documentation branch | `docs/v1.3-pos-server-api-response-status-update` |
 
 ## 3. Files Inspected
 
@@ -40,6 +40,7 @@ Runtime notes inspected:
 - `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Issuance_Idempotency_Slice.md`
 - `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Policy_Identity_Resolution_Slice.md`
 - `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Sequence_Allocation_Slice.md`
+- `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Issuance_Response_Status_Hardening_Slice.md`
 - `docs/v1.3/runtime/ExitPass_POS_Server_Runtime_Fiscal_Numbering_and_Idempotency_Implementation_Plan.md`
 
 Documentation references inspected:
@@ -56,9 +57,6 @@ Documentation references inspected:
 Updated:
 
 - `docs/v1.3/pos-server-api/ExitPass_POS_Server_API_Contract_v1.0.md`
-
-Created:
-
 - `docs/v1.3/pos-server-api/ExitPass_POS_Server_API_Contract_v1.0_Alignment_Review.md`
 
 ## 5. Current Implemented Endpoints
@@ -94,11 +92,19 @@ Confirmed current behavior:
 - POST allocates the next fiscal sequence value.
 - POST formats and persists fiscal document number fields.
 - POST returns fiscal numbering fields after durable commit.
+- POST success includes `resultClassification`, `fiscalIssuanceEvidenceStatus`, `fiscalNumberAssignmentState`, and `fiscalDocumentStatusCodeId`.
+- POST first-time success returns `resultClassification = newly_created`.
+- POST same-key/same-hash replay returns `resultClassification = idempotent_replay`.
+- POST fail-closed incomplete fiscal numbering evidence returns `fiscal_number_assignment_incomplete`.
+- POST supported failures expose conservative `errorPosture` values.
 - GET returns persisted fiscal numbering fields.
+- GET derives `fiscalIssuanceEvidenceStatus`, `fiscalNumberAssignmentState`, and `fiscalDocumentStatusCodeId` from the persisted read model.
 
-Current runtime-specific caveat:
+Current runtime-specific response/status posture:
 
-- Create and replay both return code `accepted` and HTTP `202 Accepted`; replay is distinguished by message, not a distinct response code.
+- Create and replay both return code `accepted` and HTTP `202 Accepted`.
+- Replay is explicitly distinguished by `resultClassification = idempotent_replay`.
+- First-time creation is explicitly distinguished by `resultClassification = newly_created`.
 
 ## 7. Docs Aligned
 
@@ -108,6 +114,7 @@ The API Contract was aligned to:
 - current DTO fields
 - current HTTP status codes
 - current response envelope behavior
+- current response/status hardening behavior
 - current idempotency source/key/hash posture
 - current conflict/replay behavior
 - current fiscal identity and policy resolution behavior
@@ -168,43 +175,80 @@ Mismatches resolved:
 - The previous API contract described many provisional API families in a way that could be read as current contract surface.
 - The previous API contract treated `Idempotency-Key` as the required current idempotency source, while the runtime currently derives idempotency from request-body upstream finality reference.
 - The previous API contract did not reflect implemented server-side fiscal identity resolution, sequence policy resolution, idempotency conflict/replay, sequence-state row locking, and fiscal number return behavior.
+- The previous API contract still described replay as distinguishable only by message; current runtime now exposes `resultClassification = idempotent_replay`.
+- The previous API contract did not document `errorPosture`, `fiscal_number_assignment_incomplete`, or GET-derived fiscal evidence/assignment status.
 
 No runtime contradiction was found for the v1.3 authority model.
 
-Validation issue:
+## 11. Response/Status Hardening Update
 
-- During final validation, `D:\SourceCodes\ExitPass-PoSServer` was on branch `runtime/fiscal-issuance-response-status-hardening` and reported uncommitted changes in runtime source and test files. Those runtime changes were not made by this documentation task and were not reverted. This API contract is aligned to the runtime files inspected during the read-only pass before those final-validation unstaged changes appeared.
+Runtime branch/slice inspected:
 
-Runtime files reported modified during final validation:
+- Runtime repository: `D:\SourceCodes\ExitPass-PoSServer`
+- Runtime branch inspected: `dev`
+- Runtime slice reflected: `runtime/fiscal-issuance-response-status-hardening`, merged to `dev`
+- Runtime note inspected: `docs/v1.3/runtime/ExitPass_POS_Server_Fiscal_Issuance_Response_Status_Hardening_Slice.md`
 
-- `src/ExitPass.PosServer.Api/FiscalDocuments/CreateFiscalDocumentResponse.cs`
-- `src/ExitPass.PosServer.Api/FiscalDocuments/FiscalDocumentCreationEndpoint.cs`
-- `src/ExitPass.PosServer.Api/FiscalDocuments/FiscalDocumentReadEndpoint.cs`
-- `src/ExitPass.PosServer.Api/FiscalDocuments/GetFiscalDocumentResponse.cs`
-- `tests/ExitPass.PosServer.Api.IntegrationTests/FiscalDocumentApiPostgresSmokeTests.cs`
-- `tests/ExitPass.PosServer.Api.Tests/FiscalDocumentCreationEndpointTests.cs`
-- `tests/ExitPass.PosServer.Api.Tests/FiscalDocumentReadEndpointTests.cs`
+New fields documented:
 
-## 11. Risks and Open Questions
+- `resultClassification`
+- `fiscalIssuanceEvidenceStatus`
+- `fiscalNumberAssignmentState`
+- `fiscalDocumentStatusCodeId`
+- `errorPosture`
+
+Replay distinction now aligned:
+
+- First-time success is documented as `resultClassification = newly_created`.
+- Same-key/same-hash replay is documented as `resultClassification = idempotent_replay`.
+- Both may still use HTTP `202 Accepted` and code `accepted`.
+- Replay returns the original fiscal document id and numbering fields and does not allocate another fiscal number.
+
+Error posture documented:
+
+- `do_not_retry_without_request_change`
+- `retry_after_configuration_correction`
+- `retry_after_service_recovery`
+
+Fiscal numbering completeness fail-closed behavior documented:
+
+- If a successful persistence result lacks complete fiscal numbering evidence, the API fails closed with `fiscal_number_assignment_incomplete`.
+- Central PMS must not record fiscal issuance evidence from `fiscal_number_assignment_incomplete`.
+
+Central PMS interpretation updated:
+
+- `fiscalIssuanceEvidenceStatus = fiscal_document_number_assigned` is POS Server fiscal issuance evidence only.
+- It does not mean payment finality, `ExitAuthorization`, gate permission, entitlement approval, manual release approval, continuity activation, BIR report finality, X/Z finality, Annex E finality, Digital SI issuance, or recovery completion.
+
+Files updated:
+
+- `docs/v1.3/pos-server-api/ExitPass_POS_Server_API_Contract_v1.0.md`
+- `docs/v1.3/pos-server-api/ExitPass_POS_Server_API_Contract_v1.0_Alignment_Review.md`
+
+Authority boundaries preserved:
+
+- POS Server remains fiscal issuance authority only.
+- Central PMS remains payment finality, fiscal reference recording, and `ExitAuthorization` authority.
+- POS Server response/status fields remain fiscal evidence/status fields, not payment, exit, entitlement, gate, continuity, or manual-release authority.
+
+## 12. Risks and Open Questions
 
 Risks:
 
-- Current replay response uses the same code `accepted` as first-time creation, which may require caller guidance or later response differentiation.
 - Authentication and authorization remain placeholders in this API Contract.
 - Idempotency currently depends on upstream finality reference rather than an explicit HTTP header; Central PMS must treat that reference as stable and non-reusable for semantically different fiscal issuance.
 - Durable post-commit sequence gap and recovery handling remains deferred.
 - Deferred API families must not be consumed until separate runtime contracts are produced.
-- The runtime repository must be returned to a clean or intentionally reviewed state before this API contract is treated as final against the runtime implementation branch.
 
 Open questions:
 
 - Should a future `Idempotency-Key` header be added or should upstream finality reference remain canonical?
-- Should replay return a distinct `code` while preserving HTTP `202`?
 - What is the final service-to-service authentication and authorization model?
 - What Central PMS fiscal reference recording callback or reconciliation endpoint is needed, if any?
 - What is the final durable post-commit gap/recovery policy?
+- What is the final cross-API error envelope standard?
 
-## 12. Recommended Next API / Documentation Task
+## 13. Recommended Next API / Documentation Task
 
 Recommended next task:
 
