@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Domain.Common;
 using Microsoft.Extensions.Logging;
@@ -40,6 +41,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     private readonly ISystemClock _systemClock;
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<IssueExitAuthorizationHandler> _logger;
+    private readonly IExitAuthorizationFiscalGatingShadowEvaluator _fiscalGatingShadowEvaluator;
 
     /// <summary>
     /// Creates a handler for issuing exit authorizations through the canonical DB routine.
@@ -49,18 +51,22 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     /// <param name="systemClock">System clock used for canonical request timestamps.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
+    /// <param name="fiscalGatingShadowEvaluator">Optional non-enforcing fiscal gating shadow evaluator.</param>
     public IssueExitAuthorizationHandler(
         IIssueExitAuthorizationGateway gateway,
         IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
-        ILogger<IssueExitAuthorizationHandler> logger)
+        ILogger<IssueExitAuthorizationHandler> logger,
+        IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null)
     {
         _gateway = gateway;
         _eventPublisher = eventPublisher;
         _systemClock = systemClock;
         _metrics = metrics;
         _logger = logger;
+        _fiscalGatingShadowEvaluator =
+            fiscalGatingShadowEvaluator ?? ExitAuthorizationFiscalGatingShadowEvaluator.Instance;
     }
 
     /// <summary>
@@ -96,6 +102,8 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         try
         {
             ValidateCommand(command);
+
+            await EvaluateFiscalGatingShadowAsync(command, activity, cancellationToken);
 
             var dbStart = _systemClock.UtcNow;
 
@@ -184,6 +192,49 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
 
             throw;
         }
+    }
+
+    private async Task EvaluateFiscalGatingShadowAsync(
+        IssueExitAuthorizationCommand command,
+        Activity? activity,
+        CancellationToken cancellationToken)
+    {
+        FiscalGatingShadowEvaluation evaluation;
+
+        try
+        {
+            evaluation = await _fiscalGatingShadowEvaluator.EvaluateAsync(
+                new ExitAuthorizationFiscalGatingShadowContext(
+                    ParkingSessionId: command.ParkingSessionId,
+                    PaymentAttemptId: command.PaymentAttemptId,
+                    CorrelationId: command.CorrelationId,
+                    IsPaymentFinalityVerified: true),
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            evaluation = FiscalGatingShadowEvaluation.EvaluationFailedNonBlocking(ex.GetType().Name);
+
+            _logger.LogWarning(
+                ex,
+                "Non-enforcing fiscal gating shadow evaluation failed. ExitAuthorization issuance will continue unchanged.");
+        }
+
+        activity?.SetTag("fiscal_gating_shadow.status", evaluation.Status);
+        activity?.SetTag("fiscal_gating_shadow.ready", evaluation.IsReadyForNormalExitAuthorization);
+        activity?.SetTag("fiscal_gating_shadow.blocked_reason", evaluation.BlockedReason ?? string.Empty);
+        activity?.SetTag("fiscal_gating_shadow.state", evaluation.State?.ToString() ?? string.Empty);
+
+        _metrics.ExitAuthorizationFiscalGatingShadowEvaluated(
+            evaluation.Status,
+            evaluation.BlockedReason ?? string.Empty);
+
+        _logger.LogInformation(
+            "Fiscal gating shadow evaluation recorded. status={Status} ready={Ready} blocked_reason={BlockedReason} state={State}",
+            evaluation.Status,
+            evaluation.IsReadyForNormalExitAuthorization,
+            evaluation.BlockedReason,
+            evaluation.State);
     }
 
     /// <summary>
