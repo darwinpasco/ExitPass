@@ -52,6 +52,12 @@ public interface IFiscalIssuanceOrchestrationService
         Guid fiscalIssuanceReferenceId,
         FiscalIssuanceEvidenceInput evidence,
         CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> ApplyPosServerCreateResultAsync(
+        Guid fiscalIssuanceReferenceId,
+        PosServerFiscalDocumentCreateResult result,
+        PosServerCreateResultRecordingContext context,
+        CancellationToken cancellationToken);
 }
 
 public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestrationService
@@ -194,6 +200,87 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
             evidence,
             cancellationToken);
 
+    public async Task<FiscalIssuanceReferenceRecord> ApplyPosServerCreateResultAsync(
+        Guid fiscalIssuanceReferenceId,
+        PosServerFiscalDocumentCreateResult result,
+        PosServerCreateResultRecordingContext context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(context);
+
+        if (fiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(fiscalIssuanceReferenceId));
+        }
+
+        if (string.IsNullOrWhiteSpace(context.UpstreamFinalityReference))
+        {
+            throw new ArgumentException("Upstream finality reference is required.", nameof(context));
+        }
+
+        if (result.Outcome != PosServerFiscalDocumentOutcome.Accepted || !result.Succeeded)
+        {
+            throw new ArgumentException("Only accepted POS Server create results are handled by this success/replay slice.", nameof(result));
+        }
+
+        var evidenceErrors = ValidateCompletePosServerEvidence(result);
+        if (evidenceErrors.Count > 0)
+        {
+            throw new ArgumentException(
+                $"POS Server fiscal issuance evidence is incomplete: {string.Join(", ", evidenceErrors)}",
+                nameof(result));
+        }
+
+        var scopedReference = await _repository.FindByUpstreamFinalityReferenceAsync(
+            context.UpstreamFinalityReference,
+            context.SitePosServerId,
+            context.FiscalDocumentTypeCodeId,
+            cancellationToken);
+
+        if (scopedReference is not null &&
+            scopedReference.FiscalIssuanceReferenceId != fiscalIssuanceReferenceId)
+        {
+            throw new InvalidOperationException("duplicate_active_fiscal_reference_detected");
+        }
+
+        if (scopedReference is not null &&
+            HasRecordedFiscalEvidence(scopedReference) &&
+            !MatchesRecordedEvidence(scopedReference, result))
+        {
+            return await MarkManualReviewPreservingExistingEvidenceAsync(
+                fiscalIssuanceReferenceId,
+                scopedReference,
+                context,
+                cancellationToken);
+        }
+
+        var evidence = new FiscalIssuanceEvidenceInput(
+            PosServerFiscalDocumentId: result.FiscalDocumentId,
+            FiscalIdentityId: result.FiscalIdentityId,
+            FiscalSequencePolicyId: result.FiscalSequencePolicyId,
+            FiscalSequenceValue: result.FiscalSequenceValue,
+            FiscalDocumentNumber: result.FiscalDocumentNumber,
+            FiscalSeries: result.FiscalSeries,
+            FiscalNumberPrefixText: result.FiscalNumberPrefixText,
+            FiscalNumberSuffixText: result.FiscalNumberSuffixText,
+            FiscalNumberAssignedAt: result.FiscalNumberAssignedAt,
+            FiscalNumberAssignedByRef: result.FiscalNumberAssignedByRef,
+            FiscalDocumentStatusCodeId: result.FiscalDocumentStatusCodeId,
+            CorrelationId: context.CorrelationId,
+            PosServerResponseTimestamp: context.PosServerResponseTimestamp,
+            ServiceIdentityId: context.ServiceIdentityId);
+
+        return result.ResultClassification switch
+        {
+            FiscalIssuanceResultClassification.NewlyCreated =>
+                await MarkRecordedAsync(fiscalIssuanceReferenceId, evidence, cancellationToken),
+            FiscalIssuanceResultClassification.IdempotentReplay =>
+                await MarkReplayedAsync(fiscalIssuanceReferenceId, evidence, cancellationToken),
+            _ => throw new ArgumentException("POS Server result classification is not supported by this slice.", nameof(result))
+        };
+    }
+
     public static bool IsNormalExitAuthorizationGatingReady(FiscalIssuanceReferenceRecord record) =>
         record.FiscalIssuanceState is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
             or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
@@ -243,6 +330,37 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
                 UpdatedByServiceIdentityId: context.ServiceIdentityId),
             cancellationToken);
     }
+
+    private Task<FiscalIssuanceReferenceRecord> MarkManualReviewPreservingExistingEvidenceAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceReferenceRecord existing,
+        PosServerCreateResultRecordingContext context,
+        CancellationToken cancellationToken) =>
+        TransitionAsync(
+            fiscalIssuanceReferenceId,
+            new FiscalIssuanceStateTransitionRequest(
+                FiscalIssuanceState: FiscalIssuanceIntegrationState.FiscalIssuanceManualReview,
+                PosServerFiscalDocumentId: existing.PosServerFiscalDocumentId,
+                FiscalIdentityId: existing.FiscalIdentityId,
+                FiscalSequencePolicyId: existing.FiscalSequencePolicyId,
+                FiscalSequenceValue: existing.FiscalSequenceValue,
+                FiscalDocumentNumber: existing.FiscalDocumentNumber,
+                FiscalSeries: existing.FiscalSeries,
+                FiscalNumberPrefixText: existing.FiscalNumberPrefixText,
+                FiscalNumberSuffixText: existing.FiscalNumberSuffixText,
+                FiscalNumberAssignedAt: existing.FiscalNumberAssignedAt,
+                FiscalNumberAssignedByRef: existing.FiscalNumberAssignedByRef,
+                FiscalDocumentStatusCodeId: existing.FiscalDocumentStatusCodeId,
+                ResultClassification: existing.ResultClassification,
+                FiscalIssuanceEvidenceStatus: existing.FiscalIssuanceEvidenceStatus,
+                FiscalNumberAssignmentState: existing.FiscalNumberAssignmentState,
+                LatestExceptionReason: FiscalIssuanceExceptionReason.ReplayMismatch,
+                LatestErrorCode: "replay_mismatch",
+                LatestErrorPosture: FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+                CorrelationId: context.CorrelationId,
+                PosServerResponseTimestamp: existing.PosServerResponseTimestamp,
+                UpdatedByServiceIdentityId: context.ServiceIdentityId),
+            cancellationToken);
 
     private Task<FiscalIssuanceReferenceRecord> MarkEvidenceAsync(
         Guid fiscalIssuanceReferenceId,
@@ -296,6 +414,91 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
 
         return _repository.UpdateStateAsync(fiscalIssuanceReferenceId, request, cancellationToken);
     }
+
+    private static IReadOnlyList<string> ValidateCompletePosServerEvidence(PosServerFiscalDocumentCreateResult result)
+    {
+        var errors = new List<string>();
+
+        if (result.FiscalDocumentId is null || result.FiscalDocumentId == Guid.Empty)
+        {
+            errors.Add("pos_server_fiscal_document_id_required");
+        }
+
+        if (result.FiscalIdentityId is null || result.FiscalIdentityId == Guid.Empty)
+        {
+            errors.Add("fiscal_identity_id_required");
+        }
+
+        if (result.FiscalSequencePolicyId is null || result.FiscalSequencePolicyId == Guid.Empty)
+        {
+            errors.Add("fiscal_sequence_policy_id_required");
+        }
+
+        if (result.FiscalSequenceValue is null or < 1)
+        {
+            errors.Add("fiscal_sequence_value_required");
+        }
+
+        if (string.IsNullOrWhiteSpace(result.FiscalDocumentNumber))
+        {
+            errors.Add("fiscal_document_number_required");
+        }
+
+        if (result.FiscalDocumentStatusCodeId is null || result.FiscalDocumentStatusCodeId == Guid.Empty)
+        {
+            errors.Add("fiscal_document_status_code_id_required");
+        }
+
+        if (result.FiscalIssuanceEvidenceStatus != FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned)
+        {
+            errors.Add("fiscal_issuance_evidence_status_required");
+        }
+
+        if (result.FiscalNumberAssignmentState != FiscalNumberAssignmentState.Assigned)
+        {
+            errors.Add("fiscal_number_assignment_state_assigned_required");
+        }
+
+        if (result.FiscalNumberAssignedAt is null)
+        {
+            errors.Add("fiscal_number_assigned_at_required");
+        }
+
+        if (string.IsNullOrWhiteSpace(result.FiscalNumberAssignedByRef))
+        {
+            errors.Add("fiscal_number_assigned_by_ref_required");
+        }
+
+        return errors;
+    }
+
+    private static bool HasRecordedFiscalEvidence(FiscalIssuanceReferenceRecord record) =>
+        record.PosServerFiscalDocumentId is not null ||
+        record.FiscalDocumentNumber is not null ||
+        record.FiscalSequenceValue is not null ||
+        record.FiscalIdentityId is not null ||
+        record.FiscalSequencePolicyId is not null;
+
+    private static bool MatchesRecordedEvidence(
+        FiscalIssuanceReferenceRecord record,
+        PosServerFiscalDocumentCreateResult result) =>
+        NullableGuidMatches(record.PosServerFiscalDocumentId, result.FiscalDocumentId) &&
+        NullableGuidMatches(record.FiscalIdentityId, result.FiscalIdentityId) &&
+        NullableGuidMatches(record.FiscalSequencePolicyId, result.FiscalSequencePolicyId) &&
+        NullableLongMatches(record.FiscalSequenceValue, result.FiscalSequenceValue) &&
+        NullableStringMatches(record.FiscalDocumentNumber, result.FiscalDocumentNumber) &&
+        NullableGuidMatches(record.FiscalDocumentStatusCodeId, result.FiscalDocumentStatusCodeId);
+
+    private static bool NullableGuidMatches(Guid? recorded, Guid? incoming) =>
+        recorded is null || incoming is null || recorded == incoming;
+
+    private static bool NullableLongMatches(long? recorded, long? incoming) =>
+        recorded is null || incoming is null || recorded == incoming;
+
+    private static bool NullableStringMatches(string? recorded, string? incoming) =>
+        string.IsNullOrWhiteSpace(recorded) ||
+        string.IsNullOrWhiteSpace(incoming) ||
+        string.Equals(recorded, incoming, StringComparison.Ordinal);
 }
 
 public sealed record PrepareFiscalIssuanceCommand(
@@ -409,6 +612,14 @@ public sealed record FiscalIssuanceEvidenceInput(
     DateTimeOffset? FiscalNumberAssignedAt,
     string? FiscalNumberAssignedByRef,
     Guid? FiscalDocumentStatusCodeId,
+    Guid? CorrelationId,
+    DateTimeOffset? PosServerResponseTimestamp,
+    Guid? ServiceIdentityId);
+
+public sealed record PosServerCreateResultRecordingContext(
+    string UpstreamFinalityReference,
+    Guid? SitePosServerId,
+    Guid? FiscalDocumentTypeCodeId,
     Guid? CorrelationId,
     DateTimeOffset? PosServerResponseTimestamp,
     Guid? ServiceIdentityId);
