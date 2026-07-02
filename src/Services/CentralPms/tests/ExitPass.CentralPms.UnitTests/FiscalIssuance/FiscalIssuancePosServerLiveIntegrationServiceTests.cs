@@ -1,0 +1,420 @@
+using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+using FluentAssertions;
+using NSubstitute;
+using Xunit;
+
+namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
+
+public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
+{
+    [Fact]
+    public void Options_Defaults_DisableLivePosServerFiscalIssuance()
+    {
+        var options = new FiscalIssuancePosServerIntegrationOptions();
+
+        options.EnablePosServerFiscalIssuanceLiveCall.Should().BeFalse();
+        options.EnableLiveFiscalIssuanceFromPaymentFlow.Should().BeFalse();
+        options.EnableLiveFiscalIssuanceFromExitFlow.Should().BeFalse();
+        options.PosServerBaseUrl.Should().BeNull();
+        options.TimeoutSeconds.Should().Be(10);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenDisabled_DoesNotCallClientOrMapper()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions(),
+            mapper,
+            client,
+            orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Disabled);
+        result.Code.Should().Be("pos_server_fiscal_issuance_live_call_disabled");
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+        await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenEnabledWithoutBaseUrl_FailsSafely()
+    {
+        var mapper = Substitute.For<IPosServerFiscalDocumentRequestMapper>();
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var sut = CreateSut(
+            new FiscalIssuancePosServerIntegrationOptions
+            {
+                EnablePosServerFiscalIssuanceLiveCall = true
+            },
+            mapper,
+            client,
+            orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
+        result.Errors.Should().Contain("pos_server_base_url_required");
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
+        mapper.DidNotReceiveWithAnyArgs().Map(default!);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenEnabled_MapsRequestAndCallsMockedClient()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServerResult = CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated);
+        client.CreateFiscalDocumentAsync(Arg.Any<PosServerFiscalDocumentCreateRequest>(), Arg.Any<CancellationToken>())
+            .Returns(posServerResult);
+        orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        orchestration.ApplyPosServerCreateResultAsync(
+                FiscalIssuanceReferenceId,
+                posServerResult,
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
+        var sut = CreateSut(client: client, orchestration: orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        result.MappedRequest.Should().NotBeNull();
+        result.MappedRequest!.PayableBasis.UpstreamFinalityRef.Should().Be("upstream-finality-ref");
+        await client.Received(1).CreateFiscalDocumentAsync(
+            Arg.Is<PosServerFiscalDocumentCreateRequest>(request =>
+                request.UpstreamFinalityRef == "upstream-finality-ref" &&
+                request.PayableBasis.UpstreamFinalityRef == "upstream-finality-ref"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenNewlyCreatedReturned_AppliesRecordedState()
+    {
+        var result = await ExecuteWithPosServerResultAsync(
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated),
+            FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+
+        result.FiscalIssuanceReference.Should().NotBeNull();
+        result.FiscalIssuanceReference!.FiscalIssuanceState.Should()
+            .Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        result.PosServerResult!.ResultClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenReplayReturned_AppliesReplayedState()
+    {
+        var result = await ExecuteWithPosServerResultAsync(
+            CompletePosServerCreateResult(FiscalIssuanceResultClassification.IdempotentReplay),
+            FiscalIssuanceIntegrationState.FiscalIssuanceReplayed);
+
+        result.FiscalIssuanceReference.Should().NotBeNull();
+        result.FiscalIssuanceReference!.FiscalIssuanceState.Should()
+            .Be(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed);
+        result.PosServerResult!.ResultClassification.Should().Be(FiscalIssuanceResultClassification.IdempotentReplay);
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenConflictReturned_AppliesConflictState()
+    {
+        var result = await ExecuteWithPosServerResultAsync(
+            FailurePosServerCreateResult(
+                PosServerFiscalDocumentOutcome.Conflict,
+                409,
+                "fiscal_document_idempotency_conflict",
+                FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange),
+            FiscalIssuanceIntegrationState.FiscalIssuanceConflict);
+
+        result.FiscalIssuanceReference!.FiscalIssuanceState.Should()
+            .Be(FiscalIssuanceIntegrationState.FiscalIssuanceConflict);
+    }
+
+    [Theory]
+    [InlineData(
+        PosServerFiscalDocumentOutcome.FailedRequest,
+        400,
+        "missing_payable_basis",
+        FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest)]
+    [InlineData(
+        PosServerFiscalDocumentOutcome.FailedConfiguration,
+        400,
+        "fiscal_sequence_policy_not_found",
+        FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration)]
+    [InlineData(
+        PosServerFiscalDocumentOutcome.FailedService,
+        503,
+        "persistence_write_failed",
+        FiscalIssuanceIntegrationState.FiscalIssuanceFailedService)]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenFailureReturned_AppliesFailureState(
+        PosServerFiscalDocumentOutcome outcome,
+        int httpStatusCode,
+        string code,
+        FiscalIssuanceIntegrationState expectedState)
+    {
+        var result = await ExecuteWithPosServerResultAsync(
+            FailurePosServerCreateResult(
+                outcome,
+                httpStatusCode,
+                code,
+                outcome == PosServerFiscalDocumentOutcome.FailedConfiguration
+                    ? FiscalIssuanceErrorPosture.RetryAfterConfigurationCorrection
+                    : outcome == PosServerFiscalDocumentOutcome.FailedService
+                        ? FiscalIssuanceErrorPosture.RetryAfterServiceRecovery
+                        : FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange),
+            expectedState);
+
+        result.FiscalIssuanceReference!.FiscalIssuanceState.Should().Be(expectedState);
+        result.PosServerResult!.Code.Should().Be(code);
+    }
+
+    [Fact]
+    public async Task OperationalPaymentAndExitFlows_DoNotDependOnLivePosServerIntegrationSeam()
+    {
+        var operationalTypes = new[]
+        {
+            typeof(RecordPaymentConfirmationService),
+            typeof(ReportVerifiedPaymentOutcomeHandler),
+            typeof(IssueExitAuthorizationHandler)
+        };
+
+        var constructorParameterTypes = operationalTypes
+            .SelectMany(type => type.GetConstructors())
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        constructorParameterTypes.Should().NotContain(typeof(IFiscalIssuancePosServerLiveIntegrationService));
+        constructorParameterTypes.Should().NotContain(typeof(IPosServerFiscalDocumentClient));
+        constructorParameterTypes.Should().NotContain(typeof(IPosServerFiscalDocumentRequestMapper));
+    }
+
+    private static FiscalIssuancePosServerLiveIntegrationService CreateSut(
+        FiscalIssuancePosServerIntegrationOptions? options = null,
+        IPosServerFiscalDocumentRequestMapper? mapper = null,
+        IPosServerFiscalDocumentClient? client = null,
+        IFiscalIssuanceOrchestrationService? orchestration = null) =>
+        new(
+            options ?? EnabledOptions(),
+            mapper ?? new PosServerFiscalDocumentRequestMapper(),
+            client ?? Substitute.For<IPosServerFiscalDocumentClient>(),
+            orchestration ?? Substitute.For<IFiscalIssuanceOrchestrationService>());
+
+    private static async Task<FiscalIssuancePosServerLiveIntegrationResult> ExecuteWithPosServerResultAsync(
+        PosServerFiscalDocumentCreateResult posServerResult,
+        FiscalIssuanceIntegrationState expectedAppliedState)
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        client.CreateFiscalDocumentAsync(Arg.Any<PosServerFiscalDocumentCreateRequest>(), Arg.Any<CancellationToken>())
+            .Returns(posServerResult);
+        orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+
+        if (posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted && posServerResult.Succeeded)
+        {
+            orchestration.ApplyPosServerCreateResultAsync(
+                    FiscalIssuanceReferenceId,
+                    posServerResult,
+                    Arg.Any<PosServerCreateResultRecordingContext>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(Reference(expectedAppliedState));
+        }
+        else
+        {
+            orchestration.ApplyPosServerFailureResultAsync(
+                    FiscalIssuanceReferenceId,
+                    posServerResult,
+                    Arg.Any<PosServerCreateResultRecordingContext>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(Reference(expectedAppliedState));
+        }
+
+        var sut = CreateSut(client: client, orchestration: orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        await client.Received(1).CreateFiscalDocumentAsync(
+            Arg.Any<PosServerFiscalDocumentCreateRequest>(),
+            Arg.Any<CancellationToken>());
+
+        return result;
+    }
+
+    private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
+        new()
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            PosServerBaseUrl = "https://pos-server.local",
+            TimeoutSeconds = 10
+        };
+
+    private static PosServerCreateResultRecordingContext RecordingContext() =>
+        new(
+            UpstreamFinalityReference: "upstream-finality-ref",
+            SitePosServerId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            FiscalDocumentTypeCodeId: Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            CorrelationId: Guid.NewGuid(),
+            PosServerResponseTimestamp: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
+            ServiceIdentityId: Guid.NewGuid());
+
+    private static PosServerFiscalDocumentCreateResult CompletePosServerCreateResult(
+        FiscalIssuanceResultClassification resultClassification) =>
+        new(
+            Outcome: PosServerFiscalDocumentOutcome.Accepted,
+            Succeeded: true,
+            HttpStatusCode: 202,
+            Code: "accepted",
+            Message: "accepted",
+            FiscalDocumentId: PosServerFiscalDocumentId,
+            ResultClassification: resultClassification,
+            FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+            FiscalIdentityId: FiscalIdentityId,
+            FiscalDocumentStatusCodeId: FiscalDocumentStatusCodeId,
+            FiscalSequencePolicyId: FiscalSequencePolicyId,
+            FiscalSequenceValue: 10001,
+            FiscalDocumentNumber: "SI-010001",
+            FiscalSeries: "SI",
+            FiscalNumberPrefixText: "SI-",
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: DateTimeOffset.Parse("2026-07-02T10:30:00+08:00"),
+            FiscalNumberAssignedByRef: "pos-server-runtime",
+            ErrorPosture: null);
+
+    private static PosServerFiscalDocumentCreateResult FailurePosServerCreateResult(
+        PosServerFiscalDocumentOutcome outcome,
+        int httpStatusCode,
+        string code,
+        FiscalIssuanceErrorPosture? errorPosture) =>
+        new(
+            Outcome: outcome,
+            Succeeded: false,
+            HttpStatusCode: httpStatusCode,
+            Code: code,
+            Message: code,
+            FiscalDocumentId: null,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIdentityId: null,
+            FiscalDocumentStatusCodeId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            ErrorPosture: errorPosture);
+
+    private static FiscalIssuanceReferenceRecord Reference(FiscalIssuanceIntegrationState state) =>
+        new(
+            FiscalIssuanceReferenceId: FiscalIssuanceReferenceId,
+            PaymentConfirmationId: Guid.NewGuid(),
+            PaymentAttemptId: Guid.NewGuid(),
+            ParkingSessionId: Guid.NewGuid(),
+            TariffSnapshotId: Guid.NewGuid(),
+            SiteId: Guid.NewGuid(),
+            SitePosServerId: Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            SitePosServerRef: "site-pos-server-main",
+            PayableBasisRef: "payable-basis-ref",
+            UpstreamFinalityReference: "upstream-finality-ref",
+            PosServerFiscalDocumentId: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? PosServerFiscalDocumentId
+                : null,
+            FiscalIdentityId: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalIdentityId
+                : null,
+            FiscalSequencePolicyId: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalSequencePolicyId
+                : null,
+            FiscalSequenceValue: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? 10001
+                : null,
+            FiscalDocumentNumber: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? "SI-010001"
+                : null,
+            FiscalSeries: "SI",
+            FiscalNumberPrefixText: "SI-",
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? DateTimeOffset.Parse("2026-07-02T10:30:00+08:00")
+                : null,
+            FiscalNumberAssignedByRef: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? "pos-server-runtime"
+                : null,
+            FiscalDocumentStatusCodeId: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalDocumentStatusCodeId
+                : null,
+            ResultClassification: state == FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalIssuanceResultClassification.IdempotentReplay
+                : state == FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                    ? FiscalIssuanceResultClassification.NewlyCreated
+                    : null,
+            FiscalIssuanceEvidenceStatus: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned
+                : null,
+            FiscalNumberAssignmentState: state is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+                or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed
+                ? FiscalNumberAssignmentState.Assigned
+                : FiscalNumberAssignmentState.NotAssigned,
+            FiscalIssuanceState: state,
+            LatestExceptionReason: state == FiscalIssuanceIntegrationState.FiscalIssuanceConflict
+                ? FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict
+                : null,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            CorrelationId: Guid.NewGuid(),
+            PosServerResponseTimestamp: DateTimeOffset.Parse("2026-07-02T10:30:01+08:00"),
+            FirstRecordedAt: DateTimeOffset.Parse("2026-07-02T10:30:02+08:00"),
+            LastUpdatedAt: DateTimeOffset.Parse("2026-07-02T10:30:03+08:00"),
+            RecordedByServiceIdentityId: Guid.NewGuid());
+
+    private static readonly Guid FiscalIssuanceReferenceId =
+        Guid.Parse("aaaaaaaa-1111-1111-1111-111111111111");
+
+    private static readonly Guid PosServerFiscalDocumentId =
+        Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    private static readonly Guid FiscalIdentityId =
+        Guid.Parse("22222222-2222-2222-2222-222222222222");
+
+    private static readonly Guid FiscalSequencePolicyId =
+        Guid.Parse("33333333-3333-3333-3333-333333333333");
+
+    private static readonly Guid FiscalDocumentStatusCodeId =
+        Guid.Parse("44444444-4444-4444-4444-444444444444");
+}
