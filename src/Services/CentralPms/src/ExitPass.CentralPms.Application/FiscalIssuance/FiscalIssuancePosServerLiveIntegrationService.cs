@@ -369,6 +369,8 @@ public sealed record FiscalIssuancePosServerDiagnosticResult(
     FiscalIssuanceIntegrationState? FiscalIssuanceStateApplied,
     Guid? FiscalDocumentId,
     string? FiscalDocumentNumber,
+    FiscalIssuanceEvidenceStatus? FiscalIssuanceEvidenceStatus,
+    FiscalNumberAssignmentState? FiscalNumberAssignmentState,
     string? ErrorCode,
     FiscalIssuanceErrorPosture? ErrorPosture,
     bool NoPaymentFinalityChanged,
@@ -389,6 +391,8 @@ public sealed record FiscalIssuancePosServerDiagnosticResult(
             FiscalIssuanceStateApplied: null,
             FiscalDocumentId: null,
             FiscalDocumentNumber: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: null,
             ErrorCode: null,
             ErrorPosture: null,
             NoPaymentFinalityChanged: true,
@@ -409,6 +413,8 @@ public sealed record FiscalIssuancePosServerDiagnosticResult(
             FiscalIssuanceStateApplied: result.FiscalIssuanceReference?.FiscalIssuanceState,
             FiscalDocumentId: result.PosServerResult?.FiscalDocumentId ?? result.FiscalIssuanceReference?.PosServerFiscalDocumentId,
             FiscalDocumentNumber: result.PosServerResult?.FiscalDocumentNumber ?? result.FiscalIssuanceReference?.FiscalDocumentNumber,
+            FiscalIssuanceEvidenceStatus: result.PosServerResult?.FiscalIssuanceEvidenceStatus ?? result.FiscalIssuanceReference?.FiscalIssuanceEvidenceStatus,
+            FiscalNumberAssignmentState: result.PosServerResult?.FiscalNumberAssignmentState ?? result.FiscalIssuanceReference?.FiscalNumberAssignmentState,
             ErrorCode: result.PosServerResult?.Succeeded == false
                 ? result.PosServerResult.Code
                 : null,
