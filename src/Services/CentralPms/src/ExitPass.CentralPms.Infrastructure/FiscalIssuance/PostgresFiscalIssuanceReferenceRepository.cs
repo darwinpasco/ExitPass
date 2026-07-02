@@ -149,6 +149,107 @@ public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceR
         return MapReference(reader);
     }
 
+    public async Task<FiscalIssuanceReferenceRecord> UpdateStateAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceStateTransitionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (fiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(fiscalIssuanceReferenceId));
+        }
+
+        var validationErrors = request.Validate();
+        if (validationErrors.Count > 0)
+        {
+            throw new ArgumentException(
+                $"Fiscal issuance state transition request is invalid: {string.Join(", ", validationErrors)}",
+                nameof(request));
+        }
+
+        const string sql = """
+            UPDATE core.fiscal_issuance_references
+            SET
+                pos_server_fiscal_document_id = @pos_server_fiscal_document_id,
+                fiscal_identity_id = @fiscal_identity_id,
+                fiscal_sequence_policy_id = @fiscal_sequence_policy_id,
+                fiscal_sequence_value = @fiscal_sequence_value,
+                fiscal_document_number = @fiscal_document_number,
+                fiscal_series = @fiscal_series,
+                fiscal_number_prefix_text = @fiscal_number_prefix_text,
+                fiscal_number_suffix_text = @fiscal_number_suffix_text,
+                fiscal_number_assigned_at = @fiscal_number_assigned_at,
+                fiscal_number_assigned_by_ref = @fiscal_number_assigned_by_ref,
+                fiscal_document_status_code_id = @fiscal_document_status_code_id,
+                result_classification = @result_classification,
+                fiscal_issuance_evidence_status = @fiscal_issuance_evidence_status,
+                fiscal_number_assignment_state = @fiscal_number_assignment_state,
+                fiscal_issuance_state = @fiscal_issuance_state,
+                latest_exception_reason = @latest_exception_reason,
+                latest_error_code = @latest_error_code,
+                latest_error_posture = @latest_error_posture,
+                correlation_id = COALESCE(@correlation_id, correlation_id),
+                pos_server_response_timestamp = @pos_server_response_timestamp,
+                updated_by_service_identity_id = @updated_by_service_identity_id,
+                last_updated_at = now()
+            WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+              AND is_active = true
+            RETURNING
+                fiscal_issuance_reference_id,
+                payment_confirmation_id,
+                payment_attempt_id,
+                parking_session_id,
+                tariff_snapshot_id,
+                site_id,
+                site_pos_server_id,
+                site_pos_server_ref,
+                payable_basis_ref,
+                upstream_finality_reference,
+                pos_server_fiscal_document_id,
+                fiscal_identity_id,
+                fiscal_sequence_policy_id,
+                fiscal_sequence_value,
+                fiscal_document_number,
+                fiscal_series,
+                fiscal_number_prefix_text,
+                fiscal_number_suffix_text,
+                fiscal_number_assigned_at,
+                fiscal_number_assigned_by_ref,
+                fiscal_document_status_code_id,
+                result_classification,
+                fiscal_issuance_evidence_status,
+                fiscal_number_assignment_state,
+                fiscal_issuance_state,
+                latest_exception_reason,
+                latest_error_code,
+                latest_error_posture,
+                correlation_id,
+                pos_server_response_timestamp,
+                first_recorded_at,
+                last_updated_at,
+                recorded_by_service_identity_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("fiscal_issuance_reference_id", fiscalIssuanceReferenceId);
+        AddTransitionParameters(command, request);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("Fiscal issuance reference state transition returned no rows.");
+        }
+
+        return MapReference(reader);
+    }
+
     public Task<FiscalIssuanceReferenceRecord?> FindByPaymentConfirmationIdAsync(
         Guid paymentConfirmationId,
         CancellationToken cancellationToken) =>
@@ -281,6 +382,31 @@ public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceR
         AddNullable(command, "correlation_id", request.CorrelationId);
         AddNullable(command, "pos_server_response_timestamp", request.PosServerResponseTimestamp);
         AddNullable(command, "recorded_by_service_identity_id", request.RecordedByServiceIdentityId);
+    }
+
+    private static void AddTransitionParameters(NpgsqlCommand command, FiscalIssuanceStateTransitionRequest request)
+    {
+        AddNullable(command, "pos_server_fiscal_document_id", request.PosServerFiscalDocumentId);
+        AddNullable(command, "fiscal_identity_id", request.FiscalIdentityId);
+        AddNullable(command, "fiscal_sequence_policy_id", request.FiscalSequencePolicyId);
+        AddNullable(command, "fiscal_sequence_value", request.FiscalSequenceValue);
+        AddNullable(command, "fiscal_document_number", request.FiscalDocumentNumber);
+        AddNullable(command, "fiscal_series", request.FiscalSeries);
+        AddNullable(command, "fiscal_number_prefix_text", request.FiscalNumberPrefixText);
+        AddNullable(command, "fiscal_number_suffix_text", request.FiscalNumberSuffixText);
+        AddNullable(command, "fiscal_number_assigned_at", request.FiscalNumberAssignedAt);
+        AddNullable(command, "fiscal_number_assigned_by_ref", request.FiscalNumberAssignedByRef);
+        AddNullable(command, "fiscal_document_status_code_id", request.FiscalDocumentStatusCodeId);
+        AddNullable(command, "result_classification", ToDatabaseValue(request.ResultClassification));
+        AddNullable(command, "fiscal_issuance_evidence_status", ToDatabaseValue(request.FiscalIssuanceEvidenceStatus));
+        command.Parameters.AddWithValue("fiscal_number_assignment_state", ToDatabaseValue(request.FiscalNumberAssignmentState));
+        command.Parameters.AddWithValue("fiscal_issuance_state", ToDatabaseValue(request.FiscalIssuanceState));
+        AddNullable(command, "latest_exception_reason", ToDatabaseValue(request.LatestExceptionReason));
+        AddNullable(command, "latest_error_code", request.LatestErrorCode);
+        AddNullable(command, "latest_error_posture", ToDatabaseValue(request.LatestErrorPosture));
+        AddNullable(command, "correlation_id", request.CorrelationId);
+        AddNullable(command, "pos_server_response_timestamp", request.PosServerResponseTimestamp);
+        AddNullable(command, "updated_by_service_identity_id", request.UpdatedByServiceIdentityId);
     }
 
     private static FiscalIssuanceReferenceRecord MapReference(NpgsqlDataReader reader) =>

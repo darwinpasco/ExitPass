@@ -182,10 +182,94 @@ public sealed record FiscalIssuanceAttemptRecord(
     DateTimeOffset? CompletedAt,
     string OutcomeClassification);
 
+public sealed record FiscalIssuanceStateTransitionRequest(
+    FiscalIssuanceIntegrationState FiscalIssuanceState,
+    Guid? PosServerFiscalDocumentId,
+    Guid? FiscalIdentityId,
+    Guid? FiscalSequencePolicyId,
+    long? FiscalSequenceValue,
+    string? FiscalDocumentNumber,
+    string? FiscalSeries,
+    string? FiscalNumberPrefixText,
+    string? FiscalNumberSuffixText,
+    DateTimeOffset? FiscalNumberAssignedAt,
+    string? FiscalNumberAssignedByRef,
+    Guid? FiscalDocumentStatusCodeId,
+    FiscalIssuanceResultClassification? ResultClassification,
+    FiscalIssuanceEvidenceStatus? FiscalIssuanceEvidenceStatus,
+    FiscalNumberAssignmentState FiscalNumberAssignmentState,
+    FiscalIssuanceExceptionReason? LatestExceptionReason,
+    string? LatestErrorCode,
+    FiscalIssuanceErrorPosture? LatestErrorPosture,
+    Guid? CorrelationId,
+    DateTimeOffset? PosServerResponseTimestamp,
+    Guid? UpdatedByServiceIdentityId)
+{
+    public IReadOnlyList<string> Validate()
+    {
+        var errors = new List<string>();
+
+        if (CreateFiscalIssuanceReferenceRequest.RequiresCompleteFiscalEvidence(FiscalIssuanceState))
+        {
+            if (PosServerFiscalDocumentId is null || PosServerFiscalDocumentId == Guid.Empty)
+            {
+                errors.Add("pos_server_fiscal_document_id_required");
+            }
+
+            if (FiscalIdentityId is null || FiscalIdentityId == Guid.Empty)
+            {
+                errors.Add("fiscal_identity_id_required");
+            }
+
+            if (FiscalSequencePolicyId is null || FiscalSequencePolicyId == Guid.Empty)
+            {
+                errors.Add("fiscal_sequence_policy_id_required");
+            }
+
+            if (FiscalSequenceValue is null or < 1)
+            {
+                errors.Add("fiscal_sequence_value_required");
+            }
+
+            if (string.IsNullOrWhiteSpace(FiscalDocumentNumber))
+            {
+                errors.Add("fiscal_document_number_required");
+            }
+
+            if (FiscalNumberAssignedAt is null)
+            {
+                errors.Add("fiscal_number_assigned_at_required");
+            }
+
+            if (FiscalIssuanceEvidenceStatus != Domain.FiscalIssuance.FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned)
+            {
+                errors.Add("fiscal_issuance_evidence_status_required");
+            }
+
+            if (FiscalNumberAssignmentState != FiscalNumberAssignmentState.Assigned)
+            {
+                errors.Add("fiscal_number_assignment_state_assigned_required");
+            }
+        }
+
+        if (CreateFiscalIssuanceReferenceRequest.RequiresExceptionReason(FiscalIssuanceState) && LatestExceptionReason is null)
+        {
+            errors.Add("latest_exception_reason_required");
+        }
+
+        return errors;
+    }
+}
+
 public interface IFiscalIssuanceReferenceRepository
 {
     Task<FiscalIssuanceReferenceRecord> CreateAsync(
         CreateFiscalIssuanceReferenceRequest request,
+        CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> UpdateStateAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalIssuanceStateTransitionRequest request,
         CancellationToken cancellationToken);
 
     Task<FiscalIssuanceReferenceRecord?> FindByPaymentConfirmationIdAsync(
