@@ -1,0 +1,194 @@
+# ExitPass Central PMS POS Server Controlled UAT Invocation Surface v1.0
+
+## Document control
+
+| Field | Value |
+| --- | --- |
+| Document | Controlled UAT Invocation Surface |
+| Version | v1.0 |
+| Status | Implementation slice documented; not execution approval |
+| Date | 2026-07-03 |
+| Branch | feature/central-pms-pos-server-controlled-uat-invocation-surface |
+
+## Purpose and scope
+
+This branch removes the final implementation blocker identified by the execution dry-run checklist: no safe runtime invocation surface existed for the application-level controlled UAT fiscal issuance harness.
+
+The implementation adds the smallest internal Central PMS diagnostic surface required to invoke the existing guarded UAT harness intentionally after pre-execution checks pass.
+
+## Endpoint paths added
+
+| Endpoint | Purpose | POS Server call allowed |
+| --- | --- | --- |
+| `POST /internal/controlled-uat/fiscal-issuance/preflight` | Validate request shape, approvals, first-run scenario, config guards, totals, sensitive markers, and safety posture. | No |
+| `POST /internal/controlled-uat/fiscal-issuance/run` | Invoke the existing application-level controlled UAT harness after validation and guard checks pass. | Yes, only through the existing guarded harness |
+
+Both endpoints are internal controlled-UAT-only endpoints and use the existing internal service mTLS endpoint metadata convention. They are not production operator actions.
+
+## Required configuration guards
+
+The run endpoint rejects unless:
+
+- `FiscalIssuance:PosServerIntegration:EnableControlledUatDiagnosticPath = true`
+- `FiscalIssuance:PosServerIntegration:EnablePosServerFiscalIssuanceLiveCall = true`
+- `FiscalIssuance:PosServerIntegration:PosServerBaseUrl` is present and valid
+- `FiscalIssuance:PosServerIntegration:EnableLiveFiscalIssuanceFromPaymentFlow = false`
+- `FiscalIssuance:PosServerIntegration:EnableLiveFiscalIssuanceFromExitFlow = false`
+- `FiscalIssuance:ExitAuthorizationGating:EnableFiscalBeforeExitAuthorizationEnforcement = false`
+
+The endpoint remains disabled by default because the required flags default to false.
+
+## Required request posture
+
+The invocation service requires:
+
+- run ID;
+- approval reference;
+- approved-by value;
+- `explicitExecutionApproval = true`;
+- correlation ID;
+- environment name;
+- Site ref;
+- Site POS Server ref;
+- parking session ref;
+- payment attempt ref;
+- payment confirmation ref;
+- payable basis ref;
+- upstream finality ref;
+- fiscal document type;
+- business day date;
+- currency;
+- amount minor units;
+- line summary/count/amount total;
+- tender summary/count/amount total;
+- tax detail present/summary/amount total;
+- totals present;
+- grand total;
+- `totalsMatchPayableBasis = true`;
+- expected run type;
+- evidence owner and evidence location.
+
+Optional runtime GUID fields are accepted for local fiscal schema IDs when available, but the first-run development profile remains governed by the approved refs.
+
+## First-run scenario restrictions
+
+For the first controlled run, the invocation surface only accepts:
+
+- `fiscalDocumentType = sales_invoice`
+- `expectedRunType = newly_created`
+- `replayIncluded = false`
+- `conflictIncluded = false`
+- `failureIncluded = false`
+- `unknownIncluded = false`
+
+## Approved development first-run values
+
+| Field | Value |
+| --- | --- |
+| Environment name | DEV-CONTROLLED-UAT-LOCAL |
+| Central PMS environment | CentralPMS-DEV-DOCKER |
+| Central PMS base URL | http://localhost:8080 |
+| POS Server host/browser URL | http://localhost:8091 |
+| POS Server base URL for Central PMS | http://host.docker.internal:8091 |
+| Site ref | DEV-SITE-ATC-001 |
+| Site POS Server ref | DEV-POS-SERVER-ATC-001 |
+| Fiscal identity ref | DEV-FISCAL-IDENTITY-ATC-001 |
+| Fiscal sequence policy ref | DEV-SI-SEQUENCE-POLICY-ATC-001 |
+| Fiscal sequence state ref | DEV-SI-SEQUENCE-STATE-ATC-001 |
+| Run ID | CPS-POS-UAT-20260703-DEV-ATC-001 |
+| Correlation ID | 00000000-0000-4000-8000-000000000101 |
+| Upstream finality ref | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001 |
+| Business day date | 2026-07-03 |
+| Currency | PHP |
+| Amount minor units | 10000 |
+| Line amount total | 10000 |
+| Tender amount total | 10000 |
+| Tax amount total | 0 |
+| Grand total | 10000 |
+| Approval reference | DEV-UAT-CPS-POS-001 |
+
+## Safety guarantees
+
+The invocation surface does not:
+
+- mutate payment finality;
+- issue ExitAuthorization;
+- trigger gate behavior;
+- enable fiscal gating enforcement;
+- write evidence files automatically;
+- create manual release;
+- call payment flow;
+- call exit flow;
+- expose a production operator action.
+
+Responses explicitly include:
+
+- `paymentFinalityChanged = false`
+- `exitAuthorizationIssued = false`
+- `gateBehaviorTriggered = false`
+- `fiscalGatingEnforcementEnabled = false`
+- `evidenceFileWritten = false`
+
+## Evidence behavior
+
+The run endpoint returns the safe evidence JSON generated by the existing application evidence exporter.
+
+It does not write files.
+
+The operator must manually save returned evidence JSON to:
+
+`D:\ExitPass-UAT-Evidence\DEV-CONTROLLED-UAT-LOCAL\DEV-SITE-ATC-001\2026-07-03\CPS-POS-UAT-20260703-DEV-ATC-001`
+
+## Sensitive data rejection
+
+The invocation service rejects obvious sensitive markers in request metadata before preflight/run proceeds, including:
+
+- PAN;
+- CVV;
+- token;
+- secret;
+- credential;
+- password;
+- raw provider callback;
+- raw payload;
+- unmanaged customer PII;
+- raw entitlement evidence;
+- base64 image;
+- uncontrolled image/file blobs.
+
+The evidence exporter also performs a defensive sensitive metadata scan before returning evidence JSON.
+
+## Implementation status
+
+The implementation status moves from:
+
+`dry_run_checklist_created_but_execution_invocation_blocked`
+
+to:
+
+`controlled_invocation_surface_available_pending_pre_execution_checks`
+
+This is not `ready_for_execution`.
+
+## Required next step
+
+After merge, the next step is:
+
+`manual controlled UAT pre-execution check run`
+
+Purpose:
+
+Run the dry-run checklist manually, capture runtime evidence for POS Server startup, Central PMS Docker connectivity, config/guard values, POS Server fiscal rows, evidence folder readiness, and then request Darwin's explicit approval before calling the controlled UAT run endpoint.
+
+## Requirements traceability
+
+| Requirement | Implementation/documentation |
+| --- | --- |
+| Add guarded run endpoint | `POST /internal/controlled-uat/fiscal-issuance/run` |
+| Add non-mutating preflight endpoint | `POST /internal/controlled-uat/fiscal-issuance/preflight` |
+| Reuse existing application harness | `IFiscalIssuanceControlledUatHarness` invoked by application invocation service |
+| Return safe evidence JSON | Existing evidence exporter used; response includes evidence JSON |
+| Do not write evidence files | Response includes `evidenceFileWritten = false`; no file writer added |
+| Preserve payment/exit/gate boundaries | Service and response hard-code no payment finality, ExitAuthorization, or gate side effects |
+| Remain disabled by default | Required config flags default false |
+| First-run scenario only | Request validation accepts newly_created only and rejects replay/conflict/failure/unknown |

@@ -127,6 +127,7 @@ app.MapInternalPaymentConfirmationEndpoints();
 app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
+app.MapInternalControlledUatFiscalIssuanceEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();
@@ -390,6 +391,13 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IExitAuthorizationFiscalGatingShadowEvaluator, ExitAuthorizationFiscalGatingShadowEvaluator>();
     builder.Services.Configure<FiscalIssuanceExitAuthorizationGatingOptions>(
         builder.Configuration.GetSection(FiscalIssuanceExitAuthorizationGatingOptions.SectionName));
+    builder.Services.AddScoped<IFiscalIssuanceControlledUatHarness>(serviceProvider =>
+        new FiscalIssuanceControlledUatHarness(
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>().Value,
+            serviceProvider.GetRequiredService<IFiscalIssuancePosServerLiveIntegrationService>(),
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuanceExitAuthorizationGatingOptions>>().Value));
+    builder.Services.AddScoped<IFiscalIssuanceControlledUatEvidenceExporter, FiscalIssuanceControlledUatEvidenceExporter>();
+    builder.Services.AddScoped<IFiscalIssuanceControlledUatInvocationService, FiscalIssuanceControlledUatInvocationService>();
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRepository>(_ =>
