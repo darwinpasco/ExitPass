@@ -1,0 +1,33 @@
+@startuml
+title FEQ-D07 Fiscal-Gated ExitAuthorization Interaction
+skinparam shadowing false
+
+start
+:Central PMS confirms payment finality;
+:Evaluate fiscal gating mode;
+
+if (Fiscal gating enabled?) then (yes)
+  :Request fiscal issuance from resolved Site POS Server;
+  if (Fiscal issuance succeeds and Central PMS records reference?) then (yes)
+    :Central PMS may evaluate normal ExitAuthorization eligibility;
+    :Central PMS may issue normal ExitAuthorization if all rules pass;
+  else (pending/failed/unknown)
+    :Create/update Fiscal Exception Queue case;
+    :Block normal ExitAuthorization;
+    :FEQ readback/retry/manual review proceeds;
+    if (Approved manual release / continuity path?) then (yes)
+      :Record separate manual release / continuity evidence;
+      :Do not convert it into normal ExitAuthorization;
+    else (no)
+      :Remain blocked until fiscal prerequisite or approved exception policy is resolved;
+    endif
+  endif
+else (readiness-only or disabled)
+  :Record fiscal posture according to configured mode;
+  :Do not enable production fiscal gating implicitly;
+endif
+
+:Gate/Exit consumes only Central PMS authorization;
+:FEQ does not open gates or issue ExitAuthorization;\nmanual release/continuity is separate evidence;
+stop
+@enduml

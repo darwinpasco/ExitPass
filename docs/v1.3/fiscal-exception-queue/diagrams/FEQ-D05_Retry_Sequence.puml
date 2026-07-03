@@ -1,0 +1,44 @@
+@startuml
+title FEQ-D05 Retry Sequence
+skinparam shadowing false
+
+participant "Support / FEQ Policy" as Policy
+participant "Fiscal Exception Queue" as FEQ
+participant "Central PMS Approved\nFiscal Recovery Service" as Recovery
+participant "Central PMS Fiscal Reference Store" as Store
+participant "POS Server Fiscal Issuance API" as POS
+participant "Audit / Event" as Audit
+participant "Management Dashboard Projection" as MDR
+
+Policy -> FEQ : Request or schedule retry evaluation
+FEQ -> Recovery : Evaluate retry eligibility
+Recovery -> Store : Load original request,\nsemantic hash, idempotency context,\nretry count, audit readiness
+
+alt not eligible
+  Recovery -> FEQ : Block retry with reason
+  Recovery -> Audit : Record blocked retry
+else duplicate or conflict risk
+  Recovery -> FEQ : Route to manual review
+  Recovery -> Audit : Record duplicate/conflict risk
+else eligible
+  Recovery -> FEQ : Mark retry_scheduled
+  Recovery -> Audit : Record retry scheduling
+  Recovery -> POS : Retry issuance with same\nupstream finality ref and same semantic request
+  alt success or idempotent replay
+    POS --> Recovery : fiscal document evidence
+    Recovery -> Store : Record durable fiscal reference outcome
+    Recovery -> FEQ : retry_succeeded / reconciled
+  else conflict
+    POS --> Recovery : idempotency conflict
+    Recovery -> FEQ : mismatch_review
+  else POS unavailable or HTTP failure
+    POS --> Recovery : unavailable/failure
+    Recovery -> FEQ : retry_failed
+  else timeout or unknown
+    POS --> Recovery : no durable certainty
+    Recovery -> FEQ : readback_pending
+  end
+  Recovery -> Audit : Record retry attempt and outcome
+  Recovery -> MDR : Publish projection update
+end
+@enduml
