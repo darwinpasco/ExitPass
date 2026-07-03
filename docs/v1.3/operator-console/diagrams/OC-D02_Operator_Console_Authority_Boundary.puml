@@ -1,0 +1,43 @@
+@startuml
+title OC-D02 Operator Console Authority Boundary
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 220
+
+component "Operator Console\noperations / governance /\nread-only visibility" as Console
+component "Central PMS\npayment finality\nfiscal reference recording\nnormal ExitAuthorization" as Central
+component "POS Server\nfiscal issuance\nfiscal numbering only" as Pos
+component "Payment Orchestrator\nprovider interaction\nverified provider evidence only" as Pay
+component "Vendor PMS\nraw parking session lifecycle\nnormal tariff authority" as Vendor
+component "Gate Integration\nvalidate / consume / open / report\nthrough Central PMS authorization" as Gate
+component "Audit / Event\ntraceability and non-repudiation" as Audit
+
+Console --> Central : read context\nsubmit governed workflows
+Console --> Audit : audit operator actions
+
+Central --> Pay : accepts verified provider evidence
+Central --> Pos : requests fiscal issuance\nrecords fiscal reference
+Central --> Vendor : reads normalized session/tariff context\nthrough connector
+Central --> Gate : issues authorization for gate consumption
+
+Pay -[#blue]-> Central : reports verified outcome
+Pos -[#blue]-> Central : returns fiscal evidence only
+Vendor -[#blue]-> Central : session/tariff facts
+Gate -[#blue]-> Central : consume/open/report result
+
+Console -[#red,dashed]-> Pay : cannot interact with providers
+Console -[#red,dashed]-> Pos : cannot issue/retry/readback fiscal documents
+Console -[#red,dashed]-> Vendor : cannot mutate vendor session/tariff
+Console -[#red,dashed]-> Gate : cannot open gates
+Console -[#red,dashed]-> Central : cannot mutate payment finality\nor issue normal ExitAuthorization
+
+note right of Console
+Can see and govern.
+Cannot mutate payment,
+fiscal issuance,
+ExitAuthorization,
+or gate execution.
+end note
+
+@enduml

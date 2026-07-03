@@ -1,0 +1,43 @@
+@startuml
+title OC-D05 Ticket Lookup and Statutory Discount Validation Sequence
+
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam wrapWidth 220
+
+actor Operator
+participant "Operator Console UI" as UI
+participant "Central PMS" as Central
+participant "Discount Workflow" as Discount
+participant "Evidence Service /\nEvidence Repository" as Evidence
+participant "Audit / Event" as Audit
+
+Operator -> UI : Scan or manually enter ticket reference
+UI -> Central : Site-scoped session lookup
+Central --> UI : Session context or lookup outcome
+UI -> Audit : Record lookup attempt and result
+
+alt session found and active
+  UI --> Operator : Display read-only session context
+  Operator -> UI : Start Senior Citizen / PWD validation
+  UI --> Operator : Show privacy notice
+  Operator -> UI : Provide structured metadata and evidence
+  UI -> Evidence : Capture evidence reference / hash / metadata
+  Evidence --> UI : Evidence reference
+  UI -> Discount : Submit validation request\nwith session context and evidence reference
+  Discount -> Central : Validate policy and payable-basis effect\nthrough backend authority
+  Central --> Discount : Validation outcome
+  Discount --> UI : approved / rejected / pending / duplicate / failed
+  UI -> Audit : Record validation action, outcome, and evidence reference
+  UI --> Operator : Display outcome and allowed next steps
+else not found / inactive / ambiguous / unavailable
+  UI --> Operator : Display fail-closed lookup message
+  UI -> Audit : Record failed or blocked lookup
+end
+
+note bottom
+The console does not recalculate tariff
+and does not mutate payable basis directly.
+end note
+
+@enduml
