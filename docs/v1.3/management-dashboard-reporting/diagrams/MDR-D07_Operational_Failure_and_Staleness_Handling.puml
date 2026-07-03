@@ -1,0 +1,34 @@
+@startuml
+title MDR-D07 Operational Failure and Staleness Handling
+skinparam shadowing false
+
+start
+:User opens dashboard;
+:Dashboard queries projection/read model;
+
+if (Source unavailable?) then (yes)
+  :Show source unavailable label;
+  :Disable unsafe interpretation;
+  :Keep authority actions absent;
+elseif (Projection stale?) then (yes)
+  :Show stale timestamp and threshold breach;
+  :Mark metrics as operational visibility only;
+  :Prevent export from implying real-time authority;
+elseif (Audit unavailable?) then (yes)
+  :Show audit logging degraded warning;
+  :Disable export and privileged evidence views;
+elseif (Export disabled?) then (yes)
+  :Show export unavailable message;
+  :Keep view-only dashboard available where allowed;
+elseif (Partial data available?) then (yes)
+  :Show partial data banner and missing source labels;
+  :Exclude incomplete metrics from authoritative summaries;
+else (no)
+  :Display dashboard with source-of-truth labels;
+  :Display freshness indicators;
+endif
+
+:Log report view/denial when audit is available;
+:Never present stale or incomplete data as payment, fiscal, exit, gate, discount, continuity, or reconciliation authority;
+stop
+@enduml

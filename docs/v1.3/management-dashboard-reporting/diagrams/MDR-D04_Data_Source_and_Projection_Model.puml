@@ -1,0 +1,42 @@
+@startuml
+title MDR-D04 Data Source and Projection Model
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+component "Central PMS\nsource records/events" as Central
+component "Payment Orchestrator\nprovider evidence events/readbacks" as Payment
+component "POS Server fiscal evidence\nrecorded through Central PMS" as PosEvidence
+component "Gate Integration\nevents" as Gate
+component "Operator Console\nworkflow/audit events" as Operator
+component "Continuity events" as Continuity
+component "Reconciliation events" as Reconciliation
+component "Audit / Event / Outbox" as Audit
+database "Dashboard Projection\n/ Read Model" as Projection
+component "Dashboard UI" as UI
+component "Report Export" as Export
+
+Payment --> Central : verified provider evidence
+PosEvidence --> Central : fiscal document evidence\nrecorded by Central PMS
+Gate --> Central : gate/exit outcome records
+Operator --> Audit
+Continuity --> Audit
+Reconciliation --> Audit
+Central --> Audit
+Audit --> Projection : project metrics,\nsource labels,\nfreshness timestamps
+Projection --> UI : dashboards with\nstaleness labels
+Projection --> Export : authorized exports\nwith source labels
+
+note right of Projection
+Projection records must label:
+- source of truth
+- last refresh time
+- freshness/staleness state
+- operational vs canonical financial/fiscal basis
+end note
+
+note bottom
+Projection data must not overwrite canonical payment, fiscal, exit,
+vendor, reconciliation, or audit records.
+end note
+@enduml

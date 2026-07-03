@@ -1,0 +1,62 @@
+@startuml
+title MDR-D03 Dashboard Runtime Component Model
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+package "Management Dashboard & Reporting Runtime" {
+  component "Dashboard Web UI" as UI
+  component "Dashboard API / BFF\n(if adopted)" as BFF
+  component "RBAC / Report-Scope Guard" as Guard
+  component "Metrics / Query Facade" as Query
+  component "Report Catalog" as Catalog
+  component "Operational Dashboard Module" as Operational
+  component "Fiscal Dashboard Module" as Fiscal
+  component "Payment / Revenue Dashboard Module" as Payment
+  component "Discount / Compliance Dashboard Module" as Discount
+  component "Gate / Exit Dashboard Module" as Gate
+  component "Reconciliation Dashboard Module" as Reconciliation
+  component "Continuity Dashboard Module" as Continuity
+  component "Audit / Security Dashboard Module" as AuditDash
+  component "Export Service" as Export
+  component "Audit / Report Access Logging" as AccessLog
+  component "Projection / Read-Model Consumers" as Projections
+  component "Staleness / Freshness Indicator Module" as Freshness
+}
+
+UI --> BFF
+BFF --> Guard
+BFF --> Catalog
+Catalog --> Operational
+Catalog --> Fiscal
+Catalog --> Payment
+Catalog --> Discount
+Catalog --> Gate
+Catalog --> Reconciliation
+Catalog --> Continuity
+Catalog --> AuditDash
+Operational --> Query
+Fiscal --> Query
+Payment --> Query
+Discount --> Query
+Gate --> Query
+Reconciliation --> Query
+Continuity --> Query
+AuditDash --> Query
+Query --> Projections
+Query --> Freshness
+BFF --> Export
+Export --> Guard
+Export --> AccessLog
+BFF --> AccessLog
+
+note right of Guard
+Guards enforce role, Site/Site Group scope,
+report sensitivity, and export permissions.
+end note
+
+note bottom of Projections
+Consumers read approved projections/read models.
+They do not call mutation endpoints.
+end note
+@enduml

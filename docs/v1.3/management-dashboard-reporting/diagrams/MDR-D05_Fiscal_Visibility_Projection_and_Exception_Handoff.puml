@@ -1,0 +1,30 @@
+@startuml
+title MDR-D05 Fiscal Visibility Projection and Exception Handoff
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+component "Management Dashboard\nFiscal Widgets" as Dashboard
+component "Central PMS Fiscal\nRead Model / Projection" as FiscalReadModel
+component "Central PMS Fiscal\nIssuance References" as FiscalRefs
+component "POS Server Fiscal Evidence\nrecorded by Central PMS" as PosEvidence
+component "Fiscal Exception Backlog\nprojection" as Backlog
+component "Future Fiscal Exception Queue\nretry/readback/writeback/closure owner" as Queue
+component "Management Dashboard\naggregate trends/SLA indicators" as Trends
+
+Dashboard --> FiscalReadModel : read fiscal status,\nage, backlog
+FiscalReadModel --> FiscalRefs : primary platform source
+FiscalReadModel --> PosEvidence : only after Central PMS\nrecords POS Server evidence
+FiscalReadModel --> Backlog
+Backlog --> Queue : navigation/handoff only
+Dashboard --> Trends : success rate, pending age,\nfailed/unknown counts
+
+Dashboard -[#red,dashed]-> Queue : no retry, readback,\nwriteback, or closure
+Dashboard -[#red,dashed]-> PosEvidence : no direct POS Server call
+Dashboard -[#red,dashed]-> FiscalRefs : no direct fiscal\nstate mutation
+
+note bottom
+Dashboard fiscal visibility is projection/read-model only.
+Fiscal recovery mechanics belong to the later Fiscal Exception Queue / Readback / Retry design.
+end note
+@enduml
