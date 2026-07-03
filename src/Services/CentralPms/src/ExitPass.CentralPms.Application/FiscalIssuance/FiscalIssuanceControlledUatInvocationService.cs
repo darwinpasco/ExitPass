@@ -29,10 +29,12 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private const long ApprovedAmountMinorUnits = 10000;
     private const long ApprovedTaxAmountMinorUnits = 0;
     private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 3);
-    private static readonly Guid ControlledUatFiscalIssuanceReferenceId =
-        Guid.Parse("00000000-0000-4000-8000-000000000201");
-    private static readonly Guid ControlledUatServiceIdentityId =
-        Guid.Parse("00000000-0000-4000-8000-000000000202");
+    private static readonly Guid ControlledUatPaymentConfirmationId =
+        Guid.Parse("00000000-0000-4000-8000-000000000301");
+    private static readonly Guid ControlledUatPaymentAttemptId =
+        Guid.Parse("00000000-0000-4000-8000-000000000302");
+    private static readonly Guid ControlledUatParkingSessionId =
+        Guid.Parse("00000000-0000-4000-8000-000000000303");
 
     private static readonly string[] SensitiveTerms =
     [
@@ -65,17 +67,23 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
     private readonly IFiscalIssuanceControlledUatHarness _harness;
     private readonly IFiscalIssuanceControlledUatEvidenceExporter _evidenceExporter;
+    private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
+    private readonly IFiscalIssuanceReferenceRepository _referenceRepository;
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly FiscalIssuanceExitAuthorizationGatingOptions _gatingOptions;
 
     public FiscalIssuanceControlledUatInvocationService(
         IFiscalIssuanceControlledUatHarness harness,
         IFiscalIssuanceControlledUatEvidenceExporter evidenceExporter,
+        IFiscalIssuanceOrchestrationService orchestrationService,
+        IFiscalIssuanceReferenceRepository referenceRepository,
         IOptions<FiscalIssuancePosServerIntegrationOptions> posServerOptions,
         IOptions<FiscalIssuanceExitAuthorizationGatingOptions> gatingOptions)
     {
         _harness = harness;
         _evidenceExporter = evidenceExporter;
+        _orchestrationService = orchestrationService;
+        _referenceRepository = referenceRepository;
         _posServerOptions = posServerOptions.Value;
         _gatingOptions = gatingOptions.Value;
     }
@@ -108,7 +116,14 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             return BuildRejectedResponse(request, "run_rejected", errors);
         }
 
-        var harnessRequest = BuildHarnessRequest(request);
+        var referencePreparation = await PrepareFiscalIssuanceReferenceAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        if (referencePreparation.ErrorResponse is not null)
+        {
+            return referencePreparation.ErrorResponse;
+        }
+
+        var harnessRequest = BuildHarnessRequest(request, referencePreparation.Reference!.FiscalIssuanceReferenceId);
         var harnessResult = await _harness.ExecuteAsync(harnessRequest, cancellationToken)
             .ConfigureAwait(false);
 
@@ -167,6 +182,45 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             EvidenceJson: export.Json,
             EvidenceRedactionStatus: export.RedactionStatus,
             SensitiveDataExcluded: export.SensitiveDataExcluded);
+    }
+
+    private async Task<FiscalReferencePreparationResult> PrepareFiscalIssuanceReferenceAsync(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var existing = await _referenceRepository.FindByUpstreamFinalityReferenceAsync(
+                    request.UpstreamFinalityRef!.Trim(),
+                    request.SitePosServerId,
+                    request.FiscalDocumentTypeCodeId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (existing is not null)
+            {
+                return CanStartDiagnostic(existing)
+                    ? FiscalReferencePreparationResult.Prepared(existing)
+                    : FiscalReferencePreparationResult.Rejected(BuildRejectedResponse(
+                        request,
+                        "fiscal_reference_prepare_rejected",
+                        new[] { "fiscal_reference_not_startable_state", existing.FiscalIssuanceState.ToString() }));
+            }
+
+            var prepared = await _orchestrationService.PreparePendingAsync(
+                    BuildPrepareCommand(request),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return FiscalReferencePreparationResult.Prepared(prepared);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return FiscalReferencePreparationResult.Rejected(BuildRejectedResponse(
+                request,
+                "fiscal_reference_prepare_failed",
+                new[] { "fiscal_reference_prepare_failed" }));
+        }
     }
 
     private static ControlledUatFiscalIssuanceInvocationResponse BuildPreflightPassedResponse(
@@ -282,7 +336,9 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             or "pos_server_base_url_invalid"
             or "payment_flow_guard_enabled"
             or "exit_flow_guard_enabled"
-            or "fiscal_gating_enforcement_enabled";
+            or "fiscal_gating_enforcement_enabled"
+            or "fiscal_reference_prepare_failed"
+            or "fiscal_reference_not_startable_state";
 
     private IReadOnlyList<string> ValidateConfiguration()
     {
@@ -494,12 +550,34 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         }
     }
 
+    private static PrepareFiscalIssuanceCommand BuildPrepareCommand(
+        ControlledUatFiscalIssuanceInvocationRequest request) =>
+        new(
+            PaymentConfirmationId: ControlledUatPaymentConfirmationId,
+            PaymentAttemptId: ControlledUatPaymentAttemptId,
+            ParkingSessionId: ControlledUatParkingSessionId,
+            TariffSnapshotId: null,
+            SiteId: null,
+            SitePosServerId: request.SitePosServerId,
+            SitePosServerRef: request.SitePosServerRef?.Trim(),
+            FiscalDocumentTypeCodeId: request.FiscalDocumentTypeCodeId,
+            FiscalDocumentTypeCodeKey: request.FiscalDocumentType?.Trim(),
+            PayableBasisRef: request.PayableBasisRef?.Trim(),
+            UpstreamFinalityReference: request.UpstreamFinalityRef!.Trim(),
+            CorrelationId: Guid.Parse(request.CorrelationId!.Trim()),
+            ServiceIdentityId: null);
+
+    private static bool CanStartDiagnostic(FiscalIssuanceReferenceRecord reference) =>
+        reference.FiscalIssuanceState is FiscalIssuanceIntegrationState.PendingFiscalIssuance
+            or FiscalIssuanceIntegrationState.FiscalIssuanceRequested;
+
     private static FiscalIssuanceControlledUatHarnessRequest BuildHarnessRequest(
-        ControlledUatFiscalIssuanceInvocationRequest request)
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        Guid fiscalIssuanceReferenceId)
     {
         var correlationId = Guid.Parse(request.CorrelationId.Trim());
         return new FiscalIssuanceControlledUatHarnessRequest(
-            FiscalIssuanceReferenceId: request.FiscalIssuanceReferenceId ?? ControlledUatFiscalIssuanceReferenceId,
+            FiscalIssuanceReferenceId: fiscalIssuanceReferenceId,
             RunId: request.RunId.Trim(),
             EnvironmentName: request.EnvironmentName.Trim(),
             EvidenceReference: request.EvidenceReference,
@@ -513,7 +591,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
                 FiscalDocumentTypeCodeId: request.FiscalDocumentTypeCodeId,
                 CorrelationId: correlationId,
                 PosServerResponseTimestamp: null,
-                ServiceIdentityId: ControlledUatServiceIdentityId),
+                ServiceIdentityId: null),
             ExpectedRunType: FiscalIssuanceControlledUatExpectedRunType.NewlyCreated,
             CorrelationId: request.CorrelationId.Trim());
     }
@@ -628,6 +706,17 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private static bool ContainsSensitiveTerm(string? value) =>
         value is not null &&
         SensitiveTerms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+}
+
+internal sealed record FiscalReferencePreparationResult(
+    FiscalIssuanceReferenceRecord? Reference,
+    ControlledUatFiscalIssuanceInvocationResponse? ErrorResponse)
+{
+    public static FiscalReferencePreparationResult Prepared(FiscalIssuanceReferenceRecord reference) =>
+        new(reference, null);
+
+    public static FiscalReferencePreparationResult Rejected(ControlledUatFiscalIssuanceInvocationResponse response) =>
+        new(null, response);
 }
 
 public sealed record ControlledUatFiscalIssuanceInvocationRequest(

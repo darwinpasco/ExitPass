@@ -6,9 +6,9 @@
 | --- | --- |
 | Document | Controlled UAT Invocation Surface |
 | Version | v1.0 |
-| Status | Implementation slice documented; not execution approval |
+| Status | Invocation surface available; fiscal reference state preparation fixed; not execution approval |
 | Date | 2026-07-03 |
-| Branch | feature/central-pms-pos-server-controlled-uat-invocation-surface |
+| Branch | feature/central-pms-controlled-uat-fiscal-reference-state-fix |
 
 ## Purpose and scope
 
@@ -24,6 +24,28 @@ The implementation adds the smallest internal Central PMS diagnostic surface req
 | `POST /internal/controlled-uat/fiscal-issuance/run` | Invoke the existing application-level controlled UAT harness after validation and guard checks pass. | Yes, only through the existing guarded harness |
 
 Both endpoints are internal controlled-UAT-only endpoints and use the existing internal service mTLS endpoint metadata convention. They are not production operator actions.
+
+## Fiscal reference preparation fix
+
+The first manual `/run` attempt after the invocation surface was introduced failed before successful controlled UAT execution with:
+
+`Fiscal issuance reference state transition returned no rows.`
+
+The failure was in Central PMS fiscal issuance reference state preparation. The run path reached `FiscalIssuancePosServerLiveIntegrationService` and `FiscalIssuanceOrchestrationService`, but the fiscal issuance reference row required for the transition to `FiscalIssuanceRequested` did not exist.
+
+The fixed run path now prepares the Central PMS fiscal issuance reference before invoking the controlled UAT harness:
+
+- resolves an existing active reference by upstream finality reference, Site POS Server ID, and fiscal document type ID when present;
+- accepts only existing references in a startable state for this first-run path;
+- creates a pending reference through `IFiscalIssuanceOrchestrationService.PreparePendingAsync(...)` when no existing reference is found;
+- uses the persisted reference ID returned by Central PMS when invoking the harness;
+- returns a controlled `fiscal_reference_prepare_failed` or `fiscal_reference_prepare_rejected` response before the harness if reference preparation fails;
+- does not bypass the fiscal reference state transition;
+- does not fake success.
+
+Preflight remains non-mutating. It validates request/config/safety posture and does not create fiscal issuance reference rows.
+
+The failed first `/run` response must not be reused as successful UAT evidence. Actual controlled UAT execution still must be repeated manually after this fix is merged, the Central PMS container is rebuilt, the dry-run checks pass again, and Darwin explicitly approves the retry.
 
 ## Required configuration guards
 
@@ -69,6 +91,8 @@ The invocation service requires:
 - evidence owner and evidence location.
 
 Optional runtime GUID fields are accepted for local fiscal schema IDs when available, but the first-run development profile remains governed by the approved refs.
+
+The run path also prepares a pending Central PMS fiscal issuance reference using the approved development payment/session context before calling the harness. If the local Central PMS database does not contain the required development payment/session rows, the run endpoint returns a controlled reference-preparation error instead of reaching the POS Server call.
 
 ## First-run scenario restrictions
 
@@ -166,7 +190,7 @@ The implementation status moves from:
 
 to:
 
-`controlled_invocation_surface_available_pending_pre_execution_checks`
+`controlled_invocation_surface_available_reference_state_fixed_pending_run_retry`
 
 This is not `ready_for_execution`.
 

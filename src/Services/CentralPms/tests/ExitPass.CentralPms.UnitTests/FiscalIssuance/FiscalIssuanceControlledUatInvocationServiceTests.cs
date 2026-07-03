@@ -11,6 +11,10 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
 {
     private static readonly Guid FiscalDocumentId =
         Guid.Parse("bbbbbbbb-2222-2222-2222-222222222222");
+    private static readonly Guid PreparedFiscalIssuanceReferenceId =
+        Guid.Parse("aaaaaaaa-1111-4000-8000-000000000301");
+    private static readonly Guid ExistingFiscalIssuanceReferenceId =
+        Guid.Parse("aaaaaaaa-1111-4000-8000-000000000302");
 
     [Fact]
     public async Task PreflightAsync_WhenControlledDiagnosticPathDisabled_Rejects()
@@ -215,32 +219,204 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.EvidenceFileWritten.Should().BeFalse();
         Directory.Exists(evidencePath).Should().BeFalse();
         await harness.Received(1).ExecuteAsync(
-            Arg.Any<FiscalIssuanceControlledUatHarnessRequest>(),
+            Arg.Is<FiscalIssuanceControlledUatHarnessRequest>(request =>
+                request.FiscalIssuanceReferenceId == PreparedFiscalIssuanceReferenceId),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenRequestIsValid_PreparesFiscalReferenceBeforeHarness()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        harness.ExecuteAsync(Arg.Any<FiscalIssuanceControlledUatHarnessRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<FiscalIssuanceControlledUatHarnessRequest>();
+                return HarnessResult(request.RunId);
+            });
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        orchestration.PreparePendingAsync(
+                Arg.Any<PrepareFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns(PendingReference(PreparedFiscalIssuanceReferenceId));
+
+        var response = await CreateSut(harness: harness, orchestration: orchestration)
+            .RunAsync(ValidRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(200);
+        await orchestration.Received(1).PreparePendingAsync(
+            Arg.Is<PrepareFiscalIssuanceCommand>(command =>
+                command.UpstreamFinalityReference == "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001" &&
+                command.SitePosServerRef == "DEV-POS-SERVER-ATC-001" &&
+                command.FiscalDocumentTypeCodeKey == "sales_invoice"),
+            Arg.Any<CancellationToken>());
+        await harness.Received(1).ExecuteAsync(
+            Arg.Is<FiscalIssuanceControlledUatHarnessRequest>(request =>
+                request.FiscalIssuanceReferenceId == PreparedFiscalIssuanceReferenceId),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenPendingReferenceAlreadyExists_UsesExistingReferenceWithoutCreating()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        harness.ExecuteAsync(Arg.Any<FiscalIssuanceControlledUatHarnessRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var request = call.Arg<FiscalIssuanceControlledUatHarnessRequest>();
+                return HarnessResult(request.RunId);
+            });
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByUpstreamFinalityReferenceAsync(
+                Arg.Any<string>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(PendingReference(ExistingFiscalIssuanceReferenceId));
+
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                referenceRepository: repository)
+            .RunAsync(ValidRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(200);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await harness.Received(1).ExecuteAsync(
+            Arg.Is<FiscalIssuanceControlledUatHarnessRequest>(request =>
+                request.FiscalIssuanceReferenceId == ExistingFiscalIssuanceReferenceId),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenFiscalReferencePreparationFails_ReturnsControlledErrorAndDoesNotInvokeHarness()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        orchestration.PreparePendingAsync(
+                Arg.Any<PrepareFiscalIssuanceCommand>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task<FiscalIssuanceReferenceRecord>>(_ =>
+                throw new InvalidOperationException("Fiscal issuance reference insert failed."));
+
+        var response = await CreateSut(harness: harness, orchestration: orchestration)
+            .RunAsync(ValidRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(409);
+        response.Status.Should().Be("fiscal_reference_prepare_failed");
+        response.Errors.Should().Contain("fiscal_reference_prepare_failed");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        response.PaymentFinalityChanged.Should().BeFalse();
+        response.ExitAuthorizationIssued.Should().BeFalse();
+        response.GateBehaviorTriggered.Should().BeFalse();
+        response.EvidenceFileWritten.Should().BeFalse();
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenExistingFiscalReferenceIsRecorded_RejectsBeforeHarness()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByUpstreamFinalityReferenceAsync(
+                Arg.Any<string>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(PendingReference(ExistingFiscalIssuanceReferenceId) with
+            {
+                FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+                FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned,
+                PosServerFiscalDocumentId = FiscalDocumentId,
+                FiscalIdentityId = Guid.NewGuid(),
+                FiscalSequencePolicyId = Guid.NewGuid(),
+                FiscalSequenceValue = 1,
+                FiscalDocumentNumber = "DEV-SI-00000001",
+                FiscalNumberAssignedAt = DateTimeOffset.UtcNow,
+                FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned
+            });
+
+        var response = await CreateSut(harness: harness, referenceRepository: repository)
+            .RunAsync(ValidRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(409);
+        response.Status.Should().Be("fiscal_reference_prepare_rejected");
+        response.Errors.Should().Contain("fiscal_reference_not_startable_state");
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
     }
 
     [Fact]
     public async Task PreflightAsync_WhenRequestIsValid_DoesNotInvokeHarnessOrReturnEvidence()
     {
         var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
-        var response = await CreateSut(harness: harness).PreflightAsync(ValidRequest(), CancellationToken.None);
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                referenceRepository: repository)
+            .PreflightAsync(ValidRequest(), CancellationToken.None);
 
         response.Status.Should().Be("preflight_passed");
         response.DiagnosticInvoked.Should().BeFalse();
         response.PosServerCallAttempted.Should().BeFalse();
         response.EvidenceJson.Should().BeNull();
         await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await repository.DidNotReceiveWithAnyArgs().FindByUpstreamFinalityReferenceAsync(default!, default, default, default);
     }
 
     private static FiscalIssuanceControlledUatInvocationService CreateSut(
         IFiscalIssuanceControlledUatHarness? harness = null,
+        IFiscalIssuanceOrchestrationService? orchestration = null,
+        IFiscalIssuanceReferenceRepository? referenceRepository = null,
         FiscalIssuancePosServerIntegrationOptions? options = null,
         FiscalIssuanceExitAuthorizationGatingOptions? gatingOptions = null) =>
-        new(
+        CreateSutCore(
+            harness,
+            orchestration,
+            referenceRepository,
+            options,
+            gatingOptions);
+
+    private static FiscalIssuanceControlledUatInvocationService CreateSutCore(
+        IFiscalIssuanceControlledUatHarness? harness,
+        IFiscalIssuanceOrchestrationService? orchestration,
+        IFiscalIssuanceReferenceRepository? referenceRepository,
+        FiscalIssuancePosServerIntegrationOptions? options,
+        FiscalIssuanceExitAuthorizationGatingOptions? gatingOptions)
+    {
+        var resolvedOrchestration = orchestration ?? Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var resolvedRepository = referenceRepository ?? Substitute.For<IFiscalIssuanceReferenceRepository>();
+
+        if (orchestration is null)
+        {
+            resolvedOrchestration.PreparePendingAsync(
+                    Arg.Any<PrepareFiscalIssuanceCommand>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(PendingReference(PreparedFiscalIssuanceReferenceId));
+        }
+
+        if (referenceRepository is null)
+        {
+            resolvedRepository.FindByUpstreamFinalityReferenceAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<Guid?>(),
+                    Arg.Any<Guid?>(),
+                    Arg.Any<CancellationToken>())
+                .Returns((FiscalIssuanceReferenceRecord?)null);
+        }
+
+        return new FiscalIssuanceControlledUatInvocationService(
             harness ?? Substitute.For<IFiscalIssuanceControlledUatHarness>(),
             new FiscalIssuanceControlledUatEvidenceExporter(),
+            resolvedOrchestration,
+            resolvedRepository,
             Options.Create(options ?? EnabledOptions()),
             Options.Create(gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions()));
+    }
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
         new()
@@ -321,4 +497,40 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             EvidenceLocation: @"D:\ExitPass-UAT-Evidence\DEV-CONTROLLED-UAT-LOCAL\DEV-SITE-ATC-001\2026-07-03\CPS-POS-UAT-20260703-DEV-ATC-001",
             CorrelationId: "00000000-0000-4000-8000-000000000101",
             Errors: Array.Empty<string>());
+
+    private static FiscalIssuanceReferenceRecord PendingReference(Guid fiscalIssuanceReferenceId) =>
+        new(
+            FiscalIssuanceReferenceId: fiscalIssuanceReferenceId,
+            PaymentConfirmationId: Guid.Parse("00000000-0000-4000-8000-000000000301"),
+            PaymentAttemptId: Guid.Parse("00000000-0000-4000-8000-000000000302"),
+            ParkingSessionId: Guid.Parse("00000000-0000-4000-8000-000000000303"),
+            TariffSnapshotId: null,
+            SiteId: null,
+            SitePosServerId: null,
+            SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+            PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
+            UpstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+            PosServerFiscalDocumentId: null,
+            FiscalIdentityId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            FiscalDocumentStatusCodeId: null,
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIssuanceState: FiscalIssuanceIntegrationState.PendingFiscalIssuance,
+            LatestExceptionReason: null,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            CorrelationId: Guid.Parse("00000000-0000-4000-8000-000000000101"),
+            PosServerResponseTimestamp: null,
+            FirstRecordedAt: DateTimeOffset.UtcNow,
+            LastUpdatedAt: DateTimeOffset.UtcNow,
+            RecordedByServiceIdentityId: null);
 }
