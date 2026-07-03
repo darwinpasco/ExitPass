@@ -1,0 +1,28 @@
+@startuml
+title FEQ-D04 Readback Sequence
+skinparam shadowing false
+
+participant "Central PMS Fiscal Workflow\nor Projection Worker" as Central
+participant "Fiscal Exception Queue" as FEQ
+participant "FEQ Worker / Approved Backend" as Worker
+participant "POS Server GET / Read API" as POS
+participant "Central PMS Fiscal Reference Store" as Store
+participant "Audit / Event" as Audit
+participant "Operator Console" as OC
+participant "Management Dashboard" as MDR
+
+Central -> FEQ : Detect fiscal exception\nor unknown outcome
+FEQ -> Worker : Pick eligible exception
+Worker -> Store : Load original request,\nreference, idempotency context
+Worker -> POS : GET/readback using stable identifiers
+POS --> Worker : matched / not found /\nmismatch / failed / unavailable / unknown
+Worker -> FEQ : Classify readback result
+Worker -> Store : Update fiscal reference state\nthrough approved workflow
+Worker -> Audit : Record readback attempt,\nresult, evidence reference
+FEQ -> OC : Update queue visibility
+FEQ -> MDR : Publish projection update
+
+note over OC,MDR
+Operator Console and Management Dashboard do not call POS Server directly.
+end note
+@enduml

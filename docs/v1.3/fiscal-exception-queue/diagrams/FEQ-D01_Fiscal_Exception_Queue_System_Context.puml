@@ -1,0 +1,39 @@
+@startuml
+title FEQ-D01 Fiscal Exception Queue System Context
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Support / Compliance\nUsers" as Users
+
+component "Central PMS\npayment finality, fiscal references,\nnormal ExitAuthorization" as Central
+component "Fiscal Exception Queue\nrecovery coordination" as FEQ
+component "POS Server\nfiscal issuance and numbering" as POS
+component "Operator Console\nvisibility / governed handoff" as OC
+component "Management Dashboard\nvisibility / reporting" as MDR
+component "Audit / Event" as Audit
+component "Reconciliation" as Recon
+component "Gate / Exit\nthrough Central PMS authorization" as Gate
+
+Users --> OC : view/assign/escalate\nwhere permitted
+Users --> FEQ : governed recovery actions\nthrough approved service path
+Central --> FEQ : detected fiscal exception\nand fiscal reference state
+FEQ --> Central : update exception workflow\nand fiscal reference outcome
+FEQ --> POS : approved backend\nGET readback / retry call
+POS --> FEQ : fiscal issuance evidence\nor failure/conflict
+FEQ --> Audit : attempts, decisions,\nassignments, closure
+FEQ --> Recon : reconciliation status\nand closure evidence
+FEQ --> OC : assigned exception\nvisibility
+FEQ --> MDR : projection/reporting\nupdates
+Central --> Gate : normal ExitAuthorization\nonly when eligible
+
+OC -[#red,dashed]-> POS : no direct POS Server call
+MDR -[#red,dashed]-> POS : no direct POS Server call
+FEQ -[#red,dashed]-> Gate : no gate command
+
+note bottom
+Central PMS owns fiscal reference state and normal ExitAuthorization.
+POS Server owns fiscal issuance/numbering.
+FEQ coordinates recovery through approved backend services.
+end note
+@enduml

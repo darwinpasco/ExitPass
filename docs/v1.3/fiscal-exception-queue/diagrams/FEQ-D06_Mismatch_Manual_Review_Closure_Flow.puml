@@ -1,0 +1,34 @@
+@startuml
+title FEQ-D06 Mismatch Manual Review Closure Flow
+skinparam shadowing false
+
+start
+:Mismatch or repeated unknown outcome detected;
+:Assign exception to support/compliance role;
+:Review Central PMS original request and evidence;
+:Review POS Server readback result and fiscal evidence;
+
+if (Evidence matches original request?) then (yes)
+  :Record Central PMS fiscal reference evidence\nthrough approved backend workflow;
+  :Mark reconciled;
+elseif (Retry is safe and eligible?) then (yes)
+  :Approve controlled retry request;
+  :Return to retry workflow;
+elseif (Configuration fix required?) then (yes)
+  :Mark blocked_requires_config_fix;
+  :Assign to configuration owner;
+elseif (Escalation required?) then (yes)
+  :Escalate to compliance/accounting/engineering;
+  :Keep manual_review_required;
+elseif (Superseded/cancelled?) then (yes)
+  :Mark cancelled_superseded with reason;
+else (unrecoverable)
+  :Close as unrecoverable with evidence and approval;
+endif
+
+:Audit decision, role, reason, evidence reference;
+:Publish Operator Console visibility update;
+:Publish Management Dashboard projection update;
+:Manual review does not fabricate fiscal documents\nor mutate POS Server fiscal numbering;
+stop
+@enduml
