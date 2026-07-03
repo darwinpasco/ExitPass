@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using Npgsql;
+using NpgsqlTypes;
 
 namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 
@@ -455,7 +456,49 @@ public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceR
 
     private static void AddNullable<T>(NpgsqlCommand command, string name, T? value)
     {
-        command.Parameters.AddWithValue(name, value is null ? DBNull.Value : value);
+        if (value is not null)
+        {
+            command.Parameters.AddWithValue(name, value);
+            return;
+        }
+
+        var parameter = TryGetNpgsqlDbType(typeof(T), out var dbType)
+            ? command.Parameters.Add(name, dbType)
+            : command.Parameters.AddWithValue(name, DBNull.Value);
+
+        parameter.Value = DBNull.Value;
+    }
+
+    private static bool TryGetNpgsqlDbType(Type type, out NpgsqlDbType dbType)
+    {
+        var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+
+        if (underlyingType == typeof(Guid))
+        {
+            dbType = NpgsqlDbType.Uuid;
+            return true;
+        }
+
+        if (underlyingType == typeof(string))
+        {
+            dbType = NpgsqlDbType.Text;
+            return true;
+        }
+
+        if (underlyingType == typeof(long))
+        {
+            dbType = NpgsqlDbType.Bigint;
+            return true;
+        }
+
+        if (underlyingType == typeof(DateTimeOffset))
+        {
+            dbType = NpgsqlDbType.TimestampTz;
+            return true;
+        }
+
+        dbType = default;
+        return false;
     }
 
     private static string ToDatabaseValue(FiscalIssuanceIntegrationState state) =>

@@ -35,6 +35,22 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         Guid.Parse("00000000-0000-4000-8000-000000000302");
     private static readonly Guid ControlledUatParkingSessionId =
         Guid.Parse("00000000-0000-4000-8000-000000000303");
+    private static readonly Guid ControlledUatSitePosServerId =
+        Guid.Parse("10000000-0000-4000-8000-000000000201");
+    private static readonly Guid ControlledUatFiscalDocumentTypeCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000103");
+    private static readonly Guid ControlledUatFiscalDocumentStatusCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000107");
+    private static readonly Guid ControlledUatLineTypeCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000108");
+    private static readonly Guid ControlledUatTenderTypeCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000109");
+    private static readonly Guid ControlledUatTaxTypeCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000110");
+    private static readonly Guid ControlledUatTaxClassificationCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000111");
+    private static readonly Guid ControlledUatTotalTypeCodeId =
+        Guid.Parse("10000000-0000-4000-8000-000000000112");
 
     private static readonly string[] SensitiveTerms =
     [
@@ -558,9 +574,9 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             ParkingSessionId: ControlledUatParkingSessionId,
             TariffSnapshotId: null,
             SiteId: null,
-            SitePosServerId: request.SitePosServerId,
+            SitePosServerId: ResolveSitePosServerId(request),
             SitePosServerRef: request.SitePosServerRef?.Trim(),
-            FiscalDocumentTypeCodeId: request.FiscalDocumentTypeCodeId,
+            FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
             FiscalDocumentTypeCodeKey: request.FiscalDocumentType?.Trim(),
             PayableBasisRef: request.PayableBasisRef?.Trim(),
             UpstreamFinalityReference: request.UpstreamFinalityRef!.Trim(),
@@ -587,8 +603,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             FiscalContext: BuildFiscalContext(request),
             RecordingContext: new PosServerCreateResultRecordingContext(
                 UpstreamFinalityReference: request.UpstreamFinalityRef.Trim(),
-                SitePosServerId: request.SitePosServerId,
-                FiscalDocumentTypeCodeId: request.FiscalDocumentTypeCodeId,
+                SitePosServerId: ResolveSitePosServerId(request),
+                FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
                 CorrelationId: correlationId,
                 PosServerResponseTimestamp: null,
                 ServiceIdentityId: null),
@@ -599,11 +615,11 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private static CentralPmsFiscalDocumentMappingContext BuildFiscalContext(
         ControlledUatFiscalIssuanceInvocationRequest request) =>
         new(
-            SitePosServerId: request.SitePosServerId,
+            SitePosServerId: ResolveSitePosServerId(request),
             SitePosServerRef: request.SitePosServerRef.Trim(),
-            FiscalDocumentTypeCodeId: request.FiscalDocumentTypeCodeId,
+            FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
             FiscalDocumentTypeCodeKey: request.FiscalDocumentType.Trim(),
-            FiscalDocumentStatusCodeId: request.FiscalDocumentStatusCodeId,
+            FiscalDocumentStatusCodeId: ResolveFiscalDocumentStatusCodeId(request),
             BusinessDayDate: request.BusinessDayDate,
             CentralPmsParkingSessionRef: request.ParkingSessionRef.Trim(),
             CentralPmsPaymentAttemptRef: request.PaymentAttemptRef.Trim(),
@@ -623,7 +639,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             [
                 new CentralPmsFiscalDocumentLineContext(
                     LineSequence: 1,
-                    LineTypeCodeId: null,
+                    LineTypeCodeId: ControlledUatLineTypeCodeId,
                     Description: request.LineSummary.Trim(),
                     Quantity: 1,
                     UnitAmountMinorUnits: request.LineAmountTotal,
@@ -639,7 +655,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             Tenders:
             [
                 new CentralPmsFiscalTenderContext(
-                    TenderTypeCodeId: null,
+                    TenderTypeCodeId: ControlledUatTenderTypeCodeId,
                     AmountMinorUnits: request.TenderAmountTotal,
                     CurrencyCode: request.Currency.Trim().ToUpperInvariant(),
                     CentralPmsPaymentAttemptRef: request.PaymentAttemptRef.Trim(),
@@ -651,8 +667,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             TaxDetails:
             [
                 new CentralPmsFiscalTaxDetailContext(
-                    TaxTypeCodeId: null,
-                    TaxClassificationCodeId: null,
+                    TaxTypeCodeId: ControlledUatTaxTypeCodeId,
+                    TaxClassificationCodeId: ControlledUatTaxClassificationCodeId,
                     TaxableAmountMinorUnits: request.LineAmountTotal,
                     TaxAmountMinorUnits: request.TaxAmountTotal,
                     CurrencyCode: request.Currency.Trim().ToUpperInvariant(),
@@ -664,7 +680,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             Totals:
             [
                 new CentralPmsFiscalTotalContext(
-                    TotalTypeCodeId: null,
+                    TotalTypeCodeId: ControlledUatTotalTypeCodeId,
                     AmountMinorUnits: request.GrandTotal,
                     CurrencyCode: request.Currency.Trim().ToUpperInvariant(),
                     TotalContext: new Dictionary<string, string> { ["kind"] = "grand_total" })
@@ -677,6 +693,15 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             },
             PaymentFinalityRef: request.UpstreamFinalityRef.Trim(),
             VendorAckRef: null);
+
+    private static Guid ResolveSitePosServerId(ControlledUatFiscalIssuanceInvocationRequest request) =>
+        request.SitePosServerId.GetValueOrDefault(ControlledUatSitePosServerId);
+
+    private static Guid ResolveFiscalDocumentTypeCodeId(ControlledUatFiscalIssuanceInvocationRequest request) =>
+        request.FiscalDocumentTypeCodeId.GetValueOrDefault(ControlledUatFiscalDocumentTypeCodeId);
+
+    private static Guid ResolveFiscalDocumentStatusCodeId(ControlledUatFiscalIssuanceInvocationRequest request) =>
+        request.FiscalDocumentStatusCodeId.GetValueOrDefault(ControlledUatFiscalDocumentStatusCodeId);
 
     private static IEnumerable<string?> EnumerateStrings(ControlledUatFiscalIssuanceInvocationRequest request)
     {

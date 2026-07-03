@@ -220,7 +220,15 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         Directory.Exists(evidencePath).Should().BeFalse();
         await harness.Received(1).ExecuteAsync(
             Arg.Is<FiscalIssuanceControlledUatHarnessRequest>(request =>
-                request.FiscalIssuanceReferenceId == PreparedFiscalIssuanceReferenceId),
+                request.FiscalIssuanceReferenceId == PreparedFiscalIssuanceReferenceId &&
+                request.FiscalContext.SitePosServerId == Guid.Parse("10000000-0000-4000-8000-000000000201") &&
+                request.FiscalContext.FiscalDocumentTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000103") &&
+                request.FiscalContext.FiscalDocumentStatusCodeId == Guid.Parse("10000000-0000-4000-8000-000000000107") &&
+                request.FiscalContext.DocumentLines.Single().LineTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000108") &&
+                request.FiscalContext.Tenders.Single().TenderTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000109") &&
+                request.FiscalContext.TaxDetails.Single().TaxTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000110") &&
+                request.FiscalContext.TaxDetails.Single().TaxClassificationCodeId == Guid.Parse("10000000-0000-4000-8000-000000000111") &&
+                request.FiscalContext.Totals.Single().TotalTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000112")),
             Arg.Any<CancellationToken>());
     }
 
@@ -248,6 +256,8 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             Arg.Is<PrepareFiscalIssuanceCommand>(command =>
                 command.UpstreamFinalityReference == "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001" &&
                 command.SitePosServerRef == "DEV-POS-SERVER-ATC-001" &&
+                command.SitePosServerId == Guid.Parse("10000000-0000-4000-8000-000000000201") &&
+                command.FiscalDocumentTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000103") &&
                 command.FiscalDocumentTypeCodeKey == "sales_invoice"),
             Arg.Any<CancellationToken>());
         await harness.Received(1).ExecuteAsync(
