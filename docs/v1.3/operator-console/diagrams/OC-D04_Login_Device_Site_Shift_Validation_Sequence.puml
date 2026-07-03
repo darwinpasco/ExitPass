@@ -1,0 +1,58 @@
+@startuml
+title OC-D04 Login, Device, Site, and Shift Validation Sequence
+
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam wrapWidth 220
+
+actor User
+participant "Operator Console UI" as UI
+participant "Identity / RBAC" as Identity
+participant "Device Trust" as Device
+participant "Site Assignment" as Site
+participant "Shift Validation" as Shift
+participant "Audit / Event" as Audit
+
+User -> UI : Open console
+UI -> Identity : Authenticate user
+Identity --> UI : Authenticated identity
+UI -> Identity : Resolve roles and permissions
+
+alt invalid role or missing permission
+  Identity --> UI : Deny
+  UI -> Audit : Record denial
+  UI --> User : Access denied
+else role valid
+  Identity --> UI : Role and permissions
+  UI -> Device : Validate registered/trusted device
+
+  alt unregistered, suspended, or revoked device
+    Device --> UI : Deny
+    UI -> Audit : Record device denial
+    UI --> User : Device not allowed
+  else device trusted
+    Device --> UI : Device accepted
+    UI -> Site : Validate Site / Site Group assignment
+
+    alt wrong site scope
+      Site --> UI : Deny
+      UI -> Audit : Record site-scope denial
+      UI --> User : Site scope not allowed
+    else site scope valid
+      Site --> UI : Site context accepted
+      UI -> Shift : Validate active shift for action
+
+      alt no active shift for shift-scoped action
+        Shift --> UI : Deny shift-scoped action
+        UI -> Audit : Record shift denial
+        UI --> User : Active shift required
+      else active shift valid
+        Shift --> UI : Shift accepted
+        UI -> Audit : Record successful access context
+        UI --> User : Allow permitted modules/actions
+      end
+    end
+  end
+end
+
+@enduml

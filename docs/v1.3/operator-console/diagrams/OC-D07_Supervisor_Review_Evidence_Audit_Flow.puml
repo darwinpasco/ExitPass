@@ -1,0 +1,45 @@
+@startuml
+title OC-D07 Supervisor Review, Evidence, and Audit Flow
+
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam wrapWidth 220
+
+actor Supervisor
+participant "Operator Console UI" as UI
+participant "RBAC / Privacy Policy" as Policy
+participant "Central PMS /\nDiscount Workflow" as Workflow
+participant "Evidence Service /\nEvidence Repository" as Evidence
+participant "Audit / Event" as Audit
+
+Supervisor -> UI : Open review queue
+UI -> Policy : Check role, Site scope,\ndevice, shift, and evidence permission
+
+alt access denied
+  Policy --> UI : Deny
+  UI -> Audit : Record review/evidence access denial
+  UI --> Supervisor : Access denied
+else access allowed
+  Policy --> UI : Allow scoped review
+  UI -> Workflow : Load assigned-scope discount case
+  Workflow --> UI : Case details and status
+  UI -> Evidence : Request evidence reference/view\nif policy allows
+  Evidence -> Policy : Re-check evidence access
+  Policy --> Evidence : Allow / redact / deny
+  Evidence --> UI : Evidence reference or redacted view
+  UI -> Audit : Record evidence access
+  Supervisor -> UI : Approve / reject / override\nwith reason and justification
+  UI -> Workflow : Submit reason-coded decision
+  Workflow --> UI : Decision recorded
+  UI -> Audit : Record supervisor decision
+  UI --> Supervisor : Display final review status
+end
+
+note bottom
+Supervisor override is audited.
+It does not mutate payment finality,
+issue ExitAuthorization, open gates,
+or issue fiscal documents.
+end note
+
+@enduml

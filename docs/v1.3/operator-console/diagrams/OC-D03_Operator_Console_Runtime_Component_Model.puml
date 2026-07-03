@@ -1,0 +1,66 @@
+@startuml
+title OC-D03 Operator Console Runtime Component Model
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 220
+
+package "Operator Console Web Application" {
+  component "Web UI / PWA Shell" as Shell
+  component "Auth / Session Module" as Auth
+  component "RBAC Guard" as Rbac
+  component "Device Trust Guard" as Device
+  component "Site / Shift Guard" as SiteShift
+  component "Ticket / Session\nLookup Module" as Lookup
+  component "Read-Only\nContext Viewer" as Viewer
+  component "Statutory Discount\nWorkflow Module" as Discount
+  component "Evidence Capture /\nReference Module" as Evidence
+  component "Supervisor\nReview Module" as Supervisor
+  component "Audit / Report\nViewer" as AuditReport
+  component "Fiscal Status\nViewer" as Fiscal
+  component "Future Fiscal Exception\nEntry Point" as FutureFiscal
+  component "Observability /\nAudit Hooks" as Hooks
+}
+
+Shell --> Auth
+Shell --> Rbac
+Shell --> Device
+Shell --> SiteShift
+
+Rbac --> Lookup
+Rbac --> Viewer
+Rbac --> Discount
+Rbac --> Evidence
+Rbac --> Supervisor
+Rbac --> AuditReport
+Rbac --> Fiscal
+Rbac --> FutureFiscal
+
+Device --> Lookup
+SiteShift --> Lookup
+SiteShift --> Discount
+SiteShift --> Supervisor
+
+Lookup --> Viewer
+Discount --> Evidence
+Discount --> Supervisor
+Supervisor --> Evidence
+Fiscal --> FutureFiscal : read-only handoff context
+
+Auth --> Hooks
+Rbac --> Hooks
+Device --> Hooks
+SiteShift --> Hooks
+Lookup --> Hooks
+Discount --> Hooks
+Evidence --> Hooks
+Supervisor --> Hooks
+AuditReport --> Hooks
+Fiscal --> Hooks
+
+note bottom
+All modules use approved backend services.
+No module has payment, fiscal issuance, ExitAuthorization, or gate-control authority.
+end note
+
+@enduml

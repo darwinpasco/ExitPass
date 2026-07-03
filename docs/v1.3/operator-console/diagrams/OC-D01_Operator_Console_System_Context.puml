@@ -1,0 +1,64 @@
+@startuml
+title OC-D01 Operator Console System Context
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 220
+
+actor "Site Operator /\nSupervisor /\nAuditor /\nAdmin" as User
+
+package "Operator Console Boundary" {
+  component "Operator Console\nWeb UI / PWA" as ConsoleUi
+  component "Optional Operator Console\nBFF / API Layer" as Bff
+}
+
+package "Approved Backend Services" {
+  component "Identity / RBAC" as Identity
+  component "Device Trust /\nShift Validation" as DeviceShift
+  component "Central PMS" as Central
+  component "Discount Workflow" as Discount
+  component "Evidence Service /\nEvidence Repository" as Evidence
+  component "Audit / Event" as Audit
+}
+
+component "Management Dashboard /\nReporting" as Dashboard
+component "Future Fiscal\nException Queue" as FiscalQueue
+
+package "Non-Direct Targets" {
+  component "POS Server\n(fiscal issuer)" as PosServer
+  component "Payment Orchestrator\n(provider boundary)" as Payment
+  component "Vendor PMS\n(session/tariff authority)" as Vendor
+  component "Gate Integration\n(consumes Central PMS auth)" as Gate
+}
+
+User --> ConsoleUi : internal operations access
+ConsoleUi --> Bff : approved console API calls\nif BFF is used
+ConsoleUi --> Identity : authenticate / session
+ConsoleUi --> DeviceShift : device, site, shift checks
+ConsoleUi --> Central : read session/payment/exit/fiscal context\nsubmit governed workflow requests
+ConsoleUi --> Discount : statutory discount workflow\nthrough approved backend
+ConsoleUi --> Evidence : evidence reference capture / review
+ConsoleUi --> Audit : action and access audit
+
+Bff --> Identity
+Bff --> DeviceShift
+Bff --> Central
+Bff --> Discount
+Bff --> Evidence
+Bff --> Audit
+
+Central --> Dashboard : reporting/read-model feed
+Central --> FiscalQueue : future fiscal exception handoff
+FiscalQueue --> Dashboard : aggregate exception visibility
+
+ConsoleUi -[#red,dashed]-> PosServer : no direct calls
+ConsoleUi -[#red,dashed]-> Payment : no direct provider calls
+ConsoleUi -[#red,dashed]-> Vendor : no direct vendor calls
+ConsoleUi -[#red,dashed]-> Gate : no direct gate calls
+
+note bottom
+Operator Console talks through approved backend services.
+It does not call POS Server, payment providers, Vendor PMS, or gates directly.
+end note
+
+@enduml

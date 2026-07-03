@@ -1,0 +1,36 @@
+@startuml
+title OC-D06 Fiscal Status Visibility and Exception Handoff
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 220
+
+actor "Operator /\nSupervisor" as User
+component "Operator Console\nFiscal Status Viewer" as Console
+component "Central PMS\nFiscal Read Model" as Central
+component "Central PMS\nFiscal Reference Store" as Reference
+component "POS Server\nfiscal issuance evidence\nalready recorded only" as Pos
+component "Future Fiscal\nException Queue" as Queue
+component "Management Dashboard /\nReporting" as Dashboard
+component "Audit / Event" as Audit
+
+User --> Console : View fiscal status
+Console --> Central : Request read-only fiscal context
+Central --> Reference : Read fiscal reference state
+Reference --> Central : State, evidence status,\nnumber assignment, error posture
+Central --> Console : Read-only fiscal status
+Console --> Audit : Record fiscal status view
+
+Central -[#blue]-> Pos : POS Server evidence only when\nalready recorded by Central PMS
+Console -[#red,dashed]-> Pos : no direct POS Server calls
+
+Central --> Queue : Future retry/readback/writeback handoff
+Queue --> Dashboard : Aggregate exception visibility
+Central --> Dashboard : Fiscal visibility projection / feed
+
+note bottom
+Fiscal visibility is read-only in this SDD.
+Retry, readback, writeback, and closure mechanics belong to the future Fiscal Exception Queue design.
+end note
+
+@enduml
