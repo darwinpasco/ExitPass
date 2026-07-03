@@ -6,7 +6,7 @@
 | --- | --- |
 | Document | ExitPass Central PMS POS Server Controlled UAT Execution Dry-Run Checklist |
 | Version | v1.0 |
-| Status | Checklist created; not approval to execute |
+| Status | Checklist updated after controlled invocation surface implementation; not approval to execute |
 | Date | 2026-07-03 |
 | Branch | feature/central-pms-pos-server-controlled-uat-execution-dry-run-checklist |
 | Owner | ExitPass platform implementation/orchestration |
@@ -71,11 +71,20 @@ This document must not decide:
 
 - ready_for_execution.
 
-Final checklist decision for this version:
+Original checklist decision before the invocation surface branch:
 
 `dry_run_checklist_created_but_execution_invocation_blocked`
 
-Reason: the Central PMS application contains an application-level controlled UAT harness and diagnostic seam, but repository inspection did not find a safe runtime invocation method exposed by endpoint, CLI, hosted service, or operator tool. Actual execution remains blocked even if infrastructure checks pass.
+Updated implementation status after this branch:
+
+`controlled_invocation_surface_available_pending_pre_execution_checks`
+
+Reason: this branch adds a guarded internal Central PMS invocation surface for the existing application-level controlled UAT harness:
+
+- `POST /internal/controlled-uat/fiscal-issuance/preflight`
+- `POST /internal/controlled-uat/fiscal-issuance/run`
+
+Actual execution remains blocked until this checklist is run manually, all runtime checks pass, evidence folder readiness is confirmed, and Darwin Pasco explicitly approves the first run endpoint call.
 
 ## 7. Filled values carried forward
 
@@ -185,7 +194,7 @@ Reason: the Central PMS application contains an application-level controlled UAT
 | 12 | no endpoint/CLI/tooling introduced | unresolved | Inspect changed files and source routes. | No new endpoint, CLI, hosted service, or tooling files are present. | Stop, remove unauthorized implementation or restart approved task. | `git status`, `git diff --name-only`, source search output. | Block execution if failed. |
 | 13 | no payment/exit production wiring | unresolved | Inspect source changes and known flow guards. | No new payment/exit dependencies on POS Server or harness. | Stop and revert unauthorized wiring through approved process. | Source search output. | Block execution if failed. |
 | 14 | no gate behavior | unresolved | Inspect source changes and UAT evidence confirmations. | No gate command/event/execution path is introduced. | Stop and remove unauthorized gate behavior. | Source search output. | Block execution if failed. |
-| 15 | safe invocation method exists or is explicitly blocked | unresolved | Inspect Central PMS implementation and tests. | Safe invocation exists, or execution is explicitly blocked. | If absent, do not execute; create next invocation-surface task. | Search output and conclusion. | Currently blocks execution. |
+| 15 | safe invocation method exists or is explicitly blocked | resolved by invocation-surface branch | Verify `POST /internal/controlled-uat/fiscal-issuance/preflight` and `POST /internal/controlled-uat/fiscal-issuance/run` are present and guarded. | Controlled internal endpoint exists and still requires config guards and explicit approval. | Stop if endpoint is missing or if any guard is weakened. | Source search output and endpoint review. | Does not block pre-execution checks; execution still requires checklist pass and Darwin approval. |
 | 16 | dry-run checklist passes | unresolved | Complete every item in this checklist. | All required pass criteria are captured. | Stop, remediate failed items and repeat checklist. | Completed checklist package. | Block execution if incomplete. |
 | 17 | Darwin explicit execution approval captured | unresolved | Capture explicit approval after checklist passes. | Approval reference recorded after pass evidence is reviewed. | Stop, do not execute. | Approval record. | Block execution if missing. |
 
@@ -827,7 +836,7 @@ Evidence to capture:
 
 ## 24. Invocation method verification
 
-Repository inspection outcome:
+Original repository inspection outcome before this branch:
 
 `Outcome B: No safe existing invocation method exists.`
 
@@ -838,22 +847,32 @@ Evidence:
 - Unit tests invoke the harness and diagnostic seam with mocked dependencies.
 - No Central PMS API endpoint, CLI/tool, hosted service, or operator action was found that invokes the controlled UAT harness.
 
+Updated invocation surface outcome after this branch:
+
+`Outcome A: A narrow controlled internal invocation method exists.`
+
+Endpoint paths:
+
+- `POST /internal/controlled-uat/fiscal-issuance/preflight`
+- `POST /internal/controlled-uat/fiscal-issuance/run`
+
 Execution implication:
 
-- Actual diagnostic execution remains blocked even if all runtime pre-execution checks pass.
-- Do not fake invocation through payment confirmation, ExitAuthorization, existing ops endpoints, direct database changes, or ad hoc source edits.
+- Actual diagnostic execution remains blocked until all runtime pre-execution checks pass and Darwin explicitly approves the first run endpoint call.
+- Do not invoke the run endpoint from payment confirmation, ExitAuthorization, existing ops endpoints, direct database changes, ad hoc source edits, Operator Console actions, or public clients.
+- Evidence is returned in the response and must be manually saved; the endpoint does not write evidence files.
 
 Corrective action:
 
-- Create the smallest compliant next implementation task to add a controlled invocation surface, without production payment/exit wiring and without fiscal gating enforcement.
+- Run this dry-run checklist manually and capture evidence before requesting Darwin approval.
 
 Stop/abort rule:
 
-- Abort any execution attempt until an approved invocation surface exists and has its own tests/runbook update.
+- Abort any execution attempt if preflight fails, config guards fail, evidence location is not ready, POS Server fiscal rows are not verified, or Darwin approval is missing.
 
 Evidence to capture:
 
-- Source search output showing no endpoint/CLI/tooling invocation path.
+- Source search output showing the controlled endpoint paths and no payment/exit/gate wiring.
 
 ## 25. Stop/abort conditions
 
@@ -892,7 +911,7 @@ This checklist is considered passed only when:
 - manual-save evidence path is ready;
 - Darwin reviews the checklist evidence.
 
-Because no safe invocation method currently exists, checklist pass does not authorize execution. It only permits moving to the controlled invocation-surface task.
+Checklist pass does not authorize execution by itself. It only permits requesting Darwin's explicit approval for the first controlled run endpoint call.
 
 ## 27. Explicit execution approval gate
 
@@ -979,23 +998,23 @@ Pass result:
 
 ## 29. Remaining blockers after checklist creation
 
-- No safe existing runtime invocation method exists for the application-level controlled UAT harness.
+- The previous no-invocation-surface blocker is resolved by this branch.
 - POS Server must still be started on `http://localhost:8091` before a later approved execution attempt.
 - Central PMS Docker connectivity to `http://host.docker.internal:8091` must still be verified at runtime.
 - Central PMS config must still be set and verified at runtime.
 - POS Server dev fiscal identity/policy/sequence/type availability must still be verified in the runtime database.
 - Evidence folder must still be created before execution.
-- Darwin explicit execution approval must still be captured after all checks and after an approved invocation surface exists.
+- Darwin explicit execution approval must still be captured after all checks pass.
 
 ## 30. Recommended next task
 
-Recommended next branch:
+Recommended next task:
 
-`feature/central-pms-pos-server-controlled-uat-invocation-surface`
+`manual controlled UAT pre-execution check run`
 
 Purpose:
 
-Add the smallest safe controlled invocation surface for the application-level UAT harness without exposing production payment/exit flows, without enabling fiscal gating enforcement, and without adding uncontrolled operator capability.
+Run the dry-run checklist manually, capture runtime evidence for POS Server startup, Central PMS Docker connectivity, config/guard values, POS Server fiscal rows, evidence folder readiness, and then request Darwin's explicit approval before calling the controlled UAT run endpoint.
 
 ## 31. Requirements traceability summary
 
