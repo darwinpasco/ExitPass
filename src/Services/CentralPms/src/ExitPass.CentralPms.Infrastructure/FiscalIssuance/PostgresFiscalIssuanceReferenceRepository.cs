@@ -5,7 +5,9 @@ using NpgsqlTypes;
 
 namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 
-public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceReferenceRepository
+public sealed class PostgresFiscalIssuanceReferenceRepository :
+    IFiscalIssuanceReferenceRepository,
+    IFiscalExceptionQueueReferenceReader
 {
     private readonly string _connectionString;
 
@@ -295,6 +297,46 @@ public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceR
             command => command.Parameters.AddWithValue("pos_server_fiscal_document_id", posServerFiscalDocumentId),
             cancellationToken);
 
+    public Task<FiscalIssuanceReferenceRecord?> FindFiscalExceptionReferenceAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken) =>
+        QuerySingleAsync(
+            """
+            WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+              AND is_active = true
+            """,
+            command => command.Parameters.AddWithValue("fiscal_issuance_reference_id", fiscalIssuanceReferenceId),
+            cancellationToken);
+
+    public Task<IReadOnlyList<FiscalIssuanceReferenceRecord>> ListFiscalExceptionReferencesAsync(
+        FiscalExceptionQueueQuery query,
+        CancellationToken cancellationToken) =>
+        QueryManyAsync(
+            """
+            WHERE is_active = true
+              AND fiscal_issuance_state IN (
+                  'FISCAL_ISSUANCE_CONFLICT',
+                  'FISCAL_ISSUANCE_FAILED_REQUEST',
+                  'FISCAL_ISSUANCE_FAILED_CONFIGURATION',
+                  'FISCAL_ISSUANCE_FAILED_SERVICE',
+                  'FISCAL_ISSUANCE_UNKNOWN',
+                  'FISCAL_ISSUANCE_MANUAL_REVIEW',
+                  'FISCAL_ISSUANCE_EXCEPTION_RELEASED',
+                  'FISCAL_ISSUANCE_RECONCILED'
+              )
+              AND (@site_id IS NULL OR site_id = @site_id)
+              AND (@site_pos_server_id IS NULL OR site_pos_server_id = @site_pos_server_id)
+            ORDER BY last_updated_at DESC
+            LIMIT @limit
+            """,
+            command =>
+            {
+                command.Parameters.AddWithValue("limit", Math.Clamp(query.Limit, 1, 500));
+                AddNullable(command, "site_id", query.SiteId);
+                AddNullable(command, "site_pos_server_id", query.SitePosServerId);
+            },
+            cancellationToken);
+
     private async Task<FiscalIssuanceReferenceRecord?> QuerySingleAsync(
         string whereClause,
         Action<NpgsqlCommand> configure,
@@ -355,6 +397,70 @@ public sealed class PostgresFiscalIssuanceReferenceRepository : IFiscalIssuanceR
         return await reader.ReadAsync(cancellationToken)
             ? MapReference(reader)
             : null;
+    }
+
+    private async Task<IReadOnlyList<FiscalIssuanceReferenceRecord>> QueryManyAsync(
+        string whereClause,
+        Action<NpgsqlCommand> configure,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            SELECT
+                fiscal_issuance_reference_id,
+                payment_confirmation_id,
+                payment_attempt_id,
+                parking_session_id,
+                tariff_snapshot_id,
+                site_id,
+                site_pos_server_id,
+                site_pos_server_ref,
+                payable_basis_ref,
+                upstream_finality_reference,
+                pos_server_fiscal_document_id,
+                fiscal_identity_id,
+                fiscal_sequence_policy_id,
+                fiscal_sequence_value,
+                fiscal_document_number,
+                fiscal_series,
+                fiscal_number_prefix_text,
+                fiscal_number_suffix_text,
+                fiscal_number_assigned_at,
+                fiscal_number_assigned_by_ref,
+                fiscal_document_status_code_id,
+                result_classification,
+                fiscal_issuance_evidence_status,
+                fiscal_number_assignment_state,
+                fiscal_issuance_state,
+                latest_exception_reason,
+                latest_error_code,
+                latest_error_posture,
+                correlation_id,
+                pos_server_response_timestamp,
+                first_recorded_at,
+                last_updated_at,
+                recorded_by_service_identity_id
+            FROM core.fiscal_issuance_references
+            {whereClause};
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        configure(command);
+
+        var records = new List<FiscalIssuanceReferenceRecord>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            records.Add(MapReference(reader));
+        }
+
+        return records;
     }
 
     private static void AddCreateParameters(NpgsqlCommand command, CreateFiscalIssuanceReferenceRequest request)

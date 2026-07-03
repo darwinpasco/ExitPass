@@ -360,7 +360,10 @@ static void ConfigureApplicationServices(
         new RecordPaymentConfirmationGateway(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionQueueReferenceReader>(_ =>
+        new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
+    builder.Services.AddScoped<IFiscalExceptionQueueService, FiscalExceptionQueueService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));
     builder.Services.AddScoped<IPosServerFiscalDocumentRequestMapper, PosServerFiscalDocumentRequestMapper>();
