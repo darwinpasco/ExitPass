@@ -7,20 +7,21 @@
 | Document | ExitPass Central PMS POS Server Controlled UAT Data Assignment Record |
 | Version | v1.0 |
 | Date | 2026-07-03 |
-| Branch | feature/central-pms-pos-server-controlled-uat-data-assignment-record |
-| Scope | Documentation/template only |
-| Default assignment decision | incomplete |
-| Completion required before | First controlled UAT diagnostic readiness re-review |
+| Branch | feature/central-pms-pos-server-controlled-uat-data-assignment-fill |
+| Scope | Documentation-fill only |
+| Assignment posture | Development-only values for first controlled UAT planning |
+| Default assignment decision | ready_for_readiness_review |
+| Completion required before | Refreshed first-run readiness review |
+
+This fill does not execute UAT. It does not prove POS Server is currently running. It does not prove the development fiscal identity, fiscal sequence policy, or fiscal sequence state rows exist. The next readiness refresh must verify runtime/config evidence before execution.
 
 ## 2. Purpose and Scope
 
-This record captures the actual values, owners, approvals, and references required before the first controlled Central PMS to POS Server fiscal issuance diagnostic run can be reconsidered.
+This record captures the assigned development values, consolidated small-organization ownership, and approval references required before the first controlled Central PMS to POS Server fiscal issuance diagnostic run can be reviewed again.
 
-It is intended to be filled by the responsible UAT, engineering, Site, POS Server, Central PMS, evidence, operations, and compliance/accounting owners.
+This record closes the preparation gap identified by the earlier data assignment review. It moves the assignment record from `incomplete` to `ready_for_readiness_review` using non-production values only.
 
-This record closes the preparation gap identified by the first-run readiness review, which concluded `not_ready_for_execution` because required values and approvals were not assigned.
-
-This record does not authorize execution by itself. After completion, a separate readiness review must determine whether the project can proceed to an execution dry-run checklist.
+This record does not authorize execution by itself. After this fill, a refreshed first-run readiness review must determine whether the project can proceed to execution dry-run checklist preparation.
 
 ## 3. Current Implementation Baseline
 
@@ -32,6 +33,8 @@ The current implementation and documentation baseline has:
 - controlled UAT manual-save procedure
 - controlled UAT approved test data plan
 - controlled UAT first-run readiness review
+- controlled UAT data assignment record
+- controlled UAT data assignment review
 - application-level controlled UAT harness
 - safe evidence JSON exporter
 - disabled/default-safe POS Server live-call seam
@@ -58,7 +61,7 @@ The current implementation and documentation baseline has:
 
 ## 5. Non-Goals
 
-This task does not:
+This fill does not:
 
 - execute UAT
 - execute live POS Server calls
@@ -89,135 +92,139 @@ Status values:
 
 | Assignment area | Required owner | Assigned value | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Owner and approvals | TBD | TBD | not_started | TBD | Required before readiness re-review. |
-| Environment | TBD | TBD | not_started | TBD | Environment must be explicitly selected. |
-| Site / Site POS Server | TBD | TBD | not_started | TBD | Site and Site POS Server must be mapped and approved. |
-| POS Server fiscal configuration | POS Server owner | TBD | not_started | TBD | Fiscal identity, policy, and sequence required. |
-| Central PMS configuration | Engineering lead / Central PMS owner | TBD | not_started | TBD | Diagnostic config and guard posture required. |
-| Test transaction references | UAT lead / engineering lead | TBD | not_started | TBD | Parking, payment, confirmation, and payable refs required. |
-| Upstream finality reference | UAT lead / engineering lead | TBD | not_started | TBD | Must be stable and scenario-scoped. |
-| Fiscal request facts | UAT lead / Central PMS owner | TBD | not_started | TBD | Fiscal document facts required. |
-| Line / tender / tax / totals | UAT lead / compliance/accounting observer if needed | TBD | not_started | TBD | Must match payable basis. |
-| Evidence save assignment | Evidence owner | TBD | not_started | TBD | Manual-save mode and location required. |
-| Sensitive-data exclusion | Evidence owner / redaction owner if assigned | TBD | not_started | TBD | Required before any evidence save. |
-| Scenario assignment | UAT lead | TBD | not_started | TBD | First run should normally be `newly_created`. |
-| Replay assignment | UAT lead / POS Server owner | TBD | deferred | TBD | Include only if separately approved. |
-| Conflict/failure/unknown assignment | UAT lead / POS Server owner | TBD | deferred | TBD | Include only if separately approved. |
-| Pre-run validation | Engineering lead | TBD | not_started | TBD | Required before execution dry-run checklist. |
-| Abort owners | Operations lead / rollback owner | TBD | not_started | TBD | Required before execution. |
-| Reviewer/signoff | UAT lead | TBD | not_started | TBD | Required before readiness re-review. |
+| Owner and approvals | Darwin Pasco | Small-org consolidated ownership | approved | DEV-UAT-CPS-POS-001 | Development assignment attestation. |
+| Environment | Darwin Pasco | DEV-CONTROLLED-UAT-LOCAL | approved | DEV-UAT-CPS-POS-001 | Non-production only. |
+| Site / Site POS Server | Darwin Pasco | DEV-SITE-ATC-001 / DEV-POS-SERVER-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic refs. |
+| POS Server fiscal configuration | Darwin Pasco | DEV-FISCAL-IDENTITY-ATC-001 / DEV-SI-SEQUENCE-POLICY-ATC-001 / DEV-SI-SEQUENCE-STATE-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Runtime existence must be verified in readiness refresh. |
+| Central PMS configuration | Darwin Pasco | Controlled diagnostic flags intended for approved window; payment/exit guards false | approved | DEV-UAT-CPS-POS-001 | Config must be verified before execution. |
+| Test transaction references | Darwin Pasco | DEV-PARKING/PAYMENT/PAYABLE refs assigned | approved | DEV-UAT-CPS-POS-001 | Development symbolic refs. |
+| Upstream finality reference | Darwin Pasco | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001 | approved | DEV-UAT-CPS-POS-001 | One semantic request confirmed. |
+| Fiscal request facts | Darwin Pasco | sales_invoice / PHP 10000 / 2026-07-03 | approved | DEV-UAT-CPS-POS-001 | Development test facts. |
+| Line / tender / tax / totals | Darwin Pasco | 1 line, 1 tender, total 10000, tax 0 | approved | DEV-UAT-CPS-POS-001 | Totals match payable basis. |
+| Evidence save assignment | Darwin Pasco | Mode B temporary controlled location | approved | DEV-UAT-CPS-POS-001 | Folder must be created before execution. |
+| Sensitive-data exclusion | Darwin Pasco | All exclusions confirmed yes | approved | DEV-UAT-CPS-POS-001 | Development data only. |
+| Scenario assignment | Darwin Pasco | SCN-NEWLY-CREATED-001 / newly_created only | approved | DEV-UAT-CPS-POS-001 | First run only. |
+| Replay assignment | Darwin Pasco | Not included | not_applicable | DEV-UAT-CPS-POS-001 | Not applicable for first run. |
+| Conflict/failure/unknown assignment | Darwin Pasco | Not included | not_applicable | DEV-UAT-CPS-POS-001 | Deferred beyond first run. |
+| Pre-run validation | Darwin Pasco | Assigned for readiness refresh | approved | DEV-UAT-CPS-POS-001 | Runtime verification remains required. |
+| Abort owners | Darwin Pasco | Darwin Pasco for all abort categories | approved | DEV-UAT-CPS-POS-001 | Small-org consolidated ownership. |
+| Reviewer/signoff | Darwin Pasco | Darwin Pasco consolidated signoff | approved | DEV-UAT-CPS-POS-001 | Development planning attestation. |
 
 ## 7. Owner and Approval Assignment
 
 | Role / approval | Assigned person or group | Decision | Approval reference | Date/time | Notes |
 | --- | --- | --- | --- | --- | --- |
-| UAT lead | TBD | not_started | TBD | TBD |  |
-| Engineering lead | TBD | not_started | TBD | TBD |  |
-| POS Server owner | TBD | not_started | TBD | TBD |  |
-| Central PMS owner | TBD | not_started | TBD | TBD |  |
-| Site owner | TBD | not_started | TBD | TBD |  |
-| Operations lead | TBD | not_started | TBD | TBD |  |
-| Rollback/support owner | TBD | not_started | TBD | TBD | Must be available during approved run window. |
-| Evidence owner | TBD | not_started | TBD | TBD | Owns manual-save package and traceability. |
-| Compliance/accounting observer, if fiscal number may be allocated | TBD | not_started | TBD | TBD | Required if fiscal-number allocation may occur. |
-| Run approval reference | TBD | not_started | TBD | TBD | Link to ticket/change/approval record. |
-| Evidence save approval reference | TBD | not_started | TBD | TBD | Required before evidence save. |
-| Fiscal number allocation approval, if applicable | TBD | not_started | TBD | TBD | Required if production fiscal sequence may be used. |
+| UAT lead | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Small-org consolidated owner. |
+| Engineering lead | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Small-org consolidated owner. |
+| POS Server owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Development fiscal owner. |
+| Central PMS owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Development Central PMS owner. |
+| Site owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Development Site owner. |
+| Operations lead | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Development operations owner. |
+| Rollback/support owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Must be available during approved run window. |
+| Evidence owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Owns manual-save package and traceability. |
+| Compliance/accounting observer, if fiscal number may be allocated | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Non-production sequence; consolidated small-org observer. |
+| Run approval reference | DEV-UAT-CPS-POS-001 | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Development planning reference. |
+| Evidence save approval reference | DEV-UAT-CPS-POS-001 | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Mode B temporary controlled location. |
+| Fiscal number allocation approval, if applicable | Non-production allocation impact accepted by Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | 2026-07-03 | Using production fiscal sequence: No. |
 
 ## 8. Environment Assignment
 
 | Field | Assigned value | Status | Approver/signoff | Notes |
 | --- | --- | --- | --- | --- |
-| Environment name | TBD | not_started | TBD |  |
-| Central PMS base environment | TBD | not_started | TBD |  |
-| POS Server base environment | TBD | not_started | TBD |  |
-| Database/environment reference | TBD | not_started | TBD |  |
-| Production or non-production | TBD | not_started | TBD | Non-production is preferred. |
-| POS Server Base URL reference | TBD | not_started | TBD | Reference only; do not include secrets. |
-| Diagnostic config enabled window start | TBD | not_started | TBD |  |
-| Diagnostic config enabled window end | TBD | not_started | TBD |  |
-| Evidence save mode | TBD | not_started | TBD | Mode A official approved location or Mode B temporary controlled location. |
-| Rollback/support owner | TBD | not_started | TBD | Must match owner assignment. |
-| Run approval reference | TBD | not_started | TBD |  |
-| Assignment status | incomplete | not_started | TBD | Do not mark ready until all required values are assigned and approved. |
+| Environment name | DEV-CONTROLLED-UAT-LOCAL | approved | Darwin Pasco | Development-only assignment. |
+| Central PMS base environment | CentralPMS-DEV-DOCKER | approved | Darwin Pasco |  |
+| Central PMS base URL | http://localhost:8080 | approved | Darwin Pasco | Browser/development reference. |
+| POS Server base environment | PoSServer-DEV-LOCAL | approved | Darwin Pasco |  |
+| POS Server host/browser URL | http://localhost:8091 | approved | Darwin Pasco | Must be running before actual UAT. |
+| Database/environment reference | DEV-CONTROLLED-UAT-LOCAL development data context | approved | Darwin Pasco | Runtime availability must be verified later. |
+| Production or non-production | Non-production | approved | Darwin Pasco | Production fiscal sequence not used. |
+| POS Server Base URL reference | CentralPMS config: PosServerBaseUrl = http://host.docker.internal:8091 | approved | Darwin Pasco | Reference only; no secrets. |
+| Diagnostic config enabled window start | 2026-07-03 14:00 PHT | approved | Darwin Pasco | Intended window only. |
+| Diagnostic config enabled window end | 2026-07-03 16:00 PHT | approved | Darwin Pasco | Intended window only. |
+| Evidence save mode | Mode B temporary controlled location | approved | Darwin Pasco | Official repository still not required for this development assignment. |
+| Rollback/support owner | Darwin Pasco | approved | Darwin Pasco | Must be available if execution is later approved. |
+| Run approval reference | DEV-UAT-CPS-POS-001 | approved | Darwin Pasco |  |
+| Assignment status | ready_for_readiness_review | approved | Darwin Pasco | Runtime proof still required before execution. |
 
 ## 9. Site / Site POS Server Assignment
 
 | Field | Assigned value | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| Site id/ref | TBD | not_started | TBD |  |
-| Site name | TBD | not_started | TBD |  |
-| Site group, if applicable | TBD | not_started | TBD | Reporting context only; not fiscal authority. |
-| Site POS Server id/ref | TBD | not_started | TBD |  |
-| Site POS Server environment | TBD | not_started | TBD | Must match selected POS Server environment. |
-| Site POS Server base URL reference | TBD | not_started | TBD | Reference only; no secrets. |
-| Expected fiscal identity | TBD | not_started | TBD | Must match POS Server fiscal configuration. |
-| Expected fiscal sequence policy | TBD | not_started | TBD | Must match POS Server fiscal configuration. |
-| Expected fiscal sequence state | TBD | not_started | TBD | Must be active/effective for run. |
-| Site owner approval | TBD | not_started | TBD |  |
-| POS Server owner approval | TBD | not_started | TBD |  |
-| Engineering lead approval | TBD | not_started | TBD |  |
-| Assignment status | incomplete | not_started | TBD |  |
+| Site id/ref | DEV-SITE-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic Site ref. |
+| Site name | DEV Site - Alabang Town Center | approved | DEV-UAT-CPS-POS-001 | Development-only Site. |
+| Site group, if applicable | Not applicable for fiscal authority | approved | DEV-UAT-CPS-POS-001 | Site Group is reporting only. |
+| Site POS Server id/ref | DEV-POS-SERVER-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic Site POS Server ref. |
+| Site POS Server environment | PoSServer-DEV-LOCAL | approved | DEV-UAT-CPS-POS-001 |  |
+| Site POS Server base URL reference | http://host.docker.internal:8091 | approved | DEV-UAT-CPS-POS-001 | Reference only; no secrets. |
+| Expected fiscal identity | DEV-FISCAL-IDENTITY-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Runtime row availability must be verified. |
+| Expected fiscal sequence policy | DEV-SI-SEQUENCE-POLICY-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Runtime row availability must be verified. |
+| Expected fiscal sequence state | DEV-SI-SEQUENCE-STATE-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Runtime row availability must be verified. |
+| Site owner approval | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | Small-org consolidated owner. |
+| POS Server owner approval | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | Small-org consolidated owner. |
+| Engineering lead approval | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 | Small-org consolidated owner. |
+| Assignment status | ready_for_readiness_review | approved | DEV-UAT-CPS-POS-001 |  |
 
 ## 10. POS Server Fiscal Configuration Assignment
 
 | Field | Assigned value / decision | Status | POS Server owner signoff | Notes |
 | --- | --- | --- | --- | --- |
-| Fiscal identity id/ref | TBD | not_started | TBD |  |
-| Fiscal identity active/effective confirmation | TBD | not_started | TBD |  |
-| Fiscal sequence policy id/ref | TBD | not_started | TBD |  |
-| Fiscal sequence policy active/effective confirmation | TBD | not_started | TBD |  |
-| Fiscal sequence state id/ref | TBD | not_started | TBD |  |
-| Fiscal sequence state configured confirmation | TBD | not_started | TBD |  |
-| Fiscal document type | TBD | not_started | TBD |  |
-| Fiscal numbering consequence accepted | TBD | not_started | TBD | yes/no |
-| Idempotency behavior understood | TBD | not_started | TBD | yes/no |
-| Replay behavior understood | TBD | not_started | TBD | yes/no |
-| Conflict behavior understood | TBD | not_started | TBD | yes/no |
-| GET readback available | TBD | not_started | TBD | yes/no; manual verification only if approved. |
-| Test/non-production sequence used | TBD | not_started | TBD | yes/no |
-| Production sequence approval reference, if applicable | TBD | not_started | TBD | Required if production sequence may be used. |
-| POS Server owner final signoff | TBD | not_started | TBD |  |
+| Fiscal identity id/ref | DEV-FISCAL-IDENTITY-ATC-001 | approved | Darwin Pasco | Development assignment value; verify row before execution. |
+| Fiscal identity active/effective confirmation | Assigned for readiness refresh, not runtime-proven | approved | Darwin Pasco | Refresh must verify. |
+| Fiscal sequence policy id/ref | DEV-SI-SEQUENCE-POLICY-ATC-001 | approved | Darwin Pasco | Development assignment value; verify row before execution. |
+| Fiscal sequence policy active/effective confirmation | Assigned for readiness refresh, not runtime-proven | approved | Darwin Pasco | Refresh must verify. |
+| Fiscal sequence state id/ref | DEV-SI-SEQUENCE-STATE-ATC-001 | approved | Darwin Pasco | Development assignment value; verify row before execution. |
+| Fiscal sequence state configured confirmation | Assigned for readiness refresh, not runtime-proven | approved | Darwin Pasco | Refresh must verify. |
+| Fiscal document type | sales_invoice | approved | Darwin Pasco |  |
+| Fiscal numbering consequence accepted | Yes, non-production allocation impact accepted by Darwin Pasco | approved | Darwin Pasco | Using production fiscal sequence: No. |
+| Idempotency behavior understood | Yes | approved | Darwin Pasco | Upstream finality ref is stable. |
+| Replay behavior understood | Yes | approved | Darwin Pasco | Replay not included in first run. |
+| Conflict behavior understood | Yes | approved | Darwin Pasco | Conflict not included in first run. |
+| GET readback available | To be verified in readiness refresh if needed | assigned_pending_approval | Darwin Pasco | No automatic readback worker involved. |
+| Test/non-production sequence used | Yes | approved | Darwin Pasco |  |
+| Production sequence approval reference, if applicable | Not applicable - production fiscal sequence not used | not_applicable | Darwin Pasco |  |
+| POS Server owner final signoff | Darwin Pasco | approved | Darwin Pasco | Development assignment signoff. |
 
 ## 11. Central PMS Configuration Assignment
 
 | Field | Assigned value / decision | Status | Engineering signoff | Notes |
 | --- | --- | --- | --- | --- |
-| Fiscal reference persistence patch confirmed | TBD | not_started | TBD |  |
-| Repository/harness tests evidence reference | TBD | not_started | TBD | Link to run or build evidence. |
-| Controlled UAT harness available | TBD | not_started | TBD |  |
-| Evidence exporter available | TBD | not_started | TBD |  |
-| Manual-save procedure available | TBD | not_started | TBD |  |
-| `EnablePosServerFiscalIssuanceLiveCall` intended value | TBD | not_started | TBD | Expected true only during approved diagnostic window. |
-| `EnableControlledUatDiagnosticPath` intended value | TBD | not_started | TBD | Expected true only during approved diagnostic window. |
-| Diagnostic config window | TBD | not_started | TBD | Must match environment assignment. |
-| Payment-flow guard false confirmation | TBD | not_started | TBD | Must be false. |
-| Exit-flow guard false confirmation | TBD | not_started | TBD | Must be false. |
-| Fiscal gating enforcement false confirmation | TBD | not_started | TBD | Must be false. |
-| No retry/readback worker confirmation | TBD | not_started | TBD | Must remain true for this scope. |
-| No endpoint/CLI/tooling confirmation | TBD | not_started | TBD | Must remain true for this scope. |
-| Engineering lead final signoff | TBD | not_started | TBD |  |
+| Fiscal reference persistence patch confirmed | Assigned for readiness refresh, not re-verified by this fill | assigned_pending_approval | Darwin Pasco | Refresh must verify runtime/config evidence. |
+| Repository/harness tests evidence reference | To be captured during refreshed readiness review | assigned_pending_approval | Darwin Pasco | No tests run by this docs-only fill. |
+| Controlled UAT harness available | Yes, application-level harness baseline | approved | Darwin Pasco | No endpoint/CLI/tooling used. |
+| Evidence exporter available | Yes, application-level exporter baseline | approved | Darwin Pasco | No file-writing added. |
+| Manual-save procedure available | Yes | approved | Darwin Pasco | Mode B temporary controlled location selected. |
+| `EnablePosServerFiscalIssuanceLiveCall` intended value | true during approved diagnostic window only | approved | Darwin Pasco | Must be verified before execution. |
+| `EnableControlledUatDiagnosticPath` intended value | true during approved diagnostic window only | approved | Darwin Pasco | Must be verified before execution. |
+| Diagnostic config window | 2026-07-03 14:00-16:00 PHT | approved | Darwin Pasco | Intended window only. |
+| Payment-flow guard false confirmation | Yes | approved | Darwin Pasco | Must remain false. |
+| Exit-flow guard false confirmation | Yes | approved | Darwin Pasco | Must remain false. |
+| Fiscal gating enforcement false confirmation | Yes | approved | Darwin Pasco | Must remain false. |
+| No retry/readback worker confirmation | Yes | approved | Darwin Pasco | No retry/readback worker involved. |
+| No endpoint/CLI/tooling confirmation | Yes | approved | Darwin Pasco | Application-level seam only. |
+| No gate behavior involved | Yes | approved | Darwin Pasco | No gate behavior. |
+| No ExitAuthorization issued | Yes | approved | Darwin Pasco | Diagnostic assignment must not issue ExitAuthorization. |
+| Engineering lead final signoff | Darwin Pasco | approved | Darwin Pasco | Development assignment signoff. |
 
 ## 12. Test Transaction Reference Assignment
 
 | Field | Assigned value | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| Run id | TBD | not_started | TBD | Recommended format: `CPS-POS-UAT-YYYYMMDD-<site>-<sequence>`. |
-| Correlation id | TBD | not_started | TBD |  |
-| Environment name | TBD | not_started | TBD | Must match environment assignment. |
-| Evidence owner | TBD | not_started | TBD | Must match owner assignment. |
-| Approval reference | TBD | not_started | TBD |  |
-| Site ref | TBD | not_started | TBD | Must match Site assignment. |
-| Site POS Server ref | TBD | not_started | TBD | Must match Site POS Server assignment. |
-| Parking session ref | TBD | not_started | TBD | Approved test data only. |
-| Payment attempt ref | TBD | not_started | TBD | Approved test data only. |
-| Payment confirmation ref | TBD | not_started | TBD | Approved test data only. |
-| Payable basis ref | TBD | not_started | TBD | Approved test data only. |
-| Business day date | TBD | not_started | TBD |  |
-| Currency code | TBD | not_started | TBD | Expected `PHP` unless separately approved. |
-| Amount minor units | TBD | not_started | TBD | Use low-risk approved amount where possible. |
-| Expected run type | TBD | not_started | TBD | Recommended first run: `newly_created`. |
-| Assignment status | incomplete | not_started | TBD |  |
+| Run id | CPS-POS-UAT-20260703-DEV-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development run id. |
+| Correlation id | 00000000-0000-4000-8000-000000000101 | approved | DEV-UAT-CPS-POS-001 |  |
+| Environment name | DEV-CONTROLLED-UAT-LOCAL | approved | DEV-UAT-CPS-POS-001 |  |
+| Evidence owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 |  |
+| Approval reference | DEV-UAT-CPS-POS-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Site ref | DEV-SITE-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Site POS Server ref | DEV-POS-SERVER-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Parking session ref | DEV-PARKING-SESSION-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic ref. |
+| Payment attempt ref | DEV-PAYMENT-ATTEMPT-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic ref. |
+| Payment confirmation ref | DEV-PAYMENT-CONFIRMATION-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic ref. |
+| Payable basis ref | DEV-PAYABLE-BASIS-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Development symbolic ref. |
+| Business day date | 2026-07-03 | approved | DEV-UAT-CPS-POS-001 |  |
+| Currency code | PHP | approved | DEV-UAT-CPS-POS-001 |  |
+| Amount minor units | 10000 | approved | DEV-UAT-CPS-POS-001 |  |
+| Expected run type | newly_created | approved | DEV-UAT-CPS-POS-001 | First controlled run recommendation. |
+| Assignment status | ready_for_readiness_review | approved | DEV-UAT-CPS-POS-001 |  |
 
 ## 13. Upstream Finality Reference Assignment
 
@@ -229,49 +236,49 @@ CPS-POS-UAT:<run-id>:<scenario>:<sequence>
 
 | Field | Assigned value / decision | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| Upstream finality ref | TBD | not_started | TBD | Must be stable. |
-| Pattern used | TBD | not_started | TBD | Must follow approved pattern or record approved exception. |
-| One semantic request confirmation | TBD | not_started | TBD | yes/no |
-| Replay ref reuse confirmation | TBD | deferred | TBD | Required only if replay included. |
-| Conflict bypass prohibition acknowledgement | TBD | not_started | TBD | Must acknowledge no new ref is created to bypass conflict. |
-| Assigned by | TBD | not_started | TBD |  |
-| Approved by | TBD | not_started | TBD |  |
+| Upstream finality ref | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001 | approved | DEV-UAT-CPS-POS-001 | Stable development idempotency source. |
+| Pattern used | CPS-POS-UAT:<run-id>:<scenario>:<sequence> | approved | DEV-UAT-CPS-POS-001 |  |
+| One semantic request confirmation | Yes | approved | DEV-UAT-CPS-POS-001 |  |
+| Replay ref reuse confirmation | Not applicable for first run | not_applicable | DEV-UAT-CPS-POS-001 | Replay not included. |
+| Conflict bypass prohibition acknowledgement | Yes | approved | DEV-UAT-CPS-POS-001 | Do not create a new ref to bypass conflict. |
+| Assigned by | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 |  |
+| Approved by | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 |  |
 
 ## 14. Fiscal Request Facts Assignment
 
 | Field | Assigned value | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| Fiscal document type | TBD | not_started | TBD |  |
-| Business day date | TBD | not_started | TBD |  |
-| Site ref | TBD | not_started | TBD |  |
-| Site POS Server ref | TBD | not_started | TBD |  |
-| Parking session ref | TBD | not_started | TBD |  |
-| Payment attempt ref | TBD | not_started | TBD |  |
-| Payment confirmation ref | TBD | not_started | TBD |  |
-| Payable basis ref | TBD | not_started | TBD |  |
-| Upstream finality ref | TBD | not_started | TBD |  |
-| Currency | TBD | not_started | TBD |  |
-| Amount minor units | TBD | not_started | TBD |  |
-| Line count | TBD | not_started | TBD |  |
-| Tender count | TBD | not_started | TBD |  |
-| Tax detail presence | TBD | not_started | TBD | yes/no |
-| Totals presence | TBD | not_started | TBD | yes/no |
-| Correlation id | TBD | not_started | TBD |  |
-| Assignment status | incomplete | not_started | TBD |  |
+| Fiscal document type | sales_invoice | approved | DEV-UAT-CPS-POS-001 |  |
+| Business day date | 2026-07-03 | approved | DEV-UAT-CPS-POS-001 |  |
+| Site ref | DEV-SITE-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Site POS Server ref | DEV-POS-SERVER-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Parking session ref | DEV-PARKING-SESSION-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Payment attempt ref | DEV-PAYMENT-ATTEMPT-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Payment confirmation ref | DEV-PAYMENT-CONFIRMATION-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Payable basis ref | DEV-PAYABLE-BASIS-ATC-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Upstream finality ref | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Currency | PHP | approved | DEV-UAT-CPS-POS-001 |  |
+| Amount minor units | 10000 | approved | DEV-UAT-CPS-POS-001 |  |
+| Line count | 1 | approved | DEV-UAT-CPS-POS-001 |  |
+| Tender count | 1 | approved | DEV-UAT-CPS-POS-001 |  |
+| Tax detail presence | Yes | approved | DEV-UAT-CPS-POS-001 |  |
+| Totals presence | Yes | approved | DEV-UAT-CPS-POS-001 |  |
+| Correlation id | 00000000-0000-4000-8000-000000000101 | approved | DEV-UAT-CPS-POS-001 |  |
+| Assignment status | ready_for_readiness_review | approved | DEV-UAT-CPS-POS-001 |  |
 
 ## 15. Line / Tender / Tax / Totals Assignment
 
 | Field | Assigned value | Status | Approved by | Notes |
 | --- | --- | --- | --- | --- |
-| Line summary | TBD | not_started | TBD | Synthetic or approved test facts only. |
-| Line amount total | TBD | not_started | TBD |  |
-| Tender summary | TBD | not_started | TBD | Safe test tender facts only. |
-| Tender amount total | TBD | not_started | TBD |  |
-| Tax detail summary | TBD | not_started | TBD |  |
-| Tax amount total | TBD | not_started | TBD |  |
-| Grand total | TBD | not_started | TBD |  |
-| Totals match payable basis | TBD | not_started | TBD | yes/no |
-| Sensitive data excluded | TBD | not_started | TBD | yes/no |
+| Line summary | Parking fee - controlled UAT development test | approved | Darwin Pasco | Development test fact. |
+| Line amount total | 10000 | approved | Darwin Pasco |  |
+| Tender summary | Controlled UAT test tender - non-production | approved | Darwin Pasco | Development test fact. |
+| Tender amount total | 10000 | approved | Darwin Pasco |  |
+| Tax detail summary | DEV VAT/tax facts aligned to payable basis | approved | Darwin Pasco |  |
+| Tax amount total | 0 | approved | Darwin Pasco |  |
+| Grand total | 10000 | approved | Darwin Pasco |  |
+| Totals match payable basis | Yes | approved | Darwin Pasco |  |
+| Sensitive data excluded | Yes | approved | Darwin Pasco |  |
 
 ## 16. Evidence Save Assignment
 
@@ -282,174 +289,182 @@ Save mode values:
 
 | Field | Assigned value / decision | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| Save mode | TBD | not_started | TBD | Mode A or Mode B. |
-| Target location reference | TBD | not_started | TBD | Do not include secrets. |
-| Evidence owner | TBD | not_started | TBD |  |
-| Hash/checksum required | TBD | not_started | TBD | yes/no |
-| Hash/checksum command/reference | TBD | not_started | TBD | Example: PowerShell `Get-FileHash -Algorithm SHA256`. |
-| Ticket/change linkage | TBD | not_started | TBD |  |
-| Reviewer signoff path | TBD | not_started | TBD |  |
-| Temporary local handling owner | TBD | not_started | TBD | Required if Mode B or transfer staging is used. |
-| Approval reference | TBD | not_started | TBD |  |
+| Save mode | Mode B temporary controlled location | approved | DEV-UAT-CPS-POS-001 | Development evidence preservation mode. |
+| Target location reference | D:\ExitPass-UAT-Evidence\DEV-CONTROLLED-UAT-LOCAL\DEV-SITE-ATC-001\2026-07-03\CPS-POS-UAT-20260703-DEV-ATC-001 | approved | DEV-UAT-CPS-POS-001 | Folder should be created before execution. |
+| Evidence owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 |  |
+| Hash/checksum required | Yes | approved | DEV-UAT-CPS-POS-001 |  |
+| Hash/checksum command/reference | Get-FileHash -Algorithm SHA256 "<path-to-evidence.json>" | approved | DEV-UAT-CPS-POS-001 | Manual hash after evidence export. |
+| Ticket/change linkage | DEV-UAT-CPS-POS-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| Reviewer signoff path | Darwin Pasco consolidated review/signoff | approved | DEV-UAT-CPS-POS-001 | Small-org development review. |
+| Temporary local handling owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 |  |
+| Approval reference | DEV-UAT-CPS-POS-001 | approved | DEV-UAT-CPS-POS-001 |  |
 
 ## 17. Sensitive-Data Exclusion Assignment
 
 | Exclusion check | Check status | Checked by | Checked at | Evidence/reference | Notes |
 | --- | --- | --- | --- | --- | --- |
-| No PAN | not_started | TBD | TBD | TBD |  |
-| No CVV | not_started | TBD | TBD | TBD |  |
-| No tokens | not_started | TBD | TBD | TBD |  |
-| No credentials | not_started | TBD | TBD | TBD |  |
-| No secrets | not_started | TBD | TBD | TBD |  |
-| No raw provider callback payloads | not_started | TBD | TBD | TBD |  |
-| No raw entitlement evidence | not_started | TBD | TBD | TBD |  |
-| No uncontrolled images/files | not_started | TBD | TBD | TBD |  |
-| No unmanaged customer personal data | not_started | TBD | TBD | TBD |  |
-| No free-form sensitive blobs | not_started | TBD | TBD | TBD |  |
-| No unmasked plate/ticket unless explicitly approved | not_started | TBD | TBD | TBD |  |
+| No PAN | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No CVV | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No tokens | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No credentials | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No secrets | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No raw provider callback payloads | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No raw entitlement evidence | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No uncontrolled images/files | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No unmanaged customer personal data | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No free-form sensitive blobs | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 |  |
+| No unmasked plate/ticket unless explicitly approved | Yes | Darwin Pasco | 2026-07-03 | DEV-UAT-CPS-POS-001 | No plate/ticket values included in assignment. |
 
 ## 18. Scenario Assignment
 
 | Field | Assigned value / decision | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| First scenario id | TBD | not_started | TBD |  |
-| First run expected type | newly_created | assigned_pending_approval | TBD | Recommended first run. |
-| Replay included | TBD | deferred | TBD | yes/no |
-| Conflict included | TBD | deferred | TBD | yes/no |
-| Failure included | TBD | deferred | TBD | yes/no |
-| Unknown included | TBD | deferred | TBD | yes/no |
-| Scenario sequencing decision | TBD | not_started | TBD |  |
-| Scenario owner | TBD | not_started | TBD |  |
+| First scenario id | SCN-NEWLY-CREATED-001 | approved | DEV-UAT-CPS-POS-001 |  |
+| First run expected type | newly_created | approved | DEV-UAT-CPS-POS-001 | First controlled run recommendation. |
+| Replay included | No | not_applicable | DEV-UAT-CPS-POS-001 |  |
+| Conflict included | No | not_applicable | DEV-UAT-CPS-POS-001 |  |
+| Failure included | No | not_applicable | DEV-UAT-CPS-POS-001 |  |
+| Unknown included | No | not_applicable | DEV-UAT-CPS-POS-001 |  |
+| Scenario sequencing decision | Run newly_created only for first controlled UAT diagnostic | approved | DEV-UAT-CPS-POS-001 |  |
+| Scenario owner | Darwin Pasco | approved | DEV-UAT-CPS-POS-001 |  |
 
 ## 19. Replay Assignment
 
-Complete this section only if replay is explicitly included and approved.
+Replay is not included in the first controlled UAT diagnostic run.
 
 | Field | Assigned value / decision | Status | Approval reference | Notes |
 | --- | --- | --- | --- | --- |
-| Replay included | no | deferred | TBD | Default for first run unless separately approved. |
-| Original run id | TBD | deferred | TBD |  |
-| Replay run id | TBD | deferred | TBD |  |
-| Same upstream finality ref | TBD | deferred | TBD | Must be yes if replay is approved. |
-| Same semantic facts confirmation | TBD | deferred | TBD | Must be yes if replay is approved. |
-| Expected same fiscal document id/number | TBD | deferred | TBD | Must be yes if replay is approved. |
-| No duplicate Central PMS fiscal reference expected | TBD | deferred | TBD | Must be yes if replay is approved. |
-| Replay approval reference | TBD | deferred | TBD |  |
+| Replay included | No | not_applicable | DEV-UAT-CPS-POS-001 | First run only. |
+| Original run id | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 |  |
+| Replay run id | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 |  |
+| Same upstream finality ref | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 | Replay not included. |
+| Same semantic facts confirmation | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 | Replay not included. |
+| Expected same fiscal document id/number | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 | Replay not included. |
+| No duplicate Central PMS fiscal reference expected | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 | Replay not included. |
+| Replay approval reference | Not applicable | not_applicable | DEV-UAT-CPS-POS-001 |  |
 
 ## 20. Conflict/Failure/Unknown Assignment
 
 | Scenario | Included | Scenario owner | Approval reference | Expected outcome | Readback/reconciliation plan | Abort rule | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Conflict | no | TBD | TBD | TBD | not_applicable | Stop and preserve evidence if unexpected conflict occurs. | Deferred by default. |
-| Failure | no | TBD | TBD | TBD | not_applicable | Stop and preserve evidence if unexpected failure occurs. | Deferred by default. |
-| Unknown | no | TBD | TBD | TBD | TBD | Stop; do not infer success; preserve upstream finality ref. | Deferred by default; readback/reconciliation plan required if included. |
+| Conflict | No | Darwin Pasco | DEV-UAT-CPS-POS-001 | Not applicable | Not applicable | Stop and preserve evidence if unexpected conflict occurs. | Deferred beyond first run. |
+| Failure | No | Darwin Pasco | DEV-UAT-CPS-POS-001 | Not applicable | Not applicable | Stop and preserve evidence if unexpected failure occurs. | Deferred beyond first run. |
+| Unknown | No | Darwin Pasco | DEV-UAT-CPS-POS-001 | Not applicable | No readback plan for first run; abort if unknown occurs. | Stop; do not infer success; preserve upstream finality ref. | Deferred beyond first run. |
 
 ## 21. Pre-Run Validation Assignment
 
 | Validation item | Assigned status | Owner | Approval/reference | Notes |
 | --- | --- | --- | --- | --- |
-| Test data approved | not_started | TBD | TBD |  |
-| Environment approved | not_started | TBD | TBD |  |
-| Site/Site POS Server mapping approved | not_started | TBD | TBD |  |
-| POS Server fiscal config confirmed | not_started | TBD | TBD |  |
-| Central PMS config confirmed | not_started | TBD | TBD |  |
-| Evidence save path ready | not_started | TBD | TBD |  |
-| Run id assigned | not_started | TBD | TBD |  |
-| Upstream finality ref assigned | not_started | TBD | TBD |  |
-| Sensitive-data check passed | not_started | TBD | TBD |  |
-| Payment-flow guard false | not_started | TBD | TBD |  |
-| Exit-flow guard false | not_started | TBD | TBD |  |
-| Fiscal gating enforcement false | not_started | TBD | TBD |  |
-| No retry/readback worker | not_started | TBD | TBD |  |
-| Rollback owner online | not_started | TBD | TBD |  |
-| Approval reference attached | not_started | TBD | TBD |  |
+| Test data approved | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Development symbolic refs assigned. |
+| Environment approved | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Runtime availability still requires readiness refresh. |
+| Site/Site POS Server mapping approved | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Development symbolic refs assigned. |
+| POS Server fiscal config confirmed | assigned_pending_approval | Darwin Pasco | DEV-UAT-CPS-POS-001 | Runtime rows must be verified in readiness refresh. |
+| Central PMS config confirmed | assigned_pending_approval | Darwin Pasco | DEV-UAT-CPS-POS-001 | Config must be verified in readiness refresh. |
+| Evidence save path ready | assigned_pending_approval | Darwin Pasco | DEV-UAT-CPS-POS-001 | Folder should be created before execution. |
+| Run id assigned | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 |  |
+| Upstream finality ref assigned | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 |  |
+| Sensitive-data check passed | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 |  |
+| Payment-flow guard false | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Must be verified before execution. |
+| Exit-flow guard false | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Must be verified before execution. |
+| Fiscal gating enforcement false | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Must be verified before execution. |
+| No retry/readback worker | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | No retry/readback worker involved. |
+| No endpoint/CLI/tooling used | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 | Application-level seam only. |
+| No gate behavior involved | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 |  |
+| No ExitAuthorization issued | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 |  |
+| Rollback owner online | assigned_pending_approval | Darwin Pasco | DEV-UAT-CPS-POS-001 | Must be confirmed before execution. |
+| Approval reference attached | approved | Darwin Pasco | DEV-UAT-CPS-POS-001 |  |
 
 ## 22. Abort Owner Assignment
 
 | Abort condition | Assigned owner | Backup owner | Required action | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
-| Sensitive data detected | TBD | TBD | Stop, restrict access, and notify evidence/redaction owner. | not_started |  |
-| Wrong Site/Site POS Server | TBD | TBD | Stop and do not execute diagnostic. | not_started |  |
-| Fiscal config missing | TBD | TBD | Stop and return to POS Server owner. | not_started |  |
-| Upstream finality unstable | TBD | TBD | Stop and assign stable reference. | not_started |  |
-| Amount/tax/totals mismatch | TBD | TBD | Stop and correct approved test data. | not_started |  |
-| Evidence location unavailable | TBD | TBD | Stop unless temporary controlled location is approved. | not_started |  |
-| Payment/exit flow mutation observed | TBD | TBD | Stop, preserve evidence, and escalate incident. | not_started |  |
-| ExitAuthorization issued | TBD | TBD | Stop, preserve evidence, and escalate incident. | not_started |  |
-| Gate behavior triggered | TBD | TBD | Stop, preserve evidence, and escalate incident. | not_started |  |
-| POS Server unknown outcome without readback plan | TBD | TBD | Stop; do not infer success; preserve upstream finality ref. | not_started |  |
+| Sensitive data detected | Darwin Pasco | Darwin Pasco | Stop, restrict access, and notify evidence/redaction owner. | approved |  |
+| Wrong Site/Site POS Server | Darwin Pasco | Darwin Pasco | Stop and do not execute diagnostic. | approved |  |
+| Fiscal config missing | Darwin Pasco | Darwin Pasco | Stop and return to POS Server owner. | approved |  |
+| Upstream finality unstable | Darwin Pasco | Darwin Pasco | Stop and assign stable reference. | approved |  |
+| Amount/tax/totals mismatch | Darwin Pasco | Darwin Pasco | Stop and correct approved test data. | approved |  |
+| Evidence location unavailable | Darwin Pasco | Darwin Pasco | Stop unless temporary controlled location is approved. | approved |  |
+| Payment/exit flow mutation observed | Darwin Pasco | Darwin Pasco | Stop, preserve evidence, and escalate incident. | approved |  |
+| ExitAuthorization issued | Darwin Pasco | Darwin Pasco | Stop, preserve evidence, and escalate incident. | approved |  |
+| Gate behavior triggered | Darwin Pasco | Darwin Pasco | Stop, preserve evidence, and escalate incident. | approved |  |
+| POS Server unknown outcome without readback plan | Darwin Pasco | Darwin Pasco | Stop; do not infer success; preserve upstream finality ref. | approved |  |
 
 ## 23. Reviewer/Signoff Assignment
 
 | Reviewer | Name | Role | Decision | Date/time | Approval reference | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| UAT lead | TBD | UAT lead | not_started | TBD | TBD |  |
-| Engineering lead | TBD | Engineering lead | not_started | TBD | TBD |  |
-| POS Server owner | TBD | POS Server owner | not_started | TBD | TBD |  |
-| Central PMS owner | TBD | Central PMS owner | not_started | TBD | TBD |  |
-| Site owner | TBD | Site owner | not_started | TBD | TBD |  |
-| Operations lead | TBD | Operations lead | not_started | TBD | TBD |  |
-| Evidence owner | TBD | Evidence owner | not_started | TBD | TBD |  |
-| Compliance/accounting observer, if fiscal number allocated | TBD | Observer | not_applicable | TBD | TBD | Required if fiscal number may be allocated. |
+| UAT lead | Darwin Pasco | UAT lead | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| Engineering lead | Darwin Pasco | Engineering lead | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| POS Server owner | Darwin Pasco | POS Server owner | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| Central PMS owner | Darwin Pasco | Central PMS owner | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| Site owner | Darwin Pasco | Site owner | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| Operations lead | Darwin Pasco | Operations lead | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| Evidence owner | Darwin Pasco | Evidence owner | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Small-org consolidated signoff. |
+| Compliance/accounting observer, if fiscal number allocated | Darwin Pasco | Observer | approved | 2026-07-03 | DEV-UAT-CPS-POS-001 | Non-production only; consolidated small-org observer. |
 
 ## 24. Final Assignment Status
 
 | Final check | Value | Status | Notes |
 | --- | --- | --- | --- |
-| All required values assigned | no | not_started |  |
-| All required owners assigned | no | not_started |  |
-| All required approvals recorded | no | not_started |  |
-| Sensitive-data check passed | no | not_started |  |
-| Evidence save path assigned | no | not_started |  |
-| Ready for readiness re-review | no | not_started |  |
-| Ready for execution | no | not_started |  |
-| Final assignment decision | incomplete | not_started | Do not mark ready unless actual values are filled and approved. |
+| All required values assigned | Yes - development placeholders assigned | approved | Runtime evidence still required in readiness refresh. |
+| All required owners assigned | Yes - small-org consolidated ownership | approved | Darwin Pasco assigned. |
+| All required approvals recorded | Yes - small-org owner attestation | approved | DEV-UAT-CPS-POS-001. |
+| Sensitive-data check passed | Yes | approved | Development values only. |
+| Evidence save path assigned | Yes | approved | Folder should be created before execution. |
+| Ready for readiness re-review | Yes | approved | Next step is refreshed readiness review. |
+| Ready for execution | No - requires refreshed readiness review first | assigned_pending_approval | This fill alone does not approve execution. |
+| Final assignment decision | ready_for_readiness_review | approved | Development values assigned for first controlled UAT planning. |
 
-Final assignment decision default: `incomplete`
+Final assignment decision: `ready_for_readiness_review`
 
-Allowed final decisions:
+Reason: Development values assigned for first controlled UAT planning; no production data, no payment/exit wiring, no gate behavior, and no fiscal gating enforcement.
 
-- `incomplete`
-- `ready_for_readiness_review`
-- `not_ready_for_execution`
-- `rejected`
-- `deferred`
+First controlled run recommendation: `newly_created` only
 
 ## 25. Conditions and Dependencies
 
 | Condition id | Condition/dependency | Owner | Required before readiness re-review | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
-| CDA-001 | Environment assignment approved | TBD | yes | not_started |  |
-| CDA-002 | Site/Site POS Server assignment approved | TBD | yes | not_started |  |
-| CDA-003 | POS Server fiscal identity/policy/sequence confirmed | POS Server owner | yes | not_started |  |
-| CDA-004 | Central PMS config and guard posture confirmed | Engineering lead | yes | not_started |  |
-| CDA-005 | Test transaction refs assigned | UAT lead | yes | not_started |  |
-| CDA-006 | Upstream finality ref assigned and approved | UAT lead / engineering lead | yes | not_started |  |
-| CDA-007 | Fiscal request facts assigned and approved | UAT lead / Central PMS owner | yes | not_started |  |
-| CDA-008 | Evidence save mode/location approved | Evidence owner | yes | not_started |  |
-| CDA-009 | Sensitive-data exclusion check complete | Evidence owner | yes | not_started |  |
-| CDA-010 | Abort owners assigned | Operations lead | yes | not_started |  |
-| CDA-011 | Reviewer/signoff path assigned | UAT lead | yes | not_started |  |
-| CDA-012 | Replay/conflict/failure/unknown scope decision recorded | UAT lead / POS Server owner | yes | not_started |  |
+| CDA-001 | Environment assignment approved | Darwin Pasco | yes | approved | DEV-CONTROLLED-UAT-LOCAL assigned. |
+| CDA-002 | Site/Site POS Server assignment approved | Darwin Pasco | yes | approved | DEV-SITE-ATC-001 / DEV-POS-SERVER-ATC-001 assigned. |
+| CDA-003 | POS Server fiscal identity/policy/sequence confirmed | Darwin Pasco | yes | assigned_pending_approval | Runtime availability must be verified in readiness refresh. |
+| CDA-004 | Central PMS config and guard posture confirmed | Darwin Pasco | yes | assigned_pending_approval | Config must be verified in readiness refresh. |
+| CDA-005 | Test transaction refs assigned | Darwin Pasco | yes | approved | Development symbolic refs assigned. |
+| CDA-006 | Upstream finality ref assigned and approved | Darwin Pasco | yes | approved | Stable development ref assigned. |
+| CDA-007 | Fiscal request facts assigned and approved | Darwin Pasco | yes | approved | Development test facts assigned. |
+| CDA-008 | Evidence save mode/location approved | Darwin Pasco | yes | approved | Mode B location assigned; folder should be created. |
+| CDA-009 | Sensitive-data exclusion check complete | Darwin Pasco | yes | approved | All checks marked yes. |
+| CDA-010 | Abort owners assigned | Darwin Pasco | yes | approved | Consolidated abort owner assigned. |
+| CDA-011 | Reviewer/signoff path assigned | Darwin Pasco | yes | approved | Small-org consolidated signoff. |
+| CDA-012 | Replay/conflict/failure/unknown scope decision recorded | Darwin Pasco | yes | approved | All excluded for first run. |
+
+Remaining blockers before actual execution:
+
+- POS Server must be started on http://localhost:8091 before actual UAT.
+- Central PMS config must be set to `PosServerBaseUrl = http://host.docker.internal:8091` before actual UAT.
+- Refreshed readiness review must confirm development fiscal identity/policy/sequence availability.
+- Refreshed readiness review must confirm guards/config before execution.
+- Evidence folder should be created before execution.
+- No execution is approved by this fill alone.
 
 ## 26. Requirements Traceability Summary
 
 | Requirement | Trace |
 | --- | --- |
-| Create fillable data assignment record | Sections 6 through 24 |
-| Capture owner and approval assignment | Sections 7, 23 |
-| Capture environment assignment | Section 8 |
-| Capture Site/Site POS Server assignment | Section 9 |
-| Capture POS Server fiscal configuration assignment | Section 10 |
-| Capture Central PMS configuration assignment | Section 11 |
-| Capture test transaction references | Section 12 |
-| Capture upstream finality reference | Section 13 |
-| Capture fiscal request facts | Sections 14, 15 |
-| Capture evidence save assignment | Section 16 |
-| Capture sensitive-data exclusion assignment | Section 17 |
-| Capture scenario/replay/conflict/failure/unknown assignment | Sections 18 through 20 |
-| Capture pre-run validation and abort ownership | Sections 21, 22 |
-| Default final assignment decision is incomplete | Section 24 |
+| Fill data assignment record with agreed development values | Sections 6 through 24 |
+| Mark assignment as ready for readiness review | Sections 1, 24 |
+| Preserve ready-for-execution as no | Section 24 |
+| Record consolidated small-org ownership | Sections 7, 22, 23 |
+| Record environment values | Section 8 |
+| Record Site/Site POS Server values | Section 9 |
+| Record POS Server fiscal setup values | Section 10 |
+| Record Central PMS guard/safety posture | Section 11 |
+| Record test transaction refs | Section 12 |
+| Record upstream finality ref | Section 13 |
+| Record fiscal request facts and totals | Sections 14, 15 |
+| Record evidence save assignment | Section 16 |
+| Record sensitive-data exclusion | Section 17 |
+| Record newly-created-only scenario scope | Sections 18 through 20 |
 | Preserve authority boundaries | Section 4 |
 | Preserve non-goals | Section 5 |
 
@@ -457,9 +472,9 @@ Allowed final decisions:
 
 Recommended next branch:
 
-`feature/central-pms-pos-server-controlled-uat-data-assignment-review`
+`feature/central-pms-pos-server-controlled-uat-first-run-readiness-refresh`
 
 Purpose:
 
-Review the completed data assignment record and decide whether the project can move from `not_ready_for_execution` to execution dry-run checklist preparation.
+Refresh the first-run readiness review using the filled small-organization data assignment values and decide whether the project can move to execution dry-run checklist preparation.
 
