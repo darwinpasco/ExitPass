@@ -1,0 +1,59 @@
+@startuml
+title MDR-D01 Management Dashboard System Context
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Executive / Operations / Finance / Compliance User" as User
+
+rectangle "Management Dashboard & Reporting" as MDR {
+  component "Dashboard Web UI" as UI
+  component "Dashboard API / BFF\n(if adopted)" as BFF
+  component "Report Catalog\nand Query Facade" as Catalog
+}
+
+component "Identity / RBAC" as Identity
+component "Central PMS\napproved read models / projections" as Central
+component "Audit / Event" as Audit
+component "Reconciliation\nread model" as Reconciliation
+component "Operator Console\nactivity read model" as OperatorConsole
+component "Continuity\nread model" as Continuity
+component "Future Fiscal Exception Queue\nread model / navigation handoff" as FiscalQueue
+component "External BI / Export Consumers\napproved exports only" as BI
+
+rectangle "Non-direct targets" as NonDirect {
+  component "POS Server\nfiscal issuance authority" as PosServer
+  component "Payment Orchestrator\nprovider interaction" as Payment
+  component "Site Integration Adapter" as SIA
+  component "Vendor PMS" as Vendor
+  component "Gate Integration" as Gate
+}
+
+User --> UI : view dashboards,\nrequest reports/exports
+UI --> BFF : authenticated dashboard calls
+BFF --> Identity : role, scope,\nexport permission
+BFF --> Catalog : report/query request
+Catalog --> Central : read approved\nprojections
+Catalog --> Audit : read audit/report\naccess events
+Catalog --> Reconciliation : read reconciliation\nstatus
+Catalog --> OperatorConsole : read operator\nactivity summaries
+Catalog --> Continuity : read continuity\nstatus
+Catalog --> FiscalQueue : read exception\nsummary / handoff
+BFF --> BI : controlled export\nwhen authorized
+
+Central ..> PosServer : fiscal evidence recorded\nthrough Central PMS only
+Central ..> Payment : provider evidence\nreported through backend
+Central ..> SIA : normalized vendor\nprojection feed
+SIA ..> Vendor : vendor-specific\nsession/tariff source
+Central ..> Gate : authorization/gate\noutcome records
+
+UI -[#red,dashed]-> PosServer : no direct calls
+UI -[#red,dashed]-> Payment : no direct calls
+UI -[#red,dashed]-> Vendor : no direct calls
+UI -[#red,dashed]-> Gate : no direct calls
+
+note bottom of MDR
+Dashboard consumes approved projections and read models only.
+It does not call POS Server, payment providers, Vendor PMS, or gates directly.
+end note
+@enduml

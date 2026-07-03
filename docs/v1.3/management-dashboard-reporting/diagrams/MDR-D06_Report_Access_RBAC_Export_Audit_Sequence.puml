@@ -1,0 +1,56 @@
+@startuml
+title MDR-D06 Report Access RBAC Export Audit Sequence
+skinparam shadowing false
+
+actor "Dashboard User" as User
+participant "Dashboard Web UI" as UI
+participant "Identity / RBAC" as Identity
+participant "Report-Scope Guard" as Guard
+participant "Dashboard API / BFF" as BFF
+participant "Projection / Read Model" as Projection
+participant "Redaction Policy" as Redaction
+participant "Export Service" as Export
+participant "Audit / Event" as Audit
+
+User -> UI : Open dashboard/report
+UI -> Identity : Authenticate and resolve role
+Identity --> UI : Role and identity context
+UI -> BFF : Request report with filters
+BFF -> Guard : Validate role, Site/Site Group scope,\nreport sensitivity
+
+alt authorized report and scope
+  Guard --> BFF : allow
+  BFF -> Projection : Query approved read model
+  Projection --> BFF : Report rows and freshness metadata
+  BFF -> Redaction : Apply role-based redaction
+  Redaction --> BFF : Redacted report data
+  BFF -> Audit : Log report view and filters
+  BFF --> UI : Display report with source/freshness labels
+else unauthorized report
+  Guard --> BFF : deny
+  BFF -> Audit : Log denied report access
+  BFF --> UI : Denied: insufficient role
+else cross-site access
+  Guard --> BFF : deny
+  BFF -> Audit : Log denied cross-site request
+  BFF --> UI : Denied: outside assigned scope
+else restricted evidence
+  Guard --> BFF : deny or redact
+  BFF -> Audit : Log restricted evidence handling
+  BFF --> UI : Evidence hidden or access denied
+end
+
+opt User requests export
+  UI -> BFF : Export report
+  BFF -> Guard : Validate export permission
+  alt export allowed
+    BFF -> Export : Generate export with labels and filters
+    Export -> Audit : Log export action
+    Export --> BFF : Export artifact/reference
+    BFF --> UI : Export ready
+  else export not allowed
+    BFF -> Audit : Log denied export
+    BFF --> UI : Export denied
+  end
+end
+@enduml

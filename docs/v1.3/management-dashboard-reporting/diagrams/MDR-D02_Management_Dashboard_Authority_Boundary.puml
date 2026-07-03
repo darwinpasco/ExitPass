@@ -1,0 +1,33 @@
+@startuml
+title MDR-D02 Management Dashboard Authority Boundary
+left to right direction
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+component "Central PMS\npayment finality\nfiscal reference recording\nnormal ExitAuthorization" as Central
+component "POS Server\nfiscal issuance\nfiscal numbering only" as PosServer
+component "Payment Orchestrator\nprovider interaction\nverified evidence reporting only" as Payment
+component "Vendor PMS\nraw session lifecycle\nnormal tariff authority" as Vendor
+component "Gate Integration\nvalidate-consume-open-report\nthrough Central PMS authorization" as Gate
+component "Operator Console\noperator workflow surface\nno payment/fiscal/exit/gate authority" as OperatorConsole
+component "Management Dashboard\n& Reporting\nvisibility/reporting only" as Dashboard
+component "Future Fiscal Exception Queue\nretry/readback/writeback/closure design owner" as FiscalQueue
+
+Dashboard --> Central : read-only payment,\nfiscal, exit, session status
+Dashboard --> OperatorConsole : read operator activity\nand evidence access summaries
+Dashboard --> FiscalQueue : read exception backlog\nand navigate/handoff only
+Dashboard --> Payment : no direct provider calls\n(use backend projections)
+Dashboard --> PosServer : no direct fiscal commands\n(use Central PMS records)
+Dashboard --> Vendor : no direct vendor calls\n(use projections)
+Dashboard --> Gate : no direct gate calls\n(use Central PMS/gate events)
+
+Dashboard -[#red,dashed]-> Central : cannot mutate payment finality,\nfiscal references, or ExitAuthorization
+Dashboard -[#red,dashed]-> PosServer : cannot issue, retry, void,\nor mutate fiscal documents
+Dashboard -[#red,dashed]-> Gate : cannot open gates
+Dashboard -[#red,dashed]-> OperatorConsole : cannot approve discounts\nor supervisor overrides
+Dashboard -[#red,dashed]-> FiscalQueue : cannot close exceptions\nor trigger recovery
+
+note bottom
+Dashboard can summarize and expose status, but cannot execute authority-changing actions.
+end note
+@enduml
