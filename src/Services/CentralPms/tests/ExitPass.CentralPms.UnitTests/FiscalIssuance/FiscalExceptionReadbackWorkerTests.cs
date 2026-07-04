@@ -17,14 +17,18 @@ public sealed class FiscalExceptionReadbackWorkerTests
             PosServerFiscalDocumentId = null
         };
         var client = new FakeReadbackClient(supportsReadback: true);
-        var sut = CreateWorker([reference], client);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, readbackAttempts: readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
         result.Classification.Should().Be(FiscalExceptionReadbackClassification.IdentifierMissing);
         result.PosServerReadbackCallAttempted.Should().BeFalse();
         result.RetryScheduled.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
         client.CallCount.Should().Be(0);
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == FiscalExceptionReadbackClassification.IdentifierMissing);
     }
 
     [Fact]
@@ -36,14 +40,18 @@ public sealed class FiscalExceptionReadbackWorkerTests
             PosServerFiscalDocumentId = fiscalDocumentId
         };
         var client = new FakeReadbackClient(supportsReadback: false);
-        var sut = CreateWorker([reference], client);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, readbackAttempts: readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
         result.Classification.Should().Be(FiscalExceptionReadbackClassification.NotSupportedYet);
         result.PosServerReadbackCallAttempted.Should().BeFalse();
         result.RetryScheduled.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
         client.CallCount.Should().Be(0);
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == FiscalExceptionReadbackClassification.NotSupportedYet);
     }
 
     [Fact]
@@ -58,7 +66,8 @@ public sealed class FiscalExceptionReadbackWorkerTests
             supportsReadback: true,
             ReadResult(fiscalDocumentId));
         var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
-        var sut = CreateWorker([reference], client, orchestration);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, orchestration, readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
@@ -68,9 +77,12 @@ public sealed class FiscalExceptionReadbackWorkerTests
         result.PaymentFinalityChanged.Should().BeFalse();
         result.ExitAuthorizationIssued.Should().BeFalse();
         result.GateBehaviorTriggered.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
         result.UpdatedCase.Should().NotBeNull();
         result.UpdatedCase!.FiscalNumberEditingAllowed.Should().BeFalse();
         result.UpdatedCase.ManualFiscalDocumentCreationAllowed.Should().BeFalse();
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == FiscalExceptionReadbackClassification.Matched);
         _ = orchestration.DidNotReceiveWithAnyArgs().ApplyReadbackPlanningResultAsync(default, default!, default);
     }
 
@@ -98,13 +110,17 @@ public sealed class FiscalExceptionReadbackWorkerTests
         var client = new FakeReadbackClient(
             supportsReadback: true,
             ReadResult(null, succeeded: false, httpStatusCode: 404, code: "fiscal_document_not_found"));
-        var sut = CreateWorker([reference], client, orchestration);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, orchestration, readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
         result.Classification.Should().Be(FiscalExceptionReadbackClassification.NotFound);
         result.RetryScheduled.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
         result.UpdatedCase!.Summary.ReadbackClassification.Should().Be(FiscalExceptionReadbackClassification.NotFound);
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == FiscalExceptionReadbackClassification.NotFound);
     }
 
     [Fact]
@@ -133,14 +149,18 @@ public sealed class FiscalExceptionReadbackWorkerTests
         var client = new FakeReadbackClient(
             supportsReadback: true,
             ReadResult(Guid.NewGuid()));
-        var sut = CreateWorker([reference], client, orchestration);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, orchestration, readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
         result.Classification.Should().Be(FiscalExceptionReadbackClassification.Mismatch);
         result.RetryScheduled.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
         result.UpdatedCase!.Summary.QueueState.Should().Be(FiscalExceptionQueueState.ManualReviewRequired);
         result.UpdatedCase.Summary.RetryEligibilityStatus.Should().Be(FiscalExceptionRetryEligibilityStatus.BlockedManualReview);
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == FiscalExceptionReadbackClassification.Mismatch);
     }
 
     [Theory]
@@ -176,7 +196,8 @@ public sealed class FiscalExceptionReadbackWorkerTests
         var client = new FakeReadbackClient(
             supportsReadback: true,
             ReadResult(null, succeeded: false, httpStatusCode: httpStatusCode, code: code));
-        var sut = CreateWorker([reference], client, orchestration);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, orchestration, readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
@@ -185,6 +206,9 @@ public sealed class FiscalExceptionReadbackWorkerTests
         result.PaymentFinalityChanged.Should().BeFalse();
         result.ExitAuthorizationIssued.Should().BeFalse();
         result.GateBehaviorTriggered.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == expectedClassification);
     }
 
     [Fact]
@@ -220,7 +244,8 @@ public sealed class FiscalExceptionReadbackWorkerTests
                 FiscalIssuanceEvidenceStatus: null,
                 FiscalNumberAssignmentState: null,
                 FiscalDocumentStatusCodeId: null));
-        var sut = CreateWorker([reference], client, orchestration);
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, orchestration, readbackAttempts);
 
         var result = await sut.RunReadbackAsync(reference.FiscalIssuanceReferenceId, Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
 
@@ -229,6 +254,38 @@ public sealed class FiscalExceptionReadbackWorkerTests
         result.PaymentFinalityChanged.Should().BeFalse();
         result.ExitAuthorizationIssued.Should().BeFalse();
         result.GateBehaviorTriggered.Should().BeFalse();
+        result.ReadbackAttemptId.Should().NotBeNull();
+        readbackAttempts.Records.Should().ContainSingle(record =>
+            record.Classification == FiscalExceptionReadbackClassification.Failed);
+    }
+
+    [Fact]
+    public async Task RunReadbackAsync_WhenAttemptPersistenceFails_DoesNotUpdateStateOrRetry()
+    {
+        var fiscalDocumentId = Guid.NewGuid();
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            PosServerFiscalDocumentId = fiscalDocumentId
+        };
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var client = new FakeReadbackClient(
+            supportsReadback: true,
+            ReadResult(Guid.NewGuid()));
+        var readbackAttempts = new FakeReadbackAttemptRepository
+        {
+            ThrowOnRecord = true
+        };
+        var sut = CreateWorker([reference], client, orchestration, readbackAttempts);
+
+        var act = () => sut.RunReadbackAsync(
+            reference.FiscalIssuanceReferenceId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("readback_attempt_persistence_failed");
+        _ = orchestration.DidNotReceiveWithAnyArgs().ApplyReadbackPlanningResultAsync(default, default!, default);
     }
 
     [Fact]
@@ -250,6 +307,42 @@ public sealed class FiscalExceptionReadbackWorkerTests
     }
 
     [Fact]
+    public async Task FeqReadOnlyDetail_WhenAttemptHistoryExists_IncludesLastAttemptSummary()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            LatestExceptionReason = FiscalIssuanceExceptionReason.PostTimeout,
+            LatestErrorCode = "post_timeout"
+        };
+        var attemptedAt = DateTimeOffset.Parse("2026-07-04T11:00:00+08:00");
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        readbackAttempts.Seed(
+            new FiscalExceptionReadbackAttemptRecord(
+                ReadbackAttemptId: Guid.NewGuid(),
+                FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                PaymentConfirmationId: reference.PaymentConfirmationId,
+                AttemptedAt: attemptedAt,
+                Classification: FiscalExceptionReadbackClassification.Unknown,
+                SafeResultCode: "unknown",
+                SafeErrorSummary: "readback_unknown",
+                PosServerFiscalDocumentId: reference.PosServerFiscalDocumentId,
+                PosServerHttpStatus: 500,
+                ServiceIdentityId: reference.RecordedByServiceIdentityId));
+        var service = new FiscalExceptionQueueService(
+            new FakeReferenceReader([reference]),
+            readbackAttempts);
+
+        var detail = await service.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.ReadbackStatus.Should().Be(FiscalExceptionReadbackStatus.Attempted);
+        detail.Summary.ReadbackClassification.Should().Be(FiscalExceptionReadbackClassification.Unknown);
+        detail.Summary.LastReadbackAttemptAt.Should().Be(attemptedAt);
+        detail.Summary.ReadbackAttemptCount.Should().Be(1);
+        detail.Summary.LastReadbackSafeSummary.Should().Be("readback_unknown");
+    }
+
+    [Fact]
     public void FiscalExceptionReadbackWorkerSlice_DoesNotIntroduceRetrySchedulerOrExecutionEndpoint()
     {
         var fiscalIssuanceTypes = typeof(FiscalExceptionReadbackWorker).Assembly
@@ -267,12 +360,17 @@ public sealed class FiscalExceptionReadbackWorkerTests
     private static FiscalExceptionReadbackWorker CreateWorker(
         IReadOnlyList<FiscalIssuanceReferenceRecord> references,
         IFiscalExceptionReadbackClient client,
-        IFiscalIssuanceOrchestrationService? orchestration = null)
+        IFiscalIssuanceOrchestrationService? orchestration = null,
+        FakeReadbackAttemptRepository? readbackAttempts = null)
     {
-        var queueService = new FiscalExceptionQueueService(new FakeReferenceReader(references));
+        readbackAttempts ??= new FakeReadbackAttemptRepository();
+        var queueService = new FiscalExceptionQueueService(
+            new FakeReferenceReader(references),
+            readbackAttempts);
         return new FiscalExceptionReadbackWorker(
             queueService,
             client,
+            readbackAttempts,
             orchestration ?? Substitute.For<IFiscalIssuanceOrchestrationService>(),
             Substitute.For<ILogger<FiscalExceptionReadbackWorker>>());
     }
@@ -354,6 +452,66 @@ public sealed class FiscalExceptionReadbackWorkerTests
         {
             CallCount++;
             return Task.FromResult(_result ?? ReadResult(fiscalDocumentId));
+        }
+    }
+
+    private sealed class FakeReadbackAttemptRepository : IFiscalExceptionReadbackAttemptRepository
+    {
+        public List<FiscalExceptionReadbackAttemptRecord> Records { get; } = [];
+
+        public bool ThrowOnRecord { get; init; }
+
+        public Task<FiscalExceptionReadbackAttemptRecord> RecordAsync(
+            FiscalExceptionReadbackAttemptWrite attempt,
+            CancellationToken cancellationToken)
+        {
+            if (ThrowOnRecord)
+            {
+                throw new InvalidOperationException("readback_attempt_persistence_failed");
+            }
+
+            var record = new FiscalExceptionReadbackAttemptRecord(
+                ReadbackAttemptId: Guid.NewGuid(),
+                FiscalIssuanceReferenceId: attempt.FiscalIssuanceReferenceId,
+                PaymentConfirmationId: attempt.PaymentConfirmationId,
+                AttemptedAt: attempt.AttemptedAt,
+                Classification: attempt.Classification,
+                SafeResultCode: attempt.SafeResultCode,
+                SafeErrorSummary: attempt.SafeErrorSummary,
+                PosServerFiscalDocumentId: attempt.PosServerFiscalDocumentId,
+                PosServerHttpStatus: attempt.PosServerHttpStatus,
+                ServiceIdentityId: attempt.ServiceIdentityId);
+
+            Records.Add(record);
+            return Task.FromResult(record);
+        }
+
+        public Task<FiscalExceptionReadbackAttemptSummary?> GetSummaryAsync(
+            Guid fiscalIssuanceReferenceId,
+            CancellationToken cancellationToken)
+        {
+            var records = Records
+                .Where(record => record.FiscalIssuanceReferenceId == fiscalIssuanceReferenceId)
+                .OrderByDescending(record => record.AttemptedAt)
+                .ToArray();
+
+            if (records.Length == 0)
+            {
+                return Task.FromResult<FiscalExceptionReadbackAttemptSummary?>(null);
+            }
+
+            var latest = records[0];
+            return Task.FromResult<FiscalExceptionReadbackAttemptSummary?>(
+                new FiscalExceptionReadbackAttemptSummary(
+                    Classification: latest.Classification,
+                    AttemptedAt: latest.AttemptedAt,
+                    AttemptCount: records.Length,
+                    SafeErrorSummary: latest.SafeErrorSummary));
+        }
+
+        public void Seed(FiscalExceptionReadbackAttemptRecord record)
+        {
+            Records.Add(record);
         }
     }
 

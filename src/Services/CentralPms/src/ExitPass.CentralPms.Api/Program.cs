@@ -362,6 +362,8 @@ static void ConfigureApplicationServices(
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionQueueReferenceReader>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionReadbackAttemptRepository>(_ =>
+        new PostgresFiscalExceptionReadbackAttemptRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
     builder.Services.AddScoped<IFiscalExceptionQueueService, FiscalExceptionQueueService>();
     builder.Services.AddScoped<IFiscalExceptionReadbackClient, PosServerFiscalExceptionReadbackClient>();
