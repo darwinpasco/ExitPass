@@ -26,10 +26,19 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     private const string DuplicateCollapseStrategy = "source_fiscal_issuance_reference_identity";
 
     private readonly IFiscalExceptionQueueReferenceReader _referenceReader;
+    private readonly IFiscalExceptionReadbackAttemptRepository? _readbackAttemptRepository;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
+        : this(referenceReader, null)
+    {
+    }
+
+    public FiscalExceptionQueueService(
+        IFiscalExceptionQueueReferenceReader referenceReader,
+        IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository)
     {
         _referenceReader = referenceReader;
+        _readbackAttemptRepository = readbackAttemptRepository;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -56,9 +65,44 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         }
 
         var record = await _referenceReader.FindFiscalExceptionReferenceAsync(caseId, cancellationToken);
-        return record is null || !IsFiscalExceptionCandidate(record)
-            ? null
-            : ToDetail(record);
+        if (record is null || !IsFiscalExceptionCandidate(record))
+        {
+            return null;
+        }
+
+        var detail = ToDetail(record);
+        if (_readbackAttemptRepository is null)
+        {
+            return detail;
+        }
+
+        var attemptSummary = await _readbackAttemptRepository.GetSummaryAsync(
+            record.FiscalIssuanceReferenceId,
+            cancellationToken);
+
+        return attemptSummary is null
+            ? detail
+            : ApplyReadbackAttemptSummary(detail, attemptSummary);
+    }
+
+    internal static FiscalExceptionQueueCaseDetail ApplyReadbackAttemptSummary(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionReadbackAttemptSummary attemptSummary)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            ReadbackStatus = FiscalExceptionReadbackStatus.Attempted,
+            ReadbackClassification = attemptSummary.Classification,
+            LastReadbackAttemptAt = attemptSummary.AttemptedAt,
+            ReadbackAttemptCount = attemptSummary.AttemptCount,
+            LastReadbackSafeSummary = attemptSummary.SafeErrorSummary ?? current.LastReadbackSafeSummary
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
     }
 
     public Task<FiscalExceptionQueueCaseDetail> CreateOrUpdateFromFiscalReferenceAsync(
@@ -146,6 +190,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             ReadbackStatus: readbackStatus,
             ReadbackClassification: readbackClassification,
             LastReadbackAttemptAt: readbackClassification is null ? null : record.LastUpdatedAt,
+            ReadbackAttemptCount: null,
+            LastReadbackSafeSummary: null,
             RetryEligibilityStatus: ResolveRetryEligibility(record, readbackStatus),
             RetryExecutionAvailable: false,
             DuplicateCollapseKey: $"fiscal-reference:{record.FiscalIssuanceReferenceId:N}",

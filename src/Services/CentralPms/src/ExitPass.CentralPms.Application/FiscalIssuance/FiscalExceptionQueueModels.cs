@@ -82,6 +82,8 @@ public sealed record FiscalExceptionQueueCaseSummary(
     FiscalExceptionReadbackStatus ReadbackStatus,
     FiscalExceptionReadbackClassification? ReadbackClassification,
     DateTimeOffset? LastReadbackAttemptAt,
+    int? ReadbackAttemptCount,
+    string? LastReadbackSafeSummary,
     FiscalExceptionRetryEligibilityStatus RetryEligibilityStatus,
     bool RetryExecutionAvailable,
     string DuplicateCollapseKey,
@@ -130,6 +132,7 @@ public sealed record FiscalExceptionReadbackWorkerResult(
     FiscalExceptionReadbackClassification Classification,
     DateTimeOffset AttemptedAt,
     string SafeSummary,
+    Guid? ReadbackAttemptId,
     bool PosServerReadbackCallAttempted,
     bool RetryScheduled,
     bool PaymentFinalityChanged,
@@ -144,6 +147,49 @@ public interface IFiscalExceptionQueueReferenceReader
         CancellationToken cancellationToken);
 
     Task<FiscalIssuanceReferenceRecord?> FindFiscalExceptionReferenceAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionReadbackAttemptWrite(
+    Guid FiscalIssuanceReferenceId,
+    Guid PaymentConfirmationId,
+    DateTimeOffset AttemptedAt,
+    FiscalExceptionReadbackClassification Classification,
+    string IdentifierType,
+    string? IdentifierValue,
+    Guid? PosServerFiscalDocumentId,
+    int? PosServerHttpStatus,
+    string SafeResultCode,
+    string? SafeErrorSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalExceptionReadbackAttemptRecord(
+    Guid ReadbackAttemptId,
+    Guid FiscalIssuanceReferenceId,
+    Guid PaymentConfirmationId,
+    DateTimeOffset AttemptedAt,
+    FiscalExceptionReadbackClassification Classification,
+    string? SafeResultCode,
+    string? SafeErrorSummary,
+    Guid? PosServerFiscalDocumentId,
+    int? PosServerHttpStatus,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalExceptionReadbackAttemptSummary(
+    FiscalExceptionReadbackClassification Classification,
+    DateTimeOffset AttemptedAt,
+    int AttemptCount,
+    string? SafeErrorSummary);
+
+public interface IFiscalExceptionReadbackAttemptRepository
+{
+    Task<FiscalExceptionReadbackAttemptRecord> RecordAsync(
+        FiscalExceptionReadbackAttemptWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionReadbackAttemptSummary?> GetSummaryAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken);
 }

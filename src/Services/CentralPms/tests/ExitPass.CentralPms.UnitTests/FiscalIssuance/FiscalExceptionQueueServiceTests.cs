@@ -131,12 +131,12 @@ public sealed class FiscalExceptionQueueServiceTests
     {
         var constructorParameters = typeof(FiscalExceptionQueueService)
             .GetConstructors()
-            .Single()
-            .GetParameters()
+            .SelectMany(constructor => constructor.GetParameters())
             .Select(parameter => parameter.ParameterType.Name)
             .ToArray();
 
-        constructorParameters.Should().ContainSingle(nameof(IFiscalExceptionQueueReferenceReader));
+        constructorParameters.Should().Contain(nameof(IFiscalExceptionQueueReferenceReader));
+        constructorParameters.Should().Contain(nameof(IFiscalExceptionReadbackAttemptRepository));
         constructorParameters.Should().NotContain(parameter =>
             parameter.Contains("Payment", StringComparison.OrdinalIgnoreCase) ||
             parameter.Contains("ExitAuthorization", StringComparison.OrdinalIgnoreCase) ||

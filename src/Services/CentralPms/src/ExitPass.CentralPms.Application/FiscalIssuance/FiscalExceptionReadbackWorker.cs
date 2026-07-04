@@ -42,17 +42,20 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
 {
     private readonly IFiscalExceptionQueueService _queueService;
     private readonly IFiscalExceptionReadbackClient _readbackClient;
+    private readonly IFiscalExceptionReadbackAttemptRepository _readbackAttemptRepository;
     private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
     private readonly ILogger<FiscalExceptionReadbackWorker> _logger;
 
     public FiscalExceptionReadbackWorker(
         IFiscalExceptionQueueService queueService,
         IFiscalExceptionReadbackClient readbackClient,
+        IFiscalExceptionReadbackAttemptRepository readbackAttemptRepository,
         IFiscalIssuanceOrchestrationService orchestrationService,
         ILogger<FiscalExceptionReadbackWorker> logger)
     {
         _queueService = queueService;
         _readbackClient = readbackClient;
+        _readbackAttemptRepository = readbackAttemptRepository;
         _orchestrationService = orchestrationService;
         _logger = logger;
     }
@@ -78,6 +81,7 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
                 FiscalExceptionReadbackClassification.IdentifierMissing,
                 attemptedAt,
                 "feq_case_not_found",
+                readbackAttemptId: null,
                 posServerReadbackCallAttempted: false,
                 updatedCase: null);
         }
@@ -89,14 +93,25 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
                 "FEQ readback skipped for {FiscalIssuanceReferenceId}: identifier missing.",
                 detail.Summary.FiscalIssuanceReferenceId);
 
+            var attempt = await RecordAttemptAsync(
+                detail,
+                FiscalExceptionReadbackClassification.IdentifierMissing,
+                attemptedAt,
+                "pos_server_fiscal_document_id_missing",
+                readResult: null,
+                correlationId,
+                serviceIdentityId,
+                cancellationToken);
+
             return Result(
                 detail.Summary.CaseId,
                 detail.Summary.FiscalIssuanceReferenceId,
                 FiscalExceptionReadbackClassification.IdentifierMissing,
                 attemptedAt,
                 "pos_server_fiscal_document_id_missing",
+                attempt.ReadbackAttemptId,
                 posServerReadbackCallAttempted: false,
-                updatedCase: detail);
+                updatedCase: ApplyAttemptToDetail(detail, attempt));
         }
 
         if (!_readbackClient.SupportsFiscalDocumentIdReadback)
@@ -105,14 +120,25 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
                 "FEQ readback not supported for {FiscalIssuanceReferenceId}.",
                 detail.Summary.FiscalIssuanceReferenceId);
 
+            var attempt = await RecordAttemptAsync(
+                detail,
+                FiscalExceptionReadbackClassification.NotSupportedYet,
+                attemptedAt,
+                "pos_server_fiscal_document_id_readback_not_supported_yet",
+                readResult: null,
+                correlationId,
+                serviceIdentityId,
+                cancellationToken);
+
             return Result(
                 detail.Summary.CaseId,
                 detail.Summary.FiscalIssuanceReferenceId,
                 FiscalExceptionReadbackClassification.NotSupportedYet,
                 attemptedAt,
                 "pos_server_fiscal_document_id_readback_not_supported_yet",
+                attempt.ReadbackAttemptId,
                 posServerReadbackCallAttempted: false,
-                updatedCase: detail);
+                updatedCase: ApplyAttemptToDetail(detail, attempt));
         }
 
         PosServerFiscalDocumentReadResult readResult;
@@ -134,6 +160,17 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         }
 
         var classification = Classify(detail, readResult);
+        var safeSummary = ToSafeSummary(classification, readResult);
+        var readbackAttempt = await RecordAttemptAsync(
+            detail,
+            classification,
+            attemptedAt,
+            safeSummary,
+            readResult,
+            correlationId,
+            serviceIdentityId,
+            cancellationToken);
+
         var updatedCase = await ApplyClassificationAsync(
             detail,
             readResult,
@@ -147,12 +184,17 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
             detail.Summary.FiscalIssuanceReferenceId,
             classification);
 
+        updatedCase = updatedCase is null
+            ? null
+            : ApplyAttemptToDetail(updatedCase, readbackAttempt);
+
         return Result(
             detail.Summary.CaseId,
             detail.Summary.FiscalIssuanceReferenceId,
             classification,
             attemptedAt,
-            ToSafeSummary(classification, readResult),
+            safeSummary,
+            readbackAttempt.ReadbackAttemptId,
             posServerReadbackCallAttempted: true,
             updatedCase);
     }
@@ -251,6 +293,47 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         return FiscalExceptionQueueService.ToDetail(updatedReference);
     }
 
+    private async Task<FiscalExceptionReadbackAttemptRecord> RecordAttemptAsync(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionReadbackClassification classification,
+        DateTimeOffset attemptedAt,
+        string safeSummary,
+        PosServerFiscalDocumentReadResult? readResult,
+        Guid? correlationId,
+        Guid? serviceIdentityId,
+        CancellationToken cancellationToken)
+    {
+        var identifierValue = detail.PosServerFiscalDocumentId?.ToString("D");
+        return await _readbackAttemptRepository.RecordAsync(
+            new FiscalExceptionReadbackAttemptWrite(
+                FiscalIssuanceReferenceId: detail.Summary.FiscalIssuanceReferenceId,
+                PaymentConfirmationId: detail.Summary.PaymentConfirmationId,
+                AttemptedAt: attemptedAt,
+                Classification: classification,
+                IdentifierType: detail.PosServerFiscalDocumentId is null
+                    ? "none"
+                    : "pos_server_fiscal_document_id",
+                IdentifierValue: identifierValue,
+                PosServerFiscalDocumentId: detail.PosServerFiscalDocumentId ?? readResult?.FiscalDocumentId,
+                PosServerHttpStatus: readResult?.HttpStatusCode,
+                SafeResultCode: ToResultCode(classification),
+                SafeErrorSummary: safeSummary,
+                CorrelationId: correlationId ?? detail.CorrelationId,
+                ServiceIdentityId: serviceIdentityId),
+            cancellationToken);
+    }
+
+    private static FiscalExceptionQueueCaseDetail ApplyAttemptToDetail(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionReadbackAttemptRecord attempt) =>
+        FiscalExceptionQueueService.ApplyReadbackAttemptSummary(
+            detail,
+            new FiscalExceptionReadbackAttemptSummary(
+                Classification: attempt.Classification,
+                AttemptedAt: attempt.AttemptedAt,
+                AttemptCount: detail.Summary.ReadbackAttemptCount is { } count ? count + 1 : 1,
+                SafeErrorSummary: attempt.SafeErrorSummary));
+
     private static FiscalIssuanceExceptionReason? ToExceptionReason(FiscalExceptionReadbackClassification classification) =>
         classification switch
         {
@@ -290,7 +373,23 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
                 : $"readback_failed:{readResult.Code}",
             FiscalExceptionReadbackClassification.Unavailable => "readback_unavailable",
             FiscalExceptionReadbackClassification.Unknown => "readback_unknown",
+            FiscalExceptionReadbackClassification.IdentifierMissing => "readback_identifier_missing",
+            FiscalExceptionReadbackClassification.NotSupportedYet => "readback_not_supported_yet",
             _ => "readback_not_classified"
+        };
+
+    private static string ToResultCode(FiscalExceptionReadbackClassification classification) =>
+        classification switch
+        {
+            FiscalExceptionReadbackClassification.Matched => "matched",
+            FiscalExceptionReadbackClassification.NotFound => "not_found",
+            FiscalExceptionReadbackClassification.Mismatch => "mismatch",
+            FiscalExceptionReadbackClassification.Failed => "failed",
+            FiscalExceptionReadbackClassification.Unavailable => "unavailable",
+            FiscalExceptionReadbackClassification.Unknown => "unknown",
+            FiscalExceptionReadbackClassification.IdentifierMissing => "identifier_missing",
+            FiscalExceptionReadbackClassification.NotSupportedYet => "not_supported_yet",
+            _ => throw new ArgumentOutOfRangeException(nameof(classification), classification, "Unknown readback classification.")
         };
 
     private static FiscalExceptionReadbackWorkerResult Result(
@@ -299,6 +398,7 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         FiscalExceptionReadbackClassification classification,
         DateTimeOffset attemptedAt,
         string safeSummary,
+        Guid? readbackAttemptId,
         bool posServerReadbackCallAttempted,
         FiscalExceptionQueueCaseDetail? updatedCase) =>
         new(
@@ -307,6 +407,7 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
             Classification: classification,
             AttemptedAt: attemptedAt,
             SafeSummary: safeSummary,
+            ReadbackAttemptId: readbackAttemptId,
             PosServerReadbackCallAttempted: posServerReadbackCallAttempted,
             RetryScheduled: false,
             PaymentFinalityChanged: false,
