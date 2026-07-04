@@ -33,7 +33,20 @@ public enum FiscalExceptionReadbackStatus
 {
     NotRequired = 1,
     RequiredNotStarted = 2,
-    PendingFutureSlice = 3
+    PendingFutureSlice = 3,
+    Attempted = 4
+}
+
+public enum FiscalExceptionReadbackClassification
+{
+    Matched = 1,
+    NotFound = 2,
+    Mismatch = 3,
+    Failed = 4,
+    Unavailable = 5,
+    Unknown = 6,
+    IdentifierMissing = 7,
+    NotSupportedYet = 8
 }
 
 public enum FiscalExceptionRetryEligibilityStatus
@@ -67,6 +80,8 @@ public sealed record FiscalExceptionQueueCaseSummary(
     FiscalIssuanceExceptionReason? LatestExceptionReason,
     string? SafeErrorSummary,
     FiscalExceptionReadbackStatus ReadbackStatus,
+    FiscalExceptionReadbackClassification? ReadbackClassification,
+    DateTimeOffset? LastReadbackAttemptAt,
     FiscalExceptionRetryEligibilityStatus RetryEligibilityStatus,
     bool RetryExecutionAvailable,
     string DuplicateCollapseKey,
@@ -81,6 +96,7 @@ public sealed record FiscalExceptionQueueCaseDetail(
     Guid? FiscalIdentityId,
     Guid? FiscalSequencePolicyId,
     long? FiscalSequenceValue,
+    Guid? FiscalDocumentStatusCodeId,
     FiscalIssuanceResultClassification? ResultClassification,
     FiscalIssuanceEvidenceStatus? FiscalIssuanceEvidenceStatus,
     FiscalNumberAssignmentState FiscalNumberAssignmentState,
@@ -107,6 +123,19 @@ public sealed record FiscalExceptionReadbackPreparation(
     bool RetryExecutionAvailable,
     bool PosServerReadbackCallPerformed,
     string PreparationStatus);
+
+public sealed record FiscalExceptionReadbackWorkerResult(
+    Guid CaseId,
+    Guid FiscalIssuanceReferenceId,
+    FiscalExceptionReadbackClassification Classification,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    bool PosServerReadbackCallAttempted,
+    bool RetryScheduled,
+    bool PaymentFinalityChanged,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    FiscalExceptionQueueCaseDetail? UpdatedCase);
 
 public interface IFiscalExceptionQueueReferenceReader
 {
