@@ -718,7 +718,7 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
     }
 
     [Fact]
-    public void FiscalIssuanceOrchestrationService_DoesNotIntroduceReadbackWorkerOrScheduler()
+    public void FiscalIssuanceOrchestrationService_DoesNotIntroduceRetryWorkerSchedulerOrBackgroundService()
     {
         var fiscalIssuanceTypes = typeof(FiscalIssuanceOrchestrationService).Assembly
             .GetTypes()
@@ -727,7 +727,9 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             .ToArray();
 
         fiscalIssuanceTypes.Should().NotContain(typeName =>
-            typeName.Contains("Worker", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("RetryWorker", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("RetryScheduler", StringComparison.OrdinalIgnoreCase) ||
+            typeName.Contains("RetryEndpoint", StringComparison.OrdinalIgnoreCase) ||
             typeName.Contains("Scheduler", StringComparison.OrdinalIgnoreCase) ||
             typeName.Contains("BackgroundService", StringComparison.OrdinalIgnoreCase));
     }

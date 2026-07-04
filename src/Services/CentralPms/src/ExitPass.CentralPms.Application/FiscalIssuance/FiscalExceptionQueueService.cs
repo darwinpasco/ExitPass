@@ -125,6 +125,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     internal static FiscalExceptionQueueCaseSummary ToSummary(FiscalIssuanceReferenceRecord record)
     {
         var readbackStatus = ResolveReadbackStatus(record);
+        var readbackClassification = ResolveReadbackClassification(record);
 
         return new FiscalExceptionQueueCaseSummary(
             CaseId: record.FiscalIssuanceReferenceId,
@@ -143,6 +144,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             LatestExceptionReason: record.LatestExceptionReason,
             SafeErrorSummary: SafeErrorSummary(record),
             ReadbackStatus: readbackStatus,
+            ReadbackClassification: readbackClassification,
+            LastReadbackAttemptAt: readbackClassification is null ? null : record.LastUpdatedAt,
             RetryEligibilityStatus: ResolveRetryEligibility(record, readbackStatus),
             RetryExecutionAvailable: false,
             DuplicateCollapseKey: $"fiscal-reference:{record.FiscalIssuanceReferenceId:N}",
@@ -159,6 +162,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             FiscalIdentityId: record.FiscalIdentityId,
             FiscalSequencePolicyId: record.FiscalSequencePolicyId,
             FiscalSequenceValue: record.FiscalSequenceValue,
+            FiscalDocumentStatusCodeId: record.FiscalDocumentStatusCodeId,
             ResultClassification: record.ResultClassification,
             FiscalIssuanceEvidenceStatus: record.FiscalIssuanceEvidenceStatus,
             FiscalNumberAssignmentState: record.FiscalNumberAssignmentState,
@@ -243,16 +247,26 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         };
 
     private static FiscalExceptionReadbackStatus ResolveReadbackStatus(FiscalIssuanceReferenceRecord record) =>
-        record.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceUnknown ||
-        record.LatestExceptionReason is FiscalIssuanceExceptionReason.PostTimeout
-            or FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit
-            or FiscalIssuanceExceptionReason.GetReadbackInconclusive
-            or FiscalIssuanceExceptionReason.GetReadbackNotFound
-            or FiscalIssuanceExceptionReason.GetReadbackServiceFailed
-            or FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete
-            or FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed
+        ResolveReadbackClassification(record) is not null
+            ? FiscalExceptionReadbackStatus.Attempted
+            : record.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceUnknown ||
+            record.LatestExceptionReason is FiscalIssuanceExceptionReason.PostTimeout
+                or FiscalIssuanceExceptionReason.NetworkDisconnectAfterPossibleCommit
+                or FiscalIssuanceExceptionReason.FiscalNumberAssignmentIncomplete
+                or FiscalIssuanceExceptionReason.CentralPmsReferencePersistenceFailed
             ? FiscalExceptionReadbackStatus.RequiredNotStarted
             : FiscalExceptionReadbackStatus.NotRequired;
+
+    private static FiscalExceptionReadbackClassification? ResolveReadbackClassification(
+        FiscalIssuanceReferenceRecord record) =>
+        record.LatestExceptionReason switch
+        {
+            FiscalIssuanceExceptionReason.GetReadbackNotFound => FiscalExceptionReadbackClassification.NotFound,
+            FiscalIssuanceExceptionReason.GetReadbackServiceFailed => FiscalExceptionReadbackClassification.Failed,
+            FiscalIssuanceExceptionReason.GetReadbackInconclusive => FiscalExceptionReadbackClassification.Unknown,
+            FiscalIssuanceExceptionReason.FiscalReferenceMismatch => FiscalExceptionReadbackClassification.Mismatch,
+            _ => null
+        };
 
     private static FiscalExceptionRetryEligibilityStatus ResolveRetryEligibility(
         FiscalIssuanceReferenceRecord record,
@@ -261,11 +275,6 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         if (record.FiscalIssuanceState == FiscalIssuanceIntegrationState.FiscalIssuanceReconciled)
         {
             return FiscalExceptionRetryEligibilityStatus.NotRequiredRecorded;
-        }
-
-        if (readbackStatus != FiscalExceptionReadbackStatus.NotRequired)
-        {
-            return FiscalExceptionRetryEligibilityStatus.BlockedPendingReadback;
         }
 
         if (ResolveQueueState(record) is FiscalExceptionQueueState.MismatchReview
@@ -277,6 +286,11 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         if (ResolveQueueState(record) == FiscalExceptionQueueState.BlockedRequiresConfigFix)
         {
             return FiscalExceptionRetryEligibilityStatus.BlockedConfiguration;
+        }
+
+        if (readbackStatus != FiscalExceptionReadbackStatus.NotRequired)
+        {
+            return FiscalExceptionRetryEligibilityStatus.BlockedPendingReadback;
         }
 
         return FiscalExceptionRetryEligibilityStatus.UnavailableInThisSlice;
