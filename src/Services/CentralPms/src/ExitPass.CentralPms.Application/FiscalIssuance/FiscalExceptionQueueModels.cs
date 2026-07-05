@@ -55,7 +55,25 @@ public enum FiscalExceptionRetryEligibilityStatus
     BlockedPendingReadback = 2,
     BlockedManualReview = 3,
     BlockedConfiguration = 4,
-    NotRequiredRecorded = 5
+    NotRequiredRecorded = 5,
+    EligibleForControlledRetryPlanning = 6,
+    BlockedReadbackMatched = 7,
+    BlockedReadbackMismatch = 8,
+    BlockedReadbackFailed = 9,
+    BlockedIdentifierMissing = 10,
+    BlockedReadbackUnsupported = 11,
+    BlockedMissingRequestContext = 12,
+    BlockedMissingUpstreamFinalityReference = 13,
+    UnavailablePolicyNotConfigured = 14
+}
+
+public enum FiscalExceptionRetryEligibilityDecision
+{
+    NotEvaluated = 1,
+    Eligible = 2,
+    Blocked = 3,
+    Unavailable = 4,
+    NotRequired = 5
 }
 
 public sealed record FiscalExceptionQueueQuery(
@@ -85,6 +103,11 @@ public sealed record FiscalExceptionQueueCaseSummary(
     int? ReadbackAttemptCount,
     string? LastReadbackSafeSummary,
     FiscalExceptionRetryEligibilityStatus RetryEligibilityStatus,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecision,
+    string? RetryBlockReasonCode,
+    string SafeRetryEligibilitySummary,
+    DateTimeOffset? RetryEligibilityEvaluatedAt,
+    FiscalExceptionReadbackClassification? RetryEligibilityBasedOnReadbackClassification,
     bool RetryExecutionAvailable,
     string DuplicateCollapseKey,
     string DuplicateCollapseStrategy,
@@ -110,6 +133,22 @@ public sealed record FiscalExceptionQueueCaseDetail(
     bool GateBehaviorTriggered,
     bool FiscalNumberEditingAllowed,
     bool ManualFiscalDocumentCreationAllowed);
+
+public sealed record FiscalExceptionRetryEligibilityEvaluation(
+    FiscalExceptionRetryEligibilityStatus Status,
+    FiscalExceptionRetryEligibilityDecision Decision,
+    string? BlockReasonCode,
+    string SafeSummary,
+    DateTimeOffset EvaluatedAt,
+    FiscalExceptionReadbackClassification? BasedOnReadbackClassification,
+    DateTimeOffset? LastReadbackAttemptAt,
+    int? ReadbackAttemptCount,
+    bool RetryExecutionAvailable);
+
+public interface IFiscalExceptionRetryEligibilityEvaluator
+{
+    FiscalExceptionRetryEligibilityEvaluation Evaluate(FiscalExceptionQueueCaseDetail detail);
+}
 
 public sealed record FiscalExceptionReadbackPreparation(
     Guid CaseId,
