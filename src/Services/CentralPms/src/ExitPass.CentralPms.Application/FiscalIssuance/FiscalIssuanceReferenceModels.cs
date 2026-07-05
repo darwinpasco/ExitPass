@@ -35,7 +35,16 @@ public sealed record FiscalIssuanceReferenceRecord(
     DateTimeOffset? PosServerResponseTimestamp,
     DateTimeOffset FirstRecordedAt,
     DateTimeOffset LastUpdatedAt,
-    Guid? RecordedByServiceIdentityId);
+    Guid? RecordedByServiceIdentityId,
+    Guid? FiscalDocumentTypeCodeId = null,
+    string? FiscalDocumentTypeCodeKey = null,
+    FiscalSemanticRequestHashSourceStatus? SemanticRequestHashStatus = null,
+    string? SemanticRequestHashValue = null,
+    string? SemanticRequestHashAlgorithm = null,
+    string? SemanticRequestHashSourceVersion = null,
+    int? SemanticRequestHashSourceFactCount = null,
+    string? SemanticRequestHashSafeSummary = null,
+    DateTimeOffset? SemanticRequestHashRecordedAt = null);
 
 public sealed record CreateFiscalIssuanceReferenceRequest(
     Guid PaymentConfirmationId,
@@ -270,6 +279,12 @@ public interface IFiscalIssuanceReferenceRepository
     Task<FiscalIssuanceReferenceRecord> UpdateStateAsync(
         Guid fiscalIssuanceReferenceId,
         FiscalIssuanceStateTransitionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<FiscalIssuanceReferenceRecord> RecordSemanticRequestHashAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalSemanticRequestHashResult semanticRequestHash,
+        Guid? serviceIdentityId,
         CancellationToken cancellationToken);
 
     Task<FiscalIssuanceReferenceRecord?> FindByPaymentConfirmationIdAsync(

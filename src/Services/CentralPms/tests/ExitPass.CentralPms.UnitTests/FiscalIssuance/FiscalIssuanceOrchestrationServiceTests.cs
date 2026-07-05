@@ -981,7 +981,9 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
                 PosServerResponseTimestamp: request.PosServerResponseTimestamp,
                 FirstRecordedAt: now,
                 LastUpdatedAt: now,
-                RecordedByServiceIdentityId: request.RecordedByServiceIdentityId);
+                RecordedByServiceIdentityId: request.RecordedByServiceIdentityId,
+                FiscalDocumentTypeCodeId: request.FiscalDocumentTypeCodeId,
+                FiscalDocumentTypeCodeKey: request.FiscalDocumentTypeCodeKey);
 
             _records[record.FiscalIssuanceReferenceId] = record;
             return Task.FromResult(record);
@@ -1033,6 +1035,32 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             Guid paymentConfirmationId,
             CancellationToken cancellationToken) =>
             Task.FromResult(_records.Values.SingleOrDefault(record => record.PaymentConfirmationId == paymentConfirmationId));
+
+        public Task<FiscalIssuanceReferenceRecord> RecordSemanticRequestHashAsync(
+            Guid fiscalIssuanceReferenceId,
+            FiscalSemanticRequestHashResult semanticRequestHash,
+            Guid? serviceIdentityId,
+            CancellationToken cancellationToken)
+        {
+            if (!_records.TryGetValue(fiscalIssuanceReferenceId, out var existing))
+            {
+                throw new InvalidOperationException("Fiscal issuance reference was not found.");
+            }
+
+            var updated = existing with
+            {
+                SemanticRequestHashStatus = semanticRequestHash.Status,
+                SemanticRequestHashValue = semanticRequestHash.HashValue,
+                SemanticRequestHashAlgorithm = semanticRequestHash.HashAlgorithm,
+                SemanticRequestHashSourceVersion = semanticRequestHash.HashSourceVersion,
+                SemanticRequestHashSourceFactCount = semanticRequestHash.SourceFactCount,
+                SemanticRequestHashSafeSummary = semanticRequestHash.SafeSourceSummary,
+                SemanticRequestHashRecordedAt = DateTimeOffset.UtcNow
+            };
+
+            _records[fiscalIssuanceReferenceId] = updated;
+            return Task.FromResult(updated);
+        }
 
         public Task<FiscalIssuanceReferenceRecord?> FindLatestByPaymentAttemptIdAsync(
             Guid paymentAttemptId,

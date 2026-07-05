@@ -106,6 +106,8 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 site_id,
                 site_pos_server_id,
                 site_pos_server_ref,
+                fiscal_document_type_code_id,
+                fiscal_document_type_code_key,
                 payable_basis_ref,
                 upstream_finality_reference,
                 pos_server_fiscal_document_id,
@@ -130,7 +132,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 pos_server_response_timestamp,
                 first_recorded_at,
                 last_updated_at,
-                recorded_by_service_identity_id;
+                recorded_by_service_identity_id,
+                semantic_request_hash_status,
+                semantic_request_hash_value,
+                semantic_request_hash_algorithm,
+                semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -206,6 +215,8 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 site_id,
                 site_pos_server_id,
                 site_pos_server_ref,
+                fiscal_document_type_code_id,
+                fiscal_document_type_code_key,
                 payable_basis_ref,
                 upstream_finality_reference,
                 pos_server_fiscal_document_id,
@@ -230,7 +241,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 pos_server_response_timestamp,
                 first_recorded_at,
                 last_updated_at,
-                recorded_by_service_identity_id;
+                recorded_by_service_identity_id,
+                semantic_request_hash_status,
+                semantic_request_hash_value,
+                semantic_request_hash_algorithm,
+                semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -248,6 +266,103 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
         if (!await reader.ReadAsync(cancellationToken))
         {
             throw new InvalidOperationException("Fiscal issuance reference state transition returned no rows.");
+        }
+
+        return MapReference(reader);
+    }
+
+    public async Task<FiscalIssuanceReferenceRecord> RecordSemanticRequestHashAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalSemanticRequestHashResult semanticRequestHash,
+        Guid? serviceIdentityId,
+        CancellationToken cancellationToken)
+    {
+        if (fiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(fiscalIssuanceReferenceId));
+        }
+
+        ArgumentNullException.ThrowIfNull(semanticRequestHash);
+
+        const string sql = """
+            UPDATE core.fiscal_issuance_references
+            SET
+                semantic_request_hash_status = @semantic_request_hash_status,
+                semantic_request_hash_value = @semantic_request_hash_value,
+                semantic_request_hash_algorithm = @semantic_request_hash_algorithm,
+                semantic_request_hash_source_version = @semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count = @semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary = @semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at = now(),
+                updated_by_service_identity_id = COALESCE(@updated_by_service_identity_id, updated_by_service_identity_id)
+            WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+              AND is_active = true
+            RETURNING
+                fiscal_issuance_reference_id,
+                payment_confirmation_id,
+                payment_attempt_id,
+                parking_session_id,
+                tariff_snapshot_id,
+                site_id,
+                site_pos_server_id,
+                site_pos_server_ref,
+                fiscal_document_type_code_id,
+                fiscal_document_type_code_key,
+                payable_basis_ref,
+                upstream_finality_reference,
+                pos_server_fiscal_document_id,
+                fiscal_identity_id,
+                fiscal_sequence_policy_id,
+                fiscal_sequence_value,
+                fiscal_document_number,
+                fiscal_series,
+                fiscal_number_prefix_text,
+                fiscal_number_suffix_text,
+                fiscal_number_assigned_at,
+                fiscal_number_assigned_by_ref,
+                fiscal_document_status_code_id,
+                result_classification,
+                fiscal_issuance_evidence_status,
+                fiscal_number_assignment_state,
+                fiscal_issuance_state,
+                latest_exception_reason,
+                latest_error_code,
+                latest_error_posture,
+                correlation_id,
+                pos_server_response_timestamp,
+                first_recorded_at,
+                last_updated_at,
+                recorded_by_service_identity_id,
+                semantic_request_hash_status,
+                semantic_request_hash_value,
+                semantic_request_hash_algorithm,
+                semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("fiscal_issuance_reference_id", fiscalIssuanceReferenceId);
+        command.Parameters.AddWithValue("semantic_request_hash_status", ToDatabaseValue(semanticRequestHash.Status));
+        AddNullable(command, "semantic_request_hash_value", semanticRequestHash.HashValue);
+        command.Parameters.AddWithValue("semantic_request_hash_algorithm", semanticRequestHash.HashAlgorithm);
+        command.Parameters.AddWithValue("semantic_request_hash_source_version", semanticRequestHash.HashSourceVersion);
+        command.Parameters.AddWithValue("semantic_request_hash_source_fact_count", semanticRequestHash.SourceFactCount);
+        command.Parameters.AddWithValue("semantic_request_hash_safe_summary", semanticRequestHash.SafeSourceSummary);
+        AddNullable(command, "updated_by_service_identity_id", serviceIdentityId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("Fiscal issuance semantic request hash update returned no rows.");
         }
 
         return MapReference(reader);
@@ -352,6 +467,8 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 site_id,
                 site_pos_server_id,
                 site_pos_server_ref,
+                fiscal_document_type_code_id,
+                fiscal_document_type_code_key,
                 payable_basis_ref,
                 upstream_finality_reference,
                 pos_server_fiscal_document_id,
@@ -376,7 +493,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 pos_server_response_timestamp,
                 first_recorded_at,
                 last_updated_at,
-                recorded_by_service_identity_id
+                recorded_by_service_identity_id,
+                semantic_request_hash_status,
+                semantic_request_hash_value,
+                semantic_request_hash_algorithm,
+                semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at
             FROM core.fiscal_issuance_references
             {whereClause}
             ORDER BY first_recorded_at DESC
@@ -414,6 +538,8 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 site_id,
                 site_pos_server_id,
                 site_pos_server_ref,
+                fiscal_document_type_code_id,
+                fiscal_document_type_code_key,
                 payable_basis_ref,
                 upstream_finality_reference,
                 pos_server_fiscal_document_id,
@@ -438,7 +564,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 pos_server_response_timestamp,
                 first_recorded_at,
                 last_updated_at,
-                recorded_by_service_identity_id
+                recorded_by_service_identity_id,
+                semantic_request_hash_status,
+                semantic_request_hash_value,
+                semantic_request_hash_algorithm,
+                semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at
             FROM core.fiscal_issuance_references
             {whereClause};
             """;
@@ -558,7 +691,16 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             GetNullableDateTimeOffset(reader, "pos_server_response_timestamp"),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("first_recorded_at")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_updated_at")),
-            GetNullableGuid(reader, "recorded_by_service_identity_id"));
+            GetNullableGuid(reader, "recorded_by_service_identity_id"),
+            FiscalDocumentTypeCodeId: GetNullableGuid(reader, "fiscal_document_type_code_id"),
+            FiscalDocumentTypeCodeKey: GetNullableString(reader, "fiscal_document_type_code_key"),
+            SemanticRequestHashStatus: ParseSemanticRequestHashStatus(GetNullableString(reader, "semantic_request_hash_status")),
+            SemanticRequestHashValue: GetNullableString(reader, "semantic_request_hash_value"),
+            SemanticRequestHashAlgorithm: GetNullableString(reader, "semantic_request_hash_algorithm"),
+            SemanticRequestHashSourceVersion: GetNullableString(reader, "semantic_request_hash_source_version"),
+            SemanticRequestHashSourceFactCount: GetNullableInt32(reader, "semantic_request_hash_source_fact_count"),
+            SemanticRequestHashSafeSummary: GetNullableString(reader, "semantic_request_hash_safe_summary"),
+            SemanticRequestHashRecordedAt: GetNullableDateTimeOffset(reader, "semantic_request_hash_recorded_at"));
 
     private static void AddNullable<T>(NpgsqlCommand command, string name, T? value)
     {
@@ -597,6 +739,12 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             return true;
         }
 
+        if (underlyingType == typeof(int))
+        {
+            dbType = NpgsqlDbType.Integer;
+            return true;
+        }
+
         if (underlyingType == typeof(DateTimeOffset))
         {
             dbType = NpgsqlDbType.TimestampTz;
@@ -624,6 +772,15 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             FiscalIssuanceIntegrationState.FiscalIssuanceExceptionReleased => "FISCAL_ISSUANCE_EXCEPTION_RELEASED",
             FiscalIssuanceIntegrationState.FiscalIssuanceReconciled => "FISCAL_ISSUANCE_RECONCILED",
             _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown fiscal issuance state.")
+        };
+
+    private static string ToDatabaseValue(FiscalSemanticRequestHashSourceStatus status) =>
+        status switch
+        {
+            FiscalSemanticRequestHashSourceStatus.Unavailable => "UNAVAILABLE",
+            FiscalSemanticRequestHashSourceStatus.Incomplete => "INCOMPLETE",
+            FiscalSemanticRequestHashSourceStatus.Available => "AVAILABLE",
+            _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown semantic request hash status.")
         };
 
     private static string ToDatabaseValue(FiscalNumberAssignmentState state) =>
@@ -725,6 +882,16 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
                 ? parsed
                 : throw new InvalidOperationException($"Unknown fiscal issuance exception reason '{value}'.");
 
+    private static FiscalSemanticRequestHashSourceStatus? ParseSemanticRequestHashStatus(string? value) =>
+        value switch
+        {
+            null => null,
+            "UNAVAILABLE" => FiscalSemanticRequestHashSourceStatus.Unavailable,
+            "INCOMPLETE" => FiscalSemanticRequestHashSourceStatus.Incomplete,
+            "AVAILABLE" => FiscalSemanticRequestHashSourceStatus.Available,
+            _ => throw new InvalidOperationException($"Unknown semantic request hash status '{value}'.")
+        };
+
     private static Guid? GetNullableGuid(NpgsqlDataReader reader, string name)
     {
         var ordinal = reader.GetOrdinal(name);
@@ -735,6 +902,12 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
+    }
+
+    private static int? GetNullableInt32(NpgsqlDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
     }
 
     private static string? GetNullableString(NpgsqlDataReader reader, string name)

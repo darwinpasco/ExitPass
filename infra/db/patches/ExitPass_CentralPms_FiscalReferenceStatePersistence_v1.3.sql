@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS core.fiscal_issuance_references (
     latest_error_posture varchar(80),
     correlation_id uuid,
     pos_server_response_timestamp timestamptz,
+    semantic_request_hash_status varchar(40),
+    semantic_request_hash_value varchar(64),
+    semantic_request_hash_algorithm varchar(32),
+    semantic_request_hash_source_version varchar(80),
+    semantic_request_hash_source_fact_count integer,
+    semantic_request_hash_safe_summary varchar(240),
+    semantic_request_hash_recorded_at timestamptz,
     first_recorded_at timestamptz DEFAULT now() NOT NULL,
     last_updated_at timestamptz DEFAULT now() NOT NULL,
     recorded_by_service_identity_id uuid,
@@ -127,6 +134,20 @@ CREATE TABLE IF NOT EXISTS core.fiscal_issuance_references (
             'RETRY_AFTER_SERVICE_RECOVERY'
         )
     ),
+    CONSTRAINT ck_fiscal_issuance_references__semantic_request_hash_status CHECK (
+        semantic_request_hash_status IS NULL
+        OR semantic_request_hash_status IN ('UNAVAILABLE', 'INCOMPLETE', 'AVAILABLE')
+    ),
+    CONSTRAINT ck_fiscal_issuance_references__semantic_request_hash_available_complete CHECK (
+        semantic_request_hash_status IS DISTINCT FROM 'AVAILABLE'
+        OR (
+            semantic_request_hash_value IS NOT NULL
+            AND semantic_request_hash_algorithm IS NOT NULL
+            AND semantic_request_hash_source_version IS NOT NULL
+            AND semantic_request_hash_source_fact_count IS NOT NULL
+            AND semantic_request_hash_source_fact_count > 0
+        )
+    ),
     CONSTRAINT ck_fiscal_issuance_references__complete_recorded_evidence CHECK (
         fiscal_issuance_state NOT IN (
             'FISCAL_ISSUANCE_RECORDED',
@@ -157,6 +178,27 @@ CREATE TABLE IF NOT EXISTS core.fiscal_issuance_references (
         OR latest_exception_reason IS NOT NULL
     )
 );
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_status varchar(40);
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_value varchar(64);
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_algorithm varchar(32);
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_source_version varchar(80);
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_source_fact_count integer;
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_safe_summary varchar(240);
+
+ALTER TABLE core.fiscal_issuance_references
+    ADD COLUMN IF NOT EXISTS semantic_request_hash_recorded_at timestamptz;
 
 ALTER TABLE core.fiscal_issuance_references
     ADD CONSTRAINT fk_fiscal_issuance_references__payment_confirmation_id

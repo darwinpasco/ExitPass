@@ -25,6 +25,11 @@ public static class FiscalReferenceStatePatchHarness
                 await ExecuteSqlAsync(connectionString, RetryCommandPreparationTableSql);
             }
 
+            if (!await SemanticRequestHashColumnsExistAsync(connectionString))
+            {
+                await ExecuteSqlAsync(connectionString, SemanticRequestHashColumnsSql);
+            }
+
             await ExecuteSqlFileAsync(
                 connectionString,
                 ResolveRepoPath("infra", "db", "patches", "validation", "Validate_CentralPmsFiscalReferenceStatePersistence_v1.3.sql"));
@@ -50,6 +55,32 @@ public static class FiscalReferenceStatePatchHarness
     private static async Task<bool> RetryCommandPreparationTableExistsAsync(string connectionString)
     {
         const string sql = "SELECT to_regclass('core.fiscal_issuance_retry_command_preparations') IS NOT NULL;";
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync();
+        return result is true;
+    }
+
+    private static async Task<bool> SemanticRequestHashColumnsExistAsync(string connectionString)
+    {
+        const string sql = """
+            SELECT COUNT(*) = 7
+            FROM information_schema.columns
+            WHERE table_schema = 'core'
+              AND table_name = 'fiscal_issuance_references'
+              AND column_name IN (
+                  'semantic_request_hash_status',
+                  'semantic_request_hash_value',
+                  'semantic_request_hash_algorithm',
+                  'semantic_request_hash_source_version',
+                  'semantic_request_hash_source_fact_count',
+                  'semantic_request_hash_safe_summary',
+                  'semantic_request_hash_recorded_at'
+              );
+            """;
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -172,5 +203,28 @@ public static class FiscalReferenceStatePatchHarness
 
         COMMENT ON TABLE core.fiscal_issuance_retry_command_preparations IS
             'Central PMS v1.3 FEQ retry command preparation audit records only. No retry execution, scheduler, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+        """;
+
+    private const string SemanticRequestHashColumnsSql = """
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_status varchar(40);
+
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_value varchar(64);
+
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_algorithm varchar(32);
+
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_source_version varchar(80);
+
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_source_fact_count integer;
+
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_safe_summary varchar(240);
+
+        ALTER TABLE core.fiscal_issuance_references
+            ADD COLUMN IF NOT EXISTS semantic_request_hash_recorded_at timestamptz;
         """;
 }

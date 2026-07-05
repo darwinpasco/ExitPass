@@ -340,7 +340,12 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             RetryCommandPreparationStatus: FiscalExceptionRetryCommandPreparationStatus.NotPrepared,
             RetryCommandBlockReasonCode: "retry_command_not_prepared",
             SafeRetryCommandPreparationSummary: "retry_command_not_prepared_read_detail_for_evaluation",
-            SemanticRequestHashAvailabilityStatus: FiscalExceptionSemanticRequestHashAvailabilityStatus.NotAvailableInCurrentModel,
+            SemanticRequestHashAvailabilityStatus: ToSemanticRequestHashAvailability(record),
+            SemanticRequestHashValue: record.SemanticRequestHashValue,
+            SemanticRequestHashAlgorithm: record.SemanticRequestHashAlgorithm,
+            SemanticRequestHashSourceVersion: record.SemanticRequestHashSourceVersion,
+            SemanticRequestHashSourceFactCount: record.SemanticRequestHashSourceFactCount,
+            SafeSemanticRequestHashSourceSummary: record.SemanticRequestHashSafeSummary,
             IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),
             LastRetryCommandPreparationAttemptAt: null,
             RetryCommandPreparationAttemptCount: null,
@@ -559,4 +564,20 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         string.IsNullOrWhiteSpace(upstreamFinalityReference)
             ? FiscalExceptionIdempotencyContextAvailabilityStatus.MissingUpstreamFinalityReference
             : FiscalExceptionIdempotencyContextAvailabilityStatus.Available;
+
+    private static FiscalExceptionSemanticRequestHashAvailabilityStatus ToSemanticRequestHashAvailability(
+        FiscalIssuanceReferenceRecord record) =>
+        record.SemanticRequestHashStatus switch
+        {
+            FiscalSemanticRequestHashSourceStatus.Available
+                when !string.IsNullOrWhiteSpace(record.SemanticRequestHashValue) &&
+                    !string.IsNullOrWhiteSpace(record.SemanticRequestHashAlgorithm) &&
+                    !string.IsNullOrWhiteSpace(record.SemanticRequestHashSourceVersion) =>
+                FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed,
+            FiscalSemanticRequestHashSourceStatus.Incomplete =>
+                FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButUnconfirmed,
+            FiscalSemanticRequestHashSourceStatus.Unavailable =>
+                FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing,
+            _ => FiscalExceptionSemanticRequestHashAvailabilityStatus.NotAvailableInCurrentModel
+        };
 }
