@@ -510,6 +510,97 @@ ALTER TABLE core.fiscal_issuance_retry_command_preparations
 CREATE INDEX IF NOT EXISTS ix_fiscal_issuance_retry_command_preparations__reference_attempted
     ON core.fiscal_issuance_retry_command_preparations (fiscal_issuance_reference_id, attempted_at DESC);
 
+CREATE TABLE IF NOT EXISTS core.fiscal_issuance_retry_schedule_preparations (
+    retry_schedule_preparation_attempt_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    fiscal_issuance_reference_id uuid NOT NULL,
+    retry_command_preparation_attempt_id uuid,
+    payment_confirmation_id uuid,
+    payment_attempt_id uuid,
+    parking_session_id uuid,
+    site_id uuid,
+    site_pos_server_id uuid,
+    site_pos_server_ref varchar(128),
+    latest_readback_classification varchar(40),
+    retry_eligibility_decision varchar(40) NOT NULL,
+    semantic_request_hash_availability varchar(80) NOT NULL,
+    idempotency_context_availability varchar(80) NOT NULL,
+    scheduling_preparation_status varchar(40) NOT NULL,
+    scheduling_block_reason_code varchar(160),
+    requested_at timestamptz DEFAULT now() NOT NULL,
+    earliest_eligible_at timestamptz,
+    safe_summary varchar(240) NOT NULL,
+    correlation_id uuid,
+    actor_service_identity_id uuid,
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT pk_fiscal_issuance_retry_schedule_preparations PRIMARY KEY (retry_schedule_preparation_attempt_id),
+    CONSTRAINT ck_fiscal_issuance_retry_schedule_preparations__readback_classification CHECK (
+        latest_readback_classification IS NULL
+        OR latest_readback_classification IN (
+            'MATCHED',
+            'NOT_FOUND',
+            'MISMATCH',
+            'FAILED',
+            'UNAVAILABLE',
+            'UNKNOWN',
+            'IDENTIFIER_MISSING',
+            'NOT_SUPPORTED_YET'
+        )
+    ),
+    CONSTRAINT ck_fiscal_issuance_retry_schedule_preparations__eligibility_decision CHECK (
+        retry_eligibility_decision IN ('NOT_EVALUATED', 'ELIGIBLE', 'BLOCKED', 'UNAVAILABLE', 'NOT_REQUIRED')
+    ),
+    CONSTRAINT ck_fiscal_issuance_retry_schedule_preparations__semantic_hash_status CHECK (
+        semantic_request_hash_availability IN (
+            'NOT_AVAILABLE_IN_CURRENT_MODEL',
+            'AVAILABLE_AND_CONFIRMED',
+            'REQUIRED_BUT_MISSING',
+            'REQUIRED_BUT_UNCONFIRMED'
+        )
+    ),
+    CONSTRAINT ck_fiscal_issuance_retry_schedule_preparations__idempotency_status CHECK (
+        idempotency_context_availability IN (
+            'NOT_EVALUATED',
+            'AVAILABLE',
+            'MISSING_UPSTREAM_FINALITY_REFERENCE',
+            'NEW_UPSTREAM_FINALITY_REFERENCE_REJECTED'
+        )
+    ),
+    CONSTRAINT ck_fiscal_issuance_retry_schedule_preparations__status CHECK (
+        scheduling_preparation_status IN (
+            'NOT_PREPARED',
+            'DISABLED',
+            'SCHEDULED_PREPARED',
+            'BLOCKED',
+            'UNAVAILABLE'
+        )
+    ),
+    CONSTRAINT ck_fiscal_issuance_retry_schedule_preparations__prepared_has_command_audit CHECK (
+        scheduling_preparation_status <> 'SCHEDULED_PREPARED'
+        OR retry_command_preparation_attempt_id IS NOT NULL
+    )
+);
+
+ALTER TABLE core.fiscal_issuance_retry_schedule_preparations
+    ADD CONSTRAINT fk_fiscal_issuance_retry_schedule_preparations__reference_id
+    FOREIGN KEY (fiscal_issuance_reference_id)
+    REFERENCES core.fiscal_issuance_references(fiscal_issuance_reference_id)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+ALTER TABLE core.fiscal_issuance_retry_schedule_preparations
+    ADD CONSTRAINT fk_fiscal_issuance_retry_schedule_preparations__command_preparation_id
+    FOREIGN KEY (retry_command_preparation_attempt_id)
+    REFERENCES core.fiscal_issuance_retry_command_preparations(retry_command_preparation_attempt_id)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+ALTER TABLE core.fiscal_issuance_retry_schedule_preparations
+    ADD CONSTRAINT fk_fiscal_issuance_retry_schedule_preparations__actor_service_identity_id
+    FOREIGN KEY (actor_service_identity_id)
+    REFERENCES identity.service_identities(service_identity_id)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+CREATE INDEX IF NOT EXISTS ix_fiscal_issuance_retry_schedule_preparations__reference_requested
+    ON core.fiscal_issuance_retry_schedule_preparations (fiscal_issuance_reference_id, requested_at DESC);
+
 COMMENT ON TABLE core.fiscal_issuance_references IS
     'Central PMS v1.3 persistence scaffold for POS Server fiscal issuance reference evidence. Persistence/state only; no POS Server network or ExitAuthorization gating behavior.';
 COMMENT ON TABLE core.fiscal_issuance_attempt_history IS
@@ -520,3 +611,5 @@ COMMENT ON TABLE core.fiscal_issuance_readback_reconciliations IS
     'Central PMS v1.3 fiscal readback/reconciliation scaffold for future GET readback and reconciliation slices.';
 COMMENT ON TABLE core.fiscal_issuance_retry_command_preparations IS
     'Central PMS v1.3 FEQ retry command preparation audit records only. No retry execution, scheduler, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+COMMENT ON TABLE core.fiscal_issuance_retry_schedule_preparations IS
+    'Central PMS v1.3 FEQ retry scheduling preparation audit records only. No executable retry job, endpoint, POS Server POST, or ExitAuthorization gating behavior.';

@@ -366,7 +366,15 @@ static void ConfigureApplicationServices(
         new PostgresFiscalExceptionReadbackAttemptRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionRetryCommandPreparationAuditRepository>(_ =>
         new PostgresFiscalExceptionRetryCommandPreparationAuditRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionRetrySchedulingPreparationAuditRepository>(_ =>
+        new PostgresFiscalExceptionRetrySchedulingPreparationAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionRetryCommandPreparationService, FiscalExceptionRetryCommandPreparationService>();
+    builder.Services.Configure<FiscalExceptionRetrySchedulingPreparationOptions>(
+        builder.Configuration.GetSection(FiscalExceptionRetrySchedulingPreparationOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionRetrySchedulingPreparationService>(serviceProvider =>
+        new FiscalExceptionRetrySchedulingPreparationService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionRetrySchedulingPreparationOptions>>().Value,
+            serviceProvider.GetService<IFiscalExceptionRetrySchedulingPreparationAuditRepository>()));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
     builder.Services.AddScoped<IFiscalExceptionRetryEligibilityEvaluator, FiscalExceptionRetryEligibilityEvaluator>();
     builder.Services.AddScoped<IFiscalExceptionQueueService, FiscalExceptionQueueService>();
