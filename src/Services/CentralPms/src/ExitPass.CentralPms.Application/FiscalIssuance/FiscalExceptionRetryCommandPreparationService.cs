@@ -4,7 +4,49 @@ namespace ExitPass.CentralPms.Application.FiscalIssuance;
 
 public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExceptionRetryCommandPreparationService
 {
-    public FiscalExceptionRetryCommandPreparationResult Prepare(
+    private readonly IFiscalExceptionRetryCommandPreparationAuditRepository? _auditRepository;
+
+    public FiscalExceptionRetryCommandPreparationService()
+    {
+    }
+
+    public FiscalExceptionRetryCommandPreparationService(
+        IFiscalExceptionRetryCommandPreparationAuditRepository auditRepository)
+    {
+        _auditRepository = auditRepository;
+    }
+
+    public async Task<FiscalExceptionRetryCommandPreparationResult> PrepareAsync(
+        FiscalExceptionRetryCommandPreparationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = Evaluate(request);
+        if (_auditRepository is null || request.Detail.Summary.FiscalIssuanceReferenceId == Guid.Empty)
+        {
+            return result;
+        }
+
+        try
+        {
+            var record = await _auditRepository.RecordAsync(
+                ToAuditWrite(request, result),
+                cancellationToken);
+
+            return result with
+            {
+                RetryCommandPreparationAttemptId = record.RetryCommandPreparationAttemptId,
+                RetryCommandPreparationAttemptedAt = record.AttemptedAt
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException(
+                "retry_command_preparation_audit_persistence_failed",
+                ex);
+        }
+    }
+
+    private static FiscalExceptionRetryCommandPreparationResult Evaluate(
         FiscalExceptionRetryCommandPreparationRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -236,9 +278,10 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
             BlockReasonCode: blockReasonCode,
             SafeSummary: safeSummary,
             Command: command,
-            SemanticRequestHashAvailabilityStatus: command is null
-                ? FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing
-                : command.SemanticRequestHashAvailabilityStatus,
+            SemanticRequestHashAvailabilityStatus: ResolveSemanticRequestHashAvailability(
+                detail,
+                blockReasonCode,
+                command),
             IdempotencyContextAvailabilityStatus: idempotencyStatus,
             PosServerPostCalled: false,
             RetryScheduled: false,
@@ -246,5 +289,55 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
             ExitAuthorizationIssued: false,
             GateBehaviorTriggered: false,
             FiscalNumberEdited: false,
-            ManualFiscalDocumentCreated: false);
+            ManualFiscalDocumentCreated: false,
+            RetryCommandPreparationAttemptId: null,
+            RetryCommandPreparationAttemptedAt: null);
+
+    private static FiscalExceptionRetryCommandPreparationAttemptWrite ToAuditWrite(
+        FiscalExceptionRetryCommandPreparationRequest request,
+        FiscalExceptionRetryCommandPreparationResult result)
+    {
+        var detail = request.Detail;
+        var summary = detail.Summary;
+
+        return new FiscalExceptionRetryCommandPreparationAttemptWrite(
+            FiscalIssuanceReferenceId: summary.FiscalIssuanceReferenceId,
+            PaymentConfirmationId: NullIfEmpty(summary.PaymentConfirmationId),
+            PaymentAttemptId: NullIfEmpty(summary.PaymentAttemptId),
+            ParkingSessionId: NullIfEmpty(summary.ParkingSessionId),
+            SiteId: NullIfEmpty(summary.SiteId),
+            SitePosServerId: NullIfEmpty(summary.SitePosServerId),
+            SitePosServerRef: summary.SitePosServerRef,
+            LatestReadbackClassificationBasis: summary.ReadbackClassification,
+            RetryEligibilityDecisionBasis: summary.RetryEligibilityDecision,
+            CommandPreparationStatus: result.Status,
+            CommandBlockReasonCode: result.BlockReasonCode,
+            SemanticRequestHashAvailabilityStatus: result.SemanticRequestHashAvailabilityStatus,
+            IdempotencyContextAvailabilityStatus: result.IdempotencyContextAvailabilityStatus,
+            AttemptedAt: DateTimeOffset.UtcNow,
+            SafeSummary: result.SafeSummary,
+            CorrelationId: detail.CorrelationId,
+            ServiceIdentityId: null);
+    }
+
+    private static FiscalExceptionSemanticRequestHashAvailabilityStatus ResolveSemanticRequestHashAvailability(
+        FiscalExceptionQueueCaseDetail detail,
+        string? blockReasonCode,
+        FiscalExceptionRetryCommandEnvelope? command)
+    {
+        if (command is not null)
+        {
+            return command.SemanticRequestHashAvailabilityStatus;
+        }
+
+        return blockReasonCode == "semantic_request_hash_required_but_missing"
+            ? FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing
+            : detail.Summary.SemanticRequestHashAvailabilityStatus;
+    }
+
+    private static Guid? NullIfEmpty(Guid value) =>
+        value == Guid.Empty ? null : value;
+
+    private static Guid? NullIfEmpty(Guid? value) =>
+        value is null || value == Guid.Empty ? null : value;
 }

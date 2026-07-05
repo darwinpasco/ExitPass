@@ -29,6 +29,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     private readonly IFiscalExceptionReadbackAttemptRepository? _readbackAttemptRepository;
     private readonly IFiscalExceptionRetryEligibilityEvaluator _retryEligibilityEvaluator;
     private readonly IFiscalExceptionRetryCommandPreparationService _retryCommandPreparationService;
+    private readonly IFiscalExceptionRetryCommandPreparationAuditRepository? _retryCommandPreparationAuditRepository;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
         : this(referenceReader, null)
@@ -42,7 +43,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             referenceReader,
             readbackAttemptRepository,
             new FiscalExceptionRetryEligibilityEvaluator(),
-            new FiscalExceptionRetryCommandPreparationService())
+            new FiscalExceptionRetryCommandPreparationService(),
+            retryCommandPreparationAuditRepository: null)
     {
     }
 
@@ -54,7 +56,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             referenceReader,
             readbackAttemptRepository,
             retryEligibilityEvaluator,
-            new FiscalExceptionRetryCommandPreparationService())
+            new FiscalExceptionRetryCommandPreparationService(),
+            retryCommandPreparationAuditRepository: null)
     {
     }
 
@@ -63,11 +66,27 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository,
         IFiscalExceptionRetryEligibilityEvaluator retryEligibilityEvaluator,
         IFiscalExceptionRetryCommandPreparationService retryCommandPreparationService)
+        : this(
+            referenceReader,
+            readbackAttemptRepository,
+            retryEligibilityEvaluator,
+            retryCommandPreparationService,
+            retryCommandPreparationAuditRepository: null)
+    {
+    }
+
+    public FiscalExceptionQueueService(
+        IFiscalExceptionQueueReferenceReader referenceReader,
+        IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository,
+        IFiscalExceptionRetryEligibilityEvaluator retryEligibilityEvaluator,
+        IFiscalExceptionRetryCommandPreparationService retryCommandPreparationService,
+        IFiscalExceptionRetryCommandPreparationAuditRepository? retryCommandPreparationAuditRepository)
     {
         _referenceReader = referenceReader;
         _readbackAttemptRepository = readbackAttemptRepository;
         _retryEligibilityEvaluator = retryEligibilityEvaluator;
         _retryCommandPreparationService = retryCommandPreparationService;
+        _retryCommandPreparationAuditRepository = retryCommandPreparationAuditRepository;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -116,10 +135,24 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             detail,
             _retryEligibilityEvaluator.Evaluate(detail));
 
-        return ApplyRetryCommandPreparation(
+        detail = ApplyRetryCommandPreparation(
             detail,
-            _retryCommandPreparationService.Prepare(
-                new FiscalExceptionRetryCommandPreparationRequest(detail)));
+            await _retryCommandPreparationService.PrepareAsync(
+                new FiscalExceptionRetryCommandPreparationRequest(detail),
+                cancellationToken));
+
+        if (_retryCommandPreparationAuditRepository is null)
+        {
+            return detail;
+        }
+
+        var auditSummary = await _retryCommandPreparationAuditRepository.GetSummaryAsync(
+            record.FiscalIssuanceReferenceId,
+            cancellationToken);
+
+        return auditSummary is null
+            ? detail
+            : ApplyRetryCommandPreparationAuditSummary(detail, auditSummary);
     }
 
     internal static FiscalExceptionQueueCaseDetail ApplyReadbackAttemptSummary(
@@ -176,6 +209,30 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SafeRetryCommandPreparationSummary = preparation.SafeSummary,
             SemanticRequestHashAvailabilityStatus = preparation.SemanticRequestHashAvailabilityStatus,
             IdempotencyContextAvailabilityStatus = preparation.IdempotencyContextAvailabilityStatus,
+            LastRetryCommandPreparationAttemptAt = preparation.RetryCommandPreparationAttemptedAt,
+            RetryExecutionAvailable = false
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
+    }
+
+    internal static FiscalExceptionQueueCaseDetail ApplyRetryCommandPreparationAuditSummary(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionRetryCommandPreparationAttemptSummary auditSummary)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            RetryCommandPreparationStatus = auditSummary.LastCommandPreparationStatus,
+            RetryCommandBlockReasonCode = auditSummary.LastCommandBlockReasonCode,
+            SafeRetryCommandPreparationSummary = auditSummary.SafeSummary,
+            SemanticRequestHashAvailabilityStatus = auditSummary.SemanticRequestHashAvailabilityStatus,
+            IdempotencyContextAvailabilityStatus = auditSummary.IdempotencyContextAvailabilityStatus,
+            LastRetryCommandPreparationAttemptAt = auditSummary.LastAttemptedAt,
+            RetryCommandPreparationAttemptCount = auditSummary.AttemptCount,
             RetryExecutionAvailable = false
         };
 
@@ -285,6 +342,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SafeRetryCommandPreparationSummary: "retry_command_not_prepared_read_detail_for_evaluation",
             SemanticRequestHashAvailabilityStatus: FiscalExceptionSemanticRequestHashAvailabilityStatus.NotAvailableInCurrentModel,
             IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),
+            LastRetryCommandPreparationAttemptAt: null,
+            RetryCommandPreparationAttemptCount: null,
             DuplicateCollapseKey: $"fiscal-reference:{record.FiscalIssuanceReferenceId:N}",
             DuplicateCollapseStrategy: DuplicateCollapseStrategy,
             FirstDetectedAt: record.FirstRecordedAt,

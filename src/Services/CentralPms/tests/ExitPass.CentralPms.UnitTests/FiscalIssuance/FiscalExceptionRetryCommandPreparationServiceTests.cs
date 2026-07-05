@@ -14,13 +14,84 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail!));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
         result.BlockReasonCode.Should().Be("readback_attempt_history_missing");
         result.Command.Should().BeNull();
         result.RetryScheduled.Should().BeFalse();
         result.PosServerPostCalled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenCommandPreparationIsBlocked_PersistsAuditRecord()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var detail = await DetailAsync(reference);
+        var audit = new FakeRetryCommandPreparationAuditRepository();
+        var sut = new FiscalExceptionRetryCommandPreparationService(audit);
+
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
+        result.RetryCommandPreparationAttemptId.Should().NotBeNull();
+        audit.Records.Should().ContainSingle();
+        audit.Records[0].CommandPreparationStatus.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
+        audit.Records[0].CommandBlockReasonCode.Should().Be("readback_attempt_history_missing");
+        result.PaymentFinalityChanged.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenCommandPreparationIsUnavailable_PersistsAuditRecord()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
+        var audit = new FakeRetryCommandPreparationAuditRepository();
+        var sut = new FiscalExceptionRetryCommandPreparationService(audit);
+
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Unavailable);
+        audit.Records.Should().ContainSingle();
+        audit.Records[0].CommandPreparationStatus.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Unavailable);
+        audit.Records[0].CommandBlockReasonCode.Should().Be("semantic_request_hash_required_but_missing");
+        audit.Records[0].SemanticRequestHashAvailabilityStatus
+            .Should().Be(FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenCommandPreparationIsPreparedNonExecutable_PersistsAuditRecord()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
+        detail = detail! with
+        {
+            Summary = detail.Summary with
+            {
+                SemanticRequestHashAvailabilityStatus =
+                    FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed
+            }
+        };
+        var audit = new FakeRetryCommandPreparationAuditRepository();
+        var sut = new FiscalExceptionRetryCommandPreparationService(audit);
+
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable);
+        result.Command.Should().NotBeNull();
+        result.Command!.Executable.Should().BeFalse();
+        audit.Records.Should().ContainSingle();
+        audit.Records[0].CommandPreparationStatus
+            .Should().Be(FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable);
+        audit.Records[0].CommandBlockReasonCode.Should().BeNull();
     }
 
     [Theory]
@@ -39,7 +110,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference, classification);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail!));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
 
         result.Status.Should().NotBe(FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable);
         result.BlockReasonCode.Should().Be(expectedReason);
@@ -54,7 +127,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail!));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
         result.BlockReasonCode.Should().Be("readback_attempt_history_missing");
@@ -70,7 +145,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail!));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
         result.BlockReasonCode.Should().Be("upstream_finality_reference_missing");
@@ -85,10 +162,11 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(
+        var result = await sut.PrepareAsync(
             new FiscalExceptionRetryCommandPreparationRequest(
                 detail!,
-                RequestedUpstreamFinalityReference: $"CPS-POS-UAT:{Guid.NewGuid():N}"));
+                RequestedUpstreamFinalityReference: $"CPS-POS-UAT:{Guid.NewGuid():N}"),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
         result.BlockReasonCode.Should().Be("new_upstream_finality_reference_rejected");
@@ -103,7 +181,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail!));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Unavailable);
         result.BlockReasonCode.Should().Be("semantic_request_hash_required_but_missing");
@@ -129,7 +209,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         };
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable);
         result.BlockReasonCode.Should().BeNull();
@@ -155,7 +237,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(new FiscalExceptionRetryCommandPreparationRequest(detail!));
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail!),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
         result.Command.Should().BeNull();
@@ -169,10 +253,11 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
         var sut = new FiscalExceptionRetryCommandPreparationService();
 
-        var result = sut.Prepare(
+        var result = await sut.PrepareAsync(
             new FiscalExceptionRetryCommandPreparationRequest(
                 detail!,
-                TreatAsExecutableCommand: true));
+                TreatAsExecutableCommand: true),
+            CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Blocked);
         result.BlockReasonCode.Should().Be("retry_execution_not_available");
@@ -201,6 +286,45 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
     }
 
     [Fact]
+    public async Task GetAsync_WhenCommandPreparationAuditIsAvailable_ReturnsLastAuditSummary()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var audit = new FakeRetryCommandPreparationAuditRepository();
+
+        var detail = await DetailAsync(
+            reference,
+            FiscalExceptionReadbackClassification.NotFound,
+            audit);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.RetryCommandPreparationStatus.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Unavailable);
+        detail.Summary.RetryCommandPreparationAttemptCount.Should().Be(1);
+        detail.Summary.LastRetryCommandPreparationAttemptAt.Should().NotBeNull();
+        detail.Summary.RetryCommandBlockReasonCode.Should().Be("semantic_request_hash_required_but_missing");
+        detail.Summary.SafeRetryCommandPreparationSummary
+            .Should().Be("retry_command_unavailable_semantic_request_hash_required_but_missing");
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenCommandPreparationAuditPersistenceFails_DoesNotReturnPreparedPosture()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var audit = new FakeRetryCommandPreparationAuditRepository
+        {
+            ThrowOnRecord = true
+        };
+
+        var act = () => DetailAsync(
+            reference,
+            FiscalExceptionReadbackClassification.NotFound,
+            audit);
+
+        await act.Should()
+            .ThrowAsync<InvalidOperationException>()
+            .WithMessage("retry_command_preparation_audit_persistence_failed");
+    }
+
+    [Fact]
     public void RetryCommandPreparation_DoesNotDependOnPosServerSchedulerPaymentExitOrGate()
     {
         var constructorParameters = typeof(FiscalExceptionRetryCommandPreparationService)
@@ -209,7 +333,12 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
             .Select(parameter => parameter.ParameterType.Name)
             .ToArray();
 
-        constructorParameters.Should().BeEmpty();
+        constructorParameters.Should().NotContain(parameter =>
+            parameter.Contains("PosServer", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("Scheduler", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("Payment", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("ExitAuthorization", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("Gate", StringComparison.OrdinalIgnoreCase));
 
         var resultProperties = typeof(FiscalExceptionRetryCommandPreparationResult)
             .GetProperties()
@@ -235,7 +364,8 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
 
     private static async Task<FiscalExceptionQueueCaseDetail?> DetailAsync(
         FiscalIssuanceReferenceRecord reference,
-        FiscalExceptionReadbackClassification? classification = null)
+        FiscalExceptionReadbackClassification? classification = null,
+        FakeRetryCommandPreparationAuditRepository? audit = null)
     {
         var attempts = new FakeReadbackAttemptRepository();
         if (classification is not null)
@@ -248,9 +378,16 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
                     SafeErrorSummary: classification.Value.ToString()));
         }
 
-        var service = new FiscalExceptionQueueService(
-            new FakeReferenceReader([reference]),
-            attempts);
+        var service = audit is null
+            ? new FiscalExceptionQueueService(
+                new FakeReferenceReader([reference]),
+                attempts)
+            : new FiscalExceptionQueueService(
+                new FakeReferenceReader([reference]),
+                attempts,
+                new FiscalExceptionRetryEligibilityEvaluator(),
+                new FiscalExceptionRetryCommandPreparationService(audit),
+                audit);
 
         return await service.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
     }
@@ -334,6 +471,74 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         public void Seed(FiscalExceptionReadbackAttemptSummary summary)
         {
             _summary = summary;
+        }
+    }
+
+    private sealed class FakeRetryCommandPreparationAuditRepository :
+        IFiscalExceptionRetryCommandPreparationAuditRepository
+    {
+        public List<FiscalExceptionRetryCommandPreparationAttemptRecord> Records { get; } = [];
+
+        public bool ThrowOnRecord { get; init; }
+
+        public Task<FiscalExceptionRetryCommandPreparationAttemptRecord> RecordAsync(
+            FiscalExceptionRetryCommandPreparationAttemptWrite attempt,
+            CancellationToken cancellationToken)
+        {
+            if (ThrowOnRecord)
+            {
+                throw new InvalidOperationException("audit write failed");
+            }
+
+            var record = new FiscalExceptionRetryCommandPreparationAttemptRecord(
+                RetryCommandPreparationAttemptId: Guid.NewGuid(),
+                FiscalIssuanceReferenceId: attempt.FiscalIssuanceReferenceId,
+                PaymentConfirmationId: attempt.PaymentConfirmationId,
+                PaymentAttemptId: attempt.PaymentAttemptId,
+                ParkingSessionId: attempt.ParkingSessionId,
+                SiteId: attempt.SiteId,
+                SitePosServerId: attempt.SitePosServerId,
+                SitePosServerRef: attempt.SitePosServerRef,
+                LatestReadbackClassificationBasis: attempt.LatestReadbackClassificationBasis,
+                RetryEligibilityDecisionBasis: attempt.RetryEligibilityDecisionBasis,
+                CommandPreparationStatus: attempt.CommandPreparationStatus,
+                CommandBlockReasonCode: attempt.CommandBlockReasonCode,
+                SemanticRequestHashAvailabilityStatus: attempt.SemanticRequestHashAvailabilityStatus,
+                IdempotencyContextAvailabilityStatus: attempt.IdempotencyContextAvailabilityStatus,
+                AttemptedAt: attempt.AttemptedAt,
+                SafeSummary: attempt.SafeSummary,
+                CorrelationId: attempt.CorrelationId,
+                ServiceIdentityId: attempt.ServiceIdentityId,
+                CreatedAt: attempt.AttemptedAt);
+
+            Records.Add(record);
+            return Task.FromResult(record);
+        }
+
+        public Task<FiscalExceptionRetryCommandPreparationAttemptSummary?> GetSummaryAsync(
+            Guid fiscalIssuanceReferenceId,
+            CancellationToken cancellationToken)
+        {
+            var latest = Records
+                .Where(record => record.FiscalIssuanceReferenceId == fiscalIssuanceReferenceId)
+                .OrderByDescending(record => record.AttemptedAt)
+                .FirstOrDefault();
+
+            if (latest is null)
+            {
+                return Task.FromResult<FiscalExceptionRetryCommandPreparationAttemptSummary?>(null);
+            }
+
+            var count = Records.Count(record => record.FiscalIssuanceReferenceId == fiscalIssuanceReferenceId);
+            return Task.FromResult<FiscalExceptionRetryCommandPreparationAttemptSummary?>(
+                new FiscalExceptionRetryCommandPreparationAttemptSummary(
+                    LastCommandPreparationStatus: latest.CommandPreparationStatus,
+                    LastAttemptedAt: latest.AttemptedAt,
+                    AttemptCount: count,
+                    LastCommandBlockReasonCode: latest.CommandBlockReasonCode,
+                    SemanticRequestHashAvailabilityStatus: latest.SemanticRequestHashAvailabilityStatus,
+                    IdempotencyContextAvailabilityStatus: latest.IdempotencyContextAvailabilityStatus,
+                    SafeSummary: latest.SafeSummary));
         }
     }
 }

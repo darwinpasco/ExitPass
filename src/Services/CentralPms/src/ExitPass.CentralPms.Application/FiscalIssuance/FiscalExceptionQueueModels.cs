@@ -138,6 +138,8 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string SafeRetryCommandPreparationSummary,
     FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    DateTimeOffset? LastRetryCommandPreparationAttemptAt,
+    int? RetryCommandPreparationAttemptCount,
     string DuplicateCollapseKey,
     string DuplicateCollapseStrategy,
     DateTimeOffset FirstDetectedAt,
@@ -214,12 +216,75 @@ public sealed record FiscalExceptionRetryCommandPreparationResult(
     bool ExitAuthorizationIssued,
     bool GateBehaviorTriggered,
     bool FiscalNumberEdited,
-    bool ManualFiscalDocumentCreated);
+    bool ManualFiscalDocumentCreated,
+    Guid? RetryCommandPreparationAttemptId = null,
+    DateTimeOffset? RetryCommandPreparationAttemptedAt = null);
 
 public interface IFiscalExceptionRetryCommandPreparationService
 {
-    FiscalExceptionRetryCommandPreparationResult Prepare(
-        FiscalExceptionRetryCommandPreparationRequest request);
+    Task<FiscalExceptionRetryCommandPreparationResult> PrepareAsync(
+        FiscalExceptionRetryCommandPreparationRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionRetryCommandPreparationAttemptWrite(
+    Guid FiscalIssuanceReferenceId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? ParkingSessionId,
+    Guid? SiteId,
+    Guid? SitePosServerId,
+    string? SitePosServerRef,
+    FiscalExceptionReadbackClassification? LatestReadbackClassificationBasis,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
+    FiscalExceptionRetryCommandPreparationStatus CommandPreparationStatus,
+    string? CommandBlockReasonCode,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalExceptionRetryCommandPreparationAttemptRecord(
+    Guid RetryCommandPreparationAttemptId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? ParkingSessionId,
+    Guid? SiteId,
+    Guid? SitePosServerId,
+    string? SitePosServerRef,
+    FiscalExceptionReadbackClassification? LatestReadbackClassificationBasis,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
+    FiscalExceptionRetryCommandPreparationStatus CommandPreparationStatus,
+    string? CommandBlockReasonCode,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId,
+    DateTimeOffset CreatedAt);
+
+public sealed record FiscalExceptionRetryCommandPreparationAttemptSummary(
+    FiscalExceptionRetryCommandPreparationStatus LastCommandPreparationStatus,
+    DateTimeOffset LastAttemptedAt,
+    int AttemptCount,
+    string? LastCommandBlockReasonCode,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    string SafeSummary);
+
+public interface IFiscalExceptionRetryCommandPreparationAuditRepository
+{
+    Task<FiscalExceptionRetryCommandPreparationAttemptRecord> RecordAsync(
+        FiscalExceptionRetryCommandPreparationAttemptWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionRetryCommandPreparationAttemptSummary?> GetSummaryAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
 }
 
 public sealed record FiscalExceptionReadbackPreparation(
