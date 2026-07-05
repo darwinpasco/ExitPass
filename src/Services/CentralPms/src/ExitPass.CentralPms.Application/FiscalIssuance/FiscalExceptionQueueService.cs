@@ -27,18 +27,28 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
 
     private readonly IFiscalExceptionQueueReferenceReader _referenceReader;
     private readonly IFiscalExceptionReadbackAttemptRepository? _readbackAttemptRepository;
+    private readonly IFiscalExceptionRetryEligibilityEvaluator _retryEligibilityEvaluator;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
-        : this(referenceReader, null)
+        : this(referenceReader, null, new FiscalExceptionRetryEligibilityEvaluator())
     {
     }
 
     public FiscalExceptionQueueService(
         IFiscalExceptionQueueReferenceReader referenceReader,
         IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository)
+        : this(referenceReader, readbackAttemptRepository, new FiscalExceptionRetryEligibilityEvaluator())
+    {
+    }
+
+    public FiscalExceptionQueueService(
+        IFiscalExceptionQueueReferenceReader referenceReader,
+        IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository,
+        IFiscalExceptionRetryEligibilityEvaluator retryEligibilityEvaluator)
     {
         _referenceReader = referenceReader;
         _readbackAttemptRepository = readbackAttemptRepository;
+        _retryEligibilityEvaluator = retryEligibilityEvaluator;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -71,18 +81,21 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         }
 
         var detail = ToDetail(record);
-        if (_readbackAttemptRepository is null)
+        if (_readbackAttemptRepository is not null)
         {
-            return detail;
+            var attemptSummary = await _readbackAttemptRepository.GetSummaryAsync(
+                record.FiscalIssuanceReferenceId,
+                cancellationToken);
+
+            if (attemptSummary is not null)
+            {
+                detail = ApplyReadbackAttemptSummary(detail, attemptSummary);
+            }
         }
 
-        var attemptSummary = await _readbackAttemptRepository.GetSummaryAsync(
-            record.FiscalIssuanceReferenceId,
-            cancellationToken);
-
-        return attemptSummary is null
-            ? detail
-            : ApplyReadbackAttemptSummary(detail, attemptSummary);
+        return ApplyRetryEligibilityEvaluation(
+            detail,
+            _retryEligibilityEvaluator.Evaluate(detail));
     }
 
     internal static FiscalExceptionQueueCaseDetail ApplyReadbackAttemptSummary(
@@ -97,6 +110,28 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             LastReadbackAttemptAt = attemptSummary.AttemptedAt,
             ReadbackAttemptCount = attemptSummary.AttemptCount,
             LastReadbackSafeSummary = attemptSummary.SafeErrorSummary ?? current.LastReadbackSafeSummary
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
+    }
+
+    internal static FiscalExceptionQueueCaseDetail ApplyRetryEligibilityEvaluation(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionRetryEligibilityEvaluation evaluation)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            RetryEligibilityStatus = evaluation.Status,
+            RetryEligibilityDecision = evaluation.Decision,
+            RetryBlockReasonCode = evaluation.BlockReasonCode,
+            SafeRetryEligibilitySummary = evaluation.SafeSummary,
+            RetryEligibilityEvaluatedAt = evaluation.EvaluatedAt,
+            RetryEligibilityBasedOnReadbackClassification = evaluation.BasedOnReadbackClassification,
+            RetryExecutionAvailable = false
         };
 
         return detail with
@@ -170,6 +205,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     {
         var readbackStatus = ResolveReadbackStatus(record);
         var readbackClassification = ResolveReadbackClassification(record);
+        var retryEligibilityStatus = ResolveRetryEligibility(record, readbackStatus);
 
         return new FiscalExceptionQueueCaseSummary(
             CaseId: record.FiscalIssuanceReferenceId,
@@ -192,7 +228,12 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             LastReadbackAttemptAt: readbackClassification is null ? null : record.LastUpdatedAt,
             ReadbackAttemptCount: null,
             LastReadbackSafeSummary: null,
-            RetryEligibilityStatus: ResolveRetryEligibility(record, readbackStatus),
+            RetryEligibilityStatus: retryEligibilityStatus,
+            RetryEligibilityDecision: ToRetryEligibilityDecision(retryEligibilityStatus),
+            RetryBlockReasonCode: ToRetryBlockReasonCode(retryEligibilityStatus),
+            SafeRetryEligibilitySummary: ToSafeRetryEligibilitySummary(retryEligibilityStatus),
+            RetryEligibilityEvaluatedAt: null,
+            RetryEligibilityBasedOnReadbackClassification: readbackClassification,
             RetryExecutionAvailable: false,
             DuplicateCollapseKey: $"fiscal-reference:{record.FiscalIssuanceReferenceId:N}",
             DuplicateCollapseStrategy: DuplicateCollapseStrategy,
@@ -354,5 +395,55 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             ? reason
             : $"{reason}:{record.LatestErrorCode}";
     }
+
+    private static FiscalExceptionRetryEligibilityDecision ToRetryEligibilityDecision(
+        FiscalExceptionRetryEligibilityStatus status) =>
+        status switch
+        {
+            FiscalExceptionRetryEligibilityStatus.EligibleForControlledRetryPlanning =>
+                FiscalExceptionRetryEligibilityDecision.Eligible,
+            FiscalExceptionRetryEligibilityStatus.NotRequiredRecorded =>
+                FiscalExceptionRetryEligibilityDecision.NotRequired,
+            FiscalExceptionRetryEligibilityStatus.UnavailableInThisSlice or
+                FiscalExceptionRetryEligibilityStatus.UnavailablePolicyNotConfigured =>
+                FiscalExceptionRetryEligibilityDecision.Unavailable,
+            _ => FiscalExceptionRetryEligibilityDecision.Blocked
+        };
+
+    private static string? ToRetryBlockReasonCode(FiscalExceptionRetryEligibilityStatus status) =>
+        status switch
+        {
+            FiscalExceptionRetryEligibilityStatus.EligibleForControlledRetryPlanning => null,
+            FiscalExceptionRetryEligibilityStatus.BlockedPendingReadback => "readback_attempt_history_missing",
+            FiscalExceptionRetryEligibilityStatus.BlockedManualReview => "manual_review_required",
+            FiscalExceptionRetryEligibilityStatus.BlockedConfiguration => "fiscal_configuration_invalid_or_missing",
+            FiscalExceptionRetryEligibilityStatus.NotRequiredRecorded => "not_required_recorded",
+            FiscalExceptionRetryEligibilityStatus.UnavailableInThisSlice => "retry_execution_unavailable_in_this_slice",
+            FiscalExceptionRetryEligibilityStatus.BlockedReadbackMatched => "readback_matched",
+            FiscalExceptionRetryEligibilityStatus.BlockedReadbackMismatch => "readback_mismatch",
+            FiscalExceptionRetryEligibilityStatus.BlockedReadbackFailed => "readback_failed_or_unknown",
+            FiscalExceptionRetryEligibilityStatus.BlockedIdentifierMissing => "readback_identifier_missing",
+            FiscalExceptionRetryEligibilityStatus.BlockedReadbackUnsupported => "readback_not_supported_yet",
+            FiscalExceptionRetryEligibilityStatus.BlockedMissingRequestContext => "original_request_context_missing",
+            FiscalExceptionRetryEligibilityStatus.BlockedMissingUpstreamFinalityReference => "upstream_finality_reference_missing",
+            FiscalExceptionRetryEligibilityStatus.UnavailablePolicyNotConfigured => "unavailable_policy_not_configured",
+            _ => "retry_eligibility_not_evaluated"
+        };
+
+    private static string ToSafeRetryEligibilitySummary(FiscalExceptionRetryEligibilityStatus status) =>
+        status switch
+        {
+            FiscalExceptionRetryEligibilityStatus.EligibleForControlledRetryPlanning =>
+                "retry_eligible_for_controlled_retry_planning_no_execution",
+            FiscalExceptionRetryEligibilityStatus.NotRequiredRecorded =>
+                "retry_not_required_recorded_or_reconciled",
+            FiscalExceptionRetryEligibilityStatus.BlockedManualReview =>
+                "retry_blocked_manual_review_required",
+            FiscalExceptionRetryEligibilityStatus.BlockedConfiguration =>
+                "retry_blocked_fiscal_configuration_invalid_or_missing",
+            FiscalExceptionRetryEligibilityStatus.UnavailableInThisSlice =>
+                "retry_unavailable_in_this_slice",
+            _ => "retry_blocked_until_evaluated_by_feq_retry_eligibility_evaluator"
+        };
 }
 
