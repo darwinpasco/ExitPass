@@ -135,6 +135,53 @@ public sealed class FiscalExceptionRetryEligibilityEvaluatorTests
     }
 
     [Fact]
+    public async Task GetAsync_WhenSemanticRequestHashIsPersistedAvailable_ExposesConfirmedHashAvailability()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = new string('c', 64),
+            SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            SemanticRequestHashSourceFactCount = 42,
+            SemanticRequestHashSafeSummary = "semantic_request_hash_source_available:facts=42"
+        };
+        var sut = CreateService(reference, FiscalExceptionReadbackClassification.NotFound);
+
+        var detail = await sut.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.RetryEligibilityDecision.Should().Be(FiscalExceptionRetryEligibilityDecision.Eligible);
+        detail.Summary.SemanticRequestHashAvailabilityStatus
+            .Should().Be(FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed);
+        detail.Summary.SemanticRequestHashValue.Should().Be(reference.SemanticRequestHashValue);
+        detail.Summary.RetryExecutionAvailable.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenSemanticRequestHashIsIncomplete_DoesNotExposeConfirmedHashAvailability()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Incomplete,
+            SemanticRequestHashValue = null,
+            SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            SemanticRequestHashSourceFactCount = 0,
+            SemanticRequestHashSafeSummary = "semantic_request_hash_source_incomplete:document_line_required"
+        };
+        var sut = CreateService(reference, FiscalExceptionReadbackClassification.NotFound);
+
+        var detail = await sut.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.SemanticRequestHashAvailabilityStatus
+            .Should().Be(FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButUnconfirmed);
+        detail.Summary.SemanticRequestHashValue.Should().BeNull();
+        detail.Summary.RetryExecutionAvailable.Should().BeFalse();
+    }
+
+    [Fact]
     public void FiscalExceptionRetryEligibilityEvaluator_DoesNotDependOnPosServerPaymentExitGateOrRetryExecution()
     {
         var constructorParameters = typeof(FiscalExceptionRetryEligibilityEvaluator)

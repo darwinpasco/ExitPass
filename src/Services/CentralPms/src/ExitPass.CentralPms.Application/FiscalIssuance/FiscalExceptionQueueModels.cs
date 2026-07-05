@@ -100,6 +100,13 @@ public enum FiscalExceptionIdempotencyContextAvailabilityStatus
     NewUpstreamFinalityReferenceRejected = 4
 }
 
+public enum FiscalSemanticRequestHashSourceStatus
+{
+    Unavailable = 1,
+    Incomplete = 2,
+    Available = 3
+}
+
 public sealed record FiscalExceptionQueueQuery(
     int Limit = 100,
     Guid? SiteId = null,
@@ -137,6 +144,11 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string? RetryCommandBlockReasonCode,
     string SafeRetryCommandPreparationSummary,
     FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    string? SemanticRequestHashValue,
+    string? SemanticRequestHashAlgorithm,
+    string? SemanticRequestHashSourceVersion,
+    int? SemanticRequestHashSourceFactCount,
+    string? SafeSemanticRequestHashSourceSummary,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
@@ -197,6 +209,9 @@ public sealed record FiscalExceptionRetryCommandEnvelope(
     string? FiscalDocumentTypeContextStatus,
     string UpstreamFinalityReference,
     FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    string? SemanticRequestHashValue,
+    string? SemanticRequestHashAlgorithm,
+    string? SemanticRequestHashSourceVersion,
     FiscalExceptionReadbackClassification LatestReadbackClassificationBasis,
     FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
     string? SafeBlockReasonCode,
@@ -285,6 +300,20 @@ public interface IFiscalExceptionRetryCommandPreparationAuditRepository
     Task<FiscalExceptionRetryCommandPreparationAttemptSummary?> GetSummaryAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken);
+}
+
+public sealed record FiscalSemanticRequestHashResult(
+    FiscalSemanticRequestHashSourceStatus Status,
+    string? HashValue,
+    string HashAlgorithm,
+    string HashSourceVersion,
+    int SourceFactCount,
+    string SafeSourceSummary,
+    string? BlockReasonCode);
+
+public interface IFiscalSemanticRequestHashCalculator
+{
+    FiscalSemanticRequestHashResult Calculate(PosServerFiscalDocumentCreateRequest request);
 }
 
 public sealed record FiscalExceptionReadbackPreparation(

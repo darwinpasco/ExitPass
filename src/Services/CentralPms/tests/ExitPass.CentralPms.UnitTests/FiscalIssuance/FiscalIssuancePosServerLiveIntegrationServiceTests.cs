@@ -123,8 +123,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         var sut = CreateSut(
             new FiscalIssuancePosServerIntegrationOptions(),
             mapper,
-            client,
-            orchestration);
+            client: client,
+            orchestration: orchestration);
 
         var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
             FiscalIssuanceReferenceId,
@@ -151,8 +151,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 EnablePosServerFiscalIssuanceLiveCall = true
             },
             mapper,
-            client,
-            orchestration);
+            client: client,
+            orchestration: orchestration);
 
         var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
             FiscalIssuanceReferenceId,
@@ -179,8 +179,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 PosServerBaseUrl = "not-a-url"
             },
             mapper,
-            client,
-            orchestration);
+            client: client,
+            orchestration: orchestration);
 
         var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
             FiscalIssuanceReferenceId,
@@ -209,8 +209,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 EnableLiveFiscalIssuanceFromPaymentFlow = true
             },
             mapper,
-            client,
-            orchestration);
+            client: client,
+            orchestration: orchestration);
 
         var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
             FiscalIssuanceReferenceId,
@@ -256,6 +256,35 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 request.UpstreamFinalityRef == "upstream-finality-ref" &&
                 request.PayableBasis.UpstreamFinalityRef == "upstream-finality-ref"),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_WhenSemanticHashUnavailable_DoesNotCallClient()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var calculator = Substitute.For<IFiscalSemanticRequestHashCalculator>();
+        calculator.Calculate(Arg.Any<PosServerFiscalDocumentCreateRequest>())
+            .Returns(new FiscalSemanticRequestHashResult(
+                Status: FiscalSemanticRequestHashSourceStatus.Incomplete,
+                HashValue: null,
+                HashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                HashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                SourceFactCount: 0,
+                SafeSourceSummary: "semantic_request_hash_source_incomplete:document_line_required",
+                BlockReasonCode: "document_line_required"));
+        var sut = CreateSut(
+            semanticRequestHashCalculator: calculator,
+            client: client);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            PosServerFiscalDocumentRequestMapperTests.ValidContext(),
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.LocalContextInvalid);
+        result.Errors.Should().Contain("document_line_required");
+        await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
     }
 
     [Fact]
@@ -346,8 +375,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         var sut = CreateSut(
             new FiscalIssuancePosServerIntegrationOptions(),
             mapper,
-            client,
-            orchestration);
+            client: client,
+            orchestration: orchestration);
 
         var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
             FiscalIssuanceReferenceId,
@@ -375,8 +404,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         var sut = CreateSut(
             EnabledOptions(),
             mapper,
-            client,
-            orchestration);
+            client: client,
+            orchestration: orchestration);
 
         var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
             FiscalIssuanceReferenceId,
@@ -405,7 +434,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 EnableControlledUatDiagnosticPath = true
             },
             mapper,
-            client);
+            client: client);
 
         var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
             FiscalIssuanceReferenceId,
@@ -434,7 +463,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 PosServerBaseUrl = "not-a-url"
             },
             mapper,
-            client);
+            client: client);
 
         var result = await sut.RunPosServerFiscalIssuanceDiagnosticAsync(
             FiscalIssuanceReferenceId,
@@ -562,13 +591,25 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     private static FiscalIssuancePosServerLiveIntegrationService CreateSut(
         FiscalIssuancePosServerIntegrationOptions? options = null,
         IPosServerFiscalDocumentRequestMapper? mapper = null,
+        IFiscalSemanticRequestHashCalculator? semanticRequestHashCalculator = null,
         IPosServerFiscalDocumentClient? client = null,
-        IFiscalIssuanceOrchestrationService? orchestration = null) =>
-        new(
+        IFiscalIssuanceOrchestrationService? orchestration = null)
+    {
+        var resolvedOrchestration = orchestration ?? Substitute.For<IFiscalIssuanceOrchestrationService>();
+        resolvedOrchestration.RecordSemanticRequestHashAsync(
+                Arg.Any<Guid>(),
+                Arg.Any<FiscalSemanticRequestHashResult>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
+
+        return new FiscalIssuancePosServerLiveIntegrationService(
             options ?? EnabledOptions(),
             mapper ?? new PosServerFiscalDocumentRequestMapper(),
+            semanticRequestHashCalculator ?? new FiscalSemanticRequestHashCalculator(),
             client ?? Substitute.For<IPosServerFiscalDocumentClient>(),
-            orchestration ?? Substitute.For<IFiscalIssuanceOrchestrationService>());
+            resolvedOrchestration);
+    }
 
     private static async Task<FiscalIssuancePosServerLiveIntegrationResult> ExecuteWithPosServerResultAsync(
         PosServerFiscalDocumentCreateResult posServerResult,
@@ -580,6 +621,12 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             .Returns(posServerResult);
         orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
             .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        orchestration.RecordSemanticRequestHashAsync(
+                FiscalIssuanceReferenceId,
+                Arg.Any<FiscalSemanticRequestHashResult>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
 
         if (posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted && posServerResult.Succeeded)
         {
@@ -625,6 +672,12 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             .Returns(posServerResult);
         orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
             .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        orchestration.RecordSemanticRequestHashAsync(
+                FiscalIssuanceReferenceId,
+                Arg.Any<FiscalSemanticRequestHashResult>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.PendingFiscalIssuance));
 
         if (posServerResult.Outcome == PosServerFiscalDocumentOutcome.Accepted && posServerResult.Succeeded)
         {

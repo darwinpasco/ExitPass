@@ -13,6 +13,12 @@ public interface IFiscalIssuanceOrchestrationService
         FiscalIssuanceTransitionContext context,
         CancellationToken cancellationToken);
 
+    Task<FiscalIssuanceReferenceRecord> RecordSemanticRequestHashAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalSemanticRequestHashResult semanticRequestHash,
+        Guid? serviceIdentityId,
+        CancellationToken cancellationToken);
+
     Task<FiscalIssuanceReferenceRecord> MarkFailedRequestAsync(
         Guid fiscalIssuanceReferenceId,
         FiscalIssuanceFailureTransitionContext context,
@@ -134,6 +140,26 @@ public sealed class FiscalIssuanceOrchestrationService : IFiscalIssuanceOrchestr
                 PosServerResponseTimestamp: null,
                 UpdatedByServiceIdentityId: context.ServiceIdentityId),
             cancellationToken);
+
+    public Task<FiscalIssuanceReferenceRecord> RecordSemanticRequestHashAsync(
+        Guid fiscalIssuanceReferenceId,
+        FiscalSemanticRequestHashResult semanticRequestHash,
+        Guid? serviceIdentityId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(semanticRequestHash);
+
+        if (fiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(fiscalIssuanceReferenceId));
+        }
+
+        return _repository.RecordSemanticRequestHashAsync(
+            fiscalIssuanceReferenceId,
+            semanticRequestHash,
+            serviceIdentityId,
+            cancellationToken);
+    }
 
     public Task<FiscalIssuanceReferenceRecord> MarkFailedRequestAsync(
         Guid fiscalIssuanceReferenceId,

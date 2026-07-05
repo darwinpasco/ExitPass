@@ -26,6 +26,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_exception_reviews"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_readback_reconciliations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_command_preparations"));
+        Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "semantic_request_hash_value"));
     }
 
     [Fact]
@@ -213,6 +214,54 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.Equal(1, summary!.AttemptCount);
             Assert.Equal(FiscalExceptionRetryCommandPreparationStatus.Unavailable, summary.LastCommandPreparationStatus);
             Assert.Equal(FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing, summary.SemanticRequestHashAvailabilityStatus);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task RecordSemanticRequestHashAsync_WhenHashIsAvailable_PersistsHashMetadataOnFiscalReference()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(nameof(RecordSemanticRequestHashAsync_WhenHashIsAvailable_PersistsHashMetadataOnFiscalReference));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed semantic request hash persistence test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var repository = CreateRepository();
+            var reference = await repository.CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var hash = new FiscalSemanticRequestHashResult(
+                Status: FiscalSemanticRequestHashSourceStatus.Available,
+                HashValue: new string('b', 64),
+                HashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                HashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                SourceFactCount: 42,
+                SafeSourceSummary: "semantic_request_hash_source_available:facts=42",
+                BlockReasonCode: null);
+
+            var updated = await repository.RecordSemanticRequestHashAsync(
+                reference.FiscalIssuanceReferenceId,
+                hash,
+                serviceIdentityId: null,
+                CancellationToken.None);
+            var found = await repository.FindByPaymentConfirmationIdAsync(
+                confirmation.PaymentConfirmationId,
+                CancellationToken.None);
+
+            Assert.Equal(FiscalSemanticRequestHashSourceStatus.Available, updated.SemanticRequestHashStatus);
+            Assert.Equal(hash.HashValue, updated.SemanticRequestHashValue);
+            Assert.Equal(hash.HashAlgorithm, updated.SemanticRequestHashAlgorithm);
+            Assert.Equal(hash.HashSourceVersion, updated.SemanticRequestHashSourceVersion);
+            Assert.Equal(hash.SourceFactCount, updated.SemanticRequestHashSourceFactCount);
+            Assert.Equal(FiscalSemanticRequestHashSourceStatus.Available, found?.SemanticRequestHashStatus);
+            Assert.Equal(hash.HashValue, found?.SemanticRequestHashValue);
         }
         finally
         {
@@ -608,6 +657,28 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("table_name", qualifiedTableName);
+        var result = await command.ExecuteScalarAsync();
+        return result is true;
+    }
+
+    private static async Task<bool> ColumnExistsAsync(string schema, string table, string column)
+    {
+        const string sql = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = @schema
+                  AND table_name = @table
+                  AND column_name = @column
+            );
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("schema", schema);
+        command.Parameters.AddWithValue("table", table);
+        command.Parameters.AddWithValue("column", column);
         var result = await command.ExecuteScalarAsync();
         return result is true;
     }

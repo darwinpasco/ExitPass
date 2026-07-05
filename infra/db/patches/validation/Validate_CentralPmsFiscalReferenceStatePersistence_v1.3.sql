@@ -40,6 +40,29 @@ BEGIN
         RAISE EXCEPTION 'Missing fiscal_issuance_state on core.fiscal_issuance_references.';
     END IF;
 
+    IF EXISTS (
+        SELECT required_column
+        FROM (
+            VALUES
+                ('semantic_request_hash_status'),
+                ('semantic_request_hash_value'),
+                ('semantic_request_hash_algorithm'),
+                ('semantic_request_hash_source_version'),
+                ('semantic_request_hash_source_fact_count'),
+                ('semantic_request_hash_safe_summary'),
+                ('semantic_request_hash_recorded_at')
+        ) AS required(required_column)
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = 'core'
+              AND table_name = 'fiscal_issuance_references'
+              AND column_name = required.required_column
+        )
+    ) THEN
+        RAISE EXCEPTION 'Missing semantic request hash metadata columns on core.fiscal_issuance_references.';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_indexes

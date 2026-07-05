@@ -141,12 +141,14 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 idempotencyStatus);
         }
 
-        if (summary.SemanticRequestHashAvailabilityStatus !=
-            FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed)
+        if (!HasConfirmedSemanticRequestHash(summary))
         {
+            var semanticBlockReasonCode = ToSemanticRequestHashBlockReason(summary);
             return Unavailable(
-                "semantic_request_hash_required_but_missing",
-                "retry_command_unavailable_semantic_request_hash_required_but_missing",
+                semanticBlockReasonCode,
+                semanticBlockReasonCode == "semantic_request_hash_required_but_unconfirmed"
+                    ? "retry_command_unavailable_semantic_request_hash_required_but_unconfirmed"
+                    : "retry_command_unavailable_semantic_request_hash_required_but_missing",
                 detail,
                 idempotencyStatus);
         }
@@ -168,6 +170,9 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 FiscalDocumentTypeContextStatus: "not_available_in_current_fiscal_reference_model",
                 UpstreamFinalityReference: summary.UpstreamFinalityReference,
                 SemanticRequestHashAvailabilityStatus: summary.SemanticRequestHashAvailabilityStatus,
+                SemanticRequestHashValue: summary.SemanticRequestHashValue,
+                SemanticRequestHashAlgorithm: summary.SemanticRequestHashAlgorithm,
+                SemanticRequestHashSourceVersion: summary.SemanticRequestHashSourceVersion,
                 LatestReadbackClassificationBasis: summary.ReadbackClassification!.Value,
                 RetryEligibilityDecisionBasis: summary.RetryEligibilityDecision,
                 SafeBlockReasonCode: null,
@@ -225,6 +230,19 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
             or FiscalIssuanceExceptionReason.FiscalSequenceStateNotEffective
             or FiscalIssuanceExceptionReason.FiscalNumberAllocationFailed
             or FiscalIssuanceExceptionReason.FiscalDocumentNumberFormatFailed;
+
+    private static bool HasConfirmedSemanticRequestHash(FiscalExceptionQueueCaseSummary summary) =>
+        summary.SemanticRequestHashAvailabilityStatus ==
+            FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed &&
+        !string.IsNullOrWhiteSpace(summary.SemanticRequestHashValue) &&
+        !string.IsNullOrWhiteSpace(summary.SemanticRequestHashAlgorithm) &&
+        !string.IsNullOrWhiteSpace(summary.SemanticRequestHashSourceVersion);
+
+    private static string ToSemanticRequestHashBlockReason(FiscalExceptionQueueCaseSummary summary) =>
+        summary.SemanticRequestHashAvailabilityStatus ==
+            FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButUnconfirmed
+            ? "semantic_request_hash_required_but_unconfirmed"
+            : "semantic_request_hash_required_but_missing";
 
     private static string ToReadbackBlockReason(FiscalExceptionReadbackClassification? classification) =>
         classification switch
@@ -330,9 +348,14 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
             return command.SemanticRequestHashAvailabilityStatus;
         }
 
-        return blockReasonCode == "semantic_request_hash_required_but_missing"
-            ? FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing
-            : detail.Summary.SemanticRequestHashAvailabilityStatus;
+        return blockReasonCode switch
+        {
+            "semantic_request_hash_required_but_missing" =>
+                FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing,
+            "semantic_request_hash_required_but_unconfirmed" =>
+                FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButUnconfirmed,
+            _ => detail.Summary.SemanticRequestHashAvailabilityStatus
+        };
     }
 
     private static Guid? NullIfEmpty(Guid value) =>

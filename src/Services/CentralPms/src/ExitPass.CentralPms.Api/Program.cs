@@ -372,6 +372,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalExceptionQueueService, FiscalExceptionQueueService>();
     builder.Services.AddScoped<IFiscalExceptionReadbackClient, PosServerFiscalExceptionReadbackClient>();
     builder.Services.AddScoped<IFiscalExceptionReadbackWorker, FiscalExceptionReadbackWorker>();
+    builder.Services.AddScoped<IFiscalSemanticRequestHashCalculator, FiscalSemanticRequestHashCalculator>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));
     builder.Services.AddScoped<IPosServerFiscalDocumentRequestMapper, PosServerFiscalDocumentRequestMapper>();
@@ -379,6 +380,7 @@ static void ConfigureApplicationServices(
         new FiscalIssuancePosServerLiveIntegrationService(
             serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>().Value,
             serviceProvider.GetRequiredService<IPosServerFiscalDocumentRequestMapper>(),
+            serviceProvider.GetRequiredService<IFiscalSemanticRequestHashCalculator>(),
             serviceProvider.GetRequiredService<IPosServerFiscalDocumentClient>(),
             serviceProvider.GetRequiredService<IFiscalIssuanceOrchestrationService>()));
     builder.Services

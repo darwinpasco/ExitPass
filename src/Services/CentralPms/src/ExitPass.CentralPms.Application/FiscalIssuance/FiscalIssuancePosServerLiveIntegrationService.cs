@@ -21,17 +21,20 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
 {
     private readonly FiscalIssuancePosServerIntegrationOptions _options;
     private readonly IPosServerFiscalDocumentRequestMapper _requestMapper;
+    private readonly IFiscalSemanticRequestHashCalculator _semanticRequestHashCalculator;
     private readonly IPosServerFiscalDocumentClient _client;
     private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
 
     public FiscalIssuancePosServerLiveIntegrationService(
         FiscalIssuancePosServerIntegrationOptions options,
         IPosServerFiscalDocumentRequestMapper requestMapper,
+        IFiscalSemanticRequestHashCalculator semanticRequestHashCalculator,
         IPosServerFiscalDocumentClient client,
         IFiscalIssuanceOrchestrationService orchestrationService)
     {
         _options = options ?? new FiscalIssuancePosServerIntegrationOptions();
         _requestMapper = requestMapper;
+        _semanticRequestHashCalculator = semanticRequestHashCalculator;
         _client = client;
         _orchestrationService = orchestrationService;
     }
@@ -69,6 +72,28 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
         catch (ArgumentException ex)
         {
             return FiscalIssuancePosServerLiveIntegrationResult.LocalContextInvalid(ex.Message);
+        }
+
+        var semanticRequestHash = _semanticRequestHashCalculator.Calculate(request);
+        if (semanticRequestHash.Status != FiscalSemanticRequestHashSourceStatus.Available ||
+            string.IsNullOrWhiteSpace(semanticRequestHash.HashValue))
+        {
+            return FiscalIssuancePosServerLiveIntegrationResult.LocalContextInvalid(
+                semanticRequestHash.BlockReasonCode ?? "semantic_request_hash_source_unavailable");
+        }
+
+        try
+        {
+            await _orchestrationService.RecordSemanticRequestHashAsync(
+                fiscalIssuanceReferenceId,
+                semanticRequestHash,
+                recordingContext.ServiceIdentityId,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return FiscalIssuancePosServerLiveIntegrationResult.LocalContextInvalid(
+                $"semantic_request_hash_persistence_failed:{ex.Message}");
         }
 
         await _orchestrationService.MarkRequestedAsync(

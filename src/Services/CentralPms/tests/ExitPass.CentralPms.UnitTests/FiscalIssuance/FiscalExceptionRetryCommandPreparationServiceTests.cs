@@ -75,7 +75,10 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
             Summary = detail.Summary with
             {
                 SemanticRequestHashAvailabilityStatus =
-                    FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed
+                    FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed,
+                SemanticRequestHashValue = ValidSemanticRequestHashValue(),
+                SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion
             }
         };
         var audit = new FakeRetryCommandPreparationAuditRepository();
@@ -204,7 +207,10 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
             Summary = detail.Summary with
             {
                 SemanticRequestHashAvailabilityStatus =
-                    FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed
+                    FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed,
+                SemanticRequestHashValue = ValidSemanticRequestHashValue(),
+                SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion
             }
         };
         var sut = new FiscalExceptionRetryCommandPreparationService();
@@ -218,8 +224,64 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
         result.Command.Should().NotBeNull();
         result.Command!.Executable.Should().BeFalse();
         result.Command.UpstreamFinalityReference.Should().Be(reference.UpstreamFinalityReference);
+        result.Command.SemanticRequestHashValue.Should().Be(ValidSemanticRequestHashValue());
         result.Command.SemanticRequestHashAvailabilityStatus
             .Should().Be(FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed);
+        result.PosServerPostCalled.Should().BeFalse();
+        result.RetryScheduled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenPersistedSemanticHashIsAvailable_PreparesNonExecutableEnvelopeWithoutRetryExecution()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = ValidSemanticRequestHashValue(),
+            SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            SemanticRequestHashSourceFactCount = 42,
+            SemanticRequestHashSafeSummary = "semantic_request_hash_source_available:facts=42"
+        };
+
+        var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.SemanticRequestHashAvailabilityStatus
+            .Should().Be(FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed);
+        detail.Summary.RetryCommandPreparationStatus
+            .Should().Be(FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable);
+        detail.Summary.RetryCommandBlockReasonCode.Should().BeNull();
+        detail.Summary.RetryExecutionAvailable.Should().BeFalse();
+        detail.PaymentFinalityChanged.Should().BeFalse();
+        detail.ExitAuthorizationIssued.Should().BeFalse();
+        detail.GateBehaviorTriggered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Prepare_WhenSemanticHashStatusIsConfirmedButHashValueMissing_RemainsUnavailable()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var detail = await DetailAsync(reference, FiscalExceptionReadbackClassification.NotFound);
+        detail = detail! with
+        {
+            Summary = detail.Summary with
+            {
+                SemanticRequestHashAvailabilityStatus =
+                    FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed,
+                SemanticRequestHashValue = null,
+                SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion
+            }
+        };
+        var sut = new FiscalExceptionRetryCommandPreparationService();
+
+        var result = await sut.PrepareAsync(
+            new FiscalExceptionRetryCommandPreparationRequest(detail),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalExceptionRetryCommandPreparationStatus.Unavailable);
+        result.Command.Should().BeNull();
         result.PosServerPostCalled.Should().BeFalse();
         result.RetryScheduled.Should().BeFalse();
     }
@@ -432,6 +494,9 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
             LastUpdatedAt: now,
             RecordedByServiceIdentityId: Guid.NewGuid());
     }
+
+    private static string ValidSemanticRequestHashValue() =>
+        new('a', 64);
 
     private sealed class FakeReferenceReader : IFiscalExceptionQueueReferenceReader
     {
