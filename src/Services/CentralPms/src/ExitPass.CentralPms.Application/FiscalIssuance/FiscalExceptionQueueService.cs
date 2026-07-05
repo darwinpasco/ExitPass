@@ -28,16 +28,21 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     private readonly IFiscalExceptionQueueReferenceReader _referenceReader;
     private readonly IFiscalExceptionReadbackAttemptRepository? _readbackAttemptRepository;
     private readonly IFiscalExceptionRetryEligibilityEvaluator _retryEligibilityEvaluator;
+    private readonly IFiscalExceptionRetryCommandPreparationService _retryCommandPreparationService;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
-        : this(referenceReader, null, new FiscalExceptionRetryEligibilityEvaluator())
+        : this(referenceReader, null)
     {
     }
 
     public FiscalExceptionQueueService(
         IFiscalExceptionQueueReferenceReader referenceReader,
         IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository)
-        : this(referenceReader, readbackAttemptRepository, new FiscalExceptionRetryEligibilityEvaluator())
+        : this(
+            referenceReader,
+            readbackAttemptRepository,
+            new FiscalExceptionRetryEligibilityEvaluator(),
+            new FiscalExceptionRetryCommandPreparationService())
     {
     }
 
@@ -45,10 +50,24 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         IFiscalExceptionQueueReferenceReader referenceReader,
         IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository,
         IFiscalExceptionRetryEligibilityEvaluator retryEligibilityEvaluator)
+        : this(
+            referenceReader,
+            readbackAttemptRepository,
+            retryEligibilityEvaluator,
+            new FiscalExceptionRetryCommandPreparationService())
+    {
+    }
+
+    public FiscalExceptionQueueService(
+        IFiscalExceptionQueueReferenceReader referenceReader,
+        IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository,
+        IFiscalExceptionRetryEligibilityEvaluator retryEligibilityEvaluator,
+        IFiscalExceptionRetryCommandPreparationService retryCommandPreparationService)
     {
         _referenceReader = referenceReader;
         _readbackAttemptRepository = readbackAttemptRepository;
         _retryEligibilityEvaluator = retryEligibilityEvaluator;
+        _retryCommandPreparationService = retryCommandPreparationService;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -93,9 +112,14 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             }
         }
 
-        return ApplyRetryEligibilityEvaluation(
+        detail = ApplyRetryEligibilityEvaluation(
             detail,
             _retryEligibilityEvaluator.Evaluate(detail));
+
+        return ApplyRetryCommandPreparation(
+            detail,
+            _retryCommandPreparationService.Prepare(
+                new FiscalExceptionRetryCommandPreparationRequest(detail)));
     }
 
     internal static FiscalExceptionQueueCaseDetail ApplyReadbackAttemptSummary(
@@ -131,6 +155,27 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SafeRetryEligibilitySummary = evaluation.SafeSummary,
             RetryEligibilityEvaluatedAt = evaluation.EvaluatedAt,
             RetryEligibilityBasedOnReadbackClassification = evaluation.BasedOnReadbackClassification,
+            RetryExecutionAvailable = false
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
+    }
+
+    internal static FiscalExceptionQueueCaseDetail ApplyRetryCommandPreparation(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionRetryCommandPreparationResult preparation)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            RetryCommandPreparationStatus = preparation.Status,
+            RetryCommandBlockReasonCode = preparation.BlockReasonCode,
+            SafeRetryCommandPreparationSummary = preparation.SafeSummary,
+            SemanticRequestHashAvailabilityStatus = preparation.SemanticRequestHashAvailabilityStatus,
+            IdempotencyContextAvailabilityStatus = preparation.IdempotencyContextAvailabilityStatus,
             RetryExecutionAvailable = false
         };
 
@@ -235,6 +280,11 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             RetryEligibilityEvaluatedAt: null,
             RetryEligibilityBasedOnReadbackClassification: readbackClassification,
             RetryExecutionAvailable: false,
+            RetryCommandPreparationStatus: FiscalExceptionRetryCommandPreparationStatus.NotPrepared,
+            RetryCommandBlockReasonCode: "retry_command_not_prepared",
+            SafeRetryCommandPreparationSummary: "retry_command_not_prepared_read_detail_for_evaluation",
+            SemanticRequestHashAvailabilityStatus: FiscalExceptionSemanticRequestHashAvailabilityStatus.NotAvailableInCurrentModel,
+            IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),
             DuplicateCollapseKey: $"fiscal-reference:{record.FiscalIssuanceReferenceId:N}",
             DuplicateCollapseStrategy: DuplicateCollapseStrategy,
             FirstDetectedAt: record.FirstRecordedAt,
@@ -395,7 +445,6 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             ? reason
             : $"{reason}:{record.LatestErrorCode}";
     }
-
     private static FiscalExceptionRetryEligibilityDecision ToRetryEligibilityDecision(
         FiscalExceptionRetryEligibilityStatus status) =>
         status switch
@@ -445,5 +494,10 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
                 "retry_unavailable_in_this_slice",
             _ => "retry_blocked_until_evaluated_by_feq_retry_eligibility_evaluator"
         };
-}
 
+    private static FiscalExceptionIdempotencyContextAvailabilityStatus ToIdempotencyContextAvailability(
+        string? upstreamFinalityReference) =>
+        string.IsNullOrWhiteSpace(upstreamFinalityReference)
+            ? FiscalExceptionIdempotencyContextAvailabilityStatus.MissingUpstreamFinalityReference
+            : FiscalExceptionIdempotencyContextAvailabilityStatus.Available;
+}

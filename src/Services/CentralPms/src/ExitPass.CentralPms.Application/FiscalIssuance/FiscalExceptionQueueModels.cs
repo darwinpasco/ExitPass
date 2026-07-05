@@ -76,6 +76,30 @@ public enum FiscalExceptionRetryEligibilityDecision
     NotRequired = 5
 }
 
+public enum FiscalExceptionRetryCommandPreparationStatus
+{
+    NotPrepared = 1,
+    PreparedNonExecutable = 2,
+    Blocked = 3,
+    Unavailable = 4
+}
+
+public enum FiscalExceptionSemanticRequestHashAvailabilityStatus
+{
+    NotAvailableInCurrentModel = 1,
+    AvailableAndConfirmed = 2,
+    RequiredButMissing = 3,
+    RequiredButUnconfirmed = 4
+}
+
+public enum FiscalExceptionIdempotencyContextAvailabilityStatus
+{
+    NotEvaluated = 1,
+    Available = 2,
+    MissingUpstreamFinalityReference = 3,
+    NewUpstreamFinalityReferenceRejected = 4
+}
+
 public sealed record FiscalExceptionQueueQuery(
     int Limit = 100,
     Guid? SiteId = null,
@@ -109,6 +133,11 @@ public sealed record FiscalExceptionQueueCaseSummary(
     DateTimeOffset? RetryEligibilityEvaluatedAt,
     FiscalExceptionReadbackClassification? RetryEligibilityBasedOnReadbackClassification,
     bool RetryExecutionAvailable,
+    FiscalExceptionRetryCommandPreparationStatus RetryCommandPreparationStatus,
+    string? RetryCommandBlockReasonCode,
+    string SafeRetryCommandPreparationSummary,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     string DuplicateCollapseKey,
     string DuplicateCollapseStrategy,
     DateTimeOffset FirstDetectedAt,
@@ -148,6 +177,49 @@ public sealed record FiscalExceptionRetryEligibilityEvaluation(
 public interface IFiscalExceptionRetryEligibilityEvaluator
 {
     FiscalExceptionRetryEligibilityEvaluation Evaluate(FiscalExceptionQueueCaseDetail detail);
+}
+
+public sealed record FiscalExceptionRetryCommandPreparationRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    bool TreatAsExecutableCommand = false,
+    string? RequestedUpstreamFinalityReference = null);
+
+public sealed record FiscalExceptionRetryCommandEnvelope(
+    Guid FiscalIssuanceReferenceId,
+    Guid PaymentConfirmationId,
+    Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid? SiteId,
+    Guid? SitePosServerId,
+    string? SitePosServerRef,
+    string? FiscalDocumentTypeContextStatus,
+    string UpstreamFinalityReference,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionReadbackClassification LatestReadbackClassificationBasis,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
+    string? SafeBlockReasonCode,
+    Guid? CorrelationId,
+    bool Executable);
+
+public sealed record FiscalExceptionRetryCommandPreparationResult(
+    FiscalExceptionRetryCommandPreparationStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    FiscalExceptionRetryCommandEnvelope? Command,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    bool PosServerPostCalled,
+    bool RetryScheduled,
+    bool PaymentFinalityChanged,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated);
+
+public interface IFiscalExceptionRetryCommandPreparationService
+{
+    FiscalExceptionRetryCommandPreparationResult Prepare(
+        FiscalExceptionRetryCommandPreparationRequest request);
 }
 
 public sealed record FiscalExceptionReadbackPreparation(
