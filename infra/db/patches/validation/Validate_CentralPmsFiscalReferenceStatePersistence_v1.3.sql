@@ -12,7 +12,8 @@ BEGIN
             ('core.fiscal_issuance_attempt_history'),
             ('core.fiscal_issuance_exception_reviews'),
             ('core.fiscal_issuance_readback_reconciliations'),
-            ('core.fiscal_issuance_retry_command_preparations')
+            ('core.fiscal_issuance_retry_command_preparations'),
+            ('core.fiscal_issuance_retry_schedule_preparations')
     ) AS required(required_name)
     WHERE to_regclass(required_name) IS NULL;
 
@@ -92,7 +93,8 @@ BEGIN
               'fiscal_issuance_attempt_history',
               'fiscal_issuance_exception_reviews',
               'fiscal_issuance_readback_reconciliations',
-              'fiscal_issuance_retry_command_preparations'
+              'fiscal_issuance_retry_command_preparations',
+              'fiscal_issuance_retry_schedule_preparations'
           )
           AND (
               column_name ILIKE '%raw_payload%'
@@ -114,5 +116,15 @@ BEGIN
           AND indexname = 'ix_fiscal_issuance_retry_command_preparations__reference_attempted'
     ) THEN
         RAISE EXCEPTION 'Missing retry command preparation reference audit index.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'core'
+          AND tablename = 'fiscal_issuance_retry_schedule_preparations'
+          AND indexname = 'ix_fiscal_issuance_retry_schedule_preparations__reference_requested'
+    ) THEN
+        RAISE EXCEPTION 'Missing retry schedule preparation reference audit index.';
     END IF;
 END $$;

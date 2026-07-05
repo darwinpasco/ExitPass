@@ -26,6 +26,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_exception_reviews"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_readback_reconciliations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_command_preparations"));
+        Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_schedule_preparations"));
         Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "semantic_request_hash_value"));
     }
 
@@ -271,6 +272,83 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     }
 
     [Fact]
+    public async Task RetrySchedulingPreparationAuditRepository_RecordAsync_PersistsAndSummarizesAttempt()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(nameof(RetrySchedulingPreparationAuditRepository_RecordAsync_PersistsAndSummarizesAttempt));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed retry scheduling preparation audit test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var reference = await CreateRepository().CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var commandRepository = new PostgresFiscalExceptionRetryCommandPreparationAuditRepository(ConnectionString);
+            var commandRecord = await commandRepository.RecordAsync(
+                new FiscalExceptionRetryCommandPreparationAttemptWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    PaymentConfirmationId: confirmation.PaymentConfirmationId,
+                    PaymentAttemptId: attempt.PaymentAttemptId,
+                    ParkingSessionId: context.ParkingSessionId,
+                    SiteId: context.SiteId,
+                    SitePosServerId: reference.SitePosServerId,
+                    SitePosServerRef: reference.SitePosServerRef,
+                    LatestReadbackClassificationBasis: FiscalExceptionReadbackClassification.NotFound,
+                    RetryEligibilityDecisionBasis: FiscalExceptionRetryEligibilityDecision.Eligible,
+                    CommandPreparationStatus: FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable,
+                    CommandBlockReasonCode: null,
+                    SemanticRequestHashAvailabilityStatus: FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed,
+                    IdempotencyContextAvailabilityStatus: FiscalExceptionIdempotencyContextAvailabilityStatus.Available,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "retry_command_prepared_non_executable",
+                    CorrelationId: context.CorrelationId,
+                    ServiceIdentityId: null),
+                CancellationToken.None);
+            var scheduleRepository = new PostgresFiscalExceptionRetrySchedulingPreparationAuditRepository(ConnectionString);
+
+            var record = await scheduleRepository.RecordAsync(
+                new FiscalExceptionRetrySchedulingPreparationAttemptWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    RetryCommandPreparationAttemptId: commandRecord.RetryCommandPreparationAttemptId,
+                    PaymentConfirmationId: confirmation.PaymentConfirmationId,
+                    PaymentAttemptId: attempt.PaymentAttemptId,
+                    ParkingSessionId: context.ParkingSessionId,
+                    SiteId: context.SiteId,
+                    SitePosServerId: reference.SitePosServerId,
+                    SitePosServerRef: reference.SitePosServerRef,
+                    LatestReadbackClassificationBasis: FiscalExceptionReadbackClassification.NotFound,
+                    RetryEligibilityDecisionBasis: FiscalExceptionRetryEligibilityDecision.Eligible,
+                    SemanticRequestHashAvailabilityStatus: FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed,
+                    IdempotencyContextAvailabilityStatus: FiscalExceptionIdempotencyContextAvailabilityStatus.Available,
+                    SchedulingPreparationStatus: FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared,
+                    SchedulingBlockReasonCode: null,
+                    RequestedAt: DateTimeOffset.UtcNow,
+                    EarliestEligibleAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "retry_scheduling_prepared_non_executable",
+                    CorrelationId: context.CorrelationId,
+                    ServiceIdentityId: null),
+                CancellationToken.None);
+            var summary = await scheduleRepository.GetSummaryAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+            Assert.NotEqual(Guid.Empty, record.RetrySchedulePreparationAttemptId);
+            Assert.Equal(reference.FiscalIssuanceReferenceId, record.FiscalIssuanceReferenceId);
+            Assert.Equal(commandRecord.RetryCommandPreparationAttemptId, record.RetryCommandPreparationAttemptId);
+            Assert.Equal(FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared, record.SchedulingPreparationStatus);
+            Assert.NotNull(summary);
+            Assert.Equal(1, summary!.AttemptCount);
+            Assert.Equal(FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared, summary.LastSchedulingPreparationStatus);
+            Assert.Equal("retry_scheduling_prepared_non_executable", summary.SafeSummary);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenDuplicateIdempotencyScope_RejectsDuplicateActiveReference()
     {
         await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
@@ -380,7 +458,8 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
                   'fiscal_issuance_attempt_history',
                   'fiscal_issuance_exception_reviews',
                   'fiscal_issuance_readback_reconciliations',
-                  'fiscal_issuance_retry_command_preparations'
+                  'fiscal_issuance_retry_command_preparations',
+                  'fiscal_issuance_retry_schedule_preparations'
               )
               AND (
                   column_name ILIKE '%raw_payload%'
@@ -606,6 +685,14 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     private static async Task CleanupFiscalReferenceRowsAsync(PaymentTestContext context)
     {
         const string sql = """
+            DELETE FROM core.fiscal_issuance_retry_schedule_preparations
+            WHERE payment_confirmation_id IN (
+                SELECT pc.payment_confirmation_id
+                FROM core.payment_confirmations pc
+                INNER JOIN core.payment_attempts pa ON pa.payment_attempt_id = pc.payment_attempt_id
+                WHERE pa.parking_session_id = @parking_session_id
+            );
+
             DELETE FROM core.fiscal_issuance_retry_command_preparations
             WHERE payment_confirmation_id IN (
                 SELECT pc.payment_confirmation_id

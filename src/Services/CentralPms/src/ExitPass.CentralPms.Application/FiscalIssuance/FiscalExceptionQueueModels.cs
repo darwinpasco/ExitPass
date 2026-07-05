@@ -84,6 +84,15 @@ public enum FiscalExceptionRetryCommandPreparationStatus
     Unavailable = 4
 }
 
+public enum FiscalExceptionRetrySchedulingPreparationStatus
+{
+    NotPrepared = 1,
+    Disabled = 2,
+    ScheduledPrepared = 3,
+    Blocked = 4,
+    Unavailable = 5
+}
+
 public enum FiscalExceptionSemanticRequestHashAvailabilityStatus
 {
     NotAvailableInCurrentModel = 1,
@@ -152,6 +161,11 @@ public sealed record FiscalExceptionQueueCaseSummary(
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
+    FiscalExceptionRetrySchedulingPreparationStatus RetrySchedulingPreparationStatus,
+    string? RetrySchedulingBlockReasonCode,
+    string SafeRetrySchedulingPreparationSummary,
+    DateTimeOffset? LastRetrySchedulingPreparationAttemptAt,
+    int? RetrySchedulingPreparationAttemptCount,
     string DuplicateCollapseKey,
     string DuplicateCollapseStrategy,
     DateTimeOffset FirstDetectedAt,
@@ -239,6 +253,77 @@ public interface IFiscalExceptionRetryCommandPreparationService
 {
     Task<FiscalExceptionRetryCommandPreparationResult> PrepareAsync(
         FiscalExceptionRetryCommandPreparationRequest request,
+    CancellationToken cancellationToken);
+}
+
+public sealed class FiscalExceptionRetrySchedulingPreparationOptions
+{
+    public const string SectionName = "FiscalExceptionRetrySchedulingPreparation";
+
+    public FiscalExceptionRetrySchedulingPreparationOptions()
+    {
+    }
+
+    public FiscalExceptionRetrySchedulingPreparationOptions(
+        bool EnableSchedulePreparation = false,
+        bool RetrySchedulePolicyConfigured = false,
+        bool RetryBackoffPolicyConfigured = false)
+    {
+        this.EnableSchedulePreparation = EnableSchedulePreparation;
+        this.RetrySchedulePolicyConfigured = RetrySchedulePolicyConfigured;
+        this.RetryBackoffPolicyConfigured = RetryBackoffPolicyConfigured;
+    }
+
+    public bool EnableSchedulePreparation { get; set; }
+
+    public bool RetrySchedulePolicyConfigured { get; set; }
+
+    public bool RetryBackoffPolicyConfigured { get; set; }
+}
+
+public sealed record FiscalExceptionRetrySchedulingPreparationRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    FiscalExceptionRetryCommandPreparationResult CommandPreparation,
+    bool TreatAsExecutableJob = false,
+    string? RequestedUpstreamFinalityReference = null,
+    Guid? ServiceIdentityId = null);
+
+public sealed record FiscalExceptionRetrySchedulePreparationEnvelope(
+    Guid RetrySchedulePreparationAttemptId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RetryCommandPreparationAttemptId,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
+    FiscalExceptionReadbackClassification? LatestReadbackClassificationBasis,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    string UpstreamFinalityReference,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? EarliestEligibleAt,
+    string SchedulePolicySummary,
+    Guid? CorrelationId,
+    bool Executable);
+
+public sealed record FiscalExceptionRetrySchedulingPreparationResult(
+    FiscalExceptionRetrySchedulingPreparationStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    FiscalExceptionRetrySchedulePreparationEnvelope? Schedule,
+    bool PosServerPostCalled,
+    bool ExecutableJobEnqueued,
+    bool RetryEndpointExposed,
+    bool PaymentFinalityChanged,
+    bool FiscalReferenceSuccessRecorded,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated,
+    Guid? RetrySchedulePreparationAttemptId = null,
+    DateTimeOffset? RetrySchedulePreparationAttemptedAt = null);
+
+public interface IFiscalExceptionRetrySchedulingPreparationService
+{
+    Task<FiscalExceptionRetrySchedulingPreparationResult> PrepareAsync(
+        FiscalExceptionRetrySchedulingPreparationRequest request,
         CancellationToken cancellationToken);
 }
 
@@ -283,6 +368,7 @@ public sealed record FiscalExceptionRetryCommandPreparationAttemptRecord(
     DateTimeOffset CreatedAt);
 
 public sealed record FiscalExceptionRetryCommandPreparationAttemptSummary(
+    Guid LastRetryCommandPreparationAttemptId,
     FiscalExceptionRetryCommandPreparationStatus LastCommandPreparationStatus,
     DateTimeOffset LastAttemptedAt,
     int AttemptCount,
@@ -298,6 +384,68 @@ public interface IFiscalExceptionRetryCommandPreparationAuditRepository
         CancellationToken cancellationToken);
 
     Task<FiscalExceptionRetryCommandPreparationAttemptSummary?> GetSummaryAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionRetrySchedulingPreparationAttemptWrite(
+    Guid FiscalIssuanceReferenceId,
+    Guid? RetryCommandPreparationAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? ParkingSessionId,
+    Guid? SiteId,
+    Guid? SitePosServerId,
+    string? SitePosServerRef,
+    FiscalExceptionReadbackClassification? LatestReadbackClassificationBasis,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    FiscalExceptionRetrySchedulingPreparationStatus SchedulingPreparationStatus,
+    string? SchedulingBlockReasonCode,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? EarliestEligibleAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalExceptionRetrySchedulingPreparationAttemptRecord(
+    Guid RetrySchedulePreparationAttemptId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RetryCommandPreparationAttemptId,
+    Guid? PaymentConfirmationId,
+    Guid? PaymentAttemptId,
+    Guid? ParkingSessionId,
+    Guid? SiteId,
+    Guid? SitePosServerId,
+    string? SitePosServerRef,
+    FiscalExceptionReadbackClassification? LatestReadbackClassificationBasis,
+    FiscalExceptionRetryEligibilityDecision RetryEligibilityDecisionBasis,
+    FiscalExceptionSemanticRequestHashAvailabilityStatus SemanticRequestHashAvailabilityStatus,
+    FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
+    FiscalExceptionRetrySchedulingPreparationStatus SchedulingPreparationStatus,
+    string? SchedulingBlockReasonCode,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? EarliestEligibleAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId,
+    DateTimeOffset CreatedAt);
+
+public sealed record FiscalExceptionRetrySchedulingPreparationAttemptSummary(
+    FiscalExceptionRetrySchedulingPreparationStatus LastSchedulingPreparationStatus,
+    DateTimeOffset LastRequestedAt,
+    int AttemptCount,
+    string? LastSchedulingBlockReasonCode,
+    string SafeSummary);
+
+public interface IFiscalExceptionRetrySchedulingPreparationAuditRepository
+{
+    Task<FiscalExceptionRetrySchedulingPreparationAttemptRecord> RecordAsync(
+        FiscalExceptionRetrySchedulingPreparationAttemptWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionRetrySchedulingPreparationAttemptSummary?> GetSummaryAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken);
 }

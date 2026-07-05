@@ -597,6 +597,7 @@ public sealed class FiscalExceptionRetryCommandPreparationServiceTests
             var count = Records.Count(record => record.FiscalIssuanceReferenceId == fiscalIssuanceReferenceId);
             return Task.FromResult<FiscalExceptionRetryCommandPreparationAttemptSummary?>(
                 new FiscalExceptionRetryCommandPreparationAttemptSummary(
+                    LastRetryCommandPreparationAttemptId: latest.RetryCommandPreparationAttemptId,
                     LastCommandPreparationStatus: latest.CommandPreparationStatus,
                     LastAttemptedAt: latest.AttemptedAt,
                     AttemptCount: count,

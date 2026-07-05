@@ -4,25 +4,26 @@ using NpgsqlTypes;
 
 namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 
-public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepository :
-    IFiscalExceptionRetryCommandPreparationAuditRepository
+public sealed class PostgresFiscalExceptionRetrySchedulingPreparationAuditRepository :
+    IFiscalExceptionRetrySchedulingPreparationAuditRepository
 {
     private readonly string _connectionString;
 
-    public PostgresFiscalExceptionRetryCommandPreparationAuditRepository(string connectionString)
+    public PostgresFiscalExceptionRetrySchedulingPreparationAuditRepository(string connectionString)
     {
         _connectionString = connectionString;
     }
 
-    public async Task<FiscalExceptionRetryCommandPreparationAttemptRecord> RecordAsync(
-        FiscalExceptionRetryCommandPreparationAttemptWrite attempt,
+    public async Task<FiscalExceptionRetrySchedulingPreparationAttemptRecord> RecordAsync(
+        FiscalExceptionRetrySchedulingPreparationAttemptWrite attempt,
         CancellationToken cancellationToken)
     {
         Validate(attempt);
 
         const string sql = """
-            INSERT INTO core.fiscal_issuance_retry_command_preparations (
+            INSERT INTO core.fiscal_issuance_retry_schedule_preparations (
                 fiscal_issuance_reference_id,
+                retry_command_preparation_attempt_id,
                 payment_confirmation_id,
                 payment_attempt_id,
                 parking_session_id,
@@ -31,17 +32,19 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
                 site_pos_server_ref,
                 latest_readback_classification,
                 retry_eligibility_decision,
-                command_preparation_status,
-                command_block_reason_code,
                 semantic_request_hash_availability,
                 idempotency_context_availability,
-                attempted_at,
+                scheduling_preparation_status,
+                scheduling_block_reason_code,
+                requested_at,
+                earliest_eligible_at,
                 safe_summary,
                 correlation_id,
                 actor_service_identity_id
             )
             VALUES (
                 @fiscal_issuance_reference_id,
+                @retry_command_preparation_attempt_id,
                 @payment_confirmation_id,
                 @payment_attempt_id,
                 @parking_session_id,
@@ -50,18 +53,20 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
                 @site_pos_server_ref,
                 @latest_readback_classification,
                 @retry_eligibility_decision,
-                @command_preparation_status,
-                @command_block_reason_code,
                 @semantic_request_hash_availability,
                 @idempotency_context_availability,
-                @attempted_at,
+                @scheduling_preparation_status,
+                @scheduling_block_reason_code,
+                @requested_at,
+                @earliest_eligible_at,
                 @safe_summary,
                 @correlation_id,
                 @actor_service_identity_id
             )
             RETURNING
-                retry_command_preparation_attempt_id,
+                retry_schedule_preparation_attempt_id,
                 fiscal_issuance_reference_id,
+                retry_command_preparation_attempt_id,
                 payment_confirmation_id,
                 payment_attempt_id,
                 parking_session_id,
@@ -70,11 +75,12 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
                 site_pos_server_ref,
                 latest_readback_classification,
                 retry_eligibility_decision,
-                command_preparation_status,
-                command_block_reason_code,
                 semantic_request_hash_availability,
                 idempotency_context_availability,
-                attempted_at,
+                scheduling_preparation_status,
+                scheduling_block_reason_code,
+                requested_at,
+                earliest_eligible_at,
                 safe_summary,
                 correlation_id,
                 actor_service_identity_id,
@@ -90,6 +96,7 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
         };
 
         command.Parameters.AddWithValue("fiscal_issuance_reference_id", attempt.FiscalIssuanceReferenceId);
+        AddNullable(command, "retry_command_preparation_attempt_id", attempt.RetryCommandPreparationAttemptId);
         AddNullable(command, "payment_confirmation_id", attempt.PaymentConfirmationId);
         AddNullable(command, "payment_attempt_id", attempt.PaymentAttemptId);
         AddNullable(command, "parking_session_id", attempt.ParkingSessionId);
@@ -98,15 +105,18 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
         AddNullable(command, "site_pos_server_ref", TruncateOrNull(attempt.SitePosServerRef, 128));
         AddNullable(command, "latest_readback_classification", ToStorageValue(attempt.LatestReadbackClassificationBasis));
         command.Parameters.AddWithValue("retry_eligibility_decision", ToStorageValue(attempt.RetryEligibilityDecisionBasis));
-        command.Parameters.AddWithValue("command_preparation_status", ToStorageValue(attempt.CommandPreparationStatus));
-        AddNullable(command, "command_block_reason_code", TruncateOrNull(attempt.CommandBlockReasonCode, 160));
         command.Parameters.AddWithValue(
             "semantic_request_hash_availability",
             ToStorageValue(attempt.SemanticRequestHashAvailabilityStatus));
         command.Parameters.AddWithValue(
             "idempotency_context_availability",
             ToStorageValue(attempt.IdempotencyContextAvailabilityStatus));
-        command.Parameters.AddWithValue("attempted_at", attempt.AttemptedAt);
+        command.Parameters.AddWithValue(
+            "scheduling_preparation_status",
+            ToStorageValue(attempt.SchedulingPreparationStatus));
+        AddNullable(command, "scheduling_block_reason_code", TruncateOrNull(attempt.SchedulingBlockReasonCode, 160));
+        command.Parameters.AddWithValue("requested_at", attempt.RequestedAt);
+        AddNullable(command, "earliest_eligible_at", attempt.EarliestEligibleAt);
         command.Parameters.AddWithValue("safe_summary", Truncate(attempt.SafeSummary, 240));
         AddNullable(command, "correlation_id", attempt.CorrelationId);
         AddNullable(command, "actor_service_identity_id", attempt.ServiceIdentityId);
@@ -114,13 +124,13 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
-            throw new InvalidOperationException("Fiscal exception retry command preparation insert returned no rows.");
+            throw new InvalidOperationException("Fiscal exception retry scheduling preparation insert returned no rows.");
         }
 
         return MapRecord(reader);
     }
 
-    public async Task<FiscalExceptionRetryCommandPreparationAttemptSummary?> GetSummaryAsync(
+    public async Task<FiscalExceptionRetrySchedulingPreparationAttemptSummary?> GetSummaryAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken)
     {
@@ -133,17 +143,14 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
 
         const string sql = """
             SELECT
-                retry_command_preparation_attempt_id,
-                command_preparation_status,
-                command_block_reason_code,
-                semantic_request_hash_availability,
-                idempotency_context_availability,
-                attempted_at,
+                scheduling_preparation_status,
+                scheduling_block_reason_code,
+                requested_at,
                 safe_summary,
                 COUNT(*) OVER ()::integer AS attempt_count
-            FROM core.fiscal_issuance_retry_command_preparations
+            FROM core.fiscal_issuance_retry_schedule_preparations
             WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
-            ORDER BY attempted_at DESC, created_at DESC
+            ORDER BY requested_at DESC, created_at DESC
             LIMIT 1;
             """;
 
@@ -163,21 +170,16 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
             return null;
         }
 
-        return new FiscalExceptionRetryCommandPreparationAttemptSummary(
-            LastRetryCommandPreparationAttemptId: reader.GetGuid(
-                reader.GetOrdinal("retry_command_preparation_attempt_id")),
-            LastCommandPreparationStatus: ParsePreparationStatus(reader.GetString(reader.GetOrdinal("command_preparation_status"))),
-            LastAttemptedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("attempted_at")),
+        return new FiscalExceptionRetrySchedulingPreparationAttemptSummary(
+            LastSchedulingPreparationStatus: ParseSchedulingStatus(
+                reader.GetString(reader.GetOrdinal("scheduling_preparation_status"))),
+            LastRequestedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
             AttemptCount: reader.GetInt32(reader.GetOrdinal("attempt_count")),
-            LastCommandBlockReasonCode: GetNullableString(reader, "command_block_reason_code"),
-            SemanticRequestHashAvailabilityStatus: ParseSemanticStatus(
-                reader.GetString(reader.GetOrdinal("semantic_request_hash_availability"))),
-            IdempotencyContextAvailabilityStatus: ParseIdempotencyStatus(
-                reader.GetString(reader.GetOrdinal("idempotency_context_availability"))),
+            LastSchedulingBlockReasonCode: GetNullableString(reader, "scheduling_block_reason_code"),
             SafeSummary: reader.GetString(reader.GetOrdinal("safe_summary")));
     }
 
-    private static void Validate(FiscalExceptionRetryCommandPreparationAttemptWrite attempt)
+    private static void Validate(FiscalExceptionRetrySchedulingPreparationAttemptWrite attempt)
     {
         if (attempt.FiscalIssuanceReferenceId == Guid.Empty)
         {
@@ -186,14 +188,24 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
 
         if (string.IsNullOrWhiteSpace(attempt.SafeSummary))
         {
-            throw new ArgumentException("Retry command preparation safe summary is required.", nameof(attempt));
+            throw new ArgumentException("Retry scheduling preparation safe summary is required.", nameof(attempt));
+        }
+
+        if (attempt.SchedulingPreparationStatus ==
+                FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared &&
+            attempt.RetryCommandPreparationAttemptId is null)
+        {
+            throw new ArgumentException(
+                "Retry command preparation attempt id is required for scheduled-prepared posture.",
+                nameof(attempt));
         }
     }
 
-    private static FiscalExceptionRetryCommandPreparationAttemptRecord MapRecord(NpgsqlDataReader reader) =>
+    private static FiscalExceptionRetrySchedulingPreparationAttemptRecord MapRecord(NpgsqlDataReader reader) =>
         new(
-            RetryCommandPreparationAttemptId: reader.GetGuid(reader.GetOrdinal("retry_command_preparation_attempt_id")),
+            RetrySchedulePreparationAttemptId: reader.GetGuid(reader.GetOrdinal("retry_schedule_preparation_attempt_id")),
             FiscalIssuanceReferenceId: reader.GetGuid(reader.GetOrdinal("fiscal_issuance_reference_id")),
+            RetryCommandPreparationAttemptId: GetNullableGuid(reader, "retry_command_preparation_attempt_id"),
             PaymentConfirmationId: GetNullableGuid(reader, "payment_confirmation_id"),
             PaymentAttemptId: GetNullableGuid(reader, "payment_attempt_id"),
             ParkingSessionId: GetNullableGuid(reader, "parking_session_id"),
@@ -204,14 +216,15 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
                 GetNullableString(reader, "latest_readback_classification")),
             RetryEligibilityDecisionBasis: ParseRetryEligibilityDecision(
                 reader.GetString(reader.GetOrdinal("retry_eligibility_decision"))),
-            CommandPreparationStatus: ParsePreparationStatus(
-                reader.GetString(reader.GetOrdinal("command_preparation_status"))),
-            CommandBlockReasonCode: GetNullableString(reader, "command_block_reason_code"),
             SemanticRequestHashAvailabilityStatus: ParseSemanticStatus(
                 reader.GetString(reader.GetOrdinal("semantic_request_hash_availability"))),
             IdempotencyContextAvailabilityStatus: ParseIdempotencyStatus(
                 reader.GetString(reader.GetOrdinal("idempotency_context_availability"))),
-            AttemptedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("attempted_at")),
+            SchedulingPreparationStatus: ParseSchedulingStatus(
+                reader.GetString(reader.GetOrdinal("scheduling_preparation_status"))),
+            SchedulingBlockReasonCode: GetNullableString(reader, "scheduling_block_reason_code"),
+            RequestedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
+            EarliestEligibleAt: GetNullableDateTimeOffset(reader, "earliest_eligible_at"),
             SafeSummary: reader.GetString(reader.GetOrdinal("safe_summary")),
             CorrelationId: GetNullableGuid(reader, "correlation_id"),
             ServiceIdentityId: GetNullableGuid(reader, "actor_service_identity_id"),
@@ -243,16 +256,6 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
             _ => throw new ArgumentOutOfRangeException(nameof(decision), decision, "Unknown retry eligibility decision.")
         };
 
-    private static string ToStorageValue(FiscalExceptionRetryCommandPreparationStatus status) =>
-        status switch
-        {
-            FiscalExceptionRetryCommandPreparationStatus.NotPrepared => "NOT_PREPARED",
-            FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable => "PREPARED_NON_EXECUTABLE",
-            FiscalExceptionRetryCommandPreparationStatus.Blocked => "BLOCKED",
-            FiscalExceptionRetryCommandPreparationStatus.Unavailable => "UNAVAILABLE",
-            _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown retry command preparation status.")
-        };
-
     private static string ToStorageValue(FiscalExceptionSemanticRequestHashAvailabilityStatus status) =>
         status switch
         {
@@ -271,6 +274,17 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
             FiscalExceptionIdempotencyContextAvailabilityStatus.MissingUpstreamFinalityReference => "MISSING_UPSTREAM_FINALITY_REFERENCE",
             FiscalExceptionIdempotencyContextAvailabilityStatus.NewUpstreamFinalityReferenceRejected => "NEW_UPSTREAM_FINALITY_REFERENCE_REJECTED",
             _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown idempotency status.")
+        };
+
+    private static string ToStorageValue(FiscalExceptionRetrySchedulingPreparationStatus status) =>
+        status switch
+        {
+            FiscalExceptionRetrySchedulingPreparationStatus.NotPrepared => "NOT_PREPARED",
+            FiscalExceptionRetrySchedulingPreparationStatus.Disabled => "DISABLED",
+            FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared => "SCHEDULED_PREPARED",
+            FiscalExceptionRetrySchedulingPreparationStatus.Blocked => "BLOCKED",
+            FiscalExceptionRetrySchedulingPreparationStatus.Unavailable => "UNAVAILABLE",
+            _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown retry scheduling status.")
         };
 
     private static FiscalExceptionReadbackClassification? ParseReadbackClassification(string? value) =>
@@ -298,15 +312,6 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
             _ => FiscalExceptionRetryEligibilityDecision.NotEvaluated
         };
 
-    private static FiscalExceptionRetryCommandPreparationStatus ParsePreparationStatus(string value) =>
-        value switch
-        {
-            "PREPARED_NON_EXECUTABLE" => FiscalExceptionRetryCommandPreparationStatus.PreparedNonExecutable,
-            "BLOCKED" => FiscalExceptionRetryCommandPreparationStatus.Blocked,
-            "UNAVAILABLE" => FiscalExceptionRetryCommandPreparationStatus.Unavailable,
-            _ => FiscalExceptionRetryCommandPreparationStatus.NotPrepared
-        };
-
     private static FiscalExceptionSemanticRequestHashAvailabilityStatus ParseSemanticStatus(string value) =>
         value switch
         {
@@ -323,6 +328,16 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
             "MISSING_UPSTREAM_FINALITY_REFERENCE" => FiscalExceptionIdempotencyContextAvailabilityStatus.MissingUpstreamFinalityReference,
             "NEW_UPSTREAM_FINALITY_REFERENCE_REJECTED" => FiscalExceptionIdempotencyContextAvailabilityStatus.NewUpstreamFinalityReferenceRejected,
             _ => FiscalExceptionIdempotencyContextAvailabilityStatus.NotEvaluated
+        };
+
+    private static FiscalExceptionRetrySchedulingPreparationStatus ParseSchedulingStatus(string value) =>
+        value switch
+        {
+            "DISABLED" => FiscalExceptionRetrySchedulingPreparationStatus.Disabled,
+            "SCHEDULED_PREPARED" => FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared,
+            "BLOCKED" => FiscalExceptionRetrySchedulingPreparationStatus.Blocked,
+            "UNAVAILABLE" => FiscalExceptionRetrySchedulingPreparationStatus.Unavailable,
+            _ => FiscalExceptionRetrySchedulingPreparationStatus.NotPrepared
         };
 
     private static void AddNullable<T>(NpgsqlCommand command, string name, T? value)
@@ -356,6 +371,12 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
             return true;
         }
 
+        if (underlyingType == typeof(DateTimeOffset))
+        {
+            dbType = NpgsqlDbType.TimestampTz;
+            return true;
+        }
+
         dbType = default;
         return false;
     }
@@ -370,6 +391,12 @@ public sealed class PostgresFiscalExceptionRetryCommandPreparationAuditRepositor
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static DateTimeOffset? GetNullableDateTimeOffset(NpgsqlDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
     }
 
     private static string? TruncateOrNull(string? value, int maxLength) =>
