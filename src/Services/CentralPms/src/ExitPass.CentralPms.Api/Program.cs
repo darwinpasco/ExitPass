@@ -375,6 +375,11 @@ static void ConfigureApplicationServices(
         new FiscalExceptionRetrySchedulingPreparationService(
             serviceProvider.GetRequiredService<IOptions<FiscalExceptionRetrySchedulingPreparationOptions>>().Value,
             serviceProvider.GetService<IFiscalExceptionRetrySchedulingPreparationAuditRepository>()));
+    builder.Services.Configure<FiscalExceptionRetryExecutionPreparationOptions>(
+        builder.Configuration.GetSection(FiscalExceptionRetryExecutionPreparationOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionRetryExecutionPreparationService>(serviceProvider =>
+        new FiscalExceptionRetryExecutionPreparationService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionRetryExecutionPreparationOptions>>().Value));
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
     builder.Services.AddScoped<IFiscalExceptionRetryEligibilityEvaluator, FiscalExceptionRetryEligibilityEvaluator>();
     builder.Services.AddScoped<IFiscalExceptionQueueService, FiscalExceptionQueueService>();

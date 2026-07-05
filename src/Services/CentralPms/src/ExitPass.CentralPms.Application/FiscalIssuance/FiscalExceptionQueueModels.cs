@@ -93,6 +93,38 @@ public enum FiscalExceptionRetrySchedulingPreparationStatus
     Unavailable = 5
 }
 
+public enum FiscalExceptionRetryExecutionPreparationStatus
+{
+    NotPrepared = 1,
+    ReadyForExecutionWhenEnabled = 2,
+    Blocked = 3,
+    Unavailable = 4,
+    Disabled = 5,
+    RequiresDualControl = 6,
+    RequiresPosServerReadiness = 7
+}
+
+public enum FiscalExceptionRetryExecutionAuthorizationStatus
+{
+    NotEvaluated = 1,
+    ServiceIdentityAllowed = 2,
+    ServiceIdentityNotAllowed = 3,
+    OperatorActionNotAllowed = 4,
+    DualControlRequired = 5,
+    DualControlSatisfied = 6
+}
+
+public enum FiscalExceptionRetryExecutionPosServerReadinessStatus
+{
+    NotEvaluated = 1,
+    Confirmed = 2,
+    NumberingNotReady = 3,
+    IdempotencyContractNotConfirmed = 4,
+    SequencePolicyNotConfirmed = 5,
+    FiscalIdentityNotConfirmed = 6,
+    ProductionBirReadinessNotConfirmed = 7
+}
+
 public enum FiscalExceptionSemanticRequestHashAvailabilityStatus
 {
     NotAvailableInCurrentModel = 1,
@@ -166,6 +198,12 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string SafeRetrySchedulingPreparationSummary,
     DateTimeOffset? LastRetrySchedulingPreparationAttemptAt,
     int? RetrySchedulingPreparationAttemptCount,
+    FiscalExceptionRetryExecutionPreparationStatus RetryExecutionPreparationStatus,
+    string? RetryExecutionBlockReasonCode,
+    string SafeRetryExecutionPreparationSummary,
+    bool RetryExecutionDualControlRequired,
+    FiscalExceptionRetryExecutionAuthorizationStatus RetryExecutionAuthorizationStatus,
+    FiscalExceptionRetryExecutionPosServerReadinessStatus RetryExecutionPosServerReadinessStatus,
     string DuplicateCollapseKey,
     string DuplicateCollapseStrategy,
     DateTimeOffset FirstDetectedAt,
@@ -324,6 +362,88 @@ public interface IFiscalExceptionRetrySchedulingPreparationService
 {
     Task<FiscalExceptionRetrySchedulingPreparationResult> PrepareAsync(
         FiscalExceptionRetrySchedulingPreparationRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed class FiscalExceptionRetryExecutionPreparationOptions
+{
+    public const string SectionName = "FiscalExceptionRetryExecutionPreparation";
+
+    public FiscalExceptionRetryExecutionPreparationOptions()
+    {
+    }
+
+    public FiscalExceptionRetryExecutionPreparationOptions(
+        bool EnableExecutionPreparation = false,
+        bool ServiceIdentityAllowed = false,
+        bool ProductionImpacting = true,
+        bool DualControlSatisfied = false,
+        bool PosServerNumberingReady = false,
+        bool PosServerIdempotencyContractConfirmed = false,
+        bool PosServerSequencePolicyConfirmed = false,
+        bool PosServerFiscalIdentityConfirmed = false,
+        bool ProductionBirReadinessConfirmed = false)
+    {
+        this.EnableExecutionPreparation = EnableExecutionPreparation;
+        this.ServiceIdentityAllowed = ServiceIdentityAllowed;
+        this.ProductionImpacting = ProductionImpacting;
+        this.DualControlSatisfied = DualControlSatisfied;
+        this.PosServerNumberingReady = PosServerNumberingReady;
+        this.PosServerIdempotencyContractConfirmed = PosServerIdempotencyContractConfirmed;
+        this.PosServerSequencePolicyConfirmed = PosServerSequencePolicyConfirmed;
+        this.PosServerFiscalIdentityConfirmed = PosServerFiscalIdentityConfirmed;
+        this.ProductionBirReadinessConfirmed = ProductionBirReadinessConfirmed;
+    }
+
+    public bool EnableExecutionPreparation { get; set; }
+
+    public bool ServiceIdentityAllowed { get; set; }
+
+    public bool ProductionImpacting { get; set; } = true;
+
+    public bool DualControlSatisfied { get; set; }
+
+    public bool PosServerNumberingReady { get; set; }
+
+    public bool PosServerIdempotencyContractConfirmed { get; set; }
+
+    public bool PosServerSequencePolicyConfirmed { get; set; }
+
+    public bool PosServerFiscalIdentityConfirmed { get; set; }
+
+    public bool ProductionBirReadinessConfirmed { get; set; }
+}
+
+public sealed record FiscalExceptionRetryExecutionPreparationRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    FiscalExceptionRetryCommandPreparationResult CommandPreparation,
+    FiscalExceptionRetrySchedulingPreparationResult SchedulingPreparation,
+    bool TreatAsExecutableRetry = false,
+    bool OperatorOrSupportActionRequested = false,
+    string? RequestedUpstreamFinalityReference = null);
+
+public sealed record FiscalExceptionRetryExecutionPreparationResult(
+    FiscalExceptionRetryExecutionPreparationStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    FiscalExceptionRetryExecutionAuthorizationStatus AuthorizationStatus,
+    FiscalExceptionRetryExecutionPosServerReadinessStatus PosServerReadinessStatus,
+    bool DualControlRequired,
+    bool PosServerPostCalled,
+    bool ExecutableJobEnqueued,
+    bool RetryEndpointExposed,
+    bool RetryExecuted,
+    bool PaymentFinalityChanged,
+    bool FiscalReferenceSuccessRecorded,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated);
+
+public interface IFiscalExceptionRetryExecutionPreparationService
+{
+    Task<FiscalExceptionRetryExecutionPreparationResult> EvaluateAsync(
+        FiscalExceptionRetryExecutionPreparationRequest request,
         CancellationToken cancellationToken);
 }
 
