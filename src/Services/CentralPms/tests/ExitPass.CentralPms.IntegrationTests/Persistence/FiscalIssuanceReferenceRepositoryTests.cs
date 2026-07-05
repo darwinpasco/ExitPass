@@ -25,6 +25,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_attempt_history"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_exception_reviews"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_readback_reconciliations"));
+        Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_command_preparations"));
     }
 
     [Fact]
@@ -167,6 +168,60 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     }
 
     [Fact]
+    public async Task RetryCommandPreparationAuditRepository_RecordAsync_PersistsAndSummarizesAttempt()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(nameof(RetryCommandPreparationAuditRepository_RecordAsync_PersistsAndSummarizesAttempt));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed retry command preparation audit test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var reference = await CreateRepository().CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var repository = new PostgresFiscalExceptionRetryCommandPreparationAuditRepository(ConnectionString);
+
+            var record = await repository.RecordAsync(
+                new FiscalExceptionRetryCommandPreparationAttemptWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    PaymentConfirmationId: confirmation.PaymentConfirmationId,
+                    PaymentAttemptId: attempt.PaymentAttemptId,
+                    ParkingSessionId: context.ParkingSessionId,
+                    SiteId: context.SiteId,
+                    SitePosServerId: reference.SitePosServerId,
+                    SitePosServerRef: reference.SitePosServerRef,
+                    LatestReadbackClassificationBasis: FiscalExceptionReadbackClassification.NotFound,
+                    RetryEligibilityDecisionBasis: FiscalExceptionRetryEligibilityDecision.Eligible,
+                    CommandPreparationStatus: FiscalExceptionRetryCommandPreparationStatus.Unavailable,
+                    CommandBlockReasonCode: "semantic_request_hash_required_but_missing",
+                    SemanticRequestHashAvailabilityStatus: FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing,
+                    IdempotencyContextAvailabilityStatus: FiscalExceptionIdempotencyContextAvailabilityStatus.Available,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "retry_command_unavailable_semantic_request_hash_required_but_missing",
+                    CorrelationId: context.CorrelationId,
+                    ServiceIdentityId: null),
+                CancellationToken.None);
+            var summary = await repository.GetSummaryAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+            Assert.NotEqual(Guid.Empty, record.RetryCommandPreparationAttemptId);
+            Assert.Equal(reference.FiscalIssuanceReferenceId, record.FiscalIssuanceReferenceId);
+            Assert.Equal(FiscalExceptionRetryCommandPreparationStatus.Unavailable, record.CommandPreparationStatus);
+            Assert.Equal("semantic_request_hash_required_but_missing", record.CommandBlockReasonCode);
+            Assert.NotNull(summary);
+            Assert.Equal(1, summary!.AttemptCount);
+            Assert.Equal(FiscalExceptionRetryCommandPreparationStatus.Unavailable, summary.LastCommandPreparationStatus);
+            Assert.Equal(FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing, summary.SemanticRequestHashAvailabilityStatus);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenDuplicateIdempotencyScope_RejectsDuplicateActiveReference()
     {
         await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
@@ -275,7 +330,8 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
                   'fiscal_issuance_references',
                   'fiscal_issuance_attempt_history',
                   'fiscal_issuance_exception_reviews',
-                  'fiscal_issuance_readback_reconciliations'
+                  'fiscal_issuance_readback_reconciliations',
+                  'fiscal_issuance_retry_command_preparations'
               )
               AND (
                   column_name ILIKE '%raw_payload%'
@@ -501,6 +557,14 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     private static async Task CleanupFiscalReferenceRowsAsync(PaymentTestContext context)
     {
         const string sql = """
+            DELETE FROM core.fiscal_issuance_retry_command_preparations
+            WHERE payment_confirmation_id IN (
+                SELECT pc.payment_confirmation_id
+                FROM core.payment_confirmations pc
+                INNER JOIN core.payment_attempts pa ON pa.payment_attempt_id = pc.payment_attempt_id
+                WHERE pa.parking_session_id = @parking_session_id
+            );
+
             DELETE FROM core.fiscal_issuance_readback_reconciliations
             WHERE payment_confirmation_id IN (
                 SELECT pc.payment_confirmation_id

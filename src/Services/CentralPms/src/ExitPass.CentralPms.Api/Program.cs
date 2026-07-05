@@ -364,6 +364,8 @@ static void ConfigureApplicationServices(
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionReadbackAttemptRepository>(_ =>
         new PostgresFiscalExceptionReadbackAttemptRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionRetryCommandPreparationAuditRepository>(_ =>
+        new PostgresFiscalExceptionRetryCommandPreparationAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionRetryCommandPreparationService, FiscalExceptionRetryCommandPreparationService>();
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
     builder.Services.AddScoped<IFiscalExceptionRetryEligibilityEvaluator, FiscalExceptionRetryEligibilityEvaluator>();
