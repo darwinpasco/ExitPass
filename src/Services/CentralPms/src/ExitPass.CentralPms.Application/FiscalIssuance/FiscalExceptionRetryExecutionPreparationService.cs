@@ -115,6 +115,19 @@ public sealed class FiscalExceptionRetryExecutionPreparationService :
                 dualControlRequired: _options.ProductionImpacting);
         }
 
+        if (request.PosServerRetryContractReadiness is not null &&
+            request.PosServerRetryContractReadiness.Status !=
+                FiscalExceptionPosServerRetryContractReadinessStatus.Ready)
+        {
+            return Blocked(
+                request.PosServerRetryContractReadiness.BlockReasonCode ??
+                    "pos_server_retry_contract_readiness_not_ready",
+                "retry_execution_preparation_blocked_pos_server_retry_contract_readiness_not_ready",
+                AuthorizationStatus(),
+                readiness,
+                dualControlRequired: _options.ProductionImpacting);
+        }
+
         if (schedulingPreparation.Status != FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared ||
             schedulingPreparation.Schedule is null ||
             schedulingPreparation.Schedule.Executable ||

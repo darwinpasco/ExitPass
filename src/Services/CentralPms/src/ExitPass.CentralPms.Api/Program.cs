@@ -380,6 +380,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalExceptionRetryExecutionPreparationService>(serviceProvider =>
         new FiscalExceptionRetryExecutionPreparationService(
             serviceProvider.GetRequiredService<IOptions<FiscalExceptionRetryExecutionPreparationOptions>>().Value));
+    builder.Services.AddScoped<
+        IFiscalExceptionPosServerRetryContractReadinessService,
+        FiscalExceptionPosServerRetryContractReadinessService>();
     builder.Services.AddScoped<IFiscalIssuanceOrchestrationService, FiscalIssuanceOrchestrationService>();
     builder.Services.AddScoped<IFiscalExceptionRetryEligibilityEvaluator, FiscalExceptionRetryEligibilityEvaluator>();
     builder.Services.AddScoped<IFiscalExceptionQueueService, FiscalExceptionQueueService>();

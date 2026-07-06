@@ -33,6 +33,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     private readonly IFiscalExceptionRetrySchedulingPreparationService _retrySchedulingPreparationService;
     private readonly IFiscalExceptionRetrySchedulingPreparationAuditRepository? _retrySchedulingPreparationAuditRepository;
     private readonly IFiscalExceptionRetryExecutionPreparationService _retryExecutionPreparationService;
+    private readonly IFiscalExceptionPosServerRetryContractReadinessService _posServerRetryContractReadinessService;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
         : this(referenceReader, null)
@@ -130,6 +131,29 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         IFiscalExceptionRetrySchedulingPreparationService retrySchedulingPreparationService,
         IFiscalExceptionRetrySchedulingPreparationAuditRepository? retrySchedulingPreparationAuditRepository,
         IFiscalExceptionRetryExecutionPreparationService retryExecutionPreparationService)
+        : this(
+            referenceReader,
+            readbackAttemptRepository,
+            retryEligibilityEvaluator,
+            retryCommandPreparationService,
+            retryCommandPreparationAuditRepository,
+            retrySchedulingPreparationService,
+            retrySchedulingPreparationAuditRepository,
+            retryExecutionPreparationService,
+            new FiscalExceptionPosServerRetryContractReadinessService())
+    {
+    }
+
+    public FiscalExceptionQueueService(
+        IFiscalExceptionQueueReferenceReader referenceReader,
+        IFiscalExceptionReadbackAttemptRepository? readbackAttemptRepository,
+        IFiscalExceptionRetryEligibilityEvaluator retryEligibilityEvaluator,
+        IFiscalExceptionRetryCommandPreparationService retryCommandPreparationService,
+        IFiscalExceptionRetryCommandPreparationAuditRepository? retryCommandPreparationAuditRepository,
+        IFiscalExceptionRetrySchedulingPreparationService retrySchedulingPreparationService,
+        IFiscalExceptionRetrySchedulingPreparationAuditRepository? retrySchedulingPreparationAuditRepository,
+        IFiscalExceptionRetryExecutionPreparationService retryExecutionPreparationService,
+        IFiscalExceptionPosServerRetryContractReadinessService posServerRetryContractReadinessService)
     {
         _referenceReader = referenceReader;
         _readbackAttemptRepository = readbackAttemptRepository;
@@ -139,6 +163,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         _retrySchedulingPreparationService = retrySchedulingPreparationService;
         _retrySchedulingPreparationAuditRepository = retrySchedulingPreparationAuditRepository;
         _retryExecutionPreparationService = retryExecutionPreparationService;
+        _posServerRetryContractReadinessService = posServerRetryContractReadinessService;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -223,11 +248,17 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             }
         }
 
+        var contractReadiness = _posServerRetryContractReadinessService.Evaluate(
+            new FiscalExceptionPosServerRetryContractReadinessRequest(detail));
+
+        detail = ApplyPosServerRetryContractReadiness(detail, contractReadiness);
+
         var executionPreparation = await _retryExecutionPreparationService.EvaluateAsync(
             new FiscalExceptionRetryExecutionPreparationRequest(
                 detail,
                 commandPreparation,
-                schedulingPreparation),
+                schedulingPreparation,
+                contractReadiness),
             cancellationToken);
 
         return ApplyRetryExecutionPreparation(detail, executionPreparation);
@@ -383,6 +414,30 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         };
     }
 
+    internal static FiscalExceptionQueueCaseDetail ApplyPosServerRetryContractReadiness(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionPosServerRetryContractReadinessResult readiness)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            PosServerRetryContractReadinessStatus = readiness.Status,
+            PosServerSemanticHashCompatibilityStatus = readiness.SemanticHashCompatibilityStatus,
+            PosServerIdempotencyMappingStatus = readiness.IdempotencyMappingStatus,
+            PosServerReadbackFieldCompatibilityStatus = readiness.ReadbackFieldCompatibilityStatus,
+            PosServerFiscalNumberingReadinessStatus = readiness.FiscalNumberingReadinessStatus,
+            PosServerConflictReplayBehaviorStatus = readiness.ConflictReplayBehaviorStatus,
+            PosServerRetryContractBlockReasonCode = readiness.BlockReasonCode,
+            SafePosServerRetryContractReadinessSummary = readiness.SafeSummary,
+            RetryExecutionAvailable = false
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
+    }
+
     public Task<FiscalExceptionQueueCaseDetail> CreateOrUpdateFromFiscalReferenceAsync(
         FiscalIssuanceReferenceRecord source,
         CancellationToken cancellationToken)
@@ -501,6 +556,14 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             RetryExecutionDualControlRequired: false,
             RetryExecutionAuthorizationStatus: FiscalExceptionRetryExecutionAuthorizationStatus.NotEvaluated,
             RetryExecutionPosServerReadinessStatus: FiscalExceptionRetryExecutionPosServerReadinessStatus.NotEvaluated,
+            PosServerRetryContractReadinessStatus: FiscalExceptionPosServerRetryContractReadinessStatus.NotEvaluated,
+            PosServerSemanticHashCompatibilityStatus: FiscalExceptionPosServerRetryContractReadinessStatus.NotEvaluated,
+            PosServerIdempotencyMappingStatus: FiscalExceptionPosServerRetryContractReadinessStatus.NotEvaluated,
+            PosServerReadbackFieldCompatibilityStatus: FiscalExceptionPosServerRetryContractReadinessStatus.NotEvaluated,
+            PosServerFiscalNumberingReadinessStatus: FiscalExceptionPosServerRetryContractReadinessStatus.NotEvaluated,
+            PosServerConflictReplayBehaviorStatus: FiscalExceptionPosServerRetryContractReadinessStatus.NotEvaluated,
+            PosServerRetryContractBlockReasonCode: "pos_server_retry_contract_readiness_not_evaluated",
+            SafePosServerRetryContractReadinessSummary: "pos_server_retry_contract_readiness_read_detail_for_evaluation",
             DuplicateCollapseKey: $"fiscal-reference:{record.FiscalIssuanceReferenceId:N}",
             DuplicateCollapseStrategy: DuplicateCollapseStrategy,
             FirstDetectedAt: record.FirstRecordedAt,

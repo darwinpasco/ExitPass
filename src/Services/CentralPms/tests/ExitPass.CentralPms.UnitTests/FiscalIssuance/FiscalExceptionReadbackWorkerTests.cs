@@ -163,6 +163,122 @@ public sealed class FiscalExceptionReadbackWorkerTests
             record.Classification == FiscalExceptionReadbackClassification.Mismatch);
     }
 
+    [Fact]
+    public async Task RunReadbackAsync_WhenReadbackIdempotencyAndSemanticHashMatch_StillClassifiesMatched()
+    {
+        var fiscalDocumentId = Guid.NewGuid();
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            PosServerFiscalDocumentId = fiscalDocumentId,
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = new string('a', 64),
+            SemanticRequestHashAlgorithm = "sha256",
+            SemanticRequestHashSourceVersion = "sha256:v1"
+        };
+        var client = new FakeReadbackClient(
+            supportsReadback: true,
+            ReadResult(
+                fiscalDocumentId,
+                idempotencyKey: reference.UpstreamFinalityReference,
+                semanticRequestHash: new string('a', 64)));
+        var readbackAttempts = new FakeReadbackAttemptRepository();
+        var sut = CreateWorker([reference], client, readbackAttempts: readbackAttempts);
+
+        var result = await sut.RunReadbackAsync(
+            reference.FiscalIssuanceReferenceId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        result.Classification.Should().Be(FiscalExceptionReadbackClassification.Matched);
+        result.RetryScheduled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunReadbackAsync_WhenReadbackSemanticHashDiffers_ClassifiesMismatch()
+    {
+        var fiscalDocumentId = Guid.NewGuid();
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            PosServerFiscalDocumentId = fiscalDocumentId,
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = new string('a', 64),
+            SemanticRequestHashAlgorithm = "sha256",
+            SemanticRequestHashSourceVersion = "sha256:v1"
+        };
+        var updated = reference with
+        {
+            FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceManualReview,
+            LatestExceptionReason = FiscalIssuanceExceptionReason.FiscalReferenceMismatch,
+            LatestErrorCode = "fiscal_reference_mismatch",
+            LatestErrorPosture = FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+            LastUpdatedAt = reference.LastUpdatedAt.AddMinutes(1)
+        };
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        orchestration.ApplyReadbackPlanningResultAsync(
+                reference.FiscalIssuanceReferenceId,
+                Arg.Is<FiscalIssuanceReadbackPlanningResult>(result =>
+                    result.Outcome == FiscalIssuanceReadbackPlanningOutcome.Mismatch),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(updated));
+        var client = new FakeReadbackClient(
+            supportsReadback: true,
+            ReadResult(
+                fiscalDocumentId,
+                idempotencyKey: reference.UpstreamFinalityReference,
+                semanticRequestHash: new string('b', 64)));
+        var sut = CreateWorker([reference], client, orchestration);
+
+        var result = await sut.RunReadbackAsync(
+            reference.FiscalIssuanceReferenceId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        result.Classification.Should().Be(FiscalExceptionReadbackClassification.Mismatch);
+        result.RetryScheduled.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RunReadbackAsync_WhenReadbackIdempotencyKeyDiffers_ClassifiesMismatch()
+    {
+        var fiscalDocumentId = Guid.NewGuid();
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            PosServerFiscalDocumentId = fiscalDocumentId
+        };
+        var updated = reference with
+        {
+            FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceManualReview,
+            LatestExceptionReason = FiscalIssuanceExceptionReason.FiscalReferenceMismatch,
+            LatestErrorCode = "fiscal_reference_mismatch",
+            LatestErrorPosture = FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange,
+            LastUpdatedAt = reference.LastUpdatedAt.AddMinutes(1)
+        };
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        orchestration.ApplyReadbackPlanningResultAsync(
+                reference.FiscalIssuanceReferenceId,
+                Arg.Is<FiscalIssuanceReadbackPlanningResult>(result =>
+                    result.Outcome == FiscalIssuanceReadbackPlanningOutcome.Mismatch),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(updated));
+        var client = new FakeReadbackClient(
+            supportsReadback: true,
+            ReadResult(
+                fiscalDocumentId,
+                idempotencyKey: $"different-{Guid.NewGuid():N}"));
+        var sut = CreateWorker([reference], client, orchestration);
+
+        var result = await sut.RunReadbackAsync(
+            reference.FiscalIssuanceReferenceId,
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            CancellationToken.None);
+
+        result.Classification.Should().Be(FiscalExceptionReadbackClassification.Mismatch);
+        result.RetryScheduled.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(503, "pos_server_unavailable", FiscalExceptionReadbackClassification.Unavailable)]
     [InlineData(500, "invalid_json_response", FiscalExceptionReadbackClassification.Unknown)]
@@ -379,7 +495,9 @@ public sealed class FiscalExceptionReadbackWorkerTests
         Guid? fiscalDocumentId,
         bool succeeded = true,
         int httpStatusCode = 200,
-        string code = "ok") =>
+        string code = "ok",
+        string? idempotencyKey = null,
+        string? semanticRequestHash = null) =>
         new(
             Outcome: succeeded ? PosServerFiscalDocumentOutcome.Accepted : PosServerFiscalDocumentOutcome.InvalidResponse,
             Succeeded: succeeded,
@@ -389,7 +507,26 @@ public sealed class FiscalExceptionReadbackWorkerTests
             FiscalDocumentId: fiscalDocumentId,
             FiscalIssuanceEvidenceStatus: succeeded ? FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned : null,
             FiscalNumberAssignmentState: succeeded ? FiscalNumberAssignmentState.Assigned : null,
-            FiscalDocumentStatusCodeId: succeeded ? Guid.Parse("33333333-3333-3333-3333-333333333333") : null);
+            FiscalDocumentStatusCodeId: succeeded ? Guid.Parse("33333333-3333-3333-3333-333333333333") : null,
+            IdempotencyScope: succeeded
+                ? "fiscal_document_creation:22222222222222222222222222222222:33333333333333333333333333333333"
+                : null,
+            IdempotencyKey: idempotencyKey,
+            IdempotencyKeySource: idempotencyKey is null
+                ? null
+                : FiscalExceptionPosServerRetryContractReadinessService.PosServerIdempotencyKeySource,
+            SemanticRequestHash: semanticRequestHash,
+            SemanticRequestHashVersion: semanticRequestHash is null ? null : "sha256:v1",
+            SemanticRequestHashStatus: semanticRequestHash is null ? null : "available",
+            FiscalIdentityId: succeeded ? Guid.Parse("22222222-2222-2222-2222-222222222222") : null,
+            FiscalSequencePolicyId: succeeded ? Guid.Parse("44444444-4444-4444-4444-444444444444") : null,
+            FiscalSequenceValue: succeeded ? 1 : null,
+            FiscalDocumentNumber: succeeded ? "SI-000001" : null,
+            FiscalSeries: succeeded ? "SI" : null,
+            FiscalNumberPrefixText: succeeded ? "SI-" : null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: succeeded ? DateTimeOffset.Parse("2026-07-04T10:30:00+08:00") : null,
+            FiscalNumberAssignedByRef: succeeded ? "pos-server-runtime" : null);
 
     private static FiscalIssuanceReferenceRecord Reference(FiscalIssuanceIntegrationState state)
     {
