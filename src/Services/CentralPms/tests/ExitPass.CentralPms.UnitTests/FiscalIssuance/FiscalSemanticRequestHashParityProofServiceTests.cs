@@ -6,9 +6,58 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 
 public sealed class FiscalSemanticRequestHashParityProofServiceTests
 {
+    private const string ExpectedPosServerHash =
+        "6a490379e4275a57f0a0695ff9dbd1271c4480adaeeefb9b6bfbd11e4d1ed201";
+    private const string CurrentCentralPmsFixtureHash =
+        "1430a2fbd8c9c128d101658777ba427bb34564bb84460621af179a464b5d7ab8";
+
     private readonly PosServerFiscalDocumentRequestMapper _mapper = new();
     private readonly FiscalSemanticRequestHashCalculator _calculator = new();
     private readonly FiscalSemanticRequestHashParityProofService _sut = new();
+
+    [Fact]
+    public void Fixture_WhenCanonicalSourceTextIsHashed_ReturnsExpectedPosServerSha256V1Hash()
+    {
+        var fixture = PosServerSemanticHashSha256V1Fixture.Read();
+
+        fixture.CanonicalSourceVersion.Should().Be("sha256:v1");
+        fixture.HashAlgorithm.Should().Be("SHA-256");
+        fixture.ExpectedSha256Hash.Should().Be(ExpectedPosServerHash);
+        fixture.ComputeCanonicalSourceSha256LowerHex().Should().Be(ExpectedPosServerHash);
+    }
+
+    [Fact]
+    public void FixtureMapping_WhenReadMultipleTimes_ProducesDeterministicCentralPmsHash()
+    {
+        var first = PosServerSemanticHashSha256V1Fixture.Read().RepresentativeCreateRequest;
+        var second = PosServerSemanticHashSha256V1Fixture.Read().RepresentativeCreateRequest;
+
+        var firstResult = _calculator.InspectCanonicalSource(first);
+        var secondResult = _calculator.InspectCanonicalSource(second);
+
+        firstResult.HashValue.Should().Be(secondResult.HashValue);
+        firstResult.CanonicalSourceText.Should().Be(secondResult.CanonicalSourceText);
+        firstResult.HashValue.Should().MatchRegex("^[0-9a-f]{64}$");
+    }
+
+    [Fact]
+    public void Prove_WhenActualPosServerFixtureIsConsumed_ReturnsMismatchWithExactReason()
+    {
+        var fixture = PosServerSemanticHashSha256V1Fixture.Read();
+        var centralPms = _calculator.InspectCanonicalSource(fixture.RepresentativeCreateRequest);
+
+        var result = _sut.Prove(fixture.RepresentativeCreateRequest, fixture.ToParityFixture());
+
+        result.Status.Should().Be(FiscalSemanticRequestHashParityProofStatus.Mismatch);
+        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_mismatch");
+        result.CentralPmsHashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
+        result.CentralPmsCanonicalSourceText.Should().Be(centralPms.CanonicalSourceText);
+        result.CentralPmsSemanticRequestHash.Should().Be(centralPms.HashValue);
+        result.CentralPmsSemanticRequestHash.Should().Be(CurrentCentralPmsFixtureHash);
+        result.CentralPmsSemanticRequestHash.Should().NotBe(ExpectedPosServerHash);
+        result.PosServerExpectedHashSourceVersion.Should().Be("sha256:v1");
+        result.PosServerExpectedSemanticRequestHash.Should().Be(ExpectedPosServerHash);
+    }
 
     [Fact]
     public void Prove_WhenExactPosServerExpectedSourceAndHashAreAvailable_ReturnsProven()

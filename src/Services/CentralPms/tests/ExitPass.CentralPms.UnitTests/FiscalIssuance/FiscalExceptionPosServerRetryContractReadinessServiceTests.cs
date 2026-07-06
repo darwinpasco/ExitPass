@@ -59,6 +59,31 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
         result.BlockReasonCode.Should().Be("pos_server_semantic_hash_mismatch");
     }
 
+    [Fact]
+    public async Task Evaluate_WhenActualPosServerFixtureProofMismatches_ReturnsMismatchInsteadOfSourceUnavailable()
+    {
+        var fixture = PosServerSemanticHashSha256V1Fixture.Read();
+        var parityProof = new FiscalSemanticRequestHashParityProofService()
+            .Prove(fixture.RepresentativeCreateRequest, fixture.ToParityFixture());
+        var detail = await DetailAsync(
+            upstreamFinalityReference: "central-finality-parity-001",
+            semanticHashValue: parityProof.CentralPmsSemanticRequestHash,
+            semanticHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            semanticHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
+        var sut = new FiscalExceptionPosServerRetryContractReadinessService();
+
+        var result = sut.Evaluate(
+            new FiscalExceptionPosServerRetryContractReadinessRequest(
+                detail,
+                SemanticHashParityProof: parityProof));
+
+        parityProof.Status.Should().Be(FiscalSemanticRequestHashParityProofStatus.Mismatch);
+        result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
+        result.SemanticHashCompatibilityStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
+        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_mismatch");
+        result.RetryExecutionAvailable.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(null, "sha256:v1")]
     [InlineData("sha256", null)]
@@ -180,10 +205,15 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
 
     private static async Task<FiscalExceptionQueueCaseDetail> DetailAsync(
         string upstreamFinalityReference = "CPS-POS-UAT:ready",
+        string? semanticHashValue = null,
         string? semanticHashAlgorithm = "sha256",
         string? semanticHashSourceVersion = "sha256:v1")
     {
-        var reference = Reference(upstreamFinalityReference, semanticHashAlgorithm, semanticHashSourceVersion);
+        var reference = Reference(
+            upstreamFinalityReference,
+            semanticHashAlgorithm,
+            semanticHashSourceVersion,
+            semanticHashValue);
         var service = new FiscalExceptionQueueService(new FakeReferenceReader([reference]));
         return (await service.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None))!;
     }
@@ -191,7 +221,8 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
     private static FiscalIssuanceReferenceRecord Reference(
         string upstreamFinalityReference,
         string? semanticHashAlgorithm,
-        string? semanticHashSourceVersion)
+        string? semanticHashSourceVersion,
+        string? semanticHashValue = null)
     {
         var now = DateTimeOffset.Parse("2026-07-06T09:00:00+08:00");
         return new FiscalIssuanceReferenceRecord(
@@ -229,7 +260,7 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
             LastUpdatedAt: now,
             RecordedByServiceIdentityId: Guid.NewGuid(),
             SemanticRequestHashStatus: FiscalSemanticRequestHashSourceStatus.Available,
-            SemanticRequestHashValue: new string('a', 64),
+            SemanticRequestHashValue: semanticHashValue ?? new string('a', 64),
             SemanticRequestHashAlgorithm: semanticHashAlgorithm,
             SemanticRequestHashSourceVersion: semanticHashSourceVersion,
             SemanticRequestHashSourceFactCount: 42,
