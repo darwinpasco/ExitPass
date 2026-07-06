@@ -220,6 +220,31 @@ public enum FiscalExceptionSemanticHashControlledBackfillMutationMode
     SingleRecordOnly = 1
 }
 
+public enum FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus
+{
+    NotRequested = 1,
+    ReadyForOperatorApproval = 2,
+    PreparedButMutationInvocationDisabled = 3,
+    MutationInvoked = 4,
+    Blocked = 5,
+    Unavailable = 6
+}
+
+public enum FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode
+{
+    SingleRecordOnly = 1,
+    Batch = 2
+}
+
+public enum FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture
+{
+    NotRequested = 1,
+    DryRunOnly = 2,
+    Disabled = 3,
+    Invoked = 4,
+    Blocked = 5
+}
+
 public enum FiscalExceptionIdempotencyContextAvailabilityStatus
 {
     NotEvaluated = 1,
@@ -319,6 +344,14 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string? SemanticHashControlledBackfillMutationNewSourceVersion,
     string? SemanticHashControlledBackfillMutationNewHashValue,
     string SafeSemanticHashControlledBackfillMutationSummary,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus SemanticHashBackfillOperatorWorkflowStatus,
+    string? SemanticHashBackfillOperatorWorkflowBlockReasonCode,
+    Guid? SemanticHashBackfillOperatorWorkflowRequestId,
+    string? SemanticHashBackfillOperatorWorkflowApprovalReference,
+    FiscalExceptionSemanticHashControlledBackfillDualControlPosture SemanticHashBackfillOperatorWorkflowDualControlPosture,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture
+        SemanticHashBackfillOperatorWorkflowMutationInvocationPosture,
+    string SafeSemanticHashBackfillOperatorWorkflowSummary,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
@@ -1086,6 +1119,152 @@ public interface IFiscalExceptionSemanticHashGuardedBackfillMutationRepository
 {
     Task<FiscalExceptionSemanticHashGuardedBackfillMutationResult> MutateAsync(
         FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        CancellationToken cancellationToken);
+}
+
+public sealed class FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions
+{
+    public const string SectionName = "FiscalExceptionSemanticHashBackfillOperatorWorkflow";
+
+    public FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions()
+    {
+    }
+
+    public FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions(
+        bool enableControlledMutationInvocation = false)
+    {
+        EnableControlledMutationInvocation = enableControlledMutationInvocation;
+    }
+
+    public bool EnableControlledMutationInvocation { get; set; }
+}
+
+public sealed record FiscalExceptionSemanticHashBackfillOperatorWorkflowRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    Guid? MutationPreparationAuditId,
+    Guid? ActorServiceIdentityId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    string? ReasonCode,
+    string? SafeJustification,
+    Guid? CorrelationId,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode RequestMode =
+        FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode.SingleRecordOnly,
+    bool ExecuteControlledMutation = false,
+    bool DryRunOnly = true,
+    DateTimeOffset? RequestedAt = null,
+    FiscalExceptionSemanticHashRecalculationPreviewAuditSummary? LatestRecalculationPreviewAuditSummary = null,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationResult? MutationPreparationBasis = null);
+
+public sealed record FiscalExceptionSemanticHashBackfillOperatorWorkflowResult(
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    Guid? WorkflowRequestId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    Guid? MutationPreparationAuditId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    Guid? ActorServiceIdentityId,
+    string? ReasonCode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode RequestMode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture MutationInvocationPosture,
+    bool ExecuteControlledMutationRequested,
+    bool MutationInvocationEnabled,
+    bool DryRunOnly,
+    Guid? GuardedMutationAuditId,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus? GuardedMutationStatus,
+    bool WorkflowAuditPersisted,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? CreatedAt,
+    bool FiscalIssuanceReferenceMutated,
+    bool RetryExecutionAvailable,
+    bool PosServerPostCalled,
+    bool RetryExecuted,
+    bool RetryScheduled,
+    bool PaymentFinalityChanged,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated);
+
+public interface IFiscalExceptionSemanticHashBackfillOperatorWorkflowService
+{
+    Task<FiscalExceptionSemanticHashBackfillOperatorWorkflowResult> RequestAsync(
+        FiscalExceptionSemanticHashBackfillOperatorWorkflowRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditWrite(
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    Guid? MutationPreparationAuditId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    Guid? ActorServiceIdentityId,
+    string? ReasonCode,
+    string? SafeJustification,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode RequestMode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus WorkflowStatus,
+    string? BlockReasonCode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture MutationInvocationPosture,
+    Guid? GuardedMutationAuditId,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus? GuardedMutationStatus,
+    bool ExecuteControlledMutationRequested,
+    bool MutationInvocationEnabled,
+    bool DryRunOnly,
+    DateTimeOffset RequestedAt,
+    Guid? CorrelationId,
+    string SafeSummary);
+
+public sealed record FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRecord(
+    Guid WorkflowRequestId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    Guid? MutationPreparationAuditId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    Guid? ActorServiceIdentityId,
+    string? ReasonCode,
+    string? SafeJustification,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode RequestMode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus WorkflowStatus,
+    string? BlockReasonCode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture MutationInvocationPosture,
+    Guid? GuardedMutationAuditId,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus? GuardedMutationStatus,
+    bool ExecuteControlledMutationRequested,
+    bool MutationInvocationEnabled,
+    bool DryRunOnly,
+    DateTimeOffset RequestedAt,
+    Guid? CorrelationId,
+    string SafeSummary,
+    DateTimeOffset CreatedAt);
+
+public sealed record FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditSummary(
+    Guid LastWorkflowRequestId,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus LastWorkflowStatus,
+    DateTimeOffset LastRequestedAt,
+    int RequestCount,
+    string? LastBlockReasonCode,
+    string? ApprovalReference,
+    FiscalExceptionSemanticHashControlledBackfillDualControlPosture DualControlPosture,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture MutationInvocationPosture,
+    Guid? GuardedMutationAuditId,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus? GuardedMutationStatus,
+    string SafeSummary);
+
+public interface IFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository
+{
+    Task<FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRecord> RecordAsync(
+        FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditSummary?> GetSummaryAsync(
+        Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken);
 }
 

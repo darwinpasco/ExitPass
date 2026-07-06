@@ -40,6 +40,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         _semanticHashControlledBackfillMutationPreparationService;
     private readonly IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository?
         _semanticHashControlledBackfillMutationAuditRepository;
+    private readonly IFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository?
+        _semanticHashBackfillOperatorWorkflowAuditRepository;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
         : this(referenceReader, null)
@@ -165,7 +167,9 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         IFiscalExceptionSemanticHashControlledBackfillMutationPreparationService?
             semanticHashControlledBackfillMutationPreparationService = null,
         IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository?
-            semanticHashControlledBackfillMutationAuditRepository = null)
+            semanticHashControlledBackfillMutationAuditRepository = null,
+        IFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository?
+            semanticHashBackfillOperatorWorkflowAuditRepository = null)
     {
         _referenceReader = referenceReader;
         _readbackAttemptRepository = readbackAttemptRepository;
@@ -185,6 +189,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             new FiscalExceptionSemanticHashControlledBackfillMutationPreparationService();
         _semanticHashControlledBackfillMutationAuditRepository =
             semanticHashControlledBackfillMutationAuditRepository;
+        _semanticHashBackfillOperatorWorkflowAuditRepository =
+            semanticHashBackfillOperatorWorkflowAuditRepository;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -261,6 +267,21 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
                 detail = ApplySemanticHashControlledBackfillMutationAuditSummary(
                     detail,
                     mutationAuditSummary);
+            }
+        }
+
+        if (_semanticHashBackfillOperatorWorkflowAuditRepository is not null)
+        {
+            var workflowAuditSummary =
+                await _semanticHashBackfillOperatorWorkflowAuditRepository.GetSummaryAsync(
+                    record.FiscalIssuanceReferenceId,
+                    cancellationToken);
+
+            if (workflowAuditSummary is not null)
+            {
+                detail = ApplySemanticHashBackfillOperatorWorkflowAuditSummary(
+                    detail,
+                    workflowAuditSummary);
             }
         }
 
@@ -443,6 +464,29 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SemanticHashControlledBackfillMutationNewSourceVersion = auditSummary.NewSourceVersion,
             SemanticHashControlledBackfillMutationNewHashValue = auditSummary.NewHashValue,
             SafeSemanticHashControlledBackfillMutationSummary = auditSummary.SafeSummary,
+            RetryExecutionAvailable = false
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
+    }
+
+    internal static FiscalExceptionQueueCaseDetail ApplySemanticHashBackfillOperatorWorkflowAuditSummary(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditSummary auditSummary)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            SemanticHashBackfillOperatorWorkflowStatus = auditSummary.LastWorkflowStatus,
+            SemanticHashBackfillOperatorWorkflowBlockReasonCode = auditSummary.LastBlockReasonCode,
+            SemanticHashBackfillOperatorWorkflowRequestId = auditSummary.LastWorkflowRequestId,
+            SemanticHashBackfillOperatorWorkflowApprovalReference = auditSummary.ApprovalReference,
+            SemanticHashBackfillOperatorWorkflowDualControlPosture = auditSummary.DualControlPosture,
+            SemanticHashBackfillOperatorWorkflowMutationInvocationPosture = auditSummary.MutationInvocationPosture,
+            SafeSemanticHashBackfillOperatorWorkflowSummary = auditSummary.SafeSummary,
             RetryExecutionAvailable = false
         };
 
@@ -810,6 +854,18 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SemanticHashControlledBackfillMutationNewHashValue: null,
             SafeSemanticHashControlledBackfillMutationSummary:
                 "semantic_hash_controlled_backfill_mutation_not_prepared_read_detail_for_evaluation",
+            SemanticHashBackfillOperatorWorkflowStatus:
+                FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus.NotRequested,
+            SemanticHashBackfillOperatorWorkflowBlockReasonCode:
+                "semantic_hash_backfill_operator_workflow_not_requested",
+            SemanticHashBackfillOperatorWorkflowRequestId: null,
+            SemanticHashBackfillOperatorWorkflowApprovalReference: null,
+            SemanticHashBackfillOperatorWorkflowDualControlPosture:
+                FiscalExceptionSemanticHashControlledBackfillDualControlPosture.RequiredPending,
+            SemanticHashBackfillOperatorWorkflowMutationInvocationPosture:
+                FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture.NotRequested,
+            SafeSemanticHashBackfillOperatorWorkflowSummary:
+                "semantic_hash_backfill_operator_workflow_not_requested",
             IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),
             LastRetryCommandPreparationAttemptAt: null,
             RetryCommandPreparationAttemptCount: null,
