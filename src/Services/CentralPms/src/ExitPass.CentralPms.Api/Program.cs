@@ -389,6 +389,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalExceptionReadbackClient, PosServerFiscalExceptionReadbackClient>();
     builder.Services.AddScoped<IFiscalExceptionReadbackWorker, FiscalExceptionReadbackWorker>();
     builder.Services.AddScoped<IFiscalSemanticRequestHashCalculator, FiscalSemanticRequestHashCalculator>();
+    builder.Services.AddScoped<
+        IFiscalExceptionSemanticHashRecalculationPreviewService,
+        FiscalExceptionSemanticHashRecalculationPreviewService>();
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));
