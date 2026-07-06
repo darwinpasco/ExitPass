@@ -39,6 +39,10 @@ public static class FiscalReferenceStatePatchHarness
             {
                 await ExecuteSqlAsync(connectionString, SemanticHashBackfillMutationPreparationTableSql);
             }
+            else
+            {
+                await ExecuteSqlAsync(connectionString, SemanticHashBackfillMutationPreparationUpgradeSql);
+            }
 
             if (!await SemanticRequestHashColumnsExistAsync(connectionString))
             {
@@ -426,6 +430,9 @@ public static class FiscalReferenceStatePatchHarness
             semantic_hash_recalculation_preview_audit_id uuid
                 REFERENCES core.fiscal_issuance_semantic_hash_recalculation_previews(semantic_hash_recalculation_preview_audit_id)
                 DEFERRABLE INITIALLY IMMEDIATE,
+            mutation_preparation_audit_id uuid
+                REFERENCES core.fiscal_issuance_semantic_hash_backfill_mutation_preparations(semantic_hash_backfill_mutation_audit_id)
+                DEFERRABLE INITIALLY IMMEDIATE,
             controlled_backfill_approval_status varchar(60) NOT NULL,
             old_semantic_hash_source_version varchar(80),
             required_semantic_hash_source_version varchar(80) NOT NULL,
@@ -464,6 +471,11 @@ public static class FiscalReferenceStatePatchHarness
                 mutation_preparation_status IN (
                     'NOT_PREPARED',
                     'PREPARED_BUT_MUTATION_DISABLED',
+                    'PREPARED_FOR_CONTROLLED_MUTATION',
+                    'MUTATED',
+                    'FAILED',
+                    'STALE',
+                    'DISABLED',
                     'BLOCKED',
                     'UNAVAILABLE'
                 )
@@ -471,11 +483,21 @@ public static class FiscalReferenceStatePatchHarness
             CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__mode CHECK (
                 mutation_mode IN ('SINGLE_RECORD_ONLY')
             ),
-            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__not_mutated CHECK (
+            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__mutation_guard CHECK (
                 fiscal_issuance_reference_mutated = false
+                OR (
+                    fiscal_issuance_reference_mutated = true
+                    AND mutation_preparation_status = 'MUTATED'
+                    AND mutation_enabled = true
+                    AND mutation_preparation_audit_id IS NOT NULL
+                )
             ),
             CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__prepared_has_hash CHECK (
-                mutation_preparation_status <> 'PREPARED_BUT_MUTATION_DISABLED'
+                mutation_preparation_status NOT IN (
+                    'PREPARED_BUT_MUTATION_DISABLED',
+                    'PREPARED_FOR_CONTROLLED_MUTATION',
+                    'MUTATED'
+                )
                 OR (
                     semantic_hash_recalculation_preview_audit_id IS NOT NULL
                     AND new_semantic_hash_value IS NOT NULL
@@ -491,6 +513,78 @@ public static class FiscalReferenceStatePatchHarness
             ON core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (fiscal_issuance_reference_id, attempted_at DESC);
 
         COMMENT ON TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations IS
-            'Central PMS v1.3 FEQ semantic hash controlled backfill mutation preparation audit records only. No automatic batch backfill, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+            'Central PMS v1.3 FEQ semantic hash controlled single-record backfill mutation audit records. No automatic batch backfill, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+        """;
+
+    private const string SemanticHashBackfillMutationPreparationUpgradeSql = """
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            ADD COLUMN IF NOT EXISTS mutation_preparation_audit_id uuid;
+
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            DROP CONSTRAINT IF EXISTS ck_fiscal_sem_hash_backfill_mutation__status;
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            DROP CONSTRAINT IF EXISTS ck_fiscal_sem_hash_backfill_mutation__not_mutated;
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            DROP CONSTRAINT IF EXISTS ck_fiscal_sem_hash_backfill_mutation__mutation_guard;
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            DROP CONSTRAINT IF EXISTS ck_fiscal_sem_hash_backfill_mutation__prepared_has_hash;
+
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            ADD CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__status CHECK (
+                mutation_preparation_status IN (
+                    'NOT_PREPARED',
+                    'PREPARED_BUT_MUTATION_DISABLED',
+                    'PREPARED_FOR_CONTROLLED_MUTATION',
+                    'MUTATED',
+                    'FAILED',
+                    'STALE',
+                    'DISABLED',
+                    'BLOCKED',
+                    'UNAVAILABLE'
+                )
+            );
+
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            ADD CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__mutation_guard CHECK (
+                fiscal_issuance_reference_mutated = false
+                OR (
+                    fiscal_issuance_reference_mutated = true
+                    AND mutation_preparation_status = 'MUTATED'
+                    AND mutation_enabled = true
+                    AND mutation_preparation_audit_id IS NOT NULL
+                )
+            );
+
+        ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            ADD CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__prepared_has_hash CHECK (
+                mutation_preparation_status NOT IN (
+                    'PREPARED_BUT_MUTATION_DISABLED',
+                    'PREPARED_FOR_CONTROLLED_MUTATION',
+                    'MUTATED'
+                )
+                OR (
+                    semantic_hash_recalculation_preview_audit_id IS NOT NULL
+                    AND new_semantic_hash_value IS NOT NULL
+                    AND new_semantic_hash_algorithm IS NOT NULL
+                    AND new_semantic_hash_source_version IS NOT NULL
+                    AND new_semantic_hash_source_fact_count IS NOT NULL
+                    AND new_semantic_hash_source_fact_count > 0
+                )
+            );
+
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'fk_fiscal_sem_hash_backfill_mutation__prep_audit_id'
+            ) THEN
+                ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+                    ADD CONSTRAINT fk_fiscal_sem_hash_backfill_mutation__prep_audit_id
+                    FOREIGN KEY (mutation_preparation_audit_id)
+                    REFERENCES core.fiscal_issuance_semantic_hash_backfill_mutation_preparations(semantic_hash_backfill_mutation_audit_id)
+                    DEFERRABLE INITIALLY IMMEDIATE;
+            END IF;
+        END $$;
         """;
 }

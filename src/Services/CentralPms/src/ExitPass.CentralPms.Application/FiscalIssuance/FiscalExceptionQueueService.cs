@@ -412,6 +412,9 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SemanticHashControlledBackfillMutationAttemptedAt = preparation.MutationAttemptedAt,
             SemanticHashControlledBackfillMutationMode = preparation.MutationMode,
             SemanticHashControlledBackfillMutationEnabled = preparation.MutationEnabled,
+            SemanticHashControlledBackfillMutationOldSourceVersion = preparation.Command?.StoredSourceVersion,
+            SemanticHashControlledBackfillMutationNewSourceVersion = preparation.Command?.RecalculatedHashSourceVersion,
+            SemanticHashControlledBackfillMutationNewHashValue = preparation.Command?.RecalculatedHashValue,
             SafeSemanticHashControlledBackfillMutationSummary = preparation.SafeSummary,
             RetryExecutionAvailable = false
         };
@@ -436,6 +439,9 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SemanticHashControlledBackfillMutationAttemptCount = auditSummary.AttemptCount,
             SemanticHashControlledBackfillMutationMode = auditSummary.MutationMode,
             SemanticHashControlledBackfillMutationEnabled = auditSummary.MutationEnabled,
+            SemanticHashControlledBackfillMutationOldSourceVersion = auditSummary.OldSourceVersion,
+            SemanticHashControlledBackfillMutationNewSourceVersion = auditSummary.NewSourceVersion,
+            SemanticHashControlledBackfillMutationNewHashValue = auditSummary.NewHashValue,
             SafeSemanticHashControlledBackfillMutationSummary = auditSummary.SafeSummary,
             RetryExecutionAvailable = false
         };
@@ -799,6 +805,9 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SemanticHashControlledBackfillMutationMode:
                 FiscalExceptionSemanticHashControlledBackfillMutationMode.SingleRecordOnly,
             SemanticHashControlledBackfillMutationEnabled: false,
+            SemanticHashControlledBackfillMutationOldSourceVersion: null,
+            SemanticHashControlledBackfillMutationNewSourceVersion: null,
+            SemanticHashControlledBackfillMutationNewHashValue: null,
             SafeSemanticHashControlledBackfillMutationSummary:
                 "semantic_hash_controlled_backfill_mutation_not_prepared_read_detail_for_evaluation",
             IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),

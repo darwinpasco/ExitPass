@@ -5,7 +5,8 @@ using NpgsqlTypes;
 namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 
 public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository :
-    IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository
+    IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository,
+    IFiscalExceptionSemanticHashGuardedBackfillMutationRepository
 {
     private readonly string _connectionString;
 
@@ -24,6 +25,7 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             INSERT INTO core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (
                 fiscal_issuance_reference_id,
                 semantic_hash_recalculation_preview_audit_id,
+                mutation_preparation_audit_id,
                 controlled_backfill_approval_status,
                 old_semantic_hash_source_version,
                 required_semantic_hash_source_version,
@@ -48,6 +50,7 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             VALUES (
                 @fiscal_issuance_reference_id,
                 @semantic_hash_recalculation_preview_audit_id,
+                @mutation_preparation_audit_id,
                 @controlled_backfill_approval_status,
                 @old_semantic_hash_source_version,
                 @required_semantic_hash_source_version,
@@ -73,6 +76,7 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
                 semantic_hash_backfill_mutation_audit_id,
                 fiscal_issuance_reference_id,
                 semantic_hash_recalculation_preview_audit_id,
+                mutation_preparation_audit_id,
                 controlled_backfill_approval_status,
                 old_semantic_hash_source_version,
                 required_semantic_hash_source_version,
@@ -116,6 +120,460 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
         return MapRecord(reader);
     }
 
+    public async Task<FiscalExceptionSemanticHashGuardedBackfillMutationResult> MutateAsync(
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        CancellationToken cancellationToken)
+    {
+        Validate(command);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var reference = await ReadReferenceForUpdateAsync(connection, transaction, command, cancellationToken);
+        if (reference is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return Result(
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Failed,
+                "fiscal_issuance_reference_not_found",
+                "semantic_hash_guarded_backfill_failed_reference_not_found",
+                command,
+                mutationAuditId: null,
+                oldSourceVersion: null,
+                oldHashValue: null,
+                mutated: false,
+                mutationTimestamp: null);
+        }
+
+        if (!string.Equals(
+                reference.SourceVersion,
+                command.ExpectedOldSourceVersion,
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(
+                reference.SourceVersion,
+                FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            var audit = await RecordTransactionalAuditAsync(
+                connection,
+                transaction,
+                command,
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Stale,
+                "semantic_hash_source_version_changed_before_backfill",
+                "semantic_hash_guarded_backfill_stale_source_version_changed_not_mutated",
+                reference.SourceVersion,
+                reference.HashValue,
+                mutated: false,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return ToMutationResult(audit, mutated: false);
+        }
+
+        var preview = await ReadPreviewAsync(connection, transaction, command, cancellationToken);
+        if (preview is null || !PreviewMatches(preview, command))
+        {
+            var audit = await RecordTransactionalAuditAsync(
+                connection,
+                transaction,
+                command,
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Stale,
+                "semantic_hash_recalculation_preview_audit_basis_mismatch",
+                "semantic_hash_guarded_backfill_stale_preview_audit_basis_mismatch",
+                reference.SourceVersion,
+                reference.HashValue,
+                mutated: false,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return ToMutationResult(audit, mutated: false);
+        }
+
+        var preparation = await ReadMutationPreparationAsync(connection, transaction, command, cancellationToken);
+        if (preparation is null || !PreparationMatches(preparation, command))
+        {
+            var audit = await RecordTransactionalAuditAsync(
+                connection,
+                transaction,
+                command,
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Stale,
+                "semantic_hash_backfill_mutation_preparation_audit_basis_mismatch",
+                "semantic_hash_guarded_backfill_stale_mutation_preparation_audit_basis_mismatch",
+                reference.SourceVersion,
+                reference.HashValue,
+                mutated: false,
+                cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return ToMutationResult(audit, mutated: false);
+        }
+
+        var mutationTimestamp = command.AttemptedAt;
+        await UpdateSemanticHashMetadataAsync(connection, transaction, command, mutationTimestamp, cancellationToken);
+        var mutationAudit = await RecordTransactionalAuditAsync(
+            connection,
+            transaction,
+            command,
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Mutated,
+            blockReasonCode: null,
+            "semantic_hash_guarded_backfill_mutated_single_record_semantic_metadata_only",
+            reference.SourceVersion,
+            reference.HashValue,
+            mutated: true,
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return ToMutationResult(mutationAudit, mutated: true);
+    }
+
+    private static async Task<ReferenceSnapshot?> ReadReferenceForUpdateAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT semantic_request_hash_source_version, semantic_request_hash_value
+            FROM core.fiscal_issuance_references
+            WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+              AND is_active = true
+            FOR UPDATE;
+            """;
+
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
+        dbCommand.Parameters.AddWithValue("fiscal_issuance_reference_id", command.FiscalIssuanceReferenceId);
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new ReferenceSnapshot(
+                GetNullableString(reader, "semantic_request_hash_source_version"),
+                GetNullableString(reader, "semantic_request_hash_value"))
+            : null;
+    }
+
+    private static async Task<PreviewSnapshot?> ReadPreviewAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                recalculated_hash_value,
+                recalculated_hash_algorithm,
+                recalculated_hash_source_version,
+                recalculated_source_fact_count,
+                safe_source_summary,
+                recalculation_preview_status,
+                complete_original_request_facts_available,
+                mutation_status
+            FROM core.fiscal_issuance_semantic_hash_recalculation_previews
+            WHERE semantic_hash_recalculation_preview_audit_id = @semantic_hash_recalculation_preview_audit_id
+              AND fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+            FOR SHARE;
+            """;
+
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
+        dbCommand.Parameters.AddWithValue(
+            "semantic_hash_recalculation_preview_audit_id",
+            command.RecalculationPreviewAuditId);
+        dbCommand.Parameters.AddWithValue("fiscal_issuance_reference_id", command.FiscalIssuanceReferenceId);
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new PreviewSnapshot(
+                GetNullableString(reader, "recalculated_hash_value"),
+                GetNullableString(reader, "recalculated_hash_algorithm"),
+                GetNullableString(reader, "recalculated_hash_source_version"),
+                GetNullableInt32(reader, "recalculated_source_fact_count"),
+                GetNullableString(reader, "safe_source_summary"),
+                reader.GetString(reader.GetOrdinal("recalculation_preview_status")),
+                reader.GetBoolean(reader.GetOrdinal("complete_original_request_facts_available")),
+                reader.GetString(reader.GetOrdinal("mutation_status")))
+            : null;
+    }
+
+    private static async Task<PreparationSnapshot?> ReadMutationPreparationAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                semantic_hash_recalculation_preview_audit_id,
+                new_semantic_hash_value,
+                new_semantic_hash_algorithm,
+                new_semantic_hash_source_version,
+                new_semantic_hash_source_fact_count,
+                safe_source_summary,
+                mutation_preparation_status,
+                mutation_mode,
+                mutation_enabled,
+                fiscal_issuance_reference_mutated,
+                actor_service_identity_id,
+                approval_reference,
+                dual_control_reference
+            FROM core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            WHERE semantic_hash_backfill_mutation_audit_id = @mutation_preparation_audit_id
+              AND fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+            FOR SHARE;
+            """;
+
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
+        dbCommand.Parameters.AddWithValue("mutation_preparation_audit_id", command.MutationPreparationAuditId);
+        dbCommand.Parameters.AddWithValue("fiscal_issuance_reference_id", command.FiscalIssuanceReferenceId);
+
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new PreparationSnapshot(
+                GetNullableGuid(reader, "semantic_hash_recalculation_preview_audit_id"),
+                GetNullableString(reader, "new_semantic_hash_value"),
+                GetNullableString(reader, "new_semantic_hash_algorithm"),
+                GetNullableString(reader, "new_semantic_hash_source_version"),
+                GetNullableInt32(reader, "new_semantic_hash_source_fact_count"),
+                GetNullableString(reader, "safe_source_summary"),
+                reader.GetString(reader.GetOrdinal("mutation_preparation_status")),
+                reader.GetString(reader.GetOrdinal("mutation_mode")),
+                reader.GetBoolean(reader.GetOrdinal("mutation_enabled")),
+                reader.GetBoolean(reader.GetOrdinal("fiscal_issuance_reference_mutated")),
+                GetNullableGuid(reader, "actor_service_identity_id"),
+                GetNullableString(reader, "approval_reference"),
+                GetNullableString(reader, "dual_control_reference"))
+            : null;
+    }
+
+    private static bool PreviewMatches(
+        PreviewSnapshot preview,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command) =>
+        preview.PreviewStatus == "PREVIEW_CALCULATED" &&
+        preview.CompleteOriginalRequestFactsAvailable &&
+        preview.MutationStatus == "NOT_MUTATED" &&
+        preview.RecalculatedHashValue == command.NewHashValue &&
+        string.Equals(preview.RecalculatedHashAlgorithm, command.NewHashAlgorithm, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(preview.RecalculatedHashSourceVersion, command.NewHashSourceVersion, StringComparison.OrdinalIgnoreCase) &&
+        preview.RecalculatedSourceFactCount == command.NewHashSourceFactCount &&
+        preview.RecalculatedSafeSourceSummary == command.SafeSourceSummary;
+
+    private static bool PreparationMatches(
+        PreparationSnapshot preparation,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command) =>
+        preparation.RecalculationPreviewAuditId == command.RecalculationPreviewAuditId &&
+        preparation.MutationStatus == "PREPARED_FOR_CONTROLLED_MUTATION" &&
+        preparation.MutationMode == "SINGLE_RECORD_ONLY" &&
+        preparation.MutationEnabled &&
+        !preparation.FiscalIssuanceReferenceMutated &&
+        preparation.NewHashValue == command.NewHashValue &&
+        string.Equals(preparation.NewHashAlgorithm, command.NewHashAlgorithm, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(preparation.NewHashSourceVersion, command.NewHashSourceVersion, StringComparison.OrdinalIgnoreCase) &&
+        preparation.NewHashSourceFactCount == command.NewHashSourceFactCount &&
+        preparation.SafeSourceSummary == command.SafeSourceSummary &&
+        preparation.ActorServiceIdentityId == command.ActorServiceIdentityId &&
+        preparation.ApprovalReference == command.ApprovalReference &&
+        preparation.DualControlReference == command.DualControlReference;
+
+    private static async Task UpdateSemanticHashMetadataAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        DateTimeOffset mutationTimestamp,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE core.fiscal_issuance_references
+            SET
+                semantic_request_hash_status = 'AVAILABLE',
+                semantic_request_hash_value = @semantic_request_hash_value,
+                semantic_request_hash_algorithm = @semantic_request_hash_algorithm,
+                semantic_request_hash_source_version = @semantic_request_hash_source_version,
+                semantic_request_hash_source_fact_count = @semantic_request_hash_source_fact_count,
+                semantic_request_hash_safe_summary = @semantic_request_hash_safe_summary,
+                semantic_request_hash_recorded_at = @semantic_request_hash_recorded_at
+            WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id
+              AND is_active = true
+              AND semantic_request_hash_source_version = @expected_old_source_version;
+            """;
+
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
+        dbCommand.Parameters.AddWithValue("fiscal_issuance_reference_id", command.FiscalIssuanceReferenceId);
+        dbCommand.Parameters.AddWithValue("expected_old_source_version", command.ExpectedOldSourceVersion);
+        dbCommand.Parameters.AddWithValue("semantic_request_hash_value", command.NewHashValue);
+        dbCommand.Parameters.AddWithValue("semantic_request_hash_algorithm", command.NewHashAlgorithm);
+        dbCommand.Parameters.AddWithValue("semantic_request_hash_source_version", command.NewHashSourceVersion);
+        dbCommand.Parameters.AddWithValue("semantic_request_hash_source_fact_count", command.NewHashSourceFactCount);
+        dbCommand.Parameters.AddWithValue("semantic_request_hash_safe_summary", Truncate(command.SafeSourceSummary, 240));
+        dbCommand.Parameters.AddWithValue("semantic_request_hash_recorded_at", mutationTimestamp);
+
+        var affected = await dbCommand.ExecuteNonQueryAsync(cancellationToken);
+        if (affected != 1)
+        {
+            throw new InvalidOperationException("semantic_hash_guarded_backfill_update_failed_closed");
+        }
+    }
+
+    private static async Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord>
+        RecordTransactionalAuditAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus status,
+            string? blockReasonCode,
+            string safeSummary,
+            string? oldSourceVersion,
+            string? oldHashValue,
+            bool mutated,
+            CancellationToken cancellationToken)
+    {
+        const string sql = """
+            INSERT INTO core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (
+                fiscal_issuance_reference_id,
+                semantic_hash_recalculation_preview_audit_id,
+                mutation_preparation_audit_id,
+                controlled_backfill_approval_status,
+                old_semantic_hash_source_version,
+                required_semantic_hash_source_version,
+                old_semantic_hash_value,
+                new_semantic_hash_value,
+                new_semantic_hash_algorithm,
+                new_semantic_hash_source_version,
+                new_semantic_hash_source_fact_count,
+                safe_source_summary,
+                mutation_preparation_status,
+                mutation_block_reason_code,
+                mutation_mode,
+                mutation_enabled,
+                fiscal_issuance_reference_mutated,
+                attempted_at,
+                safe_summary,
+                correlation_id,
+                actor_service_identity_id,
+                approval_reference,
+                dual_control_reference
+            )
+            VALUES (
+                @fiscal_issuance_reference_id,
+                @semantic_hash_recalculation_preview_audit_id,
+                @mutation_preparation_audit_id,
+                @controlled_backfill_approval_status,
+                @old_semantic_hash_source_version,
+                @required_semantic_hash_source_version,
+                @old_semantic_hash_value,
+                @new_semantic_hash_value,
+                @new_semantic_hash_algorithm,
+                @new_semantic_hash_source_version,
+                @new_semantic_hash_source_fact_count,
+                @safe_source_summary,
+                @mutation_preparation_status,
+                @mutation_block_reason_code,
+                @mutation_mode,
+                @mutation_enabled,
+                @fiscal_issuance_reference_mutated,
+                @attempted_at,
+                @safe_summary,
+                @correlation_id,
+                @actor_service_identity_id,
+                @approval_reference,
+                @dual_control_reference
+            )
+            RETURNING
+                semantic_hash_backfill_mutation_audit_id,
+                fiscal_issuance_reference_id,
+                semantic_hash_recalculation_preview_audit_id,
+                mutation_preparation_audit_id,
+                controlled_backfill_approval_status,
+                old_semantic_hash_source_version,
+                required_semantic_hash_source_version,
+                old_semantic_hash_value,
+                new_semantic_hash_value,
+                new_semantic_hash_algorithm,
+                new_semantic_hash_source_version,
+                new_semantic_hash_source_fact_count,
+                safe_source_summary,
+                mutation_preparation_status,
+                mutation_block_reason_code,
+                mutation_mode,
+                mutation_enabled,
+                fiscal_issuance_reference_mutated,
+                attempted_at,
+                safe_summary,
+                correlation_id,
+                actor_service_identity_id,
+                approval_reference,
+                dual_control_reference,
+                created_at;
+            """;
+
+        var write = new FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite(
+            FiscalIssuanceReferenceId: command.FiscalIssuanceReferenceId,
+            RecalculationPreviewAuditId: command.RecalculationPreviewAuditId,
+            MutationPreparationAuditId: command.MutationPreparationAuditId,
+            ApprovalBasisStatus: command.ApprovalBasisStatus,
+            OldSourceVersion: oldSourceVersion,
+            RequiredSourceVersion: command.RequiredSourceVersion,
+            OldHashValue: oldHashValue,
+            NewHashValue: command.NewHashValue,
+            NewHashAlgorithm: command.NewHashAlgorithm,
+            NewHashSourceVersion: command.NewHashSourceVersion,
+            NewHashSourceFactCount: command.NewHashSourceFactCount,
+            SafeSourceSummary: command.SafeSourceSummary,
+            MutationStatus: status,
+            BlockReasonCode: blockReasonCode,
+            MutationMode: FiscalExceptionSemanticHashControlledBackfillMutationMode.SingleRecordOnly,
+            MutationEnabled: true,
+            FiscalIssuanceReferenceMutated: mutated,
+            AttemptedAt: command.AttemptedAt,
+            SafeSummary: safeSummary,
+            CorrelationId: command.CorrelationId,
+            ActorServiceIdentityId: command.ActorServiceIdentityId,
+            ApprovalReference: command.ApprovalReference,
+            DualControlReference: command.DualControlReference);
+
+        await using var dbCommand = new NpgsqlCommand(sql, connection, transaction);
+        AddParameters(dbCommand, write);
+        await using var reader = await dbCommand.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("Semantic hash guarded backfill mutation audit insert returned no rows.");
+        }
+
+        return MapRecord(reader);
+    }
+
+    private static FiscalExceptionSemanticHashGuardedBackfillMutationResult ToMutationResult(
+        FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord audit,
+        bool mutated) =>
+        FiscalExceptionSemanticHashGuardedBackfillMutationService.Result(
+            audit.MutationStatus,
+            audit.BlockReasonCode,
+            audit.SafeSummary,
+            audit.MutationAuditId,
+            audit.OldSourceVersion,
+            audit.NewHashSourceVersion,
+            audit.OldHashValue,
+            audit.NewHashValue,
+            audit.AttemptedAt,
+            mutated);
+
+    private static FiscalExceptionSemanticHashGuardedBackfillMutationResult Result(
+        FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus status,
+        string blockReasonCode,
+        string safeSummary,
+        FiscalExceptionSemanticHashGuardedBackfillMutationCommand command,
+        Guid? mutationAuditId,
+        string? oldSourceVersion,
+        string? oldHashValue,
+        bool mutated,
+        DateTimeOffset? mutationTimestamp) =>
+        FiscalExceptionSemanticHashGuardedBackfillMutationService.Result(
+            status,
+            blockReasonCode,
+            safeSummary,
+            mutationAuditId,
+            oldSourceVersion,
+            command.NewHashSourceVersion,
+            oldHashValue,
+            command.NewHashValue,
+            mutationTimestamp,
+            mutated);
+
     public async Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditSummary?> GetSummaryAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken)
@@ -135,6 +593,9 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
                 mutation_mode,
                 mutation_enabled,
                 fiscal_issuance_reference_mutated,
+                old_semantic_hash_source_version,
+                new_semantic_hash_source_version,
+                new_semantic_hash_value,
                 attempted_at,
                 safe_summary,
                 COUNT(*) OVER ()::integer AS attempt_count
@@ -169,6 +630,9 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             MutationMode: ParseMutationMode(reader.GetString(reader.GetOrdinal("mutation_mode"))),
             MutationEnabled: reader.GetBoolean(reader.GetOrdinal("mutation_enabled")),
             FiscalIssuanceReferenceMutated: reader.GetBoolean(reader.GetOrdinal("fiscal_issuance_reference_mutated")),
+            OldSourceVersion: GetNullableString(reader, "old_semantic_hash_source_version"),
+            NewSourceVersion: GetNullableString(reader, "new_semantic_hash_source_version"),
+            NewHashValue: GetNullableString(reader, "new_semantic_hash_value"),
             SafeSummary: reader.GetString(reader.GetOrdinal("safe_summary")));
     }
 
@@ -178,6 +642,7 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
     {
         command.Parameters.AddWithValue("fiscal_issuance_reference_id", attempt.FiscalIssuanceReferenceId);
         AddNullable(command, "semantic_hash_recalculation_preview_audit_id", attempt.RecalculationPreviewAuditId);
+        AddNullable(command, "mutation_preparation_audit_id", attempt.MutationPreparationAuditId);
         command.Parameters.AddWithValue(
             "controlled_backfill_approval_status",
             ToStorageValue(attempt.ApprovalBasisStatus));
@@ -223,11 +688,51 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             throw new ArgumentException("Semantic hash backfill mutation safe summary is required.", nameof(attempt));
         }
 
-        if (attempt.FiscalIssuanceReferenceMutated)
+        if (attempt.FiscalIssuanceReferenceMutated &&
+            attempt.MutationStatus != FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Mutated)
         {
             throw new ArgumentException(
-                "This slice cannot persist a mutated fiscal issuance reference audit record.",
+                "A mutated audit record must use mutated status.",
                 nameof(attempt));
+        }
+    }
+
+    private static void Validate(FiscalExceptionSemanticHashGuardedBackfillMutationCommand command)
+    {
+        if (command.FiscalIssuanceReferenceId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal issuance reference id is required.", nameof(command));
+        }
+
+        if (command.RecalculationPreviewAuditId == Guid.Empty)
+        {
+            throw new ArgumentException("Recalculation preview audit id is required.", nameof(command));
+        }
+
+        if (command.MutationPreparationAuditId == Guid.Empty)
+        {
+            throw new ArgumentException("Mutation preparation audit id is required.", nameof(command));
+        }
+
+        if (command.ActorServiceIdentityId == Guid.Empty)
+        {
+            throw new ArgumentException("Actor service identity id is required.", nameof(command));
+        }
+
+        if (string.IsNullOrWhiteSpace(command.ApprovalReference))
+        {
+            throw new ArgumentException("Approval reference is required.", nameof(command));
+        }
+
+        if (string.IsNullOrWhiteSpace(command.ExpectedOldSourceVersion) ||
+            string.IsNullOrWhiteSpace(command.RequiredSourceVersion) ||
+            string.IsNullOrWhiteSpace(command.NewHashValue) ||
+            string.IsNullOrWhiteSpace(command.NewHashAlgorithm) ||
+            string.IsNullOrWhiteSpace(command.NewHashSourceVersion) ||
+            string.IsNullOrWhiteSpace(command.SafeSourceSummary) ||
+            command.NewHashSourceFactCount < 1)
+        {
+            throw new ArgumentException("Semantic hash guarded backfill command metadata is incomplete.", nameof(command));
         }
     }
 
@@ -236,6 +741,7 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             MutationAuditId: reader.GetGuid(reader.GetOrdinal("semantic_hash_backfill_mutation_audit_id")),
             FiscalIssuanceReferenceId: reader.GetGuid(reader.GetOrdinal("fiscal_issuance_reference_id")),
             RecalculationPreviewAuditId: GetNullableGuid(reader, "semantic_hash_recalculation_preview_audit_id"),
+            MutationPreparationAuditId: GetNullableGuid(reader, "mutation_preparation_audit_id"),
             ApprovalBasisStatus: ParseApprovalStatus(
                 reader.GetString(reader.GetOrdinal("controlled_backfill_approval_status"))),
             OldSourceVersion: GetNullableString(reader, "old_semantic_hash_source_version"),
@@ -289,6 +795,11 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedButMutationDisabled => "PREPARED_BUT_MUTATION_DISABLED",
             FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Blocked => "BLOCKED",
             FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Unavailable => "UNAVAILABLE",
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedForControlledMutation => "PREPARED_FOR_CONTROLLED_MUTATION",
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Mutated => "MUTATED",
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Failed => "FAILED",
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Stale => "STALE",
+            FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Disabled => "DISABLED",
             _ => throw new ArgumentOutOfRangeException(nameof(status), status, "Unknown mutation status.")
         };
 
@@ -299,6 +810,11 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             "PREPARED_BUT_MUTATION_DISABLED" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedButMutationDisabled,
             "BLOCKED" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Blocked,
             "UNAVAILABLE" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Unavailable,
+            "PREPARED_FOR_CONTROLLED_MUTATION" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedForControlledMutation,
+            "MUTATED" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Mutated,
+            "FAILED" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Failed,
+            "STALE" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Stale,
+            "DISABLED" => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Disabled,
             _ => FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.NotPrepared
         };
 
@@ -382,4 +898,31 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt32(ordinal);
     }
+
+    private sealed record ReferenceSnapshot(string? SourceVersion, string? HashValue);
+
+    private sealed record PreviewSnapshot(
+        string? RecalculatedHashValue,
+        string? RecalculatedHashAlgorithm,
+        string? RecalculatedHashSourceVersion,
+        int? RecalculatedSourceFactCount,
+        string? RecalculatedSafeSourceSummary,
+        string PreviewStatus,
+        bool CompleteOriginalRequestFactsAvailable,
+        string MutationStatus);
+
+    private sealed record PreparationSnapshot(
+        Guid? RecalculationPreviewAuditId,
+        string? NewHashValue,
+        string? NewHashAlgorithm,
+        string? NewHashSourceVersion,
+        int? NewHashSourceFactCount,
+        string? SafeSourceSummary,
+        string MutationStatus,
+        string MutationMode,
+        bool MutationEnabled,
+        bool FiscalIssuanceReferenceMutated,
+        Guid? ActorServiceIdentityId,
+        string? ApprovalReference,
+        string? DualControlReference);
 }
