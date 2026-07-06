@@ -370,6 +370,8 @@ static void ConfigureApplicationServices(
         new PostgresFiscalExceptionRetrySchedulingPreparationAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository>(_ =>
         new PostgresFiscalExceptionSemanticHashRecalculationPreviewAuditRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>(_ =>
+        new PostgresFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionRetryCommandPreparationService, FiscalExceptionRetryCommandPreparationService>();
     builder.Services.Configure<FiscalExceptionRetrySchedulingPreparationOptions>(
         builder.Configuration.GetSection(FiscalExceptionRetrySchedulingPreparationOptions.SectionName));
@@ -399,6 +401,12 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalExceptionSemanticHashControlledBackfillApprovalService>(serviceProvider =>
         new FiscalExceptionSemanticHashControlledBackfillApprovalService(
             serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashControlledBackfillApprovalOptions>>().Value));
+    builder.Services.Configure<FiscalExceptionSemanticHashControlledBackfillMutationOptions>(
+        builder.Configuration.GetSection(FiscalExceptionSemanticHashControlledBackfillMutationOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashControlledBackfillMutationPreparationService>(serviceProvider =>
+        new FiscalExceptionSemanticHashControlledBackfillMutationPreparationService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashControlledBackfillMutationOptions>>().Value,
+            serviceProvider.GetService<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>()));
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));

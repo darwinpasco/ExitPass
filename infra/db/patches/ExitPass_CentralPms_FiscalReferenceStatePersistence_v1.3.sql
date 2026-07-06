@@ -658,6 +658,90 @@ ALTER TABLE core.fiscal_issuance_semantic_hash_recalculation_previews
 CREATE INDEX IF NOT EXISTS ix_fiscal_sem_hash_recalc_previews__reference_attempted
     ON core.fiscal_issuance_semantic_hash_recalculation_previews (fiscal_issuance_reference_id, attempted_at DESC);
 
+CREATE TABLE IF NOT EXISTS core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (
+    semantic_hash_backfill_mutation_audit_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    fiscal_issuance_reference_id uuid NOT NULL,
+    semantic_hash_recalculation_preview_audit_id uuid,
+    controlled_backfill_approval_status varchar(60) NOT NULL,
+    old_semantic_hash_source_version varchar(80),
+    required_semantic_hash_source_version varchar(80) NOT NULL,
+    old_semantic_hash_value varchar(64),
+    new_semantic_hash_value varchar(64),
+    new_semantic_hash_algorithm varchar(32),
+    new_semantic_hash_source_version varchar(80),
+    new_semantic_hash_source_fact_count integer,
+    safe_source_summary varchar(240),
+    mutation_preparation_status varchar(60) NOT NULL,
+    mutation_block_reason_code varchar(160),
+    mutation_mode varchar(40) NOT NULL,
+    mutation_enabled boolean DEFAULT false NOT NULL,
+    fiscal_issuance_reference_mutated boolean DEFAULT false NOT NULL,
+    attempted_at timestamptz DEFAULT now() NOT NULL,
+    safe_summary varchar(240) NOT NULL,
+    correlation_id uuid,
+    actor_service_identity_id uuid,
+    approval_reference varchar(160),
+    dual_control_reference varchar(160),
+    created_at timestamptz DEFAULT now() NOT NULL,
+    CONSTRAINT pk_fiscal_issuance_semantic_hash_backfill_mutation_preparations
+        PRIMARY KEY (semantic_hash_backfill_mutation_audit_id),
+    CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__approval_status CHECK (
+        controlled_backfill_approval_status IN (
+            'NOT_REQUIRED_CURRENT',
+            'READY_FOR_CONTROLLED_BACKFILL',
+            'BLOCKED',
+            'PENDING_DUAL_CONTROL',
+            'UNAVAILABLE'
+        )
+    ),
+    CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__status CHECK (
+        mutation_preparation_status IN (
+            'NOT_PREPARED',
+            'PREPARED_BUT_MUTATION_DISABLED',
+            'BLOCKED',
+            'UNAVAILABLE'
+        )
+    ),
+    CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__mode CHECK (
+        mutation_mode IN ('SINGLE_RECORD_ONLY')
+    ),
+    CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__not_mutated CHECK (
+        fiscal_issuance_reference_mutated = false
+    ),
+    CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__prepared_has_hash CHECK (
+        mutation_preparation_status <> 'PREPARED_BUT_MUTATION_DISABLED'
+        OR (
+            semantic_hash_recalculation_preview_audit_id IS NOT NULL
+            AND new_semantic_hash_value IS NOT NULL
+            AND new_semantic_hash_algorithm IS NOT NULL
+            AND new_semantic_hash_source_version IS NOT NULL
+            AND new_semantic_hash_source_fact_count IS NOT NULL
+            AND new_semantic_hash_source_fact_count > 0
+        )
+    )
+);
+
+ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+    ADD CONSTRAINT fk_fiscal_sem_hash_backfill_mutation__reference_id
+    FOREIGN KEY (fiscal_issuance_reference_id)
+    REFERENCES core.fiscal_issuance_references(fiscal_issuance_reference_id)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+    ADD CONSTRAINT fk_fiscal_sem_hash_backfill_mutation__preview_audit_id
+    FOREIGN KEY (semantic_hash_recalculation_preview_audit_id)
+    REFERENCES core.fiscal_issuance_semantic_hash_recalculation_previews(semantic_hash_recalculation_preview_audit_id)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+ALTER TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+    ADD CONSTRAINT fk_fiscal_sem_hash_backfill_mutation__actor_service_identity_id
+    FOREIGN KEY (actor_service_identity_id)
+    REFERENCES identity.service_identities(service_identity_id)
+    DEFERRABLE INITIALLY IMMEDIATE;
+
+CREATE INDEX IF NOT EXISTS ix_fiscal_sem_hash_backfill_mutation__reference_attempted
+    ON core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (fiscal_issuance_reference_id, attempted_at DESC);
+
 COMMENT ON TABLE core.fiscal_issuance_references IS
     'Central PMS v1.3 persistence scaffold for POS Server fiscal issuance reference evidence. Persistence/state only; no POS Server network or ExitAuthorization gating behavior.';
 COMMENT ON TABLE core.fiscal_issuance_attempt_history IS
@@ -672,3 +756,5 @@ COMMENT ON TABLE core.fiscal_issuance_retry_schedule_preparations IS
     'Central PMS v1.3 FEQ retry scheduling preparation audit records only. No executable retry job, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
 COMMENT ON TABLE core.fiscal_issuance_semantic_hash_recalculation_previews IS
     'Central PMS v1.3 FEQ semantic hash recalculation preview audit records only. No hash backfill mutation, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+COMMENT ON TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations IS
+    'Central PMS v1.3 FEQ semantic hash controlled backfill mutation preparation audit records only. No automatic batch backfill, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';

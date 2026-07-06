@@ -28,6 +28,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_command_preparations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_schedule_preparations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_recalculation_previews"));
+        Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_backfill_mutation_preparations"));
         Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "semantic_request_hash_value"));
     }
 
@@ -423,6 +424,113 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     }
 
     [Fact]
+    public async Task SemanticHashBackfillMutationAuditRepository_RecordAsync_PersistsIntentWithoutMutatingReference()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(
+            nameof(SemanticHashBackfillMutationAuditRepository_RecordAsync_PersistsIntentWithoutMutatingReference));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed semantic hash controlled backfill mutation audit test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var reference = await CreateRepository().CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var previewRepository =
+                new PostgresFiscalExceptionSemanticHashRecalculationPreviewAuditRepository(ConnectionString);
+            var mutationRepository =
+                new PostgresFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository(ConnectionString);
+
+            var preview = await previewRepository.RecordAsync(
+                new FiscalExceptionSemanticHashRecalculationPreviewAuditWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    StoredSemanticHashSourceVersion:
+                        FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+                    RequiredSemanticHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    StoredSemanticHashValue: new string('c', 64),
+                    PreviewStatus: FiscalExceptionSemanticHashRecalculationPreviewStatus.PreviewCalculated,
+                    BlockReasonCode: null,
+                    CompleteOriginalRequestFactsAvailable: true,
+                    RecalculatedHashValue: new string('d', 64),
+                    RecalculatedHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                    RecalculatedHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    RecalculatedSourceFactCount: 20,
+                    RecalculatedSafeSourceSummary: "semantic_request_hash_source_available:facts=20",
+                    RecalculatedHashMatchesStoredHash: false,
+                    MutationStatus: FiscalExceptionSemanticHashRecalculationMutationStatus.NotMutated,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "semantic_hash_recalculation_preview_calculated_not_mutated",
+                    CorrelationId: context.CorrelationId,
+                    ServiceIdentityId: null),
+                CancellationToken.None);
+
+            var record = await mutationRepository.RecordAsync(
+                new FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    RecalculationPreviewAuditId: preview.RecalculationPreviewAuditId,
+                    ApprovalBasisStatus:
+                        FiscalExceptionSemanticHashControlledBackfillApprovalStatus.ReadyForControlledBackfill,
+                    OldSourceVersion: FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+                    RequiredSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    OldHashValue: new string('c', 64),
+                    NewHashValue: new string('d', 64),
+                    NewHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                    NewHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    NewHashSourceFactCount: 20,
+                    SafeSourceSummary: "semantic_request_hash_source_available:facts=20",
+                    MutationStatus:
+                        FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus
+                            .PreparedButMutationDisabled,
+                    BlockReasonCode: "semantic_hash_controlled_backfill_mutation_disabled",
+                    MutationMode: FiscalExceptionSemanticHashControlledBackfillMutationMode.SingleRecordOnly,
+                    MutationEnabled: false,
+                    FiscalIssuanceReferenceMutated: false,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "semantic_hash_backfill_mutation_prepared_single_record_disabled_not_mutated",
+                    CorrelationId: context.CorrelationId,
+                    ActorServiceIdentityId: null,
+                    ApprovalReference: "APPROVAL-TEST-001",
+                    DualControlReference: "DUAL-TEST-001"),
+                CancellationToken.None);
+            var summary = await mutationRepository.GetSummaryAsync(
+                reference.FiscalIssuanceReferenceId,
+                CancellationToken.None);
+            var rereadReference = await CreateRepository().FindByPaymentConfirmationIdAsync(
+                confirmation.PaymentConfirmationId,
+                CancellationToken.None);
+
+            Assert.NotEqual(Guid.Empty, record.MutationAuditId);
+            Assert.Equal(reference.FiscalIssuanceReferenceId, record.FiscalIssuanceReferenceId);
+            Assert.Equal(
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedButMutationDisabled,
+                record.MutationStatus);
+            Assert.False(record.MutationEnabled);
+            Assert.False(record.FiscalIssuanceReferenceMutated);
+            Assert.Equal(preview.RecalculationPreviewAuditId, record.RecalculationPreviewAuditId);
+            Assert.NotNull(summary);
+            Assert.Equal(1, summary!.AttemptCount);
+            Assert.Equal(
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedButMutationDisabled,
+                summary.LastMutationStatus);
+            Assert.False(summary.MutationEnabled);
+            Assert.False(summary.FiscalIssuanceReferenceMutated);
+            Assert.NotNull(rereadReference);
+            Assert.Null(rereadReference!.SemanticRequestHashValue);
+            Assert.Null(rereadReference.SemanticRequestHashSourceVersion);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task CreateAsync_WhenDuplicateIdempotencyScope_RejectsDuplicateActiveReference()
     {
         await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
@@ -759,6 +867,13 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     private static async Task CleanupFiscalReferenceRowsAsync(PaymentTestContext context)
     {
         const string sql = """
+            DELETE FROM core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            WHERE fiscal_issuance_reference_id IN (
+                SELECT fiscal_issuance_reference_id
+                FROM core.fiscal_issuance_references
+                WHERE parking_session_id = @parking_session_id
+            );
+
             DELETE FROM core.fiscal_issuance_semantic_hash_recalculation_previews
             WHERE fiscal_issuance_reference_id IN (
                 SELECT fiscal_issuance_reference_id
