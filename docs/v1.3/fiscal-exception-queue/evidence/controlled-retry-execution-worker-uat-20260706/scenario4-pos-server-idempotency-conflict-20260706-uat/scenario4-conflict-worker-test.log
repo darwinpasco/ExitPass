@@ -1,0 +1,23 @@
+  ExitPass.CentralPms.Domain -> D:\SourceCodes\ExitPass\src\Services\CentralPms\src\ExitPass.CentralPms.Domain\bin\Debug\net8.0\ExitPass.CentralPms.Domain.dll
+  ExitPass.CentralPms.Contracts -> D:\SourceCodes\ExitPass\src\Services\CentralPms\src\ExitPass.CentralPms.Contracts\bin\Debug\net8.0\ExitPass.CentralPms.Contracts.dll
+  ExitPass.BuildingBlocks.Persistence -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Persistence\bin\Debug\net8.0\ExitPass.BuildingBlocks.Persistence.dll
+  ExitPass.BuildingBlocks.Messaging -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Messaging\bin\Debug\net8.0\ExitPass.BuildingBlocks.Messaging.dll
+  ExitPass.BuildingBlocks.Testing -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Testing\bin\Debug\net8.0\ExitPass.BuildingBlocks.Testing.dll
+  ExitPass.BuildingBlocks.Security -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Security\bin\Debug\net8.0\ExitPass.BuildingBlocks.Security.dll
+  ExitPass.VendorPmsAdapter.Domain -> D:\SourceCodes\ExitPass\src\Services\VendorPmsAdapter\src\ExitPass.VendorPmsAdapter.Domain\bin\Debug\net8.0\ExitPass.VendorPmsAdapter.Domain.dll
+  ExitPass.BuildingBlocks.Infrastructure -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Infrastructure\bin\Debug\net8.0\ExitPass.BuildingBlocks.Infrastructure.dll
+  ExitPass.VendorPmsAdapter.Contracts -> D:\SourceCodes\ExitPass\src\Services\VendorPmsAdapter\src\ExitPass.VendorPmsAdapter.Contracts\bin\Debug\net8.0\ExitPass.VendorPmsAdapter.Contracts.dll
+  ExitPass.BuildingBlocks.Application -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Application\bin\Debug\net8.0\ExitPass.BuildingBlocks.Application.dll
+  ExitPass.BuildingBlocks.Domain -> D:\SourceCodes\ExitPass\src\BuildingBlocks\ExitPass.BuildingBlocks.Domain\bin\Debug\net8.0\ExitPass.BuildingBlocks.Domain.dll
+  ExitPass.VendorPmsAdapter.Application -> D:\SourceCodes\ExitPass\src\Services\VendorPmsAdapter\src\ExitPass.VendorPmsAdapter.Application\bin\Debug\net8.0\ExitPass.VendorPmsAdapter.Application.dll
+  ExitPass.CentralPms.Application -> D:\SourceCodes\ExitPass\src\Services\CentralPms\src\ExitPass.CentralPms.Application\bin\Debug\net8.0\ExitPass.CentralPms.Application.dll
+  ExitPass.VendorPmsAdapter.Infrastructure -> D:\SourceCodes\ExitPass\src\Services\VendorPmsAdapter\src\ExitPass.VendorPmsAdapter.Infrastructure\bin\Debug\net8.0\ExitPass.VendorPmsAdapter.Infrastructure.dll
+  ExitPass.CentralPms.Infrastructure -> D:\SourceCodes\ExitPass\src\Services\CentralPms\src\ExitPass.CentralPms.Infrastructure\bin\Debug\net8.0\ExitPass.CentralPms.Infrastructure.dll
+  ExitPass.CentralPms.UnitTests -> D:\SourceCodes\ExitPass\src\Services\CentralPms\tests\ExitPass.CentralPms.UnitTests\bin\Debug\net8.0\ExitPass.CentralPms.UnitTests.dll
+Test run for D:\SourceCodes\ExitPass\src\Services\CentralPms\tests\ExitPass.CentralPms.UnitTests\bin\Debug\net8.0\ExitPass.CentralPms.UnitTests.dll (.NETCoreApp,Version=v8.0)
+VSTest version 17.11.1 (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+
+Passed!  - Failed:     0, Passed:     1, Skipped:     0, Total:     1, Duration: < 1 ms - ExitPass.CentralPms.UnitTests.dll (net8.0)

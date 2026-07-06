@@ -1,0 +1,1 @@
+dotnet test src\Services\CentralPms\tests\ExitPass.CentralPms.UnitTests\ExitPass.CentralPms.UnitTests.csproj --filter "FullyQualifiedName~FiscalExceptionControlledRetryExecutionServiceTests.ExecuteAsync_WhenReadbackIsNotNotFound_Blocks" --no-restore --logger "console;verbosity=minimal"

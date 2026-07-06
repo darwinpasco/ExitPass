@@ -1,0 +1,1 @@
+dotnet test src\Services\CentralPms\tests\ExitPass.CentralPms.UnitTests\ExitPass.CentralPms.UnitTests.csproj --filter "FullyQualifiedName~FiscalExceptionControlledRetryExecutionServiceTests.ExecuteAsync_WhenEnabledAndAllGatesPass_CallsPosServerPathOnceAndPersistsAudit" --no-restore --logger "console;verbosity=minimal"
