@@ -486,6 +486,7 @@ public sealed class FiscalExceptionSemanticHashControlledBackfillMutationPrepara
                 MutationAuditId: Guid.NewGuid(),
                 FiscalIssuanceReferenceId: attempt.FiscalIssuanceReferenceId,
                 RecalculationPreviewAuditId: attempt.RecalculationPreviewAuditId,
+                MutationPreparationAuditId: attempt.MutationPreparationAuditId,
                 ApprovalBasisStatus: attempt.ApprovalBasisStatus,
                 OldSourceVersion: attempt.OldSourceVersion,
                 RequiredSourceVersion: attempt.RequiredSourceVersion,
@@ -538,6 +539,9 @@ public sealed class FiscalExceptionSemanticHashControlledBackfillMutationPrepara
                     MutationMode: latest.MutationMode,
                     MutationEnabled: latest.MutationEnabled,
                     FiscalIssuanceReferenceMutated: latest.FiscalIssuanceReferenceMutated,
+                    OldSourceVersion: latest.OldSourceVersion,
+                    NewSourceVersion: latest.NewHashSourceVersion,
+                    NewHashValue: latest.NewHashValue,
                     SafeSummary: latest.SafeSummary));
         }
     }

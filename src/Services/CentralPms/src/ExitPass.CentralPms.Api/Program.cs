@@ -407,6 +407,13 @@ static void ConfigureApplicationServices(
         new FiscalExceptionSemanticHashControlledBackfillMutationPreparationService(
             serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashControlledBackfillMutationOptions>>().Value,
             serviceProvider.GetService<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>()));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashGuardedBackfillMutationRepository>(serviceProvider =>
+        (PostgresFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository)serviceProvider
+            .GetRequiredService<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>());
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashGuardedBackfillMutationService>(serviceProvider =>
+        new FiscalExceptionSemanticHashGuardedBackfillMutationService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashControlledBackfillMutationOptions>>().Value,
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashGuardedBackfillMutationRepository>()));
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));

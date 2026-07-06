@@ -34,7 +34,7 @@ public sealed class FiscalExceptionSemanticHashControlledBackfillMutationPrepara
                     "semantic_hash_backfill_mutation_unavailable_audit_persistence_unavailable",
                     command: null,
                     mutationEnabled: _options.EnableControlledMutation,
-                    dryRunOnly: request?.DryRunOnly ?? true)
+                    dryRunOnly: request.DryRunOnly)
                 : evaluated;
         }
 
@@ -206,16 +206,17 @@ public sealed class FiscalExceptionSemanticHashControlledBackfillMutationPrepara
             CorrelationId: detail.CorrelationId,
             MutationMode: FiscalExceptionSemanticHashControlledBackfillMutationMode.SingleRecordOnly,
             DryRunOnly: request.DryRunOnly,
-            MutationStatus: FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus
-                .PreparedButMutationDisabled);
+            MutationStatus: _options.EnableControlledMutation
+                ? FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedForControlledMutation
+                : FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedButMutationDisabled);
 
         if (_options.EnableControlledMutation)
         {
             return Result(
-                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.Unavailable,
-                "semantic_hash_controlled_backfill_guarded_mutation_not_implemented",
-                "semantic_hash_backfill_mutation_unavailable_guarded_update_deferred",
-                command: null,
+                FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus.PreparedForControlledMutation,
+                blockReasonCode: null,
+                "semantic_hash_backfill_mutation_prepared_single_record_guarded_write_enabled",
+                command,
                 mutationEnabled: true,
                 dryRunOnly: request.DryRunOnly);
         }
@@ -239,6 +240,7 @@ public sealed class FiscalExceptionSemanticHashControlledBackfillMutationPrepara
         return new FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite(
             FiscalIssuanceReferenceId: summary.FiscalIssuanceReferenceId,
             RecalculationPreviewAuditId: previewAudit?.LastRecalculationPreviewAuditId,
+            MutationPreparationAuditId: null,
             ApprovalBasisStatus: request.ApprovalBasis.Status,
             OldSourceVersion: summary.SemanticRequestHashSourceVersion,
             RequiredSourceVersion: summary.RequiredSemanticHashSourceVersion,
