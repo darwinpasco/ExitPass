@@ -37,6 +37,51 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
     }
 
     [Fact]
+    public async Task RequestAsync_WhenFiscalIssuanceReferenceIdIsDefault_BlocksBeforeWorkflow()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { FiscalIssuanceReferenceId = Guid.Empty };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("fiscal_issuance_reference_id_required");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenRecalculationPreviewAuditIdIsMissing_BlocksBeforeWorkflow()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { RecalculationPreviewAuditId = Guid.Empty };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("semantic_hash_recalculation_preview_audit_id_required");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenMutationPreparationAuditIdIsMissing_BlocksBeforeWorkflow()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { MutationPreparationAuditId = Guid.Empty };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("semantic_hash_backfill_mutation_preparation_audit_id_required");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
     public async Task RequestAsync_WhenApprovalReferenceIsMissing_BlocksThroughWorkflow()
     {
         var context = await ReadyContextAsync();
@@ -60,6 +105,68 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
 
         result.BlockReasonCode.Should().Be("semantic_hash_backfill_dual_control_required");
         context.WorkflowAudit.Records.Should().ContainSingle();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenReasonCodeIsBlank_BlocksBeforeWorkflow()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { ReasonCode = " " };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("semantic_hash_backfill_internal_api_reason_code_invalid");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenReasonCodeContainsUnsafeCharacters_BlocksBeforeWorkflow()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { ReasonCode = "semantic hash backfill;drop" };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("semantic_hash_backfill_internal_api_reason_code_invalid");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenJustificationIsOversized_BlocksBeforeWorkflow()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { SafeJustification = new string('a', 513) };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("semantic_hash_backfill_internal_api_safe_justification_invalid");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenJustificationContainsSecretTerm_DoesNotEchoRawPayload()
+    {
+        var context = await ReadyContextAsync();
+        var request = context.Request with { SafeJustification = "operator pasted secret token value" };
+
+        var result = await context.Sut.RequestAsync(request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(400);
+        result.BlockReasonCode.Should().Be("semantic_hash_backfill_internal_api_safe_justification_invalid");
+        result.SafeSummary.Should().NotContain("secret");
+        result.SafeSummary.Should().NotContain("token");
+        context.WorkflowAudit.Records.Should().BeEmpty();
         context.GuardedMutation.Requests.Should().BeEmpty();
         AssertNoRetryOrExternalMutation(result);
     }
@@ -125,9 +232,27 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
     }
 
     [Fact]
-    public async Task RequestAsync_WhenExecuteIntentAndWorkflowInvocationDisabled_DoesNotInvokeMutation()
+    public async Task RequestAsync_WhenExecuteIntentAndApiIntentDisabled_DoesNotInvokeMutation()
     {
         var context = await ReadyContextAsync(executeControlledMutation: true, dryRunOnly: false);
+
+        var result = await context.Sut.RequestAsync(context.Request, CancellationToken.None);
+
+        result.HttpStatusCode.Should().Be(403);
+        result.BlockReasonCode.Should()
+            .Be("semantic_hash_backfill_internal_api_execute_intent_disabled");
+        context.WorkflowAudit.Records.Should().BeEmpty();
+        context.GuardedMutation.Requests.Should().BeEmpty();
+        AssertNoRetryOrExternalMutation(result);
+    }
+
+    [Fact]
+    public async Task RequestAsync_WhenApiIntentAllowedButWorkflowInvocationDisabled_DoesNotInvokeMutation()
+    {
+        var context = await ReadyContextAsync(
+            executeControlledMutation: true,
+            dryRunOnly: false,
+            apiAllowsControlledMutationIntent: true);
 
         var result = await context.Sut.RequestAsync(context.Request, CancellationToken.None);
 
@@ -135,6 +260,7 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
             .Be(FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus.PreparedButMutationInvocationDisabled);
         result.BlockReasonCode.Should()
             .Be("semantic_hash_backfill_operator_workflow_mutation_invocation_disabled");
+        context.WorkflowAudit.Records.Should().ContainSingle();
         context.GuardedMutation.Requests.Should().BeEmpty();
         AssertNoRetryOrExternalMutation(result);
     }
@@ -145,6 +271,7 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
         var context = await ReadyContextAsync(
             executeControlledMutation: true,
             dryRunOnly: false,
+            apiAllowsControlledMutationIntent: true,
             workflowMutationInvocationEnabled: true);
 
         var result = await context.Sut.RequestAsync(context.Request, CancellationToken.None);
@@ -162,6 +289,7 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
         bool includeMutationAudit = true,
         bool executeControlledMutation = false,
         bool dryRunOnly = true,
+        bool apiAllowsControlledMutationIntent = false,
         bool workflowMutationInvocationEnabled = false)
     {
         var reference = LegacyReference();
@@ -179,7 +307,9 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiHandlerTests
         var workflowAudit = new FakeWorkflowAuditRepository();
         var guardedMutation = new FakeGuardedMutationService();
         var sut = new FiscalExceptionSemanticHashBackfillInternalApiHandler(
-            new FiscalExceptionSemanticHashBackfillInternalApiOptions(apiEnabled),
+            new FiscalExceptionSemanticHashBackfillInternalApiOptions(
+                apiEnabled,
+                apiAllowsControlledMutationIntent),
             new FakeQueueService(detail),
             new FakePreviewAuditRepository(includePreview ? preview : null),
             new FakeMutationAuditRepository(includeMutationAudit ? mutationAudit : null),
