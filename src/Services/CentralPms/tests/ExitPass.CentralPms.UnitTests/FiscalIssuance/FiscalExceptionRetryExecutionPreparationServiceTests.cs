@@ -198,6 +198,34 @@ public sealed class FiscalExceptionRetryExecutionPreparationServiceTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_WhenPosServerContractReadinessIsUnconfirmed_BlocksExecutionPrep()
+    {
+        var (detail, commandPreparation, schedulingPreparation) = await SafeExecutionPrerequisitesAsync();
+        var sut = ReadySut();
+
+        var result = await sut.EvaluateAsync(
+            new FiscalExceptionRetryExecutionPreparationRequest(
+                detail,
+                commandPreparation,
+                schedulingPreparation,
+                new FiscalExceptionPosServerRetryContractReadinessResult(
+                    Status: FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed,
+                    SemanticHashCompatibilityStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed,
+                    IdempotencyMappingStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                    ReadbackFieldCompatibilityStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                    FiscalNumberingReadinessStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                    ConflictReplayBehaviorStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                    BlockReasonCode: "pos_server_semantic_hash_compatibility_unconfirmed",
+                    SafeSummary: "pos_server_semantic_hash_compatibility_unconfirmed",
+                    RetryExecutionAvailable: false)),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalExceptionRetryExecutionPreparationStatus.Blocked);
+        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_compatibility_unconfirmed");
+        AssertNoExecutionSideEffects(result);
+    }
+
+    [Fact]
     public async Task GetAsync_WhenExecutionPrepIsConfigured_ReturnsSafeExecutionPosture()
     {
         var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
@@ -227,7 +255,8 @@ public sealed class FiscalExceptionRetryExecutionPreparationServiceTests
                 SchedulingOptions(),
                 scheduleAudit),
             scheduleAudit,
-            ReadySut());
+            ReadySut(),
+            new ReadyPosServerRetryContractReadinessService());
 
         var detail = await service.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
 
@@ -504,6 +533,23 @@ public sealed class FiscalExceptionRetryExecutionPreparationServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(_records.SingleOrDefault(record =>
                 record.FiscalIssuanceReferenceId == fiscalIssuanceReferenceId));
+    }
+
+    private sealed class ReadyPosServerRetryContractReadinessService :
+        IFiscalExceptionPosServerRetryContractReadinessService
+    {
+        public FiscalExceptionPosServerRetryContractReadinessResult Evaluate(
+            FiscalExceptionPosServerRetryContractReadinessRequest request) =>
+            new(
+                Status: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                SemanticHashCompatibilityStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                IdempotencyMappingStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                ReadbackFieldCompatibilityStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                FiscalNumberingReadinessStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                ConflictReplayBehaviorStatus: FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                BlockReasonCode: null,
+                SafeSummary: "pos_server_retry_contract_readiness_ready_no_execution",
+                RetryExecutionAvailable: false);
     }
 
     private sealed class FakeReadbackAttemptRepository : IFiscalExceptionReadbackAttemptRepository

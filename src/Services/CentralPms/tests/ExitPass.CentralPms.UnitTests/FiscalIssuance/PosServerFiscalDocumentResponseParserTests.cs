@@ -138,6 +138,76 @@ public sealed class PosServerFiscalDocumentResponseParserTests
     }
 
     [Fact]
+    public void ParseReadResponse_WhenReadbackIncludesIdempotencyAndHashFields_ExposesSafeContractFields()
+    {
+        var result = PosServerFiscalDocumentResponseParser.ParseReadResponse(
+            200,
+            """
+            {
+              "succeeded": true,
+              "code": "found",
+              "message": "Fiscal document found.",
+              "document": {
+                "fiscalDocumentId": "11111111-1111-1111-1111-111111111111",
+                "idempotencyScope": "fiscal_document_creation:22222222222222222222222222222222:33333333333333333333333333333333",
+                "idempotencyKey": "CPS-POS-UAT:READBACK",
+                "idempotencyKeySource": "payableBasis.upstreamFinalityRef",
+                "semanticRequestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "semanticRequestHashVersion": "sha256:v1",
+                "semanticRequestHashStatus": "available"
+              },
+              "fiscalIssuanceEvidenceStatus": "fiscal_document_number_assigned",
+              "fiscalNumberAssignmentState": "assigned",
+              "fiscalDocumentStatusCodeId": "33333333-3333-3333-3333-333333333333"
+            }
+            """);
+
+        result.Succeeded.Should().BeTrue();
+        result.IdempotencyKey.Should().Be("CPS-POS-UAT:READBACK");
+        result.IdempotencyKeySource.Should().Be("payableBasis.upstreamFinalityRef");
+        result.SemanticRequestHash.Should().Be(new string('a', 64));
+        result.SemanticRequestHashVersion.Should().Be("sha256:v1");
+        result.SemanticRequestHashStatus.Should().Be("available");
+    }
+
+    [Fact]
+    public void ParseReadResponse_WhenReadbackIncludesFiscalNumberingFields_ExposesNumberingEvidence()
+    {
+        var result = PosServerFiscalDocumentResponseParser.ParseReadResponse(
+            200,
+            """
+            {
+              "succeeded": true,
+              "code": "found",
+              "message": "Fiscal document found.",
+              "document": {
+                "fiscalDocumentId": "11111111-1111-1111-1111-111111111111",
+                "fiscalIdentityId": "22222222-2222-2222-2222-222222222222",
+                "fiscalSequencePolicyId": "44444444-4444-4444-4444-444444444444",
+                "fiscalSequenceValue": 7,
+                "fiscalDocumentNumber": "SI-000007",
+                "fiscalSeries": "SI",
+                "fiscalNumberPrefixText": "SI-",
+                "fiscalNumberSuffixText": null,
+                "fiscalNumberAssignedAt": "2026-07-06T10:30:00+08:00",
+                "fiscalNumberAssignedByRef": "pos-server-runtime"
+              },
+              "fiscalIssuanceEvidenceStatus": "fiscal_document_number_assigned",
+              "fiscalNumberAssignmentState": "assigned"
+            }
+            """);
+
+        result.FiscalIdentityId.Should().Be(Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        result.FiscalSequencePolicyId.Should().Be(Guid.Parse("44444444-4444-4444-4444-444444444444"));
+        result.FiscalSequenceValue.Should().Be(7);
+        result.FiscalDocumentNumber.Should().Be("SI-000007");
+        result.FiscalSeries.Should().Be("SI");
+        result.FiscalNumberPrefixText.Should().Be("SI-");
+        result.FiscalNumberAssignedAt.Should().Be(DateTimeOffset.Parse("2026-07-06T10:30:00+08:00"));
+        result.FiscalNumberAssignedByRef.Should().Be("pos-server-runtime");
+    }
+
+    [Fact]
     public void ExistingPaymentAndExitFlows_DoNotDependOnPosServerFiscalDocumentClient()
     {
         var operationalTypes = new[]

@@ -152,7 +152,22 @@ public static class PosServerFiscalDocumentResponseParser
             FiscalDocumentId: envelope.Document?.FiscalDocumentId,
             FiscalIssuanceEvidenceStatus: ParseEvidenceStatus(envelope.FiscalIssuanceEvidenceStatus),
             FiscalNumberAssignmentState: ParseAssignmentState(envelope.FiscalNumberAssignmentState),
-            FiscalDocumentStatusCodeId: envelope.FiscalDocumentStatusCodeId);
+            FiscalDocumentStatusCodeId: envelope.FiscalDocumentStatusCodeId ?? envelope.Document?.FiscalDocumentStatusCodeId,
+            IdempotencyScope: envelope.IdempotencyScope ?? envelope.Document?.IdempotencyScope,
+            IdempotencyKey: envelope.IdempotencyKey ?? envelope.Document?.IdempotencyKey,
+            IdempotencyKeySource: envelope.IdempotencyKeySource ?? envelope.Document?.IdempotencyKeySource,
+            SemanticRequestHash: envelope.SemanticRequestHash ?? envelope.Document?.SemanticRequestHash,
+            SemanticRequestHashVersion: envelope.SemanticRequestHashVersion ?? envelope.Document?.SemanticRequestHashVersion,
+            SemanticRequestHashStatus: envelope.SemanticRequestHashStatus ?? envelope.Document?.SemanticRequestHashStatus,
+            FiscalIdentityId: envelope.FiscalIdentityId ?? envelope.Document?.FiscalIdentityId,
+            FiscalSequencePolicyId: envelope.FiscalSequencePolicyId ?? envelope.Document?.FiscalSequencePolicyId,
+            FiscalSequenceValue: envelope.FiscalSequenceValue ?? envelope.Document?.FiscalSequenceValue,
+            FiscalDocumentNumber: envelope.FiscalDocumentNumber ?? envelope.Document?.FiscalDocumentNumber,
+            FiscalSeries: envelope.FiscalSeries ?? envelope.Document?.FiscalSeries,
+            FiscalNumberPrefixText: envelope.FiscalNumberPrefixText ?? envelope.Document?.FiscalNumberPrefixText,
+            FiscalNumberSuffixText: envelope.FiscalNumberSuffixText ?? envelope.Document?.FiscalNumberSuffixText,
+            FiscalNumberAssignedAt: envelope.FiscalNumberAssignedAt ?? envelope.Document?.FiscalNumberAssignedAt,
+            FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef ?? envelope.Document?.FiscalNumberAssignedByRef);
     }
 
     private static bool HasCompleteFiscalNumberingEvidence(
@@ -279,7 +294,39 @@ public static class PosServerFiscalDocumentResponseParser
         PosServerReadDocumentEnvelope? Document,
         string? FiscalIssuanceEvidenceStatus,
         string? FiscalNumberAssignmentState,
-        Guid? FiscalDocumentStatusCodeId);
+        Guid? FiscalDocumentStatusCodeId,
+        string? IdempotencyScope,
+        string? IdempotencyKey,
+        string? IdempotencyKeySource,
+        string? SemanticRequestHash,
+        string? SemanticRequestHashVersion,
+        string? SemanticRequestHashStatus,
+        Guid? FiscalIdentityId,
+        Guid? FiscalSequencePolicyId,
+        long? FiscalSequenceValue,
+        string? FiscalDocumentNumber,
+        string? FiscalSeries,
+        string? FiscalNumberPrefixText,
+        string? FiscalNumberSuffixText,
+        DateTimeOffset? FiscalNumberAssignedAt,
+        string? FiscalNumberAssignedByRef);
 
-    private sealed record PosServerReadDocumentEnvelope(Guid? FiscalDocumentId);
+    private sealed record PosServerReadDocumentEnvelope(
+        Guid? FiscalDocumentId,
+        Guid? FiscalDocumentStatusCodeId,
+        string? IdempotencyScope,
+        string? IdempotencyKey,
+        string? IdempotencyKeySource,
+        string? SemanticRequestHash,
+        string? SemanticRequestHashVersion,
+        string? SemanticRequestHashStatus,
+        Guid? FiscalIdentityId,
+        Guid? FiscalSequencePolicyId,
+        long? FiscalSequenceValue,
+        string? FiscalDocumentNumber,
+        string? FiscalSeries,
+        string? FiscalNumberPrefixText,
+        string? FiscalNumberSuffixText,
+        DateTimeOffset? FiscalNumberAssignedAt,
+        string? FiscalNumberAssignedByRef);
 }

@@ -125,6 +125,15 @@ public enum FiscalExceptionRetryExecutionPosServerReadinessStatus
     ProductionBirReadinessNotConfirmed = 7
 }
 
+public enum FiscalExceptionPosServerRetryContractReadinessStatus
+{
+    NotEvaluated = 1,
+    Ready = 2,
+    Blocked = 3,
+    Unconfirmed = 4,
+    Unavailable = 5
+}
+
 public enum FiscalExceptionSemanticRequestHashAvailabilityStatus
 {
     NotAvailableInCurrentModel = 1,
@@ -204,6 +213,14 @@ public sealed record FiscalExceptionQueueCaseSummary(
     bool RetryExecutionDualControlRequired,
     FiscalExceptionRetryExecutionAuthorizationStatus RetryExecutionAuthorizationStatus,
     FiscalExceptionRetryExecutionPosServerReadinessStatus RetryExecutionPosServerReadinessStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus PosServerRetryContractReadinessStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus PosServerSemanticHashCompatibilityStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus PosServerIdempotencyMappingStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus PosServerReadbackFieldCompatibilityStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus PosServerFiscalNumberingReadinessStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus PosServerConflictReplayBehaviorStatus,
+    string? PosServerRetryContractBlockReasonCode,
+    string SafePosServerRetryContractReadinessSummary,
     string DuplicateCollapseKey,
     string DuplicateCollapseStrategy,
     DateTimeOffset FirstDetectedAt,
@@ -418,6 +435,7 @@ public sealed record FiscalExceptionRetryExecutionPreparationRequest(
     FiscalExceptionQueueCaseDetail Detail,
     FiscalExceptionRetryCommandPreparationResult CommandPreparation,
     FiscalExceptionRetrySchedulingPreparationResult SchedulingPreparation,
+    FiscalExceptionPosServerRetryContractReadinessResult? PosServerRetryContractReadiness = null,
     bool TreatAsExecutableRetry = false,
     bool OperatorOrSupportActionRequested = false,
     string? RequestedUpstreamFinalityReference = null);
@@ -445,6 +463,27 @@ public interface IFiscalExceptionRetryExecutionPreparationService
     Task<FiscalExceptionRetryExecutionPreparationResult> EvaluateAsync(
         FiscalExceptionRetryExecutionPreparationRequest request,
         CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionPosServerRetryContractReadinessRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    string? RequestedUpstreamFinalityReference = null);
+
+public sealed record FiscalExceptionPosServerRetryContractReadinessResult(
+    FiscalExceptionPosServerRetryContractReadinessStatus Status,
+    FiscalExceptionPosServerRetryContractReadinessStatus SemanticHashCompatibilityStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus IdempotencyMappingStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus ReadbackFieldCompatibilityStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus FiscalNumberingReadinessStatus,
+    FiscalExceptionPosServerRetryContractReadinessStatus ConflictReplayBehaviorStatus,
+    string? BlockReasonCode,
+    string SafeSummary,
+    bool RetryExecutionAvailable);
+
+public interface IFiscalExceptionPosServerRetryContractReadinessService
+{
+    FiscalExceptionPosServerRetryContractReadinessResult Evaluate(
+        FiscalExceptionPosServerRetryContractReadinessRequest request);
 }
 
 public sealed record FiscalExceptionRetryCommandPreparationAttemptWrite(

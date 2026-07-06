@@ -227,6 +227,34 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
             return FiscalExceptionReadbackClassification.Mismatch;
         }
 
+        if (!string.IsNullOrWhiteSpace(readResult.IdempotencyKeySource) &&
+            !string.Equals(
+                readResult.IdempotencyKeySource.Trim(),
+                FiscalExceptionPosServerRetryContractReadinessService.PosServerIdempotencyKeySource,
+                StringComparison.Ordinal))
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
+        if (!string.IsNullOrWhiteSpace(readResult.IdempotencyKey) &&
+            !string.Equals(
+                readResult.IdempotencyKey.Trim(),
+                detail.Summary.UpstreamFinalityReference.Trim(),
+                StringComparison.Ordinal))
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
+        if (!string.IsNullOrWhiteSpace(readResult.SemanticRequestHash) &&
+            !string.IsNullOrWhiteSpace(detail.Summary.SemanticRequestHashValue) &&
+            !string.Equals(
+                readResult.SemanticRequestHash.Trim(),
+                detail.Summary.SemanticRequestHashValue.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
         if (detail.FiscalIssuanceEvidenceStatus is not null &&
             readResult.FiscalIssuanceEvidenceStatus is not null &&
             detail.FiscalIssuanceEvidenceStatus != readResult.FiscalIssuanceEvidenceStatus)
@@ -249,6 +277,37 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         if (detail.FiscalDocumentStatusCodeId is not null &&
             readResult.FiscalDocumentStatusCodeId is not null &&
             detail.FiscalDocumentStatusCodeId != readResult.FiscalDocumentStatusCodeId)
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
+        if (detail.FiscalIdentityId is not null &&
+            readResult.FiscalIdentityId is not null &&
+            detail.FiscalIdentityId != readResult.FiscalIdentityId)
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
+        if (detail.FiscalSequencePolicyId is not null &&
+            readResult.FiscalSequencePolicyId is not null &&
+            detail.FiscalSequencePolicyId != readResult.FiscalSequencePolicyId)
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
+        if (detail.FiscalSequenceValue is not null &&
+            readResult.FiscalSequenceValue is not null &&
+            detail.FiscalSequenceValue != readResult.FiscalSequenceValue)
+        {
+            return FiscalExceptionReadbackClassification.Mismatch;
+        }
+
+        if (!string.IsNullOrWhiteSpace(detail.FiscalDocumentNumber) &&
+            !string.IsNullOrWhiteSpace(readResult.FiscalDocumentNumber) &&
+            !string.Equals(
+                detail.FiscalDocumentNumber.Trim(),
+                readResult.FiscalDocumentNumber.Trim(),
+                StringComparison.Ordinal))
         {
             return FiscalExceptionReadbackClassification.Mismatch;
         }
