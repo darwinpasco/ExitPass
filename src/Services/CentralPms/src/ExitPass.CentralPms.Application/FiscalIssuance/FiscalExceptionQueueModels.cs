@@ -160,6 +160,19 @@ public enum FiscalExceptionSemanticHashRecalculationPosture
     NotPossible = 3
 }
 
+public enum FiscalExceptionSemanticHashRecalculationPreviewStatus
+{
+    NotRequired = 1,
+    PreviewCalculated = 2,
+    Blocked = 3,
+    Unavailable = 4
+}
+
+public enum FiscalExceptionSemanticHashRecalculationMutationStatus
+{
+    NotMutated = 1
+}
+
 public enum FiscalExceptionIdempotencyContextAvailabilityStatus
 {
     NotEvaluated = 1,
@@ -231,6 +244,13 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string RequiredSemanticHashSourceVersion,
     FiscalExceptionSemanticHashRecalculationPosture SemanticHashRecalculationPosture,
     string SafeSemanticHashReadinessSummary,
+    FiscalExceptionSemanticHashRecalculationPreviewStatus SemanticHashRecalculationPreviewStatus,
+    string? SemanticHashRecalculationPreviewBlockReasonCode,
+    string? SemanticHashRecalculationPreviewStoredSourceVersion,
+    string SemanticHashRecalculationPreviewRequiredSourceVersion,
+    DateTimeOffset? SemanticHashRecalculationPreviewAttemptedAt,
+    string SafeSemanticHashRecalculationPreviewSummary,
+    FiscalExceptionSemanticHashRecalculationMutationStatus SemanticHashRecalculationMutationStatus,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
@@ -674,6 +694,43 @@ public sealed record FiscalExceptionSemanticHashReadinessResult(
     string RequiredSourceVersion,
     FiscalExceptionSemanticHashRecalculationPosture RecalculationPosture,
     string SafeSummary);
+
+public sealed record FiscalExceptionSemanticHashRecalculationPreviewRequest(
+    FiscalIssuanceReferenceRecord FiscalIssuanceReference,
+    PosServerFiscalDocumentCreateRequest? OriginalFiscalRequestFacts = null,
+    Guid? ServiceIdentityId = null,
+    DateTimeOffset? RequestedAt = null);
+
+public sealed record FiscalExceptionSemanticHashRecalculationPreviewResult(
+    FiscalExceptionSemanticHashRecalculationPreviewStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    string? StoredSourceVersion,
+    string RequiredSourceVersion,
+    bool CompleteOriginalFiscalRequestFactsAvailable,
+    string? RecalculatedHashValue,
+    string? RecalculatedHashAlgorithm,
+    string? RecalculatedHashSourceVersion,
+    int? RecalculatedSourceFactCount,
+    string? RecalculatedSafeSourceSummary,
+    bool? RecalculatedHashMatchesStoredHash,
+    DateTimeOffset? PreviewAttemptedAt,
+    FiscalExceptionSemanticHashRecalculationMutationStatus MutationStatus,
+    bool FiscalIssuanceReferenceMutated,
+    bool PosServerPostCalled,
+    bool RetryExecuted,
+    bool RetryScheduled,
+    bool PaymentFinalityChanged,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated);
+
+public interface IFiscalExceptionSemanticHashRecalculationPreviewService
+{
+    FiscalExceptionSemanticHashRecalculationPreviewResult Preview(
+        FiscalExceptionSemanticHashRecalculationPreviewRequest request);
+}
 
 public sealed record FiscalSemanticRequestHashParityFixture(
     string PosServerHashSourceVersion,

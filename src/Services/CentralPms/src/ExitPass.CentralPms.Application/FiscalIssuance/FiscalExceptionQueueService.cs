@@ -505,6 +505,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         var readbackClassification = ResolveReadbackClassification(record);
         var retryEligibilityStatus = ResolveRetryEligibility(record, readbackStatus);
         var semanticHashReadiness = FiscalExceptionSemanticHashReadinessPolicy.Evaluate(record);
+        var semanticHashRecalculationPreview =
+            FiscalExceptionSemanticHashRecalculationPreviewService.PreviewWithoutOriginalFacts(record);
 
         return new FiscalExceptionQueueCaseSummary(
             CaseId: record.FiscalIssuanceReferenceId,
@@ -550,6 +552,13 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             RequiredSemanticHashSourceVersion: semanticHashReadiness.RequiredSourceVersion,
             SemanticHashRecalculationPosture: semanticHashReadiness.RecalculationPosture,
             SafeSemanticHashReadinessSummary: semanticHashReadiness.SafeSummary,
+            SemanticHashRecalculationPreviewStatus: semanticHashRecalculationPreview.Status,
+            SemanticHashRecalculationPreviewBlockReasonCode: semanticHashRecalculationPreview.BlockReasonCode,
+            SemanticHashRecalculationPreviewStoredSourceVersion: semanticHashRecalculationPreview.StoredSourceVersion,
+            SemanticHashRecalculationPreviewRequiredSourceVersion: semanticHashRecalculationPreview.RequiredSourceVersion,
+            SemanticHashRecalculationPreviewAttemptedAt: semanticHashRecalculationPreview.PreviewAttemptedAt,
+            SafeSemanticHashRecalculationPreviewSummary: semanticHashRecalculationPreview.SafeSummary,
+            SemanticHashRecalculationMutationStatus: semanticHashRecalculationPreview.MutationStatus,
             IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),
             LastRetryCommandPreparationAttemptAt: null,
             RetryCommandPreparationAttemptCount: null,
