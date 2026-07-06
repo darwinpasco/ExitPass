@@ -8,14 +8,17 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
 {
     [Fact]
-    public async Task Evaluate_WhenSemanticHashUsesPosServerSha256V1Contract_ReturnsReady()
+    public async Task Evaluate_WhenSemanticHashUsesPosServerSha256V1ContractAndParityIsProven_ReturnsReady()
     {
         var detail = await DetailAsync(
             semanticHashAlgorithm: "sha256",
             semanticHashSourceVersion: FiscalExceptionPosServerRetryContractReadinessService.PosServerSemanticHashVersion);
         var sut = new FiscalExceptionPosServerRetryContractReadinessService();
 
-        var result = sut.Evaluate(new FiscalExceptionPosServerRetryContractReadinessRequest(detail));
+        var result = sut.Evaluate(
+            new FiscalExceptionPosServerRetryContractReadinessRequest(
+                detail,
+                SemanticHashParityProof: ProvenParityProof()));
 
         result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Ready);
         result.SemanticHashCompatibilityStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Ready);
@@ -24,7 +27,7 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
     }
 
     [Fact]
-    public async Task Evaluate_WhenCentralPmsHashSourceCannotProvePosServerByteCompatibility_ReturnsUnconfirmed()
+    public async Task Evaluate_WhenPosServerHashSourceCodeIsNotAvailableForParityProof_ReturnsUnconfirmed()
     {
         var detail = await DetailAsync(
             semanticHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
@@ -35,7 +38,25 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
 
         result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed);
         result.SemanticHashCompatibilityStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed);
-        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_compatibility_unconfirmed");
+        result.BlockReasonCode.Should().Be("pos_server_hash_source_code_not_available_for_parity_proof");
+    }
+
+    [Fact]
+    public async Task Evaluate_WhenParityProofReportsMismatch_ReturnsBlockedWithMismatchReason()
+    {
+        var detail = await DetailAsync(
+            semanticHashAlgorithm: "sha256",
+            semanticHashSourceVersion: FiscalExceptionPosServerRetryContractReadinessService.PosServerSemanticHashVersion);
+        var sut = new FiscalExceptionPosServerRetryContractReadinessService();
+
+        var result = sut.Evaluate(
+            new FiscalExceptionPosServerRetryContractReadinessRequest(
+                detail,
+                SemanticHashParityProof: MismatchParityProof()));
+
+        result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
+        result.SemanticHashCompatibilityStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
+        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_mismatch");
     }
 
     [Theory]
@@ -68,7 +89,8 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
         var result = sut.Evaluate(
             new FiscalExceptionPosServerRetryContractReadinessRequest(
                 detail,
-                RequestedUpstreamFinalityReference: detail.Summary.UpstreamFinalityReference));
+                RequestedUpstreamFinalityReference: detail.Summary.UpstreamFinalityReference,
+                SemanticHashParityProof: ProvenParityProof()));
 
         result.IdempotencyMappingStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Ready);
         result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Ready);
@@ -83,7 +105,10 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
             semanticHashSourceVersion: FiscalExceptionPosServerRetryContractReadinessService.PosServerSemanticHashVersion);
         var sut = new FiscalExceptionPosServerRetryContractReadinessService();
 
-        var result = sut.Evaluate(new FiscalExceptionPosServerRetryContractReadinessRequest(detail));
+        var result = sut.Evaluate(
+            new FiscalExceptionPosServerRetryContractReadinessRequest(
+                detail,
+                SemanticHashParityProof: ProvenParityProof()));
 
         result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
         result.IdempotencyMappingStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
@@ -101,7 +126,8 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
         var result = sut.Evaluate(
             new FiscalExceptionPosServerRetryContractReadinessRequest(
                 detail,
-                RequestedUpstreamFinalityReference: $"new-upstream-{Guid.NewGuid():N}"));
+                RequestedUpstreamFinalityReference: $"new-upstream-{Guid.NewGuid():N}",
+                SemanticHashParityProof: ProvenParityProof()));
 
         result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
         result.IdempotencyMappingStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
@@ -125,9 +151,32 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
         detail.Summary.PosServerSemanticHashCompatibilityStatus
             .Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed);
         detail.Summary.PosServerRetryContractBlockReasonCode
-            .Should().Be("pos_server_semantic_hash_compatibility_unconfirmed");
+            .Should().Be("pos_server_hash_source_code_not_available_for_parity_proof");
         detail.Summary.RetryExecutionAvailable.Should().BeFalse();
     }
+
+    private static FiscalSemanticRequestHashParityProofResult ProvenParityProof() =>
+        new(
+            Status: FiscalSemanticRequestHashParityProofStatus.Proven,
+            BlockReasonCode: null,
+            SafeSummary: "semantic_hash_parity_proven_sha256_v1_no_execution",
+            CentralPmsHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            CentralPmsCanonicalSourceText: "central-pms-canonical-source",
+            CentralPmsNormalizedFacts: ["hash_source_version=central-pms-pos-server-fiscal-request-v1"],
+            CentralPmsSemanticRequestHash: new string('a', 64),
+            PosServerExpectedHashSourceVersion:
+                FiscalExceptionPosServerRetryContractReadinessService.PosServerSemanticHashVersion,
+            PosServerExpectedCanonicalSourceText: "central-pms-canonical-source",
+            PosServerExpectedSemanticRequestHash: new string('a', 64));
+
+    private static FiscalSemanticRequestHashParityProofResult MismatchParityProof() =>
+        ProvenParityProof() with
+        {
+            Status = FiscalSemanticRequestHashParityProofStatus.Mismatch,
+            BlockReasonCode = "pos_server_semantic_hash_mismatch",
+            SafeSummary = "semantic_hash_parity_mismatch_pos_server_expected_hash_or_source_differs",
+            PosServerExpectedSemanticRequestHash = new string('b', 64)
+        };
 
     private static async Task<FiscalExceptionQueueCaseDetail> DetailAsync(
         string upstreamFinalityReference = "CPS-POS-UAT:ready",

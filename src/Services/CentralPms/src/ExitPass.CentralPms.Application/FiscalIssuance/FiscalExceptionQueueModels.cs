@@ -157,6 +157,14 @@ public enum FiscalSemanticRequestHashSourceStatus
     Available = 3
 }
 
+public enum FiscalSemanticRequestHashParityProofStatus
+{
+    Proven = 1,
+    Unconfirmed = 2,
+    Mismatch = 3,
+    Unavailable = 4
+}
+
 public sealed record FiscalExceptionQueueQuery(
     int Limit = 100,
     Guid? SiteId = null,
@@ -467,7 +475,8 @@ public interface IFiscalExceptionRetryExecutionPreparationService
 
 public sealed record FiscalExceptionPosServerRetryContractReadinessRequest(
     FiscalExceptionQueueCaseDetail Detail,
-    string? RequestedUpstreamFinalityReference = null);
+    string? RequestedUpstreamFinalityReference = null,
+    FiscalSemanticRequestHashParityProofResult? SemanticHashParityProof = null);
 
 public sealed record FiscalExceptionPosServerRetryContractReadinessResult(
     FiscalExceptionPosServerRetryContractReadinessStatus Status,
@@ -618,9 +627,44 @@ public sealed record FiscalSemanticRequestHashResult(
     string SafeSourceSummary,
     string? BlockReasonCode);
 
+public sealed record FiscalSemanticRequestHashCanonicalInspectionResult(
+    FiscalSemanticRequestHashSourceStatus Status,
+    string? HashValue,
+    string HashAlgorithm,
+    string HashSourceVersion,
+    int SourceFactCount,
+    string SafeSourceSummary,
+    string? BlockReasonCode,
+    IReadOnlyList<string> NormalizedFacts,
+    string? CanonicalSourceText);
+
 public interface IFiscalSemanticRequestHashCalculator
 {
     FiscalSemanticRequestHashResult Calculate(PosServerFiscalDocumentCreateRequest request);
+}
+
+public sealed record FiscalSemanticRequestHashParityFixture(
+    string PosServerHashSourceVersion,
+    string PosServerCanonicalSourceText,
+    string PosServerSemanticRequestHash);
+
+public sealed record FiscalSemanticRequestHashParityProofResult(
+    FiscalSemanticRequestHashParityProofStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    string CentralPmsHashSourceVersion,
+    string? CentralPmsCanonicalSourceText,
+    IReadOnlyList<string> CentralPmsNormalizedFacts,
+    string? CentralPmsSemanticRequestHash,
+    string? PosServerExpectedHashSourceVersion,
+    string? PosServerExpectedCanonicalSourceText,
+    string? PosServerExpectedSemanticRequestHash);
+
+public interface IFiscalSemanticRequestHashParityProofService
+{
+    FiscalSemanticRequestHashParityProofResult Prove(
+        PosServerFiscalDocumentCreateRequest request,
+        FiscalSemanticRequestHashParityFixture? posServerExpected);
 }
 
 public sealed record FiscalExceptionReadbackPreparation(
