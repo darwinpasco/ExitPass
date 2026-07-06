@@ -1139,6 +1139,54 @@ public sealed class FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions
     public bool EnableControlledMutationInvocation { get; set; }
 }
 
+public sealed class FiscalExceptionSemanticHashBackfillInternalApiOptions
+{
+    public const string SectionName = "FiscalExceptionSemanticHashBackfillInternalApi";
+
+    public FiscalExceptionSemanticHashBackfillInternalApiOptions()
+    {
+    }
+
+    public FiscalExceptionSemanticHashBackfillInternalApiOptions(bool enabled = false)
+    {
+        Enabled = enabled;
+    }
+
+    public bool Enabled { get; set; }
+}
+
+public sealed record FiscalExceptionSemanticHashBackfillInternalApiRequest(
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    Guid? MutationPreparationAuditId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    Guid? ActorServiceIdentityId,
+    string? ReasonCode,
+    string? SafeJustification,
+    Guid? CorrelationId,
+    bool DryRunOnly = true,
+    bool ExecuteControlledMutation = false,
+    IReadOnlyList<Guid>? FiscalIssuanceReferenceIds = null);
+
+public sealed record FiscalExceptionSemanticHashBackfillInternalApiResponse(
+    Guid? WorkflowRequestId,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus WorkflowStatus,
+    string? BlockReasonCode,
+    FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture MutationInvocationPosture,
+    Guid? GuardedMutationAuditId,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus? GuardedMutationStatus,
+    bool RetryExecutionAvailable,
+    string SafeSummary,
+    int HttpStatusCode);
+
+public interface IFiscalExceptionSemanticHashBackfillInternalApiHandler
+{
+    Task<FiscalExceptionSemanticHashBackfillInternalApiResponse> RequestAsync(
+        FiscalExceptionSemanticHashBackfillInternalApiRequest request,
+        CancellationToken cancellationToken);
+}
+
 public sealed record FiscalExceptionSemanticHashBackfillOperatorWorkflowRequest(
     FiscalExceptionQueueCaseDetail Detail,
     Guid FiscalIssuanceReferenceId,
@@ -1338,6 +1386,10 @@ public interface IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepo
 {
     Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord> RecordAsync(
         FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord?> GetRecordAsync(
+        Guid mutationAuditId,
         CancellationToken cancellationToken);
 
     Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditSummary?> GetSummaryAsync(

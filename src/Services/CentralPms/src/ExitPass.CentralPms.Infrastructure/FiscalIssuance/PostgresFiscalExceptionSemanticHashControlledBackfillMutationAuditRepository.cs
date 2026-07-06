@@ -636,6 +636,63 @@ public sealed class PostgresFiscalExceptionSemanticHashControlledBackfillMutatio
             SafeSummary: reader.GetString(reader.GetOrdinal("safe_summary")));
     }
 
+    public async Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord?> GetRecordAsync(
+        Guid mutationAuditId,
+        CancellationToken cancellationToken)
+    {
+        if (mutationAuditId == Guid.Empty)
+        {
+            throw new ArgumentException("Mutation audit id is required.", nameof(mutationAuditId));
+        }
+
+        const string sql = """
+            SELECT
+                semantic_hash_backfill_mutation_audit_id,
+                fiscal_issuance_reference_id,
+                semantic_hash_recalculation_preview_audit_id,
+                mutation_preparation_audit_id,
+                controlled_backfill_approval_status,
+                old_semantic_hash_source_version,
+                required_semantic_hash_source_version,
+                old_semantic_hash_value,
+                new_semantic_hash_value,
+                new_semantic_hash_algorithm,
+                new_semantic_hash_source_version,
+                new_semantic_hash_source_fact_count,
+                safe_source_summary,
+                mutation_preparation_status,
+                mutation_block_reason_code,
+                mutation_mode,
+                mutation_enabled,
+                fiscal_issuance_reference_mutated,
+                attempted_at,
+                safe_summary,
+                correlation_id,
+                actor_service_identity_id,
+                approval_reference,
+                dual_control_reference,
+                created_at
+            FROM core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
+            WHERE semantic_hash_backfill_mutation_audit_id = @mutation_audit_id
+            LIMIT 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            CommandTimeout = 30
+        };
+
+        command.Parameters.AddWithValue("mutation_audit_id", mutationAuditId);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? MapRecord(reader)
+            : null;
+    }
+
     private static void AddParameters(
         NpgsqlCommand command,
         FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite attempt)
