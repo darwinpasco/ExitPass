@@ -141,6 +141,16 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 idempotencyStatus);
         }
 
+        var semanticHashReadiness = FiscalExceptionSemanticHashReadinessPolicy.Evaluate(summary);
+        if (!FiscalExceptionSemanticHashReadinessPolicy.IsReady(semanticHashReadiness.Status))
+        {
+            return Unavailable(
+                semanticHashReadiness.BlockReasonCode ?? "semantic_hash_not_ready",
+                semanticHashReadiness.SafeSummary,
+                detail,
+                idempotencyStatus);
+        }
+
         if (!HasConfirmedSemanticRequestHash(summary))
         {
             var semanticBlockReasonCode = ToSemanticRequestHashBlockReason(summary);
@@ -354,6 +364,9 @@ public sealed class FiscalExceptionRetryCommandPreparationService : IFiscalExcep
                 FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButMissing,
             "semantic_request_hash_required_but_unconfirmed" =>
                 FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButUnconfirmed,
+            _ when blockReasonCode?.StartsWith("semantic_hash_", StringComparison.Ordinal) == true =>
+                FiscalExceptionSemanticHashReadinessPolicy.ToAvailabilityStatus(
+                    FiscalExceptionSemanticHashReadinessPolicy.Evaluate(detail.Summary).Status),
             _ => detail.Summary.SemanticRequestHashAvailabilityStatus
         };
     }

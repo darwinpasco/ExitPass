@@ -40,7 +40,7 @@ public sealed class FiscalExceptionRetrySchedulingPreparationServiceTests
             CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetrySchedulingPreparationStatus.Blocked);
-        result.BlockReasonCode.Should().Be("semantic_request_hash_required_but_missing");
+        result.BlockReasonCode.Should().Be("semantic_hash_value_missing");
         result.ExecutableJobEnqueued.Should().BeFalse();
     }
 
@@ -56,7 +56,7 @@ public sealed class FiscalExceptionRetrySchedulingPreparationServiceTests
             CancellationToken.None);
 
         result.Status.Should().Be(FiscalExceptionRetrySchedulingPreparationStatus.Blocked);
-        result.BlockReasonCode.Should().Be("semantic_request_hash_required_but_missing");
+        result.BlockReasonCode.Should().Be("semantic_hash_value_missing");
         result.Schedule.Should().BeNull();
     }
 

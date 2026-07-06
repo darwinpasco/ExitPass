@@ -210,6 +210,17 @@ public sealed class FiscalExceptionRetryExecutionPreparationService :
                 dualControlRequired: _options.ProductionImpacting);
         }
 
+        var semanticHashReadiness = FiscalExceptionSemanticHashReadinessPolicy.Evaluate(summary);
+        if (!FiscalExceptionSemanticHashReadinessPolicy.IsReady(semanticHashReadiness.Status))
+        {
+            return Blocked(
+                semanticHashReadiness.BlockReasonCode ?? "semantic_hash_not_ready",
+                semanticHashReadiness.SafeSummary,
+                AuthorizationStatus(),
+                readiness,
+                dualControlRequired: _options.ProductionImpacting);
+        }
+
         if (!string.Equals(
             commandPreparation.Command.SemanticRequestHashValue,
             summary.SemanticRequestHashValue,

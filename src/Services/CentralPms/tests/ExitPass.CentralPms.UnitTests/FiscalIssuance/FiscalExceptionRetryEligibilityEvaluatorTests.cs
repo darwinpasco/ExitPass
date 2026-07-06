@@ -116,7 +116,7 @@ public sealed class FiscalExceptionRetryEligibilityEvaluatorTests
     [Fact]
     public async Task GetAsync_WhenReadbackNotFoundAndModeledPrerequisitesAreSafe_ReturnsEligibleWithoutExecution()
     {
-        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown);
+        var reference = WithCurrentSemanticHash(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown));
         var sut = CreateService(reference, FiscalExceptionReadbackClassification.NotFound);
 
         var detail = await sut.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
@@ -132,6 +132,37 @@ public sealed class FiscalExceptionRetryEligibilityEvaluatorTests
         detail.PaymentFinalityChanged.Should().BeFalse();
         detail.ExitAuthorizationIssued.Should().BeFalse();
         detail.GateBehaviorTriggered.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenLegacySemanticHashIsPersisted_BlocksRetryEligibility()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown) with
+        {
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = new string('c', 64),
+            SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            SemanticRequestHashSourceVersion =
+                FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+            SemanticRequestHashSourceFactCount = 42,
+            SemanticRequestHashSafeSummary = "semantic_request_hash_source_available:facts=42"
+        };
+        var sut = CreateService(reference, FiscalExceptionReadbackClassification.NotFound);
+
+        var detail = await sut.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        detail.Should().NotBeNull();
+        detail!.Summary.SemanticHashReadinessStatus
+            .Should().Be(FiscalExceptionSemanticHashReadinessStatus.LegacyRecalculationRequired);
+        detail.Summary.SemanticHashReadinessBlockReasonCode
+            .Should().Be("semantic_hash_legacy_version_requires_recalculation");
+        detail.Summary.SemanticRequestHashAvailabilityStatus
+            .Should().Be(FiscalExceptionSemanticRequestHashAvailabilityStatus.RequiredButUnconfirmed);
+        detail.Summary.RetryEligibilityStatus
+            .Should().Be(FiscalExceptionRetryEligibilityStatus.BlockedSemanticHashNotReady);
+        detail.Summary.RetryBlockReasonCode
+            .Should().Be("semantic_hash_legacy_version_requires_recalculation");
+        detail.Summary.RetryExecutionAvailable.Should().BeFalse();
     }
 
     [Fact]
@@ -266,6 +297,18 @@ public sealed class FiscalExceptionRetryEligibilityEvaluatorTests
             LastUpdatedAt: now,
             RecordedByServiceIdentityId: Guid.NewGuid());
     }
+
+    private static FiscalIssuanceReferenceRecord WithCurrentSemanticHash(
+        FiscalIssuanceReferenceRecord reference) =>
+        reference with
+        {
+            SemanticRequestHashStatus = FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue = new string('c', 64),
+            SemanticRequestHashAlgorithm = FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+            SemanticRequestHashSourceVersion = FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+            SemanticRequestHashSourceFactCount = 42,
+            SemanticRequestHashSafeSummary = "semantic_request_hash_source_available:facts=42"
+        };
 
     private sealed class FakeReferenceReader : IFiscalExceptionQueueReferenceReader
     {

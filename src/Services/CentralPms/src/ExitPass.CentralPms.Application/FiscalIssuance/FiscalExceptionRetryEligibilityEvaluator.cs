@@ -92,6 +92,17 @@ public sealed class FiscalExceptionRetryEligibilityEvaluator : IFiscalExceptionR
                 detail);
         }
 
+        var semanticHashReadiness = FiscalExceptionSemanticHashReadinessPolicy.Evaluate(summary);
+        if (!FiscalExceptionSemanticHashReadinessPolicy.IsReady(semanticHashReadiness.Status))
+        {
+            return Blocked(
+                FiscalExceptionRetryEligibilityStatus.BlockedSemanticHashNotReady,
+                semanticHashReadiness.BlockReasonCode ?? "semantic_hash_not_ready",
+                semanticHashReadiness.SafeSummary,
+                evaluatedAt,
+                detail);
+        }
+
         return new FiscalExceptionRetryEligibilityEvaluation(
             Status: FiscalExceptionRetryEligibilityStatus.EligibleForControlledRetryPlanning,
             Decision: FiscalExceptionRetryEligibilityDecision.Eligible,

@@ -93,6 +93,32 @@ public sealed class FiscalExceptionRetryExecutionPreparationServiceTests
     }
 
     [Fact]
+    public async Task EvaluateAsync_WhenSemanticHashUsesLegacySourceVersion_BlocksExecutionPrep()
+    {
+        var (detail, commandPreparation, schedulingPreparation) = await SafeExecutionPrerequisitesAsync();
+        detail = detail with
+        {
+            Summary = detail.Summary with
+            {
+                SemanticRequestHashSourceVersion =
+                    FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion
+            }
+        };
+        var sut = ReadySut();
+
+        var result = await sut.EvaluateAsync(
+            new FiscalExceptionRetryExecutionPreparationRequest(
+                detail,
+                commandPreparation,
+                schedulingPreparation),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalExceptionRetryExecutionPreparationStatus.Blocked);
+        result.BlockReasonCode.Should().Be("semantic_hash_legacy_version_requires_recalculation");
+        AssertNoExecutionSideEffects(result);
+    }
+
+    [Fact]
     public async Task EvaluateAsync_WhenReadbackIsNotNotFound_BlocksExecutionPrep()
     {
         var (detail, commandPreparation, schedulingPreparation) = await SafeExecutionPrerequisitesAsync();
