@@ -128,6 +128,7 @@ app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapInternalControlledUatFiscalIssuanceEndpoints();
+app.MapInternalFiscalExceptionQueueSemanticHashBackfillEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();
@@ -424,6 +425,15 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashControlledBackfillApprovalService>(),
             serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashGuardedBackfillMutationService>(),
             serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository>()));
+    builder.Services.Configure<FiscalExceptionSemanticHashBackfillInternalApiOptions>(
+        builder.Configuration.GetSection(FiscalExceptionSemanticHashBackfillInternalApiOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashBackfillInternalApiHandler>(serviceProvider =>
+        new FiscalExceptionSemanticHashBackfillInternalApiHandler(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashBackfillInternalApiOptions>>().Value,
+            serviceProvider.GetRequiredService<IFiscalExceptionQueueService>(),
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository>(),
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>(),
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashBackfillOperatorWorkflowService>()));
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));

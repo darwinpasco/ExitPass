@@ -513,6 +513,11 @@ public sealed class FiscalExceptionSemanticHashControlledBackfillMutationPrepara
             return Task.FromResult(record);
         }
 
+        public Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord?> GetRecordAsync(
+            Guid mutationAuditId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(Records.SingleOrDefault(record => record.MutationAuditId == mutationAuditId));
+
         public Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditSummary?> GetSummaryAsync(
             Guid fiscalIssuanceReferenceId,
             CancellationToken cancellationToken)
