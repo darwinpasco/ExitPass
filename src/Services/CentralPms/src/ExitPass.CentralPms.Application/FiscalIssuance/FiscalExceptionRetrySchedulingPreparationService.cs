@@ -147,6 +147,14 @@ public sealed class FiscalExceptionRetrySchedulingPreparationService :
                 "retry_scheduling_blocked_semantic_request_hash_missing_or_unconfirmed");
         }
 
+        var semanticHashReadiness = FiscalExceptionSemanticHashReadinessPolicy.Evaluate(summary);
+        if (!FiscalExceptionSemanticHashReadinessPolicy.IsReady(semanticHashReadiness.Status))
+        {
+            return Blocked(
+                semanticHashReadiness.BlockReasonCode ?? "semantic_hash_not_ready",
+                semanticHashReadiness.SafeSummary);
+        }
+
         if (summary.IdempotencyContextAvailabilityStatus !=
             FiscalExceptionIdempotencyContextAvailabilityStatus.Available)
         {

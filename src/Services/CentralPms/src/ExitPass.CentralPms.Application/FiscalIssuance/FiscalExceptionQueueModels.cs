@@ -64,7 +64,8 @@ public enum FiscalExceptionRetryEligibilityStatus
     BlockedReadbackUnsupported = 11,
     BlockedMissingRequestContext = 12,
     BlockedMissingUpstreamFinalityReference = 13,
-    UnavailablePolicyNotConfigured = 14
+    UnavailablePolicyNotConfigured = 14,
+    BlockedSemanticHashNotReady = 15
 }
 
 public enum FiscalExceptionRetryEligibilityDecision
@@ -142,6 +143,23 @@ public enum FiscalExceptionSemanticRequestHashAvailabilityStatus
     RequiredButUnconfirmed = 4
 }
 
+public enum FiscalExceptionSemanticHashReadinessStatus
+{
+    ReadyCurrent = 1,
+    LegacyRecalculationRequired = 2,
+    Missing = 3,
+    Incomplete = 4,
+    Incompatible = 5,
+    Unavailable = 6
+}
+
+public enum FiscalExceptionSemanticHashRecalculationPosture
+{
+    Unknown = 1,
+    Possible = 2,
+    NotPossible = 3
+}
+
 public enum FiscalExceptionIdempotencyContextAvailabilityStatus
 {
     NotEvaluated = 1,
@@ -207,6 +225,12 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string? SemanticRequestHashSourceVersion,
     int? SemanticRequestHashSourceFactCount,
     string? SafeSemanticRequestHashSourceSummary,
+    FiscalExceptionSemanticHashReadinessStatus SemanticHashReadinessStatus,
+    string? SemanticHashReadinessBlockReasonCode,
+    string? StoredSemanticHashSourceVersion,
+    string RequiredSemanticHashSourceVersion,
+    FiscalExceptionSemanticHashRecalculationPosture SemanticHashRecalculationPosture,
+    string SafeSemanticHashReadinessSummary,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
@@ -642,6 +666,14 @@ public interface IFiscalSemanticRequestHashCalculator
 {
     FiscalSemanticRequestHashResult Calculate(PosServerFiscalDocumentCreateRequest request);
 }
+
+public sealed record FiscalExceptionSemanticHashReadinessResult(
+    FiscalExceptionSemanticHashReadinessStatus Status,
+    string? BlockReasonCode,
+    string? StoredSourceVersion,
+    string RequiredSourceVersion,
+    FiscalExceptionSemanticHashRecalculationPosture RecalculationPosture,
+    string SafeSummary);
 
 public sealed record FiscalSemanticRequestHashParityFixture(
     string PosServerHashSourceVersion,
