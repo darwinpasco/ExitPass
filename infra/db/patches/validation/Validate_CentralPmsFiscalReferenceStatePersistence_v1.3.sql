@@ -14,6 +14,7 @@ BEGIN
             ('core.fiscal_issuance_readback_reconciliations'),
             ('core.fiscal_issuance_retry_command_preparations'),
             ('core.fiscal_issuance_retry_schedule_preparations'),
+            ('core.fiscal_issuance_retry_execution_attempts'),
             ('core.fiscal_issuance_semantic_hash_recalculation_previews'),
             ('core.fiscal_issuance_semantic_hash_backfill_mutation_preparations'),
             ('core.fiscal_issuance_semantic_hash_backfill_workflow_requests')
@@ -98,6 +99,7 @@ BEGIN
               'fiscal_issuance_readback_reconciliations',
               'fiscal_issuance_retry_command_preparations',
               'fiscal_issuance_retry_schedule_preparations',
+              'fiscal_issuance_retry_execution_attempts',
               'fiscal_issuance_semantic_hash_recalculation_previews',
               'fiscal_issuance_semantic_hash_backfill_mutation_preparations',
               'fiscal_issuance_semantic_hash_backfill_workflow_requests'
@@ -132,6 +134,16 @@ BEGIN
           AND indexname = 'ix_fiscal_issuance_retry_schedule_preparations__reference_requested'
     ) THEN
         RAISE EXCEPTION 'Missing retry schedule preparation reference audit index.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'core'
+          AND tablename = 'fiscal_issuance_retry_execution_attempts'
+          AND indexname = 'ix_fiscal_issuance_retry_execution_attempts__reference_attempted'
+    ) THEN
+        RAISE EXCEPTION 'Missing retry execution attempt reference audit index.';
     END IF;
 
     IF NOT EXISTS (
