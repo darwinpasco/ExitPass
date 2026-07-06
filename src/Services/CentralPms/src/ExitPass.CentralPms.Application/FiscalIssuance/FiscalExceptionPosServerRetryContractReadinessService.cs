@@ -14,20 +14,20 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessService :
         ArgumentNullException.ThrowIfNull(request.Detail);
 
         var summary = request.Detail.Summary;
-        var semanticHashStatus = EvaluateSemanticHashCompatibility(summary);
+        var semanticHash = EvaluateSemanticHashCompatibility(summary, request.SemanticHashParityProof);
         var idempotencyStatus = EvaluateIdempotencyMapping(summary, request.RequestedUpstreamFinalityReference);
         var readbackFieldStatus = FiscalExceptionPosServerRetryContractReadinessStatus.Ready;
         var fiscalNumberingStatus = FiscalExceptionPosServerRetryContractReadinessStatus.Ready;
         var conflictReplayStatus = FiscalExceptionPosServerRetryContractReadinessStatus.Ready;
 
-        var blockReason = FirstBlockReason(semanticHashStatus, idempotencyStatus);
+        var blockReason = FirstBlockReason(semanticHash, idempotencyStatus);
         var status = blockReason is null
             ? FiscalExceptionPosServerRetryContractReadinessStatus.Ready
-            : ToOverallStatus(semanticHashStatus, idempotencyStatus);
+            : ToOverallStatus(semanticHash.Status, idempotencyStatus);
 
         return new FiscalExceptionPosServerRetryContractReadinessResult(
             Status: status,
-            SemanticHashCompatibilityStatus: semanticHashStatus,
+            SemanticHashCompatibilityStatus: semanticHash.Status,
             IdempotencyMappingStatus: idempotencyStatus,
             ReadbackFieldCompatibilityStatus: readbackFieldStatus,
             FiscalNumberingReadinessStatus: fiscalNumberingStatus,
@@ -37,8 +37,9 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessService :
             RetryExecutionAvailable: false);
     }
 
-    private static FiscalExceptionPosServerRetryContractReadinessStatus EvaluateSemanticHashCompatibility(
-        FiscalExceptionQueueCaseSummary summary)
+    private static SemanticHashCompatibilityEvaluation EvaluateSemanticHashCompatibility(
+        FiscalExceptionQueueCaseSummary summary,
+        FiscalSemanticRequestHashParityProofResult? parityProof)
     {
         if (summary.SemanticRequestHashAvailabilityStatus !=
                 FiscalExceptionSemanticRequestHashAvailabilityStatus.AvailableAndConfirmed ||
@@ -46,19 +47,62 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessService :
             string.IsNullOrWhiteSpace(summary.SemanticRequestHashAlgorithm) ||
             string.IsNullOrWhiteSpace(summary.SemanticRequestHashSourceVersion))
         {
-            return FiscalExceptionPosServerRetryContractReadinessStatus.Blocked;
+            return new SemanticHashCompatibilityEvaluation(
+                FiscalExceptionPosServerRetryContractReadinessStatus.Blocked,
+                "pos_server_semantic_hash_required_but_missing_or_unconfirmed");
         }
 
-        if (!IsSha256Compatible(summary.SemanticRequestHashAlgorithm) ||
-            !string.Equals(
-                summary.SemanticRequestHashSourceVersion.Trim(),
-                PosServerSemanticHashVersion,
-                StringComparison.OrdinalIgnoreCase))
+        if (!IsSha256Compatible(summary.SemanticRequestHashAlgorithm))
         {
-            return FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed;
+            return new SemanticHashCompatibilityEvaluation(
+                FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed,
+                "pos_server_semantic_hash_parity_unproven");
         }
 
-        return FiscalExceptionPosServerRetryContractReadinessStatus.Ready;
+        if (parityProof is null)
+        {
+            return new SemanticHashCompatibilityEvaluation(
+                FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed,
+                "pos_server_hash_source_code_not_available_for_parity_proof");
+        }
+
+        if (parityProof.Status == FiscalSemanticRequestHashParityProofStatus.Proven)
+        {
+            var centralHashMatchesSummary = string.Equals(
+                summary.SemanticRequestHashValue.Trim(),
+                parityProof.CentralPmsSemanticRequestHash,
+                StringComparison.OrdinalIgnoreCase);
+            var posSourceIsSha256V1 = string.Equals(
+                parityProof.PosServerExpectedHashSourceVersion?.Trim(),
+                PosServerSemanticHashVersion,
+                StringComparison.OrdinalIgnoreCase);
+
+            return centralHashMatchesSummary && posSourceIsSha256V1
+                ? new SemanticHashCompatibilityEvaluation(
+                    FiscalExceptionPosServerRetryContractReadinessStatus.Ready,
+                    null)
+                : new SemanticHashCompatibilityEvaluation(
+                    FiscalExceptionPosServerRetryContractReadinessStatus.Blocked,
+                    "pos_server_semantic_hash_mismatch");
+        }
+
+        if (parityProof.Status == FiscalSemanticRequestHashParityProofStatus.Mismatch)
+        {
+            return new SemanticHashCompatibilityEvaluation(
+                FiscalExceptionPosServerRetryContractReadinessStatus.Blocked,
+                parityProof.BlockReasonCode ?? "pos_server_semantic_hash_mismatch");
+        }
+
+        if (parityProof.Status == FiscalSemanticRequestHashParityProofStatus.Unavailable)
+        {
+            return new SemanticHashCompatibilityEvaluation(
+                FiscalExceptionPosServerRetryContractReadinessStatus.Blocked,
+                parityProof.BlockReasonCode ?? "pos_server_semantic_hash_parity_unproven");
+        }
+
+        return new SemanticHashCompatibilityEvaluation(
+            FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed,
+            parityProof.BlockReasonCode ?? "pos_server_semantic_hash_parity_unproven");
     }
 
     private static FiscalExceptionPosServerRetryContractReadinessStatus EvaluateIdempotencyMapping(
@@ -90,17 +134,13 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessService :
     }
 
     private static string? FirstBlockReason(
-        FiscalExceptionPosServerRetryContractReadinessStatus semanticHashStatus,
+        SemanticHashCompatibilityEvaluation semanticHash,
         FiscalExceptionPosServerRetryContractReadinessStatus idempotencyStatus)
     {
-        if (semanticHashStatus == FiscalExceptionPosServerRetryContractReadinessStatus.Blocked)
+        if (semanticHash.Status is FiscalExceptionPosServerRetryContractReadinessStatus.Blocked or
+            FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed)
         {
-            return "pos_server_semantic_hash_required_but_missing_or_unconfirmed";
-        }
-
-        if (semanticHashStatus == FiscalExceptionPosServerRetryContractReadinessStatus.Unconfirmed)
-        {
-            return "pos_server_semantic_hash_compatibility_unconfirmed";
+            return semanticHash.BlockReasonCode;
         }
 
         return idempotencyStatus == FiscalExceptionPosServerRetryContractReadinessStatus.Blocked
@@ -143,4 +183,8 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessService :
     private static bool IsSha256Compatible(string value) =>
         string.Equals(value.Trim(), PosServerSemanticHashAlgorithm, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(value.Trim(), "SHA-256", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record SemanticHashCompatibilityEvaluation(
+        FiscalExceptionPosServerRetryContractReadinessStatus Status,
+        string? BlockReasonCode);
 }

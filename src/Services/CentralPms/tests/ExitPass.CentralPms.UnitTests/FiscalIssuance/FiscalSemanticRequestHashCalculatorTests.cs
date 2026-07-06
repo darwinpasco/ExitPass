@@ -25,6 +25,24 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
         firstResult.SourceFactCount.Should().BeGreaterThan(0);
     }
 
+    [Fact]
+    public void InspectCanonicalSource_WhenFiscalRequestIsRepresentative_ReturnsSafeFactListAndCanonicalText()
+    {
+        var request = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());
+
+        var result = _sut.InspectCanonicalSource(request);
+
+        result.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        result.HashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
+        result.NormalizedFacts.Should().Contain("payable_basis.upstream_finality_ref=upstream-finality-ref");
+        result.NormalizedFacts.Should().Contain("document_lines[0].net_amount_minor_units=11300");
+        result.NormalizedFacts.Should().Contain("tenders[0].amount_minor_units=12500");
+        result.NormalizedFacts.Should().Contain("tax_details[0].tax_amount_minor_units=1200");
+        result.NormalizedFacts.Should().Contain("totals[0].amount_minor_units=12500");
+        result.CanonicalSourceText.Should().Contain("hash_source_version=central-pms-pos-server-fiscal-request-v1");
+        result.HashValue.Should().MatchRegex("^[0-9a-f]{64}$");
+    }
+
     [Theory]
     [InlineData("upstream")]
     [InlineData("line")]

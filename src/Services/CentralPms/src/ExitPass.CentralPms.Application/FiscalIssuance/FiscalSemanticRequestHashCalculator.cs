@@ -11,19 +11,36 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
 
     public FiscalSemanticRequestHashResult Calculate(PosServerFiscalDocumentCreateRequest request)
     {
+        var inspection = InspectCanonicalSource(request);
+
+        return new FiscalSemanticRequestHashResult(
+            Status: inspection.Status,
+            HashValue: inspection.HashValue,
+            HashAlgorithm: inspection.HashAlgorithm,
+            HashSourceVersion: inspection.HashSourceVersion,
+            SourceFactCount: inspection.SourceFactCount,
+            SafeSourceSummary: inspection.SafeSourceSummary,
+            BlockReasonCode: inspection.BlockReasonCode);
+    }
+
+    public FiscalSemanticRequestHashCanonicalInspectionResult InspectCanonicalSource(
+        PosServerFiscalDocumentCreateRequest request)
+    {
         ArgumentNullException.ThrowIfNull(request);
 
         var missingFacts = MissingRequiredFacts(request);
         if (missingFacts.Count > 0)
         {
-            return new FiscalSemanticRequestHashResult(
+            return new FiscalSemanticRequestHashCanonicalInspectionResult(
                 Status: FiscalSemanticRequestHashSourceStatus.Incomplete,
                 HashValue: null,
                 HashAlgorithm: CurrentHashAlgorithm,
                 HashSourceVersion: CurrentHashSourceVersion,
                 SourceFactCount: 0,
                 SafeSourceSummary: $"semantic_request_hash_source_incomplete:{string.Join(",", missingFacts)}",
-                BlockReasonCode: missingFacts[0]);
+                BlockReasonCode: missingFacts[0],
+                NormalizedFacts: Array.Empty<string>(),
+                CanonicalSourceText: null);
         }
 
         var facts = CanonicalFacts(request);
@@ -31,14 +48,16 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(canonicalSource));
         var hash = Convert.ToHexString(bytes).ToLowerInvariant();
 
-        return new FiscalSemanticRequestHashResult(
+        return new FiscalSemanticRequestHashCanonicalInspectionResult(
             Status: FiscalSemanticRequestHashSourceStatus.Available,
             HashValue: hash,
             HashAlgorithm: CurrentHashAlgorithm,
             HashSourceVersion: CurrentHashSourceVersion,
             SourceFactCount: facts.Count,
             SafeSourceSummary: $"semantic_request_hash_source_available:facts={facts.Count}",
-            BlockReasonCode: null);
+            BlockReasonCode: null,
+            NormalizedFacts: facts,
+            CanonicalSourceText: canonicalSource);
     }
 
     private static IReadOnlyList<string> MissingRequiredFacts(PosServerFiscalDocumentCreateRequest request)
