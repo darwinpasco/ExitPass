@@ -1,0 +1,6 @@
+Branch: test/central-pms-pos-server-normal-fiscal-issuance-uat
+Commit: e0d560af74c86c90f23873d5205c1d22551ed694
+Central PMS GET route result: The remote server returned an error: (405) Method Not Allowed.
+Central PMS GET route HTTP: 405
+POS Server root result: The remote server returned an error: (404) Not Found.
+POS Server root HTTP: 404

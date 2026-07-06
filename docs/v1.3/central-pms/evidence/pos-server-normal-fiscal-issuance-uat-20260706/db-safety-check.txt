@@ -1,0 +1,22 @@
+﻿Command:
+docker exec exitpass-postgres psql -U exitpass -lqt
+
+Purpose:
+List local PostgreSQL database names only, to check whether a clearly disposable Central PMS UAT database exists before any mutating controlled fiscal issuance run.
+
+Observed database names:
+- centralpms_feq_retry_uat_local
+- exitpass_v12_dev
+- posserver_api_smoke_validation_local
+- posserver_controlled_code_validation_local
+- posserver_controlled_code_validation_slice2_local
+- posserver_controlled_code_validation_slice3_local
+- posserver_controlled_code_workflow_validation_local
+- posserver_fiscal_numbering_columns_validation_local
+- posserver_validation_local
+- postgres
+- template0
+- template1
+
+Safety conclusion:
+The Central PMS active database could not be proven from a safe read-only source. Because exitpass_v12_dev is present and is not clearly disposable UAT data, the mutating /run step was not executed.

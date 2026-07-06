@@ -1,0 +1,8 @@
+﻿Command:
+docker exec exitpass-postgres psql -U exitpass -d centralpms_feq_retry_uat_local -c "select table_schema, table_name from information_schema.tables where table_schema not in ('pg_catalog','information_schema') order by table_schema, table_name limit 100;"
+
+Result:
+(0 rows)
+
+Conclusion:
+The manually confirmed disposable Central PMS DB name is safe, but the database has no migrated Central PMS schema. The controlled /run endpoint was not invoked because fiscal issuance reference persistence cannot succeed without the schema.

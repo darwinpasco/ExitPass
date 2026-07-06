@@ -1,0 +1,2 @@
+GET preflight result: The remote server returned an error: (405) Method Not Allowed.
+HTTP status: 405

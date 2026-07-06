@@ -1,0 +1,1 @@
+﻿Invoke-RestMethod -Uri http://localhost:5080/internal/controlled-uat/fiscal-issuance/run -Method Post -ContentType 'application/json' -Body <normal-fiscal-issuance-uat-request.json>

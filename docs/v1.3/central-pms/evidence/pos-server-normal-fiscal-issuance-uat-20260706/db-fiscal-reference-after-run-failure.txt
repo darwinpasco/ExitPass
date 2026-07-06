@@ -1,0 +1,7 @@
+﻿Read-only query after failed /run:
+
+select fiscal_issuance_reference_id, upstream_finality_reference, fiscal_issuance_state, fiscal_document_number, semantic_request_hash_value, semantic_request_hash_source_version from core.fiscal_issuance_references where upstream_finality_reference = 'CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001';
+
+Result: 0 rows
+
+Conclusion: no fiscal issuance reference row was created for the approved UAT upstream finality reference.
