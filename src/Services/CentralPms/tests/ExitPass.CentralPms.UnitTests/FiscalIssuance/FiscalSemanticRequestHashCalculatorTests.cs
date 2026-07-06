@@ -6,6 +6,9 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 
 public sealed class FiscalSemanticRequestHashCalculatorTests
 {
+    private const string ExpectedPosServerHash =
+        "6a490379e4275a57f0a0695ff9dbd1271c4480adaeeefb9b6bfbd11e4d1ed201";
+
     private readonly PosServerFiscalDocumentRequestMapper _mapper = new();
     private readonly FiscalSemanticRequestHashCalculator _sut = new();
 
@@ -34,13 +37,32 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
 
         result.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
         result.HashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
-        result.NormalizedFacts.Should().Contain("payable_basis.upstream_finality_ref=upstream-finality-ref");
-        result.NormalizedFacts.Should().Contain("document_lines[0].net_amount_minor_units=11300");
-        result.NormalizedFacts.Should().Contain("tenders[0].amount_minor_units=12500");
-        result.NormalizedFacts.Should().Contain("tax_details[0].tax_amount_minor_units=1200");
-        result.NormalizedFacts.Should().Contain("totals[0].amount_minor_units=12500");
-        result.CanonicalSourceText.Should().Contain("hash_source_version=central-pms-pos-server-fiscal-request-v1");
+        result.NormalizedFacts.Should().Contain("payable_basis");
+        result.NormalizedFacts.Should().Contain("document_lines");
+        result.NormalizedFacts.Should().Contain("tenders");
+        result.NormalizedFacts.Should().Contain("tax_details");
+        result.NormalizedFacts.Should().Contain("totals");
+        result.CanonicalSourceText.Should().Contain("\"payable_basis\"");
+        result.CanonicalSourceText.Should().Contain("\"document_lines\"");
+        result.CanonicalSourceText.Should().Contain("\"tenders\"");
+        result.CanonicalSourceText.Should().Contain("\"tax_details\"");
+        result.CanonicalSourceText.Should().Contain("\"totals\"");
+        result.CanonicalSourceText.Should().NotContain("hash_source_version");
         result.HashValue.Should().MatchRegex("^[0-9a-f]{64}$");
+    }
+
+    [Fact]
+    public void InspectCanonicalSource_WhenPosServerFixtureIsMapped_ReturnsExactSha256V1CanonicalJsonAndHash()
+    {
+        var fixture = PosServerSemanticHashSha256V1Fixture.Read();
+
+        var result = _sut.InspectCanonicalSource(fixture.RepresentativeCreateRequest);
+
+        result.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        result.HashSourceVersion.Should().Be("sha256:v1");
+        result.CanonicalSourceText.Should().Be(fixture.CanonicalSourceText);
+        result.HashValue.Should().Be(ExpectedPosServerHash);
+        result.HashValue.Should().Be(fixture.ExpectedSha256Hash);
     }
 
     [Theory]
@@ -104,7 +126,7 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
     }
 
     [Fact]
-    public void Calculate_WhenVolatileTransportFieldsChange_ReturnsSameHash()
+    public void Calculate_WhenPosServerSemanticScopeFieldChannelTerminalChanges_ReturnsDifferentHash()
     {
         var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());
         var changed = baseline with
@@ -115,7 +137,23 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
         var baselineResult = _sut.Calculate(baseline);
         var changedResult = _sut.Calculate(changed);
 
-        changedResult.HashValue.Should().Be(baselineResult.HashValue);
+        changedResult.HashValue.Should().NotBe(baselineResult.HashValue);
+    }
+
+    [Fact]
+    public void InspectCanonicalSource_WhenCanonicalJsonIsBuilt_ExcludesResponseRetryAndFiscalNumberOutcomeFields()
+    {
+        var request = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());
+
+        var result = _sut.InspectCanonicalSource(request);
+
+        result.CanonicalSourceText.Should().NotBeNull();
+        result.CanonicalSourceText.Should().NotContain("fiscal_document_id");
+        result.CanonicalSourceText.Should().NotContain("fiscal_document_number");
+        result.CanonicalSourceText.Should().NotContain("fiscal_sequence_value");
+        result.CanonicalSourceText.Should().NotContain("retry");
+        result.CanonicalSourceText.Should().NotContain("replay");
+        result.CanonicalSourceText.Should().NotContain("response");
     }
 
     [Fact]

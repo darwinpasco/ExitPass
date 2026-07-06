@@ -1,13 +1,19 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace ExitPass.CentralPms.Application.FiscalIssuance;
 
 public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequestHashCalculator
 {
     public const string CurrentHashAlgorithm = "SHA-256";
-    public const string CurrentHashSourceVersion = "central-pms-pos-server-fiscal-request-v1";
+    public const string CurrentHashSourceVersion = "sha256:v1";
+
+    private static readonly JsonWriterOptions CanonicalJsonOptions = new()
+    {
+        Indented = false
+    };
 
     public FiscalSemanticRequestHashResult Calculate(PosServerFiscalDocumentCreateRequest request)
     {
@@ -43,20 +49,19 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
                 CanonicalSourceText: null);
         }
 
-        var facts = CanonicalFacts(request);
-        var canonicalSource = string.Join('\n', facts);
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(canonicalSource));
-        var hash = Convert.ToHexString(bytes).ToLowerInvariant();
+        var canonicalSource = CanonicalSource(request);
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalSource))).ToLowerInvariant();
+        var topLevelFacts = TopLevelFactNames();
 
         return new FiscalSemanticRequestHashCanonicalInspectionResult(
             Status: FiscalSemanticRequestHashSourceStatus.Available,
             HashValue: hash,
             HashAlgorithm: CurrentHashAlgorithm,
             HashSourceVersion: CurrentHashSourceVersion,
-            SourceFactCount: facts.Count,
-            SafeSourceSummary: $"semantic_request_hash_source_available:facts={facts.Count}",
+            SourceFactCount: topLevelFacts.Length,
+            SafeSourceSummary: $"semantic_request_hash_source_available:facts={topLevelFacts.Length}",
             BlockReasonCode: null,
-            NormalizedFacts: facts,
+            NormalizedFacts: topLevelFacts,
             CanonicalSourceText: canonicalSource);
     }
 
@@ -107,223 +112,247 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         return missing;
     }
 
-    private static List<string> CanonicalFacts(PosServerFiscalDocumentCreateRequest request)
+    private static string CanonicalSource(PosServerFiscalDocumentCreateRequest request)
     {
-        var facts = new List<string>
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, CanonicalJsonOptions))
         {
-            Fact("hash_source_version", CurrentHashSourceVersion),
-            Fact("site_pos_server_id", request.SitePosServerId),
-            Fact("site_pos_server_ref", request.SitePosServerRef),
-            Fact("fiscal_document_type_code_id", request.FiscalDocumentTypeCodeId),
-            Fact("fiscal_document_type_code_key", request.FiscalDocumentTypeCodeKey),
-            Fact("fiscal_document_status_code_id", request.FiscalDocumentStatusCodeId),
-            Fact("business_day_date", request.BusinessDayDate),
-            Fact("central_pms_parking_session_ref", request.CentralPmsParkingSessionRef),
-            Fact("central_pms_payment_attempt_ref", request.CentralPmsPaymentAttemptRef),
-            Fact("central_pms_payment_confirmation_ref", request.CentralPmsPaymentConfirmationRef),
-            Fact("upstream_finality_ref", request.UpstreamFinalityRef),
-            Fact("payment_finality_ref", request.PaymentFinalityRef),
-            Fact("vendor_ack_ref", request.VendorAckRef)
-        };
-
-        AddPayableBasisFacts(facts, request.PayableBasis);
-        AddDictionaryFacts(facts, "reference_context", request.ReferenceContext);
-        AddLineFacts(facts, request.DocumentLines);
-        AddTenderFacts(facts, request.Tenders);
-        AddTaxFacts(facts, request.TaxDetails);
-        AddDiscountPrivilegeFacts(facts, request.DiscountPrivilegeDetails);
-        AddTotalFacts(facts, request.Totals);
-
-        return facts;
-    }
-
-    private static void AddPayableBasisFacts(List<string> facts, PosServerPayableBasisRequest payableBasis)
-    {
-        facts.Add(Fact("payable_basis.ref", payableBasis.PayableBasisRef));
-        facts.Add(Fact("payable_basis.upstream_finality_ref", payableBasis.UpstreamFinalityRef));
-        facts.Add(Fact("payable_basis.currency_code", payableBasis.CurrencyCode));
-        facts.Add(Fact("payable_basis.amount_minor_units", payableBasis.PayableAmountMinorUnits));
-        AddDictionaryFacts(facts, "payable_basis.reference_context", payableBasis.ReferenceContext);
-
-        var discounts = payableBasis.DiscountReferences
-            .OrderBy(discount => Normalize(discount.DiscountValidationRef), StringComparer.Ordinal)
-            .ThenBy(discount => Normalize(discount.Status), StringComparer.Ordinal)
-            .ThenBy(discount => discount.AppliesStatutoryDiscountTreatment)
-            .ThenBy(discount => DictionaryFingerprint(discount.ReferenceContext), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact("payable_basis.discount_references.count", discounts.Length));
-        for (var index = 0; index < discounts.Length; index++)
-        {
-            var discount = discounts[index];
-            var prefix = $"payable_basis.discount_references[{index}]";
-            facts.Add(Fact($"{prefix}.discount_validation_ref", discount.DiscountValidationRef));
-            facts.Add(Fact($"{prefix}.status", discount.Status));
-            facts.Add(Fact($"{prefix}.applies_statutory_discount_treatment", discount.AppliesStatutoryDiscountTreatment));
-            AddDictionaryFacts(facts, $"{prefix}.reference_context", discount.ReferenceContext);
+            writer.WriteStartObject();
+            WriteString(writer, "business_day_date", request.BusinessDayDate);
+            WriteString(writer, "central_pms_parking_session_ref", request.CentralPmsParkingSessionRef);
+            WriteString(writer, "central_pms_payment_attempt_ref", request.CentralPmsPaymentAttemptRef);
+            WriteString(writer, "central_pms_payment_confirmation_ref", request.CentralPmsPaymentConfirmationRef);
+            WriteString(writer, "channel_terminal_id", request.ChannelTerminalId);
+            WriteDiscountPrivileges(writer, request.DiscountPrivilegeDetails);
+            WriteDocumentLines(writer, request.DocumentLines);
+            writer.WritePropertyName("document_links");
+            writer.WriteStartArray();
+            writer.WriteEndArray();
+            WriteString(writer, "fiscal_document_status_code_id", request.FiscalDocumentStatusCodeId);
+            WriteString(writer, "fiscal_document_type_code_id", request.FiscalDocumentTypeCodeId);
+            WriteString(writer, "fiscal_document_type_code_key", request.FiscalDocumentTypeCodeKey);
+            WritePayableBasis(writer, request.PayableBasis);
+            WriteString(writer, "payment_finality_ref", request.PaymentFinalityRef);
+            WriteDictionary(writer, "reference_context", request.ReferenceContext);
+            WriteString(writer, "site_pos_server_id", request.SitePosServerId);
+            WriteString(writer, "site_pos_server_ref", request.SitePosServerRef);
+            WriteTaxDetails(writer, request.TaxDetails);
+            WriteTenders(writer, request.Tenders);
+            WriteTotals(writer, request.Totals);
+            WriteString(writer, "vendor_ack_ref", request.VendorAckRef);
+            writer.WriteEndObject();
         }
+
+        return Encoding.UTF8.GetString(stream.ToArray());
     }
 
-    private static void AddLineFacts(List<string> facts, IReadOnlyList<PosServerFiscalDocumentLineRequest> lines)
+    private static void WritePayableBasis(Utf8JsonWriter writer, PosServerPayableBasisRequest payableBasis)
     {
-        var ordered = lines
-            .OrderBy(line => line.LineSequence)
-            .ThenBy(line => Normalize(line.SourceRef), StringComparer.Ordinal)
-            .ThenBy(line => Normalize(line.Description), StringComparer.Ordinal)
-            .ThenBy(line => line.LineTypeCodeId)
-            .ThenBy(line => line.LineStatusCodeId)
-            .ThenBy(line => DictionaryFingerprint(line.LineContext), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact("document_lines.count", ordered.Length));
-        for (var index = 0; index < ordered.Length; index++)
+        writer.WritePropertyName("payable_basis");
+        writer.WriteStartObject();
+        WriteString(writer, "currency_code", NormalizeCurrency(payableBasis.CurrencyCode));
+        writer.WritePropertyName("discount_references");
+        writer.WriteStartArray();
+        foreach (var discount in payableBasis.DiscountReferences.OrderBy(discount => Normalize(discount.DiscountValidationRef), StringComparer.Ordinal))
         {
-            var line = ordered[index];
-            var prefix = $"document_lines[{index}]";
-            facts.Add(Fact($"{prefix}.line_sequence", line.LineSequence));
-            facts.Add(Fact($"{prefix}.line_type_code_id", line.LineTypeCodeId));
-            facts.Add(Fact($"{prefix}.description", line.Description));
-            facts.Add(Fact($"{prefix}.quantity", line.Quantity));
-            facts.Add(Fact($"{prefix}.unit_amount_minor_units", line.UnitAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.gross_amount_minor_units", line.GrossAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.discount_amount_minor_units", line.DiscountAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.tax_amount_minor_units", line.TaxAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.net_amount_minor_units", line.NetAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.currency_code", line.CurrencyCode));
-            facts.Add(Fact($"{prefix}.line_status_code_id", line.LineStatusCodeId));
-            facts.Add(Fact($"{prefix}.source_ref", line.SourceRef));
-            AddDictionaryFacts(facts, $"{prefix}.line_context", line.LineContext);
+            writer.WriteStartObject();
+            writer.WriteBoolean("applies_statutory_discount_treatment", discount.AppliesStatutoryDiscountTreatment);
+            WriteString(writer, "discount_validation_ref", discount.DiscountValidationRef);
+            WriteDictionary(writer, "reference_context", discount.ReferenceContext);
+            WriteString(writer, "status", NormalizeDiscountStatus(discount.Status));
+            writer.WriteEndObject();
         }
+
+        writer.WriteEndArray();
+        writer.WriteNumber("payable_amount_minor_units", payableBasis.PayableAmountMinorUnits);
+        WriteString(writer, "payable_basis_ref", payableBasis.PayableBasisRef);
+        WriteDictionary(writer, "reference_context", payableBasis.ReferenceContext);
+        WriteString(writer, "upstream_finality_ref", payableBasis.UpstreamFinalityRef);
+        writer.WriteEndObject();
     }
 
-    private static void AddTenderFacts(List<string> facts, IReadOnlyList<PosServerFiscalTenderRequest> tenders)
+    private static void WriteDocumentLines(Utf8JsonWriter writer, IReadOnlyList<PosServerFiscalDocumentLineRequest> lines)
     {
-        var ordered = tenders
-            .OrderBy(tender => tender.TenderTypeCodeId)
-            .ThenBy(tender => tender.AmountMinorUnits)
-            .ThenBy(tender => Normalize(tender.CurrencyCode), StringComparer.Ordinal)
-            .ThenBy(tender => Normalize(tender.ProviderRef), StringComparer.Ordinal)
-            .ThenBy(tender => DictionaryFingerprint(tender.TenderContext), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact("tenders.count", ordered.Length));
-        for (var index = 0; index < ordered.Length; index++)
+        writer.WritePropertyName("document_lines");
+        writer.WriteStartArray();
+        foreach (var line in lines.OrderBy(line => line.LineSequence).ThenBy(line => Normalize(line.SourceRef), StringComparer.Ordinal))
         {
-            var tender = ordered[index];
-            var prefix = $"tenders[{index}]";
-            facts.Add(Fact($"{prefix}.tender_type_code_id", tender.TenderTypeCodeId));
-            facts.Add(Fact($"{prefix}.amount_minor_units", tender.AmountMinorUnits));
-            facts.Add(Fact($"{prefix}.currency_code", tender.CurrencyCode));
-            facts.Add(Fact($"{prefix}.central_pms_payment_attempt_ref", tender.CentralPmsPaymentAttemptRef));
-            facts.Add(Fact($"{prefix}.central_pms_payment_confirmation_ref", tender.CentralPmsPaymentConfirmationRef));
-            facts.Add(Fact($"{prefix}.payment_finality_ref", tender.PaymentFinalityRef));
-            facts.Add(Fact($"{prefix}.provider_ref", tender.ProviderRef));
-            AddDictionaryFacts(facts, $"{prefix}.tender_context", tender.TenderContext);
+            writer.WriteStartObject();
+            WriteString(writer, "currency_code", NormalizeCurrency(line.CurrencyCode));
+            WriteString(writer, "description", line.Description);
+            writer.WriteNumber("discount_amount_minor_units", line.DiscountAmountMinorUnits);
+            writer.WriteNumber("gross_amount_minor_units", line.GrossAmountMinorUnits);
+            WriteDictionary(writer, "line_context", line.LineContext);
+            writer.WriteNumber("line_sequence", line.LineSequence);
+            WriteString(writer, "line_status_code_id", line.LineStatusCodeId);
+            WriteString(writer, "line_type_code_id", line.LineTypeCodeId);
+            writer.WriteNumber("net_amount_minor_units", line.NetAmountMinorUnits);
+            WriteNumber(writer, "quantity", line.Quantity);
+            WriteString(writer, "source_ref", line.SourceRef);
+            writer.WriteNumber("tax_amount_minor_units", line.TaxAmountMinorUnits);
+            writer.WriteNumber("unit_amount_minor_units", line.UnitAmountMinorUnits);
+            writer.WriteEndObject();
         }
+
+        writer.WriteEndArray();
     }
 
-    private static void AddTaxFacts(List<string> facts, IReadOnlyList<PosServerFiscalTaxDetailRequest> taxes)
+    private static void WriteTenders(Utf8JsonWriter writer, IReadOnlyList<PosServerFiscalTenderRequest> tenders)
     {
-        var ordered = taxes
-            .OrderBy(tax => tax.LineSequence)
-            .ThenBy(tax => tax.TaxTypeCodeId)
-            .ThenBy(tax => tax.TaxClassificationCodeId)
-            .ThenBy(tax => tax.TaxableAmountMinorUnits)
-            .ThenBy(tax => tax.TaxAmountMinorUnits)
-            .ThenBy(tax => DictionaryFingerprint(tax.TaxContext), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact("tax_details.count", ordered.Length));
-        for (var index = 0; index < ordered.Length; index++)
+        writer.WritePropertyName("tenders");
+        writer.WriteStartArray();
+        foreach (var tender in tenders.OrderBy(tender => tender.TenderTypeCodeId).ThenBy(tender => Normalize(tender.ProviderRef), StringComparer.Ordinal))
         {
-            var tax = ordered[index];
-            var prefix = $"tax_details[{index}]";
-            facts.Add(Fact($"{prefix}.tax_type_code_id", tax.TaxTypeCodeId));
-            facts.Add(Fact($"{prefix}.tax_classification_code_id", tax.TaxClassificationCodeId));
-            facts.Add(Fact($"{prefix}.taxable_amount_minor_units", tax.TaxableAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.tax_amount_minor_units", tax.TaxAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.currency_code", tax.CurrencyCode));
-            facts.Add(Fact($"{prefix}.line_sequence", tax.LineSequence));
-            facts.Add(Fact($"{prefix}.tax_rate", tax.TaxRate));
-            AddDictionaryFacts(facts, $"{prefix}.tax_context", tax.TaxContext);
+            writer.WriteStartObject();
+            writer.WriteNumber("amount_minor_units", tender.AmountMinorUnits);
+            WriteString(writer, "central_pms_payment_attempt_ref", tender.CentralPmsPaymentAttemptRef);
+            WriteString(writer, "central_pms_payment_confirmation_ref", tender.CentralPmsPaymentConfirmationRef);
+            WriteString(writer, "currency_code", NormalizeCurrency(tender.CurrencyCode));
+            WriteString(writer, "payment_finality_ref", tender.PaymentFinalityRef);
+            WriteString(writer, "provider_ref", tender.ProviderRef);
+            WriteDictionary(writer, "tender_context", tender.TenderContext);
+            WriteString(writer, "tender_type_code_id", tender.TenderTypeCodeId);
+            writer.WriteEndObject();
         }
+
+        writer.WriteEndArray();
     }
 
-    private static void AddDiscountPrivilegeFacts(
-        List<string> facts,
+    private static void WriteTaxDetails(Utf8JsonWriter writer, IReadOnlyList<PosServerFiscalTaxDetailRequest> taxes)
+    {
+        writer.WritePropertyName("tax_details");
+        writer.WriteStartArray();
+        foreach (var tax in taxes.OrderBy(tax => tax.LineSequence).ThenBy(tax => tax.TaxTypeCodeId))
+        {
+            writer.WriteStartObject();
+            WriteString(writer, "currency_code", NormalizeCurrency(tax.CurrencyCode));
+            WriteNullableNumber(writer, "line_sequence", tax.LineSequence);
+            writer.WriteNumber("tax_amount_minor_units", tax.TaxAmountMinorUnits);
+            WriteString(writer, "tax_classification_code_id", tax.TaxClassificationCodeId);
+            WriteDictionary(writer, "tax_context", tax.TaxContext);
+            WriteNullableNumber(writer, "tax_rate", tax.TaxRate);
+            WriteString(writer, "tax_type_code_id", tax.TaxTypeCodeId);
+            writer.WriteNumber("taxable_amount_minor_units", tax.TaxableAmountMinorUnits);
+            writer.WriteEndObject();
+        }
+
+        writer.WriteEndArray();
+    }
+
+    private static void WriteDiscountPrivileges(
+        Utf8JsonWriter writer,
         IReadOnlyList<PosServerFiscalDiscountPrivilegeDetailRequest> discounts)
     {
-        var ordered = discounts
-            .OrderBy(discount => discount.LineSequence)
-            .ThenBy(discount => discount.DiscountPrivilegeTypeCodeId)
-            .ThenBy(discount => Normalize(discount.ApprovalRef), StringComparer.Ordinal)
-            .ThenBy(discount => Normalize(discount.EvidenceRef), StringComparer.Ordinal)
-            .ThenBy(discount => DictionaryFingerprint(discount.DiscountPrivilegeContext), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact("discount_privilege_details.count", ordered.Length));
-        for (var index = 0; index < ordered.Length; index++)
+        writer.WritePropertyName("discount_privilege_details");
+        writer.WriteStartArray();
+        foreach (var discount in discounts.OrderBy(discount => discount.LineSequence).ThenBy(discount => discount.DiscountPrivilegeTypeCodeId))
         {
-            var discount = ordered[index];
-            var prefix = $"discount_privilege_details[{index}]";
-            facts.Add(Fact($"{prefix}.discount_privilege_type_code_id", discount.DiscountPrivilegeTypeCodeId));
-            facts.Add(Fact($"{prefix}.basis_amount_minor_units", discount.BasisAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.discount_amount_minor_units", discount.DiscountAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.vat_privilege_amount_minor_units", discount.VatPrivilegeAmountMinorUnits));
-            facts.Add(Fact($"{prefix}.currency_code", discount.CurrencyCode));
-            facts.Add(Fact($"{prefix}.line_sequence", discount.LineSequence));
-            facts.Add(Fact($"{prefix}.beneficiary_ref", discount.BeneficiaryRef));
-            facts.Add(Fact($"{prefix}.evidence_ref", discount.EvidenceRef));
-            facts.Add(Fact($"{prefix}.approval_ref", discount.ApprovalRef));
-            AddDictionaryFacts(facts, $"{prefix}.discount_privilege_context", discount.DiscountPrivilegeContext);
+            writer.WriteStartObject();
+            WriteString(writer, "approval_ref", discount.ApprovalRef);
+            writer.WriteNumber("basis_amount_minor_units", discount.BasisAmountMinorUnits);
+            WriteString(writer, "beneficiary_ref", discount.BeneficiaryRef);
+            WriteString(writer, "currency_code", NormalizeCurrency(discount.CurrencyCode));
+            writer.WriteNumber("discount_amount_minor_units", discount.DiscountAmountMinorUnits);
+            WriteDictionary(writer, "discount_privilege_context", discount.DiscountPrivilegeContext);
+            WriteString(writer, "discount_privilege_type_code_id", discount.DiscountPrivilegeTypeCodeId);
+            WriteString(writer, "evidence_ref", discount.EvidenceRef);
+            WriteNullableNumber(writer, "line_sequence", discount.LineSequence);
+            writer.WriteNumber("vat_privilege_amount_minor_units", discount.VatPrivilegeAmountMinorUnits);
+            writer.WriteEndObject();
         }
+
+        writer.WriteEndArray();
     }
 
-    private static void AddTotalFacts(List<string> facts, IReadOnlyList<PosServerFiscalTotalRequest> totals)
+    private static void WriteTotals(Utf8JsonWriter writer, IReadOnlyList<PosServerFiscalTotalRequest> totals)
     {
-        var ordered = totals
-            .OrderBy(total => total.TotalTypeCodeId)
-            .ThenBy(total => total.AmountMinorUnits)
-            .ThenBy(total => Normalize(total.CurrencyCode), StringComparer.Ordinal)
-            .ThenBy(total => DictionaryFingerprint(total.TotalContext), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact("totals.count", ordered.Length));
-        for (var index = 0; index < ordered.Length; index++)
+        writer.WritePropertyName("totals");
+        writer.WriteStartArray();
+        foreach (var total in totals.OrderBy(total => total.TotalTypeCodeId))
         {
-            var total = ordered[index];
-            var prefix = $"totals[{index}]";
-            facts.Add(Fact($"{prefix}.total_type_code_id", total.TotalTypeCodeId));
-            facts.Add(Fact($"{prefix}.amount_minor_units", total.AmountMinorUnits));
-            facts.Add(Fact($"{prefix}.currency_code", total.CurrencyCode));
-            AddDictionaryFacts(facts, $"{prefix}.total_context", total.TotalContext);
+            writer.WriteStartObject();
+            writer.WriteNumber("amount_minor_units", total.AmountMinorUnits);
+            WriteString(writer, "currency_code", NormalizeCurrency(total.CurrencyCode));
+            WriteDictionary(writer, "total_context", total.TotalContext);
+            WriteString(writer, "total_type_code_id", total.TotalTypeCodeId);
+            writer.WriteEndObject();
         }
+
+        writer.WriteEndArray();
     }
 
-    private static void AddDictionaryFacts(
-        List<string> facts,
-        string prefix,
+    private static void WriteDictionary(
+        Utf8JsonWriter writer,
+        string propertyName,
         IReadOnlyDictionary<string, string> dictionary)
     {
-        var pairs = dictionary
-            .OrderBy(pair => Normalize(pair.Key), StringComparer.Ordinal)
-            .ThenBy(pair => Normalize(pair.Value), StringComparer.Ordinal)
-            .ToArray();
-
-        facts.Add(Fact($"{prefix}.count", pairs.Length));
-        foreach (var pair in pairs)
+        writer.WritePropertyName(propertyName);
+        writer.WriteStartObject();
+        foreach (var pair in dictionary.OrderBy(pair => Normalize(pair.Key), StringComparer.Ordinal))
         {
-            facts.Add(Fact($"{prefix}.{Normalize(pair.Key)}", pair.Value));
+            WriteString(writer, Normalize(pair.Key), pair.Value);
         }
+
+        writer.WriteEndObject();
     }
 
-    private static string DictionaryFingerprint(IReadOnlyDictionary<string, string> dictionary) =>
-        string.Join(
-            "|",
-            dictionary
-                .OrderBy(pair => Normalize(pair.Key), StringComparer.Ordinal)
-                .ThenBy(pair => Normalize(pair.Value), StringComparer.Ordinal)
-                .Select(pair => $"{Normalize(pair.Key)}={Normalize(pair.Value)}"));
+    private static void WriteString(Utf8JsonWriter writer, string propertyName, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteString(propertyName, Normalize(value));
+    }
+
+    private static void WriteString(Utf8JsonWriter writer, string propertyName, Guid? value)
+    {
+        if (value is null || value == Guid.Empty)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteString(propertyName, value.Value.ToString("D"));
+    }
+
+    private static void WriteString(Utf8JsonWriter writer, string propertyName, DateOnly? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteString(propertyName, value.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+    }
+
+    private static void WriteNumber(Utf8JsonWriter writer, string propertyName, decimal value) =>
+        writer.WriteNumber(propertyName, value);
+
+    private static void WriteNullableNumber(Utf8JsonWriter writer, string propertyName, int? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteNumber(propertyName, value.Value);
+    }
+
+    private static void WriteNullableNumber(Utf8JsonWriter writer, string propertyName, decimal? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteNumber(propertyName, value.Value);
+    }
 
     private static void AddIfMissing(List<string> missing, string? value, string reason)
     {
@@ -333,22 +362,41 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         }
     }
 
-    private static string Fact(string key, object? value) =>
-        $"{key}={CanonicalValue(value)}";
-
-    private static string CanonicalValue(object? value) =>
-        value switch
-        {
-            null => "<null>",
-            string text => Normalize(text),
-            Guid guid => guid == Guid.Empty ? "<empty-guid>" : guid.ToString("D"),
-            DateOnly date => date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            decimal number => number.ToString("0.#############################", CultureInfo.InvariantCulture),
-            bool boolean => boolean ? "true" : "false",
-            IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture) ?? "<null>",
-            _ => value.ToString() ?? "<null>"
-        };
-
     private static string Normalize(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? "<null>" : value.Trim();
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+
+    private static string NormalizeCurrency(string? value) =>
+        Normalize(value).ToUpperInvariant();
+
+    private static string NormalizeDiscountStatus(string? value)
+    {
+        var normalized = Normalize(value);
+        return string.Equals(normalized, "approved", StringComparison.OrdinalIgnoreCase)
+            ? "Approved"
+            : normalized;
+    }
+
+    private static string[] TopLevelFactNames() =>
+    [
+        "business_day_date",
+        "central_pms_parking_session_ref",
+        "central_pms_payment_attempt_ref",
+        "central_pms_payment_confirmation_ref",
+        "channel_terminal_id",
+        "discount_privilege_details",
+        "document_lines",
+        "document_links",
+        "fiscal_document_status_code_id",
+        "fiscal_document_type_code_id",
+        "fiscal_document_type_code_key",
+        "payable_basis",
+        "payment_finality_ref",
+        "reference_context",
+        "site_pos_server_id",
+        "site_pos_server_ref",
+        "tax_details",
+        "tenders",
+        "totals",
+        "vendor_ack_ref"
+    ];
 }
