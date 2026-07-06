@@ -35,6 +35,11 @@ public static class FiscalReferenceStatePatchHarness
                 await ExecuteSqlAsync(connectionString, SemanticHashRecalculationPreviewTableSql);
             }
 
+            if (!await SemanticHashBackfillMutationPreparationTableExistsAsync(connectionString))
+            {
+                await ExecuteSqlAsync(connectionString, SemanticHashBackfillMutationPreparationTableSql);
+            }
+
             if (!await SemanticRequestHashColumnsExistAsync(connectionString))
             {
                 await ExecuteSqlAsync(connectionString, SemanticRequestHashColumnsSql);
@@ -89,6 +94,18 @@ public static class FiscalReferenceStatePatchHarness
     private static async Task<bool> SemanticHashRecalculationPreviewTableExistsAsync(string connectionString)
     {
         const string sql = "SELECT to_regclass('core.fiscal_issuance_semantic_hash_recalculation_previews') IS NOT NULL;";
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync();
+        return result is true;
+    }
+
+    private static async Task<bool> SemanticHashBackfillMutationPreparationTableExistsAsync(string connectionString)
+    {
+        const string sql = "SELECT to_regclass('core.fiscal_issuance_semantic_hash_backfill_mutation_preparations') IS NOT NULL;";
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -398,5 +415,82 @@ public static class FiscalReferenceStatePatchHarness
 
         COMMENT ON TABLE core.fiscal_issuance_semantic_hash_recalculation_previews IS
             'Central PMS v1.3 FEQ semantic hash recalculation preview audit records only. No hash backfill mutation, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+        """;
+
+    private const string SemanticHashBackfillMutationPreparationTableSql = """
+        CREATE TABLE IF NOT EXISTS core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (
+            semantic_hash_backfill_mutation_audit_id uuid DEFAULT gen_random_uuid() NOT NULL,
+            fiscal_issuance_reference_id uuid NOT NULL
+                REFERENCES core.fiscal_issuance_references(fiscal_issuance_reference_id)
+                DEFERRABLE INITIALLY IMMEDIATE,
+            semantic_hash_recalculation_preview_audit_id uuid
+                REFERENCES core.fiscal_issuance_semantic_hash_recalculation_previews(semantic_hash_recalculation_preview_audit_id)
+                DEFERRABLE INITIALLY IMMEDIATE,
+            controlled_backfill_approval_status varchar(60) NOT NULL,
+            old_semantic_hash_source_version varchar(80),
+            required_semantic_hash_source_version varchar(80) NOT NULL,
+            old_semantic_hash_value varchar(64),
+            new_semantic_hash_value varchar(64),
+            new_semantic_hash_algorithm varchar(32),
+            new_semantic_hash_source_version varchar(80),
+            new_semantic_hash_source_fact_count integer,
+            safe_source_summary varchar(240),
+            mutation_preparation_status varchar(60) NOT NULL,
+            mutation_block_reason_code varchar(160),
+            mutation_mode varchar(40) NOT NULL,
+            mutation_enabled boolean DEFAULT false NOT NULL,
+            fiscal_issuance_reference_mutated boolean DEFAULT false NOT NULL,
+            attempted_at timestamptz DEFAULT now() NOT NULL,
+            safe_summary varchar(240) NOT NULL,
+            correlation_id uuid,
+            actor_service_identity_id uuid
+                REFERENCES identity.service_identities(service_identity_id)
+                DEFERRABLE INITIALLY IMMEDIATE,
+            approval_reference varchar(160),
+            dual_control_reference varchar(160),
+            created_at timestamptz DEFAULT now() NOT NULL,
+            CONSTRAINT pk_fiscal_issuance_semantic_hash_backfill_mutation_preparations
+                PRIMARY KEY (semantic_hash_backfill_mutation_audit_id),
+            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__approval_status CHECK (
+                controlled_backfill_approval_status IN (
+                    'NOT_REQUIRED_CURRENT',
+                    'READY_FOR_CONTROLLED_BACKFILL',
+                    'BLOCKED',
+                    'PENDING_DUAL_CONTROL',
+                    'UNAVAILABLE'
+                )
+            ),
+            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__status CHECK (
+                mutation_preparation_status IN (
+                    'NOT_PREPARED',
+                    'PREPARED_BUT_MUTATION_DISABLED',
+                    'BLOCKED',
+                    'UNAVAILABLE'
+                )
+            ),
+            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__mode CHECK (
+                mutation_mode IN ('SINGLE_RECORD_ONLY')
+            ),
+            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__not_mutated CHECK (
+                fiscal_issuance_reference_mutated = false
+            ),
+            CONSTRAINT ck_fiscal_sem_hash_backfill_mutation__prepared_has_hash CHECK (
+                mutation_preparation_status <> 'PREPARED_BUT_MUTATION_DISABLED'
+                OR (
+                    semantic_hash_recalculation_preview_audit_id IS NOT NULL
+                    AND new_semantic_hash_value IS NOT NULL
+                    AND new_semantic_hash_algorithm IS NOT NULL
+                    AND new_semantic_hash_source_version IS NOT NULL
+                    AND new_semantic_hash_source_fact_count IS NOT NULL
+                    AND new_semantic_hash_source_fact_count > 0
+                )
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_fiscal_sem_hash_backfill_mutation__reference_attempted
+            ON core.fiscal_issuance_semantic_hash_backfill_mutation_preparations (fiscal_issuance_reference_id, attempted_at DESC);
+
+        COMMENT ON TABLE core.fiscal_issuance_semantic_hash_backfill_mutation_preparations IS
+            'Central PMS v1.3 FEQ semantic hash controlled backfill mutation preparation audit records only. No automatic batch backfill, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
         """;
 }
