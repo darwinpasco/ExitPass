@@ -60,7 +60,7 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
     }
 
     [Fact]
-    public async Task Evaluate_WhenActualPosServerFixtureProofMismatches_ReturnsMismatchInsteadOfSourceUnavailable()
+    public async Task Evaluate_WhenActualPosServerFixtureProofIsProven_ReturnsReadyInsteadOfMismatch()
     {
         var fixture = PosServerSemanticHashSha256V1Fixture.Read();
         var parityProof = new FiscalSemanticRequestHashParityProofService()
@@ -77,10 +77,10 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
                 detail,
                 SemanticHashParityProof: parityProof));
 
-        parityProof.Status.Should().Be(FiscalSemanticRequestHashParityProofStatus.Mismatch);
-        result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
-        result.SemanticHashCompatibilityStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Blocked);
-        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_mismatch");
+        parityProof.Status.Should().Be(FiscalSemanticRequestHashParityProofStatus.Proven);
+        result.Status.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Ready);
+        result.SemanticHashCompatibilityStatus.Should().Be(FiscalExceptionPosServerRetryContractReadinessStatus.Ready);
+        result.BlockReasonCode.Should().BeNull();
         result.RetryExecutionAvailable.Should().BeFalse();
     }
 
@@ -187,7 +187,7 @@ public sealed class FiscalExceptionPosServerRetryContractReadinessServiceTests
             SafeSummary: "semantic_hash_parity_proven_sha256_v1_no_execution",
             CentralPmsHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
             CentralPmsCanonicalSourceText: "central-pms-canonical-source",
-            CentralPmsNormalizedFacts: ["hash_source_version=central-pms-pos-server-fiscal-request-v1"],
+            CentralPmsNormalizedFacts: ["sha256:v1"],
             CentralPmsSemanticRequestHash: new string('a', 64),
             PosServerExpectedHashSourceVersion:
                 FiscalExceptionPosServerRetryContractReadinessService.PosServerSemanticHashVersion,

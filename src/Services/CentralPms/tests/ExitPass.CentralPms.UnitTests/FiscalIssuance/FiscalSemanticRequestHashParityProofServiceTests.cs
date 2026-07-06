@@ -8,8 +8,6 @@ public sealed class FiscalSemanticRequestHashParityProofServiceTests
 {
     private const string ExpectedPosServerHash =
         "6a490379e4275a57f0a0695ff9dbd1271c4480adaeeefb9b6bfbd11e4d1ed201";
-    private const string CurrentCentralPmsFixtureHash =
-        "1430a2fbd8c9c128d101658777ba427bb34564bb84460621af179a464b5d7ab8";
 
     private readonly PosServerFiscalDocumentRequestMapper _mapper = new();
     private readonly FiscalSemanticRequestHashCalculator _calculator = new();
@@ -41,20 +39,20 @@ public sealed class FiscalSemanticRequestHashParityProofServiceTests
     }
 
     [Fact]
-    public void Prove_WhenActualPosServerFixtureIsConsumed_ReturnsMismatchWithExactReason()
+    public void Prove_WhenActualPosServerFixtureIsConsumed_ReturnsProvenWithExactSourceAndHash()
     {
         var fixture = PosServerSemanticHashSha256V1Fixture.Read();
         var centralPms = _calculator.InspectCanonicalSource(fixture.RepresentativeCreateRequest);
 
         var result = _sut.Prove(fixture.RepresentativeCreateRequest, fixture.ToParityFixture());
 
-        result.Status.Should().Be(FiscalSemanticRequestHashParityProofStatus.Mismatch);
-        result.BlockReasonCode.Should().Be("pos_server_semantic_hash_mismatch");
+        result.Status.Should().Be(FiscalSemanticRequestHashParityProofStatus.Proven);
+        result.BlockReasonCode.Should().BeNull();
         result.CentralPmsHashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion);
         result.CentralPmsCanonicalSourceText.Should().Be(centralPms.CanonicalSourceText);
+        result.CentralPmsCanonicalSourceText.Should().Be(fixture.CanonicalSourceText);
         result.CentralPmsSemanticRequestHash.Should().Be(centralPms.HashValue);
-        result.CentralPmsSemanticRequestHash.Should().Be(CurrentCentralPmsFixtureHash);
-        result.CentralPmsSemanticRequestHash.Should().NotBe(ExpectedPosServerHash);
+        result.CentralPmsSemanticRequestHash.Should().Be(ExpectedPosServerHash);
         result.PosServerExpectedHashSourceVersion.Should().Be("sha256:v1");
         result.PosServerExpectedSemanticRequestHash.Should().Be(ExpectedPosServerHash);
     }
