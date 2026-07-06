@@ -394,6 +394,11 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<
         IFiscalExceptionSemanticHashRecalculationPreviewService,
         FiscalExceptionSemanticHashRecalculationPreviewService>();
+    builder.Services.Configure<FiscalExceptionSemanticHashControlledBackfillApprovalOptions>(
+        builder.Configuration.GetSection(FiscalExceptionSemanticHashControlledBackfillApprovalOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashControlledBackfillApprovalService>(serviceProvider =>
+        new FiscalExceptionSemanticHashControlledBackfillApprovalService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashControlledBackfillApprovalOptions>>().Value));
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));

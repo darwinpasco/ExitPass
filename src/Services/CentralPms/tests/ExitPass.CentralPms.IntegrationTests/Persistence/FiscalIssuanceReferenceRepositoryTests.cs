@@ -404,6 +404,12 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.NotNull(summary);
             Assert.Equal(1, summary!.AttemptCount);
             Assert.Equal(FiscalExceptionSemanticHashRecalculationPreviewStatus.PreviewCalculated, summary.LastPreviewStatus);
+            Assert.True(summary.CompleteOriginalRequestFactsAvailable);
+            Assert.Equal(new string('d', 64), summary.RecalculatedHashValue);
+            Assert.Equal(FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm, summary.RecalculatedHashAlgorithm);
+            Assert.Equal(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion, summary.RecalculatedHashSourceVersion);
+            Assert.Equal(20, summary.RecalculatedSourceFactCount);
+            Assert.False(summary.RecalculatedHashMatchesStoredHash);
             Assert.Equal("semantic_hash_recalculation_preview_calculated_not_mutated", summary.SafeSummary);
             Assert.NotNull(rereadReference);
             Assert.Null(rereadReference!.SemanticRequestHashValue);
