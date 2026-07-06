@@ -140,6 +140,13 @@ public sealed class PostgresFiscalExceptionSemanticHashRecalculationPreviewAudit
                 semantic_hash_recalculation_preview_audit_id,
                 recalculation_preview_status,
                 recalculation_block_reason_code,
+                complete_original_request_facts_available,
+                recalculated_hash_value,
+                recalculated_hash_algorithm,
+                recalculated_hash_source_version,
+                recalculated_source_fact_count,
+                safe_source_summary,
+                recalculated_hash_matches_stored,
                 mutation_status,
                 attempted_at,
                 safe_summary,
@@ -173,6 +180,14 @@ public sealed class PostgresFiscalExceptionSemanticHashRecalculationPreviewAudit
             LastAttemptedAt: reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("attempted_at")),
             AttemptCount: reader.GetInt32(reader.GetOrdinal("attempt_count")),
             LastBlockReasonCode: GetNullableString(reader, "recalculation_block_reason_code"),
+            CompleteOriginalRequestFactsAvailable: reader.GetBoolean(
+                reader.GetOrdinal("complete_original_request_facts_available")),
+            RecalculatedHashValue: GetNullableString(reader, "recalculated_hash_value"),
+            RecalculatedHashAlgorithm: GetNullableString(reader, "recalculated_hash_algorithm"),
+            RecalculatedHashSourceVersion: GetNullableString(reader, "recalculated_hash_source_version"),
+            RecalculatedSourceFactCount: GetNullableInt32(reader, "recalculated_source_fact_count"),
+            RecalculatedSafeSourceSummary: GetNullableString(reader, "safe_source_summary"),
+            RecalculatedHashMatchesStoredHash: GetNullableBoolean(reader, "recalculated_hash_matches_stored"),
             MutationStatus: ParseMutationStatus(reader.GetString(reader.GetOrdinal("mutation_status"))),
             SafeSummary: reader.GetString(reader.GetOrdinal("safe_summary")));
     }

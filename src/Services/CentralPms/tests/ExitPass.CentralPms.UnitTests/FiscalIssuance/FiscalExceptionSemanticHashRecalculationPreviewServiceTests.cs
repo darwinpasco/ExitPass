@@ -463,6 +463,13 @@ public sealed class FiscalExceptionSemanticHashRecalculationPreviewServiceTests
                     LastAttemptedAt: latest.AttemptedAt,
                     AttemptCount: matching.Length,
                     LastBlockReasonCode: latest.BlockReasonCode,
+                    CompleteOriginalRequestFactsAvailable: latest.CompleteOriginalRequestFactsAvailable,
+                    RecalculatedHashValue: latest.RecalculatedHashValue,
+                    RecalculatedHashAlgorithm: latest.RecalculatedHashAlgorithm,
+                    RecalculatedHashSourceVersion: latest.RecalculatedHashSourceVersion,
+                    RecalculatedSourceFactCount: latest.RecalculatedSourceFactCount,
+                    RecalculatedSafeSourceSummary: latest.RecalculatedSafeSourceSummary,
+                    RecalculatedHashMatchesStoredHash: latest.RecalculatedHashMatchesStoredHash,
                     MutationStatus: latest.MutationStatus,
                     SafeSummary: latest.SafeSummary));
         }

@@ -173,6 +173,35 @@ public enum FiscalExceptionSemanticHashRecalculationMutationStatus
     NotMutated = 1
 }
 
+public enum FiscalExceptionSemanticHashControlledBackfillApprovalStatus
+{
+    NotRequiredCurrent = 1,
+    ReadyForControlledBackfill = 2,
+    Blocked = 3,
+    PendingDualControl = 4,
+    Unavailable = 5
+}
+
+public enum FiscalExceptionSemanticHashControlledBackfillDualControlPosture
+{
+    NotRequired = 1,
+    RequiredPending = 2,
+    Satisfied = 3
+}
+
+public enum FiscalExceptionSemanticHashControlledBackfillApprovalPosture
+{
+    PolicyMissing = 1,
+    ApprovalMissing = 2,
+    ApprovalPresent = 3
+}
+
+public enum FiscalExceptionSemanticHashControlledBackfillActorAuthorizationPosture
+{
+    Missing = 1,
+    Present = 2
+}
+
 public enum FiscalExceptionIdempotencyContextAvailabilityStatus
 {
     NotEvaluated = 1,
@@ -252,6 +281,15 @@ public sealed record FiscalExceptionQueueCaseSummary(
     int? SemanticHashRecalculationPreviewAttemptCount,
     string SafeSemanticHashRecalculationPreviewSummary,
     FiscalExceptionSemanticHashRecalculationMutationStatus SemanticHashRecalculationMutationStatus,
+    FiscalExceptionSemanticHashControlledBackfillApprovalStatus SemanticHashControlledBackfillApprovalStatus,
+    string? SemanticHashControlledBackfillBlockReasonCode,
+    Guid? SemanticHashControlledBackfillLatestPreviewAuditId,
+    DateTimeOffset? SemanticHashControlledBackfillLatestPreviewAttemptedAt,
+    FiscalExceptionSemanticHashControlledBackfillDualControlPosture SemanticHashControlledBackfillDualControlPosture,
+    FiscalExceptionSemanticHashControlledBackfillApprovalPosture SemanticHashControlledBackfillApprovalPosture,
+    FiscalExceptionSemanticHashControlledBackfillActorAuthorizationPosture SemanticHashControlledBackfillActorAuthorizationPosture,
+    FiscalExceptionSemanticHashRecalculationMutationStatus SemanticHashControlledBackfillMutationStatus,
+    string SafeSemanticHashControlledBackfillSummary,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
@@ -787,6 +825,13 @@ public sealed record FiscalExceptionSemanticHashRecalculationPreviewAuditSummary
     DateTimeOffset LastAttemptedAt,
     int AttemptCount,
     string? LastBlockReasonCode,
+    bool CompleteOriginalRequestFactsAvailable,
+    string? RecalculatedHashValue,
+    string? RecalculatedHashAlgorithm,
+    string? RecalculatedHashSourceVersion,
+    int? RecalculatedSourceFactCount,
+    string? RecalculatedSafeSourceSummary,
+    bool? RecalculatedHashMatchesStoredHash,
     FiscalExceptionSemanticHashRecalculationMutationStatus MutationStatus,
     string SafeSummary);
 
@@ -799,6 +844,81 @@ public interface IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository
     Task<FiscalExceptionSemanticHashRecalculationPreviewAuditSummary?> GetSummaryAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken);
+}
+
+public sealed class FiscalExceptionSemanticHashControlledBackfillApprovalOptions
+{
+    public const string SectionName = "FiscalExceptionSemanticHashControlledBackfillApproval";
+
+    public FiscalExceptionSemanticHashControlledBackfillApprovalOptions()
+    {
+    }
+
+    public FiscalExceptionSemanticHashControlledBackfillApprovalOptions(
+        bool approvalPolicyConfigured = false,
+        bool dualControlRequired = true,
+        bool dualControlSatisfied = false,
+        bool actorOrServiceAuthorized = false,
+        bool explicitApprovalPresent = false)
+    {
+        ApprovalPolicyConfigured = approvalPolicyConfigured;
+        DualControlRequired = dualControlRequired;
+        DualControlSatisfied = dualControlSatisfied;
+        ActorOrServiceAuthorized = actorOrServiceAuthorized;
+        ExplicitApprovalPresent = explicitApprovalPresent;
+    }
+
+    public bool ApprovalPolicyConfigured { get; set; }
+
+    public bool DualControlRequired { get; set; } = true;
+
+    public bool DualControlSatisfied { get; set; }
+
+    public bool ActorOrServiceAuthorized { get; set; }
+
+    public bool ExplicitApprovalPresent { get; set; }
+}
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillApprovalRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    FiscalExceptionSemanticHashRecalculationPreviewAuditSummary? LatestRecalculationPreviewAuditSummary = null);
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillApprovalResult(
+    FiscalExceptionSemanticHashControlledBackfillApprovalStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    string? LegacySourceVersion,
+    string RequiredSourceVersion,
+    Guid? LatestRecalculationPreviewAuditId,
+    DateTimeOffset? LatestRecalculationPreviewAttemptedAt,
+    bool LatestRecalculationPreviewAuditExists,
+    bool PreviewSuccessful,
+    bool CompleteOriginalRequestFactsAvailable,
+    bool RecalculatedHashIsSha256V1,
+    bool RecalculatedHashMetadataComplete,
+    bool DualControlRequired,
+    bool DualControlSatisfied,
+    bool ExplicitApprovalPresent,
+    bool ActorOrServiceAuthorizationPresent,
+    FiscalExceptionSemanticHashControlledBackfillDualControlPosture DualControlPosture,
+    FiscalExceptionSemanticHashControlledBackfillApprovalPosture ApprovalPosture,
+    FiscalExceptionSemanticHashControlledBackfillActorAuthorizationPosture ActorAuthorizationPosture,
+    FiscalExceptionSemanticHashRecalculationMutationStatus MutationStatus,
+    bool FiscalIssuanceReferenceMutated,
+    bool RetryExecutionAvailable,
+    bool PosServerPostCalled,
+    bool RetryExecuted,
+    bool RetryScheduled,
+    bool PaymentFinalityChanged,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated);
+
+public interface IFiscalExceptionSemanticHashControlledBackfillApprovalService
+{
+    FiscalExceptionSemanticHashControlledBackfillApprovalResult Evaluate(
+        FiscalExceptionSemanticHashControlledBackfillApprovalRequest request);
 }
 
 public sealed record FiscalSemanticRequestHashParityFixture(
