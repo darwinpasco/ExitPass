@@ -30,6 +30,11 @@ public static class FiscalReferenceStatePatchHarness
                 await ExecuteSqlAsync(connectionString, RetrySchedulePreparationTableSql);
             }
 
+            if (!await SemanticHashRecalculationPreviewTableExistsAsync(connectionString))
+            {
+                await ExecuteSqlAsync(connectionString, SemanticHashRecalculationPreviewTableSql);
+            }
+
             if (!await SemanticRequestHashColumnsExistAsync(connectionString))
             {
                 await ExecuteSqlAsync(connectionString, SemanticRequestHashColumnsSql);
@@ -72,6 +77,18 @@ public static class FiscalReferenceStatePatchHarness
     private static async Task<bool> RetrySchedulePreparationTableExistsAsync(string connectionString)
     {
         const string sql = "SELECT to_regclass('core.fiscal_issuance_retry_schedule_preparations') IS NOT NULL;";
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        var result = await command.ExecuteScalarAsync();
+        return result is true;
+    }
+
+    private static async Task<bool> SemanticHashRecalculationPreviewTableExistsAsync(string connectionString)
+    {
+        const string sql = "SELECT to_regclass('core.fiscal_issuance_semantic_hash_recalculation_previews') IS NOT NULL;";
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -327,5 +344,59 @@ public static class FiscalReferenceStatePatchHarness
 
         COMMENT ON TABLE core.fiscal_issuance_retry_schedule_preparations IS
             'Central PMS v1.3 FEQ retry scheduling preparation audit records only. No executable retry job, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
+        """;
+
+    private const string SemanticHashRecalculationPreviewTableSql = """
+        CREATE TABLE IF NOT EXISTS core.fiscal_issuance_semantic_hash_recalculation_previews (
+            semantic_hash_recalculation_preview_audit_id uuid DEFAULT gen_random_uuid() NOT NULL,
+            fiscal_issuance_reference_id uuid NOT NULL
+                REFERENCES core.fiscal_issuance_references(fiscal_issuance_reference_id)
+                DEFERRABLE INITIALLY IMMEDIATE,
+            stored_semantic_hash_source_version varchar(80),
+            required_semantic_hash_source_version varchar(80) NOT NULL,
+            stored_semantic_hash_value varchar(64),
+            recalculation_preview_status varchar(40) NOT NULL,
+            recalculation_block_reason_code varchar(160),
+            complete_original_request_facts_available boolean DEFAULT false NOT NULL,
+            recalculated_hash_value varchar(64),
+            recalculated_hash_algorithm varchar(32),
+            recalculated_hash_source_version varchar(80),
+            recalculated_source_fact_count integer,
+            safe_source_summary varchar(240),
+            recalculated_hash_matches_stored boolean,
+            mutation_status varchar(40) NOT NULL,
+            attempted_at timestamptz DEFAULT now() NOT NULL,
+            safe_summary varchar(240) NOT NULL,
+            correlation_id uuid,
+            actor_service_identity_id uuid
+                REFERENCES identity.service_identities(service_identity_id)
+                DEFERRABLE INITIALLY IMMEDIATE,
+            created_at timestamptz DEFAULT now() NOT NULL,
+            CONSTRAINT pk_fiscal_issuance_semantic_hash_recalculation_previews
+                PRIMARY KEY (semantic_hash_recalculation_preview_audit_id),
+            CONSTRAINT ck_fiscal_issuance_semantic_hash_recalculation_previews__status CHECK (
+                recalculation_preview_status IN ('NOT_REQUIRED', 'PREVIEW_CALCULATED', 'BLOCKED', 'UNAVAILABLE')
+            ),
+            CONSTRAINT ck_fiscal_issuance_semantic_hash_recalculation_previews__mutation CHECK (
+                mutation_status IN ('NOT_MUTATED')
+            ),
+            CONSTRAINT ck_fiscal_issuance_semantic_hash_recalculation_previews__calculated_has_hash CHECK (
+                recalculation_preview_status <> 'PREVIEW_CALCULATED'
+                OR (
+                    complete_original_request_facts_available = true
+                    AND recalculated_hash_value IS NOT NULL
+                    AND recalculated_hash_algorithm IS NOT NULL
+                    AND recalculated_hash_source_version IS NOT NULL
+                    AND recalculated_source_fact_count IS NOT NULL
+                    AND recalculated_source_fact_count > 0
+                )
+            )
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_fiscal_sem_hash_recalc_previews__reference_attempted
+            ON core.fiscal_issuance_semantic_hash_recalculation_previews (fiscal_issuance_reference_id, attempted_at DESC);
+
+        COMMENT ON TABLE core.fiscal_issuance_semantic_hash_recalculation_previews IS
+            'Central PMS v1.3 FEQ semantic hash recalculation preview audit records only. No hash backfill mutation, retry execution, endpoint, POS Server POST, or ExitAuthorization gating behavior.';
         """;
 }

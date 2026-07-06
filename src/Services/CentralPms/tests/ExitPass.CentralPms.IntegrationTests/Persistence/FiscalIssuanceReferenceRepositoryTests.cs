@@ -27,6 +27,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_readback_reconciliations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_command_preparations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_schedule_preparations"));
+        Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_recalculation_previews"));
         Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "semantic_request_hash_value"));
     }
 
@@ -340,6 +341,73 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.Equal(1, summary!.AttemptCount);
             Assert.Equal(FiscalExceptionRetrySchedulingPreparationStatus.ScheduledPrepared, summary.LastSchedulingPreparationStatus);
             Assert.Equal("retry_scheduling_prepared_non_executable", summary.SafeSummary);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task SemanticHashRecalculationPreviewAuditRepository_RecordAsync_PersistsAndSummarizesAttempt()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(
+            nameof(SemanticHashRecalculationPreviewAuditRepository_RecordAsync_PersistsAndSummarizesAttempt));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed semantic hash recalculation preview audit test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var reference = await CreateRepository().CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var repository = new PostgresFiscalExceptionSemanticHashRecalculationPreviewAuditRepository(ConnectionString);
+
+            var record = await repository.RecordAsync(
+                new FiscalExceptionSemanticHashRecalculationPreviewAuditWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    StoredSemanticHashSourceVersion:
+                        FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+                    RequiredSemanticHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    StoredSemanticHashValue: new string('c', 64),
+                    PreviewStatus: FiscalExceptionSemanticHashRecalculationPreviewStatus.PreviewCalculated,
+                    BlockReasonCode: null,
+                    CompleteOriginalRequestFactsAvailable: true,
+                    RecalculatedHashValue: new string('d', 64),
+                    RecalculatedHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                    RecalculatedHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    RecalculatedSourceFactCount: 20,
+                    RecalculatedSafeSourceSummary: "semantic_request_hash_source_available:facts=20",
+                    RecalculatedHashMatchesStoredHash: false,
+                    MutationStatus: FiscalExceptionSemanticHashRecalculationMutationStatus.NotMutated,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "semantic_hash_recalculation_preview_calculated_not_mutated",
+                    CorrelationId: context.CorrelationId,
+                    ServiceIdentityId: null),
+                CancellationToken.None);
+            var summary = await repository.GetSummaryAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+            var rereadReference = await CreateRepository().FindByPaymentConfirmationIdAsync(
+                confirmation.PaymentConfirmationId,
+                CancellationToken.None);
+
+            Assert.NotEqual(Guid.Empty, record.RecalculationPreviewAuditId);
+            Assert.Equal(reference.FiscalIssuanceReferenceId, record.FiscalIssuanceReferenceId);
+            Assert.Equal(FiscalExceptionSemanticHashRecalculationPreviewStatus.PreviewCalculated, record.PreviewStatus);
+            Assert.Equal(FiscalExceptionSemanticHashRecalculationMutationStatus.NotMutated, record.MutationStatus);
+            Assert.Equal(new string('d', 64), record.RecalculatedHashValue);
+            Assert.NotNull(summary);
+            Assert.Equal(1, summary!.AttemptCount);
+            Assert.Equal(FiscalExceptionSemanticHashRecalculationPreviewStatus.PreviewCalculated, summary.LastPreviewStatus);
+            Assert.Equal("semantic_hash_recalculation_preview_calculated_not_mutated", summary.SafeSummary);
+            Assert.NotNull(rereadReference);
+            Assert.Null(rereadReference!.SemanticRequestHashValue);
+            Assert.Null(rereadReference.SemanticRequestHashSourceVersion);
         }
         finally
         {
@@ -685,6 +753,13 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     private static async Task CleanupFiscalReferenceRowsAsync(PaymentTestContext context)
     {
         const string sql = """
+            DELETE FROM core.fiscal_issuance_semantic_hash_recalculation_previews
+            WHERE fiscal_issuance_reference_id IN (
+                SELECT fiscal_issuance_reference_id
+                FROM core.fiscal_issuance_references
+                WHERE parking_session_id = @parking_session_id
+            );
+
             DELETE FROM core.fiscal_issuance_retry_schedule_preparations
             WHERE payment_confirmation_id IN (
                 SELECT pc.payment_confirmation_id

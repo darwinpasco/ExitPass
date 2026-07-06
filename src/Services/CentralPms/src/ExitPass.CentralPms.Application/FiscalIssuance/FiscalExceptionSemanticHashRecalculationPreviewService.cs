@@ -10,16 +10,56 @@ public sealed class FiscalExceptionSemanticHashRecalculationPreviewService
         "original_fiscal_request_facts_incomplete";
 
     private readonly FiscalSemanticRequestHashCalculator _semanticRequestHashCalculator;
+    private readonly IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository? _auditRepository;
 
     public FiscalExceptionSemanticHashRecalculationPreviewService()
-        : this(new FiscalSemanticRequestHashCalculator())
+        : this(new FiscalSemanticRequestHashCalculator(), null)
+    {
+    }
+
+    public FiscalExceptionSemanticHashRecalculationPreviewService(
+        IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository auditRepository)
+        : this(new FiscalSemanticRequestHashCalculator(), auditRepository)
     {
     }
 
     internal FiscalExceptionSemanticHashRecalculationPreviewService(
-        FiscalSemanticRequestHashCalculator semanticRequestHashCalculator)
+        FiscalSemanticRequestHashCalculator semanticRequestHashCalculator,
+        IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository? auditRepository = null)
     {
         _semanticRequestHashCalculator = semanticRequestHashCalculator;
+        _auditRepository = auditRepository;
+    }
+
+    public async Task<FiscalExceptionSemanticHashRecalculationPreviewResult> PreviewAsync(
+        FiscalExceptionSemanticHashRecalculationPreviewRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = Preview(request);
+        if (_auditRepository is null || request.FiscalIssuanceReference.FiscalIssuanceReferenceId == Guid.Empty)
+        {
+            return result;
+        }
+
+        try
+        {
+            var record = await _auditRepository.RecordAsync(
+                ToAuditWrite(request, result),
+                cancellationToken);
+
+            return result with
+            {
+                RecalculationPreviewAuditId = record.RecalculationPreviewAuditId,
+                PreviewAttemptedAt = record.AttemptedAt,
+                RecalculationPreviewCreatedAt = record.CreatedAt
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new InvalidOperationException(
+                "semantic_hash_recalculation_preview_audit_persistence_failed",
+                ex);
+        }
     }
 
     public FiscalExceptionSemanticHashRecalculationPreviewResult Preview(
@@ -95,6 +135,29 @@ public sealed class FiscalExceptionSemanticHashRecalculationPreviewService
         return new FiscalExceptionSemanticHashRecalculationPreviewService().Preview(
             new FiscalExceptionSemanticHashRecalculationPreviewRequest(fiscalIssuanceReference));
     }
+
+    private static FiscalExceptionSemanticHashRecalculationPreviewAuditWrite ToAuditWrite(
+        FiscalExceptionSemanticHashRecalculationPreviewRequest request,
+        FiscalExceptionSemanticHashRecalculationPreviewResult result) =>
+        new(
+            FiscalIssuanceReferenceId: request.FiscalIssuanceReference.FiscalIssuanceReferenceId,
+            StoredSemanticHashSourceVersion: result.StoredSourceVersion,
+            RequiredSemanticHashSourceVersion: result.RequiredSourceVersion,
+            StoredSemanticHashValue: request.FiscalIssuanceReference.SemanticRequestHashValue,
+            PreviewStatus: result.Status,
+            BlockReasonCode: result.BlockReasonCode,
+            CompleteOriginalRequestFactsAvailable: result.CompleteOriginalFiscalRequestFactsAvailable,
+            RecalculatedHashValue: result.RecalculatedHashValue,
+            RecalculatedHashAlgorithm: result.RecalculatedHashAlgorithm,
+            RecalculatedHashSourceVersion: result.RecalculatedHashSourceVersion,
+            RecalculatedSourceFactCount: result.RecalculatedSourceFactCount,
+            RecalculatedSafeSourceSummary: result.RecalculatedSafeSourceSummary,
+            RecalculatedHashMatchesStoredHash: result.RecalculatedHashMatchesStoredHash,
+            MutationStatus: result.MutationStatus,
+            AttemptedAt: result.PreviewAttemptedAt ?? DateTimeOffset.UtcNow,
+            SafeSummary: result.SafeSummary,
+            CorrelationId: request.FiscalIssuanceReference.CorrelationId,
+            ServiceIdentityId: request.ServiceIdentityId ?? request.FiscalIssuanceReference.RecordedByServiceIdentityId);
 
     private static FiscalExceptionSemanticHashRecalculationPreviewResult Result(
         FiscalExceptionSemanticHashRecalculationPreviewStatus status,
