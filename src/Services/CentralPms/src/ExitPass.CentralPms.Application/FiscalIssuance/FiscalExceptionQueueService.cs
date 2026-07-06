@@ -34,6 +34,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
     private readonly IFiscalExceptionRetrySchedulingPreparationAuditRepository? _retrySchedulingPreparationAuditRepository;
     private readonly IFiscalExceptionRetryExecutionPreparationService _retryExecutionPreparationService;
     private readonly IFiscalExceptionPosServerRetryContractReadinessService _posServerRetryContractReadinessService;
+    private readonly IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository? _semanticHashRecalculationPreviewAuditRepository;
 
     public FiscalExceptionQueueService(IFiscalExceptionQueueReferenceReader referenceReader)
         : this(referenceReader, null)
@@ -153,7 +154,8 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         IFiscalExceptionRetrySchedulingPreparationService retrySchedulingPreparationService,
         IFiscalExceptionRetrySchedulingPreparationAuditRepository? retrySchedulingPreparationAuditRepository,
         IFiscalExceptionRetryExecutionPreparationService retryExecutionPreparationService,
-        IFiscalExceptionPosServerRetryContractReadinessService posServerRetryContractReadinessService)
+        IFiscalExceptionPosServerRetryContractReadinessService posServerRetryContractReadinessService,
+        IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository? semanticHashRecalculationPreviewAuditRepository = null)
     {
         _referenceReader = referenceReader;
         _readbackAttemptRepository = readbackAttemptRepository;
@@ -164,6 +166,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         _retrySchedulingPreparationAuditRepository = retrySchedulingPreparationAuditRepository;
         _retryExecutionPreparationService = retryExecutionPreparationService;
         _posServerRetryContractReadinessService = posServerRetryContractReadinessService;
+        _semanticHashRecalculationPreviewAuditRepository = semanticHashRecalculationPreviewAuditRepository;
     }
 
     public async Task<IReadOnlyList<FiscalExceptionQueueCaseSummary>> ListAsync(
@@ -196,6 +199,21 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
         }
 
         var detail = ToDetail(record);
+        if (_semanticHashRecalculationPreviewAuditRepository is not null)
+        {
+            var recalculationPreviewAuditSummary =
+                await _semanticHashRecalculationPreviewAuditRepository.GetSummaryAsync(
+                    record.FiscalIssuanceReferenceId,
+                    cancellationToken);
+
+            if (recalculationPreviewAuditSummary is not null)
+            {
+                detail = ApplySemanticHashRecalculationPreviewAuditSummary(
+                    detail,
+                    recalculationPreviewAuditSummary);
+            }
+        }
+
         if (_readbackAttemptRepository is not null)
         {
             var attemptSummary = await _readbackAttemptRepository.GetSummaryAsync(
@@ -276,6 +294,28 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             LastReadbackAttemptAt = attemptSummary.AttemptedAt,
             ReadbackAttemptCount = attemptSummary.AttemptCount,
             LastReadbackSafeSummary = attemptSummary.SafeErrorSummary ?? current.LastReadbackSafeSummary
+        };
+
+        return detail with
+        {
+            Summary = summary
+        };
+    }
+
+    internal static FiscalExceptionQueueCaseDetail ApplySemanticHashRecalculationPreviewAuditSummary(
+        FiscalExceptionQueueCaseDetail detail,
+        FiscalExceptionSemanticHashRecalculationPreviewAuditSummary auditSummary)
+    {
+        var current = detail.Summary;
+        var summary = current with
+        {
+            SemanticHashRecalculationPreviewStatus = auditSummary.LastPreviewStatus,
+            SemanticHashRecalculationPreviewBlockReasonCode = auditSummary.LastBlockReasonCode,
+            SemanticHashRecalculationPreviewAttemptedAt = auditSummary.LastAttemptedAt,
+            SemanticHashRecalculationPreviewAttemptCount = auditSummary.AttemptCount,
+            SafeSemanticHashRecalculationPreviewSummary = auditSummary.SafeSummary,
+            SemanticHashRecalculationMutationStatus = auditSummary.MutationStatus,
+            RetryExecutionAvailable = false
         };
 
         return detail with
@@ -557,6 +597,7 @@ public sealed class FiscalExceptionQueueService : IFiscalExceptionQueueService
             SemanticHashRecalculationPreviewStoredSourceVersion: semanticHashRecalculationPreview.StoredSourceVersion,
             SemanticHashRecalculationPreviewRequiredSourceVersion: semanticHashRecalculationPreview.RequiredSourceVersion,
             SemanticHashRecalculationPreviewAttemptedAt: semanticHashRecalculationPreview.PreviewAttemptedAt,
+            SemanticHashRecalculationPreviewAttemptCount: null,
             SafeSemanticHashRecalculationPreviewSummary: semanticHashRecalculationPreview.SafeSummary,
             SemanticHashRecalculationMutationStatus: semanticHashRecalculationPreview.MutationStatus,
             IdempotencyContextAvailabilityStatus: ToIdempotencyContextAvailability(record.UpstreamFinalityReference),

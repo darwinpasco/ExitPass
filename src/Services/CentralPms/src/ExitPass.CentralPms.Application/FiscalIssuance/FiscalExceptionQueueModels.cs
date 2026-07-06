@@ -249,6 +249,7 @@ public sealed record FiscalExceptionQueueCaseSummary(
     string? SemanticHashRecalculationPreviewStoredSourceVersion,
     string SemanticHashRecalculationPreviewRequiredSourceVersion,
     DateTimeOffset? SemanticHashRecalculationPreviewAttemptedAt,
+    int? SemanticHashRecalculationPreviewAttemptCount,
     string SafeSemanticHashRecalculationPreviewSummary,
     FiscalExceptionSemanticHashRecalculationMutationStatus SemanticHashRecalculationMutationStatus,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
@@ -724,12 +725,80 @@ public sealed record FiscalExceptionSemanticHashRecalculationPreviewResult(
     bool ExitAuthorizationIssued,
     bool GateBehaviorTriggered,
     bool FiscalNumberEdited,
-    bool ManualFiscalDocumentCreated);
+    bool ManualFiscalDocumentCreated,
+    Guid? RecalculationPreviewAuditId = null,
+    DateTimeOffset? RecalculationPreviewCreatedAt = null);
 
 public interface IFiscalExceptionSemanticHashRecalculationPreviewService
 {
     FiscalExceptionSemanticHashRecalculationPreviewResult Preview(
         FiscalExceptionSemanticHashRecalculationPreviewRequest request);
+
+    Task<FiscalExceptionSemanticHashRecalculationPreviewResult> PreviewAsync(
+        FiscalExceptionSemanticHashRecalculationPreviewRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionSemanticHashRecalculationPreviewAuditWrite(
+    Guid FiscalIssuanceReferenceId,
+    string? StoredSemanticHashSourceVersion,
+    string RequiredSemanticHashSourceVersion,
+    string? StoredSemanticHashValue,
+    FiscalExceptionSemanticHashRecalculationPreviewStatus PreviewStatus,
+    string? BlockReasonCode,
+    bool CompleteOriginalRequestFactsAvailable,
+    string? RecalculatedHashValue,
+    string? RecalculatedHashAlgorithm,
+    string? RecalculatedHashSourceVersion,
+    int? RecalculatedSourceFactCount,
+    string? RecalculatedSafeSourceSummary,
+    bool? RecalculatedHashMatchesStoredHash,
+    FiscalExceptionSemanticHashRecalculationMutationStatus MutationStatus,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId);
+
+public sealed record FiscalExceptionSemanticHashRecalculationPreviewAuditRecord(
+    Guid RecalculationPreviewAuditId,
+    Guid FiscalIssuanceReferenceId,
+    string? StoredSemanticHashSourceVersion,
+    string RequiredSemanticHashSourceVersion,
+    string? StoredSemanticHashValue,
+    FiscalExceptionSemanticHashRecalculationPreviewStatus PreviewStatus,
+    string? BlockReasonCode,
+    bool CompleteOriginalRequestFactsAvailable,
+    string? RecalculatedHashValue,
+    string? RecalculatedHashAlgorithm,
+    string? RecalculatedHashSourceVersion,
+    int? RecalculatedSourceFactCount,
+    string? RecalculatedSafeSourceSummary,
+    bool? RecalculatedHashMatchesStoredHash,
+    FiscalExceptionSemanticHashRecalculationMutationStatus MutationStatus,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ServiceIdentityId,
+    DateTimeOffset CreatedAt);
+
+public sealed record FiscalExceptionSemanticHashRecalculationPreviewAuditSummary(
+    Guid LastRecalculationPreviewAuditId,
+    FiscalExceptionSemanticHashRecalculationPreviewStatus LastPreviewStatus,
+    DateTimeOffset LastAttemptedAt,
+    int AttemptCount,
+    string? LastBlockReasonCode,
+    FiscalExceptionSemanticHashRecalculationMutationStatus MutationStatus,
+    string SafeSummary);
+
+public interface IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository
+{
+    Task<FiscalExceptionSemanticHashRecalculationPreviewAuditRecord> RecordAsync(
+        FiscalExceptionSemanticHashRecalculationPreviewAuditWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionSemanticHashRecalculationPreviewAuditSummary?> GetSummaryAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
 }
 
 public sealed record FiscalSemanticRequestHashParityFixture(
