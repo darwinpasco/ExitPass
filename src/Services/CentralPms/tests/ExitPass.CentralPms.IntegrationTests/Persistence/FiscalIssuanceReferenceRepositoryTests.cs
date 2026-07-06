@@ -1015,6 +1015,13 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
     private static async Task CleanupFiscalReferenceRowsAsync(PaymentTestContext context)
     {
         const string sql = """
+            DELETE FROM core.fiscal_issuance_semantic_hash_backfill_workflow_requests
+            WHERE fiscal_issuance_reference_id IN (
+                SELECT fiscal_issuance_reference_id
+                FROM core.fiscal_issuance_references
+                WHERE parking_session_id = @parking_session_id
+            );
+
             DELETE FROM core.fiscal_issuance_semantic_hash_backfill_mutation_preparations
             WHERE fiscal_issuance_reference_id IN (
                 SELECT fiscal_issuance_reference_id

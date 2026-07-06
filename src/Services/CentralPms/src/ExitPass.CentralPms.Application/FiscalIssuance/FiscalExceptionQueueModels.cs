@@ -1147,12 +1147,17 @@ public sealed class FiscalExceptionSemanticHashBackfillInternalApiOptions
     {
     }
 
-    public FiscalExceptionSemanticHashBackfillInternalApiOptions(bool enabled = false)
+    public FiscalExceptionSemanticHashBackfillInternalApiOptions(
+        bool enabled = false,
+        bool allowControlledMutationIntent = false)
     {
         Enabled = enabled;
+        AllowControlledMutationIntent = allowControlledMutationIntent;
     }
 
     public bool Enabled { get; set; }
+
+    public bool AllowControlledMutationIntent { get; set; }
 }
 
 public sealed record FiscalExceptionSemanticHashBackfillInternalApiRequest(
