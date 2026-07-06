@@ -126,6 +126,20 @@ public enum FiscalExceptionRetryExecutionPosServerReadinessStatus
     ProductionBirReadinessNotConfirmed = 7
 }
 
+public enum FiscalExceptionControlledRetryExecutionStatus
+{
+    NotAttempted = 1,
+    Disabled = 2,
+    DryRunReady = 3,
+    Executed = 4,
+    ReplayMatched = 5,
+    Conflict = 6,
+    Blocked = 7,
+    Unavailable = 8,
+    Unknown = 9,
+    Failed = 10
+}
+
 public enum FiscalExceptionPosServerRetryContractReadinessStatus
 {
     NotEvaluated = 1,
@@ -615,6 +629,133 @@ public interface IFiscalExceptionRetryExecutionPreparationService
 {
     Task<FiscalExceptionRetryExecutionPreparationResult> EvaluateAsync(
         FiscalExceptionRetryExecutionPreparationRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed class FiscalExceptionControlledRetryExecutionOptions
+{
+    public const string SectionName = "FiscalExceptionControlledRetryExecution";
+
+    public bool EnableControlledRetryExecution { get; set; }
+}
+
+public sealed record FiscalExceptionControlledRetryExecutionRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    FiscalExceptionRetryCommandPreparationResult CommandPreparation,
+    FiscalExceptionRetrySchedulingPreparationResult SchedulingPreparation,
+    FiscalExceptionRetryExecutionPreparationResult ExecutionPreparation,
+    CentralPmsFiscalDocumentMappingContext? FiscalContext,
+    Guid? ServiceIdentityId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    Guid? CorrelationId = null,
+    bool DryRunOnly = false,
+    bool SingleRecordOnly = true,
+    string? RequestedUpstreamFinalityReference = null);
+
+public sealed record FiscalExceptionControlledRetryExecutionResult(
+    FiscalExceptionControlledRetryExecutionStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    Guid? RetryExecutionAttemptId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RetryCommandPreparationAttemptId,
+    Guid? RetrySchedulePreparationAttemptId,
+    FiscalExceptionReadbackClassification? ReadbackClassificationBasis,
+    string? SemanticRequestHashValue,
+    string? SemanticRequestHashAlgorithm,
+    string? SemanticRequestHashSourceVersion,
+    string? UpstreamFinalityReference,
+    PosServerFiscalDocumentOutcome? PosServerOutcome,
+    FiscalIssuanceResultClassification? PosServerResultClassification,
+    Guid? PosServerFiscalDocumentId,
+    string? FiscalDocumentNumber,
+    DateTimeOffset AttemptedAt,
+    DateTimeOffset? CompletedAt,
+    bool PosServerPostCalled,
+    bool RetryExecuted,
+    bool RetryExecutionAvailable,
+    bool BatchExecutionPathAvailable,
+    bool PublicEndpointExposed,
+    bool ExecutableJobEnqueued,
+    bool PaymentFinalityChanged,
+    bool FiscalReferenceSuccessRecorded,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated);
+
+public interface IFiscalExceptionControlledRetryExecutionService
+{
+    Task<FiscalExceptionControlledRetryExecutionResult> ExecuteAsync(
+        FiscalExceptionControlledRetryExecutionRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionControlledRetryExecutionAttemptWrite(
+    Guid FiscalIssuanceReferenceId,
+    Guid? RetryCommandPreparationAttemptId,
+    Guid? RetrySchedulePreparationAttemptId,
+    FiscalExceptionReadbackClassification? ReadbackClassificationBasis,
+    string? SemanticRequestHashValue,
+    string? SemanticRequestHashAlgorithm,
+    string? SemanticRequestHashSourceVersion,
+    string? UpstreamFinalityReference,
+    FiscalExceptionControlledRetryExecutionStatus ExecutionStatus,
+    string? BlockReasonCode,
+    PosServerFiscalDocumentOutcome? PosServerOutcome,
+    FiscalIssuanceResultClassification? PosServerResultClassification,
+    Guid? PosServerFiscalDocumentId,
+    string? FiscalDocumentNumber,
+    Guid? FiscalIdentityId,
+    Guid? FiscalSequencePolicyId,
+    long? FiscalSequenceValue,
+    string? FiscalSeries,
+    string? FiscalNumberPrefixText,
+    string? FiscalNumberSuffixText,
+    DateTimeOffset? FiscalNumberAssignedAt,
+    string? FiscalNumberAssignedByRef,
+    DateTimeOffset AttemptedAt,
+    DateTimeOffset? CompletedAt,
+    Guid? ServiceIdentityId,
+    Guid? CorrelationId,
+    string SafeSummary);
+
+public sealed record FiscalExceptionControlledRetryExecutionAttemptRecord(
+    Guid RetryExecutionAttemptId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RetryCommandPreparationAttemptId,
+    Guid? RetrySchedulePreparationAttemptId,
+    FiscalExceptionReadbackClassification? ReadbackClassificationBasis,
+    string? SemanticRequestHashValue,
+    string? SemanticRequestHashAlgorithm,
+    string? SemanticRequestHashSourceVersion,
+    string? UpstreamFinalityReference,
+    FiscalExceptionControlledRetryExecutionStatus ExecutionStatus,
+    string? BlockReasonCode,
+    PosServerFiscalDocumentOutcome? PosServerOutcome,
+    FiscalIssuanceResultClassification? PosServerResultClassification,
+    Guid? PosServerFiscalDocumentId,
+    string? FiscalDocumentNumber,
+    Guid? FiscalIdentityId,
+    Guid? FiscalSequencePolicyId,
+    long? FiscalSequenceValue,
+    string? FiscalSeries,
+    string? FiscalNumberPrefixText,
+    string? FiscalNumberSuffixText,
+    DateTimeOffset? FiscalNumberAssignedAt,
+    string? FiscalNumberAssignedByRef,
+    DateTimeOffset AttemptedAt,
+    DateTimeOffset? CompletedAt,
+    Guid? ServiceIdentityId,
+    Guid? CorrelationId,
+    string SafeSummary,
+    DateTimeOffset CreatedAt);
+
+public interface IFiscalExceptionControlledRetryExecutionAuditRepository
+{
+    Task<FiscalExceptionControlledRetryExecutionAttemptRecord> RecordAsync(
+        FiscalExceptionControlledRetryExecutionAttemptWrite attempt,
         CancellationToken cancellationToken);
 }
 

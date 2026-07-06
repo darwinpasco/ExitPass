@@ -369,6 +369,8 @@ static void ConfigureApplicationServices(
         new PostgresFiscalExceptionRetryCommandPreparationAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionRetrySchedulingPreparationAuditRepository>(_ =>
         new PostgresFiscalExceptionRetrySchedulingPreparationAuditRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionControlledRetryExecutionAuditRepository>(_ =>
+        new PostgresFiscalExceptionControlledRetryExecutionAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionSemanticHashRecalculationPreviewAuditRepository>(_ =>
         new PostgresFiscalExceptionSemanticHashRecalculationPreviewAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>(_ =>
@@ -445,6 +447,15 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IFiscalSemanticRequestHashCalculator>(),
             serviceProvider.GetRequiredService<IPosServerFiscalDocumentClient>(),
             serviceProvider.GetRequiredService<IFiscalIssuanceOrchestrationService>()));
+    builder.Services.Configure<FiscalExceptionControlledRetryExecutionOptions>(
+        builder.Configuration.GetSection(FiscalExceptionControlledRetryExecutionOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionControlledRetryExecutionService>(serviceProvider =>
+        new FiscalExceptionControlledRetryExecutionService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionControlledRetryExecutionOptions>>().Value,
+            serviceProvider.GetRequiredService<IPosServerFiscalDocumentRequestMapper>(),
+            serviceProvider.GetRequiredService<IFiscalSemanticRequestHashCalculator>(),
+            serviceProvider.GetRequiredService<IFiscalIssuancePosServerLiveIntegrationService>(),
+            serviceProvider.GetRequiredService<IFiscalExceptionControlledRetryExecutionAuditRepository>()));
     builder.Services
         .AddHttpClient<IPosServerFiscalDocumentClient, HttpPosServerFiscalDocumentClient>(
             (serviceProvider, httpClient) =>
