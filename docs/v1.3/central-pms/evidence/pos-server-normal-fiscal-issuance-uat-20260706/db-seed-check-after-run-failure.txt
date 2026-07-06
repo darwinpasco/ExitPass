@@ -1,0 +1,13 @@
+﻿Read-only seed row check after /run returned fiscal_reference_prepare_failed:
+
+payment_confirmations for 00000000-0000-4000-8000-000000000301: 0
+payment_attempts for 00000000-0000-4000-8000-000000000302: 0
+parking_sessions for 00000000-0000-4000-8000-000000000303: 0
+
+Relevant fiscal_issuance_references foreign keys:
+- payment_confirmation_id -> payment_confirmations.payment_confirmation_id
+- payment_attempt_id -> payment_attempts.payment_attempt_id
+- parking_session_id -> parking_sessions.parking_session_id
+
+Conclusion:
+The controlled /run failed before POS Server because the disposable DB schema exists but required fixed controlled UAT seed rows are missing.

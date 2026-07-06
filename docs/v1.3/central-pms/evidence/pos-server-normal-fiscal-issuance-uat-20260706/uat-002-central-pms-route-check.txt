@@ -1,0 +1,2 @@
+Central PMS route GET result: The remote server returned an error: (405) Method Not Allowed.
+Central PMS route GET HTTP: 405

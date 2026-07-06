@@ -1,0 +1,5 @@
+﻿Disposable DB: centralpms_feq_retry_uat_local
+Application table count: 91
+Required table: core.fiscal_issuance_references
+Required table exists: yes
+Pre-run approved upstream finality reference query: 0 rows

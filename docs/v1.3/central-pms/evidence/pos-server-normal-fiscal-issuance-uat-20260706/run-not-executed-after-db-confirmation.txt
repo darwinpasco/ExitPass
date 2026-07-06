@@ -1,0 +1,2 @@
+﻿POST /internal/controlled-uat/fiscal-issuance/run was not executed after manual DB confirmation.
+Reason: centralpms_feq_retry_uat_local is safe/disposable but has no Central PMS schema tables. Required table core.fiscal_issuance_references is missing.

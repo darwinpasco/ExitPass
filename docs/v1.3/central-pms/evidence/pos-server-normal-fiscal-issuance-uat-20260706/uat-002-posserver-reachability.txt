@@ -1,0 +1,2 @@
+POS Server root result: The remote server returned an error: (404) Not Found.
+POS Server root HTTP: 404
