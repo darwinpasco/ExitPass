@@ -372,6 +372,8 @@ static void ConfigureApplicationServices(
         new PostgresFiscalExceptionSemanticHashRecalculationPreviewAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>(_ =>
         new PostgresFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository>(_ =>
+        new PostgresFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionRetryCommandPreparationService, FiscalExceptionRetryCommandPreparationService>();
     builder.Services.Configure<FiscalExceptionRetrySchedulingPreparationOptions>(
         builder.Configuration.GetSection(FiscalExceptionRetrySchedulingPreparationOptions.SectionName));
@@ -414,6 +416,14 @@ static void ConfigureApplicationServices(
         new FiscalExceptionSemanticHashGuardedBackfillMutationService(
             serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashControlledBackfillMutationOptions>>().Value,
             serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashGuardedBackfillMutationRepository>()));
+    builder.Services.Configure<FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions>(
+        builder.Configuration.GetSection(FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions.SectionName));
+    builder.Services.AddScoped<IFiscalExceptionSemanticHashBackfillOperatorWorkflowService>(serviceProvider =>
+        new FiscalExceptionSemanticHashBackfillOperatorWorkflowService(
+            serviceProvider.GetRequiredService<IOptions<FiscalExceptionSemanticHashBackfillOperatorWorkflowOptions>>().Value,
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashControlledBackfillApprovalService>(),
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashGuardedBackfillMutationService>(),
+            serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository>()));
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
     builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
         builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));

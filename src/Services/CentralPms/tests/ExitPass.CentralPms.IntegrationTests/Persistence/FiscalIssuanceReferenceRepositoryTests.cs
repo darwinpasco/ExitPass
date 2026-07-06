@@ -29,6 +29,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
         Assert.True(await TableExistsAsync("core.fiscal_issuance_retry_schedule_preparations"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_recalculation_previews"));
         Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_backfill_mutation_preparations"));
+        Assert.True(await TableExistsAsync("core.fiscal_issuance_semantic_hash_backfill_workflow_requests"));
         Assert.True(await ColumnExistsAsync("core", "fiscal_issuance_references", "semantic_request_hash_value"));
     }
 
@@ -473,6 +474,7 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
                 new FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite(
                     FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
                     RecalculationPreviewAuditId: preview.RecalculationPreviewAuditId,
+                    MutationPreparationAuditId: null,
                     ApprovalBasisStatus:
                         FiscalExceptionSemanticHashControlledBackfillApprovalStatus.ReadyForControlledBackfill,
                     OldSourceVersion: FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
@@ -522,6 +524,152 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.NotNull(rereadReference);
             Assert.Null(rereadReference!.SemanticRequestHashValue);
             Assert.Null(rereadReference.SemanticRequestHashSourceVersion);
+        }
+        finally
+        {
+            await CleanupFiscalReferenceRowsAsync(context);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
+    public async Task SemanticHashBackfillOperatorWorkflowAuditRepository_RecordAsync_PersistsAndSurfacesFeqPosture()
+    {
+        await FiscalReferenceStatePatchHarness.EnsureAppliedAndValidatedAsync(ConnectionString);
+        var context = PaymentTestContext.Create(
+            nameof(SemanticHashBackfillOperatorWorkflowAuditRepository_RecordAsync_PersistsAndSurfacesFeqPosture));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed semantic hash backfill operator workflow audit test data.");
+
+        try
+        {
+            var (attempt, confirmation) = await CreateConfirmedPaymentAsync(context);
+            var reference = await CreateRepository().CreateAsync(
+                CreateFailureRequest(context, attempt, confirmation),
+                CancellationToken.None);
+            var previewRepository =
+                new PostgresFiscalExceptionSemanticHashRecalculationPreviewAuditRepository(ConnectionString);
+            var mutationRepository =
+                new PostgresFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository(ConnectionString);
+            var workflowRepository =
+                new PostgresFiscalExceptionSemanticHashBackfillOperatorWorkflowAuditRepository(ConnectionString);
+
+            var preview = await previewRepository.RecordAsync(
+                new FiscalExceptionSemanticHashRecalculationPreviewAuditWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    StoredSemanticHashSourceVersion:
+                        FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+                    RequiredSemanticHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    StoredSemanticHashValue: new string('c', 64),
+                    PreviewStatus: FiscalExceptionSemanticHashRecalculationPreviewStatus.PreviewCalculated,
+                    BlockReasonCode: null,
+                    CompleteOriginalRequestFactsAvailable: true,
+                    RecalculatedHashValue: new string('d', 64),
+                    RecalculatedHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                    RecalculatedHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    RecalculatedSourceFactCount: 20,
+                    RecalculatedSafeSourceSummary: "semantic_request_hash_source_available:facts=20",
+                    RecalculatedHashMatchesStoredHash: false,
+                    MutationStatus: FiscalExceptionSemanticHashRecalculationMutationStatus.NotMutated,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "semantic_hash_recalculation_preview_calculated_not_mutated",
+                    CorrelationId: context.CorrelationId,
+                    ServiceIdentityId: null),
+                CancellationToken.None);
+            var mutationPrep = await mutationRepository.RecordAsync(
+                new FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    RecalculationPreviewAuditId: preview.RecalculationPreviewAuditId,
+                    MutationPreparationAuditId: null,
+                    ApprovalBasisStatus:
+                        FiscalExceptionSemanticHashControlledBackfillApprovalStatus.ReadyForControlledBackfill,
+                    OldSourceVersion: FiscalExceptionSemanticHashReadinessPolicy.LegacyCentralPmsHashSourceVersion,
+                    RequiredSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    OldHashValue: new string('c', 64),
+                    NewHashValue: new string('d', 64),
+                    NewHashAlgorithm: FiscalSemanticRequestHashCalculator.CurrentHashAlgorithm,
+                    NewHashSourceVersion: FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                    NewHashSourceFactCount: 20,
+                    SafeSourceSummary: "semantic_request_hash_source_available:facts=20",
+                    MutationStatus:
+                        FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus
+                            .PreparedForControlledMutation,
+                    BlockReasonCode: null,
+                    MutationMode: FiscalExceptionSemanticHashControlledBackfillMutationMode.SingleRecordOnly,
+                    MutationEnabled: true,
+                    FiscalIssuanceReferenceMutated: false,
+                    AttemptedAt: DateTimeOffset.UtcNow,
+                    SafeSummary: "semantic_hash_backfill_mutation_prepared_single_record_guarded_write_enabled",
+                    CorrelationId: context.CorrelationId,
+                    ActorServiceIdentityId: null,
+                    ApprovalReference: "APPROVAL-TEST-002",
+                    DualControlReference: "DUAL-TEST-002"),
+                CancellationToken.None);
+
+            var record = await workflowRepository.RecordAsync(
+                new FiscalExceptionSemanticHashBackfillOperatorWorkflowAuditWrite(
+                    FiscalIssuanceReferenceId: reference.FiscalIssuanceReferenceId,
+                    RecalculationPreviewAuditId: preview.RecalculationPreviewAuditId,
+                    MutationPreparationAuditId: mutationPrep.MutationAuditId,
+                    ApprovalReference: "APPROVAL-TEST-002",
+                    DualControlReference: "DUAL-TEST-002",
+                    ActorServiceIdentityId: null,
+                    ReasonCode: "semantic_hash_legacy_backfill_request",
+                    SafeJustification: "legacy semantic hash requires governed sha256:v1 metadata alignment",
+                    RequestMode: FiscalExceptionSemanticHashBackfillOperatorWorkflowRequestMode.SingleRecordOnly,
+                    WorkflowStatus: FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus
+                        .PreparedButMutationInvocationDisabled,
+                    BlockReasonCode: "semantic_hash_backfill_operator_workflow_mutation_invocation_disabled",
+                    MutationInvocationPosture:
+                        FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture.Disabled,
+                    GuardedMutationAuditId: null,
+                    GuardedMutationStatus: null,
+                    ExecuteControlledMutationRequested: true,
+                    MutationInvocationEnabled: false,
+                    DryRunOnly: false,
+                    RequestedAt: DateTimeOffset.UtcNow,
+                    CorrelationId: context.CorrelationId,
+                    SafeSummary:
+                        "semantic_hash_backfill_operator_workflow_prepared_but_invocation_disabled_not_mutated"),
+                CancellationToken.None);
+            var summary = await workflowRepository.GetSummaryAsync(
+                reference.FiscalIssuanceReferenceId,
+                CancellationToken.None);
+            var queue = new FiscalExceptionQueueService(
+                referenceReader: CreateRepository(),
+                readbackAttemptRepository: null,
+                retryEligibilityEvaluator: new FiscalExceptionRetryEligibilityEvaluator(),
+                retryCommandPreparationService: new FiscalExceptionRetryCommandPreparationService(),
+                retryCommandPreparationAuditRepository: null,
+                retrySchedulingPreparationService: new FiscalExceptionRetrySchedulingPreparationService(),
+                retrySchedulingPreparationAuditRepository: null,
+                retryExecutionPreparationService: new FiscalExceptionRetryExecutionPreparationService(),
+                posServerRetryContractReadinessService: new FiscalExceptionPosServerRetryContractReadinessService(),
+                semanticHashRecalculationPreviewAuditRepository: previewRepository,
+                semanticHashControlledBackfillApprovalService:
+                    new FiscalExceptionSemanticHashControlledBackfillApprovalService(),
+                semanticHashControlledBackfillMutationPreparationService:
+                    new FiscalExceptionSemanticHashControlledBackfillMutationPreparationService(),
+                semanticHashControlledBackfillMutationAuditRepository: mutationRepository,
+                semanticHashBackfillOperatorWorkflowAuditRepository: workflowRepository);
+            var detail = await queue.GetAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+            Assert.NotEqual(Guid.Empty, record.WorkflowRequestId);
+            Assert.NotNull(summary);
+            Assert.Equal(
+                FiscalExceptionSemanticHashBackfillOperatorWorkflowStatus.PreparedButMutationInvocationDisabled,
+                summary!.LastWorkflowStatus);
+            Assert.NotNull(detail);
+            Assert.Equal(
+                record.WorkflowRequestId,
+                detail!.Summary.SemanticHashBackfillOperatorWorkflowRequestId);
+            Assert.Equal(
+                FiscalExceptionSemanticHashBackfillOperatorWorkflowMutationInvocationPosture.Disabled,
+                detail.Summary.SemanticHashBackfillOperatorWorkflowMutationInvocationPosture);
+            Assert.False(detail.Summary.RetryExecutionAvailable);
         }
         finally
         {

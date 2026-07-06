@@ -15,7 +15,8 @@ BEGIN
             ('core.fiscal_issuance_retry_command_preparations'),
             ('core.fiscal_issuance_retry_schedule_preparations'),
             ('core.fiscal_issuance_semantic_hash_recalculation_previews'),
-            ('core.fiscal_issuance_semantic_hash_backfill_mutation_preparations')
+            ('core.fiscal_issuance_semantic_hash_backfill_mutation_preparations'),
+            ('core.fiscal_issuance_semantic_hash_backfill_workflow_requests')
     ) AS required(required_name)
     WHERE to_regclass(required_name) IS NULL;
 
@@ -98,7 +99,8 @@ BEGIN
               'fiscal_issuance_retry_command_preparations',
               'fiscal_issuance_retry_schedule_preparations',
               'fiscal_issuance_semantic_hash_recalculation_previews',
-              'fiscal_issuance_semantic_hash_backfill_mutation_preparations'
+              'fiscal_issuance_semantic_hash_backfill_mutation_preparations',
+              'fiscal_issuance_semantic_hash_backfill_workflow_requests'
           )
           AND (
               column_name ILIKE '%raw_payload%'
@@ -150,5 +152,15 @@ BEGIN
           AND indexname = 'ix_fiscal_sem_hash_backfill_mutation__reference_attempted'
     ) THEN
         RAISE EXCEPTION 'Missing semantic hash controlled backfill mutation reference audit index.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'core'
+          AND tablename = 'fiscal_issuance_semantic_hash_backfill_workflow_requests'
+          AND indexname = 'ix_fiscal_sem_hash_backfill_workflow__reference_requested'
+    ) THEN
+        RAISE EXCEPTION 'Missing semantic hash backfill operator workflow reference audit index.';
     END IF;
 END $$;
