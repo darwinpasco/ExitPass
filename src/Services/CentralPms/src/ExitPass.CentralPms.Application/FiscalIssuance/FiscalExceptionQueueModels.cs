@@ -202,6 +202,19 @@ public enum FiscalExceptionSemanticHashControlledBackfillActorAuthorizationPostu
     Present = 2
 }
 
+public enum FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus
+{
+    NotPrepared = 1,
+    PreparedButMutationDisabled = 2,
+    Blocked = 3,
+    Unavailable = 4
+}
+
+public enum FiscalExceptionSemanticHashControlledBackfillMutationMode
+{
+    SingleRecordOnly = 1
+}
+
 public enum FiscalExceptionIdempotencyContextAvailabilityStatus
 {
     NotEvaluated = 1,
@@ -290,6 +303,14 @@ public sealed record FiscalExceptionQueueCaseSummary(
     FiscalExceptionSemanticHashControlledBackfillActorAuthorizationPosture SemanticHashControlledBackfillActorAuthorizationPosture,
     FiscalExceptionSemanticHashRecalculationMutationStatus SemanticHashControlledBackfillMutationStatus,
     string SafeSemanticHashControlledBackfillSummary,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus SemanticHashControlledBackfillMutationPreparationStatus,
+    string? SemanticHashControlledBackfillMutationBlockReasonCode,
+    Guid? SemanticHashControlledBackfillLatestMutationAuditId,
+    DateTimeOffset? SemanticHashControlledBackfillMutationAttemptedAt,
+    int? SemanticHashControlledBackfillMutationAttemptCount,
+    FiscalExceptionSemanticHashControlledBackfillMutationMode SemanticHashControlledBackfillMutationMode,
+    bool SemanticHashControlledBackfillMutationEnabled,
+    string SafeSemanticHashControlledBackfillMutationSummary,
     FiscalExceptionIdempotencyContextAvailabilityStatus IdempotencyContextAvailabilityStatus,
     DateTimeOffset? LastRetryCommandPreparationAttemptAt,
     int? RetryCommandPreparationAttemptCount,
@@ -919,6 +940,153 @@ public interface IFiscalExceptionSemanticHashControlledBackfillApprovalService
 {
     FiscalExceptionSemanticHashControlledBackfillApprovalResult Evaluate(
         FiscalExceptionSemanticHashControlledBackfillApprovalRequest request);
+}
+
+public sealed class FiscalExceptionSemanticHashControlledBackfillMutationOptions
+{
+    public const string SectionName = "FiscalExceptionSemanticHashControlledBackfillMutation";
+
+    public FiscalExceptionSemanticHashControlledBackfillMutationOptions()
+    {
+    }
+
+    public FiscalExceptionSemanticHashControlledBackfillMutationOptions(
+        bool enableControlledMutation = false)
+    {
+        EnableControlledMutation = enableControlledMutation;
+    }
+
+    public bool EnableControlledMutation { get; set; }
+}
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillMutationPreparationRequest(
+    FiscalExceptionQueueCaseDetail Detail,
+    FiscalExceptionSemanticHashControlledBackfillApprovalResult ApprovalBasis,
+    FiscalExceptionSemanticHashRecalculationPreviewAuditSummary? LatestRecalculationPreviewAuditSummary,
+    Guid? ActorServiceIdentityId = null,
+    string? ApprovalReference = null,
+    string? DualControlReference = null,
+    bool DryRunOnly = true,
+    DateTimeOffset? RequestedAt = null);
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillMutationCommand(
+    Guid FiscalIssuanceReferenceId,
+    Guid LatestRecalculationPreviewAuditId,
+    FiscalExceptionSemanticHashControlledBackfillApprovalStatus ApprovalBasisStatus,
+    string? StoredSourceVersion,
+    string RequiredSourceVersion,
+    string RecalculatedHashValue,
+    string RecalculatedHashAlgorithm,
+    string RecalculatedHashSourceVersion,
+    int RecalculatedSourceFactCount,
+    string RecalculatedSafeSourceSummary,
+    Guid? ActorServiceIdentityId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    Guid? CorrelationId,
+    FiscalExceptionSemanticHashControlledBackfillMutationMode MutationMode,
+    bool DryRunOnly,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus MutationStatus);
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillMutationPreparationResult(
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus Status,
+    string? BlockReasonCode,
+    string SafeSummary,
+    FiscalExceptionSemanticHashControlledBackfillMutationCommand? Command,
+    FiscalExceptionSemanticHashControlledBackfillMutationMode MutationMode,
+    bool MutationEnabled,
+    bool DryRunOnly,
+    bool AuditPersisted,
+    bool FiscalIssuanceReferenceMutated,
+    bool RetryExecutionAvailable,
+    bool PosServerPostCalled,
+    bool RetryExecuted,
+    bool RetryScheduled,
+    bool PaymentFinalityChanged,
+    bool ExitAuthorizationIssued,
+    bool GateBehaviorTriggered,
+    bool FiscalNumberEdited,
+    bool ManualFiscalDocumentCreated,
+    Guid? MutationAuditId = null,
+    DateTimeOffset? MutationAttemptedAt = null);
+
+public interface IFiscalExceptionSemanticHashControlledBackfillMutationPreparationService
+{
+    Task<FiscalExceptionSemanticHashControlledBackfillMutationPreparationResult> PrepareAsync(
+        FiscalExceptionSemanticHashControlledBackfillMutationPreparationRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite(
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    FiscalExceptionSemanticHashControlledBackfillApprovalStatus ApprovalBasisStatus,
+    string? OldSourceVersion,
+    string RequiredSourceVersion,
+    string? OldHashValue,
+    string? NewHashValue,
+    string? NewHashAlgorithm,
+    string? NewHashSourceVersion,
+    int? NewHashSourceFactCount,
+    string? SafeSourceSummary,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus MutationStatus,
+    string? BlockReasonCode,
+    FiscalExceptionSemanticHashControlledBackfillMutationMode MutationMode,
+    bool MutationEnabled,
+    bool FiscalIssuanceReferenceMutated,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ActorServiceIdentityId,
+    string? ApprovalReference,
+    string? DualControlReference);
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord(
+    Guid MutationAuditId,
+    Guid FiscalIssuanceReferenceId,
+    Guid? RecalculationPreviewAuditId,
+    FiscalExceptionSemanticHashControlledBackfillApprovalStatus ApprovalBasisStatus,
+    string? OldSourceVersion,
+    string RequiredSourceVersion,
+    string? OldHashValue,
+    string? NewHashValue,
+    string? NewHashAlgorithm,
+    string? NewHashSourceVersion,
+    int? NewHashSourceFactCount,
+    string? SafeSourceSummary,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus MutationStatus,
+    string? BlockReasonCode,
+    FiscalExceptionSemanticHashControlledBackfillMutationMode MutationMode,
+    bool MutationEnabled,
+    bool FiscalIssuanceReferenceMutated,
+    DateTimeOffset AttemptedAt,
+    string SafeSummary,
+    Guid? CorrelationId,
+    Guid? ActorServiceIdentityId,
+    string? ApprovalReference,
+    string? DualControlReference,
+    DateTimeOffset CreatedAt);
+
+public sealed record FiscalExceptionSemanticHashControlledBackfillMutationAuditSummary(
+    Guid LastMutationAuditId,
+    FiscalExceptionSemanticHashControlledBackfillMutationPreparationStatus LastMutationStatus,
+    DateTimeOffset LastAttemptedAt,
+    int AttemptCount,
+    string? LastBlockReasonCode,
+    FiscalExceptionSemanticHashControlledBackfillMutationMode MutationMode,
+    bool MutationEnabled,
+    bool FiscalIssuanceReferenceMutated,
+    string SafeSummary);
+
+public interface IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository
+{
+    Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditRecord> RecordAsync(
+        FiscalExceptionSemanticHashControlledBackfillMutationAuditWrite attempt,
+        CancellationToken cancellationToken);
+
+    Task<FiscalExceptionSemanticHashControlledBackfillMutationAuditSummary?> GetSummaryAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
 }
 
 public sealed record FiscalSemanticRequestHashParityFixture(
