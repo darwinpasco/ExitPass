@@ -376,6 +376,14 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             command => command.Parameters.AddWithValue("payment_confirmation_id", paymentConfirmationId),
             cancellationToken);
 
+    public Task<FiscalIssuanceReferenceRecord?> FindByFiscalIssuanceReferenceIdAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken) =>
+        QuerySingleAsync(
+            "WHERE fiscal_issuance_reference_id = @fiscal_issuance_reference_id AND is_active = true",
+            command => command.Parameters.AddWithValue("fiscal_issuance_reference_id", fiscalIssuanceReferenceId),
+            cancellationToken);
+
     public Task<FiscalIssuanceReferenceRecord?> FindLatestByPaymentAttemptIdAsync(
         Guid paymentAttemptId,
         CancellationToken cancellationToken) =>

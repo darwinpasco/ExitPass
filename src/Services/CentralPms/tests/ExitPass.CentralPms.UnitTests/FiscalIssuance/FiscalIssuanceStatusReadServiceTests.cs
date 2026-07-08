@@ -1,0 +1,256 @@
+using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+using FluentAssertions;
+using NSubstitute;
+using Xunit;
+
+namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
+
+public sealed class FiscalIssuanceStatusReadServiceTests
+{
+    [Fact]
+    public async Task GetByReferenceIdAsync_WhenRecorded_ReturnsFiscalDocumentEvidence()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            PosServerFiscalDocumentId = Guid.Parse("deac11e4-fc31-4c40-9a44-da690b9730ef"),
+            FiscalDocumentNumber = "SI-00000001-UAT",
+            FiscalIdentityId = Guid.NewGuid(),
+            FiscalSequencePolicyId = Guid.NewGuid(),
+            FiscalSequenceValue = 1,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            ResultClassification = FiscalIssuanceResultClassification.NewlyCreated
+        };
+        var repository = RepositoryReturning(reference);
+        var sut = new FiscalIssuanceStatusReadService(repository);
+
+        var status = await sut.GetByReferenceIdAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        status.Should().NotBeNull();
+        status!.FiscalIssuanceState.Should().Be("FISCAL_ISSUANCE_RECORDED");
+        status.ResultClassification.Should().Be("NEWLY_CREATED");
+        status.PosServerFiscalDocumentId.Should().Be(reference.PosServerFiscalDocumentId);
+        status.FiscalDocumentNumber.Should().Be("SI-00000001-UAT");
+    }
+
+    [Fact]
+    public async Task GetByReferenceIdAsync_WhenReplayed_ReturnsSafeReplayPosture()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed) with
+        {
+            PosServerFiscalDocumentId = Guid.NewGuid(),
+            FiscalDocumentNumber = "SI-00000001-UAT",
+            FiscalIdentityId = Guid.NewGuid(),
+            FiscalSequencePolicyId = Guid.NewGuid(),
+            FiscalSequenceValue = 1,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            ResultClassification = FiscalIssuanceResultClassification.IdempotentReplay
+        };
+        var sut = new FiscalIssuanceStatusReadService(RepositoryReturning(reference));
+
+        var status = await sut.GetByReferenceIdAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        status.Should().NotBeNull();
+        status!.FiscalIssuanceState.Should().Be("FISCAL_ISSUANCE_REPLAYED");
+        status.ResultClassification.Should().Be("IDEMPOTENT_REPLAY");
+        status.FiscalDocumentNumber.Should().Be("SI-00000001-UAT");
+    }
+
+    [Fact]
+    public async Task GetByReferenceIdAsync_WhenConflict_ReturnsConflictPostureWithoutFiscalDocumentNumber()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceConflict) with
+        {
+            PosServerFiscalDocumentId = null,
+            FiscalDocumentNumber = null,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.NotAssigned,
+            LatestExceptionReason = FiscalIssuanceExceptionReason.FiscalDocumentIdempotencyConflict,
+            LatestErrorCode = "fiscal_document_idempotency_conflict",
+            LatestErrorPosture = FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange
+        };
+        var sut = new FiscalIssuanceStatusReadService(RepositoryReturning(reference));
+
+        var status = await sut.GetByReferenceIdAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        status.Should().NotBeNull();
+        status!.FiscalIssuanceState.Should().Be("FISCAL_ISSUANCE_CONFLICT");
+        status.LatestExceptionReason.Should().Be("FISCAL_DOCUMENT_IDEMPOTENCY_CONFLICT");
+        status.LatestErrorCode.Should().Be("fiscal_document_idempotency_conflict");
+        status.LatestErrorPosture.Should().Be("DO_NOT_RETRY_WITHOUT_REQUEST_CHANGE");
+        status.PosServerFiscalDocumentId.Should().BeNull();
+        status.FiscalDocumentNumber.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByReferenceIdAsync_WhenFailedService_ReturnsSafeErrorPosture()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService) with
+        {
+            LatestExceptionReason = FiscalIssuanceExceptionReason.GetReadbackServiceFailed,
+            LatestErrorCode = "get_readback_service_failed",
+            LatestErrorPosture = FiscalIssuanceErrorPosture.RetryAfterServiceRecovery
+        };
+        var sut = new FiscalIssuanceStatusReadService(RepositoryReturning(reference));
+
+        var status = await sut.GetByReferenceIdAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        status.Should().NotBeNull();
+        status!.FiscalIssuanceState.Should().Be("FISCAL_ISSUANCE_FAILED_SERVICE");
+        status.LatestExceptionReason.Should().Be("GET_READBACK_SERVICE_FAILED");
+        status.LatestErrorCode.Should().Be("get_readback_service_failed");
+        status.LatestErrorPosture.Should().Be("RETRY_AFTER_SERVICE_RECOVERY");
+    }
+
+    [Fact]
+    public async Task GetByReferenceIdAsync_WhenMissing_ReturnsNull()
+    {
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByFiscalIssuanceReferenceIdAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+        var sut = new FiscalIssuanceStatusReadService(repository);
+
+        var status = await sut.GetByReferenceIdAsync(Guid.NewGuid(), CancellationToken.None);
+
+        status.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetByReferenceIdAsync_DoesNotMutateFiscalOrPaymentExitGateState()
+    {
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            PosServerFiscalDocumentId = Guid.NewGuid(),
+            FiscalDocumentNumber = "SI-00000001-UAT",
+            FiscalIdentityId = Guid.NewGuid(),
+            FiscalSequencePolicyId = Guid.NewGuid(),
+            FiscalSequenceValue = 1,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned
+        };
+        var repository = RepositoryReturning(reference);
+        var sut = new FiscalIssuanceStatusReadService(repository);
+
+        await sut.GetByReferenceIdAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        await repository.DidNotReceiveWithAnyArgs().CreateAsync(default!, default);
+        await repository.DidNotReceiveWithAnyArgs().UpdateStateAsync(default, default!, default);
+        await repository.DidNotReceiveWithAnyArgs().RecordSemanticRequestHashAsync(default, default!, default, default);
+    }
+
+    [Fact]
+    public void StatusReadService_DoesNotDependOnPosServerRetryPaymentExitOrGateServices()
+    {
+        var constructorParameters = typeof(FiscalIssuanceStatusReadService)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType.Name)
+            .ToArray();
+
+        constructorParameters.Should().ContainSingle(parameter => parameter == nameof(IFiscalIssuanceReferenceRepository));
+        constructorParameters.Should().NotContain(parameter =>
+            parameter.Contains("PosServer", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("Retry", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("Payment", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("ExitAuthorization", StringComparison.OrdinalIgnoreCase) ||
+            parameter.Contains("Gate", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void FiscalIssuanceStatusEndpoint_IsReadOnlyAndDoesNotWirePosServerOrRetryExecution()
+    {
+        var source = ReadRepoFile(
+            "src",
+            "Services",
+            "CentralPms",
+            "src",
+            "ExitPass.CentralPms.Api",
+            "Endpoints",
+            "FiscalIssuanceStatusEndpoints.cs");
+
+        source.Should().Contain("MapGet(\"/references/{fiscalIssuanceReferenceId:guid}\"");
+        source.Should().NotContain("MapPost");
+        source.Should().NotContain("IPosServer");
+        source.Should().NotContain("RetryExecution");
+        source.Should().NotContain("UpdateStateAsync");
+        source.Should().NotContain("CreateAsync");
+    }
+
+    private static IFiscalIssuanceReferenceRepository RepositoryReturning(FiscalIssuanceReferenceRecord reference)
+    {
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByFiscalIssuanceReferenceIdAsync(reference.FiscalIssuanceReferenceId, Arg.Any<CancellationToken>())
+            .Returns(reference);
+
+        return repository;
+    }
+
+    private static FiscalIssuanceReferenceRecord Reference(FiscalIssuanceIntegrationState state)
+    {
+        var now = DateTimeOffset.Parse("2026-07-08T10:00:00+08:00");
+        return new FiscalIssuanceReferenceRecord(
+            FiscalIssuanceReferenceId: Guid.NewGuid(),
+            PaymentConfirmationId: Guid.NewGuid(),
+            PaymentAttemptId: Guid.NewGuid(),
+            ParkingSessionId: Guid.NewGuid(),
+            TariffSnapshotId: Guid.NewGuid(),
+            SiteId: Guid.NewGuid(),
+            SitePosServerId: Guid.NewGuid(),
+            SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+            PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
+            UpstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+            PosServerFiscalDocumentId: null,
+            FiscalIdentityId: null,
+            FiscalSequencePolicyId: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentNumber: null,
+            FiscalSeries: "central-pms-uat-si-sequence-policy",
+            FiscalNumberPrefixText: "SI-",
+            FiscalNumberSuffixText: "-UAT",
+            FiscalNumberAssignedAt: null,
+            FiscalNumberAssignedByRef: null,
+            FiscalDocumentStatusCodeId: Guid.NewGuid(),
+            ResultClassification: null,
+            FiscalIssuanceEvidenceStatus: null,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.NotAssigned,
+            FiscalIssuanceState: state,
+            LatestExceptionReason: null,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            CorrelationId: Guid.NewGuid(),
+            PosServerResponseTimestamp: null,
+            FirstRecordedAt: now,
+            LastUpdatedAt: now,
+            RecordedByServiceIdentityId: Guid.NewGuid(),
+            FiscalDocumentTypeCodeId: Guid.NewGuid(),
+            FiscalDocumentTypeCodeKey: "sales_invoice",
+            SemanticRequestHashStatus: FiscalSemanticRequestHashSourceStatus.Available,
+            SemanticRequestHashValue: "ea863d4f8dc2c11e061236bec63855a26e896e700b4de92e5666bf8ee78cd38d",
+            SemanticRequestHashAlgorithm: "SHA-256",
+            SemanticRequestHashSourceVersion: "sha256:v1",
+            SemanticRequestHashSourceFactCount: 24,
+            SemanticRequestHashSafeSummary: "safe fiscal request facts",
+            SemanticRequestHashRecordedAt: now);
+    }
+
+    private static string ReadRepoFile(params string[] pathParts)
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (current is not null)
+        {
+            var candidateParts = new[] { current.FullName }.Concat(pathParts).ToArray();
+            var candidate = Path.Combine(candidateParts);
+
+            if (File.Exists(candidate))
+            {
+                return File.ReadAllText(candidate);
+            }
+
+            current = current.Parent;
+        }
+
+        throw new FileNotFoundException($"{Path.Combine(pathParts)} was not found from the test output path.");
+    }
+}
