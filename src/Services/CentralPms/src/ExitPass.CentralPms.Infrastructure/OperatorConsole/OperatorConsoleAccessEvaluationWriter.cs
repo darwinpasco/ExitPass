@@ -82,7 +82,7 @@ public sealed class OperatorConsoleAccessEvaluationWriter : IOperatorConsoleAcce
         command.Parameters.Add("target_entity_type", NpgsqlDbType.Varchar).Value = DbValue(context.TargetEntityType);
         command.Parameters.Add("target_entity_id", NpgsqlDbType.Uuid).Value = DbValue(context.TargetEntityId);
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(context.SiteId);
-        command.Parameters.Add("action_status", NpgsqlDbType.Text).Value = result.Allowed ? "SUCCESS" : "DENIED";
+        command.Parameters.Add("action_status", NpgsqlDbType.Text).Value = ResolveActionStatus(result);
         command.Parameters.Add("action_notes", NpgsqlDbType.Text).Value = BuildDecisionSnapshot(result);
         command.Parameters.Add("performed_at", NpgsqlDbType.TimestampTz).Value = result.EvaluatedAt;
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = result.CorrelationId;
@@ -109,8 +109,26 @@ public sealed class OperatorConsoleAccessEvaluationWriter : IOperatorConsoleAcce
             result.PersistenceContext.WorkflowCode,
             result.PersistenceContext.RequestedAction,
             result.PersistenceContext.TargetEntityType,
-            result.PersistenceContext.TargetEntityId
+            result.PersistenceContext.TargetEntityId,
+            result.PersistenceContext.SiteGroupId,
+            result.PersistenceContext.SiteId,
+            FiscalStatusViewResultClass = result.PersistenceContext.ResultClass,
+            FiscalStatusViewSafeErrorCode = result.PersistenceContext.SafeErrorCode,
+            FiscalStatusViewSafeErrorPosture = result.PersistenceContext.SafeErrorPosture,
+            FiscalStatusViewSourceModule = result.PersistenceContext.SourceModule
         });
+
+    private static string ResolveActionStatus(OperatorConsoleAccessEvaluationResult result)
+    {
+        if (!result.Allowed)
+        {
+            return "DENIED";
+        }
+
+        return string.Equals(result.PersistenceContext.ResultClass, "FAILED_SAFELY", StringComparison.Ordinal)
+            ? "FAILED"
+            : "SUCCESS";
+    }
 
     private static object DbValue(Guid? value) => value.HasValue ? value.Value : DBNull.Value;
 

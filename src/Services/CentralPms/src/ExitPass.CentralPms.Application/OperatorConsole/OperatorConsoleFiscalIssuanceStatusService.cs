@@ -7,6 +7,8 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// </summary>
 public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsoleFiscalIssuanceStatusService
 {
+    private const string FiscalIssuanceReferenceTargetEntityType = "FISCAL_ISSUANCE_REFERENCE";
+    private const string SourceModule = "operator-console-fiscal-issuance-status";
     private const string WorkflowCode = OperatorConsoleActionCodes.FiscalIssuanceStatusVisibilityWorkflow;
     private const string ControlledActionCode = OperatorConsoleActionCodes.ViewFiscalIssuanceStatus;
 
@@ -50,19 +52,74 @@ public sealed class OperatorConsoleFiscalIssuanceStatusService : IOperatorConsol
                 query.CorrelationId),
             cancellationToken);
 
-        var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(evaluation, cancellationToken);
-
-        if (!persistedEvaluation.Allowed)
+        if (!evaluation.Allowed)
         {
+            var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(
+                WithViewAuditContext(
+                    evaluation,
+                    query.FiscalIssuanceReferenceId,
+                    "DENIED",
+                    SafeErrorCode: "OPERATOR_CONSOLE_FISCAL_STATUS_ACCESS_DENIED",
+                    SafeErrorPosture: evaluation.Decision),
+                cancellationToken);
+
             return ToResult(persistedEvaluation, status: null);
         }
 
-        var status = await _statusReadService.GetByReferenceIdAsync(
-            query.FiscalIssuanceReferenceId,
-            cancellationToken);
+        try
+        {
+            var status = await _statusReadService.GetByReferenceIdAsync(
+                query.FiscalIssuanceReferenceId,
+                cancellationToken);
 
-        return ToResult(persistedEvaluation, status);
+            var persistedEvaluation = await _accessEvaluationWriter.PersistAsync(
+                WithViewAuditContext(
+                    evaluation,
+                    query.FiscalIssuanceReferenceId,
+                    status is null ? "NOT_FOUND" : "SUCCEEDED",
+                    SafeErrorCode: status is null ? "FISCAL_ISSUANCE_REFERENCE_NOT_FOUND" : null,
+                    SafeErrorPosture: status is null ? "Fiscal issuance reference was not found." : null),
+                cancellationToken);
+
+            return ToResult(persistedEvaluation, status);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            await _accessEvaluationWriter.PersistAsync(
+                WithViewAuditContext(
+                    evaluation,
+                    query.FiscalIssuanceReferenceId,
+                    "FAILED_SAFELY",
+                    SafeErrorCode: "OPERATOR_CONSOLE_FISCAL_STATUS_VIEW_FAILED",
+                    SafeErrorPosture: "Fiscal status view failed safely."),
+                cancellationToken);
+
+            throw;
+        }
     }
+
+    private static OperatorConsoleAccessEvaluationResult WithViewAuditContext(
+        OperatorConsoleAccessEvaluationResult evaluation,
+        Guid fiscalIssuanceReferenceId,
+        string resultClass,
+        string? SafeErrorCode,
+        string? SafeErrorPosture) =>
+        evaluation with
+        {
+            PersistenceContext = evaluation.PersistenceContext with
+            {
+                TargetEntityType = FiscalIssuanceReferenceTargetEntityType,
+                TargetEntityId = fiscalIssuanceReferenceId,
+                ResultClass = resultClass,
+                SafeErrorCode = SafeErrorCode,
+                SafeErrorPosture = SafeErrorPosture,
+                SourceModule = SourceModule
+            }
+        };
 
     private static OperatorConsoleFiscalIssuanceStatusResult ToResult(
         OperatorConsoleAccessEvaluationResult access,

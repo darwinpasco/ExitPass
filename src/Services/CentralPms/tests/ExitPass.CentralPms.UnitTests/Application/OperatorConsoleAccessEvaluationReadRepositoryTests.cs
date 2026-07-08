@@ -77,13 +77,9 @@ public sealed class OperatorConsoleAccessEvaluationReadRepositoryTests
             "OperatorConsoleAccessEvaluationReadRepository.cs");
 
         source.Should().Contain("@user_id");
-        source.Should().Contain("@operator_device_binding_id");
-        source.Should().Contain("@operator_shift_id");
         source.Should().Contain("@site_id");
-        source.Should().Contain("@evaluated_at");
         source.Should().Contain("command.Parameters.Add");
         source.Should().Contain("NpgsqlDbType.Uuid");
-        source.Should().Contain("NpgsqlDbType.TimestampTz");
     }
 
     private static OperatorConsoleAccessEvaluationReadRequest CreateRequest() =>

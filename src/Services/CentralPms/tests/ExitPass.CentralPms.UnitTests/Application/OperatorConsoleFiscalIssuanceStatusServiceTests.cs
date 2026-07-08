@@ -107,8 +107,108 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
 
         await writer.Received(1).PersistAsync(
             Arg.Is<OperatorConsoleAccessEvaluationResult>(result =>
-                result.PersistenceContext.RequestedAction == OperatorConsoleActionCodes.ViewFiscalIssuanceStatus),
+                result.PersistenceContext.RequestedAction == OperatorConsoleActionCodes.ViewFiscalIssuanceStatus &&
+                result.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
+                result.PersistenceContext.TargetEntityId == FiscalIssuanceReferenceId &&
+                result.PersistenceContext.ResultClass == "SUCCEEDED"),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenReferenceMissing_PersistsNotFoundResultClass()
+    {
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
+
+        var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
+
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        statusReadService.GetByReferenceIdAsync(FiscalIssuanceReferenceId, Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceStatusReadModel?)null);
+
+        var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
+
+        var result = await sut.GetAsync(Query(), CancellationToken.None);
+
+        result.Status.Should().BeNull();
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
+                persisted.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
+                persisted.PersistenceContext.TargetEntityId == FiscalIssuanceReferenceId &&
+                persisted.PersistenceContext.ResultClass == "NOT_FOUND" &&
+                persisted.PersistenceContext.SafeErrorCode == "FISCAL_ISSUANCE_REFERENCE_NOT_FOUND"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenStatusReadFails_PersistsFailedSafelyResultClass()
+    {
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
+
+        var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
+
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        statusReadService.GetByReferenceIdAsync(FiscalIssuanceReferenceId, Arg.Any<CancellationToken>())
+            .Returns<Task<FiscalIssuanceStatusReadModel?>>(_ => throw new InvalidOperationException("safe test failure"));
+
+        var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sut.GetAsync(Query(), CancellationToken.None));
+
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
+                persisted.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
+                persisted.PersistenceContext.TargetEntityId == FiscalIssuanceReferenceId &&
+                persisted.PersistenceContext.ResultClass == "FAILED_SAFELY" &&
+                persisted.PersistenceContext.SafeErrorCode == "OPERATOR_CONSOLE_FISCAL_STATUS_VIEW_FAILED"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenAccessDenied_PersistsDeniedResultClassWithFiscalReferenceTarget()
+    {
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AccessResult(allowed: false, ["NO_ACTIVE_SHIFT"]) with { EvaluationId = Guid.Empty, Persisted = false });
+
+        var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
+
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
+
+        var result = await sut.GetAsync(Query(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeFalse();
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
+                persisted.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
+                persisted.PersistenceContext.TargetEntityId == FiscalIssuanceReferenceId &&
+                persisted.PersistenceContext.ResultClass == "DENIED" &&
+                persisted.PersistenceContext.SafeErrorCode == "OPERATOR_CONSOLE_FISCAL_STATUS_ACCESS_DENIED"),
+            Arg.Any<CancellationToken>());
+        await statusReadService.DidNotReceiveWithAnyArgs()
+            .GetByReferenceIdAsync(default, default);
     }
 
     [Fact]
