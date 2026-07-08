@@ -1,0 +1,1 @@
+docker exec exitpass-postgres pg_dump --schema-only -U exitpass -d exitpass_v12_dev | docker exec -i exitpass-postgres psql -v ON_ERROR_STOP=1 -U exitpass -d centralpms_feq_retry_uat_local

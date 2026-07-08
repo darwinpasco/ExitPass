@@ -1,0 +1,111 @@
+{
+  "schemaVersion": "central-pms-pos-server-controlled-uat-evidence.v1",
+  "run": {
+    "runId": "CPS-POS-UAT-20260703-DEV-ATC-001",
+    "runTimestamp": "2026-07-08T02:03:45.9937349+00:00",
+    "expectedRunType": "NewlyCreated",
+    "environmentName": "DEV-CONTROLLED-UAT-LOCAL",
+    "correlationId": "00000000-0000-4000-8000-000000000101",
+    "evidenceReference": "central-pms-pos-server-normal-fiscal-issuance-uat-20260706",
+    "evidenceLocation": "docs/v1.3/central-pms/evidence/pos-server-normal-fiscal-issuance-uat-20260706",
+    "evidenceOwner": "Central PMS controlled UAT"
+  },
+  "approval": {
+    "approvedByRef": "DEV-UAT-CPS-POS-001",
+    "reviewerRef": "Darwin"
+  },
+  "environment": {
+    "environmentName": "DEV-CONTROLLED-UAT-LOCAL",
+    "evidenceReference": "central-pms-pos-server-normal-fiscal-issuance-uat-20260706",
+    "evidenceLocation": "docs/v1.3/central-pms/evidence/pos-server-normal-fiscal-issuance-uat-20260706"
+  },
+  "siteContext": {
+    "sitePosServerId": "10000000-0000-4000-8000-000000000201",
+    "sitePosServerRef": "DEV-POS-SERVER-ATC-001",
+    "fiscalDocumentTypeCodeId": "10000000-0000-4000-8000-000000000103",
+    "fiscalDocumentTypeCodeKey": "sales_invoice",
+    "fiscalDocumentStatusCodeId": "10000000-0000-4000-8000-000000000107"
+  },
+  "configurationReadiness": {
+    "readinessStatus": "enabled_ready",
+    "readinessReason": "pos_server_fiscal_issuance_live_call_configuration_ready",
+    "liveCallEnabled": true,
+    "diagnosticPathEnabled": true,
+    "baseUrlConfigured": true,
+    "timeoutConfigured": true,
+    "paymentFlowGuardEnabled": false,
+    "exitFlowGuardEnabled": false,
+    "fiscalGatingEnforcementEnabled": false,
+    "enforcementWiredForBlocking": false
+  },
+  "fiscalRequestFacts": {
+    "parkingSessionRef": "CPS-POS-UAT-PARKING-SESSION-001",
+    "paymentAttemptRef": "CPS-POS-UAT-PAYMENT-ATTEMPT-001",
+    "paymentConfirmationRef": "CPS-POS-UAT-PAYMENT-CONFIRMATION-001",
+    "payableBasisRef": "CPS-POS-UAT-PAYABLE-BASIS-001",
+    "upstreamFinalityRef": "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+    "businessDayDate": "2026-07-03",
+    "currencyCode": "PHP",
+    "amountMinorUnits": 10000,
+    "lineCount": 1,
+    "tenderCount": 1,
+    "taxDetailCount": 1,
+    "totalCount": 1,
+    "discountReferenceCount": 0
+  },
+  "diagnosticInvocation": {
+    "harnessStatus": "replay_recorded",
+    "validationPassed": true,
+    "diagnosticInvoked": true,
+    "posServerCallAttempted": true,
+    "diagnosticStatus": "replay_recorded"
+  },
+  "posServerResponse": {
+    "resultClassification": "idempotentReplay",
+    "fiscalDocumentId": "deac11e4-fc31-4c40-9a44-da690b9730ef",
+    "fiscalDocumentNumber": "SI-00000001-UAT",
+    "fiscalIssuanceEvidenceStatus": "fiscalDocumentNumberAssigned",
+    "fiscalNumberAssignmentState": "assigned",
+    "errorCode": null,
+    "errorPosture": null
+  },
+  "centralPmsFiscalReference": {
+    "fiscalIssuanceReferenceId": "a078eec1-a027-422b-87c0-9ec2a8523682",
+    "centralPmsFiscalState": "fiscalIssuanceReplayed",
+    "fiscalDocumentIdRecorded": "deac11e4-fc31-4c40-9a44-da690b9730ef",
+    "fiscalDocumentNumberRecorded": "SI-00000001-UAT",
+    "fiscalIssuanceEvidenceStatusRecorded": "fiscalDocumentNumberAssigned",
+    "fiscalNumberAssignmentStateRecorded": "assigned"
+  },
+  "outcomeSummary": {
+    "finalStatus": "replay_recorded",
+    "newlyCreatedRecorded": false,
+    "replayRecorded": true,
+    "conflictMapped": false,
+    "failureMapped": false,
+    "unknownFailClosed": false,
+    "duplicateReferenceExpected": false,
+    "automaticRetryPerformed": false
+  },
+  "impactConfirmation": {
+    "paymentFinalityChanged": false,
+    "exitAuthorizationIssued": false,
+    "gateBehaviorTriggered": false,
+    "paymentFinalityUnaffected": true,
+    "exitAuthorizationUnaffected": true,
+    "gateBehaviorUnaffected": true
+  },
+  "evidencePosture": {
+    "sensitiveDataExcluded": true,
+    "redactionRequired": false,
+    "redactionStatus": "safe"
+  },
+  "finalOutcome": "passed",
+  "reviewerRef": "Darwin",
+  "notes": null,
+  "safeMetadata": {
+    "invocation_surface": "internal_controlled_uat_endpoint",
+    "approval_reference": "DEV-UAT-CPS-POS-001"
+  },
+  "errors": []
+}
