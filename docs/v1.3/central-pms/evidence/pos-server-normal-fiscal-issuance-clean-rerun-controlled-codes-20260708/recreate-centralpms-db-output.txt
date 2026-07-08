@@ -1,0 +1,8 @@
+DO
+ pg_terminate_backend 
+----------------------
+ t
+(1 row)
+
+DROP DATABASE
+CREATE DATABASE

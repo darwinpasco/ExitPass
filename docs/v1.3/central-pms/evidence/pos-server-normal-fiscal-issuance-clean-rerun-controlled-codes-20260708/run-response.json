@@ -1,0 +1,31 @@
+{
+    "accepted":  true,
+    "status":  "newly_created_recorded",
+    "httpStatusCode":  200,
+    "errors":  [
+
+               ],
+    "runId":  "CPS-POS-UAT-20260703-DEV-ATC-001",
+    "correlationId":  "00000000-0000-4000-8000-000000000101",
+    "readinessStatus":  "enabled_ready",
+    "validationPassed":  true,
+    "diagnosticInvoked":  true,
+    "posServerCallAttempted":  true,
+    "diagnosticStatus":  "newly_created_recorded",
+    "resultClassification":  "NewlyCreated",
+    "fiscalDocumentId":  "deac11e4-fc31-4c40-9a44-da690b9730ef",
+    "fiscalDocumentNumber":  "SI-00000001-UAT",
+    "fiscalIssuanceEvidenceStatus":  "FiscalDocumentNumberAssigned",
+    "fiscalNumberAssignmentState":  "Assigned",
+    "centralPmsFiscalState":  "FiscalIssuanceRecorded",
+    "errorCode":  null,
+    "errorPosture":  null,
+    "paymentFinalityChanged":  false,
+    "exitAuthorizationIssued":  false,
+    "gateBehaviorTriggered":  false,
+    "fiscalGatingEnforcementEnabled":  false,
+    "evidenceFileWritten":  false,
+    "evidenceJson":  "{\r\n  \"schemaVersion\": \"central-pms-pos-server-controlled-uat-evidence.v1\",\r\n  \"run\": {\r\n    \"runId\": \"CPS-POS-UAT-20260703-DEV-ATC-001\",\r\n    \"runTimestamp\": \"2026-07-08T01:32:13.5799595+00:00\",\r\n    \"expectedRunType\": \"NewlyCreated\",\r\n    \"environmentName\": \"DEV-CONTROLLED-UAT-LOCAL\",\r\n    \"correlationId\": \"00000000-0000-4000-8000-000000000101\",\r\n    \"evidenceReference\": \"central-pms-pos-server-normal-fiscal-issuance-uat-20260706\",\r\n    \"evidenceLocation\": \"docs/v1.3/central-pms/evidence/pos-server-normal-fiscal-issuance-uat-20260706\",\r\n    \"evidenceOwner\": \"Central PMS controlled UAT\"\r\n  },\r\n  \"approval\": {\r\n    \"approvedByRef\": \"DEV-UAT-CPS-POS-001\",\r\n    \"reviewerRef\": \"Darwin\"\r\n  },\r\n  \"environment\": {\r\n    \"environmentName\": \"DEV-CONTROLLED-UAT-LOCAL\",\r\n    \"evidenceReference\": \"central-pms-pos-server-normal-fiscal-issuance-uat-20260706\",\r\n    \"evidenceLocation\": \"docs/v1.3/central-pms/evidence/pos-server-normal-fiscal-issuance-uat-20260706\"\r\n  },\r\n  \"siteContext\": {\r\n    \"sitePosServerId\": \"10000000-0000-4000-8000-000000000201\",\r\n    \"sitePosServerRef\": \"DEV-POS-SERVER-ATC-001\",\r\n    \"fiscalDocumentTypeCodeId\": \"10000000-0000-4000-8000-000000000103\",\r\n    \"fiscalDocumentTypeCodeKey\": \"sales_invoice\",\r\n    \"fiscalDocumentStatusCodeId\": \"10000000-0000-4000-8000-000000000107\"\r\n  },\r\n  \"configurationReadiness\": {\r\n    \"readinessStatus\": \"enabled_ready\",\r\n    \"readinessReason\": \"pos_server_fiscal_issuance_live_call_configuration_ready\",\r\n    \"liveCallEnabled\": true,\r\n    \"diagnosticPathEnabled\": true,\r\n    \"baseUrlConfigured\": true,\r\n    \"timeoutConfigured\": true,\r\n    \"paymentFlowGuardEnabled\": false,\r\n    \"exitFlowGuardEnabled\": false,\r\n    \"fiscalGatingEnforcementEnabled\": false,\r\n    \"enforcementWiredForBlocking\": false\r\n  },\r\n  \"fiscalRequestFacts\": {\r\n    \"parkingSessionRef\": \"CPS-POS-UAT-PARKING-SESSION-001\",\r\n    \"paymentAttemptRef\": \"CPS-POS-UAT-PAYMENT-ATTEMPT-001\",\r\n    \"paymentConfirmationRef\": \"CPS-POS-UAT-PAYMENT-CONFIRMATION-001\",\r\n    \"payableBasisRef\": \"CPS-POS-UAT-PAYABLE-BASIS-001\",\r\n    \"upstreamFinalityRef\": \"CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001\",\r\n    \"businessDayDate\": \"2026-07-03\",\r\n    \"currencyCode\": \"PHP\",\r\n    \"amountMinorUnits\": 10000,\r\n    \"lineCount\": 1,\r\n    \"tenderCount\": 1,\r\n    \"taxDetailCount\": 1,\r\n    \"totalCount\": 1,\r\n    \"discountReferenceCount\": 0\r\n  },\r\n  \"diagnosticInvocation\": {\r\n    \"harnessStatus\": \"newly_created_recorded\",\r\n    \"validationPassed\": true,\r\n    \"diagnosticInvoked\": true,\r\n    \"posServerCallAttempted\": true,\r\n    \"diagnosticStatus\": \"newly_created_recorded\"\r\n  },\r\n  \"posServerResponse\": {\r\n    \"resultClassification\": \"newlyCreated\",\r\n    \"fiscalDocumentId\": \"deac11e4-fc31-4c40-9a44-da690b9730ef\",\r\n    \"fiscalDocumentNumber\": \"SI-00000001-UAT\",\r\n    \"fiscalIssuanceEvidenceStatus\": \"fiscalDocumentNumberAssigned\",\r\n    \"fiscalNumberAssignmentState\": \"assigned\",\r\n    \"errorCode\": null,\r\n    \"errorPosture\": null\r\n  },\r\n  \"centralPmsFiscalReference\": {\r\n    \"fiscalIssuanceReferenceId\": \"bf5288c9-426c-4f22-9567-ac5efac03ec0\",\r\n    \"centralPmsFiscalState\": \"fiscalIssuanceRecorded\",\r\n    \"fiscalDocumentIdRecorded\": \"deac11e4-fc31-4c40-9a44-da690b9730ef\",\r\n    \"fiscalDocumentNumberRecorded\": \"SI-00000001-UAT\",\r\n    \"fiscalIssuanceEvidenceStatusRecorded\": \"fiscalDocumentNumberAssigned\",\r\n    \"fiscalNumberAssignmentStateRecorded\": \"assigned\"\r\n  },\r\n  \"outcomeSummary\": {\r\n    \"finalStatus\": \"newly_created_recorded\",\r\n    \"newlyCreatedRecorded\": true,\r\n    \"replayRecorded\": false,\r\n    \"conflictMapped\": false,\r\n    \"failureMapped\": false,\r\n    \"unknownFailClosed\": false,\r\n    \"duplicateReferenceExpected\": false,\r\n    \"automaticRetryPerformed\": false\r\n  },\r\n  \"impactConfirmation\": {\r\n    \"paymentFinalityChanged\": false,\r\n    \"exitAuthorizationIssued\": false,\r\n    \"gateBehaviorTriggered\": false,\r\n    \"paymentFinalityUnaffected\": true,\r\n    \"exitAuthorizationUnaffected\": true,\r\n    \"gateBehaviorUnaffected\": true\r\n  },\r\n  \"evidencePosture\": {\r\n    \"sensitiveDataExcluded\": true,\r\n    \"redactionRequired\": false,\r\n    \"redactionStatus\": \"safe\"\r\n  },\r\n  \"finalOutcome\": \"passed\",\r\n  \"reviewerRef\": \"Darwin\",\r\n  \"notes\": null,\r\n  \"safeMetadata\": {\r\n    \"invocation_surface\": \"internal_controlled_uat_endpoint\",\r\n    \"approval_reference\": \"DEV-UAT-CPS-POS-001\"\r\n  },\r\n  \"errors\": []\r\n}",
+    "evidenceRedactionStatus":  "safe",
+    "sensitiveDataExcluded":  true
+}

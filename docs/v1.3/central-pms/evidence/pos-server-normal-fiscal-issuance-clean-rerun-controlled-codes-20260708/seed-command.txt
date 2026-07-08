@@ -1,0 +1,1 @@
+Get-Content -Raw tmp\manual-smoke\central-pms-pos-server-normal-fiscal-issuance-clean-rerun\Seed-OriginalApprovedUatIdentity.sql | docker exec -i exitpass-postgres psql -v ON_ERROR_STOP=1 -U exitpass -d centralpms_feq_retry_uat_local

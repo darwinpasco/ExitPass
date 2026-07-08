@@ -1,0 +1,5 @@
+branch=test/central-pms-pos-server-normal-issuance-clean-rerun
+commit=38fef3d4c67f069283e95655fbf8dd3f920e2eb6
+date=2026-07-08T09:24:04.9057577+08:00
+central_pms_db=centralpms_feq_retry_uat_local
+pos_server_db=posserver_api_smoke_validation_local
