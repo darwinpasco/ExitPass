@@ -5,6 +5,7 @@ import type {
   AuditReportResponse,
   DraftStatus,
   EntitlementType,
+  FiscalIssuanceStatus,
   OperatorConsoleApiError,
   OperatorTicketLookupInput,
   OperatorTicketLookupResult,
@@ -43,6 +44,7 @@ import type {
 export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
+  getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
@@ -366,7 +368,8 @@ const defaultOperatorPermissions = localFallback(
     "operator-console.policy-import-review.approve.ops",
     "operator-console.policy-import-review.approve.qa",
     "operator-console.policy-import-review.approve.db",
-    "operator-console.vendor-projection-health.view"
+    "operator-console.vendor-projection-health.view",
+    "fiscal-issuance.status.read"
   ].join(",")
 );
 
@@ -423,6 +426,16 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       });
 
       return parseTicketLookupResponse(response);
+    },
+
+    async getFiscalIssuanceStatus(fiscalIssuanceReferenceId) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/fiscal-issuance/references/${encodeURIComponent(fiscalIssuanceReferenceId)}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return parseResponse<FiscalIssuanceStatus>(response);
     },
 
     async listAuditReport(input = {}) {
@@ -784,8 +797,11 @@ export function createMockOperatorConsoleApiClient(
     evidenceError?: OperatorConsoleApiError;
     ticketLookupError?: OperatorConsoleApiError;
     ticketLookupResults?: OperatorTicketLookupResult[];
+    fiscalStatusError?: OperatorConsoleApiError;
+    fiscalStatuses?: FiscalIssuanceStatus[];
     empty?: boolean;
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
+    onFiscalStatusLookup?: (fiscalIssuanceReferenceId: string) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
     onPayableBasisApply?: (input: StatutoryDiscountPayableBasisApplicationInput) => void;
@@ -812,6 +828,7 @@ export function createMockOperatorConsoleApiClient(
   const projectionHealthTargets = (options.vendorSessionProjectionHealthTargets ?? mockVendorSessionProjectionHealthTargets()).map((item) => ({
     ...item
   }));
+  const fiscalStatuses = (options.fiscalStatuses ?? mockFiscalIssuanceStatuses()).map((item) => ({ ...item }));
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
@@ -843,6 +860,25 @@ export function createMockOperatorConsoleApiClient(
         correlationId: newCorrelationId(),
         message: "Ticket not found."
       };
+    },
+
+    async getFiscalIssuanceStatus(fiscalIssuanceReferenceId) {
+      await delay();
+      options.onFiscalStatusLookup?.(fiscalIssuanceReferenceId);
+      if (options.fiscalStatusError) {
+        throw options.fiscalStatusError;
+      }
+
+      const match = fiscalStatuses.find((item) => item.fiscalIssuanceReferenceId === fiscalIssuanceReferenceId);
+      if (!match) {
+        throw {
+          status: "not-found",
+          message: "Fiscal issuance reference was not found.",
+          errorCode: "FISCAL_ISSUANCE_REFERENCE_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      return { ...match };
     },
 
     async listAuditReport() {
@@ -2295,6 +2331,45 @@ const blockedLocalPolicy = {
   requiredEvidenceType: "SENIOR_CITIZEN_ID",
   ineligibilityReason: "Local policy is not verified for operator use."
 };
+
+function mockFiscalIssuanceStatuses(): FiscalIssuanceStatus[] {
+  return [
+    {
+      fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000001",
+      fiscalIssuanceState: "FISCAL_ISSUANCE_RECORDED",
+      resultClassification: "NEWLY_CREATED",
+      fiscalIssuanceEvidenceStatus: "FISCAL_DOCUMENT_NUMBER_ASSIGNED",
+      fiscalNumberAssignmentState: "ASSIGNED",
+      upstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+      paymentConfirmationId: "5f000000-0000-0000-0000-000000000009",
+      paymentAttemptId: "5f000000-0000-0000-0000-000000000010",
+      parkingSessionId: "5f000000-0000-0000-0000-000000000011",
+      siteId: "5f000000-0000-0000-0000-000000000005",
+      sitePosServerId: "5f000000-0000-0000-0000-000000000012",
+      sitePosServerRef: "DEV-POS-SERVER-ATC-001",
+      fiscalDocumentTypeCodeId: "5f000000-0000-0000-0000-000000000013",
+      fiscalDocumentTypeCodeKey: "sales_invoice",
+      posServerFiscalDocumentId: "5f000000-0000-0000-0000-000000000014",
+      fiscalDocumentNumber: "SI-00000001-UAT",
+      fiscalIdentityId: "5f000000-0000-0000-0000-000000000015",
+      fiscalSequencePolicyId: "5f000000-0000-0000-0000-000000000016",
+      fiscalSequenceValue: 1,
+      fiscalSeries: "UAT-SI",
+      fiscalNumberPrefixText: "SI-",
+      fiscalNumberSuffixText: "-UAT",
+      fiscalNumberAssignedAt: "2026-07-08T08:00:00Z",
+      fiscalNumberAssignedByRef: "pos-server",
+      semanticRequestHashValue: "hash-value",
+      semanticRequestHashVersion: "sha256:v1",
+      semanticRequestHashStatus: "AVAILABLE",
+      semanticRequestHashAlgorithm: "SHA-256",
+      semanticRequestHashSourceFactCount: 24,
+      firstRecordedAt: "2026-07-08T08:00:00Z",
+      lastUpdatedAt: "2026-07-08T08:00:00Z",
+      correlationId: "5f000000-0000-0000-0000-000000000008"
+    }
+  ];
+}
 
 const mockTicketLookupResults: OperatorTicketLookupResult[] = [
   {

@@ -50,6 +50,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     [InlineData(OperatorConsoleActionCodes.ViewEvidence)]
     [InlineData(OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis)]
     [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
+    [InlineData(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus)]
     public async Task EvaluateAsync_WhenActionCodeMappedForOperatorConsole_AllowsAction(string actionCode)
     {
         var sut = CreateSut(ValidContext);
@@ -58,6 +59,22 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
 
         result.Allowed.Should().BeTrue();
         result.PersistenceContext.RequestedAction.Should().Be(actionCode);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenFiscalStatusVisibilityWorkflowMapped_AllowsWorkflow()
+    {
+        var sut = CreateSut(ValidContext);
+
+        var result = await sut.EvaluateAsync(
+            Command(
+                workflowCode: OperatorConsoleActionCodes.FiscalIssuanceStatusVisibilityWorkflow,
+                actionCode: OperatorConsoleActionCodes.ViewFiscalIssuanceStatus),
+            CancellationToken.None);
+
+        result.Allowed.Should().BeTrue();
+        result.PersistenceContext.WorkflowCode.Should().Be(OperatorConsoleActionCodes.FiscalIssuanceStatusVisibilityWorkflow);
+        result.PersistenceContext.RequestedAction.Should().Be(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus);
     }
 
     /// <summary>

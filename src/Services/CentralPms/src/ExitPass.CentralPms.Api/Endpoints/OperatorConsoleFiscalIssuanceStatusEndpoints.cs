@@ -1,0 +1,165 @@
+using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
+using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Contracts.Common;
+using OpenTelemetry.Trace;
+
+namespace ExitPass.CentralPms.Api.Endpoints;
+
+/// <summary>
+/// Operator Console read-only fiscal issuance status facade.
+/// </summary>
+public static class OperatorConsoleFiscalIssuanceStatusEndpoints
+{
+    private const string StatusReadPolicy = "FiscalIssuanceStatusRead";
+    private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleFiscalIssuanceStatus");
+
+    /// <summary>
+    /// Maps Operator Console fiscal issuance status endpoints.
+    /// </summary>
+    public static IEndpointRouteBuilder MapOperatorConsoleFiscalIssuanceStatusEndpoints(this IEndpointRouteBuilder app)
+    {
+        var group = app.MapGroup("/v1/ops/operator-console")
+            .WithTags("OperatorConsole");
+
+        group.MapGet("/fiscal-issuance/references/{fiscalIssuanceReferenceId:guid}", GetByReferenceIdAsync)
+            .WithName("GetOperatorConsoleFiscalIssuanceStatus")
+            .WithTags("OperatorConsole")
+            .WithMetadata(new ReconciliationPolicyMetadata(StatusReadPolicy))
+            .Produces<FiscalIssuanceStatusResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .WithSummary("View Operator Console fiscal issuance status")
+            .WithDescription("Returns safe read-only fiscal issuance status after Operator Console view-audit persistence. This endpoint does not call POS Server and does not mutate fiscal, payment, exit, gate, retry, readback, refund, reversal, or document-rendering state.");
+
+        return app;
+    }
+
+    private static async Task<IResult> GetByReferenceIdAsync(
+        Guid fiscalIssuanceReferenceId,
+        HttpRequest request,
+        IOperatorConsoleFiscalIssuanceStatusService service,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("HTTP GetOperatorConsoleFiscalIssuanceStatus", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleFiscalIssuanceStatusEndpoints");
+        var correlationId = ResolveCorrelationId(request);
+
+        activity?.SetTag("url.path", request.Path.Value);
+        activity?.SetTag("http.request.method", request.Method);
+        activity?.SetTag("correlation_id", correlationId);
+        activity?.SetTag("fiscal_issuance_reference_id", fiscalIssuanceReferenceId);
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                request,
+                fallbackCorrelationId: correlationId);
+
+            var result = await service.GetAsync(
+                new OperatorConsoleFiscalIssuanceStatusQuery(
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
+                    fiscalIssuanceReferenceId,
+                    identity.CorrelationId),
+                cancellationToken);
+
+            activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
+            activity?.SetTag("access_evaluation_allowed", result.AccessAllowed);
+            activity?.SetTag("access_evaluation_persisted", result.AccessPersisted);
+            activity?.SetTag("fiscal_status_found", result.Status is not null);
+
+            if (!result.AccessAllowed)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                logger.LogInformation(
+                    "Operator Console fiscal issuance status view denied. evaluation_id={EvaluationId} persisted={Persisted} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} correlation_id={CorrelationId}",
+                    result.AccessEvaluationId,
+                    result.AccessPersisted,
+                    fiscalIssuanceReferenceId,
+                    result.CorrelationId);
+
+                return Results.Json(
+                    BuildError(
+                        "OPERATOR_CONSOLE_FISCAL_STATUS_ACCESS_DENIED",
+                        "Operator Console fiscal issuance status access was denied.",
+                        result.CorrelationId),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            if (result.Status is null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                logger.LogInformation(
+                    "Operator Console fiscal issuance status reference not found. evaluation_id={EvaluationId} persisted={Persisted} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} correlation_id={CorrelationId}",
+                    result.AccessEvaluationId,
+                    result.AccessPersisted,
+                    fiscalIssuanceReferenceId,
+                    result.CorrelationId);
+
+                return Results.NotFound(BuildError(
+                    "FISCAL_ISSUANCE_REFERENCE_NOT_FOUND",
+                    "Fiscal issuance reference was not found.",
+                    result.CorrelationId));
+            }
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            logger.LogInformation(
+                "Operator Console fiscal issuance status view completed. evaluation_id={EvaluationId} persisted={Persisted} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} state={FiscalIssuanceState} correlation_id={CorrelationId}",
+                result.AccessEvaluationId,
+                result.AccessPersisted,
+                fiscalIssuanceReferenceId,
+                result.Status.FiscalIssuanceState,
+                result.CorrelationId);
+
+            return Results.Ok(FiscalIssuanceStatusResponse.FromReadModel(result.Status));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError(
+                "INVALID_OPERATOR_CONSOLE_FISCAL_STATUS_REQUEST",
+                ex.Message,
+                correlationId ?? Guid.Empty));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console fiscal issuance status view failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_FISCAL_STATUS_VIEW_FAILED",
+                    "The Operator Console fiscal issuance status view could not be completed.",
+                    correlationId ?? Guid.Empty),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static Guid? ResolveCorrelationId(HttpRequest request)
+    {
+        if (request.Headers.TryGetValue("X-Correlation-Id", out var value) &&
+            Guid.TryParse(value.ToString(), out var correlationId) &&
+            correlationId != Guid.Empty)
+        {
+            return correlationId;
+        }
+
+        return null;
+    }
+
+    private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId) =>
+        new()
+        {
+            ErrorCode = errorCode,
+            Message = message,
+            CorrelationId = correlationId,
+            Retryable = false
+        };
+}

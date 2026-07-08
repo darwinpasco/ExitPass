@@ -142,6 +142,7 @@ app.MapReconciliationEvaluationEndpoints();
 app.MapOperatorConsoleAccessEvaluationEndpoints();
 app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
+app.MapOperatorConsoleFiscalIssuanceStatusEndpoints();
 app.MapTicketSessionSummaryEndpoints();
 app.MapVendorPaymentAcknowledgmentOpsEndpoints();
 app.MapVendorSessionProjectionHealthEndpoints();
@@ -554,6 +555,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleSessionLookupReadRepository>(_ =>
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
+    builder.Services.AddScoped<IOperatorConsoleFiscalIssuanceStatusService, OperatorConsoleFiscalIssuanceStatusService>();
     builder.Services.AddScoped<ITicketSessionSummaryReadRepository>(_ =>
         new TicketSessionSummaryReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITicketSessionSummaryService, TicketSessionSummaryService>();

@@ -131,6 +131,44 @@ export interface OperatorTicketLookupResult {
   message?: string;
 }
 
+export interface FiscalIssuanceStatus {
+  fiscalIssuanceReferenceId: string;
+  fiscalIssuanceState: string;
+  resultClassification?: string;
+  fiscalIssuanceEvidenceStatus?: string;
+  fiscalNumberAssignmentState: string;
+  upstreamFinalityReference: string;
+  paymentConfirmationId: string;
+  paymentAttemptId: string;
+  parkingSessionId: string;
+  siteId?: string;
+  sitePosServerId?: string;
+  sitePosServerRef?: string;
+  fiscalDocumentTypeCodeId?: string;
+  fiscalDocumentTypeCodeKey?: string;
+  posServerFiscalDocumentId?: string;
+  fiscalDocumentNumber?: string;
+  fiscalIdentityId?: string;
+  fiscalSequencePolicyId?: string;
+  fiscalSequenceValue?: number;
+  fiscalSeries?: string;
+  fiscalNumberPrefixText?: string;
+  fiscalNumberSuffixText?: string;
+  fiscalNumberAssignedAt?: string;
+  fiscalNumberAssignedByRef?: string;
+  semanticRequestHashValue?: string;
+  semanticRequestHashVersion?: string;
+  semanticRequestHashStatus?: string;
+  semanticRequestHashAlgorithm?: string;
+  semanticRequestHashSourceFactCount?: number;
+  latestErrorCode?: string;
+  latestErrorPosture?: string;
+  latestExceptionReason?: string;
+  firstRecordedAt: string;
+  lastUpdatedAt: string;
+  correlationId?: string;
+}
+
 export interface AccessReadinessClientContext {
   uiModule?: string;
   screenState?: string;

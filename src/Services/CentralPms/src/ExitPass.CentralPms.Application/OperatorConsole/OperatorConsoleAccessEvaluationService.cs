@@ -13,7 +13,8 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
 {
     private static readonly HashSet<string> SupportedWorkflows = new(StringComparer.Ordinal)
     {
-        OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow
+        OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow,
+        OperatorConsoleActionCodes.FiscalIssuanceStatusVisibilityWorkflow
     };
 
     private static readonly HashSet<string> SupportedActions = new(StringComparer.Ordinal)
@@ -25,7 +26,8 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         OperatorConsoleActionCodes.CaptureEvidence,
         OperatorConsoleActionCodes.ViewEvidence,
         OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis,
-        OperatorConsoleActionCodes.ViewPolicyResolution
+        OperatorConsoleActionCodes.ViewPolicyResolution,
+        OperatorConsoleActionCodes.ViewFiscalIssuanceStatus
     };
 
     private static readonly HashSet<string> TrustedDeviceLevels = new(StringComparer.Ordinal)

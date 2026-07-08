@@ -8,6 +8,9 @@ public static class OperatorConsoleActionCodes
     /// <summary>Operator Console statutory discount validation workflow code.</summary>
     public const string StatutoryDiscountValidationWorkflow = "STATUTORY_DISCOUNT_VALIDATION";
 
+    /// <summary>Operator Console fiscal issuance status visibility workflow code.</summary>
+    public const string FiscalIssuanceStatusVisibilityWorkflow = "FISCAL_ISSUANCE_STATUS_VISIBILITY";
+
     /// <summary>Parking session lookup for Operator Console workflows.</summary>
     public const string SessionLookup = "SESSION_LOOKUP";
 
@@ -40,4 +43,7 @@ public static class OperatorConsoleActionCodes
 
     /// <summary>View Operator Console audit/reporting data.</summary>
     public const string ViewAuditReport = "VIEW_AUDIT_REPORT";
+
+    /// <summary>View read-only fiscal issuance status.</summary>
+    public const string ViewFiscalIssuanceStatus = "VIEW_FISCAL_ISSUANCE_STATUS";
 }
