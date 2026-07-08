@@ -1,0 +1,7 @@
+centralpms_feq_retry_uat_local
+application_tables|91
+fiscal_issuance_references_exists|t
+parking_sessions|1
+payment_attempts|1
+payment_confirmations|1
+fiscal_refs_for_upstream_finality_ref|0

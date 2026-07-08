@@ -1,0 +1,20 @@
+-[ RECORD 1 ]----------------+---------------------------------------------------------------
+fiscal_document_id           | deac11e4-fc31-4c40-9a44-da690b9730ef
+fiscal_document_number       | SI-00000001-UAT
+payment_finality_ref         | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001
+site_pos_server_id           | 10000000-0000-4000-8000-000000000201
+fiscal_document_type_code_id | 10000000-0000-4000-8000-000000000103
+fiscal_identity_id           | 10000000-0000-4000-8000-000000000701
+fiscal_sequence_policy_id    | 10000000-0000-4000-8000-000000000803
+fiscal_sequence_value        | 1
+
+-[ RECORD 1 ]-------------+-------------------------------------------------------------------------------------------
+idempotency_record_id     | f24bbd01-110d-4632-9b0c-99e29721c54f
+idempotency_scope         | fiscal_document_creation:10000000000040008000000000000201:10000000000040008000000000000103
+idempotency_key           | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001
+semantic_request_hash     | ea863d4f8dc2c11e061236bec63855a26e896e700b4de92e5666bf8ee78cd38d
+linked_fiscal_document_id | deac11e4-fc31-4c40-9a44-da690b9730ef
+replay_result_ref         | deac11e4-fc31-4c40-9a44-da690b9730ef
+conflict_ref              | 
+completion_unknown        | f
+
