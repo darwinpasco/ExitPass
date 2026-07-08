@@ -165,6 +165,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
             {
                 services.RemoveAll<IOperatorConsoleFiscalIssuanceStatusService>();
                 services.AddSingleton<IOperatorConsoleFiscalIssuanceStatusService>(fake);
+                services.RemoveAll<ICentralPmsRbacRepository>();
+                services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository());
             });
 
     private static void AddStatusReadHeaders(HttpClient client)
@@ -253,5 +255,41 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
             LastQuery = query;
             return Task.FromResult(_result);
         }
+    }
+
+    private sealed class FakeRbacRepository : ICentralPmsRbacRepository
+    {
+        public Task<bool> UserHasAnyPermissionAsync(
+            Guid userId,
+            IReadOnlyCollection<string> permissionCodes,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
+        public Task<bool> ServiceIdentityIsActiveAsync(
+            Guid serviceIdentityId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(false);
+
+        public Task RecordDeniedAsync(
+            string policyName,
+            Guid? userId,
+            Guid? serviceIdentityId,
+            Guid? correlationId,
+            string requestPath,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task RecordAuditEventAsync(
+            string eventType,
+            string eventResult,
+            string eventReasonCode,
+            string targetEntityType,
+            Guid? targetEntityId,
+            Guid? actorUserId,
+            Guid? actorServiceIdentityId,
+            Guid? correlationId,
+            string summary,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

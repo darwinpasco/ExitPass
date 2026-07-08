@@ -46,4 +46,7 @@ public static class OperatorConsoleActionCodes
 
     /// <summary>View read-only fiscal issuance status.</summary>
     public const string ViewFiscalIssuanceStatus = "VIEW_FISCAL_ISSUANCE_STATUS";
+
+    /// <summary>View fiscal issuance status view-audit report rows.</summary>
+    public const string ViewFiscalStatusViewAuditReport = "VIEW_FISCAL_STATUS_VIEW_AUDIT_REPORT";
 }

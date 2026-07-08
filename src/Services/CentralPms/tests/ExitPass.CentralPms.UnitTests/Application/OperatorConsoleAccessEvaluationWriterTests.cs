@@ -9,7 +9,7 @@ namespace ExitPass.CentralPms.UnitTests.Application;
 public sealed class OperatorConsoleAccessEvaluationWriterTests
 {
     /// <summary>
-    /// Verifies the writer maps allowed and denied evaluation fields to the inspected Operator Console tables.
+    /// Verifies the writer maps allowed and denied evaluation fields to the inspected Operator Console action log.
     /// </summary>
     [Fact]
     public void WriterSource_MapsEvaluationAndDenialReasonColumns()
@@ -23,20 +23,20 @@ public sealed class OperatorConsoleAccessEvaluationWriterTests
             "OperatorConsole",
             "OperatorConsoleAccessEvaluationWriter.cs");
 
-        source.Should().Contain("INSERT INTO operator_console.operator_access_evaluations");
-        source.Should().Contain("operator_access_evaluation_id");
-        source.Should().Contain("requested_action");
-        source.Should().Contain("evaluation_status");
+        source.Should().Contain("INSERT INTO operations.operator_action_logs");
+        source.Should().Contain("operator_action_log_id");
+        source.Should().Contain("action_reason_code");
+        source.Should().Contain("action_status");
+        source.Should().Contain("action_notes");
         source.Should().Contain("operator_user_id");
-        source.Should().Contain("hr_identity_mapping_id");
-        source.Should().Contain("operator_device_binding_id");
-        source.Should().Contain("operator_shift_id");
-        source.Should().Contain("site_group_id");
+        source.Should().Contain("target_entity_type");
+        source.Should().Contain("target_entity_id");
         source.Should().Contain("site_id");
-        source.Should().Contain("decision_snapshot_json");
-        source.Should().Contain("INSERT INTO operator_console.operator_access_evaluation_reasons");
-        source.Should().Contain("reason_code");
-        source.Should().Contain("display_order");
+        source.Should().Contain("correlation_id");
+        source.Should().Contain("FiscalStatusViewResultClass");
+        source.Should().Contain("FiscalStatusViewSafeErrorCode");
+        source.Should().Contain("FiscalStatusViewSafeErrorPosture");
+        source.Should().Contain("FiscalStatusViewSourceModule");
     }
 
     /// <summary>

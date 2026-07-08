@@ -20,7 +20,8 @@ public sealed class OperatorConsoleActionCatalog
         Read(OperatorConsoleActionCodes.ViewPolicyResolution, roleExpectation: "OPERATOR_SUPERVISOR_OR_AUDITOR", auditClassification: "POLICY_READ"),
         Read(OperatorConsoleActionCodes.SupervisorReview, roleExpectation: "SUPERVISOR", auditClassification: "SUPERVISOR_REVIEW"),
         Write(OperatorConsoleActionCodes.SupervisorOverride, roleExpectation: "SUPERVISOR_OR_OPERATIONS_ADMIN", auditClassification: "CONTROLLED_OVERRIDE"),
-        Read(OperatorConsoleActionCodes.ViewAuditReport, roleExpectation: "SUPERVISOR_OPERATIONS_OR_COMPLIANCE", auditClassification: "AUDIT_READ")
+        Read(OperatorConsoleActionCodes.ViewAuditReport, roleExpectation: "SUPERVISOR_OPERATIONS_OR_COMPLIANCE", auditClassification: "AUDIT_READ"),
+        Read(OperatorConsoleActionCodes.ViewFiscalStatusViewAuditReport, roleExpectation: "SUPERVISOR_COMPLIANCE_OR_SUPPORT", auditClassification: "AUDIT_READ")
     ];
 
     private static readonly IReadOnlyDictionary<string, OperatorConsoleActionCatalogEntry> EntriesByCode =

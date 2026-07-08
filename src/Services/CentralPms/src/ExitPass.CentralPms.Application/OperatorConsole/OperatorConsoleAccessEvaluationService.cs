@@ -27,7 +27,8 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         OperatorConsoleActionCodes.ViewEvidence,
         OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis,
         OperatorConsoleActionCodes.ViewPolicyResolution,
-        OperatorConsoleActionCodes.ViewFiscalIssuanceStatus
+        OperatorConsoleActionCodes.ViewFiscalIssuanceStatus,
+        OperatorConsoleActionCodes.ViewFiscalStatusViewAuditReport
     };
 
     private static readonly HashSet<string> TrustedDeviceLevels = new(StringComparer.Ordinal)

@@ -72,4 +72,8 @@ public sealed record OperatorConsoleAccessEvaluationPersistenceContext(
     string RequestedAction,
     string WorkflowCode,
     string? TargetEntityType,
-    Guid? TargetEntityId);
+    Guid? TargetEntityId,
+    string? ResultClass = null,
+    string? SafeErrorCode = null,
+    string? SafeErrorPosture = null,
+    string? SourceModule = null);
