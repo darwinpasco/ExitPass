@@ -1,0 +1,23 @@
+-[ RECORD 1 ]------------------------+---------------------------------------------------------------
+fiscal_document_id                   | deac11e4-fc31-4c40-9a44-da690b9730ef
+site_pos_server_id                   | 10000000-0000-4000-8000-000000000201
+channel_terminal_id                  | 
+fiscal_identity_id                   | 10000000-0000-4000-8000-000000000701
+fiscal_document_type_code_id         | 10000000-0000-4000-8000-000000000103
+fiscal_document_status_code_id       | 10000000-0000-4000-8000-000000000107
+fiscal_sequence_policy_id            | 10000000-0000-4000-8000-000000000803
+fiscal_sequence_value                | 1
+fiscal_document_number               | SI-00000001-UAT
+fiscal_series                        | central-pms-uat-si-sequence-policy
+fiscal_number_prefix_text            | SI-
+fiscal_number_suffix_text            | -UAT
+fiscal_number_assigned_at            | 2026-07-08 01:32:13.481689+00
+fiscal_number_assigned_by_ref        | pos-server:system
+central_pms_parking_session_ref      | CPS-POS-UAT-PARKING-SESSION-001
+central_pms_payment_attempt_ref      | CPS-POS-UAT-PAYMENT-ATTEMPT-001
+central_pms_payment_confirmation_ref | CPS-POS-UAT-PAYMENT-CONFIRMATION-001
+payment_finality_ref                 | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001
+business_day_date                    | 2026-07-03
+created_at                           | 2026-07-08 01:32:13.481689+00
+updated_at                           | 2026-07-08 01:32:13.481689+00
+

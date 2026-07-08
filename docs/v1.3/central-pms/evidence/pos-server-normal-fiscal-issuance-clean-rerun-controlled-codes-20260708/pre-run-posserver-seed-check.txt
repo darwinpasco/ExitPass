@@ -1,0 +1,6 @@
+site_pos_server|1
+fiscal_identity|1
+identity_assignment|1
+sequence_policy|1
+sequence_state|1
+controlled_codes_103_107_112_active|7
