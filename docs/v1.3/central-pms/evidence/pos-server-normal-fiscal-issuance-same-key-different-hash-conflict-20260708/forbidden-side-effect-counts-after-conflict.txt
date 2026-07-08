@@ -1,0 +1,5 @@
+core.exit_authorizations|0
+gates.gate_authorization_consumptions|0
+gates.gate_events|0
+gates.gate_heartbeats|0
+operations.manual_gate_logs|0

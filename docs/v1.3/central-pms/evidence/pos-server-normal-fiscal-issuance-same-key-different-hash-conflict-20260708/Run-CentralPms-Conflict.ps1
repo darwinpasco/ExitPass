@@ -1,0 +1,10 @@
+$env:ASPNETCORE_URLS='http://localhost:5080'
+$env:ConnectionStrings__MainDatabase='Host=localhost;Port=5433;Database=centralpms_feq_retry_uat_local;Username=exitpass;Password=change_me'
+$env:FiscalIssuance__PosServerIntegration__EnableControlledUatDiagnosticPath='true'
+$env:FiscalIssuance__PosServerIntegration__EnablePosServerFiscalIssuanceLiveCall='true'
+$env:FiscalIssuance__PosServerIntegration__PosServerBaseUrl='http://localhost:5000'
+$env:FiscalIssuance__PosServerIntegration__EnableLiveFiscalIssuanceFromPaymentFlow='false'
+$env:FiscalIssuance__PosServerIntegration__EnableLiveFiscalIssuanceFromExitFlow='false'
+$env:FiscalIssuance__ExitAuthorizationGating__EnableFiscalBeforeExitAuthorizationEnforcement='false'
+$env:FiscalIssuance__ExitAuthorizationGating__ReadinessMode='readiness_only'
+dotnet 'D:\SourceCodes\ExitPass\src\Services\CentralPms\src\ExitPass.CentralPms.Api\bin\Debug\net8.0\ExitPass.CentralPms.Api.dll' --urls http://localhost:5080

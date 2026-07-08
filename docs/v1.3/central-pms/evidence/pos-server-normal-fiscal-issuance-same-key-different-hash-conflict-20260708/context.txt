@@ -1,0 +1,6 @@
+branch=test/central-pms-pos-server-normal-issuance-different-hash-conflict
+commit=85da5735f51d7e654fa8a44fc22e7ca9400ac15e
+date=2026-07-08T10:54:31.5172050+08:00
+central_pms_db=centralpms_feq_retry_uat_local
+pos_server_db=posserver_api_smoke_validation_local
+upstream_finality_ref=CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001
