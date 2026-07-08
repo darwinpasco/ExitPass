@@ -1,3 +1,4 @@
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Contracts.Common;
 
@@ -10,6 +11,8 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class FiscalIssuanceStatusEndpoints
 {
+    private const string StatusReadPolicy = "FiscalIssuanceStatusRead";
+
     /// <summary>
     /// Maps read-only fiscal issuance status endpoints.
     /// </summary>
@@ -22,7 +25,10 @@ public static class FiscalIssuanceStatusEndpoints
 
         group.MapGet("/references/{fiscalIssuanceReferenceId:guid}", GetByReferenceIdAsync)
             .WithName("GetFiscalIssuanceReferenceStatus")
+            .WithMetadata(new ReconciliationPolicyMetadata(StatusReadPolicy))
             .Produces<FiscalIssuanceStatusResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound);
 
         return app;

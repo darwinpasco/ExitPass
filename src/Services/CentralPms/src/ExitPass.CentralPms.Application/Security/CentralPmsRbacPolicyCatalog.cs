@@ -53,6 +53,12 @@ public static class CentralPmsRbacPolicyCatalog
             ["ReconciliationEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"],
             ["ReconciliationRunEvaluator"] = ["reconciliation.evaluate", "reconciliation.manage"],
             ["VendorPaymentAcknowledgmentViewer"] = ["reconciliation.view", "reconciliation.manage"],
+            ["FiscalIssuanceStatusRead"] =
+            [
+                "fiscal-issuance.status.read",
+                "reconciliation.view",
+                "reconciliation.manage"
+            ],
             ["VendorSessionProjectionHealthViewer"] =
             [
                 "ops.vendor-session-projection-health.view",
