@@ -11,6 +11,7 @@ import type {
   AuditReportItem,
   AuditReportQuery,
   AuditReportResponse,
+  FiscalIssuanceStatus,
   LoadState,
   PolicyContextKind,
   ProductionPolicyImportDryRunResult,
@@ -41,6 +42,7 @@ import type {
 const routes = {
   home: "/operator-console",
   ticketLookup: "/operator-console/ticket-lookup",
+  fiscalStatus: "/operator-console/fiscal-issuance-status",
   audit: "/operator-console/audit",
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/",
@@ -138,6 +140,13 @@ export function App({ apiClient, initialPath }: AppProps) {
               Ticket Lookup
             </button>
             <button
+              className={`navLink ${path === routes.fiscalStatus ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.fiscalStatus)}
+            >
+              Fiscal Status
+            </button>
+            <button
               className={`navLink ${path.startsWith(routes.queue) ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.queue)}
@@ -196,6 +205,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             />
           ) : path === routes.ticketLookup ? (
             <TicketLookupPage client={client} readinessBlockReason={readinessBlockReason} />
+          ) : path === routes.fiscalStatus ? (
+            <FiscalIssuanceStatusPage client={client} />
           ) : path === routes.queue ? (
             <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.audit ? (
@@ -398,6 +409,225 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
       </section>
     </>
   );
+}
+
+function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient }) {
+  const [referenceId, setReferenceId] = useState("");
+  const [submittedReferenceId, setSubmittedReferenceId] = useState("");
+  const [statusState, setStatusState] = useState<LoadState<FiscalIssuanceStatus>>({ status: "idle" });
+
+  function submitLookup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = referenceId.trim();
+    if (!trimmed) {
+      setStatusState({ status: "error", message: "Fiscal issuance reference ID is required." });
+      return;
+    }
+
+    setSubmittedReferenceId(trimmed);
+    setStatusState({ status: "loading" });
+    void client
+      .getFiscalIssuanceStatus(trimmed)
+      .then((status) => setStatusState({ status: "loaded", data: status }))
+      .catch((error) => {
+        const mapped = mapApiError(error);
+        if (mapped.status === "not-found") {
+          setStatusState({ status: "not-found" });
+          return;
+        }
+
+        if (mapped.status === "access-denied") {
+          setStatusState({ status: "access-denied", message: mapped.message });
+          return;
+        }
+
+        setStatusState({ status: "error", message: mapped.message });
+      });
+  }
+
+  return (
+    <section className="panel" aria-labelledby="fiscal-status-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Fiscal visibility</p>
+          <h2 id="fiscal-status-title">Fiscal issuance status</h2>
+          <p className="panelCopy">
+            Read-only fiscal issuance status by Central PMS fiscal issuance reference.
+          </p>
+        </div>
+        <span className="statusPill">Read-only</span>
+      </div>
+
+      <form className="filterForm" onSubmit={submitLookup}>
+        <label>
+          Fiscal issuance reference ID
+          <input
+            value={referenceId}
+            placeholder="5f000000-0000-0000-0000-000000000001"
+            onChange={(event) => setReferenceId(event.target.value)}
+          />
+        </label>
+        <button type="submit">View status</button>
+      </form>
+
+      {statusState.status === "idle" && (
+        <StateMessage title="No fiscal status selected" message="Enter a fiscal issuance reference ID to view safe status fields." />
+      )}
+      {statusState.status === "loading" && (
+        <StateMessage title="Loading fiscal status" message="Retrieving read-only fiscal issuance status." />
+      )}
+      {statusState.status === "not-found" && (
+        <StateMessage
+          title="Fiscal reference not found"
+          message="The fiscal issuance reference was not found. Verify the reference or source context."
+        />
+      )}
+      {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
+      {statusState.status === "error" && <StateMessage title="Unable to load fiscal status" message={statusState.message} />}
+      {statusState.status === "loaded" && (
+        <FiscalIssuanceStatusPanel status={statusState.data} requestedReferenceId={submittedReferenceId} />
+      )}
+    </section>
+  );
+}
+
+function FiscalIssuanceStatusPanel({
+  status,
+  requestedReferenceId
+}: {
+  status: FiscalIssuanceStatus;
+  requestedReferenceId: string;
+}) {
+  const presentation = fiscalStatusPresentation(status);
+  const mainItems: Array<[string, string]> = [
+    ["Fiscal state", status.fiscalIssuanceState],
+    ["Result classification", displayValue(status.resultClassification)],
+    ["Evidence status", displayValue(status.fiscalIssuanceEvidenceStatus)],
+    ["Number assignment", status.fiscalNumberAssignmentState],
+    ["First recorded", formatDateTime(status.firstRecordedAt)],
+    ["Last updated", formatDateTime(status.lastUpdatedAt)]
+  ];
+
+  if (status.fiscalDocumentNumber) {
+    mainItems.splice(1, 0, ["Sales Invoice / fiscal document number", status.fiscalDocumentNumber]);
+  }
+
+  if (status.latestErrorCode || status.latestErrorPosture || status.latestExceptionReason) {
+    mainItems.push(
+      ["Safe error code", displayValue(status.latestErrorCode)],
+      ["Error posture", displayValue(status.latestErrorPosture)],
+      ["Exception reason", displayValue(status.latestExceptionReason)]
+    );
+  }
+
+  return (
+    <section aria-labelledby="fiscal-status-result-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Fiscal status result</p>
+          <h3 id="fiscal-status-result-title">{presentation.label}</h3>
+          <p className={presentation.messageClass}>{presentation.message}</p>
+        </div>
+        <span className={`statusPill ${presentation.className}`}>{presentation.badge}</span>
+      </div>
+
+      <DescriptionList items={mainItems} />
+
+      <details className="diagnosticsPanel">
+        <summary>Support/audit details</summary>
+        <DescriptionList
+          items={[
+            ["Requested reference", requestedReferenceId],
+            ["Fiscal issuance reference ID", status.fiscalIssuanceReferenceId],
+            ["Upstream finality reference", status.upstreamFinalityReference],
+            ["Payment confirmation ID", status.paymentConfirmationId],
+            ["Payment attempt ID", status.paymentAttemptId],
+            ["Parking session ID", status.parkingSessionId],
+            ["Site ID", displayValue(status.siteId)],
+            ["Site POS Server ID", displayValue(status.sitePosServerId)],
+            ["Site POS Server ref", displayValue(status.sitePosServerRef)],
+            ["POS Server fiscal document ID", displayValue(status.posServerFiscalDocumentId)],
+            ["Fiscal document type", displayValue(status.fiscalDocumentTypeCodeKey)],
+            ["Fiscal identity ID", displayValue(status.fiscalIdentityId)],
+            ["Fiscal sequence policy ID", displayValue(status.fiscalSequencePolicyId)],
+            ["Fiscal sequence value", formatOptionalNumber(status.fiscalSequenceValue)],
+            ["Fiscal series", displayValue(status.fiscalSeries)],
+            ["Fiscal number prefix", displayValue(status.fiscalNumberPrefixText)],
+            ["Fiscal number suffix", displayValue(status.fiscalNumberSuffixText)],
+            ["Fiscal number assigned at", formatOptionalDateTime(status.fiscalNumberAssignedAt)],
+            ["Fiscal number assigned by", displayValue(status.fiscalNumberAssignedByRef)],
+            ["Semantic request hash", displayValue(status.semanticRequestHashValue)],
+            ["Semantic request hash version", displayValue(status.semanticRequestHashVersion)],
+            ["Semantic request hash status", displayValue(status.semanticRequestHashStatus)],
+            ["Semantic request hash algorithm", displayValue(status.semanticRequestHashAlgorithm)],
+            ["Semantic request hash fact count", formatOptionalNumber(status.semanticRequestHashSourceFactCount)],
+            ["Correlation ID", displayValue(status.correlationId)]
+          ]}
+        />
+      </details>
+    </section>
+  );
+}
+
+function fiscalStatusPresentation(status: FiscalIssuanceStatus) {
+  const state = normalizeStatus(status.fiscalIssuanceState);
+  if (state === "FISCAL_ISSUANCE_RECORDED" && status.fiscalDocumentNumber) {
+    return {
+      label: "Issued",
+      badge: "Issued",
+      message: "Fiscal issuance was recorded and a Sales Invoice / fiscal document number is assigned.",
+      className: "readiness-ready",
+      messageClass: "successMessage"
+    };
+  }
+
+  if (state === "FISCAL_ISSUANCE_RECORDED") {
+    return {
+      label: "Recorded - number not available",
+      badge: "Recorded",
+      message: "Fiscal issuance was recorded, but no Sales Invoice / fiscal document number is available in the status response.",
+      className: "pending-review",
+      messageClass: "notice"
+    };
+  }
+
+  if (state === "FISCAL_ISSUANCE_REPLAYED") {
+    return {
+      label: "Existing issuance reused",
+      badge: "Replay",
+      message: "Existing fiscal issuance reused. No duplicate issuance was created.",
+      className: "readiness-ready",
+      messageClass: "notice"
+    };
+  }
+
+  if (state === "FISCAL_ISSUANCE_CONFLICT") {
+    return {
+      label: "Fiscal issuance conflict",
+      badge: "Conflict",
+      message: "Fiscal issuance conflict. Escalate for review; do not retry without corrected request details.",
+      className: "blocked",
+      messageClass: "errorMessage"
+    };
+  }
+
+  if (state === "FISCAL_ISSUANCE_FAILED_SERVICE") {
+    return {
+      label: "Fiscal service failed",
+      badge: "Failed service",
+      message: "Fiscal service failed. Support review is required before any retry or closure action.",
+      className: "blocked",
+      messageClass: "errorMessage"
+    };
+  }
+
+  return {
+    label: "Fiscal status requires review",
+    badge: "Review",
+    message: "Fiscal status requires support/audit review.",
+    className: "pending-review",
+    messageClass: "notice"
+  };
 }
 
 const vendorAcknowledgmentStatuses: VendorPaymentAcknowledgmentStatus[] = [

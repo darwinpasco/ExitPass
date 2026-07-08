@@ -10,6 +10,7 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
+  FiscalIssuanceStatus,
   OperatorTicketLookupResult,
   ProductionPolicyImportDryRunResult,
   ProductionPolicyImportReviewListResult,
@@ -26,6 +27,7 @@ import type {
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
 const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
 const blockedLocalDraftId = "47000000-0000-0000-0000-000000000010";
+const fiscalReferenceId = "5f000000-0000-0000-0000-000000000001";
 
 describe("ExitPass Operator Console statutory discount foundation", () => {
   it("OperatorConsole_RendersShellAndRoutes", async () => {
@@ -46,6 +48,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     const apiClient: OperatorConsoleApiClient = {
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       lookupSessionByTicket: vi.fn(),
+      getFiscalIssuanceStatus: vi.fn(),
       listAuditReport: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
         () =>
@@ -494,6 +497,169 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByPlaceholderText("****1234")).toBeInTheDocument();
   });
 
+  it("FiscalStatusViewer_RecordedWithFiscalDocumentNumberShowsIssuedAndNumber", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ fiscalStatuses: [fiscalStatus()] })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Issued" })).toBeInTheDocument();
+    expect(screen.getByText("SI-00000001-UAT")).toBeInTheDocument();
+    expect(screen.getByText("Sales Invoice / fiscal document number")).toBeInTheDocument();
+    expect(screen.getByText("POS Server fiscal document ID")).toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_RecordedWithoutFiscalDocumentNumberDoesNotShowIssued", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [fiscalStatus({ fiscalDocumentNumber: undefined })]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Recorded - number not available" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Issued" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Sales Invoice / fiscal document number")).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_ReplayedShowsExistingIssuanceReused", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [
+            fiscalStatus({
+              fiscalIssuanceState: "FISCAL_ISSUANCE_REPLAYED",
+              resultClassification: "IDEMPOTENT_REPLAY"
+            })
+          ]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Existing issuance reused" })).toBeInTheDocument();
+    expect(screen.getByText("Existing fiscal issuance reused. No duplicate issuance was created.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /duplicate/i })).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_ConflictShowsEscalationAndNoRetryControl", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [
+            fiscalStatus({
+              fiscalIssuanceState: "FISCAL_ISSUANCE_CONFLICT",
+              fiscalDocumentNumber: undefined,
+              latestErrorCode: "fiscal_document_idempotency_conflict",
+              latestErrorPosture: "DO_NOT_RETRY_WITHOUT_REQUEST_CHANGE"
+            })
+          ]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Fiscal issuance conflict" })).toBeInTheDocument();
+    expect(screen.getByText(/escalate for review; do not retry without corrected request details/i)).toBeInTheDocument();
+    expect(screen.getByText("fiscal_document_idempotency_conflict")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_FailedServiceShowsSupportReviewAndNoUnsafeDetail", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [
+            fiscalStatus({
+              fiscalIssuanceState: "FISCAL_ISSUANCE_FAILED_SERVICE",
+              fiscalDocumentNumber: undefined,
+              latestErrorCode: "pos_server_unavailable",
+              latestErrorPosture: "RETRY_AFTER_SERVICE_RECOVERY",
+              latestExceptionReason: "POS_SERVER_UNAVAILABLE"
+            })
+          ]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Fiscal service failed" })).toBeInTheDocument();
+    expect(screen.getByText(/support review is required/i)).toBeInTheDocument();
+    expect(screen.queryByText(/stack trace|raw payload|secret|statutory evidence payload/i)).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_NotFoundDoesNotImplyPaymentOrExitOutcomes", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatusError: {
+            status: "not-found",
+            message: "Fiscal issuance reference was not found.",
+            errorCode: "FISCAL_ISSUANCE_REFERENCE_NOT_FOUND"
+          }
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Fiscal reference not found" })).toBeInTheDocument();
+    expect(screen.queryByText(/unpaid|authorized to exit|voided|reversed/i)).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_UnauthorizedAndForbiddenShowAccessDeniedWithoutFiscalDetail", async () => {
+    const { rerender } = render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatusError: {
+            status: "access-denied",
+            message: "An authenticated Central PMS operator or service identity is required.",
+            errorCode: "CENTRAL_PMS_RBAC_UNAUTHENTICATED"
+          }
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Access denied" })).toBeInTheDocument();
+    expect(screen.queryByText("SI-00000001-UAT")).not.toBeInTheDocument();
+
+    rerender(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatusError: {
+            status: "access-denied",
+            message: "The caller does not have the required Central PMS permission.",
+            errorCode: "CENTRAL_PMS_RBAC_FORBIDDEN"
+          }
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByText("The caller does not have the required Central PMS permission.")).toBeInTheDocument();
+    expect(screen.queryByText("SI-00000001-UAT")).not.toBeInTheDocument();
+  });
+
   it("OperatorConsoleApi_MapsBackendErrorsIntoUiErrors", () => {
     expect(mapApiError({ status: "access-denied", message: "Access blocked", errorCode: "ACCESS_BLOCKED" })).toEqual({
       status: "access-denied",
@@ -615,6 +781,25 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(calledUrls).not.toMatch(/confirm/i);
     expect(calledUrls).not.toMatch(/hikcentral/i);
     expect(calledUrls).not.toMatch(/gate/i);
+  });
+
+  it("OperatorConsoleApi_GetsFiscalStatusThroughFacadeUsingGetHeadersAndEncodedReference", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fiscalStatus()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.getFiscalIssuanceStatus("reference/with space");
+
+    expect(result.fiscalDocumentNumber).toBe("SI-00000001-UAT");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/fiscal-issuance/references/reference%2Fwith%20space",
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expect(requestOptions?.method).toBeUndefined();
+    expect(requestOptions?.body).toBeUndefined();
+    expectOperatorContextHeaders(requestOptions?.headers);
   });
 
   it("OperatorConsoleApi_EvaluatesAccessReadinessThroughFetch", async () => {
@@ -1444,6 +1629,50 @@ function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
   };
 }
 
+async function lookupFiscalStatus(referenceId: string) {
+  await userEvent.clear(await screen.findByLabelText(/fiscal issuance reference id/i));
+  await userEvent.type(screen.getByLabelText(/fiscal issuance reference id/i), referenceId);
+  await userEvent.click(screen.getByRole("button", { name: "View status" }));
+}
+
+function fiscalStatus(overrides: Partial<FiscalIssuanceStatus> = {}): FiscalIssuanceStatus {
+  return {
+    fiscalIssuanceReferenceId: fiscalReferenceId,
+    fiscalIssuanceState: "FISCAL_ISSUANCE_RECORDED",
+    resultClassification: "NEWLY_CREATED",
+    fiscalIssuanceEvidenceStatus: "FISCAL_DOCUMENT_NUMBER_ASSIGNED",
+    fiscalNumberAssignmentState: "ASSIGNED",
+    upstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+    paymentConfirmationId: "5f000000-0000-0000-0000-000000000009",
+    paymentAttemptId: "5f000000-0000-0000-0000-000000000010",
+    parkingSessionId: "5f000000-0000-0000-0000-000000000011",
+    siteId: "5f000000-0000-0000-0000-000000000005",
+    sitePosServerId: "5f000000-0000-0000-0000-000000000012",
+    sitePosServerRef: "DEV-POS-SERVER-ATC-001",
+    fiscalDocumentTypeCodeId: "5f000000-0000-0000-0000-000000000013",
+    fiscalDocumentTypeCodeKey: "sales_invoice",
+    posServerFiscalDocumentId: "5f000000-0000-0000-0000-000000000014",
+    fiscalDocumentNumber: "SI-00000001-UAT",
+    fiscalIdentityId: "5f000000-0000-0000-0000-000000000015",
+    fiscalSequencePolicyId: "5f000000-0000-0000-0000-000000000016",
+    fiscalSequenceValue: 1,
+    fiscalSeries: "UAT-SI",
+    fiscalNumberPrefixText: "SI-",
+    fiscalNumberSuffixText: "-UAT",
+    fiscalNumberAssignedAt: "2026-07-08T08:00:00Z",
+    fiscalNumberAssignedByRef: "pos-server",
+    semanticRequestHashValue: "hash-value",
+    semanticRequestHashVersion: "sha256:v1",
+    semanticRequestHashStatus: "AVAILABLE",
+    semanticRequestHashAlgorithm: "SHA-256",
+    semanticRequestHashSourceFactCount: 24,
+    firstRecordedAt: "2026-07-08T08:00:00Z",
+    lastUpdatedAt: "2026-07-08T08:00:00Z",
+    correlationId: "5f000000-0000-0000-0000-000000000008",
+    ...overrides
+  };
+}
+
 function readyReadiness(): AccessReadinessResponse {
   return {
     accessEvaluationId: undefined,
@@ -1906,4 +2135,5 @@ function expectOperatorContextHeaders(headers: unknown) {
     "X-Operator-Device-Binding-Id": "77000000-0000-0000-0000-000000000030",
     "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000050"
   }));
+  expect((headers as Record<string, string>)["X-ExitPass-Permissions"]).toContain("fiscal-issuance.status.read");
 }

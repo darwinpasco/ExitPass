@@ -1,0 +1,257 @@
+using System.Net;
+using System.Net.Http.Json;
+using ExitPass.CentralPms.Api.Endpoints;
+using ExitPass.CentralPms.Api.Security;
+using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Contracts.Common;
+using FluentAssertions;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Xunit;
+
+namespace ExitPass.CentralPms.IntegrationTests.Api;
+
+/// <summary>
+/// Verifies the Operator Console read-only fiscal issuance status facade.
+/// </summary>
+public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
+{
+    private const string StatusReadPermission = "fiscal-issuance.status.read";
+    private static readonly Guid ReferenceId = Guid.Parse("5f000000-0000-0000-0000-000000000001");
+    private static readonly Guid EvaluationId = Guid.Parse("5f000000-0000-0000-0000-000000000002");
+    private static readonly Guid UserId = Guid.Parse("5f000000-0000-0000-0000-000000000003");
+    private static readonly Guid DeviceBindingId = Guid.Parse("5f000000-0000-0000-0000-000000000004");
+    private static readonly Guid SiteId = Guid.Parse("5f000000-0000-0000-0000-000000000005");
+    private static readonly Guid SiteGroupId = Guid.Parse("5f000000-0000-0000-0000-000000000006");
+    private static readonly Guid ShiftId = Guid.Parse("5f000000-0000-0000-0000-000000000007");
+    private static readonly Guid CorrelationId = Guid.Parse("5f000000-0000-0000-0000-000000000008");
+    private static readonly string Endpoint = $"/v1/ops/operator-console/fiscal-issuance/references/{ReferenceId}";
+
+    [Fact]
+    public void EndpointRouteExistsWithFiscalIssuanceStatusReadPolicy()
+    {
+        using var factory = CreateFactory(Result(Status()));
+
+        var endpoints = factory.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText == "/v1/ops/operator-console/fiscal-issuance/references/{fiscalIssuanceReferenceId:guid}")
+            .ToArray();
+
+        endpoints.Should().ContainSingle();
+        endpoints[0].Metadata.GetMetadata<HttpMethodMetadata>()!
+            .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Get.Method);
+        endpoints[0].Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName
+            .Should()
+            .Be("FiscalIssuanceStatusRead");
+    }
+
+    [Fact]
+    public async Task Get_WhenAuthorizedAndReferenceExists_ReturnsFiscalStatus()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync(Endpoint);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<FiscalIssuanceStatusResponse>();
+        body.Should().NotBeNull();
+        body!.FiscalIssuanceReferenceId.Should().Be(ReferenceId);
+        body.FiscalIssuanceState.Should().Be("FISCAL_ISSUANCE_RECORDED");
+        body.FiscalDocumentNumber.Should().Be("SI-00000001-UAT");
+
+        fake.CallCount.Should().Be(1);
+        fake.LastQuery.Should().NotBeNull();
+        fake.LastQuery!.UserId.Should().Be(UserId);
+        fake.LastQuery.OperatorDeviceBindingId.Should().Be(DeviceBindingId);
+        fake.LastQuery.OperatorShiftId.Should().Be(ShiftId);
+        fake.LastQuery.CorrelationId.Should().Be(CorrelationId);
+    }
+
+    [Fact]
+    public async Task Get_WhenAuthorizedAndReferenceMissing_ReturnsNotFound()
+    {
+        using var factory = CreateFactory(Result(status: null));
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync(Endpoint);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("FISCAL_ISSUANCE_REFERENCE_NOT_FOUND");
+        body.CorrelationId.Should().Be(CorrelationId);
+    }
+
+    [Fact]
+    public async Task Get_WhenRbacEnabledAndUnauthenticated_ReturnsUnauthorized()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(Endpoint);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("CENTRAL_PMS_RBAC_UNAUTHENTICATED");
+        fake.CallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Get_WhenRbacEnabledAndPermissionMissing_ReturnsForbidden()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, UserId.ToString());
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, "reconciliation.evaluate");
+
+        using var response = await client.GetAsync(Endpoint);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("CENTRAL_PMS_RBAC_FORBIDDEN");
+        fake.CallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Get_WhenOperatorConsoleAccessDenied_ReturnsForbiddenWithoutFiscalDetails()
+    {
+        using var factory = CreateFactory(Result(status: null, accessAllowed: false));
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync(Endpoint);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("OPERATOR_CONSOLE_FISCAL_STATUS_ACCESS_DENIED");
+    }
+
+    [Fact]
+    public async Task Get_RemainsGetOnly()
+    {
+        using var factory = CreateFactory(Result(Status()));
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.PostAsync(Endpoint, content: null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
+    }
+
+    private static CustomWebApplicationFactory CreateFactory(OperatorConsoleFiscalIssuanceStatusResult result) =>
+        CreateFactory(new FakeFiscalStatusService(result));
+
+    private static CustomWebApplicationFactory CreateFactory(FakeFiscalStatusService fake) =>
+        new CustomWebApplicationFactory()
+            .WithConfigurationOverrides(new Dictionary<string, string?>
+            {
+                ["CentralPms:Rbac:Enabled"] = "true",
+                ["CentralPms:Rbac:AllowPermissionHeader"] = "true"
+            })
+            .WithServiceOverrides(services =>
+            {
+                services.RemoveAll<IOperatorConsoleFiscalIssuanceStatusService>();
+                services.AddSingleton<IOperatorConsoleFiscalIssuanceStatusService>(fake);
+            });
+
+    private static void AddStatusReadHeaders(HttpClient client)
+    {
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, UserId.ToString());
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, StatusReadPermission);
+        client.DefaultRequestHeaders.Add("X-Operator-User-Id", UserId.ToString());
+        client.DefaultRequestHeaders.Add("X-Operator-Device-Binding-Id", DeviceBindingId.ToString());
+        client.DefaultRequestHeaders.Add("X-Operator-Shift-Id", ShiftId.ToString());
+        client.DefaultRequestHeaders.Add("X-Site-Id", SiteId.ToString());
+        client.DefaultRequestHeaders.Add("X-Site-Group-Id", SiteGroupId.ToString());
+        client.DefaultRequestHeaders.Add("X-Correlation-Id", CorrelationId.ToString());
+    }
+
+    private static OperatorConsoleFiscalIssuanceStatusResult Result(
+        FiscalIssuanceStatusReadModel? status,
+        bool accessAllowed = true) =>
+        new(
+            EvaluationId,
+            accessAllowed,
+            accessAllowed ? "ALLOWED" : "DENIED",
+            accessAllowed ? Array.Empty<string>() : ["NO_ACTIVE_SHIFT"],
+            AccessPersisted: true,
+            status,
+            CorrelationId);
+
+    private static FiscalIssuanceStatusReadModel Status()
+    {
+        var now = DateTimeOffset.Parse("2026-07-08T08:00:00Z");
+        return new FiscalIssuanceStatusReadModel(
+            ReferenceId,
+            "FISCAL_ISSUANCE_RECORDED",
+            ResultClassification: "NEWLY_CREATED",
+            FiscalIssuanceEvidenceStatus: "FISCAL_DOCUMENT_NUMBER_ASSIGNED",
+            FiscalNumberAssignmentState: "ASSIGNED",
+            UpstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+            PaymentConfirmationId: Guid.Parse("5f000000-0000-0000-0000-000000000009"),
+            PaymentAttemptId: Guid.Parse("5f000000-0000-0000-0000-000000000010"),
+            ParkingSessionId: Guid.Parse("5f000000-0000-0000-0000-000000000011"),
+            SiteId,
+            SitePosServerId: Guid.Parse("5f000000-0000-0000-0000-000000000012"),
+            SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+            FiscalDocumentTypeCodeId: Guid.Parse("5f000000-0000-0000-0000-000000000013"),
+            FiscalDocumentTypeCodeKey: "sales_invoice",
+            PosServerFiscalDocumentId: Guid.Parse("5f000000-0000-0000-0000-000000000014"),
+            FiscalDocumentNumber: "SI-00000001-UAT",
+            FiscalIdentityId: Guid.Parse("5f000000-0000-0000-0000-000000000015"),
+            FiscalSequencePolicyId: Guid.Parse("5f000000-0000-0000-0000-000000000016"),
+            FiscalSequenceValue: 1,
+            FiscalSeries: "UAT-SI",
+            FiscalNumberPrefixText: "SI-",
+            FiscalNumberSuffixText: "-UAT",
+            FiscalNumberAssignedAt: now,
+            FiscalNumberAssignedByRef: "pos-server",
+            SemanticRequestHashValue: "hash-value",
+            SemanticRequestHashVersion: "sha256:v1",
+            SemanticRequestHashStatus: "AVAILABLE",
+            SemanticRequestHashAlgorithm: "SHA-256",
+            SemanticRequestHashSourceFactCount: 24,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            LatestExceptionReason: null,
+            FirstRecordedAt: now,
+            LastUpdatedAt: now,
+            CorrelationId);
+    }
+
+    private sealed class FakeFiscalStatusService : IOperatorConsoleFiscalIssuanceStatusService
+    {
+        private readonly OperatorConsoleFiscalIssuanceStatusResult _result;
+
+        public FakeFiscalStatusService(OperatorConsoleFiscalIssuanceStatusResult result)
+        {
+            _result = result;
+        }
+
+        public int CallCount { get; private set; }
+
+        public OperatorConsoleFiscalIssuanceStatusQuery? LastQuery { get; private set; }
+
+        public Task<OperatorConsoleFiscalIssuanceStatusResult> GetAsync(
+            OperatorConsoleFiscalIssuanceStatusQuery query,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            LastQuery = query;
+            return Task.FromResult(_result);
+        }
+    }
+}
