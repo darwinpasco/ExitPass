@@ -287,6 +287,10 @@ public interface IFiscalIssuanceReferenceRepository
         Guid? serviceIdentityId,
         CancellationToken cancellationToken);
 
+    Task<FiscalIssuanceReferenceRecord?> FindByFiscalIssuanceReferenceIdAsync(
+        Guid fiscalIssuanceReferenceId,
+        CancellationToken cancellationToken);
+
     Task<FiscalIssuanceReferenceRecord?> FindByPaymentConfirmationIdAsync(
         Guid paymentConfirmationId,
         CancellationToken cancellationToken);

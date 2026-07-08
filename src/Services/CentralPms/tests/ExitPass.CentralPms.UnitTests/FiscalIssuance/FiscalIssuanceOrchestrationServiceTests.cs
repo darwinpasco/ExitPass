@@ -1036,6 +1036,11 @@ public sealed class FiscalIssuanceOrchestrationServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(_records.Values.SingleOrDefault(record => record.PaymentConfirmationId == paymentConfirmationId));
 
+        public Task<FiscalIssuanceReferenceRecord?> FindByFiscalIssuanceReferenceIdAsync(
+            Guid fiscalIssuanceReferenceId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_records.GetValueOrDefault(fiscalIssuanceReferenceId));
+
         public Task<FiscalIssuanceReferenceRecord> RecordSemanticRequestHashAsync(
             Guid fiscalIssuanceReferenceId,
             FiscalSemanticRequestHashResult semanticRequestHash,

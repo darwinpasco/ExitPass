@@ -128,6 +128,7 @@ app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapInternalControlledUatFiscalIssuanceEndpoints();
+app.MapFiscalIssuanceStatusEndpoints();
 app.MapInternalFiscalExceptionQueueSemanticHashBackfillEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
@@ -361,6 +362,7 @@ static void ConfigureApplicationServices(
         new RecordPaymentConfirmationGateway(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IFiscalIssuanceStatusReadService, FiscalIssuanceStatusReadService>();
     builder.Services.AddScoped<IFiscalExceptionQueueReferenceReader>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalExceptionReadbackAttemptRepository>(_ =>
