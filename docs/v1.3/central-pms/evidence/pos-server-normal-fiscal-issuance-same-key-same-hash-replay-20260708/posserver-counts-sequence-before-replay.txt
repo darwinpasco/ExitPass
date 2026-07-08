@@ -1,0 +1,4 @@
+current_database|posserver_api_smoke_validation_local
+fiscal_documents_for_uat|1
+idempotency_for_uat_key_hash|1
+sequence_state_value|1

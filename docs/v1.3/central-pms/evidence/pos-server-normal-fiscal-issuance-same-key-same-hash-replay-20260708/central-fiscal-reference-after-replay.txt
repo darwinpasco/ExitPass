@@ -1,0 +1,30 @@
+-[ RECORD 1 ]------------------------+-----------------------------------------------------------------
+fiscal_issuance_reference_id         | a078eec1-a027-422b-87c0-9ec2a8523682
+payment_confirmation_id              | 00000000-0000-4000-8000-000000000301
+payment_attempt_id                   | 00000000-0000-4000-8000-000000000302
+parking_session_id                   | 00000000-0000-4000-8000-000000000303
+site_pos_server_id                   | 10000000-0000-4000-8000-000000000201
+site_pos_server_ref                  | DEV-POS-SERVER-ATC-001
+upstream_finality_reference          | CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001
+pos_server_fiscal_document_id        | deac11e4-fc31-4c40-9a44-da690b9730ef
+fiscal_identity_id                   | 10000000-0000-4000-8000-000000000701
+fiscal_sequence_policy_id            | 10000000-0000-4000-8000-000000000803
+fiscal_sequence_value                | 1
+fiscal_document_number               | SI-00000001-UAT
+fiscal_series                        | central-pms-uat-si-sequence-policy
+fiscal_number_assigned_at            | 2026-07-08 01:32:13.481689+00
+result_classification                | IDEMPOTENT_REPLAY
+fiscal_issuance_evidence_status      | FISCAL_DOCUMENT_NUMBER_ASSIGNED
+fiscal_number_assignment_state       | ASSIGNED
+fiscal_issuance_state                | FISCAL_ISSUANCE_REPLAYED
+latest_exception_reason              | 
+latest_error_code                    | 
+latest_error_posture                 | 
+correlation_id                       | 00000000-0000-4000-8000-000000000101
+semantic_request_hash_status         | AVAILABLE
+semantic_request_hash_value          | ea863d4f8dc2c11e061236bec63855a26e896e700b4de92e5666bf8ee78cd38d
+semantic_request_hash_algorithm      | SHA-256
+semantic_request_hash_source_version | sha256:v1
+first_recorded_at                    | 2026-07-08 02:03:45.563967+00
+last_updated_at                      | 2026-07-08 02:03:45.990465+00
+

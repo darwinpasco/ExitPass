@@ -1,0 +1,1 @@
+Get-Content -Raw docs\v1.3\central-pms\evidence\pos-server-normal-fiscal-issuance-uat-20260706\Seed-NormalFiscalIssuanceUatRows.sql | docker exec -i exitpass-postgres psql -v ON_ERROR_STOP=1 -U exitpass -d centralpms_feq_retry_uat_local

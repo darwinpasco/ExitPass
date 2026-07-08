@@ -1,0 +1,6 @@
+      Request starting HTTP/1.1 POST http://localhost:5000/v1/fiscal-documents/ - application/json;+charset=utf-8 -
+      Executing endpoint 'HTTP: POST /v1/fiscal-documents/'
+      Setting HTTP status code 202.
+      Writing value of type 'CreateFiscalDocumentResponse' as Json.
+      Executed endpoint 'HTTP: POST /v1/fiscal-documents/'
+      Request finished HTTP/1.1 POST http://localhost:5000/v1/fiscal-documents/ - 202 - application/json;+charset=utf-8 299.4147ms

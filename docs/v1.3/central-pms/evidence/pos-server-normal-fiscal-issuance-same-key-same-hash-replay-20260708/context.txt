@@ -1,0 +1,6 @@
+branch=test/central-pms-pos-server-normal-issuance-same-hash-replay
+commit=be0814f7c94c95ce6e0c9c002e5946e9952f61cf
+date=2026-07-08T09:58:05.7467146+08:00
+central_pms_db=centralpms_feq_retry_uat_local
+pos_server_db=posserver_api_smoke_validation_local
+upstream_finality_ref=CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001
