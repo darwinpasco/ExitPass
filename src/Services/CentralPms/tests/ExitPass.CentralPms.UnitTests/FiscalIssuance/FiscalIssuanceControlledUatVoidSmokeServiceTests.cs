@@ -44,9 +44,52 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
             Arg.Is<PosServerFiscalDocumentVoidRequest>(request =>
                 request.IdempotencyKey == FiscalIssuanceControlledUatVoidSmokeService.ApprovedIdempotencyKey &&
                 request.ReasonCode == FiscalIssuanceControlledUatVoidSmokeService.PosServerReasonCode &&
+                request.ReasonText == FiscalIssuanceControlledUatVoidSmokeService.PosServerReasonText &&
                 request.RequestedByRef == "central-pms-controlled-uat" &&
                 request.CorrelationId == "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df" &&
                 request.SourceSystemRef == "central-pms" &&
+                request.BusinessDayDate == DateOnly.Parse("2026-07-09")),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenApprovedConflictMode_PosServerConflictFailsClosed()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        client.VoidFiscalDocumentAsync(
+                Arg.Any<Guid>(),
+                Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<CancellationToken>())
+            .Returns(PosVoidResult(
+                PosServerFiscalDocumentVoidOutcome.Conflict,
+                "conflict",
+                succeeded: false,
+                httpStatusCode: 409));
+
+        var response = await CreateSut(client: client)
+            .RunAsync(ApprovedRequest() with
+            {
+                Scenario = FiscalIssuanceControlledUatVoidSmokeService.ScenarioRealVoidConflict
+            }, CancellationToken.None);
+
+        response.Accepted.Should().BeFalse();
+        response.HttpStatusCode.Should().Be(409);
+        response.Status.Should().Be("pos_server_void_conflict");
+        response.PosServerResultClassification.Should().Be("conflict");
+        response.NewFiscalNumberAllocated.Should().BeFalse();
+        response.PaymentFinalityChanged.Should().BeFalse();
+        response.ExitAuthorizationIssued.Should().BeFalse();
+        response.GateBehaviorTriggered.Should().BeFalse();
+
+        await client.Received(1).VoidFiscalDocumentAsync(
+            Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"),
+            Arg.Is<PosServerFiscalDocumentVoidRequest>(request =>
+                request.IdempotencyKey == FiscalIssuanceControlledUatVoidSmokeService.ApprovedIdempotencyKey &&
+                request.ReasonCode == FiscalIssuanceControlledUatVoidSmokeService.PosServerReasonCode &&
+                request.ReasonText == FiscalIssuanceControlledUatVoidSmokeService.PosServerConflictReasonText &&
+                request.RequestedByRef == FiscalIssuanceControlledUatVoidSmokeService.RequestedByRef &&
+                request.CorrelationId == "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df" &&
+                request.SourceSystemRef == FiscalIssuanceControlledUatVoidSmokeService.SourceSystemRef &&
                 request.BusinessDayDate == DateOnly.Parse("2026-07-09")),
             Arg.Any<CancellationToken>());
     }
@@ -165,6 +208,19 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
 
         response.HttpStatusCode.Should().Be(400);
         response.Errors.Should().Contain("reason_code_not_approved");
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenScenarioIsUnknown_RejectsBeforePosServerCall()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+
+        var response = await CreateSut(client: client)
+            .RunAsync(ApprovedRequest() with { Scenario = "arbitrary_void" }, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(400);
+        response.Errors.Should().Contain("controlled_void_scenario_not_approved");
         await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
     }
 
