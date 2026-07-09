@@ -91,7 +91,12 @@ public sealed record FiscalIssuanceStatusResponse(
     string? LatestExceptionReason,
     DateTimeOffset FirstRecordedAt,
     DateTimeOffset LastUpdatedAt,
-    Guid? CorrelationId)
+    Guid? CorrelationId,
+    string? PosServerFiscalDocumentReadStatus,
+    string? PosServerFiscalDocumentStatusCodeKey,
+    string? PosServerVoidStatus,
+    string? PosServerVoidReasonCode,
+    DateTimeOffset? PosServerVoidedAt)
 {
     public static FiscalIssuanceStatusResponse FromReadModel(FiscalIssuanceStatusReadModel model) =>
         new(
@@ -129,7 +134,12 @@ public sealed record FiscalIssuanceStatusResponse(
             LatestExceptionReason: model.LatestExceptionReason,
             FirstRecordedAt: model.FirstRecordedAt,
             LastUpdatedAt: model.LastUpdatedAt,
-            CorrelationId: model.CorrelationId);
+            CorrelationId: model.CorrelationId,
+            PosServerFiscalDocumentReadStatus: model.PosServerFiscalDocumentReadStatus,
+            PosServerFiscalDocumentStatusCodeKey: model.PosServerFiscalDocumentStatusCodeKey,
+            PosServerVoidStatus: model.PosServerVoidStatus,
+            PosServerVoidReasonCode: model.PosServerVoidReasonCode,
+            PosServerVoidedAt: model.PosServerVoidedAt);
 }
 
 #pragma warning restore CS1591

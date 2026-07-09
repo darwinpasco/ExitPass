@@ -266,6 +266,7 @@ public sealed class PosServerFiscalDocumentResponseParserTests
               "message": "Fiscal document found.",
               "document": {
                 "fiscalDocumentId": "11111111-1111-1111-1111-111111111111",
+                "fiscalDocumentStatusCodeKey": "voided",
                 "fiscalIdentityId": "22222222-2222-2222-2222-222222222222",
                 "fiscalSequencePolicyId": "44444444-4444-4444-4444-444444444444",
                 "fiscalSequenceValue": 7,
@@ -274,7 +275,10 @@ public sealed class PosServerFiscalDocumentResponseParserTests
                 "fiscalNumberPrefixText": "SI-",
                 "fiscalNumberSuffixText": null,
                 "fiscalNumberAssignedAt": "2026-07-06T10:30:00+08:00",
-                "fiscalNumberAssignedByRef": "pos-server-runtime"
+                "fiscalNumberAssignedByRef": "pos-server-runtime",
+                "voidStatus": "recorded",
+                "voidReasonCode": "operator_error",
+                "voidedAt": "2026-07-09T16:45:00Z"
               },
               "fiscalIssuanceEvidenceStatus": "fiscal_document_number_assigned",
               "fiscalNumberAssignmentState": "assigned"
@@ -289,6 +293,10 @@ public sealed class PosServerFiscalDocumentResponseParserTests
         result.FiscalNumberPrefixText.Should().Be("SI-");
         result.FiscalNumberAssignedAt.Should().Be(DateTimeOffset.Parse("2026-07-06T10:30:00+08:00"));
         result.FiscalNumberAssignedByRef.Should().Be("pos-server-runtime");
+        result.FiscalDocumentStatusCodeKey.Should().Be("voided");
+        result.VoidStatus.Should().Be("recorded");
+        result.VoidReasonCode.Should().Be("operator_error");
+        result.VoidedAt.Should().Be(DateTimeOffset.Parse("2026-07-09T16:45:00Z"));
     }
 
     [Fact]

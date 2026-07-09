@@ -14,10 +14,19 @@ public interface IFiscalIssuanceStatusReadService
 public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadService
 {
     private readonly IFiscalIssuanceReferenceRepository _repository;
+    private readonly IPosServerFiscalDocumentClient? _posServerClient;
 
     public FiscalIssuanceStatusReadService(IFiscalIssuanceReferenceRepository repository)
     {
         _repository = repository;
+    }
+
+    public FiscalIssuanceStatusReadService(
+        IFiscalIssuanceReferenceRepository repository,
+        IPosServerFiscalDocumentClient posServerClient)
+        : this(repository)
+    {
+        _posServerClient = posServerClient;
     }
 
     public async Task<FiscalIssuanceStatusReadModel?> GetByReferenceIdAsync(
@@ -33,7 +42,60 @@ public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadS
             fiscalIssuanceReferenceId,
             cancellationToken);
 
-        return reference is null ? null : FromReference(reference);
+        if (reference is null)
+        {
+            return null;
+        }
+
+        var status = FromReference(reference);
+        return await EnrichWithPosServerReadAsync(status, reference, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<FiscalIssuanceStatusReadModel> EnrichWithPosServerReadAsync(
+        FiscalIssuanceStatusReadModel status,
+        FiscalIssuanceReferenceRecord reference,
+        CancellationToken cancellationToken)
+    {
+        if (_posServerClient is null || reference.PosServerFiscalDocumentId is null)
+        {
+            return status;
+        }
+
+        PosServerFiscalDocumentReadResult posRead;
+        try
+        {
+            posRead = await _posServerClient.GetFiscalDocumentAsync(
+                    reference.PosServerFiscalDocumentId.Value,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return status with { PosServerFiscalDocumentReadStatus = "FAILED_SAFELY" };
+        }
+
+        if (!posRead.Succeeded)
+        {
+            return status with
+            {
+                PosServerFiscalDocumentReadStatus = posRead.HttpStatusCode == 404 ? "NOT_FOUND" : "FAILED_SAFELY"
+            };
+        }
+
+        if (posRead.FiscalDocumentId != reference.PosServerFiscalDocumentId)
+        {
+            return status with { PosServerFiscalDocumentReadStatus = "MISMATCH" };
+        }
+
+        return status with
+        {
+            PosServerFiscalDocumentReadStatus = "AVAILABLE",
+            PosServerFiscalDocumentStatusCodeKey = posRead.FiscalDocumentStatusCodeKey,
+            PosServerVoidStatus = posRead.VoidStatus,
+            PosServerVoidReasonCode = posRead.VoidReasonCode,
+            PosServerVoidedAt = posRead.VoidedAt
+        };
     }
 
     private static FiscalIssuanceStatusReadModel FromReference(FiscalIssuanceReferenceRecord reference) =>
@@ -199,6 +261,11 @@ public sealed record FiscalIssuanceStatusReadModel(
     string? LatestExceptionReason,
     DateTimeOffset FirstRecordedAt,
     DateTimeOffset LastUpdatedAt,
-    Guid? CorrelationId);
+    Guid? CorrelationId,
+    string? PosServerFiscalDocumentReadStatus = null,
+    string? PosServerFiscalDocumentStatusCodeKey = null,
+    string? PosServerVoidStatus = null,
+    string? PosServerVoidReasonCode = null,
+    DateTimeOffset? PosServerVoidedAt = null);
 
 #pragma warning restore CS1591
