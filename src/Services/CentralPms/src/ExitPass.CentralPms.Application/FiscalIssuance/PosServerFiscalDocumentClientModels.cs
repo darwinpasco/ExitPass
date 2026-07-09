@@ -11,6 +11,11 @@ public interface IPosServerFiscalDocumentClient
     Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
         Guid fiscalDocumentId,
         CancellationToken cancellationToken);
+
+    Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
+        Guid fiscalDocumentId,
+        PosServerFiscalDocumentVoidRequest request,
+        CancellationToken cancellationToken);
 }
 
 public sealed record CentralPmsFiscalDocumentMappingContext(
@@ -247,3 +252,45 @@ public sealed record PosServerFiscalDocumentReadResult(
     string? FiscalNumberSuffixText = null,
     DateTimeOffset? FiscalNumberAssignedAt = null,
     string? FiscalNumberAssignedByRef = null);
+
+public sealed record PosServerFiscalDocumentVoidRequest(
+    string IdempotencyKey,
+    string ReasonCode,
+    string? ReasonText,
+    string RequestedByRef,
+    DateTimeOffset? RequestedAt,
+    string CorrelationId,
+    string SourceSystemRef,
+    DateOnly? BusinessDayDate);
+
+public enum PosServerFiscalDocumentVoidOutcome
+{
+    NewlyVoided = 1,
+    IdempotentReplay = 2,
+    AlreadyVoided = 3,
+    Conflict = 4,
+    Rejected = 5,
+    NotFound = 6,
+    FailedService = 7,
+    InvalidResponse = 8
+}
+
+public sealed record PosServerFiscalDocumentVoidResult(
+    PosServerFiscalDocumentVoidOutcome Outcome,
+    bool Succeeded,
+    int HttpStatusCode,
+    string Code,
+    string Message,
+    Guid? FiscalDocumentId,
+    string? FiscalDocumentNumber,
+    long? FiscalSequenceValue,
+    string? FiscalDocumentStatus,
+    string? VoidStatus,
+    DateTimeOffset? VoidedAt,
+    string? VoidReasonCode,
+    string? VoidReasonText,
+    string? RequestedByRef,
+    string? IdempotencyKey,
+    string? ResultClassification,
+    string? CorrelationId,
+    string? ErrorPosture);

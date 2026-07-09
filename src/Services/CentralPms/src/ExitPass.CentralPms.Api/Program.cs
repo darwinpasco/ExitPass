@@ -496,6 +496,13 @@ static void ConfigureApplicationServices(
             ? new PersistenceNotConfiguredControlledUatFiscalVoidSmokeStore()
             : new PostgresControlledUatFiscalVoidSmokeStore(posServerConnectionString);
     });
+    builder.Services.AddScoped<IControlledUatFiscalVoidSafetyGuard>(_ =>
+    {
+        var posServerConnectionString = builder.Configuration.GetConnectionString("PosServer");
+        return string.IsNullOrWhiteSpace(posServerConnectionString)
+            ? new PersistenceNotConfiguredControlledUatFiscalVoidSafetyGuard()
+            : new PostgresControlledUatFiscalVoidSafetyGuard(posServerConnectionString);
+    });
     builder.Services.AddScoped<IFiscalIssuanceControlledUatInvocationService, FiscalIssuanceControlledUatInvocationService>();
     builder.Services.AddScoped<IFiscalIssuanceControlledUatVoidSmokeService, FiscalIssuanceControlledUatVoidSmokeService>();
 
