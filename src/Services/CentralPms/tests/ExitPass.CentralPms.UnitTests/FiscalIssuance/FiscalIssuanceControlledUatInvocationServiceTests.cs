@@ -191,6 +191,33 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.SensitiveDataExcluded.Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("run_id", "wrong-run-id", "run_id_not_approved_for_first_run")]
+    [InlineData("correlation_id", "00000000-0000-4000-8000-000000000101", "correlation_id_not_approved_for_first_run")]
+    [InlineData("upstream_finality_ref", "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001", "upstream_finality_ref_not_approved_for_first_run")]
+    [InlineData("business_day_date", "2026-07-03", "business_day_date_not_approved_for_first_run")]
+    public async Task RunAsync_WhenApprovedGateValueDiffers_Rejects(
+        string field,
+        string value,
+        string expectedError)
+    {
+        var request = field switch
+        {
+            "run_id" => ValidRequest() with { RunId = value },
+            "correlation_id" => ValidRequest() with { CorrelationId = value },
+            "upstream_finality_ref" => ValidRequest() with { UpstreamFinalityRef = value },
+            "business_day_date" => ValidRequest() with { BusinessDayDate = DateOnly.Parse(value) },
+            _ => throw new ArgumentOutOfRangeException(nameof(field), field, null)
+        };
+
+        var response = await CreateSut().RunAsync(request, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(400);
+        response.Errors.Should().Contain(expectedError);
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+    }
+
     [Fact]
     public async Task RunAsync_WhenRequestIsValid_InvokesHarnessOnceAndReturnsSafeEvidence()
     {
@@ -211,7 +238,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.HttpStatusCode.Should().Be(200);
         response.Status.Should().Be(FiscalIssuanceControlledUatHarnessStatuses.NewlyCreatedRecorded);
         response.EvidenceJson.Should().NotBeNullOrWhiteSpace();
-        response.EvidenceJson.Should().Contain("CPS-POS-UAT-20260703-DEV-ATC-001");
+        response.EvidenceJson.Should().Contain("CPS-POS-UAT-20260709-DEV-ATC-001");
         response.PaymentFinalityChanged.Should().BeFalse();
         response.ExitAuthorizationIssued.Should().BeFalse();
         response.GateBehaviorTriggered.Should().BeFalse();
@@ -254,7 +281,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.HttpStatusCode.Should().Be(200);
         await orchestration.Received(1).PreparePendingAsync(
             Arg.Is<PrepareFiscalIssuanceCommand>(command =>
-                command.UpstreamFinalityReference == "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001" &&
+                command.UpstreamFinalityReference == "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001" &&
                 command.SitePosServerRef == "DEV-POS-SERVER-ATC-001" &&
                 command.SitePosServerId == Guid.Parse("10000000-0000-4000-8000-000000000201") &&
                 command.FiscalDocumentTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000103") &&
@@ -441,11 +468,11 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
 
     private static ControlledUatFiscalIssuanceInvocationRequest ValidRequest() =>
         new(
-            RunId: "CPS-POS-UAT-20260703-DEV-ATC-001",
+            RunId: "CPS-POS-UAT-20260709-DEV-ATC-001",
             ApprovalReference: "DEV-UAT-CPS-POS-001",
             ApprovedBy: "Darwin Pasco",
             ExplicitExecutionApproval: true,
-            CorrelationId: "00000000-0000-4000-8000-000000000101",
+            CorrelationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
             EnvironmentName: "DEV-CONTROLLED-UAT-LOCAL",
             SiteRef: "DEV-SITE-ATC-001",
             SitePosServerRef: "DEV-POS-SERVER-ATC-001",
@@ -457,9 +484,9 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             PaymentAttemptRef: "DEV-PAYMENT-ATTEMPT-ATC-001",
             PaymentConfirmationRef: "DEV-PAYMENT-CONFIRMATION-ATC-001",
             PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
-            UpstreamFinalityRef: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+            UpstreamFinalityRef: "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001",
             FiscalDocumentType: "sales_invoice",
-            BusinessDayDate: new DateOnly(2026, 7, 3),
+            BusinessDayDate: new DateOnly(2026, 7, 9),
             Currency: "PHP",
             AmountMinorUnits: 10000,
             LineSummary: "Parking fee - controlled UAT development test",
@@ -480,7 +507,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             FailureIncluded: false,
             UnknownIncluded: false,
             EvidenceReference: "DEV-UAT-CPS-POS-001",
-            EvidenceLocation: @"D:\ExitPass-UAT-Evidence\DEV-CONTROLLED-UAT-LOCAL\DEV-SITE-ATC-001\2026-07-03\CPS-POS-UAT-20260703-DEV-ATC-001",
+            EvidenceLocation: @"D:\ExitPass-UAT-Evidence\CPS-POS-UAT-20260709-DEV-ATC-001",
             EvidenceOwner: "Darwin Pasco");
 
     private static FiscalIssuanceControlledUatHarnessResult HarnessResult(string runId) =>
@@ -504,8 +531,8 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             ExitAuthorizationIssued: false,
             GateBehaviorTriggered: false,
             EvidenceReference: "DEV-UAT-CPS-POS-001",
-            EvidenceLocation: @"D:\ExitPass-UAT-Evidence\DEV-CONTROLLED-UAT-LOCAL\DEV-SITE-ATC-001\2026-07-03\CPS-POS-UAT-20260703-DEV-ATC-001",
-            CorrelationId: "00000000-0000-4000-8000-000000000101",
+            EvidenceLocation: @"D:\ExitPass-UAT-Evidence\CPS-POS-UAT-20260709-DEV-ATC-001",
+            CorrelationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
             Errors: Array.Empty<string>());
 
     private static FiscalIssuanceReferenceRecord PendingReference(Guid fiscalIssuanceReferenceId) =>
@@ -519,7 +546,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             SitePosServerId: null,
             SitePosServerRef: "DEV-POS-SERVER-ATC-001",
             PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
-            UpstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001",
+            UpstreamFinalityReference: "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001",
             PosServerFiscalDocumentId: null,
             FiscalIdentityId: null,
             FiscalSequencePolicyId: null,
@@ -538,7 +565,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             LatestExceptionReason: null,
             LatestErrorCode: null,
             LatestErrorPosture: null,
-            CorrelationId: Guid.Parse("00000000-0000-4000-8000-000000000101"),
+            CorrelationId: Guid.Parse("b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df"),
             PosServerResponseTimestamp: null,
             FirstRecordedAt: DateTimeOffset.UtcNow,
             LastUpdatedAt: DateTimeOffset.UtcNow,
