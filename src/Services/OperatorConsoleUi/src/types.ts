@@ -317,6 +317,43 @@ export interface AuditReportItem {
   accessEvaluationSummary?: string;
 }
 
+export type FiscalStatusViewAuditResultClass = "SUCCEEDED" | "DENIED" | "NOT_FOUND" | "FAILED_SAFELY";
+
+export interface FiscalStatusViewAuditReportQuery {
+  from?: string;
+  to?: string;
+  siteId?: string;
+  siteGroupId?: string;
+  operatorUserId?: string;
+  fiscalIssuanceReferenceId?: string;
+  resultClass?: FiscalStatusViewAuditResultClass | string;
+  correlationId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface FiscalStatusViewAuditReportResponse {
+  items: FiscalStatusViewAuditReportItem[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  correlationId: string;
+}
+
+export interface FiscalStatusViewAuditReportItem {
+  actionLogEntryId: string;
+  actionTimestamp: string;
+  actionCode: string;
+  resultClass: FiscalStatusViewAuditResultClass | string;
+  operatorUserId: string;
+  siteId?: string;
+  siteGroupId?: string;
+  fiscalIssuanceReferenceId: string;
+  correlationId: string;
+  safeDenialOrErrorPosture?: string;
+  sourceModule?: string;
+}
+
 export type VendorPaymentAcknowledgmentStatus =
   | "PENDING"
   | "RETRY_PENDING"

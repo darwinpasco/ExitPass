@@ -482,6 +482,14 @@ dd {
   gap: 7px;
 }
 
+.paginationControls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 .ticketLookupForm {
   align-items: end;
   display: grid;

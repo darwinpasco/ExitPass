@@ -12,6 +12,9 @@ import type {
   AuditReportQuery,
   AuditReportResponse,
   FiscalIssuanceStatus,
+  FiscalStatusViewAuditReportItem,
+  FiscalStatusViewAuditReportQuery,
+  FiscalStatusViewAuditReportResponse,
   LoadState,
   PolicyContextKind,
   ProductionPolicyImportDryRunResult,
@@ -44,6 +47,7 @@ const routes = {
   ticketLookup: "/operator-console/ticket-lookup",
   fiscalStatus: "/operator-console/fiscal-issuance-status",
   audit: "/operator-console/audit",
+  fiscalStatusViewAudit: "/operator-console/audit/fiscal-status-views",
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/",
   vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
@@ -161,6 +165,13 @@ export function App({ apiClient, initialPath }: AppProps) {
               Audit / Reporting
             </button>
             <button
+              className={`navLink ${path === routes.fiscalStatusViewAudit ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.fiscalStatusViewAudit)}
+            >
+              Fiscal View Audit
+            </button>
+            <button
               className={`navLink ${path === routes.vendorAcknowledgments ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.vendorAcknowledgments)}
@@ -211,6 +222,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.audit ? (
             <AuditReportPage client={client} />
+          ) : path === routes.fiscalStatusViewAudit ? (
+            <FiscalStatusViewAuditReportPage client={client} />
           ) : path === routes.vendorAcknowledgments ? (
             <VendorPaymentAcknowledgmentsPage client={client} />
           ) : path === routes.vendorProjectionHealth ? (
@@ -409,6 +422,305 @@ function AuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
       </section>
     </>
   );
+}
+
+function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
+  const [filters, setFilters] = useState<FiscalStatusViewAuditReportQuery>({ limit: 25, offset: 0 });
+  const [draftFilters, setDraftFilters] = useState<FiscalStatusViewAuditReportQuery>({ limit: 25, offset: 0 });
+  const [reportState, setReportState] = useState<LoadState<FiscalStatusViewAuditReportResponse>>({ status: "loading" });
+
+  useEffect(() => {
+    let active = true;
+    setReportState({ status: "loading" });
+
+    client
+      .listFiscalStatusViewAuditReport(filters)
+      .then((report) => {
+        if (!active) {
+          return;
+        }
+
+        setReportState(report.items.length === 0 ? { status: "empty" } : { status: "loaded", data: report });
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        const mapped = mapApiError(error);
+        if (mapped.status === "access-denied") {
+          setReportState({ status: "access-denied", message: mapped.message });
+          return;
+        }
+
+        setReportState({ status: "error", message: mapped.message });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, filters]);
+
+  function submitFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFilters({
+      ...draftFilters,
+      limit: draftFilters.limit ?? 25,
+      offset: 0
+    });
+  }
+
+  function changePage(nextOffset: number) {
+    setDraftFilters((current) => ({ ...current, offset: nextOffset }));
+    setFilters((current) => ({ ...current, offset: nextOffset }));
+  }
+
+  const pageLimit = reportState.status === "loaded" ? reportState.data.limit : filters.limit ?? 25;
+  const pageOffset = reportState.status === "loaded" ? reportState.data.offset : filters.offset ?? 0;
+  const canGoPrevious = pageOffset > 0;
+  const canGoNext = reportState.status === "loaded" && pageOffset + pageLimit < reportState.data.totalCount;
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Audit / Reporting</p>
+          <h2>Fiscal status view-audit report</h2>
+          <p>Read-only report of Operator Console fiscal status view events.</p>
+        </div>
+      </section>
+
+      <section className="panel auditGuardrail" aria-labelledby="fiscal-view-audit-guardrail-title">
+        <div className="panelHeader">
+          <h3 id="fiscal-view-audit-guardrail-title">Read-only boundaries</h3>
+          <span className="statusPill">View logs only</span>
+        </div>
+        <p>View logs are observational only.</p>
+        <p>View logs do not prove payment.</p>
+        <p>View logs do not prove fiscal issuance.</p>
+        <p>View logs do not authorize exit.</p>
+        <p>View logs do not imply gate action.</p>
+      </section>
+
+      <section className="panel" aria-labelledby="fiscal-view-audit-filters-title">
+        <div className="panelHeader">
+          <h3 id="fiscal-view-audit-filters-title">Filters</h3>
+        </div>
+        <form className="auditFilterGrid" onSubmit={submitFilters}>
+          <label>
+            Date from
+            <input
+              type="datetime-local"
+              value={draftFilters.from ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, from: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Date to
+            <input
+              type="datetime-local"
+              value={draftFilters.to ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, to: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Site ID
+            <input
+              value={draftFilters.siteId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, siteId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Site group ID
+            <input
+              value={draftFilters.siteGroupId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, siteGroupId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Operator/support user ID
+            <input
+              value={draftFilters.operatorUserId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, operatorUserId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Fiscal issuance reference ID
+            <input
+              value={draftFilters.fiscalIssuanceReferenceId ?? ""}
+              onChange={(event) =>
+                setDraftFilters((current) => ({ ...current, fiscalIssuanceReferenceId: event.target.value || undefined }))
+              }
+            />
+          </label>
+          <label>
+            Result class
+            <select
+              value={draftFilters.resultClass ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, resultClass: event.target.value || undefined }))}
+            >
+              <option value="">Any result</option>
+              <option value="SUCCEEDED">Succeeded</option>
+              <option value="DENIED">Denied</option>
+              <option value="NOT_FOUND">Not found</option>
+              <option value="FAILED_SAFELY">Failed safely</option>
+            </select>
+          </label>
+          <label>
+            Correlation ID
+            <input
+              value={draftFilters.correlationId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, correlationId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Limit
+            <select
+              value={String(draftFilters.limit ?? 25)}
+              onChange={(event) =>
+                setDraftFilters((current) => ({ ...current, limit: Number(event.target.value), offset: 0 }))
+              }
+            >
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <button type="submit">Apply filters</button>
+        </form>
+      </section>
+
+      <section className="panel" aria-labelledby="fiscal-view-audit-results-title">
+        <div className="panelHeader">
+          <h3 id="fiscal-view-audit-results-title">Report results</h3>
+          {reportState.status === "loaded" && <span className="statusPill">{reportState.data.totalCount} rows</span>}
+        </div>
+
+        {reportState.status === "loading" && (
+          <StateMessage title="Loading fiscal view audit report" message="Retrieving safe fiscal status view rows." />
+        )}
+        {reportState.status === "empty" && (
+          <StateMessage title="No fiscal view audit rows" message="No fiscal status view-audit rows matched the filters." />
+        )}
+        {reportState.status === "access-denied" && <StateMessage title="Access denied" message={reportState.message} />}
+        {reportState.status === "error" && (
+          <StateMessage title="Unable to load fiscal view audit report" message={reportState.message} />
+        )}
+        {reportState.status === "loaded" && (
+          <>
+            <p className="placeholderCopy">Report correlation ID: {reportState.data.correlationId}</p>
+            <div className="tableScroller">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Action Timestamp</th>
+                    <th>Action Code</th>
+                    <th>Result Class</th>
+                    <th>Operator / Support User ID</th>
+                    <th>Site ID</th>
+                    <th>Site Group ID</th>
+                    <th>Fiscal Issuance Reference ID</th>
+                    <th>Correlation ID</th>
+                    <th>Safe Posture</th>
+                    <th>Source Module</th>
+                    <th>Support / Audit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportState.data.items.map((item) => (
+                    <FiscalStatusViewAuditReportRow item={item} key={item.actionLogEntryId} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="paginationControls" aria-label="Fiscal view audit pagination">
+              <button type="button" disabled={!canGoPrevious} onClick={() => changePage(Math.max(0, pageOffset - pageLimit))}>
+                Previous page
+              </button>
+              <span>
+                Offset {pageOffset} / {reportState.data.totalCount}
+              </span>
+              <button type="button" disabled={!canGoNext} onClick={() => changePage(pageOffset + pageLimit)}>
+                Next page
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
+function FiscalStatusViewAuditReportRow({ item }: { item: FiscalStatusViewAuditReportItem }) {
+  const presentation = fiscalViewAuditResultPresentation(item.resultClass);
+  return (
+    <tr>
+      <td>{formatDateTime(item.actionTimestamp)}</td>
+      <td>{item.actionCode}</td>
+      <td>
+        <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
+      </td>
+      <td>{item.operatorUserId}</td>
+      <td>{displayValue(item.siteId)}</td>
+      <td>{displayValue(item.siteGroupId)}</td>
+      <td>{item.fiscalIssuanceReferenceId}</td>
+      <td>{item.correlationId}</td>
+      <td>{displayValue(item.safeDenialOrErrorPosture)}</td>
+      <td>{displayValue(item.sourceModule)}</td>
+      <td>
+        <details className="diagnosticsPanel">
+          <summary>Support/audit details</summary>
+          <DescriptionList
+            items={[
+              ["Action-log entry ID", item.actionLogEntryId],
+              ["Result meaning", presentation.meaning],
+              ["Action code", item.actionCode],
+              ["Fiscal issuance reference ID", item.fiscalIssuanceReferenceId],
+              ["Correlation ID", item.correlationId],
+              ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
+              ["Source module/screen", displayValue(item.sourceModule)]
+            ]}
+          />
+        </details>
+      </td>
+    </tr>
+  );
+}
+
+function fiscalViewAuditResultPresentation(resultClass: string) {
+  switch (resultClass) {
+    case "SUCCEEDED":
+      return {
+        label: "Succeeded",
+        className: "readiness-ready",
+        meaning: "Fiscal status was viewed by an authorized user."
+      };
+    case "DENIED":
+      return {
+        label: "Denied",
+        className: "blocked",
+        meaning: "The view was denied or unauthorized."
+      };
+    case "NOT_FOUND":
+      return {
+        label: "Not found",
+        className: "warningPill",
+        meaning: "The requested fiscal issuance reference was not available through the read path."
+      };
+    case "FAILED_SAFELY":
+      return {
+        label: "Failed safely",
+        className: "blocked",
+        meaning: "The view did not complete and failed without exposing unsafe details."
+      };
+    default:
+      return {
+        label: resultClass,
+        className: "",
+        meaning: "Unrecognized result class returned by the report endpoint."
+      };
+  }
 }
 
 function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient }) {

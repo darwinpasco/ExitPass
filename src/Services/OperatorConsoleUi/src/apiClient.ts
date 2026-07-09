@@ -6,6 +6,8 @@ import type {
   DraftStatus,
   EntitlementType,
   FiscalIssuanceStatus,
+  FiscalStatusViewAuditReportQuery,
+  FiscalStatusViewAuditReportResponse,
   OperatorConsoleApiError,
   OperatorTicketLookupInput,
   OperatorTicketLookupResult,
@@ -45,6 +47,7 @@ export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
+  listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
@@ -255,6 +258,28 @@ interface AuditReportResponseDto {
   correlationId: string;
 }
 
+interface FiscalStatusViewAuditReportItemDto {
+  actionLogEntryId: string;
+  actionTimestamp: string;
+  actionCode: string;
+  resultClass: string;
+  operatorUserId: string;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  fiscalIssuanceReferenceId: string;
+  correlationId: string;
+  safeDenialOrErrorPosture?: string | null;
+  sourceModule?: string | null;
+}
+
+interface FiscalStatusViewAuditReportResponseDto {
+  items: FiscalStatusViewAuditReportItemDto[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  correlationId: string;
+}
+
 interface OperatorTicketLookupResponseDto {
   ticketNumber?: string | null;
   cardNum?: string | null;
@@ -436,6 +461,29 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       );
 
       return parseResponse<FiscalIssuanceStatus>(response);
+    },
+
+    async listFiscalStatusViewAuditReport(input = {}) {
+      const requestCorrelationId = newCorrelationId();
+      const search = new URLSearchParams();
+      addQuery(search, "from", input.from);
+      addQuery(search, "to", input.to);
+      addQuery(search, "siteId", input.siteId);
+      addQuery(search, "siteGroupId", input.siteGroupId);
+      addQuery(search, "operatorUserId", input.operatorUserId);
+      addQuery(search, "fiscalIssuanceReferenceId", input.fiscalIssuanceReferenceId);
+      addQuery(search, "resultClass", input.resultClass);
+      addQuery(search, "correlationId", input.correlationId);
+      addQuery(search, "limit", input.limit?.toString());
+      addQuery(search, "offset", input.offset?.toString());
+
+      const query = search.toString();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/audit/fiscal-status-views${query ? `?${query}` : ""}`,
+        { headers: operatorConsoleHeaders(requestCorrelationId) }
+      );
+
+      return toFiscalStatusViewAuditReport(await parseResponse<FiscalStatusViewAuditReportResponseDto>(response));
     },
 
     async listAuditReport(input = {}) {
@@ -799,9 +847,12 @@ export function createMockOperatorConsoleApiClient(
     ticketLookupResults?: OperatorTicketLookupResult[];
     fiscalStatusError?: OperatorConsoleApiError;
     fiscalStatuses?: FiscalIssuanceStatus[];
+    fiscalStatusViewAuditReportError?: OperatorConsoleApiError;
+    fiscalStatusViewAuditReport?: FiscalStatusViewAuditReportResponse;
     empty?: boolean;
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
     onFiscalStatusLookup?: (fiscalIssuanceReferenceId: string) => void;
+    onFiscalStatusViewAuditReport?: (input: FiscalStatusViewAuditReportQuery) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
     onPayableBasisApply?: (input: StatutoryDiscountPayableBasisApplicationInput) => void;
@@ -879,6 +930,23 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return { ...match };
+    },
+
+    async listFiscalStatusViewAuditReport(input = {}) {
+      await delay();
+      options.onFiscalStatusViewAuditReport?.(input);
+      if (options.fiscalStatusViewAuditReportError) {
+        throw options.fiscalStatusViewAuditReportError;
+      }
+
+      const report = options.fiscalStatusViewAuditReport ?? mockFiscalStatusViewAuditReport();
+      return {
+        ...report,
+        items: options.empty ? [] : report.items.map((item) => ({ ...item })),
+        totalCount: options.empty ? 0 : report.totalCount,
+        limit: input.limit ?? report.limit,
+        offset: input.offset ?? report.offset
+      };
     },
 
     async listAuditReport() {
@@ -2204,6 +2272,28 @@ function toAuditReport(dto: AuditReportResponseDto): AuditReportResponse {
   };
 }
 
+function toFiscalStatusViewAuditReport(dto: FiscalStatusViewAuditReportResponseDto): FiscalStatusViewAuditReportResponse {
+  return {
+    items: dto.items.map((item) => ({
+      actionLogEntryId: item.actionLogEntryId,
+      actionTimestamp: item.actionTimestamp,
+      actionCode: item.actionCode,
+      resultClass: item.resultClass,
+      operatorUserId: item.operatorUserId,
+      siteId: item.siteId ?? undefined,
+      siteGroupId: item.siteGroupId ?? undefined,
+      fiscalIssuanceReferenceId: item.fiscalIssuanceReferenceId,
+      correlationId: item.correlationId,
+      safeDenialOrErrorPosture: item.safeDenialOrErrorPosture ?? undefined,
+      sourceModule: item.sourceModule ?? undefined
+    })),
+    totalCount: dto.totalCount,
+    limit: dto.limit,
+    offset: dto.offset,
+    correlationId: dto.correlationId
+  };
+}
+
 function toAuditReportItem(draft: StatutoryDiscountDraftDetail) {
   return {
     statutoryDiscountValidationId: draft.draftId,
@@ -2369,6 +2459,68 @@ function mockFiscalIssuanceStatuses(): FiscalIssuanceStatus[] {
       correlationId: "5f000000-0000-0000-0000-000000000008"
     }
   ];
+}
+
+function mockFiscalStatusViewAuditReport(): FiscalStatusViewAuditReportResponse {
+  return {
+    items: [
+      {
+        actionLogEntryId: "6b000000-0000-0000-0000-000000000001",
+        actionTimestamp: "2026-07-08T01:30:00Z",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "SUCCEEDED",
+        operatorUserId: defaultOperatorContext.userId,
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000001",
+        correlationId: "6b000000-0000-0000-0000-000000000099",
+        sourceModule: "operator-console-fiscal-issuance-status"
+      },
+      {
+        actionLogEntryId: "6b000000-0000-0000-0000-000000000002",
+        actionTimestamp: "2026-07-08T01:20:00Z",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "DENIED",
+        operatorUserId: defaultOperatorContext.userId,
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000002",
+        correlationId: "6b000000-0000-0000-0000-000000000098",
+        safeDenialOrErrorPosture: "Operator Console fiscal issuance status access was denied.",
+        sourceModule: "operator-console-fiscal-issuance-status"
+      },
+      {
+        actionLogEntryId: "6b000000-0000-0000-0000-000000000003",
+        actionTimestamp: "2026-07-08T01:10:00Z",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "NOT_FOUND",
+        operatorUserId: defaultOperatorContext.userId,
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000003",
+        correlationId: "6b000000-0000-0000-0000-000000000097",
+        safeDenialOrErrorPosture: "Fiscal issuance reference was not found.",
+        sourceModule: "operator-console-fiscal-issuance-status"
+      },
+      {
+        actionLogEntryId: "6b000000-0000-0000-0000-000000000004",
+        actionTimestamp: "2026-07-08T01:00:00Z",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "FAILED_SAFELY",
+        operatorUserId: defaultOperatorContext.userId,
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000004",
+        correlationId: "6b000000-0000-0000-0000-000000000096",
+        safeDenialOrErrorPosture: "Fiscal status view failed safely.",
+        sourceModule: "operator-console-fiscal-issuance-status"
+      }
+    ],
+    totalCount: 4,
+    limit: 25,
+    offset: 0,
+    correlationId: "6b000000-0000-0000-0000-000000000100"
+  };
 }
 
 const mockTicketLookupResults: OperatorTicketLookupResult[] = [

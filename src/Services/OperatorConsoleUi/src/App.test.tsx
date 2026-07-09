@@ -10,6 +10,7 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
+  FiscalStatusViewAuditReportResponse,
   FiscalIssuanceStatus,
   OperatorTicketLookupResult,
   ProductionPolicyImportDryRunResult,
@@ -49,6 +50,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
+      listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
         () =>
@@ -478,6 +480,135 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("Audit report unavailable.")).toBeInTheDocument();
   });
 
+  it("FiscalStatusViewAuditReport_LoadsRouteRowsLabelsAndReadOnlyGuardrail", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ fiscalStatusViewAuditReport: fiscalStatusViewAuditReportResponse() })}
+        initialPath="/operator-console/audit/fiscal-status-views"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Fiscal status view-audit report" })).toBeInTheDocument();
+    expect(screen.getByText("View logs are observational only.")).toBeInTheDocument();
+    expect(screen.getByText("View logs do not prove payment.")).toBeInTheDocument();
+    expect(screen.getByText("View logs do not prove fiscal issuance.")).toBeInTheDocument();
+    expect(screen.getByText("View logs do not authorize exit.")).toBeInTheDocument();
+    expect(screen.getByText("View logs do not imply gate action.")).toBeInTheDocument();
+    expect((await screen.findAllByText("VIEW_FISCAL_ISSUANCE_STATUS")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Denied").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Not found").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Failed safely").length).toBeGreaterThan(0);
+  });
+
+  it("FiscalStatusViewAuditReport_FiltersSubmitExpectedQueryAndRenderAllFilterControls", async () => {
+    const onFiscalStatusViewAuditReport = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatusViewAuditReport: fiscalStatusViewAuditReportResponse(),
+          onFiscalStatusViewAuditReport
+        })}
+        initialPath="/operator-console/audit/fiscal-status-views"
+      />
+    );
+
+    expect((await screen.findAllByText("5f000000-0000-0000-0000-000000000101")).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("Date from")).toBeInTheDocument();
+    expect(screen.getByLabelText("Date to")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("Site ID"), "77000000-0000-0000-0000-000000000002");
+    await userEvent.type(screen.getByLabelText("Site group ID"), "77000000-0000-0000-0000-000000000001");
+    await userEvent.type(screen.getByLabelText("Operator/support user ID"), "77000000-0000-0000-0000-000000000010");
+    await userEvent.type(screen.getByLabelText("Fiscal issuance reference ID"), "5f000000-0000-0000-0000-000000000104");
+    await userEvent.selectOptions(screen.getByLabelText("Result class"), "FAILED_SAFELY");
+    await userEvent.type(screen.getByLabelText("Correlation ID"), "6b000000-0000-0000-0000-000000000104");
+    await userEvent.selectOptions(screen.getByLabelText("Limit"), "50");
+    await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() => {
+      expect(onFiscalStatusViewAuditReport).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          siteId: "77000000-0000-0000-0000-000000000002",
+          siteGroupId: "77000000-0000-0000-0000-000000000001",
+          operatorUserId: "77000000-0000-0000-0000-000000000010",
+          fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000104",
+          resultClass: "FAILED_SAFELY",
+          correlationId: "6b000000-0000-0000-0000-000000000104",
+          limit: 50,
+          offset: 0
+        })
+      );
+    });
+  });
+
+  it("FiscalStatusViewAuditReport_PaginationUpdatesOffset", async () => {
+    const onFiscalStatusViewAuditReport = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatusViewAuditReport: fiscalStatusViewAuditReportResponse({ totalCount: 60 }),
+          onFiscalStatusViewAuditReport
+        })}
+        initialPath="/operator-console/audit/fiscal-status-views"
+      />
+    );
+
+    expect((await screen.findAllByText("5f000000-0000-0000-0000-000000000101")).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    await waitFor(() => {
+      expect(onFiscalStatusViewAuditReport).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 25, offset: 25 }));
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Previous page" }));
+
+    await waitFor(() => {
+      expect(onFiscalStatusViewAuditReport).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 25, offset: 0 }));
+    });
+  });
+
+  it("FiscalStatusViewAuditReport_AccessDeniedHidesRowsAndShowsAccessDenied", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatusViewAuditReportError: { status: "access-denied", message: "Access denied." }
+        })}
+        initialPath="/operator-console/audit/fiscal-status-views"
+      />
+    );
+
+    expect(await screen.findByText("Access denied")).toBeInTheDocument();
+    expect(screen.getByText("Access denied.")).toBeInTheDocument();
+    expect(screen.queryByText("5f000000-0000-0000-0000-000000000101")).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewAuditReport_DetailsCollapsedAndNoUnsafeFieldsOrActions", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ fiscalStatusViewAuditReport: fiscalStatusViewAuditReportResponse() })}
+        initialPath="/operator-console/audit/fiscal-status-views"
+      />
+    );
+
+    expect((await screen.findAllByText("5f000000-0000-0000-0000-000000000101")).length).toBeGreaterThan(0);
+    const detailSummary = screen.getAllByText("Support/audit details")[0];
+    expect(detailSummary.closest("details")).not.toHaveAttribute("open");
+    expect(document.body.innerHTML).not.toMatch(
+      /raw fiscal request|raw POS Server request|raw POS Server response|secret-token|stack trace|customer PII|payment provider raw payload|statutory evidence payload|raw payment callback|local environment variable|credential/i
+    );
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /readback/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /writeback/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /POS Server action/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /payment confirmation/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /ExitAuthorization/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /gate opening/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /refund/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reversal/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /PDF|HTML|QR/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /raw evidence/i })).not.toBeInTheDocument();
+  });
+
   it("StatutoryDiscountDetail_EvidencePanelShowsMetadataOnlyAndMaskedReferenceGuidance", async () => {
     render(
       <App
@@ -800,6 +931,44 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(requestOptions?.method).toBeUndefined();
     expect(requestOptions?.body).toBeUndefined();
     expectOperatorContextHeaders(requestOptions?.headers);
+  });
+
+  it("OperatorConsoleApi_LoadsFiscalStatusViewAuditReportWithFiltersAndEncodedReference", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fiscalStatusViewAuditReportResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const report = await client.listFiscalStatusViewAuditReport({
+      from: "2026-07-01T00:00:00+08:00",
+      to: "2026-07-09T23:59:59+08:00",
+      siteId: "77000000-0000-0000-0000-000000000002",
+      siteGroupId: "77000000-0000-0000-0000-000000000001",
+      operatorUserId: "77000000-0000-0000-0000-000000000010",
+      fiscalIssuanceReferenceId: "reference/with space",
+      resultClass: "NOT_FOUND",
+      correlationId: "6b000000-0000-0000-0000-000000000104",
+      limit: 50,
+      offset: 25
+    });
+
+    expect(report.items[0].actionCode).toBe("VIEW_FISCAL_ISSUANCE_STATUS");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/ops/operator-console/audit/fiscal-status-views?"),
+      expect.any(Object)
+    );
+    const calledUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(calledUrl.searchParams.get("from")).toBe("2026-07-01T00:00:00+08:00");
+    expect(calledUrl.searchParams.get("to")).toBe("2026-07-09T23:59:59+08:00");
+    expect(calledUrl.searchParams.get("siteId")).toBe("77000000-0000-0000-0000-000000000002");
+    expect(calledUrl.searchParams.get("siteGroupId")).toBe("77000000-0000-0000-0000-000000000001");
+    expect(calledUrl.searchParams.get("operatorUserId")).toBe("77000000-0000-0000-0000-000000000010");
+    expect(calledUrl.searchParams.get("fiscalIssuanceReferenceId")).toBe("reference/with space");
+    expect(calledUrl.searchParams.get("resultClass")).toBe("NOT_FOUND");
+    expect(calledUrl.searchParams.get("correlationId")).toBe("6b000000-0000-0000-0000-000000000104");
+    expect(calledUrl.searchParams.get("limit")).toBe("50");
+    expect(calledUrl.searchParams.get("offset")).toBe("25");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("fiscalIssuanceReferenceId=reference%2Fwith+space");
+    expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
   });
 
   it("OperatorConsoleApi_EvaluatesAccessReadinessThroughFetch", async () => {
@@ -1633,6 +1802,69 @@ async function lookupFiscalStatus(referenceId: string) {
   await userEvent.clear(await screen.findByLabelText(/fiscal issuance reference id/i));
   await userEvent.type(screen.getByLabelText(/fiscal issuance reference id/i), referenceId);
   await userEvent.click(screen.getByRole("button", { name: "View status" }));
+}
+
+function fiscalStatusViewAuditReportResponse(
+  overrides: Partial<FiscalStatusViewAuditReportResponse> = {}
+): FiscalStatusViewAuditReportResponse {
+  const response: FiscalStatusViewAuditReportResponse = {
+    items: [
+      {
+        actionLogEntryId: "79000000-0000-0000-0000-000000000101",
+        actionTimestamp: "2026-07-09T08:30:00+08:00",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "SUCCEEDED",
+        operatorUserId: "77000000-0000-0000-0000-000000000010",
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000101",
+        correlationId: "6b000000-0000-0000-0000-000000000101",
+        sourceModule: "FiscalStatusViewer"
+      },
+      {
+        actionLogEntryId: "79000000-0000-0000-0000-000000000102",
+        actionTimestamp: "2026-07-09T08:20:00+08:00",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "DENIED",
+        operatorUserId: "77000000-0000-0000-0000-000000000011",
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000102",
+        correlationId: "6b000000-0000-0000-0000-000000000102",
+        safeDenialOrErrorPosture: "Operator Console fiscal status view access was denied.",
+        sourceModule: "FiscalStatusViewer"
+      },
+      {
+        actionLogEntryId: "79000000-0000-0000-0000-000000000103",
+        actionTimestamp: "2026-07-09T08:10:00+08:00",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "NOT_FOUND",
+        operatorUserId: "77000000-0000-0000-0000-000000000012",
+        siteId: "77000000-0000-0000-0000-000000000003",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000103",
+        correlationId: "6b000000-0000-0000-0000-000000000103",
+        safeDenialOrErrorPosture: "Fiscal issuance reference was not found.",
+        sourceModule: "FiscalStatusViewer"
+      },
+      {
+        actionLogEntryId: "79000000-0000-0000-0000-000000000104",
+        actionTimestamp: "2026-07-09T08:00:00+08:00",
+        actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
+        resultClass: "FAILED_SAFELY",
+        operatorUserId: "77000000-0000-0000-0000-000000000013",
+        fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000104",
+        correlationId: "6b000000-0000-0000-0000-000000000104",
+        safeDenialOrErrorPosture: "Fiscal status view failed safely.",
+        sourceModule: "FiscalStatusViewer"
+      }
+    ],
+    totalCount: 4,
+    limit: 25,
+    offset: 0,
+    correlationId: "6b000000-0000-0000-0000-000000000199"
+  };
+
+  return { ...response, ...overrides };
 }
 
 function fiscalStatus(overrides: Partial<FiscalIssuanceStatus> = {}): FiscalIssuanceStatus {
