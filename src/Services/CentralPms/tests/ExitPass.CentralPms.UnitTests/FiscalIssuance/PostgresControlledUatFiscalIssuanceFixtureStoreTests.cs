@@ -2,6 +2,7 @@ using System.Reflection;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using FluentAssertions;
+using Npgsql;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
@@ -81,6 +82,33 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStoreTests
         sql.Should().Contain("idempotency_key = @payment_attempt_ref");
         sql.Should().Contain("UPDATE core.payment_confirmations");
         sql.Should().Contain("provider_transaction_ref = @upstream_finality_ref");
+    }
+
+    [Fact]
+    public void FixtureSql_DeactivatesStaleControlledUatFiscalReferencesForApprovedPaymentConfirmation()
+    {
+        var sql = FixtureSql();
+
+        sql.Should().Contain("UPDATE core.fiscal_issuance_references");
+        sql.Should().Contain("payment_confirmation_id = @payment_confirmation_id");
+        sql.Should().Contain("upstream_finality_reference <> @upstream_finality_ref");
+        sql.Should().Contain("is_active = FALSE");
+    }
+
+    [Fact]
+    public void AddParameters_UsesUtcTimestamptzValues()
+    {
+        using var command = new NpgsqlCommand();
+        var method = typeof(PostgresControlledUatFiscalIssuanceFixtureStore)
+            .GetMethod("AddParameters", BindingFlags.NonPublic | BindingFlags.Static);
+
+        method.Should().NotBeNull();
+        method!.Invoke(null, new object[] { command, ApprovedFixture() });
+
+        command.Parameters["business_start_at"].Value.Should()
+            .Be(new DateTimeOffset(2026, 7, 9, 0, 0, 0, TimeSpan.Zero));
+        command.Parameters["business_end_at"].Value.Should()
+            .Be(new DateTimeOffset(2026, 7, 10, 0, 0, 0, TimeSpan.Zero));
     }
 
     [Theory]

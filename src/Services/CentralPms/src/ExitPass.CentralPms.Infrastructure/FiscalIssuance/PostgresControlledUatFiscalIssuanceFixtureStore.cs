@@ -105,7 +105,7 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
         var amount = fixture.AmountMinorUnits / 100m;
         var businessStart = new DateTimeOffset(
             fixture.BusinessDayDate.ToDateTime(new TimeOnly(8, 0)),
-            TimeSpan.FromHours(8));
+            TimeSpan.FromHours(8)).ToUniversalTime();
         var businessEnd = businessStart.AddDays(1);
 
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = fixture.ServiceIdentityId;
@@ -565,5 +565,14 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             confirmed_at = EXCLUDED.confirmed_at,
             correlation_id = EXCLUDED.correlation_id,
             created_by_service_identity_id = EXCLUDED.created_by_service_identity_id;
+
+        UPDATE core.fiscal_issuance_references
+        SET
+            is_active = FALSE,
+            last_updated_at = NOW(),
+            updated_by_service_identity_id = @service_identity_id
+        WHERE payment_confirmation_id = @payment_confirmation_id
+          AND upstream_finality_reference <> @upstream_finality_ref
+          AND is_active = TRUE;
         """;
 }
