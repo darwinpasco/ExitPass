@@ -103,7 +103,7 @@ public sealed class PostgresControlledUatFiscalVoidSmokeStoreTests
         command.Parameters["fiscal_document_id"].Value.Should()
             .Be(Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"));
         command.Parameters["fiscal_document_number"].Value.Should().Be("SI-00000002-UAT");
-        command.Parameters["reason_code"].Value.Should().Be("CONTROLLED_UAT_VOID_SMOKE");
+        command.Parameters["reason_code"].Value.Should().Be(FiscalIssuanceControlledUatVoidSmokeService.ApprovedReasonCode);
         command.Parameters["correlation_id"].Value.Should()
             .Be(Guid.Parse("b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df"));
     }
@@ -124,7 +124,7 @@ public sealed class PostgresControlledUatFiscalVoidSmokeStoreTests
             PosServerFiscalDocumentId: Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"),
             FiscalDocumentNumber: "SI-00000002-UAT",
             PaymentFinalityRef: "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001",
-            ReasonCode: "CONTROLLED_UAT_VOID_SMOKE",
+            ReasonCode: FiscalIssuanceControlledUatVoidSmokeService.ApprovedReasonCode,
             CorrelationId: Guid.Parse("b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df"),
             ApprovedBy: "Darwin Pasco");
 }

@@ -43,7 +43,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
             Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"),
             Arg.Is<PosServerFiscalDocumentVoidRequest>(request =>
                 request.IdempotencyKey == FiscalIssuanceControlledUatVoidSmokeService.ApprovedIdempotencyKey &&
-                request.ReasonCode == "CONTROLLED_UAT_REAL_VOID" &&
+                request.ReasonCode == FiscalIssuanceControlledUatVoidSmokeService.PosServerReasonCode &&
                 request.RequestedByRef == "central-pms-controlled-uat" &&
                 request.CorrelationId == "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df" &&
                 request.SourceSystemRef == "central-pms" &&
