@@ -14,6 +14,13 @@ public interface IFiscalIssuanceControlledUatInvocationService
         CancellationToken cancellationToken);
 }
 
+public interface IControlledUatFiscalIssuanceFixtureStore
+{
+    Task EnsureApprovedFirstRunFixtureAsync(
+        ControlledUatFiscalIssuanceFixture fixture,
+        CancellationToken cancellationToken);
+}
+
 public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuanceControlledUatInvocationService
 {
     private const string ApprovedEnvironmentName = "DEV-CONTROLLED-UAT-LOCAL";
@@ -23,6 +30,10 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private const string ApprovedRunId = "CPS-POS-UAT-20260709-DEV-ATC-001";
     private const string ApprovedCorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df";
     private const string ApprovedUpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001";
+    private const string ApprovedParkingSessionRef = "DEV-PARKING-SESSION-ATC-001";
+    private const string ApprovedPaymentAttemptRef = "DEV-PAYMENT-ATTEMPT-ATC-001";
+    private const string ApprovedPaymentConfirmationRef = "DEV-PAYMENT-FINALITY-ATC-001";
+    private const string ApprovedPayableBasisRef = "DEV-PAYABLE-BASIS-ATC-001";
     private const string ApprovedCurrency = "PHP";
     private const string ApprovedApprovalReference = "DEV-UAT-CPS-POS-001";
     private const string ApprovedExpectedRunType = "newly_created";
@@ -35,6 +46,16 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         Guid.Parse("00000000-0000-4000-8000-000000000302");
     private static readonly Guid ControlledUatParkingSessionId =
         Guid.Parse("00000000-0000-4000-8000-000000000303");
+    private static readonly Guid ControlledUatSiteGroupId =
+        Guid.Parse("00000000-0000-4000-8000-000000000401");
+    private static readonly Guid ControlledUatSiteId =
+        Guid.Parse("00000000-0000-4000-8000-000000000402");
+    private static readonly Guid ControlledUatVendorSystemId =
+        Guid.Parse("00000000-0000-4000-8000-000000000501");
+    private static readonly Guid ControlledUatTariffSnapshotId =
+        Guid.Parse("00000000-0000-4000-8000-000000000601");
+    private static readonly Guid ControlledUatServiceIdentityId =
+        Guid.Parse("00000000-0000-4000-8000-000000000901");
     private static readonly Guid ControlledUatSitePosServerId =
         Guid.Parse("10000000-0000-4000-8000-000000000201");
     private static readonly Guid ControlledUatFiscalDocumentTypeCodeId =
@@ -85,6 +106,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private readonly IFiscalIssuanceControlledUatEvidenceExporter _evidenceExporter;
     private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
     private readonly IFiscalIssuanceReferenceRepository _referenceRepository;
+    private readonly IControlledUatFiscalIssuanceFixtureStore _fixtureStore;
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly FiscalIssuanceExitAuthorizationGatingOptions _gatingOptions;
 
@@ -93,6 +115,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         IFiscalIssuanceControlledUatEvidenceExporter evidenceExporter,
         IFiscalIssuanceOrchestrationService orchestrationService,
         IFiscalIssuanceReferenceRepository referenceRepository,
+        IControlledUatFiscalIssuanceFixtureStore fixtureStore,
         IOptions<FiscalIssuancePosServerIntegrationOptions> posServerOptions,
         IOptions<FiscalIssuanceExitAuthorizationGatingOptions> gatingOptions)
     {
@@ -100,6 +123,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         _evidenceExporter = evidenceExporter;
         _orchestrationService = orchestrationService;
         _referenceRepository = referenceRepository;
+        _fixtureStore = fixtureStore;
         _posServerOptions = posServerOptions.Value;
         _gatingOptions = gatingOptions.Value;
     }
@@ -130,6 +154,13 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         if (errors.Count > 0)
         {
             return BuildRejectedResponse(request, "run_rejected", errors);
+        }
+
+        var fixturePreparation = await EnsureControlledUatFixtureAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+        if (fixturePreparation is not null)
+        {
+            return fixturePreparation;
         }
 
         var referencePreparation = await PrepareFiscalIssuanceReferenceAsync(request, cancellationToken)
@@ -345,6 +376,26 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             SensitiveDataExcluded: harnessResult.Status != FiscalIssuanceControlledUatHarnessStatuses.RejectedSensitivePayload);
     }
 
+    private async Task<ControlledUatFiscalIssuanceInvocationResponse?> EnsureControlledUatFixtureAsync(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _fixtureStore.EnsureApprovedFirstRunFixtureAsync(BuildFixture(request), cancellationToken)
+                .ConfigureAwait(false);
+
+            return null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return BuildRejectedResponse(
+                request,
+                "controlled_uat_fixture_prepare_failed",
+                new[] { "controlled_uat_fixture_prepare_failed" });
+        }
+    }
+
     private static bool IsConflictError(string error) =>
         error is "controlled_diagnostic_flag_disabled"
             or "live_call_seam_disabled"
@@ -353,6 +404,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             or "payment_flow_guard_enabled"
             or "exit_flow_guard_enabled"
             or "fiscal_gating_enforcement_enabled"
+            or "controlled_uat_fixture_prepare_failed"
             or "fiscal_reference_prepare_failed"
             or "fiscal_reference_not_startable_state";
 
@@ -524,6 +576,10 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         CheckEquals(request.RunId, ApprovedRunId, "run_id_not_approved_for_first_run", errors);
         CheckEquals(request.CorrelationId, ApprovedCorrelationId, "correlation_id_not_approved_for_first_run", errors);
         CheckEquals(request.UpstreamFinalityRef, ApprovedUpstreamFinalityRef, "upstream_finality_ref_not_approved_for_first_run", errors);
+        CheckEquals(request.ParkingSessionRef, ApprovedParkingSessionRef, "parking_session_ref_not_approved_for_first_run", errors);
+        CheckEquals(request.PaymentAttemptRef, ApprovedPaymentAttemptRef, "payment_attempt_ref_not_approved_for_first_run", errors);
+        CheckEquals(request.PaymentConfirmationRef, ApprovedPaymentConfirmationRef, "payment_confirmation_ref_not_approved_for_first_run", errors);
+        CheckEquals(request.PayableBasisRef, ApprovedPayableBasisRef, "payable_basis_ref_not_approved_for_first_run", errors);
         CheckEquals(request.Currency, ApprovedCurrency, "currency_not_approved_for_first_run", errors);
         CheckEquals(request.ApprovalReference, ApprovedApprovalReference, "approval_reference_not_approved_for_first_run", errors);
 
@@ -572,8 +628,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             PaymentConfirmationId: ControlledUatPaymentConfirmationId,
             PaymentAttemptId: ControlledUatPaymentAttemptId,
             ParkingSessionId: ControlledUatParkingSessionId,
-            TariffSnapshotId: null,
-            SiteId: null,
+            TariffSnapshotId: ControlledUatTariffSnapshotId,
+            SiteId: ControlledUatSiteId,
             SitePosServerId: ResolveSitePosServerId(request),
             SitePosServerRef: request.SitePosServerRef?.Trim(),
             FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
@@ -581,7 +637,29 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             PayableBasisRef: request.PayableBasisRef?.Trim(),
             UpstreamFinalityReference: request.UpstreamFinalityRef!.Trim(),
             CorrelationId: Guid.Parse(request.CorrelationId!.Trim()),
-            ServiceIdentityId: null);
+            ServiceIdentityId: ControlledUatServiceIdentityId);
+
+    private static ControlledUatFiscalIssuanceFixture BuildFixture(
+        ControlledUatFiscalIssuanceInvocationRequest request) =>
+        new(
+            PaymentConfirmationId: ControlledUatPaymentConfirmationId,
+            PaymentAttemptId: ControlledUatPaymentAttemptId,
+            ParkingSessionId: ControlledUatParkingSessionId,
+            TariffSnapshotId: ControlledUatTariffSnapshotId,
+            ServiceIdentityId: ControlledUatServiceIdentityId,
+            SiteGroupId: ControlledUatSiteGroupId,
+            SiteId: ControlledUatSiteId,
+            VendorSystemId: ControlledUatVendorSystemId,
+            RunId: request.RunId!.Trim(),
+            CorrelationId: Guid.Parse(request.CorrelationId!.Trim()),
+            SiteRef: request.SiteRef!.Trim(),
+            ParkingSessionRef: request.ParkingSessionRef!.Trim(),
+            PaymentAttemptRef: request.PaymentAttemptRef!.Trim(),
+            PaymentConfirmationRef: request.PaymentConfirmationRef!.Trim(),
+            UpstreamFinalityRef: request.UpstreamFinalityRef!.Trim(),
+            Currency: request.Currency!.Trim().ToUpperInvariant(),
+            AmountMinorUnits: request.AmountMinorUnits,
+            BusinessDayDate: request.BusinessDayDate!.Value);
 
     private static bool CanStartDiagnostic(FiscalIssuanceReferenceRecord reference) =>
         reference.FiscalIssuanceState is FiscalIssuanceIntegrationState.PendingFiscalIssuance
@@ -786,6 +864,26 @@ public sealed record ControlledUatFiscalIssuanceInvocationRequest(
     string? EvidenceReference,
     string? EvidenceLocation,
     string? EvidenceOwner);
+
+public sealed record ControlledUatFiscalIssuanceFixture(
+    Guid PaymentConfirmationId,
+    Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    Guid ServiceIdentityId,
+    Guid SiteGroupId,
+    Guid SiteId,
+    Guid VendorSystemId,
+    string RunId,
+    Guid CorrelationId,
+    string SiteRef,
+    string ParkingSessionRef,
+    string PaymentAttemptRef,
+    string PaymentConfirmationRef,
+    string UpstreamFinalityRef,
+    string Currency,
+    long AmountMinorUnits,
+    DateOnly BusinessDayDate);
 
 public sealed record ControlledUatFiscalIssuanceInvocationResponse(
     bool Accepted,

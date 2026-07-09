@@ -487,6 +487,8 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IFiscalIssuancePosServerLiveIntegrationService>(),
             serviceProvider.GetRequiredService<IOptions<FiscalIssuanceExitAuthorizationGatingOptions>>().Value));
     builder.Services.AddScoped<IFiscalIssuanceControlledUatEvidenceExporter, FiscalIssuanceControlledUatEvidenceExporter>();
+    builder.Services.AddScoped<IControlledUatFiscalIssuanceFixtureStore>(_ =>
+        new PostgresControlledUatFiscalIssuanceFixtureStore(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceControlledUatInvocationService, FiscalIssuanceControlledUatInvocationService>();
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
