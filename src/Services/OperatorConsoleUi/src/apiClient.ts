@@ -363,6 +363,8 @@ export interface OperatorConsoleOperatorContext {
   userId: string;
   operatorDeviceBindingId: string;
   operatorShiftId: string;
+  siteId: string;
+  siteGroupId: string;
 }
 
 const defaultOperatorContext: OperatorConsoleOperatorContext = {
@@ -371,7 +373,9 @@ const defaultOperatorContext: OperatorConsoleOperatorContext = {
     import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID,
     "77000000-0000-0000-0000-000000000030"
   ),
-  operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000050")
+  operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000050"),
+  siteId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID, "00000000-0000-4000-8000-000000000402"),
+  siteGroupId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_GROUP_ID, "")
 };
 
 const reviewDecisionPermissions = new Set([
@@ -793,7 +797,9 @@ function operatorConsoleHeaders(correlationId: string, options: { json?: boolean
     "X-ExitPass-User-Id": defaultOperatorContext.userId,
     "X-ExitPass-Permissions": defaultOperatorPermissions,
     "X-Operator-Device-Binding-Id": defaultOperatorContext.operatorDeviceBindingId,
-    "X-Operator-Shift-Id": defaultOperatorContext.operatorShiftId
+    "X-Operator-Shift-Id": defaultOperatorContext.operatorShiftId,
+    ...(defaultOperatorContext.siteId ? { "X-Site-Id": defaultOperatorContext.siteId } : {}),
+    ...(defaultOperatorContext.siteGroupId ? { "X-Site-Group-Id": defaultOperatorContext.siteGroupId } : {})
   };
 }
 
@@ -827,7 +833,8 @@ function isUsingLocalFallbackContext() {
   return (
     !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID) ||
     !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID) ||
-    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID)
+    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID) ||
+    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID)
   );
 }
 
