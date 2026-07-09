@@ -196,6 +196,10 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     [InlineData("correlation_id", "00000000-0000-4000-8000-000000000101", "correlation_id_not_approved_for_first_run")]
     [InlineData("upstream_finality_ref", "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001", "upstream_finality_ref_not_approved_for_first_run")]
     [InlineData("business_day_date", "2026-07-03", "business_day_date_not_approved_for_first_run")]
+    [InlineData("parking_session_ref", "DEV-PARKING-SESSION-OTHER", "parking_session_ref_not_approved_for_first_run")]
+    [InlineData("payment_attempt_ref", "DEV-PAYMENT-ATTEMPT-OTHER", "payment_attempt_ref_not_approved_for_first_run")]
+    [InlineData("payment_confirmation_ref", "DEV-PAYMENT-CONFIRMATION-ATC-001", "payment_confirmation_ref_not_approved_for_first_run")]
+    [InlineData("payable_basis_ref", "DEV-PAYABLE-BASIS-OTHER", "payable_basis_ref_not_approved_for_first_run")]
     public async Task RunAsync_WhenApprovedGateValueDiffers_Rejects(
         string field,
         string value,
@@ -207,15 +211,22 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             "correlation_id" => ValidRequest() with { CorrelationId = value },
             "upstream_finality_ref" => ValidRequest() with { UpstreamFinalityRef = value },
             "business_day_date" => ValidRequest() with { BusinessDayDate = DateOnly.Parse(value) },
+            "parking_session_ref" => ValidRequest() with { ParkingSessionRef = value },
+            "payment_attempt_ref" => ValidRequest() with { PaymentAttemptRef = value },
+            "payment_confirmation_ref" => ValidRequest() with { PaymentConfirmationRef = value },
+            "payable_basis_ref" => ValidRequest() with { PayableBasisRef = value },
             _ => throw new ArgumentOutOfRangeException(nameof(field), field, null)
         };
+        var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
 
-        var response = await CreateSut().RunAsync(request, CancellationToken.None);
+        var response = await CreateSut(fixtureStore: fixtureStore).RunAsync(request, CancellationToken.None);
 
         response.HttpStatusCode.Should().Be(400);
         response.Errors.Should().Contain(expectedError);
         response.DiagnosticInvoked.Should().BeFalse();
         response.PosServerCallAttempted.Should().BeFalse();
+        await fixtureStore.DidNotReceiveWithAnyArgs()
+            .EnsureApprovedFirstRunFixtureAsync(default!, default);
     }
 
     [Fact]
@@ -274,16 +285,36 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
                 Arg.Any<PrepareFiscalIssuanceCommand>(),
                 Arg.Any<CancellationToken>())
             .Returns(PendingReference(PreparedFiscalIssuanceReferenceId));
+        var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
+        fixtureStore.EnsureApprovedFirstRunFixtureAsync(
+                Arg.Any<ControlledUatFiscalIssuanceFixture>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
 
-        var response = await CreateSut(harness: harness, orchestration: orchestration)
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                fixtureStore: fixtureStore)
             .RunAsync(ValidRequest(), CancellationToken.None);
 
         response.HttpStatusCode.Should().Be(200);
+        await fixtureStore.Received(1).EnsureApprovedFirstRunFixtureAsync(
+            Arg.Is<ControlledUatFiscalIssuanceFixture>(fixture =>
+                fixture.RunId == "CPS-POS-UAT-20260709-DEV-ATC-001" &&
+                fixture.PaymentConfirmationRef == "DEV-PAYMENT-FINALITY-ATC-001" &&
+                fixture.PaymentConfirmationId == Guid.Parse("00000000-0000-4000-8000-000000000301") &&
+                fixture.PaymentAttemptId == Guid.Parse("00000000-0000-4000-8000-000000000302") &&
+                fixture.ParkingSessionId == Guid.Parse("00000000-0000-4000-8000-000000000303") &&
+                fixture.UpstreamFinalityRef == "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001"),
+            Arg.Any<CancellationToken>());
         await orchestration.Received(1).PreparePendingAsync(
             Arg.Is<PrepareFiscalIssuanceCommand>(command =>
                 command.UpstreamFinalityReference == "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001" &&
                 command.SitePosServerRef == "DEV-POS-SERVER-ATC-001" &&
                 command.SitePosServerId == Guid.Parse("10000000-0000-4000-8000-000000000201") &&
+                command.TariffSnapshotId == Guid.Parse("00000000-0000-4000-8000-000000000601") &&
+                command.SiteId == Guid.Parse("00000000-0000-4000-8000-000000000402") &&
+                command.ServiceIdentityId == Guid.Parse("00000000-0000-4000-8000-000000000901") &&
                 command.FiscalDocumentTypeCodeId == Guid.Parse("10000000-0000-4000-8000-000000000103") &&
                 command.FiscalDocumentTypeCodeKey == "sales_invoice"),
             Arg.Any<CancellationToken>());
@@ -409,12 +440,14 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         IFiscalIssuanceControlledUatHarness? harness = null,
         IFiscalIssuanceOrchestrationService? orchestration = null,
         IFiscalIssuanceReferenceRepository? referenceRepository = null,
+        IControlledUatFiscalIssuanceFixtureStore? fixtureStore = null,
         FiscalIssuancePosServerIntegrationOptions? options = null,
         FiscalIssuanceExitAuthorizationGatingOptions? gatingOptions = null) =>
         CreateSutCore(
             harness,
             orchestration,
             referenceRepository,
+            fixtureStore,
             options,
             gatingOptions);
 
@@ -422,11 +455,13 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         IFiscalIssuanceControlledUatHarness? harness,
         IFiscalIssuanceOrchestrationService? orchestration,
         IFiscalIssuanceReferenceRepository? referenceRepository,
+        IControlledUatFiscalIssuanceFixtureStore? fixtureStore,
         FiscalIssuancePosServerIntegrationOptions? options,
         FiscalIssuanceExitAuthorizationGatingOptions? gatingOptions)
     {
         var resolvedOrchestration = orchestration ?? Substitute.For<IFiscalIssuanceOrchestrationService>();
         var resolvedRepository = referenceRepository ?? Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var resolvedFixtureStore = fixtureStore ?? Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
 
         if (orchestration is null)
         {
@@ -446,11 +481,20 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
                 .Returns((FiscalIssuanceReferenceRecord?)null);
         }
 
+        if (fixtureStore is null)
+        {
+            resolvedFixtureStore.EnsureApprovedFirstRunFixtureAsync(
+                    Arg.Any<ControlledUatFiscalIssuanceFixture>(),
+                    Arg.Any<CancellationToken>())
+                .Returns(Task.CompletedTask);
+        }
+
         return new FiscalIssuanceControlledUatInvocationService(
             harness ?? Substitute.For<IFiscalIssuanceControlledUatHarness>(),
             new FiscalIssuanceControlledUatEvidenceExporter(),
             resolvedOrchestration,
             resolvedRepository,
+            resolvedFixtureStore,
             Options.Create(options ?? EnabledOptions()),
             Options.Create(gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions()));
     }
@@ -482,7 +526,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             FiscalIssuanceReferenceId: null,
             ParkingSessionRef: "DEV-PARKING-SESSION-ATC-001",
             PaymentAttemptRef: "DEV-PAYMENT-ATTEMPT-ATC-001",
-            PaymentConfirmationRef: "DEV-PAYMENT-CONFIRMATION-ATC-001",
+            PaymentConfirmationRef: "DEV-PAYMENT-FINALITY-ATC-001",
             PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
             UpstreamFinalityRef: "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001",
             FiscalDocumentType: "sales_invoice",
