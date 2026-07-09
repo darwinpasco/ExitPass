@@ -6,6 +6,34 @@ namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 
 public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlledUatFiscalIssuanceFixtureStore
 {
+    private static readonly Guid ApprovedPaymentConfirmationId =
+        Guid.Parse("00000000-0000-4000-8000-000000000301");
+    private static readonly Guid ApprovedPaymentAttemptId =
+        Guid.Parse("00000000-0000-4000-8000-000000000302");
+    private static readonly Guid ApprovedParkingSessionId =
+        Guid.Parse("00000000-0000-4000-8000-000000000303");
+    private static readonly Guid ApprovedTariffSnapshotId =
+        Guid.Parse("00000000-0000-4000-8000-000000000601");
+    private static readonly Guid ApprovedServiceIdentityId =
+        Guid.Parse("00000000-0000-4000-8000-000000000901");
+    private static readonly Guid ApprovedSiteGroupId =
+        Guid.Parse("00000000-0000-4000-8000-000000000401");
+    private static readonly Guid ApprovedSiteId =
+        Guid.Parse("00000000-0000-4000-8000-000000000402");
+    private static readonly Guid ApprovedVendorSystemId =
+        Guid.Parse("00000000-0000-4000-8000-000000000501");
+
+    private const string ApprovedRunId = "CPS-POS-UAT-20260709-DEV-ATC-001";
+    private const string ApprovedCorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df";
+    private const string ApprovedSiteRef = "DEV-SITE-ATC-001";
+    private const string ApprovedParkingSessionRef = "DEV-PARKING-SESSION-ATC-001";
+    private const string ApprovedPaymentAttemptRef = "DEV-PAYMENT-ATTEMPT-ATC-001";
+    private const string ApprovedPaymentConfirmationRef = "DEV-PAYMENT-FINALITY-ATC-001";
+    private const string ApprovedUpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001";
+    private const string ApprovedCurrency = "PHP";
+
+    private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 9);
+
     private readonly string _connectionString;
 
     public PostgresControlledUatFiscalIssuanceFixtureStore(string connectionString)
@@ -18,6 +46,7 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(fixture);
+        ValidateApprovedFirstRunFixture(fixture);
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -28,6 +57,47 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
 
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public static void ValidateApprovedFirstRunFixture(ControlledUatFiscalIssuanceFixture fixture)
+    {
+        ArgumentNullException.ThrowIfNull(fixture);
+
+        var errors = new List<string>();
+
+        Require(fixture.PaymentConfirmationId == ApprovedPaymentConfirmationId, "payment_confirmation_id_not_approved", errors);
+        Require(fixture.PaymentAttemptId == ApprovedPaymentAttemptId, "payment_attempt_id_not_approved", errors);
+        Require(fixture.ParkingSessionId == ApprovedParkingSessionId, "parking_session_id_not_approved", errors);
+        Require(fixture.TariffSnapshotId == ApprovedTariffSnapshotId, "tariff_snapshot_id_not_approved", errors);
+        Require(fixture.ServiceIdentityId == ApprovedServiceIdentityId, "service_identity_id_not_approved", errors);
+        Require(fixture.SiteGroupId == ApprovedSiteGroupId, "site_group_id_not_approved", errors);
+        Require(fixture.SiteId == ApprovedSiteId, "site_id_not_approved", errors);
+        Require(fixture.VendorSystemId == ApprovedVendorSystemId, "vendor_system_id_not_approved", errors);
+        Require(fixture.RunId == ApprovedRunId, "run_id_not_approved", errors);
+        Require(fixture.CorrelationId.ToString("D") == ApprovedCorrelationId, "correlation_id_not_approved", errors);
+        Require(fixture.SiteRef == ApprovedSiteRef, "site_ref_not_approved", errors);
+        Require(fixture.ParkingSessionRef == ApprovedParkingSessionRef, "parking_session_ref_not_approved", errors);
+        Require(fixture.PaymentAttemptRef == ApprovedPaymentAttemptRef, "payment_attempt_ref_not_approved", errors);
+        Require(fixture.PaymentConfirmationRef == ApprovedPaymentConfirmationRef, "payment_confirmation_ref_not_approved", errors);
+        Require(fixture.UpstreamFinalityRef == ApprovedUpstreamFinalityRef, "upstream_finality_ref_not_approved", errors);
+        Require(fixture.Currency == ApprovedCurrency, "currency_not_approved", errors);
+        Require(fixture.AmountMinorUnits == 10000, "amount_not_approved", errors);
+        Require(fixture.BusinessDayDate == ApprovedBusinessDayDate, "business_day_date_not_approved", errors);
+
+        if (errors.Count > 0)
+        {
+            throw new ArgumentException(
+                $"Controlled UAT fixture does not match the approved first-run fixture: {string.Join(", ", errors)}",
+                nameof(fixture));
+        }
+    }
+
+    private static void Require(bool condition, string error, List<string> errors)
+    {
+        if (!condition)
+        {
+            errors.Add(error);
+        }
     }
 
     private static void AddParameters(NpgsqlCommand command, ControlledUatFiscalIssuanceFixture fixture)
@@ -96,7 +166,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             NOW(),
             1
         )
-        ON CONFLICT (service_identity_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_service_identities__service_identity_code DO UPDATE SET
+            service_identity_id = EXCLUDED.service_identity_id,
             service_identity_code = EXCLUDED.service_identity_code,
             service_identity_name = EXCLUDED.service_identity_name,
             identity_type = EXCLUDED.identity_type,
@@ -143,7 +214,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             @service_identity_id,
             1
         )
-        ON CONFLICT (site_group_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_site_groups__site_group_code DO UPDATE SET
+            site_group_id = EXCLUDED.site_group_id,
             site_group_code = EXCLUDED.site_group_code,
             site_group_name = EXCLUDED.site_group_name,
             site_group_status = EXCLUDED.site_group_status,
@@ -193,7 +265,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             @service_identity_id,
             1
         )
-        ON CONFLICT (site_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_sites__site_group_site_code DO UPDATE SET
+            site_id = EXCLUDED.site_id,
             site_group_id = EXCLUDED.site_group_id,
             site_code = EXCLUDED.site_code,
             site_name = EXCLUDED.site_name,
@@ -239,7 +312,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             @service_identity_id,
             1
         )
-        ON CONFLICT (vendor_system_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_vendor_systems__vendor_code_environment DO UPDATE SET
+            vendor_system_id = EXCLUDED.vendor_system_id,
             vendor_code = EXCLUDED.vendor_code,
             vendor_name = EXCLUDED.vendor_name,
             vendor_system_status = EXCLUDED.vendor_system_status,
@@ -298,6 +372,16 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             updated_at = NOW(),
             updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
             row_version = core.parking_sessions.row_version + 1;
+
+        UPDATE core.tariff_snapshots
+        SET
+            snapshot_status = 'EXPIRED',
+            updated_at = NOW(),
+            updated_by_service_identity_id = @service_identity_id,
+            row_version = core.tariff_snapshots.row_version + 1
+        WHERE parking_session_id = @parking_session_id
+          AND snapshot_status = 'ACTIVE'
+          AND tariff_snapshot_id <> @tariff_snapshot_id;
 
         INSERT INTO core.tariff_snapshots (
             tariff_snapshot_id,
@@ -359,6 +443,24 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
             row_version = core.tariff_snapshots.row_version + 1;
 
+        UPDATE core.payment_attempts
+        SET
+            payment_attempt_id = @payment_attempt_id,
+            parking_session_id = @parking_session_id,
+            tariff_snapshot_id = @tariff_snapshot_id,
+            idempotency_key = @payment_attempt_ref,
+            currency_code = @currency,
+            amount = @amount,
+            attempt_status = 'CONFIRMED',
+            finalized_at = @business_start_at,
+            failure_reason_code = NULL,
+            correlation_id = @correlation_id,
+            updated_at = NOW(),
+            updated_by_service_identity_id = @service_identity_id,
+            row_version = core.payment_attempts.row_version + 1
+        WHERE tariff_snapshot_id = @tariff_snapshot_id
+          AND payment_attempt_id <> @payment_attempt_id;
+
         INSERT INTO core.payment_attempts (
             payment_attempt_id,
             parking_session_id,
@@ -399,7 +501,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             @service_identity_id,
             1
         )
-        ON CONFLICT (payment_attempt_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_payment_attempts__idempotency_key DO UPDATE SET
+            payment_attempt_id = EXCLUDED.payment_attempt_id,
             parking_session_id = EXCLUDED.parking_session_id,
             tariff_snapshot_id = EXCLUDED.tariff_snapshot_id,
             idempotency_key = EXCLUDED.idempotency_key,
@@ -442,7 +545,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             NOW(),
             @service_identity_id
         )
-        ON CONFLICT (payment_confirmation_id) DO UPDATE SET
+        ON CONFLICT ON CONSTRAINT uq_payment_confirmations__payment_attempt DO UPDATE SET
+            payment_confirmation_id = EXCLUDED.payment_confirmation_id,
             payment_attempt_id = EXCLUDED.payment_attempt_id,
             provider_transaction_ref = EXCLUDED.provider_transaction_ref,
             currency_code = EXCLUDED.currency_code,
