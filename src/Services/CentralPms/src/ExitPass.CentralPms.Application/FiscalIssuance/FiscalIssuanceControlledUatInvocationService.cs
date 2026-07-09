@@ -20,15 +20,15 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private const string ApprovedSiteRef = "DEV-SITE-ATC-001";
     private const string ApprovedSitePosServerRef = "DEV-POS-SERVER-ATC-001";
     private const string ApprovedFiscalDocumentType = "sales_invoice";
-    private const string ApprovedRunId = "CPS-POS-UAT-20260703-DEV-ATC-001";
-    private const string ApprovedCorrelationId = "00000000-0000-4000-8000-000000000101";
-    private const string ApprovedUpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001";
+    private const string ApprovedRunId = "CPS-POS-UAT-20260709-DEV-ATC-001";
+    private const string ApprovedCorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df";
+    private const string ApprovedUpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001";
     private const string ApprovedCurrency = "PHP";
     private const string ApprovedApprovalReference = "DEV-UAT-CPS-POS-001";
     private const string ApprovedExpectedRunType = "newly_created";
     private const long ApprovedAmountMinorUnits = 10000;
     private const long ApprovedTaxAmountMinorUnits = 0;
-    private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 3);
+    private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 9);
     private static readonly Guid ControlledUatPaymentConfirmationId =
         Guid.Parse("00000000-0000-4000-8000-000000000301");
     private static readonly Guid ControlledUatPaymentAttemptId =
