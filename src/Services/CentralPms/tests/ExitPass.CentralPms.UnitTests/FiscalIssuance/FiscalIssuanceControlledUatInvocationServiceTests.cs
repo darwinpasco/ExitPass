@@ -536,6 +536,95 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenApprovedConflictFindsRecordedReference_FailsClosedWithoutDiagnosticCall()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByUpstreamFinalityReferenceAsync(
+                Arg.Any<string>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(RecordedReference());
+
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                referenceRepository: repository,
+                fixtureStore: fixtureStore)
+            .RunAsync(ConflictRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(409);
+        response.Accepted.Should().BeFalse();
+        response.Status.Should().Be(FiscalIssuanceControlledUatHarnessStatuses.ConflictFailureMapped);
+        response.Errors.Should().Contain("controlled_semantic_conflict_detected");
+        response.Errors.Should().Contain("amount_minor_units_conflict");
+        response.ErrorCode.Should().Be("controlled_semantic_conflict_detected");
+        response.ErrorPosture.Should().Be(FiscalIssuanceErrorPosture.DoNotRetryWithoutRequestChange.ToString());
+        response.ValidationPassed.Should().BeFalse();
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        response.FiscalDocumentId.Should().Be(Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"));
+        response.FiscalDocumentNumber.Should().Be("SI-00000002-UAT");
+        response.FiscalNumberAssignmentState.Should().Be(FiscalNumberAssignmentState.Assigned.ToString());
+        response.CentralPmsFiscalState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded.ToString());
+        response.PaymentFinalityChanged.Should().BeFalse();
+        response.ExitAuthorizationIssued.Should().BeFalse();
+        response.GateBehaviorTriggered.Should().BeFalse();
+        response.EvidenceFileWritten.Should().BeFalse();
+
+        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenApprovedConflictReferenceIsMissing_FailsClosedWithoutDiagnosticCall()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByUpstreamFinalityReferenceAsync(
+                Arg.Any<string>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                referenceRepository: repository)
+            .RunAsync(ConflictRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(409);
+        response.Status.Should().Be("fiscal_reference_conflict_rejected");
+        response.Errors.Should().Contain("fiscal_reference_conflict_not_found");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenConflictAmountIsNotApproved_FailsClosedBeforeLookup()
+    {
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+
+        var response = await CreateSut(referenceRepository: repository)
+            .RunAsync(ConflictRequest() with { AmountMinorUnits = 10002 }, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(400);
+        response.Errors.Should().Contain("amount_conflict_value_not_approved_for_conflict_run");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        await repository.DidNotReceiveWithAnyArgs()
+            .FindByUpstreamFinalityReferenceAsync(default!, default, default, default);
+    }
+
+    [Fact]
     public async Task PreflightAsync_WhenRequestIsValid_DoesNotInvokeHarnessOrReturnEvidence()
     {
         var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
@@ -679,6 +768,17 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         {
             ExpectedRunType = "replay",
             ReplayIncluded = true
+        };
+
+    private static ControlledUatFiscalIssuanceInvocationRequest ConflictRequest() =>
+        ValidRequest() with
+        {
+            AmountMinorUnits = 10001,
+            LineAmountTotal = 10001,
+            TenderAmountTotal = 10001,
+            GrandTotal = 10001,
+            ExpectedRunType = "conflict",
+            ConflictIncluded = true
         };
 
     private static FiscalIssuanceControlledUatHarnessResult HarnessResult(string runId) =>
