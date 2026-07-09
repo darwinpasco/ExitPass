@@ -53,6 +53,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
         Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395");
     public const string ApprovedFiscalDocumentNumber = "SI-00000002-UAT";
     public const string ApprovedReasonCode = "CONTROLLED_UAT_REAL_VOID";
+    public const string PosServerReasonCode = "operator_error";
     public const string ApprovedIdempotencyKey =
         "central-pms-controlled-uat-real-void:CPS-POS-UAT-20260709-DEV-ATC-001:9bdf2948-dadd-450b-8776-be688b579395";
     public const string RequestedByRef = "central-pms-controlled-uat";
@@ -133,7 +134,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
                     request.PosServerFiscalDocumentId.Value,
                     new PosServerFiscalDocumentVoidRequest(
                         IdempotencyKey: ApprovedIdempotencyKey,
-                        ReasonCode: request.ReasonCode.Trim(),
+                        ReasonCode: PosServerReasonCode,
                         ReasonText: "Controlled non-production UAT fiscal void integration smoke.",
                         RequestedByRef: RequestedByRef,
                         RequestedAt: null,
