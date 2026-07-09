@@ -13,7 +13,8 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStoreTests
     public void ValidateApprovedFirstRunFixture_WhenApprovedFixture_DoesNotThrow()
     {
         var act = () => PostgresControlledUatFiscalIssuanceFixtureStore.ValidateApprovedFirstRunFixture(
-            ApprovedFixture());
+            ApprovedFixture(),
+            ApprovedProfile());
 
         act.Should().NotThrow();
     }
@@ -40,7 +41,9 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStoreTests
             _ => throw new ArgumentOutOfRangeException(nameof(field), field, null)
         };
 
-        var act = () => PostgresControlledUatFiscalIssuanceFixtureStore.ValidateApprovedFirstRunFixture(fixture);
+        var act = () => PostgresControlledUatFiscalIssuanceFixtureStore.ValidateApprovedFirstRunFixture(
+            fixture,
+            ApprovedProfile());
 
         act.Should()
             .Throw<ArgumentException>()
@@ -137,6 +140,7 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStoreTests
 
     private static ControlledUatFiscalIssuanceFixture ApprovedFixture() =>
         new(
+            ProfileId: "CPS-POS-UAT-20260709-DEV-ATC-001",
             PaymentConfirmationId: Guid.Parse("00000000-0000-4000-8000-000000000301"),
             PaymentAttemptId: Guid.Parse("00000000-0000-4000-8000-000000000302"),
             ParkingSessionId: Guid.Parse("00000000-0000-4000-8000-000000000303"),
@@ -155,4 +159,47 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStoreTests
             Currency: "PHP",
             AmountMinorUnits: 10000,
             BusinessDayDate: new DateOnly(2026, 7, 9));
+
+    private static ControlledUatFiscalSmokeProfile ApprovedProfile() =>
+        new(
+            ProfileId: "CPS-POS-UAT-20260709-DEV-ATC-001",
+            EnvironmentName: "DEV-CONTROLLED-UAT-LOCAL",
+            SiteRef: "DEV-SITE-ATC-001",
+            SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+            FiscalDocumentType: "sales_invoice",
+            RunId: "CPS-POS-UAT-20260709-DEV-ATC-001",
+            CorrelationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
+            UpstreamFinalityRef: "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001",
+            ParkingSessionRef: "DEV-PARKING-SESSION-ATC-001",
+            PaymentAttemptRef: "DEV-PAYMENT-ATTEMPT-ATC-001",
+            PaymentConfirmationRef: "DEV-PAYMENT-FINALITY-ATC-001",
+            PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
+            Currency: "PHP",
+            ApprovalReference: "DEV-UAT-CPS-POS-001",
+            BusinessDayDate: new DateOnly(2026, 7, 9),
+            AmountMinorUnits: 10000,
+            ConflictAmountMinorUnits: 10001,
+            TaxAmountMinorUnits: 0,
+            SupportedScenarios: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "newly_created",
+                "replay",
+                "conflict"
+            },
+            PaymentConfirmationId: Guid.Parse("00000000-0000-4000-8000-000000000301"),
+            PaymentAttemptId: Guid.Parse("00000000-0000-4000-8000-000000000302"),
+            ParkingSessionId: Guid.Parse("00000000-0000-4000-8000-000000000303"),
+            SiteGroupId: Guid.Parse("00000000-0000-4000-8000-000000000401"),
+            SiteId: Guid.Parse("00000000-0000-4000-8000-000000000402"),
+            VendorSystemId: Guid.Parse("00000000-0000-4000-8000-000000000501"),
+            TariffSnapshotId: Guid.Parse("00000000-0000-4000-8000-000000000601"),
+            ServiceIdentityId: Guid.Parse("00000000-0000-4000-8000-000000000901"),
+            SitePosServerId: Guid.Parse("10000000-0000-4000-8000-000000000201"),
+            FiscalDocumentTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000103"),
+            FiscalDocumentStatusCodeId: Guid.Parse("10000000-0000-4000-8000-000000000107"),
+            LineTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000108"),
+            TenderTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000109"),
+            TaxTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000110"),
+            TaxClassificationCodeId: Guid.Parse("10000000-0000-4000-8000-000000000111"),
+            TotalTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000112"));
 }

@@ -19,63 +19,15 @@ public interface IControlledUatFiscalIssuanceFixtureStore
 {
     Task EnsureApprovedFirstRunFixtureAsync(
         ControlledUatFiscalIssuanceFixture fixture,
+        ControlledUatFiscalSmokeProfile profile,
         CancellationToken cancellationToken);
 }
 
 public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuanceControlledUatInvocationService
 {
-    private const string ApprovedEnvironmentName = "DEV-CONTROLLED-UAT-LOCAL";
-    private const string ApprovedSiteRef = "DEV-SITE-ATC-001";
-    private const string ApprovedSitePosServerRef = "DEV-POS-SERVER-ATC-001";
-    private const string ApprovedFiscalDocumentType = "sales_invoice";
-    private const string ApprovedRunId = "CPS-POS-UAT-20260709-DEV-ATC-001";
-    private const string ApprovedCorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df";
-    private const string ApprovedUpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001";
-    private const string ApprovedParkingSessionRef = "DEV-PARKING-SESSION-ATC-001";
-    private const string ApprovedPaymentAttemptRef = "DEV-PAYMENT-ATTEMPT-ATC-001";
-    private const string ApprovedPaymentConfirmationRef = "DEV-PAYMENT-FINALITY-ATC-001";
-    private const string ApprovedPayableBasisRef = "DEV-PAYABLE-BASIS-ATC-001";
-    private const string ApprovedCurrency = "PHP";
-    private const string ApprovedApprovalReference = "DEV-UAT-CPS-POS-001";
-    private const string ApprovedExpectedRunType = "newly_created";
-    private const string ApprovedReplayExpectedRunType = "replay";
-    private const string ApprovedConflictExpectedRunType = "conflict";
-    private const long ApprovedAmountMinorUnits = 10000;
-    private const long ApprovedConflictAmountMinorUnits = 10001;
-    private const long ApprovedTaxAmountMinorUnits = 0;
-    private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 9);
-    private static readonly Guid ControlledUatPaymentConfirmationId =
-        Guid.Parse("00000000-0000-4000-8000-000000000301");
-    private static readonly Guid ControlledUatPaymentAttemptId =
-        Guid.Parse("00000000-0000-4000-8000-000000000302");
-    private static readonly Guid ControlledUatParkingSessionId =
-        Guid.Parse("00000000-0000-4000-8000-000000000303");
-    private static readonly Guid ControlledUatSiteGroupId =
-        Guid.Parse("00000000-0000-4000-8000-000000000401");
-    private static readonly Guid ControlledUatSiteId =
-        Guid.Parse("00000000-0000-4000-8000-000000000402");
-    private static readonly Guid ControlledUatVendorSystemId =
-        Guid.Parse("00000000-0000-4000-8000-000000000501");
-    private static readonly Guid ControlledUatTariffSnapshotId =
-        Guid.Parse("00000000-0000-4000-8000-000000000601");
-    private static readonly Guid ControlledUatServiceIdentityId =
-        Guid.Parse("00000000-0000-4000-8000-000000000901");
-    private static readonly Guid ControlledUatSitePosServerId =
-        Guid.Parse("10000000-0000-4000-8000-000000000201");
-    private static readonly Guid ControlledUatFiscalDocumentTypeCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000103");
-    private static readonly Guid ControlledUatFiscalDocumentStatusCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000107");
-    private static readonly Guid ControlledUatLineTypeCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000108");
-    private static readonly Guid ControlledUatTenderTypeCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000109");
-    private static readonly Guid ControlledUatTaxTypeCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000110");
-    private static readonly Guid ControlledUatTaxClassificationCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000111");
-    private static readonly Guid ControlledUatTotalTypeCodeId =
-        Guid.Parse("10000000-0000-4000-8000-000000000112");
+    private const string NewlyCreatedScenario = "newly_created";
+    private const string ReplayScenario = "replay";
+    private const string ConflictScenario = "conflict";
 
     private static readonly string[] SensitiveTerms =
     [
@@ -105,6 +57,48 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         "file blob",
         "file_blob"
     ];
+
+    private static readonly ControlledUatFiscalSmokeProfile DefaultSmokeProfile = new(
+        ProfileId: "CPS-POS-UAT-20260709-DEV-ATC-001",
+        EnvironmentName: "DEV-CONTROLLED-UAT-LOCAL",
+        SiteRef: "DEV-SITE-ATC-001",
+        SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+        FiscalDocumentType: "sales_invoice",
+        RunId: "CPS-POS-UAT-20260709-DEV-ATC-001",
+        CorrelationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
+        UpstreamFinalityRef: "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001",
+        ParkingSessionRef: "DEV-PARKING-SESSION-ATC-001",
+        PaymentAttemptRef: "DEV-PAYMENT-ATTEMPT-ATC-001",
+        PaymentConfirmationRef: "DEV-PAYMENT-FINALITY-ATC-001",
+        PayableBasisRef: "DEV-PAYABLE-BASIS-ATC-001",
+        Currency: "PHP",
+        ApprovalReference: "DEV-UAT-CPS-POS-001",
+        BusinessDayDate: new DateOnly(2026, 7, 9),
+        AmountMinorUnits: 10000,
+        ConflictAmountMinorUnits: 10001,
+        TaxAmountMinorUnits: 0,
+        SupportedScenarios: new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            NewlyCreatedScenario,
+            ReplayScenario,
+            ConflictScenario
+        },
+        PaymentConfirmationId: Guid.Parse("00000000-0000-4000-8000-000000000301"),
+        PaymentAttemptId: Guid.Parse("00000000-0000-4000-8000-000000000302"),
+        ParkingSessionId: Guid.Parse("00000000-0000-4000-8000-000000000303"),
+        SiteGroupId: Guid.Parse("00000000-0000-4000-8000-000000000401"),
+        SiteId: Guid.Parse("00000000-0000-4000-8000-000000000402"),
+        VendorSystemId: Guid.Parse("00000000-0000-4000-8000-000000000501"),
+        TariffSnapshotId: Guid.Parse("00000000-0000-4000-8000-000000000601"),
+        ServiceIdentityId: Guid.Parse("00000000-0000-4000-8000-000000000901"),
+        SitePosServerId: Guid.Parse("10000000-0000-4000-8000-000000000201"),
+        FiscalDocumentTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000103"),
+        FiscalDocumentStatusCodeId: Guid.Parse("10000000-0000-4000-8000-000000000107"),
+        LineTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000108"),
+        TenderTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000109"),
+        TaxTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000110"),
+        TaxClassificationCodeId: Guid.Parse("10000000-0000-4000-8000-000000000111"),
+        TotalTypeCodeId: Guid.Parse("10000000-0000-4000-8000-000000000112"));
 
     private readonly IFiscalIssuanceControlledUatHarness _harness;
     private readonly IFiscalIssuanceControlledUatEvidenceExporter _evidenceExporter;
@@ -142,7 +136,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var errors = ValidateRequest(request);
+        var errors = ValidateRequest(request, out _);
         errors.AddRange(ValidateConfiguration());
 
         return Task.FromResult(errors.Count == 0
@@ -156,7 +150,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var errors = ValidateRequest(request);
+        var errors = ValidateRequest(request, out var profile);
         errors.AddRange(ValidateConfiguration());
         if (errors.Count > 0)
         {
@@ -168,7 +162,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
         if (!replayRequested && !conflictRequested)
         {
-            var fixturePreparation = await EnsureControlledUatFixtureAsync(request, cancellationToken)
+            var fixturePreparation = await EnsureControlledUatFixtureAsync(request, profile!, cancellationToken)
                 .ConfigureAwait(false);
             if (fixturePreparation is not null)
             {
@@ -178,6 +172,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
         var referencePreparation = await PrepareFiscalIssuanceReferenceAsync(
                 request,
+                profile!,
                 replayRequested,
                 conflictRequested,
                 cancellationToken)
@@ -197,7 +192,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             return BuildConflictResponse(request, referencePreparation.Reference!);
         }
 
-        var harnessRequest = BuildHarnessRequest(request, referencePreparation.Reference!.FiscalIssuanceReferenceId);
+        var harnessRequest = BuildHarnessRequest(request, profile!, referencePreparation.Reference!.FiscalIssuanceReferenceId);
         var harnessResult = await _harness.ExecuteAsync(harnessRequest, cancellationToken)
             .ConfigureAwait(false);
 
@@ -260,6 +255,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
     private async Task<FiscalReferencePreparationResult> PrepareFiscalIssuanceReferenceAsync(
         ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile,
         bool replayRequested,
         bool conflictRequested,
         CancellationToken cancellationToken)
@@ -268,8 +264,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         {
             var existing = await _referenceRepository.FindByUpstreamFinalityReferenceAsync(
                     request.UpstreamFinalityRef!.Trim(),
-                    request.SitePosServerId,
-                    request.FiscalDocumentTypeCodeId,
+                    ResolveSitePosServerId(request, profile),
+                    ResolveFiscalDocumentTypeCodeId(request, profile),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -320,7 +316,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             }
 
             var prepared = await _orchestrationService.PreparePendingAsync(
-                    BuildPrepareCommand(request),
+                    BuildPrepareCommand(request, profile),
                     cancellationToken)
                 .ConfigureAwait(false);
 
@@ -328,6 +324,13 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            _logger?.LogWarning(
+                exception,
+                "Controlled UAT fiscal reference preparation failed. profile_id={ProfileId} run_id={RunId} correlation_id={CorrelationId}",
+                profile.ProfileId,
+                request.RunId,
+                request.CorrelationId);
+
             return FiscalReferencePreparationResult.Rejected(BuildRejectedResponse(
                 request,
                 "fiscal_reference_prepare_failed",
@@ -507,11 +510,12 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
     private async Task<ControlledUatFiscalIssuanceInvocationResponse?> EnsureControlledUatFixtureAsync(
         ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile,
         CancellationToken cancellationToken)
     {
         try
         {
-            await _fixtureStore.EnsureApprovedFirstRunFixtureAsync(BuildFixture(request), cancellationToken)
+            await _fixtureStore.EnsureApprovedFirstRunFixtureAsync(BuildFixture(request, profile), profile, cancellationToken)
                 .ConfigureAwait(false);
 
             return null;
@@ -590,9 +594,12 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         return errors;
     }
 
-    private static List<string> ValidateRequest(ControlledUatFiscalIssuanceInvocationRequest request)
+    private List<string> ValidateRequest(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        out ControlledUatFiscalSmokeProfile? profile)
     {
         var errors = new List<string>();
+        profile = ResolveProfile(request, errors);
 
         Require(request.RunId, "run_id_required", errors);
         Require(request.ApprovalReference, "approval_reference_required", errors);
@@ -618,7 +625,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             errors.Add("explicit_execution_approval_required");
         }
 
-        if (!string.Equals(request.FiscalDocumentType, ApprovedFiscalDocumentType, StringComparison.OrdinalIgnoreCase))
+        if (profile is not null &&
+            !string.Equals(request.FiscalDocumentType, profile.FiscalDocumentType, StringComparison.OrdinalIgnoreCase))
         {
             errors.Add("wrong_fiscal_document_type");
         }
@@ -626,11 +634,13 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         var replayRequested = IsReplayRequest(request);
         var conflictRequested = IsConflictRequest(request);
 
-        if (!string.Equals(request.ExpectedRunType, ApprovedExpectedRunType, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(request.ExpectedRunType, ApprovedReplayExpectedRunType, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(request.ExpectedRunType, ApprovedConflictExpectedRunType, StringComparison.OrdinalIgnoreCase))
+        if (!IsSupportedScenarioName(request.ExpectedRunType))
         {
             errors.Add("expected_run_type_must_be_newly_created_replay_or_conflict");
+        }
+        else if (profile is not null && !profile.SupportsScenario(request.ExpectedRunType))
+        {
+            errors.Add("scenario_not_allowlisted_for_profile");
         }
 
         if (!replayRequested && request.ReplayIncluded)
@@ -684,7 +694,10 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         }
 
         ValidateTotals(request, errors);
-        ValidateApprovedFirstRunValues(request, errors);
+        if (profile is not null)
+        {
+            ValidateApprovedProfileValues(request, profile, errors);
+        }
 
         if (EnumerateStrings(request).Where(value => !string.IsNullOrWhiteSpace(value)).Any(ContainsSensitiveTerm))
         {
@@ -692,6 +705,28 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         }
 
         return errors;
+    }
+
+    private ControlledUatFiscalSmokeProfile? ResolveProfile(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        List<string> errors)
+    {
+        var profileId = string.IsNullOrWhiteSpace(request.ProfileId)
+            ? request.RunId?.Trim()
+            : request.ProfileId.Trim();
+
+        if (string.IsNullOrWhiteSpace(profileId))
+        {
+            errors.Add("profile_id_required");
+            return null;
+        }
+
+        var configuredProfiles = _posServerOptions.ControlledUatSmokeProfiles ?? [];
+        return ControlledUatFiscalSmokeProfileCatalog.TryResolve(
+            profileId,
+            DefaultSmokeProfile,
+            configuredProfiles,
+            errors);
     }
 
     private static void ValidateTotals(
@@ -726,34 +761,35 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         }
     }
 
-    private static void ValidateApprovedFirstRunValues(
+    private static void ValidateApprovedProfileValues(
         ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile,
         List<string> errors)
     {
-        CheckEquals(request.EnvironmentName, ApprovedEnvironmentName, "environment_not_approved_for_first_run", errors);
-        CheckEquals(request.SiteRef, ApprovedSiteRef, "site_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.SitePosServerRef, ApprovedSitePosServerRef, "site_pos_server_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.RunId, ApprovedRunId, "run_id_not_approved_for_first_run", errors);
-        CheckEquals(request.CorrelationId, ApprovedCorrelationId, "correlation_id_not_approved_for_first_run", errors);
-        CheckEquals(request.UpstreamFinalityRef, ApprovedUpstreamFinalityRef, "upstream_finality_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.ParkingSessionRef, ApprovedParkingSessionRef, "parking_session_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.PaymentAttemptRef, ApprovedPaymentAttemptRef, "payment_attempt_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.PaymentConfirmationRef, ApprovedPaymentConfirmationRef, "payment_confirmation_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.PayableBasisRef, ApprovedPayableBasisRef, "payable_basis_ref_not_approved_for_first_run", errors);
-        CheckEquals(request.Currency, ApprovedCurrency, "currency_not_approved_for_first_run", errors);
-        CheckEquals(request.ApprovalReference, ApprovedApprovalReference, "approval_reference_not_approved_for_first_run", errors);
+        CheckEquals(request.EnvironmentName, profile.EnvironmentName, "environment_not_approved_for_profile", errors);
+        CheckEquals(request.SiteRef, profile.SiteRef, "site_ref_not_approved_for_profile", errors);
+        CheckEquals(request.SitePosServerRef, profile.SitePosServerRef, "site_pos_server_ref_not_approved_for_profile", errors);
+        CheckEquals(request.RunId, profile.RunId, "run_id_not_approved_for_profile", errors);
+        CheckEquals(request.CorrelationId, profile.CorrelationId, "correlation_id_not_approved_for_profile", errors);
+        CheckEquals(request.UpstreamFinalityRef, profile.UpstreamFinalityRef, "upstream_finality_ref_not_approved_for_profile", errors);
+        CheckEquals(request.ParkingSessionRef, profile.ParkingSessionRef, "parking_session_ref_not_approved_for_profile", errors);
+        CheckEquals(request.PaymentAttemptRef, profile.PaymentAttemptRef, "payment_attempt_ref_not_approved_for_profile", errors);
+        CheckEquals(request.PaymentConfirmationRef, profile.PaymentConfirmationRef, "payment_confirmation_ref_not_approved_for_profile", errors);
+        CheckEquals(request.PayableBasisRef, profile.PayableBasisRef, "payable_basis_ref_not_approved_for_profile", errors);
+        CheckEquals(request.Currency, profile.Currency, "currency_not_approved_for_profile", errors);
+        CheckEquals(request.ApprovalReference, profile.ApprovalReference, "approval_reference_not_approved_for_profile", errors);
 
-        if (request.BusinessDayDate != ApprovedBusinessDayDate)
+        if (request.BusinessDayDate != profile.BusinessDayDate)
         {
-            errors.Add("business_day_date_not_approved_for_first_run");
+            errors.Add("business_day_date_not_approved_for_profile");
         }
 
         var approvedAmount = IsConflictRequest(request)
-            ? ApprovedConflictAmountMinorUnits
-            : ApprovedAmountMinorUnits;
+            ? profile.ConflictAmountMinorUnits
+            : profile.AmountMinorUnits;
         var amountError = IsConflictRequest(request)
-            ? "amount_conflict_value_not_approved_for_conflict_run"
-            : "amounts_not_approved_for_first_run";
+            ? "amount_conflict_value_not_approved_for_profile"
+            : "amounts_not_approved_for_profile";
 
         if (request.AmountMinorUnits != approvedAmount ||
             request.LineAmountTotal != approvedAmount ||
@@ -763,9 +799,9 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             errors.Add(amountError);
         }
 
-        if (request.TaxAmountTotal != ApprovedTaxAmountMinorUnits)
+        if (request.TaxAmountTotal != profile.TaxAmountMinorUnits)
         {
-            errors.Add("tax_amount_not_approved_for_first_run");
+            errors.Add("tax_amount_not_approved_for_profile");
         }
     }
 
@@ -790,33 +826,36 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     }
 
     private static PrepareFiscalIssuanceCommand BuildPrepareCommand(
-        ControlledUatFiscalIssuanceInvocationRequest request) =>
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile) =>
         new(
-            PaymentConfirmationId: ControlledUatPaymentConfirmationId,
-            PaymentAttemptId: ControlledUatPaymentAttemptId,
-            ParkingSessionId: ControlledUatParkingSessionId,
-            TariffSnapshotId: ControlledUatTariffSnapshotId,
-            SiteId: ControlledUatSiteId,
-            SitePosServerId: ResolveSitePosServerId(request),
+            PaymentConfirmationId: profile.PaymentConfirmationId,
+            PaymentAttemptId: profile.PaymentAttemptId,
+            ParkingSessionId: profile.ParkingSessionId,
+            TariffSnapshotId: profile.TariffSnapshotId,
+            SiteId: profile.SiteId,
+            SitePosServerId: ResolveSitePosServerId(request, profile),
             SitePosServerRef: request.SitePosServerRef?.Trim(),
-            FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
+            FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request, profile),
             FiscalDocumentTypeCodeKey: request.FiscalDocumentType?.Trim(),
             PayableBasisRef: request.PayableBasisRef?.Trim(),
             UpstreamFinalityReference: request.UpstreamFinalityRef!.Trim(),
             CorrelationId: Guid.Parse(request.CorrelationId!.Trim()),
-            ServiceIdentityId: ControlledUatServiceIdentityId);
+            ServiceIdentityId: profile.ServiceIdentityId);
 
     private static ControlledUatFiscalIssuanceFixture BuildFixture(
-        ControlledUatFiscalIssuanceInvocationRequest request) =>
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile) =>
         new(
-            PaymentConfirmationId: ControlledUatPaymentConfirmationId,
-            PaymentAttemptId: ControlledUatPaymentAttemptId,
-            ParkingSessionId: ControlledUatParkingSessionId,
-            TariffSnapshotId: ControlledUatTariffSnapshotId,
-            ServiceIdentityId: ControlledUatServiceIdentityId,
-            SiteGroupId: ControlledUatSiteGroupId,
-            SiteId: ControlledUatSiteId,
-            VendorSystemId: ControlledUatVendorSystemId,
+            ProfileId: profile.ProfileId,
+            PaymentConfirmationId: profile.PaymentConfirmationId,
+            PaymentAttemptId: profile.PaymentAttemptId,
+            ParkingSessionId: profile.ParkingSessionId,
+            TariffSnapshotId: profile.TariffSnapshotId,
+            ServiceIdentityId: profile.ServiceIdentityId,
+            SiteGroupId: profile.SiteGroupId,
+            SiteId: profile.SiteId,
+            VendorSystemId: profile.VendorSystemId,
             RunId: request.RunId!.Trim(),
             CorrelationId: Guid.Parse(request.CorrelationId!.Trim()),
             SiteRef: request.SiteRef!.Trim(),
@@ -843,13 +882,19 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             reference.FiscalSequenceValue is > 0;
 
     private static bool IsReplayRequest(ControlledUatFiscalIssuanceInvocationRequest request) =>
-        string.Equals(request.ExpectedRunType, ApprovedReplayExpectedRunType, StringComparison.OrdinalIgnoreCase);
+        string.Equals(request.ExpectedRunType, ReplayScenario, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsConflictRequest(ControlledUatFiscalIssuanceInvocationRequest request) =>
-        string.Equals(request.ExpectedRunType, ApprovedConflictExpectedRunType, StringComparison.OrdinalIgnoreCase);
+        string.Equals(request.ExpectedRunType, ConflictScenario, StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsSupportedScenarioName(string? scenario) =>
+        string.Equals(scenario, NewlyCreatedScenario, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(scenario, ReplayScenario, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(scenario, ConflictScenario, StringComparison.OrdinalIgnoreCase);
 
     private static FiscalIssuanceControlledUatHarnessRequest BuildHarnessRequest(
         ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile,
         Guid fiscalIssuanceReferenceId)
     {
         var correlationId = Guid.Parse(request.CorrelationId.Trim());
@@ -861,11 +906,11 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             EvidenceLocation: request.EvidenceLocation,
             EvidenceOwner: request.EvidenceOwner.Trim(),
             ApprovedByRef: request.ApprovalReference.Trim(),
-            FiscalContext: BuildFiscalContext(request),
+            FiscalContext: BuildFiscalContext(request, profile),
             RecordingContext: new PosServerCreateResultRecordingContext(
                 UpstreamFinalityReference: request.UpstreamFinalityRef.Trim(),
-                SitePosServerId: ResolveSitePosServerId(request),
-                FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
+                SitePosServerId: ResolveSitePosServerId(request, profile),
+                FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request, profile),
                 CorrelationId: correlationId,
                 PosServerResponseTimestamp: null,
                 ServiceIdentityId: null),
@@ -874,13 +919,14 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     }
 
     private static CentralPmsFiscalDocumentMappingContext BuildFiscalContext(
-        ControlledUatFiscalIssuanceInvocationRequest request) =>
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile) =>
         new(
-            SitePosServerId: ResolveSitePosServerId(request),
+            SitePosServerId: ResolveSitePosServerId(request, profile),
             SitePosServerRef: request.SitePosServerRef.Trim(),
-            FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request),
+            FiscalDocumentTypeCodeId: ResolveFiscalDocumentTypeCodeId(request, profile),
             FiscalDocumentTypeCodeKey: request.FiscalDocumentType.Trim(),
-            FiscalDocumentStatusCodeId: ResolveFiscalDocumentStatusCodeId(request),
+            FiscalDocumentStatusCodeId: ResolveFiscalDocumentStatusCodeId(request, profile),
             BusinessDayDate: request.BusinessDayDate,
             CentralPmsParkingSessionRef: request.ParkingSessionRef.Trim(),
             CentralPmsPaymentAttemptRef: request.PaymentAttemptRef.Trim(),
@@ -900,7 +946,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             [
                 new CentralPmsFiscalDocumentLineContext(
                     LineSequence: 1,
-                    LineTypeCodeId: ControlledUatLineTypeCodeId,
+                    LineTypeCodeId: profile.LineTypeCodeId,
                     Description: request.LineSummary.Trim(),
                     Quantity: 1,
                     UnitAmountMinorUnits: request.LineAmountTotal,
@@ -916,7 +962,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             Tenders:
             [
                 new CentralPmsFiscalTenderContext(
-                    TenderTypeCodeId: ControlledUatTenderTypeCodeId,
+                    TenderTypeCodeId: profile.TenderTypeCodeId,
                     AmountMinorUnits: request.TenderAmountTotal,
                     CurrencyCode: request.Currency.Trim().ToUpperInvariant(),
                     CentralPmsPaymentAttemptRef: request.PaymentAttemptRef.Trim(),
@@ -928,8 +974,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             TaxDetails:
             [
                 new CentralPmsFiscalTaxDetailContext(
-                    TaxTypeCodeId: ControlledUatTaxTypeCodeId,
-                    TaxClassificationCodeId: ControlledUatTaxClassificationCodeId,
+                    TaxTypeCodeId: profile.TaxTypeCodeId,
+                    TaxClassificationCodeId: profile.TaxClassificationCodeId,
                     TaxableAmountMinorUnits: request.LineAmountTotal,
                     TaxAmountMinorUnits: request.TaxAmountTotal,
                     CurrencyCode: request.Currency.Trim().ToUpperInvariant(),
@@ -941,7 +987,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             Totals:
             [
                 new CentralPmsFiscalTotalContext(
-                    TotalTypeCodeId: ControlledUatTotalTypeCodeId,
+                    TotalTypeCodeId: profile.TotalTypeCodeId,
                     AmountMinorUnits: request.GrandTotal,
                     CurrencyCode: request.Currency.Trim().ToUpperInvariant(),
                     TotalContext: new Dictionary<string, string> { ["kind"] = "grand_total" })
@@ -955,14 +1001,20 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             PaymentFinalityRef: request.UpstreamFinalityRef.Trim(),
             VendorAckRef: null);
 
-    private static Guid ResolveSitePosServerId(ControlledUatFiscalIssuanceInvocationRequest request) =>
-        request.SitePosServerId.GetValueOrDefault(ControlledUatSitePosServerId);
+    private static Guid ResolveSitePosServerId(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile) =>
+        request.SitePosServerId.GetValueOrDefault(profile.SitePosServerId);
 
-    private static Guid ResolveFiscalDocumentTypeCodeId(ControlledUatFiscalIssuanceInvocationRequest request) =>
-        request.FiscalDocumentTypeCodeId.GetValueOrDefault(ControlledUatFiscalDocumentTypeCodeId);
+    private static Guid ResolveFiscalDocumentTypeCodeId(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile) =>
+        request.FiscalDocumentTypeCodeId.GetValueOrDefault(profile.FiscalDocumentTypeCodeId);
 
-    private static Guid ResolveFiscalDocumentStatusCodeId(ControlledUatFiscalIssuanceInvocationRequest request) =>
-        request.FiscalDocumentStatusCodeId.GetValueOrDefault(ControlledUatFiscalDocumentStatusCodeId);
+    private static Guid ResolveFiscalDocumentStatusCodeId(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        ControlledUatFiscalSmokeProfile profile) =>
+        request.FiscalDocumentStatusCodeId.GetValueOrDefault(profile.FiscalDocumentStatusCodeId);
 
     private static IEnumerable<string?> EnumerateStrings(ControlledUatFiscalIssuanceInvocationRequest request)
     {
@@ -987,6 +1039,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         yield return request.EvidenceLocation;
         yield return request.EvidenceOwner;
         yield return request.ExpectedRunType;
+        yield return request.ProfileId;
     }
 
     private static bool ContainsSensitiveTerm(string? value) =>
@@ -1046,9 +1099,11 @@ public sealed record ControlledUatFiscalIssuanceInvocationRequest(
     bool UnknownIncluded,
     string? EvidenceReference,
     string? EvidenceLocation,
-    string? EvidenceOwner);
+    string? EvidenceOwner,
+    string? ProfileId);
 
 public sealed record ControlledUatFiscalIssuanceFixture(
+    string ProfileId,
     Guid PaymentConfirmationId,
     Guid PaymentAttemptId,
     Guid ParkingSessionId,
@@ -1096,3 +1151,324 @@ public sealed record ControlledUatFiscalIssuanceInvocationResponse(
     string? EvidenceJson,
     string? EvidenceRedactionStatus,
     bool SensitiveDataExcluded);
+
+public sealed record ControlledUatFiscalSmokeProfile(
+    string ProfileId,
+    string EnvironmentName,
+    string SiteRef,
+    string SitePosServerRef,
+    string FiscalDocumentType,
+    string RunId,
+    string CorrelationId,
+    string UpstreamFinalityRef,
+    string ParkingSessionRef,
+    string PaymentAttemptRef,
+    string PaymentConfirmationRef,
+    string PayableBasisRef,
+    string Currency,
+    string ApprovalReference,
+    DateOnly BusinessDayDate,
+    long AmountMinorUnits,
+    long ConflictAmountMinorUnits,
+    long TaxAmountMinorUnits,
+    IReadOnlySet<string> SupportedScenarios,
+    Guid PaymentConfirmationId,
+    Guid PaymentAttemptId,
+    Guid ParkingSessionId,
+    Guid SiteGroupId,
+    Guid SiteId,
+    Guid VendorSystemId,
+    Guid TariffSnapshotId,
+    Guid ServiceIdentityId,
+    Guid SitePosServerId,
+    Guid FiscalDocumentTypeCodeId,
+    Guid FiscalDocumentStatusCodeId,
+    Guid LineTypeCodeId,
+    Guid TenderTypeCodeId,
+    Guid TaxTypeCodeId,
+    Guid TaxClassificationCodeId,
+    Guid TotalTypeCodeId)
+{
+    public bool SupportsScenario(string? scenario) =>
+        !string.IsNullOrWhiteSpace(scenario) &&
+        SupportedScenarios.Contains(scenario.Trim());
+}
+
+public sealed record ControlledUatFiscalSmokeProfileOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    public string? ProfileId { get; set; }
+
+    public string? EnvironmentName { get; set; }
+
+    public string? SiteRef { get; set; }
+
+    public string? SitePosServerRef { get; set; }
+
+    public string? FiscalDocumentType { get; set; }
+
+    public string? RunId { get; set; }
+
+    public string? CorrelationId { get; set; }
+
+    public string? UpstreamFinalityRef { get; set; }
+
+    public string? ParkingSessionRef { get; set; }
+
+    public string? PaymentAttemptRef { get; set; }
+
+    public string? PaymentConfirmationRef { get; set; }
+
+    public string? PayableBasisRef { get; set; }
+
+    public string? Currency { get; set; }
+
+    public string? ApprovalReference { get; set; }
+
+    public DateOnly? BusinessDayDate { get; set; }
+
+    public long AmountMinorUnits { get; set; }
+
+    public long ConflictAmountMinorUnits { get; set; }
+
+    public long TaxAmountMinorUnits { get; set; }
+
+    public List<string> SupportedScenarios { get; set; } = [];
+
+    public Guid PaymentConfirmationId { get; set; }
+
+    public Guid PaymentAttemptId { get; set; }
+
+    public Guid ParkingSessionId { get; set; }
+
+    public Guid SiteGroupId { get; set; }
+
+    public Guid SiteId { get; set; }
+
+    public Guid VendorSystemId { get; set; }
+
+    public Guid TariffSnapshotId { get; set; }
+
+    public Guid ServiceIdentityId { get; set; }
+
+    public Guid SitePosServerId { get; set; }
+
+    public Guid FiscalDocumentTypeCodeId { get; set; }
+
+    public Guid FiscalDocumentStatusCodeId { get; set; }
+
+    public Guid LineTypeCodeId { get; set; }
+
+    public Guid TenderTypeCodeId { get; set; }
+
+    public Guid TaxTypeCodeId { get; set; }
+
+    public Guid TaxClassificationCodeId { get; set; }
+
+    public Guid TotalTypeCodeId { get; set; }
+}
+
+internal static class ControlledUatFiscalSmokeProfileCatalog
+{
+    private static readonly string[] UnsafeProductionMarkers =
+    [
+        "prod",
+        "production",
+        "live",
+        "shared"
+    ];
+
+    private static readonly string[] NonProductionMarkers =
+    [
+        "dev",
+        "uat",
+        "smoke",
+        "sandbox",
+        "local"
+    ];
+
+    public static ControlledUatFiscalSmokeProfile? TryResolve(
+        string profileId,
+        ControlledUatFiscalSmokeProfile defaultProfile,
+        IReadOnlyList<ControlledUatFiscalSmokeProfileOptions> configuredProfiles,
+        List<string> errors)
+    {
+        if (string.Equals(profileId, defaultProfile.ProfileId, StringComparison.OrdinalIgnoreCase))
+        {
+            return defaultProfile;
+        }
+
+        var option = configuredProfiles.FirstOrDefault(candidate =>
+            candidate.Enabled &&
+            string.Equals(candidate.ProfileId, profileId, StringComparison.OrdinalIgnoreCase));
+        if (option is null)
+        {
+            errors.Add("profile_not_allowlisted");
+            return null;
+        }
+
+        return TryBuildConfiguredProfile(option, errors);
+    }
+
+    private static ControlledUatFiscalSmokeProfile? TryBuildConfiguredProfile(
+        ControlledUatFiscalSmokeProfileOptions option,
+        List<string> errors)
+    {
+        var profileErrors = new List<string>();
+
+        Require(option.ProfileId, "configured_profile_id_required", profileErrors);
+        Require(option.EnvironmentName, "configured_environment_name_required", profileErrors);
+        Require(option.SiteRef, "configured_site_ref_required", profileErrors);
+        Require(option.SitePosServerRef, "configured_site_pos_server_ref_required", profileErrors);
+        Require(option.FiscalDocumentType, "configured_fiscal_document_type_required", profileErrors);
+        Require(option.RunId, "configured_run_id_required", profileErrors);
+        Require(option.CorrelationId, "configured_correlation_id_required", profileErrors);
+        Require(option.UpstreamFinalityRef, "configured_upstream_finality_ref_required", profileErrors);
+        Require(option.ParkingSessionRef, "configured_parking_session_ref_required", profileErrors);
+        Require(option.PaymentAttemptRef, "configured_payment_attempt_ref_required", profileErrors);
+        Require(option.PaymentConfirmationRef, "configured_payment_confirmation_ref_required", profileErrors);
+        Require(option.PayableBasisRef, "configured_payable_basis_ref_required", profileErrors);
+        Require(option.Currency, "configured_currency_required", profileErrors);
+        Require(option.ApprovalReference, "configured_approval_reference_required", profileErrors);
+
+        if (option.BusinessDayDate is null)
+        {
+            profileErrors.Add("configured_business_day_date_required");
+        }
+
+        if (option.AmountMinorUnits <= 0)
+        {
+            profileErrors.Add("configured_amount_minor_units_required");
+        }
+
+        if (option.ConflictAmountMinorUnits <= 0 ||
+            option.ConflictAmountMinorUnits == option.AmountMinorUnits)
+        {
+            profileErrors.Add("configured_conflict_amount_minor_units_required");
+        }
+
+        if (option.TaxAmountMinorUnits < 0)
+        {
+            profileErrors.Add("configured_tax_amount_minor_units_invalid");
+        }
+
+        var supportedScenarios = option.SupportedScenarios
+            .Where(scenario => !string.IsNullOrWhiteSpace(scenario))
+            .Select(scenario => scenario.Trim())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (supportedScenarios.Count == 0)
+        {
+            profileErrors.Add("configured_supported_scenarios_required");
+        }
+        else if (supportedScenarios.Any(scenario => !FiscalIssuanceControlledUatInvocationService.IsSupportedScenarioName(scenario)))
+        {
+            profileErrors.Add("configured_supported_scenario_invalid");
+        }
+
+        RequireNonEmpty(option.PaymentConfirmationId, "configured_payment_confirmation_id_required", profileErrors);
+        RequireNonEmpty(option.PaymentAttemptId, "configured_payment_attempt_id_required", profileErrors);
+        RequireNonEmpty(option.ParkingSessionId, "configured_parking_session_id_required", profileErrors);
+        RequireNonEmpty(option.SiteGroupId, "configured_site_group_id_required", profileErrors);
+        RequireNonEmpty(option.SiteId, "configured_site_id_required", profileErrors);
+        RequireNonEmpty(option.VendorSystemId, "configured_vendor_system_id_required", profileErrors);
+        RequireNonEmpty(option.TariffSnapshotId, "configured_tariff_snapshot_id_required", profileErrors);
+        RequireNonEmpty(option.ServiceIdentityId, "configured_service_identity_id_required", profileErrors);
+        RequireNonEmpty(option.SitePosServerId, "configured_site_pos_server_id_required", profileErrors);
+        RequireNonEmpty(option.FiscalDocumentTypeCodeId, "configured_fiscal_document_type_code_id_required", profileErrors);
+        RequireNonEmpty(option.FiscalDocumentStatusCodeId, "configured_fiscal_document_status_code_id_required", profileErrors);
+        RequireNonEmpty(option.LineTypeCodeId, "configured_line_type_code_id_required", profileErrors);
+        RequireNonEmpty(option.TenderTypeCodeId, "configured_tender_type_code_id_required", profileErrors);
+        RequireNonEmpty(option.TaxTypeCodeId, "configured_tax_type_code_id_required", profileErrors);
+        RequireNonEmpty(option.TaxClassificationCodeId, "configured_tax_classification_code_id_required", profileErrors);
+        RequireNonEmpty(option.TotalTypeCodeId, "configured_total_type_code_id_required", profileErrors);
+
+        if (!IsNonProduction(option))
+        {
+            profileErrors.Add("configured_profile_not_non_production");
+        }
+
+        if (profileErrors.Count > 0)
+        {
+            errors.AddRange(profileErrors);
+            return null;
+        }
+
+        return new ControlledUatFiscalSmokeProfile(
+            ProfileId: option.ProfileId!.Trim(),
+            EnvironmentName: option.EnvironmentName!.Trim(),
+            SiteRef: option.SiteRef!.Trim(),
+            SitePosServerRef: option.SitePosServerRef!.Trim(),
+            FiscalDocumentType: option.FiscalDocumentType!.Trim(),
+            RunId: option.RunId!.Trim(),
+            CorrelationId: option.CorrelationId!.Trim(),
+            UpstreamFinalityRef: option.UpstreamFinalityRef!.Trim(),
+            ParkingSessionRef: option.ParkingSessionRef!.Trim(),
+            PaymentAttemptRef: option.PaymentAttemptRef!.Trim(),
+            PaymentConfirmationRef: option.PaymentConfirmationRef!.Trim(),
+            PayableBasisRef: option.PayableBasisRef!.Trim(),
+            Currency: option.Currency!.Trim().ToUpperInvariant(),
+            ApprovalReference: option.ApprovalReference!.Trim(),
+            BusinessDayDate: option.BusinessDayDate!.Value,
+            AmountMinorUnits: option.AmountMinorUnits,
+            ConflictAmountMinorUnits: option.ConflictAmountMinorUnits,
+            TaxAmountMinorUnits: option.TaxAmountMinorUnits,
+            SupportedScenarios: supportedScenarios,
+            PaymentConfirmationId: option.PaymentConfirmationId,
+            PaymentAttemptId: option.PaymentAttemptId,
+            ParkingSessionId: option.ParkingSessionId,
+            SiteGroupId: option.SiteGroupId,
+            SiteId: option.SiteId,
+            VendorSystemId: option.VendorSystemId,
+            TariffSnapshotId: option.TariffSnapshotId,
+            ServiceIdentityId: option.ServiceIdentityId,
+            SitePosServerId: option.SitePosServerId,
+            FiscalDocumentTypeCodeId: option.FiscalDocumentTypeCodeId,
+            FiscalDocumentStatusCodeId: option.FiscalDocumentStatusCodeId,
+            LineTypeCodeId: option.LineTypeCodeId,
+            TenderTypeCodeId: option.TenderTypeCodeId,
+            TaxTypeCodeId: option.TaxTypeCodeId,
+            TaxClassificationCodeId: option.TaxClassificationCodeId,
+            TotalTypeCodeId: option.TotalTypeCodeId);
+    }
+
+    private static void Require(string? value, string error, List<string> errors)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            errors.Add(error);
+        }
+    }
+
+    private static void RequireNonEmpty(Guid value, string error, List<string> errors)
+    {
+        if (value == Guid.Empty)
+        {
+            errors.Add(error);
+        }
+    }
+
+    private static bool IsNonProduction(ControlledUatFiscalSmokeProfileOptions option)
+    {
+        var values = new[]
+        {
+            option.ProfileId,
+            option.EnvironmentName,
+            option.SiteRef,
+            option.SitePosServerRef,
+            option.RunId,
+            option.UpstreamFinalityRef,
+            option.ParkingSessionRef,
+            option.PaymentAttemptRef,
+            option.PaymentConfirmationRef,
+            option.PayableBasisRef
+        };
+
+        return values.All(value => !ContainsAny(value, UnsafeProductionMarkers)) &&
+            values.Any(value => ContainsAny(value, NonProductionMarkers));
+    }
+
+    private static bool ContainsAny(string? value, IReadOnlyList<string> markers) =>
+        value is not null &&
+        markers.Any(marker => value.Contains(marker, StringComparison.OrdinalIgnoreCase));
+}

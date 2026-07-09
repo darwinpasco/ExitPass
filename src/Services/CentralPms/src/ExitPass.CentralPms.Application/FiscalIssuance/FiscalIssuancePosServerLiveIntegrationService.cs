@@ -193,6 +193,8 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
 
     public bool EnableLiveFiscalIssuanceFromExitFlow { get; set; }
 
+    public List<ControlledUatFiscalSmokeProfileOptions> ControlledUatSmokeProfiles { get; set; } = [];
+
     public FiscalIssuancePosServerIntegrationReadiness EvaluateReadiness()
     {
         var baseUrlConfigured = !string.IsNullOrWhiteSpace(PosServerBaseUrl);

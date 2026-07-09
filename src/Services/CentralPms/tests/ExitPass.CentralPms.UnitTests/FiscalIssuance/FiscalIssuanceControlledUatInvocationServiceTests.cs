@@ -192,14 +192,14 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     }
 
     [Theory]
-    [InlineData("run_id", "wrong-run-id", "run_id_not_approved_for_first_run")]
-    [InlineData("correlation_id", "00000000-0000-4000-8000-000000000101", "correlation_id_not_approved_for_first_run")]
-    [InlineData("upstream_finality_ref", "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001", "upstream_finality_ref_not_approved_for_first_run")]
-    [InlineData("business_day_date", "2026-07-03", "business_day_date_not_approved_for_first_run")]
-    [InlineData("parking_session_ref", "DEV-PARKING-SESSION-OTHER", "parking_session_ref_not_approved_for_first_run")]
-    [InlineData("payment_attempt_ref", "DEV-PAYMENT-ATTEMPT-OTHER", "payment_attempt_ref_not_approved_for_first_run")]
-    [InlineData("payment_confirmation_ref", "DEV-PAYMENT-CONFIRMATION-ATC-001", "payment_confirmation_ref_not_approved_for_first_run")]
-    [InlineData("payable_basis_ref", "DEV-PAYABLE-BASIS-OTHER", "payable_basis_ref_not_approved_for_first_run")]
+    [InlineData("run_id", "wrong-run-id", "run_id_not_approved_for_profile")]
+    [InlineData("correlation_id", "00000000-0000-4000-8000-000000000101", "correlation_id_not_approved_for_profile")]
+    [InlineData("upstream_finality_ref", "CPS-POS-UAT:CPS-POS-UAT-20260703-DEV-ATC-001:newly_created:001", "upstream_finality_ref_not_approved_for_profile")]
+    [InlineData("business_day_date", "2026-07-03", "business_day_date_not_approved_for_profile")]
+    [InlineData("parking_session_ref", "DEV-PARKING-SESSION-OTHER", "parking_session_ref_not_approved_for_profile")]
+    [InlineData("payment_attempt_ref", "DEV-PAYMENT-ATTEMPT-OTHER", "payment_attempt_ref_not_approved_for_profile")]
+    [InlineData("payment_confirmation_ref", "DEV-PAYMENT-CONFIRMATION-ATC-001", "payment_confirmation_ref_not_approved_for_profile")]
+    [InlineData("payable_basis_ref", "DEV-PAYABLE-BASIS-OTHER", "payable_basis_ref_not_approved_for_profile")]
     public async Task RunAsync_WhenApprovedGateValueDiffers_Rejects(
         string field,
         string value,
@@ -226,7 +226,64 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.DiagnosticInvoked.Should().BeFalse();
         response.PosServerCallAttempted.Should().BeFalse();
         await fixtureStore.DidNotReceiveWithAnyArgs()
-            .EnsureApprovedFirstRunFixtureAsync(default!, default);
+            .EnsureApprovedFirstRunFixtureAsync(default!, default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenProfileIsUnknown_RejectsBeforeFixtureOrDiagnostic()
+    {
+        var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+
+        var response = await CreateSut(harness: harness, fixtureStore: fixtureStore)
+            .RunAsync(ValidRequest() with { ProfileId = "CPS-POS-UAT-UNKNOWN" }, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(400);
+        response.Errors.Should().Contain("profile_not_allowlisted");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default!, default);
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task PreflightAsync_WhenConfiguredNonProductionProfileMatchesRequest_Passes()
+    {
+        var options = EnabledOptions();
+        options.ControlledUatSmokeProfiles.Add(FutureProfileOptions());
+        var request = FutureProfileRequest();
+
+        var response = await CreateSut(options: options)
+            .PreflightAsync(request, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(200);
+        response.Status.Should().Be("preflight_passed");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task PreflightAsync_WhenConfiguredProfileIsProductionLike_Rejects()
+    {
+        var options = EnabledOptions();
+        options.ControlledUatSmokeProfiles.Add(FutureProfileOptions() with
+        {
+            ProfileId = "PROD-POS-UAT-20260710-001",
+            RunId = "PROD-POS-UAT-20260710-001",
+            EnvironmentName = "PRODUCTION"
+        });
+        var request = FutureProfileRequest() with
+        {
+            ProfileId = "PROD-POS-UAT-20260710-001",
+            RunId = "PROD-POS-UAT-20260710-001",
+            EnvironmentName = "PRODUCTION"
+        };
+
+        var response = await CreateSut(options: options)
+            .PreflightAsync(request, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(400);
+        response.Errors.Should().Contain("configured_profile_not_non_production");
     }
 
     [Fact]
@@ -237,6 +294,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
         fixtureStore.EnsureApprovedFirstRunFixtureAsync(
                 Arg.Any<ControlledUatFiscalIssuanceFixture>(),
+                Arg.Any<ControlledUatFiscalSmokeProfile>(),
                 Arg.Any<CancellationToken>())
             .Returns<Task>(_ => throw new InvalidOperationException("database primary key collision detail"));
 
@@ -320,6 +378,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
         fixtureStore.EnsureApprovedFirstRunFixtureAsync(
                 Arg.Any<ControlledUatFiscalIssuanceFixture>(),
+                Arg.Any<ControlledUatFiscalSmokeProfile>(),
                 Arg.Any<CancellationToken>())
             .Returns(Task.CompletedTask);
 
@@ -332,12 +391,15 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.HttpStatusCode.Should().Be(200);
         await fixtureStore.Received(1).EnsureApprovedFirstRunFixtureAsync(
             Arg.Is<ControlledUatFiscalIssuanceFixture>(fixture =>
+                fixture.ProfileId == "CPS-POS-UAT-20260709-DEV-ATC-001" &&
                 fixture.RunId == "CPS-POS-UAT-20260709-DEV-ATC-001" &&
                 fixture.PaymentConfirmationRef == "DEV-PAYMENT-FINALITY-ATC-001" &&
                 fixture.PaymentConfirmationId == Guid.Parse("00000000-0000-4000-8000-000000000301") &&
                 fixture.PaymentAttemptId == Guid.Parse("00000000-0000-4000-8000-000000000302") &&
                 fixture.ParkingSessionId == Guid.Parse("00000000-0000-4000-8000-000000000303") &&
                 fixture.UpstreamFinalityRef == "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001"),
+            Arg.Is<ControlledUatFiscalSmokeProfile>(profile =>
+                profile.ProfileId == "CPS-POS-UAT-20260709-DEV-ATC-001"),
             Arg.Any<CancellationToken>());
         await orchestration.Received(1).PreparePendingAsync(
             Arg.Is<PrepareFiscalIssuanceCommand>(command =>
@@ -486,7 +548,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.GateBehaviorTriggered.Should().BeFalse();
         response.EvidenceFileWritten.Should().BeFalse();
 
-        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default);
+        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default!, default);
         await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
         await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
     }
@@ -528,7 +590,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             .RunAsync(ReplayRequest() with { RunId = "CPS-POS-UAT-OTHER" }, CancellationToken.None);
 
         response.HttpStatusCode.Should().Be(400);
-        response.Errors.Should().Contain("run_id_not_approved_for_first_run");
+        response.Errors.Should().Contain("run_id_not_approved_for_profile");
         response.DiagnosticInvoked.Should().BeFalse();
         response.PosServerCallAttempted.Should().BeFalse();
         await repository.DidNotReceiveWithAnyArgs()
@@ -575,7 +637,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         response.GateBehaviorTriggered.Should().BeFalse();
         response.EvidenceFileWritten.Should().BeFalse();
 
-        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default);
+        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default!, default);
         await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
         await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
     }
@@ -617,7 +679,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             .RunAsync(ConflictRequest() with { AmountMinorUnits = 10002 }, CancellationToken.None);
 
         response.HttpStatusCode.Should().Be(400);
-        response.Errors.Should().Contain("amount_conflict_value_not_approved_for_conflict_run");
+        response.Errors.Should().Contain("amount_conflict_value_not_approved_for_profile");
         response.DiagnosticInvoked.Should().BeFalse();
         response.PosServerCallAttempted.Should().BeFalse();
         await repository.DidNotReceiveWithAnyArgs()
@@ -694,6 +756,7 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
         {
             resolvedFixtureStore.EnsureApprovedFirstRunFixtureAsync(
                     Arg.Any<ControlledUatFiscalIssuanceFixture>(),
+                    Arg.Any<ControlledUatFiscalSmokeProfile>(),
                     Arg.Any<CancellationToken>())
                 .Returns(Task.CompletedTask);
         }
@@ -761,13 +824,71 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             UnknownIncluded: false,
             EvidenceReference: "DEV-UAT-CPS-POS-001",
             EvidenceLocation: @"D:\ExitPass-UAT-Evidence\CPS-POS-UAT-20260709-DEV-ATC-001",
-            EvidenceOwner: "Darwin Pasco");
+            EvidenceOwner: "Darwin Pasco",
+            ProfileId: "CPS-POS-UAT-20260709-DEV-ATC-001");
 
     private static ControlledUatFiscalIssuanceInvocationRequest ReplayRequest() =>
         ValidRequest() with
         {
             ExpectedRunType = "replay",
             ReplayIncluded = true
+        };
+
+    private static ControlledUatFiscalIssuanceInvocationRequest FutureProfileRequest() =>
+        ValidRequest() with
+        {
+            ProfileId = "CPS-POS-UAT-20260710-DEV-ATC-002",
+            RunId = "CPS-POS-UAT-20260710-DEV-ATC-002",
+            ApprovalReference = "DEV-UAT-CPS-POS-002",
+            CorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2e0",
+            UpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260710-DEV-ATC-002:newly_created:001",
+            ParkingSessionRef = "DEV-PARKING-SESSION-ATC-002",
+            PaymentAttemptRef = "DEV-PAYMENT-ATTEMPT-ATC-002",
+            PaymentConfirmationRef = "DEV-PAYMENT-FINALITY-ATC-002",
+            PayableBasisRef = "DEV-PAYABLE-BASIS-ATC-002",
+            BusinessDayDate = new DateOnly(2026, 7, 10),
+            EvidenceReference = "DEV-UAT-CPS-POS-002",
+            EvidenceLocation = @"D:\ExitPass-UAT-Evidence\CPS-POS-UAT-20260710-DEV-ATC-002"
+        };
+
+    private static ControlledUatFiscalSmokeProfileOptions FutureProfileOptions() =>
+        new()
+        {
+            ProfileId = "CPS-POS-UAT-20260710-DEV-ATC-002",
+            EnvironmentName = "DEV-CONTROLLED-UAT-LOCAL",
+            SiteRef = "DEV-SITE-ATC-001",
+            SitePosServerRef = "DEV-POS-SERVER-ATC-001",
+            FiscalDocumentType = "sales_invoice",
+            RunId = "CPS-POS-UAT-20260710-DEV-ATC-002",
+            CorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2e0",
+            UpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260710-DEV-ATC-002:newly_created:001",
+            ParkingSessionRef = "DEV-PARKING-SESSION-ATC-002",
+            PaymentAttemptRef = "DEV-PAYMENT-ATTEMPT-ATC-002",
+            PaymentConfirmationRef = "DEV-PAYMENT-FINALITY-ATC-002",
+            PayableBasisRef = "DEV-PAYABLE-BASIS-ATC-002",
+            Currency = "PHP",
+            ApprovalReference = "DEV-UAT-CPS-POS-002",
+            BusinessDayDate = new DateOnly(2026, 7, 10),
+            AmountMinorUnits = 10000,
+            ConflictAmountMinorUnits = 10001,
+            TaxAmountMinorUnits = 0,
+            SupportedScenarios = ["newly_created", "replay", "conflict"],
+            PaymentConfirmationId = Guid.Parse("00000000-0000-4000-8000-000000000321"),
+            PaymentAttemptId = Guid.Parse("00000000-0000-4000-8000-000000000322"),
+            ParkingSessionId = Guid.Parse("00000000-0000-4000-8000-000000000323"),
+            SiteGroupId = Guid.Parse("00000000-0000-4000-8000-000000000401"),
+            SiteId = Guid.Parse("00000000-0000-4000-8000-000000000402"),
+            VendorSystemId = Guid.Parse("00000000-0000-4000-8000-000000000501"),
+            TariffSnapshotId = Guid.Parse("00000000-0000-4000-8000-000000000621"),
+            ServiceIdentityId = Guid.Parse("00000000-0000-4000-8000-000000000901"),
+            SitePosServerId = Guid.Parse("10000000-0000-4000-8000-000000000201"),
+            FiscalDocumentTypeCodeId = Guid.Parse("10000000-0000-4000-8000-000000000103"),
+            FiscalDocumentStatusCodeId = Guid.Parse("10000000-0000-4000-8000-000000000107"),
+            LineTypeCodeId = Guid.Parse("10000000-0000-4000-8000-000000000108"),
+            TenderTypeCodeId = Guid.Parse("10000000-0000-4000-8000-000000000109"),
+            TaxTypeCodeId = Guid.Parse("10000000-0000-4000-8000-000000000110"),
+            TaxClassificationCodeId = Guid.Parse("10000000-0000-4000-8000-000000000111"),
+            TotalTypeCodeId = Guid.Parse("10000000-0000-4000-8000-000000000112")
         };
 
     private static ControlledUatFiscalIssuanceInvocationRequest ConflictRequest() =>

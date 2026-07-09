@@ -6,34 +6,6 @@ namespace ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 
 public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlledUatFiscalIssuanceFixtureStore
 {
-    private static readonly Guid ApprovedPaymentConfirmationId =
-        Guid.Parse("00000000-0000-4000-8000-000000000301");
-    private static readonly Guid ApprovedPaymentAttemptId =
-        Guid.Parse("00000000-0000-4000-8000-000000000302");
-    private static readonly Guid ApprovedParkingSessionId =
-        Guid.Parse("00000000-0000-4000-8000-000000000303");
-    private static readonly Guid ApprovedTariffSnapshotId =
-        Guid.Parse("00000000-0000-4000-8000-000000000601");
-    private static readonly Guid ApprovedServiceIdentityId =
-        Guid.Parse("00000000-0000-4000-8000-000000000901");
-    private static readonly Guid ApprovedSiteGroupId =
-        Guid.Parse("00000000-0000-4000-8000-000000000401");
-    private static readonly Guid ApprovedSiteId =
-        Guid.Parse("00000000-0000-4000-8000-000000000402");
-    private static readonly Guid ApprovedVendorSystemId =
-        Guid.Parse("00000000-0000-4000-8000-000000000501");
-
-    private const string ApprovedRunId = "CPS-POS-UAT-20260709-DEV-ATC-001";
-    private const string ApprovedCorrelationId = "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df";
-    private const string ApprovedSiteRef = "DEV-SITE-ATC-001";
-    private const string ApprovedParkingSessionRef = "DEV-PARKING-SESSION-ATC-001";
-    private const string ApprovedPaymentAttemptRef = "DEV-PAYMENT-ATTEMPT-ATC-001";
-    private const string ApprovedPaymentConfirmationRef = "DEV-PAYMENT-FINALITY-ATC-001";
-    private const string ApprovedUpstreamFinalityRef = "CPS-POS-UAT:CPS-POS-UAT-20260709-DEV-ATC-001:newly_created:001";
-    private const string ApprovedCurrency = "PHP";
-
-    private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 9);
-
     private readonly string _connectionString;
 
     public PostgresControlledUatFiscalIssuanceFixtureStore(string connectionString)
@@ -43,10 +15,12 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
 
     public async Task EnsureApprovedFirstRunFixtureAsync(
         ControlledUatFiscalIssuanceFixture fixture,
+        ControlledUatFiscalSmokeProfile profile,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(fixture);
-        ValidateApprovedFirstRunFixture(fixture);
+        ArgumentNullException.ThrowIfNull(profile);
+        ValidateApprovedFirstRunFixture(fixture, profile);
 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
@@ -59,30 +33,34 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public static void ValidateApprovedFirstRunFixture(ControlledUatFiscalIssuanceFixture fixture)
+    public static void ValidateApprovedFirstRunFixture(
+        ControlledUatFiscalIssuanceFixture fixture,
+        ControlledUatFiscalSmokeProfile profile)
     {
         ArgumentNullException.ThrowIfNull(fixture);
+        ArgumentNullException.ThrowIfNull(profile);
 
         var errors = new List<string>();
 
-        Require(fixture.PaymentConfirmationId == ApprovedPaymentConfirmationId, "payment_confirmation_id_not_approved", errors);
-        Require(fixture.PaymentAttemptId == ApprovedPaymentAttemptId, "payment_attempt_id_not_approved", errors);
-        Require(fixture.ParkingSessionId == ApprovedParkingSessionId, "parking_session_id_not_approved", errors);
-        Require(fixture.TariffSnapshotId == ApprovedTariffSnapshotId, "tariff_snapshot_id_not_approved", errors);
-        Require(fixture.ServiceIdentityId == ApprovedServiceIdentityId, "service_identity_id_not_approved", errors);
-        Require(fixture.SiteGroupId == ApprovedSiteGroupId, "site_group_id_not_approved", errors);
-        Require(fixture.SiteId == ApprovedSiteId, "site_id_not_approved", errors);
-        Require(fixture.VendorSystemId == ApprovedVendorSystemId, "vendor_system_id_not_approved", errors);
-        Require(fixture.RunId == ApprovedRunId, "run_id_not_approved", errors);
-        Require(fixture.CorrelationId.ToString("D") == ApprovedCorrelationId, "correlation_id_not_approved", errors);
-        Require(fixture.SiteRef == ApprovedSiteRef, "site_ref_not_approved", errors);
-        Require(fixture.ParkingSessionRef == ApprovedParkingSessionRef, "parking_session_ref_not_approved", errors);
-        Require(fixture.PaymentAttemptRef == ApprovedPaymentAttemptRef, "payment_attempt_ref_not_approved", errors);
-        Require(fixture.PaymentConfirmationRef == ApprovedPaymentConfirmationRef, "payment_confirmation_ref_not_approved", errors);
-        Require(fixture.UpstreamFinalityRef == ApprovedUpstreamFinalityRef, "upstream_finality_ref_not_approved", errors);
-        Require(fixture.Currency == ApprovedCurrency, "currency_not_approved", errors);
-        Require(fixture.AmountMinorUnits == 10000, "amount_not_approved", errors);
-        Require(fixture.BusinessDayDate == ApprovedBusinessDayDate, "business_day_date_not_approved", errors);
+        Require(fixture.ProfileId == profile.ProfileId, "profile_id_not_approved", errors);
+        Require(fixture.PaymentConfirmationId == profile.PaymentConfirmationId, "payment_confirmation_id_not_approved", errors);
+        Require(fixture.PaymentAttemptId == profile.PaymentAttemptId, "payment_attempt_id_not_approved", errors);
+        Require(fixture.ParkingSessionId == profile.ParkingSessionId, "parking_session_id_not_approved", errors);
+        Require(fixture.TariffSnapshotId == profile.TariffSnapshotId, "tariff_snapshot_id_not_approved", errors);
+        Require(fixture.ServiceIdentityId == profile.ServiceIdentityId, "service_identity_id_not_approved", errors);
+        Require(fixture.SiteGroupId == profile.SiteGroupId, "site_group_id_not_approved", errors);
+        Require(fixture.SiteId == profile.SiteId, "site_id_not_approved", errors);
+        Require(fixture.VendorSystemId == profile.VendorSystemId, "vendor_system_id_not_approved", errors);
+        Require(fixture.RunId == profile.RunId, "run_id_not_approved", errors);
+        Require(fixture.CorrelationId.ToString("D") == profile.CorrelationId, "correlation_id_not_approved", errors);
+        Require(fixture.SiteRef == profile.SiteRef, "site_ref_not_approved", errors);
+        Require(fixture.ParkingSessionRef == profile.ParkingSessionRef, "parking_session_ref_not_approved", errors);
+        Require(fixture.PaymentAttemptRef == profile.PaymentAttemptRef, "payment_attempt_ref_not_approved", errors);
+        Require(fixture.PaymentConfirmationRef == profile.PaymentConfirmationRef, "payment_confirmation_ref_not_approved", errors);
+        Require(fixture.UpstreamFinalityRef == profile.UpstreamFinalityRef, "upstream_finality_ref_not_approved", errors);
+        Require(fixture.Currency == profile.Currency, "currency_not_approved", errors);
+        Require(fixture.AmountMinorUnits == profile.AmountMinorUnits, "amount_not_approved", errors);
+        Require(fixture.BusinessDayDate == profile.BusinessDayDate, "business_day_date_not_approved", errors);
 
         if (errors.Count > 0)
         {
