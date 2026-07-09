@@ -824,6 +824,18 @@ function FiscalIssuanceStatusPanel({
     mainItems.splice(1, 0, ["Sales Invoice / fiscal document number", status.fiscalDocumentNumber]);
   }
 
+  if (status.posServerFiscalDocumentReadStatus) {
+    mainItems.push(["POS Server document read status", displayStatusValue(status.posServerFiscalDocumentReadStatus)]);
+  }
+
+  if (status.posServerFiscalDocumentStatusCodeKey) {
+    mainItems.push(["Fiscal document status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)]);
+  }
+
+  if (status.posServerVoidStatus) {
+    mainItems.push(["Void status", displayStatusValue(status.posServerVoidStatus)]);
+  }
+
   if (status.latestErrorCode || status.latestErrorPosture || status.latestExceptionReason) {
     mainItems.push(
       ["Safe error code", displayValue(status.latestErrorCode)],
@@ -868,6 +880,11 @@ function FiscalIssuanceStatusPanel({
             ["Fiscal number suffix", displayValue(status.fiscalNumberSuffixText)],
             ["Fiscal number assigned at", formatOptionalDateTime(status.fiscalNumberAssignedAt)],
             ["Fiscal number assigned by", displayValue(status.fiscalNumberAssignedByRef)],
+            ["POS Server document read status", displayValue(status.posServerFiscalDocumentReadStatus)],
+            ["Fiscal document status", displayValue(status.posServerFiscalDocumentStatusCodeKey)],
+            ["Void status", displayValue(status.posServerVoidStatus)],
+            ["Void reason code", displayValue(status.posServerVoidReasonCode)],
+            ["Voided at", formatOptionalDateTime(status.posServerVoidedAt)],
             ["Semantic request hash", displayValue(status.semanticRequestHashValue)],
             ["Semantic request hash version", displayValue(status.semanticRequestHashVersion)],
             ["Semantic request hash status", displayValue(status.semanticRequestHashStatus)],
@@ -883,6 +900,19 @@ function FiscalIssuanceStatusPanel({
 
 function fiscalStatusPresentation(status: FiscalIssuanceStatus) {
   const state = normalizeStatus(status.fiscalIssuanceState);
+  const documentStatus = normalizeStatus(status.posServerFiscalDocumentStatusCodeKey);
+  const voidStatus = normalizeStatus(status.posServerVoidStatus);
+
+  if (documentStatus === "VOIDED" || voidStatus === "RECORDED") {
+    return {
+      label: "Fiscal document voided",
+      badge: "Voided",
+      message: "Fiscal document is voided in POS Server. This view is observational only and does not authorize payment, exit, gate, refund, or replacement action.",
+      className: "pending-review",
+      messageClass: "notice"
+    };
+  }
+
   if (state === "FISCAL_ISSUANCE_RECORDED" && status.fiscalDocumentNumber) {
     return {
       label: "Issued",
@@ -3607,6 +3637,19 @@ function normalizeStatus(status?: string | null) {
 
 function displayValue(value?: string) {
   return value && value.trim().length > 0 ? value : "Not available";
+}
+
+function displayStatusValue(value?: string) {
+  if (!value || value.trim().length === 0) {
+    return "Not available";
+  }
+
+  return value
+    .trim()
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function formatOptionalDateTime(value?: string) {

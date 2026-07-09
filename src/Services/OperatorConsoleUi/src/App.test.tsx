@@ -644,6 +644,39 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("POS Server fiscal document ID")).toBeInTheDocument();
   });
 
+  it("FiscalStatusViewer_VoidedPosDocumentShowsReadOnlyVoidPosture", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [
+            fiscalStatus({
+              fiscalDocumentNumber: "SI-00000002-UAT",
+              fiscalSequenceValue: 2,
+              posServerFiscalDocumentReadStatus: "AVAILABLE",
+              posServerFiscalDocumentStatusCodeKey: "voided",
+              posServerVoidStatus: "recorded",
+              posServerVoidReasonCode: "operator_error",
+              posServerVoidedAt: "2026-07-09T16:06:07.499917+00:00"
+            })
+          ]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Fiscal document voided" })).toBeInTheDocument();
+    expect(screen.getByText("SI-00000002-UAT")).toBeInTheDocument();
+    expect(screen.getAllByText("POS Server document read status").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Available").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Fiscal document status").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Voided").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Void status").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: /retry|reissue|replacement|payment|gate|refund/i })).not.toBeInTheDocument();
+  });
+
   it("FiscalStatusViewer_RecordedWithoutFiscalDocumentNumberDoesNotShowIssued", async () => {
     render(
       <App

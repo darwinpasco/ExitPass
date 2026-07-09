@@ -167,6 +167,11 @@ export interface FiscalIssuanceStatus {
   firstRecordedAt: string;
   lastUpdatedAt: string;
   correlationId?: string;
+  posServerFiscalDocumentReadStatus?: string;
+  posServerFiscalDocumentStatusCodeKey?: string;
+  posServerVoidStatus?: string;
+  posServerVoidReasonCode?: string;
+  posServerVoidedAt?: string;
 }
 
 export interface AccessReadinessClientContext {
