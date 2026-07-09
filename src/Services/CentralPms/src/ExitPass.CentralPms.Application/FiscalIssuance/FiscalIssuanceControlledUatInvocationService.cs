@@ -38,6 +38,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private const string ApprovedCurrency = "PHP";
     private const string ApprovedApprovalReference = "DEV-UAT-CPS-POS-001";
     private const string ApprovedExpectedRunType = "newly_created";
+    private const string ApprovedReplayExpectedRunType = "replay";
     private const long ApprovedAmountMinorUnits = 10000;
     private const long ApprovedTaxAmountMinorUnits = 0;
     private static readonly DateOnly ApprovedBusinessDayDate = new(2026, 7, 9);
@@ -160,18 +161,28 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             return BuildRejectedResponse(request, "run_rejected", errors);
         }
 
-        var fixturePreparation = await EnsureControlledUatFixtureAsync(request, cancellationToken)
-            .ConfigureAwait(false);
-        if (fixturePreparation is not null)
+        var replayRequested = IsReplayRequest(request);
+
+        if (!replayRequested)
         {
-            return fixturePreparation;
+            var fixturePreparation = await EnsureControlledUatFixtureAsync(request, cancellationToken)
+                .ConfigureAwait(false);
+            if (fixturePreparation is not null)
+            {
+                return fixturePreparation;
+            }
         }
 
-        var referencePreparation = await PrepareFiscalIssuanceReferenceAsync(request, cancellationToken)
+        var referencePreparation = await PrepareFiscalIssuanceReferenceAsync(request, replayRequested, cancellationToken)
             .ConfigureAwait(false);
         if (referencePreparation.ErrorResponse is not null)
         {
             return referencePreparation.ErrorResponse;
+        }
+
+        if (replayRequested)
+        {
+            return BuildReplayResponse(request, referencePreparation.Reference!);
         }
 
         var harnessRequest = BuildHarnessRequest(request, referencePreparation.Reference!.FiscalIssuanceReferenceId);
@@ -237,6 +248,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
     private async Task<FiscalReferencePreparationResult> PrepareFiscalIssuanceReferenceAsync(
         ControlledUatFiscalIssuanceInvocationRequest request,
+        bool replayRequested,
         CancellationToken cancellationToken)
     {
         try
@@ -250,12 +262,30 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
 
             if (existing is not null)
             {
+                if (replayRequested)
+                {
+                    return CanReportReplay(existing)
+                        ? FiscalReferencePreparationResult.Prepared(existing)
+                        : FiscalReferencePreparationResult.Rejected(BuildRejectedResponse(
+                            request,
+                            "fiscal_reference_replay_rejected",
+                            new[] { "fiscal_reference_replay_not_recorded_state", existing.FiscalIssuanceState.ToString() }));
+                }
+
                 return CanStartDiagnostic(existing)
                     ? FiscalReferencePreparationResult.Prepared(existing)
                     : FiscalReferencePreparationResult.Rejected(BuildRejectedResponse(
                         request,
                         "fiscal_reference_prepare_rejected",
                         new[] { "fiscal_reference_not_startable_state", existing.FiscalIssuanceState.ToString() }));
+            }
+
+            if (replayRequested)
+            {
+                return FiscalReferencePreparationResult.Rejected(BuildRejectedResponse(
+                    request,
+                    "fiscal_reference_replay_rejected",
+                    new[] { "fiscal_reference_replay_not_found" }));
             }
 
             var prepared = await _orchestrationService.PreparePendingAsync(
@@ -294,6 +324,38 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             FiscalIssuanceEvidenceStatus: null,
             FiscalNumberAssignmentState: null,
             CentralPmsFiscalState: null,
+            ErrorCode: null,
+            ErrorPosture: null,
+            PaymentFinalityChanged: false,
+            ExitAuthorizationIssued: false,
+            GateBehaviorTriggered: false,
+            FiscalGatingEnforcementEnabled: false,
+            EvidenceFileWritten: false,
+            EvidenceJson: null,
+            EvidenceRedactionStatus: null,
+            SensitiveDataExcluded: true);
+
+    private ControlledUatFiscalIssuanceInvocationResponse BuildReplayResponse(
+        ControlledUatFiscalIssuanceInvocationRequest request,
+        FiscalIssuanceReferenceRecord reference) =>
+        new(
+            Accepted: true,
+            Status: FiscalIssuanceControlledUatHarnessStatuses.ReplayRecorded,
+            HttpStatusCode: 200,
+            Errors: Array.Empty<string>(),
+            RunId: request.RunId,
+            CorrelationId: request.CorrelationId,
+            ReadinessStatus: _posServerOptions.EvaluateReadiness().Status,
+            ValidationPassed: true,
+            DiagnosticInvoked: false,
+            PosServerCallAttempted: false,
+            DiagnosticStatus: FiscalIssuancePosServerDiagnosticStatuses.ReplayRecorded,
+            ResultClassification: FiscalIssuanceResultClassification.IdempotentReplay.ToString(),
+            FiscalDocumentId: reference.PosServerFiscalDocumentId,
+            FiscalDocumentNumber: reference.FiscalDocumentNumber,
+            FiscalIssuanceEvidenceStatus: reference.FiscalIssuanceEvidenceStatus?.ToString(),
+            FiscalNumberAssignmentState: reference.FiscalNumberAssignmentState.ToString(),
+            CentralPmsFiscalState: reference.FiscalIssuanceState.ToString(),
             ErrorCode: null,
             ErrorPosture: null,
             PaymentFinalityChanged: false,
@@ -416,7 +478,9 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             or "fiscal_gating_enforcement_enabled"
             or "controlled_uat_fixture_prepare_failed"
             or "fiscal_reference_prepare_failed"
-            or "fiscal_reference_not_startable_state";
+            or "fiscal_reference_not_startable_state"
+            or "fiscal_reference_replay_not_found"
+            or "fiscal_reference_replay_not_recorded_state";
 
     private IReadOnlyList<string> ValidateConfiguration()
     {
@@ -493,14 +557,22 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             errors.Add("wrong_fiscal_document_type");
         }
 
-        if (!string.Equals(request.ExpectedRunType, ApprovedExpectedRunType, StringComparison.OrdinalIgnoreCase))
+        var replayRequested = IsReplayRequest(request);
+
+        if (!string.Equals(request.ExpectedRunType, ApprovedExpectedRunType, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(request.ExpectedRunType, ApprovedReplayExpectedRunType, StringComparison.OrdinalIgnoreCase))
         {
-            errors.Add("expected_run_type_must_be_newly_created");
+            errors.Add("expected_run_type_must_be_newly_created_or_replay");
         }
 
-        if (request.ReplayIncluded)
+        if (!replayRequested && request.ReplayIncluded)
         {
             errors.Add("replay_not_allowed_for_first_run");
+        }
+
+        if (replayRequested && !request.ReplayIncluded)
+        {
+            errors.Add("replay_flag_required_for_replay_run");
         }
 
         if (request.ConflictIncluded)
@@ -674,6 +746,16 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private static bool CanStartDiagnostic(FiscalIssuanceReferenceRecord reference) =>
         reference.FiscalIssuanceState is FiscalIssuanceIntegrationState.PendingFiscalIssuance
             or FiscalIssuanceIntegrationState.FiscalIssuanceRequested;
+
+    private static bool CanReportReplay(FiscalIssuanceReferenceRecord reference) =>
+        (reference.FiscalIssuanceState is FiscalIssuanceIntegrationState.FiscalIssuanceRecorded
+            or FiscalIssuanceIntegrationState.FiscalIssuanceReplayed) &&
+            reference.PosServerFiscalDocumentId is not null &&
+            !string.IsNullOrWhiteSpace(reference.FiscalDocumentNumber) &&
+            reference.FiscalSequenceValue is > 0;
+
+    private static bool IsReplayRequest(ControlledUatFiscalIssuanceInvocationRequest request) =>
+        string.Equals(request.ExpectedRunType, ApprovedReplayExpectedRunType, StringComparison.OrdinalIgnoreCase);
 
     private static FiscalIssuanceControlledUatHarnessRequest BuildHarnessRequest(
         ControlledUatFiscalIssuanceInvocationRequest request,
