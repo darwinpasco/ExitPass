@@ -36,6 +36,12 @@ public static class InternalControlledUatFiscalIssuanceEndpoints
             .Produces<ControlledUatFiscalIssuanceInvocationResponse>(StatusCodes.Status400BadRequest)
             .Produces<ControlledUatFiscalIssuanceInvocationResponse>(StatusCodes.Status409Conflict);
 
+        group.MapPost("/void-smoke", VoidSmokeAsync)
+            .WithName("ControlledUatFiscalVoidSmoke")
+            .Produces<ControlledUatFiscalVoidSmokeResponse>(StatusCodes.Status200OK)
+            .Produces<ControlledUatFiscalVoidSmokeResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ControlledUatFiscalVoidSmokeResponse>(StatusCodes.Status409Conflict);
+
         return app;
     }
 
@@ -53,6 +59,17 @@ public static class InternalControlledUatFiscalIssuanceEndpoints
     private static async Task<IResult> RunAsync(
         ControlledUatFiscalIssuanceInvocationRequest request,
         IFiscalIssuanceControlledUatInvocationService service,
+        CancellationToken cancellationToken)
+    {
+        var response = await service.RunAsync(request, cancellationToken)
+            .ConfigureAwait(false);
+
+        return Results.Json(response, statusCode: response.HttpStatusCode);
+    }
+
+    private static async Task<IResult> VoidSmokeAsync(
+        ControlledUatFiscalVoidSmokeRequest request,
+        IFiscalIssuanceControlledUatVoidSmokeService service,
         CancellationToken cancellationToken)
     {
         var response = await service.RunAsync(request, cancellationToken)

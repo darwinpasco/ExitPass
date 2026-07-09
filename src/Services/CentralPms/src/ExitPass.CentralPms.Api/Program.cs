@@ -489,7 +489,15 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IFiscalIssuanceControlledUatEvidenceExporter, FiscalIssuanceControlledUatEvidenceExporter>();
     builder.Services.AddScoped<IControlledUatFiscalIssuanceFixtureStore>(_ =>
         new PostgresControlledUatFiscalIssuanceFixtureStore(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IControlledUatFiscalVoidSmokeStore>(_ =>
+    {
+        var posServerConnectionString = builder.Configuration.GetConnectionString("PosServer");
+        return string.IsNullOrWhiteSpace(posServerConnectionString)
+            ? new PersistenceNotConfiguredControlledUatFiscalVoidSmokeStore()
+            : new PostgresControlledUatFiscalVoidSmokeStore(posServerConnectionString);
+    });
     builder.Services.AddScoped<IFiscalIssuanceControlledUatInvocationService, FiscalIssuanceControlledUatInvocationService>();
+    builder.Services.AddScoped<IFiscalIssuanceControlledUatVoidSmokeService, FiscalIssuanceControlledUatVoidSmokeService>();
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRepository>(_ =>

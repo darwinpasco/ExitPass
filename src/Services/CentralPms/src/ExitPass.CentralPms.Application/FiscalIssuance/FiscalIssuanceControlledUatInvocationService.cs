@@ -58,7 +58,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         "file_blob"
     ];
 
-    private static readonly ControlledUatFiscalSmokeProfile DefaultSmokeProfile = new(
+    public static readonly ControlledUatFiscalSmokeProfile DefaultSmokeProfile = new(
         ProfileId: "CPS-POS-UAT-20260709-DEV-ATC-001",
         EnvironmentName: "DEV-CONTROLLED-UAT-LOCAL",
         SiteRef: "DEV-SITE-ATC-001",
