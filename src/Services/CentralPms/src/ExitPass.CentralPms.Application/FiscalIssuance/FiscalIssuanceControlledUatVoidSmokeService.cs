@@ -54,6 +54,11 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
     public const string ApprovedFiscalDocumentNumber = "SI-00000002-UAT";
     public const string ApprovedReasonCode = "CONTROLLED_UAT_REAL_VOID";
     public const string PosServerReasonCode = "operator_error";
+    public const string ScenarioRealVoid = "real_void";
+    public const string ScenarioRealVoidReplay = "real_void_replay";
+    public const string ScenarioRealVoidConflict = "real_void_conflict";
+    public const string PosServerReasonText = "Controlled non-production UAT fiscal void integration smoke.";
+    public const string PosServerConflictReasonText = "CONTROLLED_UAT_REAL_VOID_CONFLICT_TEXT";
     public const string ApprovedIdempotencyKey =
         "central-pms-controlled-uat-real-void:CPS-POS-UAT-20260709-DEV-ATC-001:9bdf2948-dadd-450b-8776-be688b579395";
     public const string RequestedByRef = "central-pms-controlled-uat";
@@ -135,7 +140,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
                     new PosServerFiscalDocumentVoidRequest(
                         IdempotencyKey: ApprovedIdempotencyKey,
                         ReasonCode: PosServerReasonCode,
-                        ReasonText: "Controlled non-production UAT fiscal void integration smoke.",
+                        ReasonText: ResolvePosServerReasonText(request.Scenario),
                         RequestedByRef: RequestedByRef,
                         RequestedAt: null,
                         CorrelationId: request.CorrelationId.Trim(),
@@ -187,7 +192,8 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
                 request,
                 MapFailedStatus(posResult.Outcome),
                 posResult.HttpStatusCode is 400 or 404 or 409 ? posResult.HttpStatusCode : 409,
-                [posResult.Code]);
+                [posResult.Code],
+                posResult.ResultClassification ?? MapFailedResultClassification(posResult.Outcome));
     }
 
     private static List<string> ValidateRequest(ControlledUatFiscalVoidSmokeRequest request)
@@ -217,6 +223,10 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
         RequireEqual(request.ReasonCode, ApprovedReasonCode, "reason_code_not_approved", errors);
         RequireEqual(request.CorrelationId, FiscalIssuanceControlledUatInvocationService.DefaultSmokeProfile.CorrelationId, "correlation_id_not_approved_for_profile", errors);
         Require(!string.IsNullOrWhiteSpace(request.ApprovedBy), "approved_by_required", errors);
+        if (!IsSupportedScenario(request.Scenario))
+        {
+            errors.Add("controlled_void_scenario_not_approved");
+        }
 
         return errors;
     }
@@ -275,6 +285,15 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
             _ => "pos_server_void_failed"
         };
 
+    private static string MapFailedResultClassification(PosServerFiscalDocumentVoidOutcome outcome) =>
+        outcome switch
+        {
+            PosServerFiscalDocumentVoidOutcome.Conflict => "conflict",
+            PosServerFiscalDocumentVoidOutcome.Rejected => "rejected",
+            PosServerFiscalDocumentVoidOutcome.NotFound => "not_found",
+            _ => "failed"
+        };
+
     private static List<string> ValidateReference(
         ControlledUatFiscalVoidSmokeRequest request,
         FiscalIssuanceReferenceRecord reference)
@@ -293,7 +312,8 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
         ControlledUatFiscalVoidSmokeRequest request,
         string status,
         int httpStatusCode,
-        IReadOnlyList<string> errors) =>
+        IReadOnlyList<string> errors,
+        string? posServerResultClassification = null) =>
         new(
             Accepted: false,
             Status: status,
@@ -316,7 +336,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
             RenderingGenerated: false,
             StatusHistoryRecorded: false,
             IdempotentReplay: false,
-            PosServerResultClassification: null,
+            PosServerResultClassification: posServerResultClassification,
             VoidStatus: null);
 
     private static void Require(bool condition, string error, List<string> errors)
@@ -332,6 +352,21 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
 
     private static void RequireEqual(string? actual, string expected, string error, List<string> errors) =>
         Require(string.Equals(actual?.Trim(), expected, StringComparison.Ordinal), error, errors);
+
+    private static bool IsSupportedScenario(string? scenario)
+    {
+        if (string.IsNullOrWhiteSpace(scenario))
+        {
+            return true;
+        }
+
+        return scenario.Trim() is ScenarioRealVoid or ScenarioRealVoidReplay or ScenarioRealVoidConflict;
+    }
+
+    private static string ResolvePosServerReasonText(string? scenario) =>
+        string.Equals(scenario?.Trim(), ScenarioRealVoidConflict, StringComparison.Ordinal)
+            ? PosServerConflictReasonText
+            : PosServerReasonText;
 }
 
 public sealed record ControlledUatFiscalVoidSmokeRequest(
@@ -342,7 +377,10 @@ public sealed record ControlledUatFiscalVoidSmokeRequest(
     string? ReasonCode,
     string? CorrelationId,
     string? ApprovedBy,
-    bool? ExplicitExecutionApproval);
+    bool? ExplicitExecutionApproval)
+{
+    public string? Scenario { get; init; }
+}
 
 public sealed record ControlledUatFiscalVoidSmokeResponse(
     bool Accepted,
