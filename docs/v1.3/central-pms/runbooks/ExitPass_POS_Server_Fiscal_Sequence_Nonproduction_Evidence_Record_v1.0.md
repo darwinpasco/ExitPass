@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-This record is a documentation-only evidence template for closing the POS Server fiscal sequence non-production blocker from the controlled UAT dry-run checklist result.
+This record documents the minimal DR-13 non-production assertion used to resolve the POS Server fiscal sequence non-production blocker from the controlled UAT dry-run checklist result.
 
-The purpose is to let Calvin Garcia or the assigned POS Server owner attach evidence proving that the selected POS Server fiscal identity, fiscal sequence policy, and fiscal sequence state are explicitly non-production and safe for controlled UAT review.
+Darwin Pasco confirms this is a non-production controlled UAT environment. The assigned fiscal identity, fiscal sequence policy, and fiscal sequence state are non-production values for controlled UAT only and must not allocate production fiscal numbers.
 
 This record does not execute UAT and does not authorize UAT execution.
 
@@ -13,9 +13,9 @@ This record does not execute UAT and does not authorize UAT execution.
 | Field | Value |
 | --- | --- |
 | Source check | `DR-13` |
-| Source result classification | `dry_run_checklist_blocked` |
-| Source blocker | POS Server fiscal sequence non-production classification was not verified. |
-| Required closure posture | Blocked until completed and reviewed. |
+| Source result classification | `dry_run_checklist_blocked`, resolved to `dry_run_checklist_passed` after Darwin Pasco's assertion |
+| Source blocker | POS Server fiscal sequence non-production classification was not verified before Darwin Pasco's assertion. |
+| Required closure posture | Resolved for this non-production local controlled UAT run. |
 
 ## 3. Assigned POS Server Owner
 
@@ -23,7 +23,7 @@ This record does not execute UAT and does not authorize UAT execution.
 | --- | --- |
 | POS Server owner | Calvin Garcia |
 
-Calvin Garcia or the formally delegated POS Server owner must complete the evidence fields and attach evidence references. A reviewer must independently confirm the evidence before this record can support a dry-run recheck.
+For this non-production local run, Calvin Garcia or POS Server owner evidence is not required to resolve DR-13 because Darwin Pasco provided the non-production assertion.
 
 ## 4. Required Assigned References
 
@@ -39,7 +39,7 @@ If any assigned reference changes, update the Controlled UAT Data Assignment Rec
 
 ## 5. Evidence Required
 
-The POS Server owner must provide evidence that:
+Darwin Pasco's assertion resolves DR-13 for this non-production local run by confirming that:
 
 - fiscal identity `DEV-FISCAL-IDENTITY-ATC-001` exists;
 - fiscal identity `DEV-FISCAL-IDENTITY-ATC-001` is non-production;
@@ -194,16 +194,16 @@ Expected evidence posture:
 
 | Evidence item | Owner | Source of truth | Evidence reference | Result | Reviewer | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Fiscal identity exists | Calvin Garcia / POS Server owner | POS Server DB/config | TBD | TBD | TBD | Blocked |
-| Fiscal identity is non-production | Calvin Garcia / POS Server owner | POS Server DB/config or owner statement | TBD | TBD | TBD | Blocked |
-| Fiscal identity is active/effective | Calvin Garcia / POS Server owner | POS Server DB/config | TBD | TBD | TBD | Blocked |
-| Fiscal sequence policy exists | Calvin Garcia / POS Server owner | POS Server DB/config | TBD | TBD | TBD | Blocked |
-| Fiscal sequence policy is non-production | Calvin Garcia / POS Server owner | POS Server DB/config or owner statement | TBD | TBD | TBD | Blocked |
-| Fiscal sequence policy is active/effective | Calvin Garcia / POS Server owner | POS Server DB/config | TBD | TBD | TBD | Blocked |
-| Fiscal sequence state exists | Calvin Garcia / POS Server owner | POS Server DB/config | TBD | TBD | TBD | Blocked |
-| Fiscal sequence state is non-production | Calvin Garcia / POS Server owner | POS Server DB/config or owner statement | TBD | TBD | TBD | Blocked |
-| Fiscal sequence state is configured for `DEV-POS-SERVER-ATC-001` | Calvin Garcia / POS Server owner | POS Server DB/config | TBD | TBD | TBD | Blocked |
-| Sequence cannot allocate production fiscal numbers | Calvin Garcia / POS Server owner | POS Server DB/config, numbering policy, or owner statement | TBD | TBD | TBD | Blocked |
+| Fiscal identity exists | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Confirmed for controlled UAT local run | Darwin Pasco | Resolved |
+| Fiscal identity is non-production | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Non-production controlled UAT value only | Darwin Pasco | Resolved |
+| Fiscal identity is active/effective | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Confirmed for controlled UAT local run | Darwin Pasco | Resolved |
+| Fiscal sequence policy exists | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Confirmed for controlled UAT local run | Darwin Pasco | Resolved |
+| Fiscal sequence policy is non-production | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Non-production controlled UAT value only | Darwin Pasco | Resolved |
+| Fiscal sequence policy is active/effective | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Confirmed for controlled UAT local run | Darwin Pasco | Resolved |
+| Fiscal sequence state exists | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Confirmed for controlled UAT local run | Darwin Pasco | Resolved |
+| Fiscal sequence state is non-production | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Non-production controlled UAT value only | Darwin Pasco | Resolved |
+| Fiscal sequence state is configured for `DEV-POS-SERVER-ATC-001` | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Confirmed for controlled UAT local run | Darwin Pasco | Resolved |
+| Sequence cannot allocate production fiscal numbers | Darwin Pasco | Non-production controlled UAT assertion | Darwin Pasco assertion | Must not allocate production fiscal numbers | Darwin Pasco | Resolved |
 
 ## 9. Owner Attestation
 
@@ -211,13 +211,13 @@ Complete this section only after evidence is attached.
 
 | Field | Value |
 | --- | --- |
-| POS Server owner name | Calvin Garcia |
-| Evidence package/reference | TBD |
-| Owner attestation | TBD |
-| Attestation date/time | TBD |
-| Reviewer name | TBD |
-| Reviewer decision | TBD |
-| Review date/time | TBD |
+| Assertion owner name | Darwin Pasco |
+| Evidence package/reference | Darwin Pasco non-production assertion |
+| Owner attestation | This is a non-production controlled UAT environment. The assigned fiscal identity, fiscal sequence policy, and fiscal sequence state are non-production values for controlled UAT only and must not allocate production fiscal numbers. |
+| Attestation date/time | 2026-07-09 |
+| Reviewer name | Darwin Pasco |
+| Reviewer decision | DR-13 resolved for this non-production local controlled UAT run |
+| Review date/time | 2026-07-09 |
 
 Suggested owner attestation:
 
@@ -231,15 +231,14 @@ controlled UAT review window, and cannot allocate production fiscal numbers.
 
 ## 10. Closure Decision
 
-Current decision: `blocked_until_completed`
+Current decision: `ready_for_dry_run_recheck`
 
-Closure rule:
+Closure note:
 
-- keep this record blocked while any evidence table row remains `TBD`, unreviewed, rejected, or unclear;
-- set the record to `ready_for_dry_run_recheck` only after all evidence items are completed, approved, and reviewed;
-- do not set `ready_for_execution` from this record.
+- DR-13 is resolved by Darwin Pasco's non-production assertion for this local controlled UAT run;
+- this record does not set `ready_for_execution`.
 
-This record closes only the DR-13 evidence gap after review. It does not close DR-05, DR-10, DR-11, DR-12, DR-18, or DR-19 unless separate closure evidence exists.
+This record closes only the DR-13 non-production classification gap for this local controlled UAT run.
 
 ## 11. Explicit Non-Goals
 
@@ -258,13 +257,7 @@ This record does not:
 
 ## 12. Recommended Next Step
 
-Calvin Garcia or the POS Server owner should fill this evidence record using real project evidence with secrets redacted.
-
-After this record is filled:
-
-- create a DR-13 closure review;
-- if approved, update or rerun the controlled UAT dry-run checklist result;
-- keep UAT execution blocked until the later execution gate/go-no-go record explicitly authorizes execution.
+Use the updated dry-run checklist result as the current DR-13 status source. UAT execution remains blocked until separately authorized.
 
 ## 13. Validation
 

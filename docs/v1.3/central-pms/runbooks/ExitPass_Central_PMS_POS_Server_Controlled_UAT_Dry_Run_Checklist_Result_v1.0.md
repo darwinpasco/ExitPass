@@ -59,21 +59,21 @@ The first sandboxed `dotnet build` attempts failed because the sandbox could not
 | DR-02 | POS Server process can start | Passed. Local sibling project `D:\SourceCodes\ExitPass-PoSServer` was available, POS Server started with `--urls http://localhost:5000`, and was stopped after the reachability check. |
 | DR-03 | Central PMS base URL reachable | Passed. Safe root GET to `http://localhost:56065/` returned HTTP 200. |
 | DR-04 | POS Server base URL reachable | Passed. Safe root GET to `http://localhost:5000/` returned HTTP 404 from the POS Server process, proving reachability. No fiscal endpoint was called. |
-| DR-05 | Central PMS diagnostic flags assigned correctly | Failed/blocking. Redacted config inspection did not find explicit assigned values for `EnablePosServerFiscalIssuanceLiveCall=true` and `EnableControlledUatDiagnosticPath=true` in local appsettings or launch settings. |
+| DR-05 | Central PMS diagnostic flags assigned correctly | Accepted for execution gate preparation / waived for this non-production local controlled UAT run by Darwin Pasco. Redacted config inspection did not find explicit assigned values for `EnablePosServerFiscalIssuanceLiveCall=true` and `EnableControlledUatDiagnosticPath=true` in local appsettings or launch settings. |
 | DR-06 | Payment-flow guard false | Passed by absence/default posture. No explicit `EnableLiveFiscalIssuanceFromPaymentFlow=true` assignment was found in local appsettings or launch settings. |
 | DR-07 | Exit-flow guard false | Passed by absence/default posture. No explicit `EnableLiveFiscalIssuanceFromExitFlow=true` assignment was found in local appsettings or launch settings. |
 | DR-08 | Fiscal gating enforcement false | Passed by absence/default posture. No explicit `EnableFiscalBeforeExitAuthorizationEnforcement=true` assignment was found in local appsettings or launch settings. |
 | DR-09 | No retry/readback worker enabled | Passed by static inspection. Fiscal retry/readback services are registered as scoped services; no fiscal retry/readback hosted worker registration was found in the inspected Central PMS startup path. |
-| DR-10 | POS Server non-production fiscal identity exists | Blocked. POS Server fiscal identity existence requires POS owner confirmation or approved read-only DB/config evidence; neither was available to Codex in this run. |
-| DR-11 | POS Server non-production sequence policy exists | Blocked. POS Server sequence policy existence requires POS owner confirmation or approved read-only DB/config evidence; neither was available to Codex in this run. |
-| DR-12 | POS Server non-production sequence state exists | Blocked. POS Server sequence state existence requires POS owner confirmation or approved read-only DB/config evidence; neither was available to Codex in this run. |
-| DR-13 | POS Server fiscal sequence is non-production | Blocked. Non-production sequence classification requires POS owner confirmation or approved read-only DB/config evidence; neither was available to Codex in this run. |
+| DR-10 | POS Server non-production fiscal identity exists | Accepted for execution gate preparation / waived for this non-production local controlled UAT run by Darwin Pasco. |
+| DR-11 | POS Server non-production sequence policy exists | Accepted for execution gate preparation / waived for this non-production local controlled UAT run by Darwin Pasco. |
+| DR-12 | POS Server non-production sequence state exists | Accepted for execution gate preparation / waived for this non-production local controlled UAT run by Darwin Pasco. |
+| DR-13 | POS Server fiscal sequence is non-production | Passed/resolved. Darwin Pasco confirms this is a non-production controlled UAT environment. The assigned fiscal identity, fiscal sequence policy, and fiscal sequence state are non-production values for controlled UAT only and must not allocate production fiscal numbers. |
 | DR-14 | Evidence folder exists | Passed after setup. The evidence folder did not exist before the check and was created during the allowed evidence readiness step. |
 | DR-15 | Evidence folder write access works | Passed. A harmless marker file was written and removed. |
 | DR-16 | Checksum command works | Passed. `Get-FileHash -Algorithm SHA256` produced a hash for the marker file. |
 | DR-17 | Side-effect baseline checks are defined | Passed. The input checklist defines read-only placeholders for exit authorization count, gate event count, refund/reversal count, payment mutation outside fixture, and POS Server non-production sequence classification. These baseline queries were not executed. |
-| DR-18 | Rollback/support owner contact works | Blocked. Manual contact confirmation cannot be performed by Codex and was not evidenced in this run. |
-| DR-19 | Execution window is current | Blocked/pending. The filled execution window was `July 9, 2026 1:00 PM-3:00 PM PHT`; the recorded check timestamp was before the window opened. No execution authority was inferred. |
+| DR-18 | Rollback/support owner contact works | Accepted for execution gate preparation / waived for this non-production local controlled UAT run by Darwin Pasco. Manual contact confirmation was not performed by Codex. |
+| DR-19 | Execution window is current | Accepted for execution gate preparation / waived for this non-production local controlled UAT run by Darwin Pasco. The filled execution window was `July 9, 2026 1:00 PM-3:00 PM PHT`; the recorded check timestamp was before the window opened. |
 | DR-20 | Runtime boundary reminder acknowledged | Passed for this dry-run activity. No UAT execution or forbidden action was performed. |
 
 ## 5. Build Results
@@ -124,27 +124,31 @@ Findings:
 - `EnableLiveFiscalIssuanceFromExitFlow` was not explicitly assigned in inspected local appsettings or launch settings.
 - `EnableFiscalBeforeExitAuthorizationEnforcement` was not explicitly assigned in inspected local appsettings or launch settings.
 
-This posture is safe for non-execution dry-run validation, but it is not enough to pass the later execution-gate readiness check that requires explicit controlled diagnostic flag assignment for the approved window.
+This posture is accepted by Darwin Pasco for execution gate preparation only on this non-production local controlled UAT path.
 
-## 9. Failed Or Blocked Checks
+## 9. Accepted Assumptions / Waivers For Non-Production Local Controlled UAT
 
-| Check ID | Status | Blocker |
+Darwin Pasco confirms this is a non-production controlled UAT environment and accepts the remaining dry-run assumptions for purposes of creating the execution gate/go-no-go record.
+
+| Check ID | Status | Accepted assumption / waiver |
 | --- | --- | --- |
-| DR-05 | Failed/blocking | Central PMS controlled UAT diagnostic/live-call flags were not explicitly assigned in inspected local config for an approved execution window. |
-| DR-10 | Blocked | POS Server fiscal identity existence was not verified by POS owner or approved read-only DB/config evidence. |
-| DR-11 | Blocked | POS Server fiscal sequence policy existence was not verified by POS owner or approved read-only DB/config evidence. |
-| DR-12 | Blocked | POS Server fiscal sequence state existence was not verified by POS owner or approved read-only DB/config evidence. |
-| DR-13 | Blocked | POS Server fiscal sequence non-production classification was not verified by POS owner or approved read-only DB/config evidence. |
-| DR-18 | Blocked | Rollback/support owner contact was not manually confirmed. |
-| DR-19 | Blocked/pending | The assigned execution window had not opened at the check timestamp; execution authority remains absent. |
+| DR-05 | Accepted for execution gate preparation / waived | Accepted only for this non-production local controlled UAT path. Central PMS controlled UAT diagnostic/live-call flags were not explicitly assigned in inspected local config. |
+| DR-10 | Accepted for execution gate preparation / waived | Accepted only for this non-production local controlled UAT path. POS Server fiscal identity existence was not independently verified by Codex. |
+| DR-11 | Accepted for execution gate preparation / waived | Accepted only for this non-production local controlled UAT path. POS Server fiscal sequence policy existence was not independently verified by Codex. |
+| DR-12 | Accepted for execution gate preparation / waived | Accepted only for this non-production local controlled UAT path. POS Server fiscal sequence state existence was not independently verified by Codex. |
+| DR-13 | Passed/resolved | Resolved by Darwin Pasco's non-production assertion for this controlled UAT environment. The assigned fiscal identity, fiscal sequence policy, and fiscal sequence state are non-production values for controlled UAT only and must not allocate production fiscal numbers. |
+| DR-18 | Accepted for execution gate preparation / waived | Accepted only for this non-production local controlled UAT path. Rollback/support owner contact was not manually confirmed by Codex. |
+| DR-19 | Accepted for execution gate preparation / waived | Accepted only for this non-production local controlled UAT path. The assigned execution window was not open at the recorded check timestamp. |
 
 ## 10. Final Classification
 
-Final classification: `dry_run_checklist_blocked`
+Final classification: `dry_run_checklist_passed`
 
-Central PMS and POS Server local runtime reachability passed, and evidence write/checksum readiness passed. The dry-run checklist cannot pass because required execution-gate evidence remains unavailable or incomplete, especially explicit controlled diagnostic flag assignment, POS Server non-production fiscal configuration evidence, rollback/support owner contact confirmation, and active execution-window confirmation.
+Central PMS and POS Server local runtime reachability passed, evidence write/checksum readiness passed, DR-13 was resolved by Darwin Pasco's non-production assertion, and Darwin Pasco accepted the remaining dry-run assumptions for execution gate preparation.
 
-This is not classified as a product defect. It is a readiness blocker closure outcome.
+Darwin Pasco confirms this is a non-production controlled UAT environment and accepts the remaining dry-run assumptions for purposes of creating the execution gate/go-no-go record.
+
+This dry-run pass does not authorize UAT execution.
 
 ## 11. Boundary Statement
 
@@ -152,14 +156,13 @@ UAT execution remains not authorized.
 
 During this dry-run result preparation:
 
-- no UAT scenario was executed;
-- no fiscal issuance was created;
+- no UAT scenario was executed during this dry-run result preparation;
+- no fiscal issuance was created during this dry-run result preparation;
 - no fiscal issuance creation endpoint was called;
 - no payment was confirmed;
 - no POS Server mutation endpoint was called;
 - no HikCentral endpoint was called or written;
-- no ExitAuthorization behavior was triggered;
-- no gate behavior was triggered;
+- no ExitAuthorization or gate behavior was triggered;
 - no refund/reversal was created;
 - no PDF, HTML, or QR artifact was generated;
 - no final BIR statutory wording was defined;
@@ -167,13 +170,7 @@ During this dry-run result preparation:
 
 ## 12. Recommended Next Step
 
-Close the blocked readiness items before creating an execution gate/go-no-go record:
-
-- explicitly assign and review Central PMS controlled UAT diagnostic flags for the approved window;
-- attach POS Server owner evidence for non-production fiscal identity, sequence policy, sequence state, and sequence classification;
-- capture rollback/support owner availability confirmation;
-- repeat the window check inside the approved execution window or update the assignment/review if the window changes;
-- then rerun this dry-run checklist result before requesting execution approval.
+Create the Controlled UAT execution gate/go-no-go record.
 
 ## 13. Validation
 
