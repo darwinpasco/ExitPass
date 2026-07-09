@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Domain.FiscalIssuance;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace ExitPass.CentralPms.Application.FiscalIssuance;
@@ -109,6 +110,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     private readonly IControlledUatFiscalIssuanceFixtureStore _fixtureStore;
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly FiscalIssuanceExitAuthorizationGatingOptions _gatingOptions;
+    private readonly ILogger<FiscalIssuanceControlledUatInvocationService>? _logger;
 
     public FiscalIssuanceControlledUatInvocationService(
         IFiscalIssuanceControlledUatHarness harness,
@@ -117,7 +119,8 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         IFiscalIssuanceReferenceRepository referenceRepository,
         IControlledUatFiscalIssuanceFixtureStore fixtureStore,
         IOptions<FiscalIssuancePosServerIntegrationOptions> posServerOptions,
-        IOptions<FiscalIssuanceExitAuthorizationGatingOptions> gatingOptions)
+        IOptions<FiscalIssuanceExitAuthorizationGatingOptions> gatingOptions,
+        ILogger<FiscalIssuanceControlledUatInvocationService>? logger = null)
     {
         _harness = harness;
         _evidenceExporter = evidenceExporter;
@@ -126,6 +129,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         _fixtureStore = fixtureStore;
         _posServerOptions = posServerOptions.Value;
         _gatingOptions = gatingOptions.Value;
+        _logger = logger;
     }
 
     public Task<ControlledUatFiscalIssuanceInvocationResponse> PreflightAsync(
@@ -389,6 +393,12 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
+            _logger?.LogWarning(
+                exception,
+                "Controlled UAT fixture preparation failed before fiscal reference preparation. run_id={RunId} correlation_id={CorrelationId}",
+                request.RunId,
+                request.CorrelationId);
+
             return BuildRejectedResponse(
                 request,
                 "controlled_uat_fixture_prepare_failed",

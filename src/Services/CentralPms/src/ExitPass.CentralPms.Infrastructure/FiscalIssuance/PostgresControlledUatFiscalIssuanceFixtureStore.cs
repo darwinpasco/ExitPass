@@ -445,7 +445,6 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
 
         UPDATE core.payment_attempts
         SET
-            payment_attempt_id = @payment_attempt_id,
             parking_session_id = @parking_session_id,
             tariff_snapshot_id = @tariff_snapshot_id,
             idempotency_key = @payment_attempt_ref,
@@ -458,8 +457,7 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             updated_at = NOW(),
             updated_by_service_identity_id = @service_identity_id,
             row_version = core.payment_attempts.row_version + 1
-        WHERE tariff_snapshot_id = @tariff_snapshot_id
-          AND payment_attempt_id <> @payment_attempt_id;
+        WHERE payment_attempt_id = @payment_attempt_id;
 
         INSERT INTO core.payment_attempts (
             payment_attempt_id,
@@ -501,8 +499,7 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             @service_identity_id,
             1
         )
-        ON CONFLICT ON CONSTRAINT uq_payment_attempts__idempotency_key DO UPDATE SET
-            payment_attempt_id = EXCLUDED.payment_attempt_id,
+        ON CONFLICT (payment_attempt_id) DO UPDATE SET
             parking_session_id = EXCLUDED.parking_session_id,
             tariff_snapshot_id = EXCLUDED.tariff_snapshot_id,
             idempotency_key = EXCLUDED.idempotency_key,
@@ -514,6 +511,19 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             updated_at = NOW(),
             updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
             row_version = core.payment_attempts.row_version + 1;
+
+        UPDATE core.payment_confirmations
+        SET
+            payment_attempt_id = @payment_attempt_id,
+            provider_transaction_ref = @upstream_finality_ref,
+            currency_code = @currency,
+            confirmed_amount = @amount,
+            confirmation_status = 'RECORDED',
+            verified_at = @business_start_at,
+            confirmed_at = @business_start_at,
+            correlation_id = @correlation_id,
+            created_by_service_identity_id = @service_identity_id
+        WHERE payment_confirmation_id = @payment_confirmation_id;
 
         INSERT INTO core.payment_confirmations (
             payment_confirmation_id,
@@ -545,8 +555,7 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStore : IControlle
             NOW(),
             @service_identity_id
         )
-        ON CONFLICT ON CONSTRAINT uq_payment_confirmations__payment_attempt DO UPDATE SET
-            payment_confirmation_id = EXCLUDED.payment_confirmation_id,
+        ON CONFLICT (payment_confirmation_id) DO UPDATE SET
             payment_attempt_id = EXCLUDED.payment_attempt_id,
             provider_transaction_ref = EXCLUDED.provider_transaction_ref,
             currency_code = EXCLUDED.currency_code,

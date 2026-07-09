@@ -66,8 +66,21 @@ public sealed class PostgresControlledUatFiscalIssuanceFixtureStoreTests
         sql.Should().Contain("uq_sites__site_group_site_code");
         sql.Should().Contain("uq_vendor_systems__vendor_code_environment");
         sql.Should().Contain("snapshot_status = 'EXPIRED'");
-        sql.Should().Contain("uq_payment_attempts__idempotency_key");
-        sql.Should().Contain("uq_payment_confirmations__payment_attempt");
+        sql.Should().Contain("WHERE payment_attempt_id = @payment_attempt_id");
+        sql.Should().Contain("ON CONFLICT (payment_attempt_id) DO UPDATE SET");
+        sql.Should().Contain("WHERE payment_confirmation_id = @payment_confirmation_id");
+        sql.Should().Contain("ON CONFLICT (payment_confirmation_id) DO UPDATE SET");
+    }
+
+    [Fact]
+    public void FixtureSql_RepairsStaleApprovedPaymentRowsBeforeInsert()
+    {
+        var sql = FixtureSql();
+
+        sql.Should().Contain("UPDATE core.payment_attempts");
+        sql.Should().Contain("idempotency_key = @payment_attempt_ref");
+        sql.Should().Contain("UPDATE core.payment_confirmations");
+        sql.Should().Contain("provider_transaction_ref = @upstream_finality_ref");
     }
 
     [Theory]

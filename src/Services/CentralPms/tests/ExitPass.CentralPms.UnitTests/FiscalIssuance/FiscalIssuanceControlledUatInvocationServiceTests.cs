@@ -230,6 +230,38 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenFixturePreparationFails_ReturnsSafeControlledErrorAndDoesNotInvokeDiagnosticPath()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
+        fixtureStore.EnsureApprovedFirstRunFixtureAsync(
+                Arg.Any<ControlledUatFiscalIssuanceFixture>(),
+                Arg.Any<CancellationToken>())
+            .Returns<Task>(_ => throw new InvalidOperationException("database primary key collision detail"));
+
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                fixtureStore: fixtureStore)
+            .RunAsync(ValidRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(409);
+        response.Status.Should().Be("controlled_uat_fixture_prepare_failed");
+        response.Errors.Should().Equal("controlled_uat_fixture_prepare_failed");
+        response.ErrorCode.Should().Be("controlled_uat_fixture_prepare_failed");
+        response.Errors.Should().NotContain(error => error.Contains("database", StringComparison.OrdinalIgnoreCase));
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        response.PaymentFinalityChanged.Should().BeFalse();
+        response.ExitAuthorizationIssued.Should().BeFalse();
+        response.GateBehaviorTriggered.Should().BeFalse();
+        response.EvidenceFileWritten.Should().BeFalse();
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
     public async Task RunAsync_WhenRequestIsValid_InvokesHarnessOnceAndReturnsSafeEvidence()
     {
         var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
