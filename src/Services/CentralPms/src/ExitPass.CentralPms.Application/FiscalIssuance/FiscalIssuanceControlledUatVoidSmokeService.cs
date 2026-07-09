@@ -18,6 +18,23 @@ public interface IControlledUatFiscalVoidSmokeStore
         CancellationToken cancellationToken);
 }
 
+public interface IControlledUatFiscalVoidSafetyGuard
+{
+    Task<ControlledUatFiscalVoidSafetyGuardResult> ValidateAsync(
+        ControlledUatFiscalVoidSafetyGuardRequest request,
+        CancellationToken cancellationToken);
+}
+
+public sealed class PersistenceNotConfiguredControlledUatFiscalVoidSafetyGuard : IControlledUatFiscalVoidSafetyGuard
+{
+    public Task<ControlledUatFiscalVoidSafetyGuardResult> ValidateAsync(
+        ControlledUatFiscalVoidSafetyGuardRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ControlledUatFiscalVoidSafetyGuardResult.Rejected(
+            "controlled_uat_real_void_pos_persistence_not_configured",
+            ["pos_server_connection_string_missing"]));
+}
+
 public sealed class PersistenceNotConfiguredControlledUatFiscalVoidSmokeStore : IControlledUatFiscalVoidSmokeStore
 {
     public Task<ControlledUatFiscalVoidSmokeStoreResult> RecordApprovedVoidPostureAsync(
@@ -35,23 +52,30 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
     public static readonly Guid ApprovedPosServerFiscalDocumentId =
         Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395");
     public const string ApprovedFiscalDocumentNumber = "SI-00000002-UAT";
-    public const string ApprovedReasonCode = "CONTROLLED_UAT_VOID_SMOKE";
+    public const string ApprovedReasonCode = "CONTROLLED_UAT_REAL_VOID";
+    public const string ApprovedIdempotencyKey =
+        "central-pms-controlled-uat-real-void:CPS-POS-UAT-20260709-DEV-ATC-001:9bdf2948-dadd-450b-8776-be688b579395";
+    public const string RequestedByRef = "central-pms-controlled-uat";
+    public const string SourceSystemRef = "central-pms";
 
     private readonly IFiscalIssuanceReferenceRepository _referenceRepository;
-    private readonly IControlledUatFiscalVoidSmokeStore _store;
+    private readonly IControlledUatFiscalVoidSafetyGuard _safetyGuard;
+    private readonly IPosServerFiscalDocumentClient _posServerClient;
     private readonly FiscalIssuancePosServerIntegrationOptions _posServerOptions;
     private readonly FiscalIssuanceExitAuthorizationGatingOptions _gatingOptions;
     private readonly ILogger<FiscalIssuanceControlledUatVoidSmokeService> _logger;
 
     public FiscalIssuanceControlledUatVoidSmokeService(
         IFiscalIssuanceReferenceRepository referenceRepository,
-        IControlledUatFiscalVoidSmokeStore store,
+        IControlledUatFiscalVoidSafetyGuard safetyGuard,
+        IPosServerFiscalDocumentClient posServerClient,
         IOptions<FiscalIssuancePosServerIntegrationOptions> posServerOptions,
         IOptions<FiscalIssuanceExitAuthorizationGatingOptions> gatingOptions,
         ILogger<FiscalIssuanceControlledUatVoidSmokeService> logger)
     {
         _referenceRepository = referenceRepository;
-        _store = store;
+        _safetyGuard = safetyGuard;
+        _posServerClient = posServerClient;
         _posServerOptions = posServerOptions.Value;
         _gatingOptions = gatingOptions.Value;
         _logger = logger;
@@ -85,19 +109,37 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
             return Rejected(request, "controlled_uat_void_smoke_reference_rejected", 409, referenceErrors);
         }
 
-        ControlledUatFiscalVoidSmokeStoreResult storeResult;
+        var guardResult = await _safetyGuard.ValidateAsync(
+                new ControlledUatFiscalVoidSafetyGuardRequest(
+                    ProfileId: request.ProfileId!.Trim(),
+                    FiscalIssuanceReferenceId: request.FiscalIssuanceReferenceId.Value,
+                    PosServerFiscalDocumentId: request.PosServerFiscalDocumentId!.Value,
+                    FiscalDocumentNumber: request.FiscalDocumentNumber!.Trim(),
+                    PaymentFinalityRef: reference.UpstreamFinalityReference,
+                    FiscalSequenceValue: reference.FiscalSequenceValue,
+                    ReasonCode: request.ReasonCode!.Trim(),
+                    CorrelationId: Guid.Parse(request.CorrelationId!.Trim())),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (!guardResult.Succeeded)
+        {
+            return Rejected(request, guardResult.Status, 409, guardResult.Errors);
+        }
+
+        PosServerFiscalDocumentVoidResult posResult;
         try
         {
-            storeResult = await _store.RecordApprovedVoidPostureAsync(
-                    new ControlledUatFiscalVoidSmokeStoreRequest(
-                        ProfileId: request.ProfileId!.Trim(),
-                        FiscalIssuanceReferenceId: request.FiscalIssuanceReferenceId.Value,
-                        PosServerFiscalDocumentId: request.PosServerFiscalDocumentId!.Value,
-                        FiscalDocumentNumber: request.FiscalDocumentNumber!.Trim(),
-                        PaymentFinalityRef: reference.UpstreamFinalityReference,
-                        ReasonCode: request.ReasonCode!.Trim(),
-                        CorrelationId: Guid.Parse(request.CorrelationId!.Trim()),
-                        ApprovedBy: request.ApprovedBy!.Trim()),
+            posResult = await _posServerClient.VoidFiscalDocumentAsync(
+                    request.PosServerFiscalDocumentId.Value,
+                    new PosServerFiscalDocumentVoidRequest(
+                        IdempotencyKey: ApprovedIdempotencyKey,
+                        ReasonCode: request.ReasonCode.Trim(),
+                        ReasonText: "Controlled non-production UAT fiscal void integration smoke.",
+                        RequestedByRef: RequestedByRef,
+                        RequestedAt: null,
+                        CorrelationId: request.CorrelationId.Trim(),
+                        SourceSystemRef: SourceSystemRef,
+                        BusinessDayDate: FiscalIssuanceControlledUatInvocationService.DefaultSmokeProfile.BusinessDayDate),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -110,26 +152,24 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
 
             return Rejected(
                 request,
-                "controlled_uat_void_smoke_failed_safely",
+                "pos_server_void_failed",
                 409,
-                ["controlled_uat_void_smoke_failed_safely"]);
+                ["pos_server_void_failed"]);
         }
 
-        return storeResult.Succeeded
+        return posResult.Succeeded
             ? new ControlledUatFiscalVoidSmokeResponse(
                 Accepted: true,
-                Status: storeResult.AlreadyRecorded
-                    ? "controlled_uat_void_smoke_already_recorded"
-                    : "controlled_uat_void_smoke_recorded",
+                Status: MapSuccessfulStatus(posResult.Outcome),
                 HttpStatusCode: 200,
                 Errors: Array.Empty<string>(),
                 ProfileId: request.ProfileId,
                 CorrelationId: request.CorrelationId,
                 FiscalIssuanceReferenceId: request.FiscalIssuanceReferenceId,
                 PosServerFiscalDocumentId: request.PosServerFiscalDocumentId,
-                FiscalDocumentNumber: storeResult.FiscalDocumentNumber,
-                FiscalDocumentStatusPosture: storeResult.FiscalDocumentStatusPosture,
-                FiscalSequenceValue: storeResult.FiscalSequenceValue,
+                FiscalDocumentNumber: posResult.FiscalDocumentNumber,
+                FiscalDocumentStatusPosture: posResult.FiscalDocumentStatus,
+                FiscalSequenceValue: posResult.FiscalSequenceValue,
                 NewFiscalNumberAllocated: false,
                 PaymentFinalityChanged: false,
                 ExitAuthorizationIssued: false,
@@ -138,9 +178,15 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
                 HikCentralCalled: false,
                 PaymentProviderCalled: false,
                 RenderingGenerated: false,
-                StatusHistoryRecorded: storeResult.StatusHistoryRecorded,
-                IdempotentReplay: storeResult.AlreadyRecorded)
-            : Rejected(request, storeResult.Status, 409, storeResult.Errors);
+                StatusHistoryRecorded: false,
+                IdempotentReplay: posResult.Outcome == PosServerFiscalDocumentVoidOutcome.IdempotentReplay,
+                PosServerResultClassification: posResult.ResultClassification,
+                VoidStatus: posResult.VoidStatus)
+            : Rejected(
+                request,
+                MapFailedStatus(posResult.Outcome),
+                posResult.HttpStatusCode is 400 or 404 or 409 ? posResult.HttpStatusCode : 409,
+                [posResult.Code]);
     }
 
     private static List<string> ValidateRequest(ControlledUatFiscalVoidSmokeRequest request)
@@ -182,6 +228,16 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
             errors.Add("controlled_diagnostic_flag_disabled");
         }
 
+        if (!_posServerOptions.EnablePosServerFiscalIssuanceLiveCall)
+        {
+            errors.Add("pos_server_live_call_flag_disabled");
+        }
+
+        if (string.IsNullOrWhiteSpace(_posServerOptions.PosServerBaseUrl))
+        {
+            errors.Add("pos_server_base_url_required");
+        }
+
         if (_posServerOptions.EnableLiveFiscalIssuanceFromPaymentFlow)
         {
             errors.Add("payment_flow_guard_enabled");
@@ -199,6 +255,24 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
 
         return errors;
     }
+
+    private static string MapSuccessfulStatus(PosServerFiscalDocumentVoidOutcome outcome) =>
+        outcome switch
+        {
+            PosServerFiscalDocumentVoidOutcome.NewlyVoided => "pos_server_void_recorded",
+            PosServerFiscalDocumentVoidOutcome.IdempotentReplay => "pos_server_void_idempotent_replay",
+            PosServerFiscalDocumentVoidOutcome.AlreadyVoided => "pos_server_already_voided",
+            _ => "pos_server_void_failed"
+        };
+
+    private static string MapFailedStatus(PosServerFiscalDocumentVoidOutcome outcome) =>
+        outcome switch
+        {
+            PosServerFiscalDocumentVoidOutcome.Conflict => "pos_server_void_conflict",
+            PosServerFiscalDocumentVoidOutcome.Rejected or
+            PosServerFiscalDocumentVoidOutcome.NotFound => "pos_server_void_rejected",
+            _ => "pos_server_void_failed"
+        };
 
     private static List<string> ValidateReference(
         ControlledUatFiscalVoidSmokeRequest request,
@@ -240,7 +314,9 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
             PaymentProviderCalled: false,
             RenderingGenerated: false,
             StatusHistoryRecorded: false,
-            IdempotentReplay: false);
+            IdempotentReplay: false,
+            PosServerResultClassification: null,
+            VoidStatus: null);
 
     private static void Require(bool condition, string error, List<string> errors)
     {
@@ -288,7 +364,31 @@ public sealed record ControlledUatFiscalVoidSmokeResponse(
     bool PaymentProviderCalled,
     bool RenderingGenerated,
     bool StatusHistoryRecorded,
-    bool IdempotentReplay);
+    bool IdempotentReplay,
+    string? PosServerResultClassification = null,
+    string? VoidStatus = null);
+
+public sealed record ControlledUatFiscalVoidSafetyGuardRequest(
+    string ProfileId,
+    Guid FiscalIssuanceReferenceId,
+    Guid PosServerFiscalDocumentId,
+    string FiscalDocumentNumber,
+    string PaymentFinalityRef,
+    long? FiscalSequenceValue,
+    string ReasonCode,
+    Guid CorrelationId);
+
+public sealed record ControlledUatFiscalVoidSafetyGuardResult(
+    bool Succeeded,
+    string Status,
+    IReadOnlyList<string> Errors)
+{
+    public static ControlledUatFiscalVoidSafetyGuardResult Accepted() =>
+        new(true, "controlled_uat_real_void_safety_guard_accepted", Array.Empty<string>());
+
+    public static ControlledUatFiscalVoidSafetyGuardResult Rejected(string status, IReadOnlyList<string> errors) =>
+        new(false, status, errors);
+}
 
 public sealed record ControlledUatFiscalVoidSmokeStoreRequest(
     string ProfileId,

@@ -137,6 +137,90 @@ public sealed class PosServerFiscalDocumentResponseParserTests
         result.ResultClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
     }
 
+    [Theory]
+    [InlineData("newly_voided", PosServerFiscalDocumentVoidOutcome.NewlyVoided)]
+    [InlineData("idempotent_replay", PosServerFiscalDocumentVoidOutcome.IdempotentReplay)]
+    [InlineData("already_voided", PosServerFiscalDocumentVoidOutcome.AlreadyVoided)]
+    public void ParseVoidResponse_WhenAccepted_MapsSafeClassifications(
+        string classification,
+        PosServerFiscalDocumentVoidOutcome expectedOutcome)
+    {
+        var result = PosServerFiscalDocumentResponseParser.ParseVoidResponse(
+            200,
+            VoidAcceptedResponse(classification));
+
+        result.Succeeded.Should().BeTrue();
+        result.Outcome.Should().Be(expectedOutcome);
+        result.ResultClassification.Should().Be(classification);
+        result.FiscalDocumentId.Should().Be(Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        result.FiscalDocumentNumber.Should().Be("SI-000001");
+        result.FiscalSequenceValue.Should().Be(1);
+        result.FiscalDocumentStatus.Should().Be("voided");
+        result.VoidStatus.Should().Be("recorded");
+    }
+
+    [Theory]
+    [InlineData(409, "fiscal_document_void_idempotency_conflict", PosServerFiscalDocumentVoidOutcome.Conflict)]
+    [InlineData(400, "invalid_reason_code", PosServerFiscalDocumentVoidOutcome.Rejected)]
+    [InlineData(404, "fiscal_document_not_found", PosServerFiscalDocumentVoidOutcome.NotFound)]
+    [InlineData(503, "persistence_write_failed", PosServerFiscalDocumentVoidOutcome.FailedService)]
+    public void ParseVoidResponse_WhenFailure_MapsFailClosedOutcome(
+        int httpStatusCode,
+        string code,
+        PosServerFiscalDocumentVoidOutcome expectedOutcome)
+    {
+        var result = PosServerFiscalDocumentResponseParser.ParseVoidResponse(
+            httpStatusCode,
+            VoidFailureResponse(code));
+
+        result.Succeeded.Should().BeFalse();
+        result.Outcome.Should().Be(expectedOutcome);
+        result.Code.Should().Be(code);
+    }
+
+    [Fact]
+    public async Task HttpClient_WhenVoidCalled_PostsExpectedEndpointAndBody()
+    {
+        HttpRequestMessage? observedRequest = null;
+        string? observedBody = null;
+        var client = new HttpClient(new StubHandler(request =>
+        {
+            observedRequest = request;
+            observedBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(VoidAcceptedResponse("newly_voided"), Encoding.UTF8, "application/json")
+            };
+        }))
+        {
+            BaseAddress = new Uri("https://pos-server.local")
+        };
+        var sut = new HttpPosServerFiscalDocumentClient(client);
+        var documentId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+        var result = await sut.VoidFiscalDocumentAsync(
+            documentId,
+            new PosServerFiscalDocumentVoidRequest(
+                "void-key",
+                "CONTROLLED_UAT_REAL_VOID",
+                null,
+                "central-pms-controlled-uat",
+                null,
+                "corr-001",
+                "central-pms",
+                DateOnly.Parse("2026-07-09")),
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(PosServerFiscalDocumentVoidOutcome.NewlyVoided);
+        observedRequest!.Method.Should().Be(HttpMethod.Post);
+        observedRequest.RequestUri!.PathAndQuery.Should().Be($"/v1/fiscal-documents/{documentId:D}/void");
+        observedBody.Should().Contain("\"idempotencyKey\":\"void-key\"");
+        observedBody.Should().Contain("\"reasonCode\":\"CONTROLLED_UAT_REAL_VOID\"");
+        observedBody.Should().Contain("\"requestedByRef\":\"central-pms-controlled-uat\"");
+        observedBody.Should().Contain("\"correlationId\":\"corr-001\"");
+        observedBody.Should().Contain("\"sourceSystemRef\":\"central-pms\"");
+    }
+
     [Fact]
     public void ParseReadResponse_WhenReadbackIncludesIdempotencyAndHashFields_ExposesSafeContractFields()
     {
@@ -258,6 +342,37 @@ public sealed class PosServerFiscalDocumentResponseParserTests
           "code": "{{code}}",
           "message": "{{code}}",
           "errorPosture": "{{errorPosture}}"
+        }
+        """;
+
+    private static string VoidAcceptedResponse(string resultClassification) =>
+        $$"""
+        {
+          "succeeded": true,
+          "code": "accepted",
+          "message": "Fiscal document void was recorded.",
+          "fiscalDocumentId": "11111111-1111-1111-1111-111111111111",
+          "fiscalDocumentNumber": "SI-000001",
+          "fiscalSequenceValue": 1,
+          "fiscalDocumentStatus": "voided",
+          "voidStatus": "recorded",
+          "voidedAt": "2026-07-09T14:23:18Z",
+          "voidReasonCode": "CONTROLLED_UAT_REAL_VOID",
+          "requestedByRef": "central-pms-controlled-uat",
+          "idempotencyKey": "void-key",
+          "resultClassification": "{{resultClassification}}",
+          "correlationId": "corr-001"
+        }
+        """;
+
+    private static string VoidFailureResponse(string code) =>
+        $$"""
+        {
+          "succeeded": false,
+          "code": "{{code}}",
+          "message": "{{code}}",
+          "resultClassification": "rejected",
+          "errorPosture": "do_not_retry_without_request_change"
         }
         """;
 

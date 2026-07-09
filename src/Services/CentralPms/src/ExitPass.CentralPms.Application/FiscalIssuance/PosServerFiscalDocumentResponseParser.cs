@@ -170,6 +170,53 @@ public static class PosServerFiscalDocumentResponseParser
             FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef ?? envelope.Document?.FiscalNumberAssignedByRef);
     }
 
+    public static PosServerFiscalDocumentVoidResult ParseVoidResponse(
+        int httpStatusCode,
+        string responseBody)
+    {
+        PosServerVoidResponseEnvelope? envelope;
+        try
+        {
+            envelope = JsonSerializer.Deserialize<PosServerVoidResponseEnvelope>(responseBody, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return InvalidVoidResponse(httpStatusCode, "invalid_json_response", "POS Server void response body was not valid JSON.");
+        }
+
+        if (envelope is null)
+        {
+            return InvalidVoidResponse(httpStatusCode, "empty_response", "POS Server void response body was empty.");
+        }
+
+        var outcome = MapVoidOutcome(httpStatusCode, envelope.Succeeded, envelope.ResultClassification);
+        var succeeded = httpStatusCode == (int)HttpStatusCode.OK &&
+            envelope.Succeeded &&
+            outcome is PosServerFiscalDocumentVoidOutcome.NewlyVoided
+                or PosServerFiscalDocumentVoidOutcome.IdempotentReplay
+                or PosServerFiscalDocumentVoidOutcome.AlreadyVoided;
+
+        return new PosServerFiscalDocumentVoidResult(
+            Outcome: outcome,
+            Succeeded: succeeded,
+            HttpStatusCode: httpStatusCode,
+            Code: string.IsNullOrWhiteSpace(envelope.Code) ? "pos_server_void_failure" : envelope.Code,
+            Message: envelope.Message,
+            FiscalDocumentId: envelope.FiscalDocumentId,
+            FiscalDocumentNumber: envelope.FiscalDocumentNumber,
+            FiscalSequenceValue: envelope.FiscalSequenceValue,
+            FiscalDocumentStatus: envelope.FiscalDocumentStatus,
+            VoidStatus: envelope.VoidStatus,
+            VoidedAt: envelope.VoidedAt,
+            VoidReasonCode: envelope.VoidReasonCode,
+            VoidReasonText: envelope.VoidReasonText,
+            RequestedByRef: envelope.RequestedByRef,
+            IdempotencyKey: envelope.IdempotencyKey,
+            ResultClassification: envelope.ResultClassification,
+            CorrelationId: envelope.CorrelationId,
+            ErrorPosture: envelope.ErrorPosture);
+    }
+
     private static bool HasCompleteFiscalNumberingEvidence(
         PosServerCreateResponseEnvelope envelope,
         FiscalIssuanceEvidenceStatus? evidenceStatus,
@@ -236,6 +283,56 @@ public static class PosServerFiscalDocumentResponseParser
             FiscalNumberAssignedAt: null,
             FiscalNumberAssignedByRef: null,
             ErrorPosture: null);
+
+    private static PosServerFiscalDocumentVoidResult InvalidVoidResponse(
+        int httpStatusCode,
+        string code,
+        string message) =>
+        new(
+            Outcome: PosServerFiscalDocumentVoidOutcome.InvalidResponse,
+            Succeeded: false,
+            HttpStatusCode: httpStatusCode,
+            Code: code,
+            Message: message,
+            FiscalDocumentId: null,
+            FiscalDocumentNumber: null,
+            FiscalSequenceValue: null,
+            FiscalDocumentStatus: null,
+            VoidStatus: null,
+            VoidedAt: null,
+            VoidReasonCode: null,
+            VoidReasonText: null,
+            RequestedByRef: null,
+            IdempotencyKey: null,
+            ResultClassification: null,
+            CorrelationId: null,
+            ErrorPosture: null);
+
+    private static PosServerFiscalDocumentVoidOutcome MapVoidOutcome(
+        int httpStatusCode,
+        bool succeeded,
+        string? resultClassification)
+    {
+        if (httpStatusCode == (int)HttpStatusCode.OK && succeeded)
+        {
+            return resultClassification switch
+            {
+                "newly_voided" => PosServerFiscalDocumentVoidOutcome.NewlyVoided,
+                "idempotent_replay" => PosServerFiscalDocumentVoidOutcome.IdempotentReplay,
+                "already_voided" => PosServerFiscalDocumentVoidOutcome.AlreadyVoided,
+                _ => PosServerFiscalDocumentVoidOutcome.InvalidResponse
+            };
+        }
+
+        return httpStatusCode switch
+        {
+            (int)HttpStatusCode.Conflict => PosServerFiscalDocumentVoidOutcome.Conflict,
+            (int)HttpStatusCode.NotFound => PosServerFiscalDocumentVoidOutcome.NotFound,
+            (int)HttpStatusCode.BadRequest => PosServerFiscalDocumentVoidOutcome.Rejected,
+            (int)HttpStatusCode.ServiceUnavailable => PosServerFiscalDocumentVoidOutcome.FailedService,
+            _ => PosServerFiscalDocumentVoidOutcome.InvalidResponse
+        };
+    }
 
     private static FiscalIssuanceResultClassification? ParseResultClassification(string? value) =>
         value switch
@@ -329,4 +426,22 @@ public static class PosServerFiscalDocumentResponseParser
         string? FiscalNumberSuffixText,
         DateTimeOffset? FiscalNumberAssignedAt,
         string? FiscalNumberAssignedByRef);
+
+    private sealed record PosServerVoidResponseEnvelope(
+        bool Succeeded,
+        string Code,
+        string Message,
+        Guid? FiscalDocumentId,
+        string? FiscalDocumentNumber,
+        long? FiscalSequenceValue,
+        string? FiscalDocumentStatus,
+        string? VoidStatus,
+        DateTimeOffset? VoidedAt,
+        string? VoidReasonCode,
+        string? VoidReasonText,
+        string? RequestedByRef,
+        string? IdempotencyKey,
+        string? ResultClassification,
+        string? CorrelationId,
+        string? ErrorPosture);
 }

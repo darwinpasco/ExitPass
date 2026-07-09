@@ -45,4 +45,25 @@ public sealed class HttpPosServerFiscalDocumentClient : IPosServerFiscalDocument
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         return PosServerFiscalDocumentResponseParser.ParseReadResponse((int)response.StatusCode, body);
     }
+
+    public async Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
+        Guid fiscalDocumentId,
+        PosServerFiscalDocumentVoidRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (fiscalDocumentId == Guid.Empty)
+        {
+            throw new ArgumentException("Fiscal document id is required.", nameof(fiscalDocumentId));
+        }
+
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var response = await _httpClient.PostAsJsonAsync(
+            $"{FiscalDocumentsPath}{fiscalDocumentId:D}/void",
+            request,
+            cancellationToken);
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        return PosServerFiscalDocumentResponseParser.ParseVoidResponse((int)response.StatusCode, body);
+    }
 }
