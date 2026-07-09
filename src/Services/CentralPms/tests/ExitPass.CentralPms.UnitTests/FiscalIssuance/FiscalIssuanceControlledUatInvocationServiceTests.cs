@@ -448,6 +448,94 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenApprovedReplayFindsRecordedReference_ReturnsExistingFiscalEvidenceWithoutDiagnosticCall()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var fixtureStore = Substitute.For<IControlledUatFiscalIssuanceFixtureStore>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByUpstreamFinalityReferenceAsync(
+                Arg.Any<string>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns(RecordedReference());
+
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                referenceRepository: repository,
+                fixtureStore: fixtureStore)
+            .RunAsync(ReplayRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(200);
+        response.Accepted.Should().BeTrue();
+        response.Status.Should().Be(FiscalIssuanceControlledUatHarnessStatuses.ReplayRecorded);
+        response.ValidationPassed.Should().BeTrue();
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        response.ResultClassification.Should().Be(FiscalIssuanceResultClassification.IdempotentReplay.ToString());
+        response.FiscalDocumentId.Should().Be(Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"));
+        response.FiscalDocumentNumber.Should().Be("SI-00000002-UAT");
+        response.FiscalNumberAssignmentState.Should().Be(FiscalNumberAssignmentState.Assigned.ToString());
+        response.FiscalIssuanceEvidenceStatus.Should()
+            .Be(FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned.ToString());
+        response.CentralPmsFiscalState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded.ToString());
+        response.PaymentFinalityChanged.Should().BeFalse();
+        response.ExitAuthorizationIssued.Should().BeFalse();
+        response.GateBehaviorTriggered.Should().BeFalse();
+        response.EvidenceFileWritten.Should().BeFalse();
+
+        await fixtureStore.DidNotReceiveWithAnyArgs().EnsureApprovedFirstRunFixtureAsync(default!, default);
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenApprovedReplayReferenceIsMissing_FailsClosedWithoutDiagnosticCall()
+    {
+        var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        repository.FindByUpstreamFinalityReferenceAsync(
+                Arg.Any<string>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<Guid?>(),
+                Arg.Any<CancellationToken>())
+            .Returns((FiscalIssuanceReferenceRecord?)null);
+
+        var response = await CreateSut(
+                harness: harness,
+                orchestration: orchestration,
+                referenceRepository: repository)
+            .RunAsync(ReplayRequest(), CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(409);
+        response.Status.Should().Be("fiscal_reference_replay_rejected");
+        response.Errors.Should().Contain("fiscal_reference_replay_not_found");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+        await harness.DidNotReceiveWithAnyArgs().ExecuteAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenReplayRunIdIsNotApproved_FailsClosedBeforeLookup()
+    {
+        var repository = Substitute.For<IFiscalIssuanceReferenceRepository>();
+
+        var response = await CreateSut(referenceRepository: repository)
+            .RunAsync(ReplayRequest() with { RunId = "CPS-POS-UAT-OTHER" }, CancellationToken.None);
+
+        response.HttpStatusCode.Should().Be(400);
+        response.Errors.Should().Contain("run_id_not_approved_for_first_run");
+        response.DiagnosticInvoked.Should().BeFalse();
+        response.PosServerCallAttempted.Should().BeFalse();
+        await repository.DidNotReceiveWithAnyArgs()
+            .FindByUpstreamFinalityReferenceAsync(default!, default, default, default);
+    }
+
+    [Fact]
     public async Task PreflightAsync_WhenRequestIsValid_DoesNotInvokeHarnessOrReturnEvidence()
     {
         var harness = Substitute.For<IFiscalIssuanceControlledUatHarness>();
@@ -586,6 +674,13 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             EvidenceLocation: @"D:\ExitPass-UAT-Evidence\CPS-POS-UAT-20260709-DEV-ATC-001",
             EvidenceOwner: "Darwin Pasco");
 
+    private static ControlledUatFiscalIssuanceInvocationRequest ReplayRequest() =>
+        ValidRequest() with
+        {
+            ExpectedRunType = "replay",
+            ReplayIncluded = true
+        };
+
     private static FiscalIssuanceControlledUatHarnessResult HarnessResult(string runId) =>
         new(
             RunId: runId,
@@ -646,4 +741,24 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
             FirstRecordedAt: DateTimeOffset.UtcNow,
             LastUpdatedAt: DateTimeOffset.UtcNow,
             RecordedByServiceIdentityId: null);
+
+    private static FiscalIssuanceReferenceRecord RecordedReference() =>
+        PendingReference(ExistingFiscalIssuanceReferenceId) with
+        {
+            FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+            PosServerFiscalDocumentId = Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395"),
+            FiscalIdentityId = Guid.Parse("10000000-0000-4000-8000-000000000301"),
+            FiscalSequencePolicyId = Guid.Parse("10000000-0000-4000-8000-000000000401"),
+            FiscalSequenceValue = 2,
+            FiscalDocumentNumber = "SI-00000002-UAT",
+            FiscalSeries = "central-pms-uat-si-sequence-policy",
+            FiscalNumberPrefixText = "SI-",
+            FiscalNumberSuffixText = "-UAT",
+            FiscalNumberAssignedAt = DateTimeOffset.Parse("2026-07-09T09:33:57.142508+00:00"),
+            FiscalNumberAssignedByRef = "pos-server:system",
+            FiscalDocumentStatusCodeId = Guid.Parse("10000000-0000-4000-8000-000000000107"),
+            ResultClassification = FiscalIssuanceResultClassification.NewlyCreated,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned
+        };
 }
