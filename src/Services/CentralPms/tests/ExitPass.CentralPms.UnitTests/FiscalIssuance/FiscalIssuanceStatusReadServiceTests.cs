@@ -140,7 +140,49 @@ public sealed class FiscalIssuanceStatusReadServiceTests
     }
 
     [Fact]
-    public void StatusReadService_DoesNotDependOnPosServerRetryPaymentExitOrGateServices()
+    public async Task GetByReferenceIdAsync_WhenPosReadReturnsVoidedDocument_ExposesSafeVoidPosture()
+    {
+        var posDocumentId = Guid.Parse("9bdf2948-dadd-450b-8776-be688b579395");
+        var reference = Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+        {
+            PosServerFiscalDocumentId = posDocumentId,
+            FiscalDocumentNumber = "SI-00000002-UAT",
+            FiscalSequenceValue = 2,
+            FiscalNumberAssignmentState = FiscalNumberAssignmentState.Assigned,
+            FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned
+        };
+        var posRead = Substitute.For<IPosServerFiscalDocumentClient>();
+        posRead.GetFiscalDocumentAsync(posDocumentId, Arg.Any<CancellationToken>())
+            .Returns(new PosServerFiscalDocumentReadResult(
+                Outcome: PosServerFiscalDocumentOutcome.Accepted,
+                Succeeded: true,
+                HttpStatusCode: 200,
+                Code: "found",
+                Message: "Fiscal document found.",
+                FiscalDocumentId: posDocumentId,
+                FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+                FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+                FiscalDocumentStatusCodeId: reference.FiscalDocumentStatusCodeId,
+                FiscalDocumentStatusCodeKey: "voided",
+                FiscalSequenceValue: 2,
+                FiscalDocumentNumber: "SI-00000002-UAT",
+                VoidStatus: "recorded",
+                VoidReasonCode: "operator_error",
+                VoidedAt: DateTimeOffset.Parse("2026-07-09T16:45:00Z")));
+        var sut = new FiscalIssuanceStatusReadService(RepositoryReturning(reference), posRead);
+
+        var status = await sut.GetByReferenceIdAsync(reference.FiscalIssuanceReferenceId, CancellationToken.None);
+
+        status.Should().NotBeNull();
+        status!.PosServerFiscalDocumentReadStatus.Should().Be("AVAILABLE");
+        status.PosServerFiscalDocumentStatusCodeKey.Should().Be("voided");
+        status.PosServerVoidStatus.Should().Be("recorded");
+        status.PosServerVoidReasonCode.Should().Be("operator_error");
+        status.PosServerVoidedAt.Should().Be(DateTimeOffset.Parse("2026-07-09T16:45:00Z"));
+    }
+
+    [Fact]
+    public void StatusReadService_UsesOnlyReadOnlyPosServerStatusDependency()
     {
         var constructorParameters = typeof(FiscalIssuanceStatusReadService)
             .GetConstructors()
@@ -148,9 +190,9 @@ public sealed class FiscalIssuanceStatusReadServiceTests
             .Select(parameter => parameter.ParameterType.Name)
             .ToArray();
 
-        constructorParameters.Should().ContainSingle(parameter => parameter == nameof(IFiscalIssuanceReferenceRepository));
+        constructorParameters.Should().Contain(parameter => parameter == nameof(IFiscalIssuanceReferenceRepository));
+        constructorParameters.Should().Contain(parameter => parameter == nameof(IPosServerFiscalDocumentClient));
         constructorParameters.Should().NotContain(parameter =>
-            parameter.Contains("PosServer", StringComparison.OrdinalIgnoreCase) ||
             parameter.Contains("Retry", StringComparison.OrdinalIgnoreCase) ||
             parameter.Contains("Payment", StringComparison.OrdinalIgnoreCase) ||
             parameter.Contains("ExitAuthorization", StringComparison.OrdinalIgnoreCase) ||

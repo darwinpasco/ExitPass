@@ -159,6 +159,7 @@ public static class PosServerFiscalDocumentResponseParser
             SemanticRequestHash: envelope.SemanticRequestHash ?? envelope.Document?.SemanticRequestHash,
             SemanticRequestHashVersion: envelope.SemanticRequestHashVersion ?? envelope.Document?.SemanticRequestHashVersion,
             SemanticRequestHashStatus: envelope.SemanticRequestHashStatus ?? envelope.Document?.SemanticRequestHashStatus,
+            FiscalDocumentStatusCodeKey: envelope.FiscalDocumentStatusCodeKey ?? envelope.Document?.FiscalDocumentStatusCodeKey,
             FiscalIdentityId: envelope.FiscalIdentityId ?? envelope.Document?.FiscalIdentityId,
             FiscalSequencePolicyId: envelope.FiscalSequencePolicyId ?? envelope.Document?.FiscalSequencePolicyId,
             FiscalSequenceValue: envelope.FiscalSequenceValue ?? envelope.Document?.FiscalSequenceValue,
@@ -167,7 +168,10 @@ public static class PosServerFiscalDocumentResponseParser
             FiscalNumberPrefixText: envelope.FiscalNumberPrefixText ?? envelope.Document?.FiscalNumberPrefixText,
             FiscalNumberSuffixText: envelope.FiscalNumberSuffixText ?? envelope.Document?.FiscalNumberSuffixText,
             FiscalNumberAssignedAt: envelope.FiscalNumberAssignedAt ?? envelope.Document?.FiscalNumberAssignedAt,
-            FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef ?? envelope.Document?.FiscalNumberAssignedByRef);
+            FiscalNumberAssignedByRef: envelope.FiscalNumberAssignedByRef ?? envelope.Document?.FiscalNumberAssignedByRef,
+            VoidStatus: envelope.VoidStatus ?? envelope.Document?.VoidStatus,
+            VoidReasonCode: envelope.VoidReasonCode ?? envelope.Document?.VoidReasonCode,
+            VoidedAt: envelope.VoidedAt ?? envelope.Document?.VoidedAt);
     }
 
     public static PosServerFiscalDocumentVoidResult ParseVoidResponse(
@@ -398,6 +402,7 @@ public static class PosServerFiscalDocumentResponseParser
         string? SemanticRequestHash,
         string? SemanticRequestHashVersion,
         string? SemanticRequestHashStatus,
+        string? FiscalDocumentStatusCodeKey,
         Guid? FiscalIdentityId,
         Guid? FiscalSequencePolicyId,
         long? FiscalSequenceValue,
@@ -406,11 +411,15 @@ public static class PosServerFiscalDocumentResponseParser
         string? FiscalNumberPrefixText,
         string? FiscalNumberSuffixText,
         DateTimeOffset? FiscalNumberAssignedAt,
-        string? FiscalNumberAssignedByRef);
+        string? FiscalNumberAssignedByRef,
+        string? VoidStatus,
+        string? VoidReasonCode,
+        DateTimeOffset? VoidedAt);
 
     private sealed record PosServerReadDocumentEnvelope(
         Guid? FiscalDocumentId,
         Guid? FiscalDocumentStatusCodeId,
+        string? FiscalDocumentStatusCodeKey,
         string? IdempotencyScope,
         string? IdempotencyKey,
         string? IdempotencyKeySource,
@@ -425,7 +434,10 @@ public static class PosServerFiscalDocumentResponseParser
         string? FiscalNumberPrefixText,
         string? FiscalNumberSuffixText,
         DateTimeOffset? FiscalNumberAssignedAt,
-        string? FiscalNumberAssignedByRef);
+        string? FiscalNumberAssignedByRef,
+        string? VoidStatus,
+        string? VoidReasonCode,
+        DateTimeOffset? VoidedAt);
 
     private sealed record PosServerVoidResponseEnvelope(
         bool Succeeded,

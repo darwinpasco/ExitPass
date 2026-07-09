@@ -243,6 +243,7 @@ public sealed record PosServerFiscalDocumentReadResult(
     string? SemanticRequestHash = null,
     string? SemanticRequestHashVersion = null,
     string? SemanticRequestHashStatus = null,
+    string? FiscalDocumentStatusCodeKey = null,
     Guid? FiscalIdentityId = null,
     Guid? FiscalSequencePolicyId = null,
     long? FiscalSequenceValue = null,
@@ -251,7 +252,10 @@ public sealed record PosServerFiscalDocumentReadResult(
     string? FiscalNumberPrefixText = null,
     string? FiscalNumberSuffixText = null,
     DateTimeOffset? FiscalNumberAssignedAt = null,
-    string? FiscalNumberAssignedByRef = null);
+    string? FiscalNumberAssignedByRef = null,
+    string? VoidStatus = null,
+    string? VoidReasonCode = null,
+    DateTimeOffset? VoidedAt = null);
 
 public sealed record PosServerFiscalDocumentVoidRequest(
     string IdempotencyKey,

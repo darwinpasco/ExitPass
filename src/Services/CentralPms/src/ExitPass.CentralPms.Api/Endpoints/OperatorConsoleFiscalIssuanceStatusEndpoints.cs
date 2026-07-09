@@ -32,7 +32,7 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .WithSummary("View Operator Console fiscal issuance status")
-            .WithDescription("Returns safe read-only fiscal issuance status after Operator Console view-audit persistence. This endpoint does not call POS Server and does not mutate fiscal, payment, exit, gate, retry, readback, refund, reversal, or document-rendering state.");
+            .WithDescription("Returns safe read-only fiscal issuance status after Operator Console view-audit persistence. The read may include a POS Server fiscal document status read when configured, but it does not mutate fiscal, payment, exit, gate, retry, readback, refund, reversal, or document-rendering state.");
 
         return app;
     }
