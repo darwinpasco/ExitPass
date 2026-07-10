@@ -632,9 +632,18 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByText("Fiscal document number")).not.toBeInTheDocument();
     expect(screen.queryByText("Fiscal issuance reference ID")).not.toBeInTheDocument();
     expect(await screen.findAllByText("SI-OCVOID-0001-UAT")).not.toHaveLength(0);
-    expect(screen.getByText("VOID_FISCAL_DOCUMENT")).toBeInTheDocument();
+
+    const detailsToggle = screen.getByRole("button", { name: "View support/audit details" });
+    expect(detailsToggle).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(detailsToggle);
+
+    expect(screen.getByRole("button", { name: "Hide support/audit details" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Read-only metadata for the selected Sales Invoice void action row.")).toBeInTheDocument();
     expect(screen.getAllByText("operator_error")).not.toHaveLength(0);
     expect(screen.getByText("No unsafe side effects recorded")).toBeInTheDocument();
+    expect(screen.getByText("Sales Invoice void")).toBeInTheDocument();
+    expect(screen.queryByText("VOID_FISCAL_DOCUMENT")).not.toBeInTheDocument();
   });
 
   it("FiscalVoidActionAuditReport_FiltersSubmitExpectedQuery", async () => {
