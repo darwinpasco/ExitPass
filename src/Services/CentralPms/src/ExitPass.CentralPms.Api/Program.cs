@@ -145,6 +145,7 @@ app.MapOperatorConsoleAccessReadinessEndpoints();
 app.MapOperatorConsoleSessionLookupEndpoints();
 app.MapOperatorConsoleFiscalIssuanceStatusEndpoints();
 app.MapOperatorConsoleFiscalStatusViewAuditReportEndpoints();
+app.MapOperatorConsoleFiscalVoidActionAuditReportEndpoints();
 app.MapTicketSessionSummaryEndpoints();
 app.MapVendorPaymentAcknowledgmentOpsEndpoints();
 app.MapVendorSessionProjectionHealthEndpoints();
@@ -580,6 +581,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleFiscalStatusViewAuditReportRepository>(_ =>
         new OperatorConsoleFiscalStatusViewAuditReportRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleFiscalStatusViewAuditReportService, OperatorConsoleFiscalStatusViewAuditReportService>();
+    builder.Services.AddScoped<IOperatorConsoleFiscalVoidActionAuditReportRepository>(_ =>
+        new OperatorConsoleFiscalVoidActionAuditReportRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleFiscalVoidActionAuditReportService, OperatorConsoleFiscalVoidActionAuditReportService>();
     builder.Services.AddScoped<ITicketSessionSummaryReadRepository>(_ =>
         new TicketSessionSummaryReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITicketSessionSummaryService, TicketSessionSummaryService>();

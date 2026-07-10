@@ -11,6 +11,7 @@ import {
 import type {
   AccessReadinessResponse,
   FiscalIssuanceVoidResult,
+  FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportResponse,
   FiscalIssuanceStatus,
   OperatorTicketLookupResult,
@@ -52,6 +53,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
       lookupFiscalIssuanceStatus: vi.fn(),
+      listFiscalVoidActionAuditReport: vi.fn(),
       listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
@@ -609,6 +611,92 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByRole("button", { name: /reversal/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /PDF|HTML|QR/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /raw evidence/i })).not.toBeInTheDocument();
+  });
+
+  it("FiscalVoidActionAuditReport_LoadsRouteRowsFiltersAndReadOnlyGuardrail", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ fiscalVoidActionAuditReport: fiscalVoidActionAuditReportResponse() })}
+        initialPath="/operator-console/audit/fiscal-void-actions"
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Fiscal void action audit review" })).toBeInTheDocument();
+    expect(screen.getByText("This page reviews fiscal void action-log metadata only.")).toBeInTheDocument();
+    expect(screen.getByText(/It does not perform fiscal void/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Fiscal document number")).toBeInTheDocument();
+    expect(screen.getByLabelText("Result class")).toBeInTheDocument();
+    expect(await screen.findAllByText("SI-OCVOID-0001-UAT")).not.toHaveLength(0);
+    expect(screen.getByText("VOID_FISCAL_DOCUMENT")).toBeInTheDocument();
+    expect(screen.getAllByText("operator_error")).not.toHaveLength(0);
+    expect(screen.getByText("No unsafe side effects recorded")).toBeInTheDocument();
+  });
+
+  it("FiscalVoidActionAuditReport_FiltersSubmitExpectedQuery", async () => {
+    const onFiscalVoidActionAuditReport = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalVoidActionAuditReport: fiscalVoidActionAuditReportResponse(),
+          onFiscalVoidActionAuditReport
+        })}
+        initialPath="/operator-console/audit/fiscal-void-actions"
+      />
+    );
+
+    expect(await screen.findAllByText("SI-OCVOID-0001-UAT")).not.toHaveLength(0);
+    await userEvent.type(screen.getByLabelText("Site ID"), "77000000-0000-0000-0000-000000000002");
+    await userEvent.type(screen.getByLabelText("Site group ID"), "77000000-0000-0000-0000-000000000001");
+    await userEvent.type(screen.getByLabelText("Operator/user ID"), "77000000-0000-0000-0000-000000000010");
+    await userEvent.type(screen.getByLabelText("Fiscal issuance reference ID"), "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501");
+    await userEvent.type(screen.getByLabelText("Fiscal document number"), "SI-OCVOID-0001-UAT");
+    await userEvent.selectOptions(screen.getByLabelText("Result class"), "CONFLICT");
+    await userEvent.type(screen.getByLabelText("Correlation ID"), "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df");
+    await userEvent.selectOptions(screen.getByLabelText("Limit"), "50");
+    await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() => {
+      expect(onFiscalVoidActionAuditReport).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          siteId: "77000000-0000-0000-0000-000000000002",
+          siteGroupId: "77000000-0000-0000-0000-000000000001",
+          operatorUserId: "77000000-0000-0000-0000-000000000010",
+          fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
+          fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
+          resultClass: "CONFLICT",
+          correlationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
+          limit: 50,
+          offset: 0
+        })
+      );
+    });
+  });
+
+  it("FiscalVoidActionAuditReport_EmptyAccessDeniedAndNoUnsafeActionButtons", async () => {
+    const { rerender } = render(
+      <App apiClient={createMockOperatorConsoleApiClient({ empty: true })} initialPath="/operator-console/audit/fiscal-void-actions" />
+    );
+
+    expect(await screen.findByText("No fiscal void action rows")).toBeInTheDocument();
+
+    rerender(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalVoidActionAuditReportError: { status: "access-denied", message: "Access denied." }
+        })}
+        initialPath="/operator-console/audit/fiscal-void-actions"
+      />
+    );
+
+    expect(await screen.findByText("Access denied")).toBeInTheDocument();
+    expect(screen.getByText("Access denied.")).toBeInTheDocument();
+    expect(screen.queryByText("SI-OCVOID-0001-UAT")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void fiscal document/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /refund/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /gate/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /HikCentral/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /replacement/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /PDF|HTML|QR/i })).not.toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_EvidencePanelShowsMetadataOnlyAndMaskedReferenceGuidance", async () => {
@@ -1241,6 +1329,41 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(calledUrl.searchParams.get("offset")).toBe("25");
     expect(String(fetchMock.mock.calls[0][0])).toContain("fiscalIssuanceReferenceId=reference%2Fwith+space");
     expectOperatorContextHeaders(fetchMock.mock.calls[0][1]?.headers);
+  });
+
+  it("OperatorConsoleApi_LoadsFiscalVoidActionAuditReportWithFilters", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fiscalVoidActionAuditReportResponse()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const report = await client.listFiscalVoidActionAuditReport({
+      from: "2026-07-01T00:00:00+08:00",
+      to: "2026-07-09T23:59:59+08:00",
+      siteId: "77000000-0000-0000-0000-000000000002",
+      siteGroupId: "77000000-0000-0000-0000-000000000001",
+      operatorUserId: "77000000-0000-0000-0000-000000000010",
+      fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
+      fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
+      resultClass: "CONFLICT",
+      correlationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
+      limit: 50,
+      offset: 25
+    });
+
+    expect(report.items[0].actionCode).toBe("VOID_FISCAL_DOCUMENT");
+    expect(report.items[0].fiscalDocumentNumber).toBe("SI-OCVOID-0001-UAT");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/ops/operator-console/audit/fiscal-void-actions?"),
+      expect.any(Object)
+    );
+    const calledUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(calledUrl.searchParams.get("fiscalDocumentNumber")).toBe("SI-OCVOID-0001-UAT");
+    expect(calledUrl.searchParams.get("resultClass")).toBe("CONFLICT");
+    expect(calledUrl.searchParams.get("offset")).toBe("25");
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expect(requestOptions?.method).toBeUndefined();
+    expect(requestOptions?.body).toBeUndefined();
+    expectOperatorContextHeaders(requestOptions?.headers);
   });
 
   it("OperatorConsoleApi_EvaluatesAccessReadinessThroughFetch", async () => {
@@ -2134,6 +2257,46 @@ function fiscalStatusViewAuditReportResponse(
     limit: 25,
     offset: 0,
     correlationId: "6b000000-0000-0000-0000-000000000199"
+  };
+
+  return { ...response, ...overrides };
+}
+
+function fiscalVoidActionAuditReportResponse(
+  overrides: Partial<FiscalVoidActionAuditReportResponse> = {}
+): FiscalVoidActionAuditReportResponse {
+  const response: FiscalVoidActionAuditReportResponse = {
+    items: [
+      {
+        actionLogEntryId: "7a000000-0000-0000-0000-000000000101",
+        actionTimestamp: "2026-07-10T06:30:00+08:00",
+        actionCode: "VOID_FISCAL_DOCUMENT",
+        resultClass: "SUCCEEDED",
+        operatorUserId: "77000000-0000-0000-0000-000000000010",
+        siteId: "77000000-0000-0000-0000-000000000002",
+        siteGroupId: "77000000-0000-0000-0000-000000000001",
+        fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
+        fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
+        posServerFiscalDocumentId: "3cddbc8e-28f8-49d2-93cf-b4a28a947501",
+        reasonCode: "operator_error",
+        correlationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
+        sourceModule: "operator-console-fiscal-issuance-status",
+        paymentFinalityChanged: false,
+        exitAuthorizationIssued: false,
+        gateBehaviorTriggered: false,
+        refundOrReversalCreated: false,
+        hikCentralCalled: false,
+        paymentProviderCalled: false,
+        renderingGenerated: false,
+        replacementFiscalDocumentCreated: false,
+        newFiscalNumberAllocated: false,
+        fiscalSequenceChangedByCentralPms: false
+      }
+    ],
+    totalCount: 1,
+    limit: 25,
+    offset: 0,
+    correlationId: "7a000000-0000-0000-0000-000000000199"
   };
 
   return { ...response, ...overrides };

@@ -64,6 +64,11 @@ public static class CentralPmsRbacPolicyCatalog
                 "fiscal-issuance.void.command",
                 "reconciliation.manage"
             ],
+            ["FiscalVoidActionAuditReview"] =
+            [
+                "fiscal-issuance.void.audit.read",
+                "reconciliation.manage"
+            ],
             ["VendorSessionProjectionHealthViewer"] =
             [
                 "ops.vendor-session-projection-health.view",

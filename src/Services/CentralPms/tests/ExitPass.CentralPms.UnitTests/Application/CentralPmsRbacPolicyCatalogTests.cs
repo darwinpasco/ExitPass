@@ -22,6 +22,7 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("VendorPaymentAcknowledgmentViewer", "reconciliation.view")]
     [InlineData("FiscalIssuanceStatusRead", "fiscal-issuance.status.read")]
     [InlineData("FiscalIssuanceVoidCommand", "fiscal-issuance.void.command")]
+    [InlineData("FiscalVoidActionAuditReview", "fiscal-issuance.void.audit.read")]
     public void ResolvePermissions_ReturnsExpectedPermission(string policyName, string expectedPermission)
     {
         var permissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);

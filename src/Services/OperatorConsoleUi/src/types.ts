@@ -365,6 +365,14 @@ export interface AuditReportItem {
 }
 
 export type FiscalStatusViewAuditResultClass = "SUCCEEDED" | "DENIED" | "NOT_FOUND" | "FAILED_SAFELY";
+export type FiscalVoidActionAuditResultClass =
+  | "SUCCEEDED"
+  | "DENIED"
+  | "NOT_FOUND"
+  | "CONFLICT"
+  | "REJECTED"
+  | "ALREADY_VOIDED"
+  | "FAILED_SAFELY";
 
 export interface FiscalStatusViewAuditReportQuery {
   from?: string;
@@ -399,6 +407,58 @@ export interface FiscalStatusViewAuditReportItem {
   correlationId: string;
   safeDenialOrErrorPosture?: string;
   sourceModule?: string;
+}
+
+export interface FiscalVoidActionAuditReportQuery {
+  from?: string;
+  to?: string;
+  siteId?: string;
+  siteGroupId?: string;
+  operatorUserId?: string;
+  fiscalIssuanceReferenceId?: string;
+  fiscalDocumentNumber?: string;
+  resultClass?: FiscalVoidActionAuditResultClass | string;
+  correlationId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface FiscalVoidActionAuditReportResponse {
+  items: FiscalVoidActionAuditReportItem[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  correlationId: string;
+}
+
+export interface FiscalVoidActionAuditReportItem {
+  actionLogEntryId: string;
+  actionTimestamp: string;
+  actionCode: string;
+  resultClass: FiscalVoidActionAuditResultClass | string;
+  operatorUserId: string;
+  siteId?: string;
+  siteGroupId?: string;
+  fiscalIssuanceReferenceId: string;
+  fiscalDocumentNumber?: string;
+  posServerFiscalDocumentId?: string;
+  reasonCode?: string;
+  reasonText?: string;
+  correlationId: string;
+  operatorActionRequestId?: string;
+  posServerResultClassification?: string;
+  safeDenialOrErrorPosture?: string;
+  sourceModule?: string;
+  paymentFinalityChanged?: boolean;
+  exitAuthorizationIssued?: boolean;
+  gateBehaviorTriggered?: boolean;
+  refundOrReversalCreated?: boolean;
+  hikCentralCalled?: boolean;
+  paymentProviderCalled?: boolean;
+  renderingGenerated?: boolean;
+  replacementFiscalDocumentCreated?: boolean;
+  newFiscalNumberAllocated?: boolean;
+  fiscalSequenceChangedByCentralPms?: boolean;
 }
 
 export type VendorPaymentAcknowledgmentStatus =

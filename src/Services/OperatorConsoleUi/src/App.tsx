@@ -13,6 +13,9 @@ import type {
   AuditReportResponse,
   FiscalIssuanceStatus,
   FiscalIssuanceVoidResult,
+  FiscalVoidActionAuditReportItem,
+  FiscalVoidActionAuditReportQuery,
+  FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportItem,
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
@@ -49,6 +52,7 @@ const routes = {
   fiscalStatus: "/operator-console/fiscal-issuance-status",
   audit: "/operator-console/audit",
   fiscalStatusViewAudit: "/operator-console/audit/fiscal-status-views",
+  fiscalVoidActionAudit: "/operator-console/audit/fiscal-void-actions",
   queue: "/operator-console/statutory-discounts",
   detail: "/operator-console/statutory-discounts/",
   vendorAcknowledgments: "/operator-console/vendor-acknowledgments",
@@ -173,6 +177,13 @@ export function App({ apiClient, initialPath }: AppProps) {
               Fiscal View Audit
             </button>
             <button
+              className={`navLink ${path === routes.fiscalVoidActionAudit ? "navLinkActive" : ""}`}
+              type="button"
+              onClick={() => navigate(routes.fiscalVoidActionAudit)}
+            >
+              Fiscal Void Audit
+            </button>
+            <button
               className={`navLink ${path === routes.vendorAcknowledgments ? "navLinkActive" : ""}`}
               type="button"
               onClick={() => navigate(routes.vendorAcknowledgments)}
@@ -225,6 +236,8 @@ export function App({ apiClient, initialPath }: AppProps) {
             <AuditReportPage client={client} />
           ) : path === routes.fiscalStatusViewAudit ? (
             <FiscalStatusViewAuditReportPage client={client} />
+          ) : path === routes.fiscalVoidActionAudit ? (
+            <FiscalVoidActionAuditReportPage client={client} />
           ) : path === routes.vendorAcknowledgments ? (
             <VendorPaymentAcknowledgmentsPage client={client} />
           ) : path === routes.vendorProjectionHealth ? (
@@ -722,6 +735,384 @@ function fiscalViewAuditResultPresentation(resultClass: string) {
         meaning: "Unrecognized result class returned by the report endpoint."
       };
   }
+}
+
+function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleApiClient }) {
+  const [filters, setFilters] = useState<FiscalVoidActionAuditReportQuery>({ limit: 25, offset: 0 });
+  const [draftFilters, setDraftFilters] = useState<FiscalVoidActionAuditReportQuery>({ limit: 25, offset: 0 });
+  const [reportState, setReportState] = useState<LoadState<FiscalVoidActionAuditReportResponse>>({ status: "loading" });
+
+  useEffect(() => {
+    let active = true;
+    setReportState({ status: "loading" });
+
+    client
+      .listFiscalVoidActionAuditReport(filters)
+      .then((report) => {
+        if (!active) {
+          return;
+        }
+
+        setReportState(report.items.length === 0 ? { status: "empty" } : { status: "loaded", data: report });
+      })
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+
+        const mapped = mapApiError(error);
+        if (mapped.status === "access-denied") {
+          setReportState({ status: "access-denied", message: mapped.message });
+          return;
+        }
+
+        setReportState({ status: "error", message: mapped.message });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, filters]);
+
+  function submitFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFilters({
+      ...draftFilters,
+      limit: draftFilters.limit ?? 25,
+      offset: 0
+    });
+  }
+
+  function changePage(nextOffset: number) {
+    setDraftFilters((current) => ({ ...current, offset: nextOffset }));
+    setFilters((current) => ({ ...current, offset: nextOffset }));
+  }
+
+  const pageLimit = reportState.status === "loaded" ? reportState.data.limit : filters.limit ?? 25;
+  const pageOffset = reportState.status === "loaded" ? reportState.data.offset : filters.offset ?? 0;
+  const canGoPrevious = pageOffset > 0;
+  const canGoNext = reportState.status === "loaded" && pageOffset + pageLimit < reportState.data.totalCount;
+
+  return (
+    <>
+      <section className="pageTitle">
+        <div>
+          <p className="eyebrow">Audit / Reporting</p>
+          <h2>Fiscal void action audit review</h2>
+          <p>Read-only review of Operator Console fiscal void action records.</p>
+        </div>
+      </section>
+
+      <section className="panel auditGuardrail" aria-labelledby="fiscal-void-audit-guardrail-title">
+        <div className="panelHeader">
+          <h3 id="fiscal-void-audit-guardrail-title">Read-only boundaries</h3>
+          <span className="statusPill">Audit review only</span>
+        </div>
+        <p>This page reviews fiscal void action-log metadata only.</p>
+        <p>It does not perform fiscal void, refund payment, authorize exit, open gate, call HikCentral, or create replacement documents.</p>
+        <p>Raw fiscal payloads, POS Server bodies, secrets, stack traces, customer PII, and statutory evidence payloads are never displayed.</p>
+      </section>
+
+      <section className="panel" aria-labelledby="fiscal-void-audit-filters-title">
+        <div className="panelHeader">
+          <h3 id="fiscal-void-audit-filters-title">Filters</h3>
+        </div>
+        <form className="auditFilterGrid" onSubmit={submitFilters}>
+          <label>
+            Date from
+            <input
+              type="datetime-local"
+              value={draftFilters.from ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, from: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Date to
+            <input
+              type="datetime-local"
+              value={draftFilters.to ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, to: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Site ID
+            <input
+              value={draftFilters.siteId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, siteId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Site group ID
+            <input
+              value={draftFilters.siteGroupId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, siteGroupId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Operator/user ID
+            <input
+              value={draftFilters.operatorUserId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, operatorUserId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Fiscal issuance reference ID
+            <input
+              value={draftFilters.fiscalIssuanceReferenceId ?? ""}
+              onChange={(event) =>
+                setDraftFilters((current) => ({ ...current, fiscalIssuanceReferenceId: event.target.value || undefined }))
+              }
+            />
+          </label>
+          <label>
+            Fiscal document number
+            <input
+              value={draftFilters.fiscalDocumentNumber ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, fiscalDocumentNumber: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Result class
+            <select
+              value={draftFilters.resultClass ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, resultClass: event.target.value || undefined }))}
+            >
+              <option value="">Any result</option>
+              <option value="SUCCEEDED">Succeeded</option>
+              <option value="DENIED">Denied</option>
+              <option value="NOT_FOUND">Not found</option>
+              <option value="CONFLICT">Conflict</option>
+              <option value="REJECTED">Rejected</option>
+              <option value="ALREADY_VOIDED">Already voided</option>
+              <option value="FAILED_SAFELY">Failed safely</option>
+            </select>
+          </label>
+          <label>
+            Correlation ID
+            <input
+              value={draftFilters.correlationId ?? ""}
+              onChange={(event) => setDraftFilters((current) => ({ ...current, correlationId: event.target.value || undefined }))}
+            />
+          </label>
+          <label>
+            Limit
+            <select
+              value={String(draftFilters.limit ?? 25)}
+              onChange={(event) =>
+                setDraftFilters((current) => ({ ...current, limit: Number(event.target.value), offset: 0 }))
+              }
+            >
+              <option value="25">25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+            </select>
+          </label>
+          <button type="submit">Apply filters</button>
+        </form>
+      </section>
+
+      <section className="panel" aria-labelledby="fiscal-void-audit-results-title">
+        <div className="panelHeader">
+          <h3 id="fiscal-void-audit-results-title">Report results</h3>
+          {reportState.status === "loaded" && <span className="statusPill">{reportState.data.totalCount} rows</span>}
+        </div>
+
+        {reportState.status === "loading" && (
+          <StateMessage title="Loading fiscal void audit review" message="Retrieving safe fiscal void action rows." />
+        )}
+        {reportState.status === "empty" && (
+          <StateMessage title="No fiscal void action rows" message="No fiscal void action audit rows matched the filters." />
+        )}
+        {reportState.status === "access-denied" && <StateMessage title="Access denied" message={reportState.message} />}
+        {reportState.status === "error" && (
+          <StateMessage title="Unable to load fiscal void audit review" message={reportState.message} />
+        )}
+        {reportState.status === "loaded" && (
+          <>
+            <p className="placeholderCopy">Report correlation ID: {reportState.data.correlationId}</p>
+            <div className="tableScroller">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Submitted At</th>
+                    <th>Result</th>
+                    <th>Fiscal Document Number</th>
+                    <th>Fiscal Issuance Reference</th>
+                    <th>Operator/User</th>
+                    <th>Reason</th>
+                    <th>Correlation ID</th>
+                    <th>Side-Effect Posture</th>
+                    <th>Support / Audit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportState.data.items.map((item) => (
+                    <FiscalVoidActionAuditReportRow item={item} key={item.actionLogEntryId} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="paginationControls" aria-label="Fiscal void action audit pagination">
+              <button type="button" disabled={!canGoPrevious} onClick={() => changePage(Math.max(0, pageOffset - pageLimit))}>
+                Previous page
+              </button>
+              <span>
+                Offset {pageOffset} / {reportState.data.totalCount}
+              </span>
+              <button type="button" disabled={!canGoNext} onClick={() => changePage(pageOffset + pageLimit)}>
+                Next page
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </>
+  );
+}
+
+function FiscalVoidActionAuditReportRow({ item }: { item: FiscalVoidActionAuditReportItem }) {
+  const presentation = fiscalVoidAuditResultPresentation(item.resultClass);
+  return (
+    <tr>
+      <td>{formatDateTime(item.actionTimestamp)}</td>
+      <td>
+        <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
+      </td>
+      <td>{displayValue(item.fiscalDocumentNumber)}</td>
+      <td>{item.fiscalIssuanceReferenceId}</td>
+      <td>{item.operatorUserId}</td>
+      <td>{displayValue(item.reasonCode)}</td>
+      <td>{item.correlationId}</td>
+      <td>{sideEffectPosture(item)}</td>
+      <td>
+        <details className="diagnosticsPanel">
+          <summary>Support/audit details</summary>
+          <DescriptionList
+            items={[
+              ["Action-log entry ID", item.actionLogEntryId],
+              ["Action code", item.actionCode],
+              ["Result meaning", presentation.meaning],
+              ["Result class", item.resultClass],
+              ["Fiscal issuance reference ID", item.fiscalIssuanceReferenceId],
+              ["Fiscal document number", displayValue(item.fiscalDocumentNumber)],
+              ["POS Server fiscal document ID", displayValue(item.posServerFiscalDocumentId)],
+              ["Operator/user ID", item.operatorUserId],
+              ["Site ID", displayValue(item.siteId)],
+              ["Site group ID", displayValue(item.siteGroupId)],
+              ["Reason code", displayValue(item.reasonCode)],
+              ["Reason text", displayValue(item.reasonText)],
+              ["Correlation ID", item.correlationId],
+              ["Operator action request ID", displayValue(item.operatorActionRequestId)],
+              ["POS Server result classification", displayValue(item.posServerResultClassification)],
+              ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
+              ["Source module/screen", displayValue(item.sourceModule)],
+              ["Payment finality changed", displayBool(item.paymentFinalityChanged)],
+              ["ExitAuthorization issued", displayBool(item.exitAuthorizationIssued)],
+              ["Gate behavior triggered", displayBool(item.gateBehaviorTriggered)],
+              ["Refund/reversal created", displayBool(item.refundOrReversalCreated)],
+              ["HikCentral called", displayBool(item.hikCentralCalled)],
+              ["Payment provider called", displayBool(item.paymentProviderCalled)],
+              ["Rendering generated", displayBool(item.renderingGenerated)],
+              ["Replacement fiscal document created", displayBool(item.replacementFiscalDocumentCreated)],
+              ["New fiscal number allocated", displayBool(item.newFiscalNumberAllocated)],
+              ["Fiscal sequence changed by Central PMS", displayBool(item.fiscalSequenceChangedByCentralPms)]
+            ]}
+          />
+        </details>
+      </td>
+    </tr>
+  );
+}
+
+function fiscalVoidAuditResultPresentation(resultClass: string) {
+  switch (resultClass) {
+    case "SUCCEEDED":
+      return {
+        label: "Succeeded",
+        className: "readiness-ready",
+        meaning: "Fiscal void action succeeded or was accepted by the fiscal void service."
+      };
+    case "ALREADY_VOIDED":
+      return {
+        label: "Already voided",
+        className: "warningPill",
+        meaning: "The fiscal document was already voided when the action was reviewed."
+      };
+    case "DENIED":
+      return {
+        label: "Denied",
+        className: "blocked",
+        meaning: "The operator was denied access before fiscal void execution."
+      };
+    case "NOT_FOUND":
+      return {
+        label: "Not found",
+        className: "warningPill",
+        meaning: "The target fiscal issuance reference was not found."
+      };
+    case "CONFLICT":
+      return {
+        label: "Conflict",
+        className: "blocked",
+        meaning: "The fiscal void action failed closed because POS Server reported a semantic conflict."
+      };
+    case "REJECTED":
+      return {
+        label: "Rejected",
+        className: "blocked",
+        meaning: "The fiscal void action was rejected safely."
+      };
+    case "FAILED_SAFELY":
+      return {
+        label: "Failed safely",
+        className: "blocked",
+        meaning: "The fiscal void action failed without exposing unsafe details."
+      };
+    default:
+      return {
+        label: resultClass,
+        className: "",
+        meaning: "Unrecognized result class returned by the report endpoint."
+      };
+  }
+}
+
+function sideEffectPosture(item: FiscalVoidActionAuditReportItem) {
+  const flags = [
+    item.paymentFinalityChanged,
+    item.exitAuthorizationIssued,
+    item.gateBehaviorTriggered,
+    item.refundOrReversalCreated,
+    item.hikCentralCalled,
+    item.paymentProviderCalled,
+    item.renderingGenerated,
+    item.replacementFiscalDocumentCreated,
+    item.newFiscalNumberAllocated,
+    item.fiscalSequenceChangedByCentralPms
+  ];
+
+  if (flags.every((flag) => flag === false)) {
+    return "No unsafe side effects recorded";
+  }
+
+  if (flags.some((flag) => flag === true)) {
+    return "Review required";
+  }
+
+  return "Not available";
+}
+
+function displayBool(value: boolean | undefined) {
+  if (value === true) {
+    return "Yes";
+  }
+
+  if (value === false) {
+    return "No";
+  }
+
+  return "Not available";
 }
 
 function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient }) {
