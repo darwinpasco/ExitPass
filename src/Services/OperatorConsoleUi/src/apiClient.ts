@@ -8,6 +8,8 @@ import type {
   FiscalIssuanceVoidInput,
   FiscalIssuanceVoidResult,
   FiscalIssuanceStatus,
+  FiscalVoidActionAuditReportQuery,
+  FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
   OperatorConsoleApiError,
@@ -51,6 +53,7 @@ export interface OperatorConsoleApiClient {
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
   lookupFiscalIssuanceStatus(query: string): Promise<FiscalIssuanceStatus>;
   voidFiscalIssuanceReference(input: FiscalIssuanceVoidInput): Promise<FiscalIssuanceVoidResult>;
+  listFiscalVoidActionAuditReport(input?: FiscalVoidActionAuditReportQuery): Promise<FiscalVoidActionAuditReportResponse>;
   listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
@@ -285,6 +288,44 @@ interface FiscalStatusViewAuditReportResponseDto {
   correlationId: string;
 }
 
+interface FiscalVoidActionAuditReportItemDto {
+  actionLogEntryId: string;
+  actionTimestamp: string;
+  actionCode: string;
+  resultClass: string;
+  operatorUserId: string;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  fiscalIssuanceReferenceId: string;
+  fiscalDocumentNumber?: string | null;
+  posServerFiscalDocumentId?: string | null;
+  reasonCode?: string | null;
+  reasonText?: string | null;
+  correlationId: string;
+  operatorActionRequestId?: string | null;
+  posServerResultClassification?: string | null;
+  safeDenialOrErrorPosture?: string | null;
+  sourceModule?: string | null;
+  paymentFinalityChanged?: boolean | null;
+  exitAuthorizationIssued?: boolean | null;
+  gateBehaviorTriggered?: boolean | null;
+  refundOrReversalCreated?: boolean | null;
+  hikCentralCalled?: boolean | null;
+  paymentProviderCalled?: boolean | null;
+  renderingGenerated?: boolean | null;
+  replacementFiscalDocumentCreated?: boolean | null;
+  newFiscalNumberAllocated?: boolean | null;
+  fiscalSequenceChangedByCentralPms?: boolean | null;
+}
+
+interface FiscalVoidActionAuditReportResponseDto {
+  items: FiscalVoidActionAuditReportItemDto[];
+  totalCount: number;
+  limit: number;
+  offset: number;
+  correlationId: string;
+}
+
 interface OperatorTicketLookupResponseDto {
   ticketNumber?: string | null;
   cardNum?: string | null;
@@ -509,6 +550,30 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       );
 
       return parseCommandResponse<FiscalIssuanceVoidResult>(response);
+    },
+
+    async listFiscalVoidActionAuditReport(input = {}) {
+      const requestCorrelationId = newCorrelationId();
+      const search = new URLSearchParams();
+      addQuery(search, "from", input.from);
+      addQuery(search, "to", input.to);
+      addQuery(search, "siteId", input.siteId);
+      addQuery(search, "siteGroupId", input.siteGroupId);
+      addQuery(search, "operatorUserId", input.operatorUserId);
+      addQuery(search, "fiscalIssuanceReferenceId", input.fiscalIssuanceReferenceId);
+      addQuery(search, "fiscalDocumentNumber", input.fiscalDocumentNumber);
+      addQuery(search, "resultClass", input.resultClass);
+      addQuery(search, "correlationId", input.correlationId);
+      addQuery(search, "limit", input.limit?.toString());
+      addQuery(search, "offset", input.offset?.toString());
+
+      const query = search.toString();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/audit/fiscal-void-actions${query ? `?${query}` : ""}`,
+        { headers: operatorConsoleHeaders(requestCorrelationId) }
+      );
+
+      return toFiscalVoidActionAuditReport(await parseResponse<FiscalVoidActionAuditReportResponseDto>(response));
     },
 
     async listFiscalStatusViewAuditReport(input = {}) {
@@ -901,12 +966,15 @@ export function createMockOperatorConsoleApiClient(
     fiscalVoidError?: OperatorConsoleApiError;
     fiscalVoidResult?: FiscalIssuanceVoidResult;
     fiscalVoidAuthorized?: boolean;
+    fiscalVoidActionAuditReportError?: OperatorConsoleApiError;
+    fiscalVoidActionAuditReport?: FiscalVoidActionAuditReportResponse;
     fiscalStatusViewAuditReportError?: OperatorConsoleApiError;
     fiscalStatusViewAuditReport?: FiscalStatusViewAuditReportResponse;
     empty?: boolean;
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
     onFiscalStatusLookup?: (query: string) => void;
     onFiscalVoid?: (input: FiscalIssuanceVoidInput) => void;
+    onFiscalVoidActionAuditReport?: (input: FiscalVoidActionAuditReportQuery) => void;
     onFiscalStatusViewAuditReport?: (input: FiscalStatusViewAuditReportQuery) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
@@ -1031,6 +1099,23 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return { ...result };
+    },
+
+    async listFiscalVoidActionAuditReport(input = {}) {
+      await delay();
+      options.onFiscalVoidActionAuditReport?.(input);
+      if (options.fiscalVoidActionAuditReportError) {
+        throw options.fiscalVoidActionAuditReportError;
+      }
+
+      const report = options.fiscalVoidActionAuditReport ?? mockFiscalVoidActionAuditReport();
+      return {
+        ...report,
+        items: options.empty ? [] : report.items.map((item) => ({ ...item })),
+        totalCount: options.empty ? 0 : report.totalCount,
+        limit: input.limit ?? report.limit,
+        offset: input.offset ?? report.offset
+      };
     },
 
     async listFiscalStatusViewAuditReport(input = {}) {
@@ -2409,6 +2494,44 @@ function toFiscalStatusViewAuditReport(dto: FiscalStatusViewAuditReportResponseD
   };
 }
 
+function toFiscalVoidActionAuditReport(dto: FiscalVoidActionAuditReportResponseDto): FiscalVoidActionAuditReportResponse {
+  return {
+    items: dto.items.map((item) => ({
+      actionLogEntryId: item.actionLogEntryId,
+      actionTimestamp: item.actionTimestamp,
+      actionCode: item.actionCode,
+      resultClass: item.resultClass,
+      operatorUserId: item.operatorUserId,
+      siteId: item.siteId ?? undefined,
+      siteGroupId: item.siteGroupId ?? undefined,
+      fiscalIssuanceReferenceId: item.fiscalIssuanceReferenceId,
+      fiscalDocumentNumber: item.fiscalDocumentNumber ?? undefined,
+      posServerFiscalDocumentId: item.posServerFiscalDocumentId ?? undefined,
+      reasonCode: item.reasonCode ?? undefined,
+      reasonText: item.reasonText ?? undefined,
+      correlationId: item.correlationId,
+      operatorActionRequestId: item.operatorActionRequestId ?? undefined,
+      posServerResultClassification: item.posServerResultClassification ?? undefined,
+      safeDenialOrErrorPosture: item.safeDenialOrErrorPosture ?? undefined,
+      sourceModule: item.sourceModule ?? undefined,
+      paymentFinalityChanged: item.paymentFinalityChanged ?? undefined,
+      exitAuthorizationIssued: item.exitAuthorizationIssued ?? undefined,
+      gateBehaviorTriggered: item.gateBehaviorTriggered ?? undefined,
+      refundOrReversalCreated: item.refundOrReversalCreated ?? undefined,
+      hikCentralCalled: item.hikCentralCalled ?? undefined,
+      paymentProviderCalled: item.paymentProviderCalled ?? undefined,
+      renderingGenerated: item.renderingGenerated ?? undefined,
+      replacementFiscalDocumentCreated: item.replacementFiscalDocumentCreated ?? undefined,
+      newFiscalNumberAllocated: item.newFiscalNumberAllocated ?? undefined,
+      fiscalSequenceChangedByCentralPms: item.fiscalSequenceChangedByCentralPms ?? undefined
+    })),
+    totalCount: dto.totalCount,
+    limit: dto.limit,
+    offset: dto.offset,
+    correlationId: dto.correlationId
+  };
+}
+
 function toAuditReportItem(draft: StatutoryDiscountDraftDetail) {
   return {
     statutoryDiscountValidationId: draft.draftId,
@@ -2608,6 +2731,45 @@ function mockFiscalVoidResult(fiscalIssuanceReferenceId: string): FiscalIssuance
     replacementFiscalDocumentCreated: false,
     fiscalSequenceChangedByCentralPms: false,
     idempotentReplay: false
+  };
+}
+
+function mockFiscalVoidActionAuditReport(): FiscalVoidActionAuditReportResponse {
+  return {
+    items: [
+      {
+        actionLogEntryId: "6c000000-0000-0000-0000-000000000001",
+        actionTimestamp: "2026-07-10T06:00:00Z",
+        actionCode: "VOID_FISCAL_DOCUMENT",
+        resultClass: "SUCCEEDED",
+        operatorUserId: defaultOperatorContext.userId,
+        siteId: defaultOperatorContext.siteId,
+        siteGroupId: defaultOperatorContext.siteGroupId,
+        fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
+        fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
+        posServerFiscalDocumentId: "3cddbc8e-28f8-49d2-93cf-b4a28a947501",
+        reasonCode: "operator_error",
+        reasonText: undefined,
+        correlationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
+        operatorActionRequestId: undefined,
+        posServerResultClassification: undefined,
+        sourceModule: "operator-console-fiscal-issuance-status",
+        paymentFinalityChanged: false,
+        exitAuthorizationIssued: false,
+        gateBehaviorTriggered: false,
+        refundOrReversalCreated: false,
+        hikCentralCalled: false,
+        paymentProviderCalled: false,
+        renderingGenerated: false,
+        replacementFiscalDocumentCreated: false,
+        newFiscalNumberAllocated: false,
+        fiscalSequenceChangedByCentralPms: false
+      }
+    ],
+    totalCount: 1,
+    limit: 25,
+    offset: 0,
+    correlationId: "6c000000-0000-0000-0000-000000000099"
   };
 }
 

@@ -22,7 +22,8 @@ public sealed class OperatorConsoleActionCatalog
         Write(OperatorConsoleActionCodes.SupervisorOverride, roleExpectation: "SUPERVISOR_OR_OPERATIONS_ADMIN", auditClassification: "CONTROLLED_OVERRIDE"),
         Read(OperatorConsoleActionCodes.ViewAuditReport, roleExpectation: "SUPERVISOR_OPERATIONS_OR_COMPLIANCE", auditClassification: "AUDIT_READ"),
         Write(OperatorConsoleActionCodes.VoidFiscalDocument, roleExpectation: "SUPERVISOR_OR_AUTHORIZED_OPERATOR", auditClassification: "CONTROLLED_FISCAL_VOID"),
-        Read(OperatorConsoleActionCodes.ViewFiscalStatusViewAuditReport, roleExpectation: "SUPERVISOR_COMPLIANCE_OR_SUPPORT", auditClassification: "AUDIT_READ")
+        Read(OperatorConsoleActionCodes.ViewFiscalStatusViewAuditReport, roleExpectation: "SUPERVISOR_COMPLIANCE_OR_SUPPORT", auditClassification: "AUDIT_READ"),
+        Read(OperatorConsoleActionCodes.ViewFiscalVoidActionAuditReport, roleExpectation: "SUPERVISOR_COMPLIANCE_OR_SUPPORT", auditClassification: "AUDIT_READ")
     ];
 
     private static readonly IReadOnlyDictionary<string, OperatorConsoleActionCatalogEntry> EntriesByCode =

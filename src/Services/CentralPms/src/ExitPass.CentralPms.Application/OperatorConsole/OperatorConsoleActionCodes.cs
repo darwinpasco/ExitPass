@@ -52,4 +52,7 @@ public static class OperatorConsoleActionCodes
 
     /// <summary>View fiscal issuance status view-audit report rows.</summary>
     public const string ViewFiscalStatusViewAuditReport = "VIEW_FISCAL_STATUS_VIEW_AUDIT_REPORT";
+
+    /// <summary>View fiscal void action audit review rows.</summary>
+    public const string ViewFiscalVoidActionAuditReport = "VIEW_FISCAL_VOID_ACTION_AUDIT_REPORT";
 }
