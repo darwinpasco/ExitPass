@@ -523,7 +523,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.type(screen.getByLabelText("Site ID"), "77000000-0000-0000-0000-000000000002");
     await userEvent.type(screen.getByLabelText("Site group ID"), "77000000-0000-0000-0000-000000000001");
     await userEvent.type(screen.getByLabelText("Operator/support user ID"), "77000000-0000-0000-0000-000000000010");
-    await userEvent.type(screen.getByLabelText("Fiscal issuance reference ID"), "5f000000-0000-0000-0000-000000000104");
+    await userEvent.type(screen.getByLabelText("Sales Invoice reference ID"), "5f000000-0000-0000-0000-000000000104");
     await userEvent.selectOptions(screen.getByLabelText("Result class"), "FAILED_SAFELY");
     await userEvent.type(screen.getByLabelText("Correlation ID"), "6b000000-0000-0000-0000-000000000104");
     await userEvent.selectOptions(screen.getByLabelText("Limit"), "50");
@@ -621,11 +621,16 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Fiscal void action audit review" })).toBeInTheDocument();
-    expect(screen.getByText("This page reviews fiscal void action-log metadata only.")).toBeInTheDocument();
-    expect(screen.getByText(/It does not perform fiscal void/)).toBeInTheDocument();
-    expect(screen.getByLabelText("Fiscal document number")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice void action audit review" })).toBeInTheDocument();
+    expect(screen.getByText("This page reviews Sales Invoice void action-log metadata only.")).toBeInTheDocument();
+    expect(screen.getByText(/It does not perform Sales Invoice void/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Sales Invoice number")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("e.g. SI-OCVOID-0001-UAT")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sales Invoice reference ID")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("GUID/reference only")).toBeInTheDocument();
     expect(screen.getByLabelText("Result class")).toBeInTheDocument();
+    expect(screen.queryByText("Fiscal document number")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fiscal issuance reference ID")).not.toBeInTheDocument();
     expect(await screen.findAllByText("SI-OCVOID-0001-UAT")).not.toHaveLength(0);
     expect(screen.getByText("VOID_FISCAL_DOCUMENT")).toBeInTheDocument();
     expect(screen.getAllByText("operator_error")).not.toHaveLength(0);
@@ -648,8 +653,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.type(screen.getByLabelText("Site ID"), "77000000-0000-0000-0000-000000000002");
     await userEvent.type(screen.getByLabelText("Site group ID"), "77000000-0000-0000-0000-000000000001");
     await userEvent.type(screen.getByLabelText("Operator/user ID"), "77000000-0000-0000-0000-000000000010");
-    await userEvent.type(screen.getByLabelText("Fiscal issuance reference ID"), "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501");
-    await userEvent.type(screen.getByLabelText("Fiscal document number"), "SI-OCVOID-0001-UAT");
+    await userEvent.type(screen.getByLabelText("Sales Invoice reference ID"), "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501");
+    await userEvent.type(screen.getByLabelText("Sales Invoice number"), "SI-OCVOID-0001-UAT");
     await userEvent.selectOptions(screen.getByLabelText("Result class"), "CONFLICT");
     await userEvent.type(screen.getByLabelText("Correlation ID"), "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df");
     await userEvent.selectOptions(screen.getByLabelText("Limit"), "50");
@@ -677,7 +682,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App apiClient={createMockOperatorConsoleApiClient({ empty: true })} initialPath="/operator-console/audit/fiscal-void-actions" />
     );
 
-    expect(await screen.findByText("No fiscal void action rows")).toBeInTheDocument();
+    expect(await screen.findByText("No Sales Invoice void action rows")).toBeInTheDocument();
 
     rerender(
       <App
@@ -691,7 +696,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByText("Access denied")).toBeInTheDocument();
     expect(screen.getByText("Access denied.")).toBeInTheDocument();
     expect(screen.queryByText("SI-OCVOID-0001-UAT")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /void fiscal document/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void Sales Invoice/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /refund/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /gate/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /HikCentral/i })).not.toBeInTheDocument();
@@ -730,8 +735,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Issued" })).toBeInTheDocument();
     expect(screen.getByText("SI-00000001-UAT")).toBeInTheDocument();
-    expect(screen.getByText("Sales Invoice / fiscal document number")).toBeInTheDocument();
-    expect(screen.getByText("POS Server fiscal document ID")).toBeInTheDocument();
+    expect(screen.getByText("Sales Invoice number")).toBeInTheDocument();
+    expect(screen.getByText("POS Server Sales Invoice ID")).toBeInTheDocument();
   });
 
   it("FiscalStatusViewer_UsesOperatorFriendlyLookupCopyAndControlledActionWording", async () => {
@@ -743,9 +748,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(screen.getByRole("heading", { name: "Fiscal issuance status and controlled fiscal actions" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/search by si number or fiscal reference/i)).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/SI-00000001-UAT or fiscal reference ID/i)).toBeInTheDocument();
-    expect(screen.getByText(/Operators can search by Sales Invoice \/ fiscal document number/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/search by Sales Invoice number or reference ID/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/SI-00000001-UAT or Sales Invoice reference ID/i)).toBeInTheDocument();
+    expect(screen.getByText(/Operators can search by Sales Invoice number/i)).toBeInTheDocument();
     expect(screen.getByText("Controlled actions")).toBeInTheDocument();
     expect(screen.queryByText("Read-only fiscal issuance status by Central PMS fiscal issuance reference.")).not.toBeInTheDocument();
     expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
@@ -769,7 +774,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText("SI-OCVOID-0001-UAT").length).toBeGreaterThan(0);
     expect(onFiscalStatusLookup).toHaveBeenCalledWith("SI-OCVOID-0001-UAT");
     expect(screen.getByText("Requested reference")).toBeInTheDocument();
-    expect(screen.getByText("Fiscal issuance reference ID")).toBeInTheDocument();
+    expect(screen.getByText("Sales Invoice reference ID")).toBeInTheDocument();
     expect(screen.getByText(fiscalReferenceId)).toBeInTheDocument();
   });
 
@@ -813,16 +818,16 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await lookupFiscalStatus(fiscalReferenceId);
 
-    expect(await screen.findByRole("heading", { name: "Fiscal document voided" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice voided" })).toBeInTheDocument();
     expect(screen.getByText("SI-00000002-UAT")).toBeInTheDocument();
     expect(screen.getAllByText("POS Server document read status").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Available").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Fiscal document status").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Sales Invoice status").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Voided").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Void status").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /retry|reissue|replacement|payment|gate|refund/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /void fiscal document/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void Sales Invoice/i })).not.toBeInTheDocument();
     expect(screen.getByText(/already voided or has a recorded void status/i)).toBeInTheDocument();
   });
 
@@ -839,8 +844,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await lookupFiscalStatus(fiscalReferenceId);
 
-    expect(await screen.findByText("Fiscal void permission is required.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /void fiscal document/i })).not.toBeInTheDocument();
+    expect(await screen.findByText("Sales Invoice void permission is required.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void Sales Invoice/i })).not.toBeInTheDocument();
 
     rerender(
       <App
@@ -854,7 +859,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await lookupFiscalStatus(fiscalReferenceId);
 
-    expect(await screen.findByRole("button", { name: /void fiscal document/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /void Sales Invoice/i })).toBeInTheDocument();
   });
 
   it("FiscalStatusViewer_VoidConfirmationRequiresReasonAndExactPhrase", async () => {
@@ -868,16 +873,16 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     await lookupFiscalStatus(fiscalReferenceId);
-    await userEvent.click(await screen.findByRole("button", { name: /void fiscal document/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /void Sales Invoice/i }));
 
-    const submit = screen.getByRole("button", { name: /submit fiscal void request/i });
+    const submit = screen.getByRole("button", { name: /submit Sales Invoice void request/i });
     expect(submit).toBeDisabled();
     expect(screen.getByText("This does not refund payment.")).toBeInTheDocument();
     expect(screen.getByText("This does not open gate.")).toBeInTheDocument();
     expect(screen.getByText("This does not call HikCentral.")).toBeInTheDocument();
-    expect(screen.getByText("This does not create replacement fiscal document.")).toBeInTheDocument();
+    expect(screen.getByText("This does not create a replacement Sales Invoice.")).toBeInTheDocument();
     expect(screen.getByText("This does not render final BIR receipt/report.")).toBeInTheDocument();
-    expect(screen.getAllByText("This only requests fiscal void/cancellation in POS Server.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("This only requests Sales Invoice void/cancellation in POS Server.").length).toBeGreaterThan(0);
 
     await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
     await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID");
@@ -903,12 +908,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     await lookupFiscalStatus(fiscalReferenceId);
-    await userEvent.click(await screen.findByRole("button", { name: /void fiscal document/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /void Sales Invoice/i }));
     await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
     await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
-    await userEvent.click(screen.getByRole("button", { name: /submit fiscal void request/i }));
+    await userEvent.click(screen.getByRole("button", { name: /submit Sales Invoice void request/i }));
 
-    expect(await screen.findByRole("heading", { name: "Fiscal void recorded" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice void recorded" })).toBeInTheDocument();
     await waitFor(() => expect(onFiscalVoid).toHaveBeenCalledTimes(1));
     expect(onFiscalVoid.mock.calls[0][0]).toEqual(expect.objectContaining({
       fiscalIssuanceReferenceId: fiscalReferenceId,
@@ -916,7 +921,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       reasonText: "Incorrect operator entry.",
       confirmationText: "VOID FISCAL DOCUMENT"
     }));
-    expect(await screen.findByRole("heading", { name: "Fiscal document voided" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice voided" })).toBeInTheDocument();
     expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
   });
 
@@ -941,12 +946,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     await lookupFiscalStatus(fiscalReferenceId);
-    await userEvent.click(await screen.findByRole("button", { name: /void fiscal document/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /void Sales Invoice/i }));
     await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
     await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
-    await userEvent.click(screen.getByRole("button", { name: /submit fiscal void request/i }));
+    await userEvent.click(screen.getByRole("button", { name: /submit Sales Invoice void request/i }));
 
-    expect(await screen.findByRole("heading", { name: "Fiscal void failed closed" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice void failed closed" })).toBeInTheDocument();
     expect(screen.getByText(/do not retry automatically/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
     expect(onFiscalVoid).toHaveBeenCalledTimes(1);
@@ -966,7 +971,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Recorded - number not available" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Issued" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Sales Invoice / fiscal document number")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sales Invoice number")).not.toBeInTheDocument();
   });
 
   it("FiscalStatusViewer_ReplayedShowsExistingIssuanceReused", async () => {
@@ -1057,7 +1062,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await lookupFiscalStatus(fiscalReferenceId);
 
-    expect(await screen.findByRole("heading", { name: "Fiscal reference not found" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice reference not found" })).toBeInTheDocument();
     expect(screen.queryByText(/unpaid|authorized to exit|voided|reversed/i)).not.toBeInTheDocument();
   });
 
@@ -2194,8 +2199,8 @@ function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
 }
 
 async function lookupFiscalStatus(referenceId: string) {
-  await userEvent.clear(await screen.findByLabelText(/search by si number or fiscal reference/i));
-  await userEvent.type(screen.getByLabelText(/search by si number or fiscal reference/i), referenceId);
+  await userEvent.clear(await screen.findByLabelText(/search by Sales Invoice number or reference ID/i));
+  await userEvent.type(screen.getByLabelText(/search by Sales Invoice number or reference ID/i), referenceId);
   await userEvent.click(screen.getByRole("button", { name: "View status" }));
 }
 
@@ -2839,4 +2844,5 @@ function expectOperatorContextHeaders(headers: unknown) {
     "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000050"
   }));
   expect((headers as Record<string, string>)["X-ExitPass-Permissions"]).toContain("fiscal-issuance.status.read");
+  expect((headers as Record<string, string>)["X-ExitPass-Permissions"]).toContain("fiscal-issuance.void.audit.read");
 }
