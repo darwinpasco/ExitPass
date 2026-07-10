@@ -49,6 +49,7 @@ export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
+  lookupFiscalIssuanceStatus(query: string): Promise<FiscalIssuanceStatus>;
   voidFiscalIssuanceReference(input: FiscalIssuanceVoidInput): Promise<FiscalIssuanceVoidResult>;
   listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
@@ -478,6 +479,18 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       return parseResponse<FiscalIssuanceStatus>(response);
     },
 
+    async lookupFiscalIssuanceStatus(query) {
+      const correlationId = newCorrelationId();
+      const search = new URLSearchParams();
+      search.set("query", query);
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/fiscal-issuance/lookup?${search.toString()}`,
+        { headers: operatorConsoleHeaders(correlationId) }
+      );
+
+      return parseResponse<FiscalIssuanceStatus>(response);
+    },
+
     async voidFiscalIssuanceReference(input) {
       const correlationId = input.correlationId ?? newCorrelationId();
       const response = await fetch(
@@ -892,7 +905,7 @@ export function createMockOperatorConsoleApiClient(
     fiscalStatusViewAuditReport?: FiscalStatusViewAuditReportResponse;
     empty?: boolean;
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
-    onFiscalStatusLookup?: (fiscalIssuanceReferenceId: string) => void;
+    onFiscalStatusLookup?: (query: string) => void;
     onFiscalVoid?: (input: FiscalIssuanceVoidInput) => void;
     onFiscalStatusViewAuditReport?: (input: FiscalStatusViewAuditReportQuery) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
@@ -972,6 +985,28 @@ export function createMockOperatorConsoleApiClient(
           status: "not-found",
           message: "Fiscal issuance reference was not found.",
           errorCode: "FISCAL_ISSUANCE_REFERENCE_NOT_FOUND"
+        } satisfies OperatorConsoleApiError;
+      }
+
+      return { ...match };
+    },
+
+    async lookupFiscalIssuanceStatus(query) {
+      await delay();
+      const trimmed = query.trim();
+      options.onFiscalStatusLookup?.(trimmed);
+      if (options.fiscalStatusError) {
+        throw options.fiscalStatusError;
+      }
+
+      const match = fiscalStatuses.find((item) =>
+        item.fiscalIssuanceReferenceId === trimmed || item.fiscalDocumentNumber === trimmed
+      );
+      if (!match) {
+        throw {
+          status: "not-found",
+          message: "Fiscal status lookup did not match a fiscal issuance reference.",
+          errorCode: "FISCAL_ISSUANCE_LOOKUP_NOT_FOUND"
         } satisfies OperatorConsoleApiError;
       }
 

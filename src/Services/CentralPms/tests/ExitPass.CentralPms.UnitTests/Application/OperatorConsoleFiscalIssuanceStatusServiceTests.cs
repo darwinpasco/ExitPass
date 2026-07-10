@@ -62,6 +62,97 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
     }
 
     [Fact]
+    public async Task LookupAsync_WhenFiscalDocumentNumberResolves_PersistsResolvedReferenceAuditAndReturnsStatus()
+    {
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        statusReadService.LookupAsync("SI-OCVOID-0001-UAT", Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.Found(Status()));
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
+        var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
+        var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
+
+        var result = await sut.LookupAsync(LookupQuery("SI-OCVOID-0001-UAT"), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.Status.Should().NotBeNull();
+        result.Status!.FiscalIssuanceReferenceId.Should().Be(FiscalIssuanceReferenceId);
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
+                persisted.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
+                persisted.PersistenceContext.TargetEntityId == FiscalIssuanceReferenceId &&
+                persisted.PersistenceContext.ResultClass == "SUCCEEDED"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LookupAsync_WhenFiscalDocumentNumberMissing_PersistsNotFoundWithoutStatus()
+    {
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        statusReadService.LookupAsync("SI-MISSING-UAT", Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.NotFound("fiscal_document_number_not_found"));
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
+        var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
+        var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
+
+        var result = await sut.LookupAsync(LookupQuery("SI-MISSING-UAT"), CancellationToken.None);
+
+        result.Status.Should().BeNull();
+        result.SafeErrorCode.Should().Be("FISCAL_ISSUANCE_LOOKUP_NOT_FOUND");
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
+                persisted.PersistenceContext.TargetEntityType == "FISCAL_ISSUANCE_REFERENCE" &&
+                persisted.PersistenceContext.TargetEntityId == null &&
+                persisted.PersistenceContext.ResultClass == "NOT_FOUND"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task LookupAsync_WhenFiscalDocumentNumberAmbiguous_PersistsFailedSafely()
+    {
+        var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
+        statusReadService.LookupAsync("SI-DUP-UAT", Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuanceStatusLookupResult.Ambiguous("fiscal_document_number_ambiguous"));
+        var accessService = Substitute.For<IOperatorConsoleAccessEvaluationService>();
+        accessService.EvaluateAsync(Arg.Any<OperatorConsoleAccessEvaluationCommand>(), Arg.Any<CancellationToken>())
+            .Returns(AccessResult(allowed: true, []) with { EvaluationId = Guid.Empty, Persisted = false });
+        var writer = Substitute.For<IOperatorConsoleAccessEvaluationWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleAccessEvaluationResult>(), Arg.Any<CancellationToken>())
+            .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with
+            {
+                EvaluationId = EvaluationId,
+                Persisted = true
+            });
+        var sut = new OperatorConsoleFiscalIssuanceStatusService(accessService, writer, statusReadService);
+
+        var result = await sut.LookupAsync(LookupQuery("SI-DUP-UAT"), CancellationToken.None);
+
+        result.Status.Should().BeNull();
+        result.LookupAmbiguous.Should().BeTrue();
+        result.SafeErrorCode.Should().Be("FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS");
+        await writer.Received(1).PersistAsync(
+            Arg.Is<OperatorConsoleAccessEvaluationResult>(persisted =>
+                persisted.PersistenceContext.ResultClass == "FAILED_SAFELY" &&
+                persisted.PersistenceContext.SafeErrorCode == "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS"),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task GetAsync_WhenReferenceMissing_PersistsViewAuditAndReturnsNullStatus()
     {
         var statusReadService = Substitute.For<IFiscalIssuanceStatusReadService>();
@@ -260,6 +351,16 @@ public sealed class OperatorConsoleFiscalIssuanceStatusServiceTests
             SiteGroupId,
             ShiftId,
             FiscalIssuanceReferenceId,
+            CorrelationId);
+
+    private static OperatorConsoleFiscalIssuanceLookupQuery LookupQuery(string query) =>
+        new(
+            UserId,
+            DeviceBindingId,
+            SiteId,
+            SiteGroupId,
+            ShiftId,
+            query,
             CorrelationId);
 
     private static OperatorConsoleAccessEvaluationResult AccessResult(

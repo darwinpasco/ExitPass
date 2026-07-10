@@ -51,6 +51,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       evaluateAccessReadiness: vi.fn(async () => readyReadiness()),
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
+      lookupFiscalIssuanceStatus: vi.fn(),
       listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
@@ -645,6 +646,63 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("POS Server fiscal document ID")).toBeInTheDocument();
   });
 
+  it("FiscalStatusViewer_UsesOperatorFriendlyLookupCopyAndControlledActionWording", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ fiscalStatuses: [fiscalStatus()] })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "Fiscal issuance status and controlled fiscal actions" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/search by si number or fiscal reference/i)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/SI-00000001-UAT or fiscal reference ID/i)).toBeInTheDocument();
+    expect(screen.getByText(/Operators can search by Sales Invoice \/ fiscal document number/i)).toBeInTheDocument();
+    expect(screen.getByText("Controlled actions")).toBeInTheDocument();
+    expect(screen.queryByText("Read-only fiscal issuance status by Central PMS fiscal issuance reference.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_SearchesByFiscalDocumentNumberAndDisplaysResolvedReferenceInDetails", async () => {
+    const onFiscalStatusLookup = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [fiscalStatus({ fiscalDocumentNumber: "SI-OCVOID-0001-UAT" })],
+          onFiscalStatusLookup
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus("SI-OCVOID-0001-UAT");
+
+    await screen.findByText("Requested reference");
+    expect(screen.getAllByText("SI-OCVOID-0001-UAT").length).toBeGreaterThan(0);
+    expect(onFiscalStatusLookup).toHaveBeenCalledWith("SI-OCVOID-0001-UAT");
+    expect(screen.getByText("Requested reference")).toBeInTheDocument();
+    expect(screen.getByText("Fiscal issuance reference ID")).toBeInTheDocument();
+    expect(screen.getByText(fiscalReferenceId)).toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_GuidLookupStillWorksThroughFriendlyLookup", async () => {
+    const onFiscalStatusLookup = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [fiscalStatus()],
+          onFiscalStatusLookup
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("heading", { name: "Issued" })).toBeInTheDocument();
+    expect(onFiscalStatusLookup).toHaveBeenCalledWith(fiscalReferenceId);
+  });
+
   it("FiscalStatusViewer_VoidedPosDocumentShowsReadOnlyVoidPosture", async () => {
     render(
       <App
@@ -1086,6 +1144,25 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(result.fiscalDocumentNumber).toBe("SI-00000001-UAT");
     expect(fetchMock).toHaveBeenCalledWith(
       "http://central-pms.test/v1/ops/operator-console/fiscal-issuance/references/reference%2Fwith%20space",
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expect(requestOptions?.method).toBeUndefined();
+    expect(requestOptions?.body).toBeUndefined();
+    expectOperatorContextHeaders(requestOptions?.headers);
+  });
+
+  it("OperatorConsoleApi_LooksUpFiscalStatusThroughFriendlyLookupEndpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fiscalStatus()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.lookupFiscalIssuanceStatus("SI-OCVOID-0001-UAT");
+
+    expect(result.fiscalDocumentNumber).toBe("SI-00000001-UAT");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/fiscal-issuance/lookup?query=SI-OCVOID-0001-UAT",
       expect.objectContaining({ headers: expect.any(Object) })
     );
 
@@ -1994,8 +2071,8 @@ function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
 }
 
 async function lookupFiscalStatus(referenceId: string) {
-  await userEvent.clear(await screen.findByLabelText(/fiscal issuance reference id/i));
-  await userEvent.type(screen.getByLabelText(/fiscal issuance reference id/i), referenceId);
+  await userEvent.clear(await screen.findByLabelText(/search by si number or fiscal reference/i));
+  await userEvent.type(screen.getByLabelText(/search by si number or fiscal reference/i), referenceId);
   await userEvent.click(screen.getByRole("button", { name: "View status" }));
 }
 

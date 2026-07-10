@@ -35,6 +35,19 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
             .WithSummary("View Operator Console fiscal issuance status")
             .WithDescription("Returns safe read-only fiscal issuance status after Operator Console view-audit persistence. The read may include a POS Server fiscal document status read when configured, but it does not mutate fiscal, payment, exit, gate, retry, readback, refund, reversal, or document-rendering state.");
 
+        group.MapGet("/fiscal-issuance/lookup", LookupAsync)
+            .WithName("LookupOperatorConsoleFiscalIssuanceStatus")
+            .WithTags("OperatorConsole")
+            .WithMetadata(new ReconciliationPolicyMetadata(StatusReadPolicy))
+            .Produces<FiscalIssuanceStatusResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .WithSummary("Look up Operator Console fiscal issuance status")
+            .WithDescription("Resolves an Operator Console fiscal issuance status lookup by fiscal issuance reference ID or exact Sales Invoice/fiscal document number, then returns the same safe status DTO and view-audit posture as the reference lookup.");
+
         group.MapPost("/fiscal-issuance/references/{fiscalIssuanceReferenceId:guid}/void", VoidByReferenceIdAsync)
             .WithName("VoidOperatorConsoleFiscalIssuanceReference")
             .WithTags("OperatorConsole")
@@ -167,6 +180,124 @@ public static class OperatorConsoleFiscalIssuanceStatusEndpoints
         }
 
         return null;
+    }
+
+    private static async Task<IResult> LookupAsync(
+        string? query,
+        HttpRequest request,
+        IOperatorConsoleFiscalIssuanceStatusService service,
+        ILoggerFactory loggerFactory,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("HTTP LookupOperatorConsoleFiscalIssuanceStatus", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleFiscalIssuanceStatusEndpoints");
+        var correlationId = ResolveCorrelationId(request);
+        var trimmedQuery = query?.Trim();
+
+        activity?.SetTag("url.path", request.Path.Value);
+        activity?.SetTag("http.request.method", request.Method);
+        activity?.SetTag("correlation_id", correlationId);
+        activity?.SetTag("fiscal_status_lookup_query_present", !string.IsNullOrWhiteSpace(trimmedQuery));
+
+        if (string.IsNullOrWhiteSpace(trimmedQuery))
+        {
+            return Results.BadRequest(BuildError(
+                "INVALID_OPERATOR_CONSOLE_FISCAL_STATUS_LOOKUP",
+                "Fiscal status lookup query is required.",
+                correlationId ?? Guid.Empty));
+        }
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                request,
+                fallbackCorrelationId: correlationId);
+
+            var result = await service.LookupAsync(
+                new OperatorConsoleFiscalIssuanceLookupQuery(
+                    identity.UserId,
+                    identity.OperatorDeviceBindingId,
+                    identity.SiteId,
+                    identity.SiteGroupId,
+                    identity.OperatorShiftId,
+                    trimmedQuery,
+                    identity.CorrelationId),
+                cancellationToken);
+
+            activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
+            activity?.SetTag("access_evaluation_allowed", result.AccessAllowed);
+            activity?.SetTag("access_evaluation_persisted", result.AccessPersisted);
+            activity?.SetTag("fiscal_status_found", result.Status is not null);
+            activity?.SetTag("fiscal_status_lookup_ambiguous", result.LookupAmbiguous);
+
+            if (!result.AccessAllowed)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                logger.LogInformation(
+                    "Operator Console fiscal issuance lookup denied. evaluation_id={EvaluationId} persisted={Persisted} correlation_id={CorrelationId}",
+                    result.AccessEvaluationId,
+                    result.AccessPersisted,
+                    result.CorrelationId);
+
+                return Results.Json(
+                    BuildError(
+                        "OPERATOR_CONSOLE_FISCAL_STATUS_ACCESS_DENIED",
+                        "Operator Console fiscal issuance status access was denied.",
+                        result.CorrelationId),
+                    statusCode: StatusCodes.Status403Forbidden);
+            }
+
+            if (result.LookupAmbiguous)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.Json(
+                    BuildError(
+                        "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS",
+                        "Fiscal document number matched multiple fiscal issuance references. Use the fiscal issuance reference ID.",
+                        result.CorrelationId),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            if (result.Status is null)
+            {
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.NotFound(BuildError(
+                    "FISCAL_ISSUANCE_LOOKUP_NOT_FOUND",
+                    "Fiscal status lookup did not match a fiscal issuance reference.",
+                    result.CorrelationId));
+            }
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            logger.LogInformation(
+                "Operator Console fiscal issuance lookup completed. evaluation_id={EvaluationId} persisted={Persisted} fiscal_issuance_reference_id={FiscalIssuanceReferenceId} state={FiscalIssuanceState} correlation_id={CorrelationId}",
+                result.AccessEvaluationId,
+                result.AccessPersisted,
+                result.Status.FiscalIssuanceReferenceId,
+                result.Status.FiscalIssuanceState,
+                result.CorrelationId);
+
+            return Results.Ok(FiscalIssuanceStatusResponse.FromReadModel(result.Status));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError(
+                "INVALID_OPERATOR_CONSOLE_FISCAL_STATUS_LOOKUP",
+                ex.Message,
+                correlationId ?? Guid.Empty));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console fiscal issuance lookup failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_FISCAL_STATUS_LOOKUP_FAILED",
+                    "The Operator Console fiscal issuance status lookup could not be completed.",
+                    correlationId ?? Guid.Empty),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId) =>

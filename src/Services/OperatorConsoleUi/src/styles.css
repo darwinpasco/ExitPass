@@ -424,6 +424,16 @@ dd {
   max-width: 360px;
 }
 
+.wideLookupInput {
+  min-width: min(100%, 440px);
+  width: min(100%, 560px);
+}
+
+.helperText {
+  color: #465969;
+  margin: 8px 0 0;
+}
+
 .auditGuardrail {
   border-left: 5px solid #2f8a6a;
 }
