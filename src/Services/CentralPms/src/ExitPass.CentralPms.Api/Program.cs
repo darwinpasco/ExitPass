@@ -128,6 +128,7 @@ app.MapInternalPaymentOutcomeEndpoints();
 app.MapInternalPaymentAttemptFinalizationEndpoints();
 app.MapInternalPaymentAttemptExitAuthorizationEndpoints();
 app.MapInternalControlledUatFiscalIssuanceEndpoints();
+app.MapInternalFiscalIssuanceVoidEndpoints();
 app.MapFiscalIssuanceStatusEndpoints();
 app.MapInternalFiscalExceptionQueueSemanticHashBackfillEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
@@ -505,6 +506,7 @@ static void ConfigureApplicationServices(
     });
     builder.Services.AddScoped<IFiscalIssuanceControlledUatInvocationService, FiscalIssuanceControlledUatInvocationService>();
     builder.Services.AddScoped<IFiscalIssuanceControlledUatVoidSmokeService, FiscalIssuanceControlledUatVoidSmokeService>();
+    builder.Services.AddScoped<IFiscalIssuanceVoidCommandService, FiscalIssuanceVoidCommandService>();
 
     builder.Services.AddScoped<RecordPaymentConfirmationService>();
     builder.Services.AddScoped<IVendorPaymentAcknowledgmentRepository>(_ =>
