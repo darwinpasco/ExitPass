@@ -21,6 +21,7 @@ public sealed class OperatorConsoleActionCatalog
         Read(OperatorConsoleActionCodes.SupervisorReview, roleExpectation: "SUPERVISOR", auditClassification: "SUPERVISOR_REVIEW"),
         Write(OperatorConsoleActionCodes.SupervisorOverride, roleExpectation: "SUPERVISOR_OR_OPERATIONS_ADMIN", auditClassification: "CONTROLLED_OVERRIDE"),
         Read(OperatorConsoleActionCodes.ViewAuditReport, roleExpectation: "SUPERVISOR_OPERATIONS_OR_COMPLIANCE", auditClassification: "AUDIT_READ"),
+        Write(OperatorConsoleActionCodes.VoidFiscalDocument, roleExpectation: "SUPERVISOR_OR_AUTHORIZED_OPERATOR", auditClassification: "CONTROLLED_FISCAL_VOID"),
         Read(OperatorConsoleActionCodes.ViewFiscalStatusViewAuditReport, roleExpectation: "SUPERVISOR_COMPLIANCE_OR_SUPPORT", auditClassification: "AUDIT_READ")
     ];
 

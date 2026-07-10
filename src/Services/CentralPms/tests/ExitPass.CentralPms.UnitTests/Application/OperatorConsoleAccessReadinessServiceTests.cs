@@ -38,7 +38,8 @@ public sealed class OperatorConsoleAccessReadinessServiceTests
             OperatorConsoleActionCodes.ViewPolicyResolution,
             OperatorConsoleActionCodes.SupervisorReview,
             OperatorConsoleActionCodes.SupervisorOverride,
-            OperatorConsoleActionCodes.ViewAuditReport
+            OperatorConsoleActionCodes.ViewAuditReport,
+            OperatorConsoleActionCodes.VoidFiscalDocument
         });
     }
 

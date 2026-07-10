@@ -542,6 +542,31 @@ dd {
   margin-top: 12px;
 }
 
+.detailForm {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.detailForm textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.warningPanel {
+  background: #fff6df;
+  border: 1px solid #ecd289;
+  border-radius: 8px;
+  color: #654d12;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.warningPanel p {
+  margin: 0;
+}
+
 .notice p,
 .successMessage p,
 .errorMessage p {

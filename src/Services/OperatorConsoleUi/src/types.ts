@@ -174,6 +174,48 @@ export interface FiscalIssuanceStatus {
   posServerVoidedAt?: string;
 }
 
+export interface FiscalIssuanceVoidInput {
+  fiscalIssuanceReferenceId: string;
+  operatorActionRequestId: string;
+  reasonCode: string;
+  reasonText: string;
+  confirmationText: string;
+  correlationId?: string;
+}
+
+export interface FiscalIssuanceVoidResult {
+  accessAllowed: boolean;
+  accessDecision: string;
+  accessDenialReasons: string[];
+  accessPersisted: boolean;
+  accepted: boolean;
+  status: string;
+  httpStatusCode: number;
+  errors: string[];
+  fiscalIssuanceReferenceId: string;
+  posServerFiscalDocumentId?: string;
+  fiscalDocumentNumber?: string;
+  fiscalSequenceValue?: number;
+  fiscalDocumentStatusPosture?: string;
+  voidStatus?: string;
+  voidReasonCode?: string;
+  voidedAt?: string;
+  posServerResultClassification?: string;
+  correlationId?: string;
+  errorPosture?: string;
+  newFiscalNumberAllocated: boolean;
+  paymentFinalityChanged: boolean;
+  exitAuthorizationIssued: boolean;
+  gateBehaviorTriggered: boolean;
+  refundOrReversalCreated: boolean;
+  hikCentralCalled: boolean;
+  paymentProviderCalled: boolean;
+  renderingGenerated: boolean;
+  replacementFiscalDocumentCreated: boolean;
+  fiscalSequenceChangedByCentralPms: boolean;
+  idempotentReplay: boolean;
+}
+
 export interface AccessReadinessClientContext {
   uiModule?: string;
   screenState?: string;
