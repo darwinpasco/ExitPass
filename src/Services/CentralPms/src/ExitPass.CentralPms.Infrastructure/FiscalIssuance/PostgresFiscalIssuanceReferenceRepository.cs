@@ -420,6 +420,26 @@ public sealed class PostgresFiscalIssuanceReferenceRepository :
             command => command.Parameters.AddWithValue("pos_server_fiscal_document_id", posServerFiscalDocumentId),
             cancellationToken);
 
+    public Task<IReadOnlyList<FiscalIssuanceReferenceRecord>> FindByFiscalDocumentNumberAsync(
+        string fiscalDocumentNumber,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(fiscalDocumentNumber))
+        {
+            return Task.FromResult<IReadOnlyList<FiscalIssuanceReferenceRecord>>(Array.Empty<FiscalIssuanceReferenceRecord>());
+        }
+
+        return QueryManyAsync(
+            """
+            WHERE fiscal_document_number = @fiscal_document_number
+              AND is_active = true
+            ORDER BY first_recorded_at DESC
+            LIMIT 2
+            """,
+            command => command.Parameters.AddWithValue("fiscal_document_number", fiscalDocumentNumber.Trim()),
+            cancellationToken);
+    }
+
     public Task<FiscalIssuanceReferenceRecord?> FindFiscalExceptionReferenceAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken) =>

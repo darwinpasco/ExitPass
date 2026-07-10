@@ -308,4 +308,9 @@ public interface IFiscalIssuanceReferenceRepository
     Task<FiscalIssuanceReferenceRecord?> FindByPosServerFiscalDocumentIdAsync(
         Guid posServerFiscalDocumentId,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<FiscalIssuanceReferenceRecord>> FindByFiscalDocumentNumberAsync(
+        string fiscalDocumentNumber,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<FiscalIssuanceReferenceRecord>>(Array.Empty<FiscalIssuanceReferenceRecord>());
 }

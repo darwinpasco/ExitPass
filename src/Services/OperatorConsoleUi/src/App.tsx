@@ -725,16 +725,16 @@ function fiscalViewAuditResultPresentation(resultClass: string) {
 }
 
 function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient }) {
-  const [referenceId, setReferenceId] = useState("");
-  const [submittedReferenceId, setSubmittedReferenceId] = useState("");
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [submittedLookupQuery, setSubmittedLookupQuery] = useState("");
   const [statusState, setStatusState] = useState<LoadState<FiscalIssuanceStatus>>({ status: "idle" });
 
-  function loadFiscalStatus(reference: string, showLoading = true) {
+  function loadFiscalStatus(query: string, showLoading = true) {
     if (showLoading) {
       setStatusState({ status: "loading" });
     }
     void client
-      .getFiscalIssuanceStatus(reference)
+      .lookupFiscalIssuanceStatus(query)
       .then((status) => setStatusState({ status: "loaded", data: status }))
       .catch((error) => {
         const mapped = mapApiError(error);
@@ -754,13 +754,13 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
 
   function submitLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const trimmed = referenceId.trim();
+    const trimmed = lookupQuery.trim();
     if (!trimmed) {
-      setStatusState({ status: "error", message: "Fiscal issuance reference ID is required." });
+      setStatusState({ status: "error", message: "Sales Invoice / fiscal document number or fiscal reference ID is required." });
       return;
     }
 
-    setSubmittedReferenceId(trimmed);
+    setSubmittedLookupQuery(trimmed);
     loadFiscalStatus(trimmed);
   }
 
@@ -769,36 +769,40 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Fiscal visibility</p>
-          <h2 id="fiscal-status-title">Fiscal issuance status</h2>
+          <h2 id="fiscal-status-title">Fiscal issuance status and controlled fiscal actions</h2>
           <p className="panelCopy">
-            Read-only fiscal issuance status by Central PMS fiscal issuance reference.
+            Search by Sales Invoice / fiscal document number or fiscal reference. Controlled fiscal actions remain guarded and audited.
           </p>
         </div>
-        <span className="statusPill">Read-only</span>
+        <span className="statusPill pending-review">Controlled actions</span>
       </div>
 
       <form className="filterForm" onSubmit={submitLookup}>
         <label>
-          Fiscal issuance reference ID
+          Search by SI number or fiscal reference
           <input
-            value={referenceId}
-            placeholder="5f000000-0000-0000-0000-000000000001"
-            onChange={(event) => setReferenceId(event.target.value)}
+            className="wideLookupInput"
+            value={lookupQuery}
+            placeholder="SI-00000001-UAT or fiscal reference ID"
+            onChange={(event) => setLookupQuery(event.target.value)}
           />
         </label>
         <button type="submit">View status</button>
       </form>
+      <p className="helperText">
+        Operators can search by Sales Invoice / fiscal document number. Fiscal reference ID remains available for support.
+      </p>
 
       {statusState.status === "idle" && (
-        <StateMessage title="No fiscal status selected" message="Enter a fiscal issuance reference ID to view safe status fields." />
+        <StateMessage title="No fiscal status selected" message="Enter a Sales Invoice / fiscal document number or fiscal reference ID to view safe status fields." />
       )}
       {statusState.status === "loading" && (
-        <StateMessage title="Loading fiscal status" message="Retrieving read-only fiscal issuance status." />
+        <StateMessage title="Loading fiscal status" message="Retrieving fiscal issuance status through the Operator Console facade." />
       )}
       {statusState.status === "not-found" && (
         <StateMessage
           title="Fiscal reference not found"
-          message="The fiscal issuance reference was not found. Verify the reference or source context."
+          message="The fiscal status lookup did not match a fiscal issuance reference. Verify the SI number, fiscal document number, or support reference."
         />
       )}
       {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
@@ -806,9 +810,9 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
       {statusState.status === "loaded" && (
         <FiscalIssuanceStatusPanel
           status={statusState.data}
-          requestedReferenceId={submittedReferenceId}
+          requestedReferenceId={submittedLookupQuery}
           client={client}
-          onRefresh={() => loadFiscalStatus(submittedReferenceId, false)}
+          onRefresh={() => loadFiscalStatus(submittedLookupQuery, false)}
         />
       )}
     </section>

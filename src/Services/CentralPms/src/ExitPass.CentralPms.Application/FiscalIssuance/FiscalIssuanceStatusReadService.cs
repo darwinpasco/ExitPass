@@ -9,6 +9,28 @@ public interface IFiscalIssuanceStatusReadService
     Task<FiscalIssuanceStatusReadModel?> GetByReferenceIdAsync(
         Guid fiscalIssuanceReferenceId,
         CancellationToken cancellationToken);
+
+    async Task<FiscalIssuanceStatusLookupResult> LookupAsync(
+        string query,
+        CancellationToken cancellationToken)
+    {
+        var trimmed = query.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return FiscalIssuanceStatusLookupResult.Invalid("fiscal_status_lookup_query_required");
+        }
+
+        if (!Guid.TryParse(trimmed, out var fiscalIssuanceReferenceId))
+        {
+            return FiscalIssuanceStatusLookupResult.NotFound("fiscal_document_number_not_found");
+        }
+
+        var status = await GetByReferenceIdAsync(fiscalIssuanceReferenceId, cancellationToken)
+            .ConfigureAwait(false);
+        return status is null
+            ? FiscalIssuanceStatusLookupResult.NotFound("fiscal_issuance_reference_not_found")
+            : FiscalIssuanceStatusLookupResult.Found(status);
+    }
 }
 
 public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadService
@@ -50,6 +72,47 @@ public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadS
         var status = FromReference(reference);
         return await EnrichWithPosServerReadAsync(status, reference, cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    public async Task<FiscalIssuanceStatusLookupResult> LookupAsync(
+        string query,
+        CancellationToken cancellationToken)
+    {
+        var trimmed = query.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return FiscalIssuanceStatusLookupResult.Invalid("fiscal_status_lookup_query_required");
+        }
+
+        if (Guid.TryParse(trimmed, out var fiscalIssuanceReferenceId))
+        {
+            var status = await GetByReferenceIdAsync(fiscalIssuanceReferenceId, cancellationToken)
+                .ConfigureAwait(false);
+
+            return status is null
+                ? FiscalIssuanceStatusLookupResult.NotFound("fiscal_issuance_reference_not_found")
+                : FiscalIssuanceStatusLookupResult.Found(status);
+        }
+
+        var matches = await _repository.FindByFiscalDocumentNumberAsync(trimmed, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (matches.Count == 0)
+        {
+            return FiscalIssuanceStatusLookupResult.NotFound("fiscal_document_number_not_found");
+        }
+
+        if (matches.Count > 1)
+        {
+            return FiscalIssuanceStatusLookupResult.Ambiguous("fiscal_document_number_ambiguous");
+        }
+
+        var reference = matches[0];
+        var readModel = FromReference(reference);
+        var enriched = await EnrichWithPosServerReadAsync(readModel, reference, cancellationToken)
+            .ConfigureAwait(false);
+
+        return FiscalIssuanceStatusLookupResult.Found(enriched);
     }
 
     private async Task<FiscalIssuanceStatusReadModel> EnrichWithPosServerReadAsync(
@@ -267,5 +330,31 @@ public sealed record FiscalIssuanceStatusReadModel(
     string? PosServerVoidStatus = null,
     string? PosServerVoidReasonCode = null,
     DateTimeOffset? PosServerVoidedAt = null);
+
+public sealed record FiscalIssuanceStatusLookupResult(
+    FiscalIssuanceStatusLookupOutcome Outcome,
+    FiscalIssuanceStatusReadModel? Status,
+    string? SafeReasonCode)
+{
+    public static FiscalIssuanceStatusLookupResult Found(FiscalIssuanceStatusReadModel status) =>
+        new(FiscalIssuanceStatusLookupOutcome.Found, status, SafeReasonCode: null);
+
+    public static FiscalIssuanceStatusLookupResult NotFound(string reasonCode) =>
+        new(FiscalIssuanceStatusLookupOutcome.NotFound, Status: null, reasonCode);
+
+    public static FiscalIssuanceStatusLookupResult Ambiguous(string reasonCode) =>
+        new(FiscalIssuanceStatusLookupOutcome.Ambiguous, Status: null, reasonCode);
+
+    public static FiscalIssuanceStatusLookupResult Invalid(string reasonCode) =>
+        new(FiscalIssuanceStatusLookupOutcome.Invalid, Status: null, reasonCode);
+}
+
+public enum FiscalIssuanceStatusLookupOutcome
+{
+    Found,
+    NotFound,
+    Ambiguous,
+    Invalid
+}
 
 #pragma warning restore CS1591

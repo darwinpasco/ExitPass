@@ -65,6 +65,9 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             var byPosDocument = await repository.FindByPosServerFiscalDocumentIdAsync(
                 request.PosServerFiscalDocumentId!.Value,
                 CancellationToken.None);
+            var byFiscalDocumentNumber = await repository.FindByFiscalDocumentNumberAsync(
+                request.FiscalDocumentNumber!,
+                CancellationToken.None);
 
             Assert.NotEqual(Guid.Empty, created.FiscalIssuanceReferenceId);
             Assert.Equal(confirmation.PaymentConfirmationId, created.PaymentConfirmationId);
@@ -82,6 +85,8 @@ public sealed class FiscalIssuanceReferenceRepositoryTests
             Assert.Equal(created.FiscalIssuanceReferenceId, byPaymentAttempt?.FiscalIssuanceReferenceId);
             Assert.Equal(created.FiscalIssuanceReferenceId, byUpstreamFinality?.FiscalIssuanceReferenceId);
             Assert.Equal(created.FiscalIssuanceReferenceId, byPosDocument?.FiscalIssuanceReferenceId);
+            Assert.Single(byFiscalDocumentNumber);
+            Assert.Equal(created.FiscalIssuanceReferenceId, byFiscalDocumentNumber[0].FiscalIssuanceReferenceId);
         }
         finally
         {

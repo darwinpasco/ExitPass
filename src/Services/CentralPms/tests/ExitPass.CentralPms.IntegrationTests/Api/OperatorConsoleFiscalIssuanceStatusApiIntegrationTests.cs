@@ -31,6 +31,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
     private static readonly Guid CorrelationId = Guid.Parse("5f000000-0000-0000-0000-000000000008");
     private static readonly Guid OperatorActionRequestId = Guid.Parse("5f000000-0000-0000-0000-000000000018");
     private static readonly string Endpoint = $"/v1/ops/operator-console/fiscal-issuance/references/{ReferenceId}";
+    private const string LookupEndpoint = "/v1/ops/operator-console/fiscal-issuance/lookup";
     private static readonly string VoidEndpoint = $"/v1/ops/operator-console/fiscal-issuance/references/{ReferenceId}/void";
 
     [Fact]
@@ -72,6 +73,25 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
     }
 
     [Fact]
+    public void LookupEndpointRouteExistsWithFiscalIssuanceStatusReadPolicy()
+    {
+        using var factory = CreateFactory(Result(Status()));
+
+        var endpoints = factory.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints
+            .OfType<RouteEndpoint>()
+            .Where(endpoint => endpoint.RoutePattern.RawText == "/v1/ops/operator-console/fiscal-issuance/lookup")
+            .ToArray();
+
+        endpoints.Should().ContainSingle();
+        endpoints[0].Metadata.GetMetadata<HttpMethodMetadata>()!
+            .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Get.Method);
+        endpoints[0].Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName
+            .Should()
+            .Be("FiscalIssuanceStatusRead");
+    }
+
+    [Fact]
     public async Task Get_WhenAuthorizedAndReferenceExists_ReturnsFiscalStatus()
     {
         var fake = new FakeFiscalStatusService(Result(Status()));
@@ -94,6 +114,111 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         fake.LastQuery.OperatorDeviceBindingId.Should().Be(DeviceBindingId);
         fake.LastQuery.OperatorShiftId.Should().Be(ShiftId);
         fake.LastQuery.CorrelationId.Should().Be(CorrelationId);
+    }
+
+    [Fact]
+    public async Task Lookup_WhenFiscalDocumentNumberResolves_ReturnsFiscalStatus()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query=SI-00000001-UAT");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<FiscalIssuanceStatusResponse>();
+        body.Should().NotBeNull();
+        body!.FiscalIssuanceReferenceId.Should().Be(ReferenceId);
+        body.FiscalDocumentNumber.Should().Be("SI-00000001-UAT");
+        fake.LookupCallCount.Should().Be(1);
+        fake.LastLookupQuery.Should().NotBeNull();
+        fake.LastLookupQuery!.Query.Should().Be("SI-00000001-UAT");
+        fake.LastLookupQuery.UserId.Should().Be(UserId);
+    }
+
+    [Fact]
+    public async Task Lookup_WhenGuidProvided_ReturnsFiscalStatusThroughLookupPath()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query={ReferenceId:D}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        fake.LookupCallCount.Should().Be(1);
+        fake.LastLookupQuery!.Query.Should().Be(ReferenceId.ToString("D"));
+    }
+
+    [Fact]
+    public async Task Lookup_WhenBlank_ReturnsBadRequest()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query=%20%20");
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("INVALID_OPERATOR_CONSOLE_FISCAL_STATUS_LOOKUP");
+        fake.LookupCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Lookup_WhenMissing_ReturnsSafeNotFound()
+    {
+        using var factory = CreateFactory(Result(
+            status: null,
+            safeErrorCode: "FISCAL_ISSUANCE_LOOKUP_NOT_FOUND",
+            safeErrorPosture: "Fiscal status lookup did not match a fiscal issuance reference."));
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query=SI-MISSING-UAT");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("FISCAL_ISSUANCE_LOOKUP_NOT_FOUND");
+    }
+
+    [Fact]
+    public async Task Lookup_WhenAmbiguous_ReturnsSafeConflict()
+    {
+        using var factory = CreateFactory(Result(
+            status: null,
+            safeErrorCode: "FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS",
+            safeErrorPosture: "Fiscal document number lookup matched multiple fiscal issuance references.",
+            lookupAmbiguous: true));
+        using var client = factory.CreateClient();
+        AddStatusReadHeaders(client);
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query=SI-DUP-UAT");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body.Should().NotBeNull();
+        body!.ErrorCode.Should().Be("FISCAL_DOCUMENT_NUMBER_LOOKUP_AMBIGUOUS");
+    }
+
+    [Fact]
+    public async Task Lookup_WhenRbacEnabledAndPermissionMissing_ReturnsForbidden()
+    {
+        var fake = new FakeFiscalStatusService(Result(Status()));
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, UserId.ToString());
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, "reconciliation.evaluate");
+
+        using var response = await client.GetAsync($"{LookupEndpoint}?query=SI-00000001-UAT");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        fake.LookupCallCount.Should().Be(0);
     }
 
     [Fact]
@@ -318,7 +443,10 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
 
     private static OperatorConsoleFiscalIssuanceStatusResult Result(
         FiscalIssuanceStatusReadModel? status,
-        bool accessAllowed = true) =>
+        bool accessAllowed = true,
+        string? safeErrorCode = null,
+        string? safeErrorPosture = null,
+        bool lookupAmbiguous = false) =>
         new(
             EvaluationId,
             accessAllowed,
@@ -326,7 +454,10 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
             accessAllowed ? Array.Empty<string>() : ["NO_ACTIVE_SHIFT"],
             AccessPersisted: true,
             status,
-            CorrelationId);
+            CorrelationId,
+            safeErrorCode,
+            safeErrorPosture,
+            lookupAmbiguous);
 
     private static OperatorConsoleFiscalIssuanceVoidRequest VoidRequest() =>
         new(
@@ -434,8 +565,10 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         }
 
         public int CallCount { get; private set; }
+        public int LookupCallCount { get; private set; }
 
         public OperatorConsoleFiscalIssuanceStatusQuery? LastQuery { get; private set; }
+        public OperatorConsoleFiscalIssuanceLookupQuery? LastLookupQuery { get; private set; }
 
         public Task<OperatorConsoleFiscalIssuanceStatusResult> GetAsync(
             OperatorConsoleFiscalIssuanceStatusQuery query,
@@ -443,6 +576,15 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         {
             CallCount++;
             LastQuery = query;
+            return Task.FromResult(_result);
+        }
+
+        public Task<OperatorConsoleFiscalIssuanceStatusResult> LookupAsync(
+            OperatorConsoleFiscalIssuanceLookupQuery query,
+            CancellationToken cancellationToken)
+        {
+            LookupCallCount++;
+            LastLookupQuery = query;
             return Task.FromResult(_result);
         }
     }
