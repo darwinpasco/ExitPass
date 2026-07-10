@@ -447,7 +447,8 @@ const defaultOperatorPermissions = localFallback(
     "operator-console.policy-import-review.approve.db",
     "operator-console.vendor-projection-health.view",
     "fiscal-issuance.status.read",
-    "fiscal-issuance.void.command"
+    "fiscal-issuance.void.command",
+    "fiscal-issuance.void.audit.read"
   ].join(",")
 );
 

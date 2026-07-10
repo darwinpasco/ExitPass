@@ -480,8 +480,8 @@ dd {
 .auditFilterGrid {
   align-items: end;
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .auditFilterGrid label {
@@ -490,6 +490,22 @@ dd {
   font-size: 0.9rem;
   font-weight: 700;
   gap: 7px;
+  min-width: 0;
+}
+
+.auditFilterGrid input,
+.auditFilterGrid select {
+  min-width: 0;
+  width: 100%;
+}
+
+.auditFilterGrid .wideFilterField {
+  grid-column: span 2;
+}
+
+.auditFilterGrid button[type="submit"] {
+  min-height: 40px;
+  width: fit-content;
 }
 
 .paginationControls {
@@ -849,6 +865,10 @@ dd {
     .reviewDetailGrid {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .auditFilterGrid .wideFilterField {
+    grid-column: auto;
   }
 
   .operatorStatus {

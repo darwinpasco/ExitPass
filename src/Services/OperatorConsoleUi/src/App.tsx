@@ -181,7 +181,7 @@ export function App({ apiClient, initialPath }: AppProps) {
               type="button"
               onClick={() => navigate(routes.fiscalVoidActionAudit)}
             >
-              Fiscal Void Audit
+              Sales Invoice Void Audit
             </button>
             <button
               className={`navLink ${path === routes.vendorAcknowledgments ? "navLinkActive" : ""}`}
@@ -559,7 +559,7 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
             />
           </label>
           <label>
-            Fiscal issuance reference ID
+            Sales Invoice reference ID
             <input
               value={draftFilters.fiscalIssuanceReferenceId ?? ""}
               onChange={(event) =>
@@ -634,7 +634,7 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
                     <th>Operator / Support User ID</th>
                     <th>Site ID</th>
                     <th>Site Group ID</th>
-                    <th>Fiscal Issuance Reference ID</th>
+                    <th>Sales Invoice Reference ID</th>
                     <th>Correlation ID</th>
                     <th>Safe Posture</th>
                     <th>Source Module</th>
@@ -690,7 +690,7 @@ function FiscalStatusViewAuditReportRow({ item }: { item: FiscalStatusViewAuditR
               ["Action-log entry ID", item.actionLogEntryId],
               ["Result meaning", presentation.meaning],
               ["Action code", item.actionCode],
-              ["Fiscal issuance reference ID", item.fiscalIssuanceReferenceId],
+              ["Sales Invoice reference ID", item.fiscalIssuanceReferenceId],
               ["Correlation ID", item.correlationId],
               ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
               ["Source module/screen", displayValue(item.sourceModule)]
@@ -798,8 +798,8 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
       <section className="pageTitle">
         <div>
           <p className="eyebrow">Audit / Reporting</p>
-          <h2>Fiscal void action audit review</h2>
-          <p>Read-only review of Operator Console fiscal void action records.</p>
+          <h2>Sales Invoice void action audit review</h2>
+          <p>Read-only review of Operator Console Sales Invoice void action records.</p>
         </div>
       </section>
 
@@ -808,8 +808,8 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
           <h3 id="fiscal-void-audit-guardrail-title">Read-only boundaries</h3>
           <span className="statusPill">Audit review only</span>
         </div>
-        <p>This page reviews fiscal void action-log metadata only.</p>
-        <p>It does not perform fiscal void, refund payment, authorize exit, open gate, call HikCentral, or create replacement documents.</p>
+        <p>This page reviews Sales Invoice void action-log metadata only.</p>
+        <p>It does not perform Sales Invoice void, refund payment, authorize exit, open gate, call HikCentral, or create replacement Sales Invoices.</p>
         <p>Raw fiscal payloads, POS Server bodies, secrets, stack traces, customer PII, and statutory evidence payloads are never displayed.</p>
       </section>
 
@@ -855,18 +855,20 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
               onChange={(event) => setDraftFilters((current) => ({ ...current, operatorUserId: event.target.value || undefined }))}
             />
           </label>
-          <label>
-            Fiscal issuance reference ID
+          <label className="wideFilterField">
+            Sales Invoice reference ID
             <input
+              placeholder="GUID/reference only"
               value={draftFilters.fiscalIssuanceReferenceId ?? ""}
               onChange={(event) =>
                 setDraftFilters((current) => ({ ...current, fiscalIssuanceReferenceId: event.target.value || undefined }))
               }
             />
           </label>
-          <label>
-            Fiscal document number
+          <label className="wideFilterField">
+            Sales Invoice number
             <input
+              placeholder="e.g. SI-OCVOID-0001-UAT"
               value={draftFilters.fiscalDocumentNumber ?? ""}
               onChange={(event) => setDraftFilters((current) => ({ ...current, fiscalDocumentNumber: event.target.value || undefined }))}
             />
@@ -919,14 +921,14 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
         </div>
 
         {reportState.status === "loading" && (
-          <StateMessage title="Loading fiscal void audit review" message="Retrieving safe fiscal void action rows." />
+          <StateMessage title="Loading Sales Invoice void audit review" message="Retrieving safe Sales Invoice void action rows." />
         )}
         {reportState.status === "empty" && (
-          <StateMessage title="No fiscal void action rows" message="No fiscal void action audit rows matched the filters." />
+          <StateMessage title="No Sales Invoice void action rows" message="No Sales Invoice void action audit rows matched the filters." />
         )}
         {reportState.status === "access-denied" && <StateMessage title="Access denied" message={reportState.message} />}
         {reportState.status === "error" && (
-          <StateMessage title="Unable to load fiscal void audit review" message={reportState.message} />
+          <StateMessage title="Unable to load Sales Invoice void audit review" message={reportState.message} />
         )}
         {reportState.status === "loaded" && (
           <>
@@ -937,8 +939,8 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
                   <tr>
                     <th>Submitted At</th>
                     <th>Result</th>
-                    <th>Fiscal Document Number</th>
-                    <th>Fiscal Issuance Reference</th>
+                    <th>Sales Invoice Number</th>
+                    <th>Sales Invoice Reference</th>
                     <th>Operator/User</th>
                     <th>Reason</th>
                     <th>Correlation ID</th>
@@ -953,7 +955,7 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
                 </tbody>
               </table>
             </div>
-            <div className="paginationControls" aria-label="Fiscal void action audit pagination">
+            <div className="paginationControls" aria-label="Sales Invoice void action audit pagination">
               <button type="button" disabled={!canGoPrevious} onClick={() => changePage(Math.max(0, pageOffset - pageLimit))}>
                 Previous page
               </button>
@@ -994,9 +996,9 @@ function FiscalVoidActionAuditReportRow({ item }: { item: FiscalVoidActionAuditR
               ["Action code", item.actionCode],
               ["Result meaning", presentation.meaning],
               ["Result class", item.resultClass],
-              ["Fiscal issuance reference ID", item.fiscalIssuanceReferenceId],
-              ["Fiscal document number", displayValue(item.fiscalDocumentNumber)],
-              ["POS Server fiscal document ID", displayValue(item.posServerFiscalDocumentId)],
+              ["Sales Invoice reference ID", item.fiscalIssuanceReferenceId],
+              ["Sales Invoice number", displayValue(item.fiscalDocumentNumber)],
+              ["POS Server Sales Invoice ID", displayValue(item.posServerFiscalDocumentId)],
               ["Operator/user ID", item.operatorUserId],
               ["Site ID", displayValue(item.siteId)],
               ["Site group ID", displayValue(item.siteGroupId)],
@@ -1014,7 +1016,7 @@ function FiscalVoidActionAuditReportRow({ item }: { item: FiscalVoidActionAuditR
               ["HikCentral called", displayBool(item.hikCentralCalled)],
               ["Payment provider called", displayBool(item.paymentProviderCalled)],
               ["Rendering generated", displayBool(item.renderingGenerated)],
-              ["Replacement fiscal document created", displayBool(item.replacementFiscalDocumentCreated)],
+              ["Replacement Sales Invoice created", displayBool(item.replacementFiscalDocumentCreated)],
               ["New fiscal number allocated", displayBool(item.newFiscalNumberAllocated)],
               ["Fiscal sequence changed by Central PMS", displayBool(item.fiscalSequenceChangedByCentralPms)]
             ]}
@@ -1031,19 +1033,19 @@ function fiscalVoidAuditResultPresentation(resultClass: string) {
       return {
         label: "Succeeded",
         className: "readiness-ready",
-        meaning: "Fiscal void action succeeded or was accepted by the fiscal void service."
+        meaning: "Sales Invoice void action succeeded or was accepted by the Sales Invoice void service."
       };
     case "ALREADY_VOIDED":
       return {
         label: "Already voided",
         className: "warningPill",
-        meaning: "The fiscal document was already voided when the action was reviewed."
+        meaning: "The Sales Invoice was already voided when the action was reviewed."
       };
     case "DENIED":
       return {
         label: "Denied",
         className: "blocked",
-        meaning: "The operator was denied access before fiscal void execution."
+        meaning: "The operator was denied access before Sales Invoice void execution."
       };
     case "NOT_FOUND":
       return {
@@ -1055,19 +1057,19 @@ function fiscalVoidAuditResultPresentation(resultClass: string) {
       return {
         label: "Conflict",
         className: "blocked",
-        meaning: "The fiscal void action failed closed because POS Server reported a semantic conflict."
+        meaning: "The Sales Invoice void action failed closed because POS Server reported a semantic conflict."
       };
     case "REJECTED":
       return {
         label: "Rejected",
         className: "blocked",
-        meaning: "The fiscal void action was rejected safely."
+        meaning: "The Sales Invoice void action was rejected safely."
       };
     case "FAILED_SAFELY":
       return {
         label: "Failed safely",
         className: "blocked",
-        meaning: "The fiscal void action failed without exposing unsafe details."
+        meaning: "The Sales Invoice void action failed without exposing unsafe details."
       };
     default:
       return {
@@ -1147,7 +1149,7 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
     event.preventDefault();
     const trimmed = lookupQuery.trim();
     if (!trimmed) {
-      setStatusState({ status: "error", message: "Sales Invoice / fiscal document number or fiscal reference ID is required." });
+      setStatusState({ status: "error", message: "Sales Invoice number or Sales Invoice reference ID is required." });
       return;
     }
 
@@ -1162,7 +1164,7 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
           <p className="eyebrow">Fiscal visibility</p>
           <h2 id="fiscal-status-title">Fiscal issuance status and controlled fiscal actions</h2>
           <p className="panelCopy">
-            Search by Sales Invoice / fiscal document number or fiscal reference. Controlled fiscal actions remain guarded and audited.
+            Search by Sales Invoice number or Sales Invoice reference ID. Controlled Sales Invoice actions remain guarded and audited.
           </p>
         </div>
         <span className="statusPill pending-review">Controlled actions</span>
@@ -1170,30 +1172,30 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
 
       <form className="filterForm" onSubmit={submitLookup}>
         <label>
-          Search by SI number or fiscal reference
+          Search by Sales Invoice number or reference ID
           <input
             className="wideLookupInput"
             value={lookupQuery}
-            placeholder="SI-00000001-UAT or fiscal reference ID"
+            placeholder="SI-00000001-UAT or Sales Invoice reference ID"
             onChange={(event) => setLookupQuery(event.target.value)}
           />
         </label>
         <button type="submit">View status</button>
       </form>
       <p className="helperText">
-        Operators can search by Sales Invoice / fiscal document number. Fiscal reference ID remains available for support.
+        Operators can search by Sales Invoice number. Sales Invoice reference ID remains available for support.
       </p>
 
       {statusState.status === "idle" && (
-        <StateMessage title="No fiscal status selected" message="Enter a Sales Invoice / fiscal document number or fiscal reference ID to view safe status fields." />
+        <StateMessage title="No Sales Invoice status selected" message="Enter a Sales Invoice number or Sales Invoice reference ID to view safe status fields." />
       )}
       {statusState.status === "loading" && (
         <StateMessage title="Loading fiscal status" message="Retrieving fiscal issuance status through the Operator Console facade." />
       )}
       {statusState.status === "not-found" && (
         <StateMessage
-          title="Fiscal reference not found"
-          message="The fiscal status lookup did not match a fiscal issuance reference. Verify the SI number, fiscal document number, or support reference."
+          title="Sales Invoice reference not found"
+          message="The Sales Invoice status lookup did not match a Sales Invoice reference. Verify the Sales Invoice number or support reference."
         />
       )}
       {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
@@ -1232,7 +1234,7 @@ function FiscalIssuanceStatusPanel({
   ];
 
   if (status.fiscalDocumentNumber) {
-    mainItems.splice(1, 0, ["Sales Invoice / fiscal document number", status.fiscalDocumentNumber]);
+    mainItems.splice(1, 0, ["Sales Invoice number", status.fiscalDocumentNumber]);
   }
 
   if (status.posServerFiscalDocumentReadStatus) {
@@ -1240,7 +1242,7 @@ function FiscalIssuanceStatusPanel({
   }
 
   if (status.posServerFiscalDocumentStatusCodeKey) {
-    mainItems.push(["Fiscal document status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)]);
+    mainItems.push(["Sales Invoice status", displayStatusValue(status.posServerFiscalDocumentStatusCodeKey)]);
   }
 
   if (status.posServerVoidStatus) {
@@ -1275,7 +1277,7 @@ function FiscalIssuanceStatusPanel({
         <DescriptionList
           items={[
             ["Requested reference", requestedReferenceId],
-            ["Fiscal issuance reference ID", status.fiscalIssuanceReferenceId],
+            ["Sales Invoice reference ID", status.fiscalIssuanceReferenceId],
             ["Upstream finality reference", status.upstreamFinalityReference],
             ["Payment confirmation ID", status.paymentConfirmationId],
             ["Payment attempt ID", status.paymentAttemptId],
@@ -1283,8 +1285,8 @@ function FiscalIssuanceStatusPanel({
             ["Site ID", displayValue(status.siteId)],
             ["Site POS Server ID", displayValue(status.sitePosServerId)],
             ["Site POS Server ref", displayValue(status.sitePosServerRef)],
-            ["POS Server fiscal document ID", displayValue(status.posServerFiscalDocumentId)],
-            ["Fiscal document type", displayValue(status.fiscalDocumentTypeCodeKey)],
+            ["POS Server Sales Invoice ID", displayValue(status.posServerFiscalDocumentId)],
+            ["Sales Invoice type", displayValue(status.fiscalDocumentTypeCodeKey)],
             ["Fiscal identity ID", displayValue(status.fiscalIdentityId)],
             ["Fiscal sequence policy ID", displayValue(status.fiscalSequencePolicyId)],
             ["Fiscal sequence value", formatOptionalNumber(status.fiscalSequenceValue)],
@@ -1294,7 +1296,7 @@ function FiscalIssuanceStatusPanel({
             ["Fiscal number assigned at", formatOptionalDateTime(status.fiscalNumberAssignedAt)],
             ["Fiscal number assigned by", displayValue(status.fiscalNumberAssignedByRef)],
             ["POS Server document read status", displayValue(status.posServerFiscalDocumentReadStatus)],
-            ["Fiscal document status", displayValue(status.posServerFiscalDocumentStatusCodeKey)],
+            ["Sales Invoice status", displayValue(status.posServerFiscalDocumentStatusCodeKey)],
             ["Void status", displayValue(status.posServerVoidStatus)],
             ["Void reason code", displayValue(status.posServerVoidReasonCode)],
             ["Voided at", formatOptionalDateTime(status.posServerVoidedAt)],
@@ -1375,9 +1377,9 @@ function FiscalVoidActionPanel({
       <div className="panelHeader">
         <div>
           <p className="eyebrow">Fiscal action</p>
-          <h4 id="fiscal-void-action-title">Fiscal void request</h4>
+          <h4 id="fiscal-void-action-title">Sales Invoice void request</h4>
           <p className="panelCopy">
-            This only requests fiscal void/cancellation in POS Server.
+            This only requests Sales Invoice void/cancellation in POS Server.
           </p>
         </div>
         <span className={`statusPill ${eligibility.voidable ? "pending-review" : ""}`}>
@@ -1389,7 +1391,7 @@ function FiscalVoidActionPanel({
 
       {eligibility.voidable && !isOpen && (
         <button type="button" onClick={openVoidForm}>
-          Void fiscal document
+          Void Sales Invoice
         </button>
       )}
 
@@ -1399,9 +1401,9 @@ function FiscalVoidActionPanel({
             <p>This does not refund payment.</p>
             <p>This does not open gate.</p>
             <p>This does not call HikCentral.</p>
-            <p>This does not create replacement fiscal document.</p>
+            <p>This does not create a replacement Sales Invoice.</p>
             <p>This does not render final BIR receipt/report.</p>
-            <p>This only requests fiscal void/cancellation in POS Server.</p>
+            <p>This only requests Sales Invoice void/cancellation in POS Server.</p>
           </div>
 
           <label>
@@ -1432,15 +1434,15 @@ function FiscalVoidActionPanel({
 
           <p className="notice">Type {fiscalVoidConfirmationPhrase} to enable submit.</p>
           <button type="submit" disabled={!canSubmit}>
-            Submit fiscal void request
+            Submit Sales Invoice void request
           </button>
 
           {submitState.status === "loading" && (
-            <StateMessage title="Submitting fiscal void request" message="Requesting POS Server fiscal void through Central PMS." />
+            <StateMessage title="Submitting Sales Invoice void request" message="Requesting POS Server Sales Invoice void through Central PMS." />
           )}
           {submitState.status === "loaded" && <FiscalVoidResultMessage result={submitState.data} />}
           {submitState.status === "access-denied" && <StateMessage title="Access denied" message={submitState.message} />}
-          {submitState.status === "error" && <StateMessage title="Fiscal void request failed safely" message={submitState.message} />}
+          {submitState.status === "error" && <StateMessage title="Sales Invoice void request failed safely" message={submitState.message} />}
         </form>
       )}
     </section>
@@ -1451,7 +1453,7 @@ function FiscalVoidResultMessage({ result }: { result: FiscalIssuanceVoidResult 
   if (isFiscalVoidSuccess(result.status)) {
     return (
       <StateMessage
-        title="Fiscal void recorded"
+        title="Sales Invoice void recorded"
         message={`${displayStatusValue(result.status)}. Status will refresh to show the POS Server read-after-void posture.`}
       />
     );
@@ -1460,7 +1462,7 @@ function FiscalVoidResultMessage({ result }: { result: FiscalIssuanceVoidResult 
   if (normalizeStatus(result.status) === "POS_SERVER_VOID_CONFLICT") {
     return (
       <StateMessage
-        title="Fiscal void failed closed"
+        title="Sales Invoice void failed closed"
         message="POS Server reported a semantic conflict. Do not retry automatically; escalate for support review."
       />
     );
@@ -1468,35 +1470,35 @@ function FiscalVoidResultMessage({ result }: { result: FiscalIssuanceVoidResult 
 
   return (
     <StateMessage
-      title="Fiscal void failed safely"
-      message={result.errorPosture ?? result.errors[0] ?? "Central PMS did not accept the fiscal void request."}
+      title="Sales Invoice void failed safely"
+      message={result.errorPosture ?? result.errors[0] ?? "Central PMS did not accept the Sales Invoice void request."}
     />
   );
 }
 
 function fiscalVoidEligibility(status: FiscalIssuanceStatus, hasPermission: boolean) {
   if (!hasPermission) {
-    return { voidable: false, reason: "Fiscal void permission is required." };
+    return { voidable: false, reason: "Sales Invoice void permission is required." };
   }
 
   const fiscalState = normalizeStatus(status.fiscalIssuanceState);
   if (fiscalState !== "FISCAL_ISSUANCE_RECORDED" && fiscalState !== "FISCAL_ISSUANCE_REPLAYED") {
-    return { voidable: false, reason: "Only recorded fiscal issuance references with POS Server evidence can be voided." };
+    return { voidable: false, reason: "Only recorded Sales Invoice references with POS Server evidence can be voided." };
   }
 
   if (!status.posServerFiscalDocumentId) {
-    return { voidable: false, reason: "POS Server fiscal document ID is not available." };
+    return { voidable: false, reason: "POS Server Sales Invoice ID is not available." };
   }
 
   if (normalizeStatus(status.posServerFiscalDocumentReadStatus) !== "AVAILABLE") {
-    return { voidable: false, reason: "POS Server fiscal document read status is not available." };
+    return { voidable: false, reason: "POS Server Sales Invoice read status is not available." };
   }
 
   if (normalizeStatus(status.posServerFiscalDocumentStatusCodeKey) === "VOIDED" || normalizeStatus(status.posServerVoidStatus) === "RECORDED") {
-    return { voidable: false, reason: "Fiscal document is already voided or has a recorded void status." };
+    return { voidable: false, reason: "Sales Invoice is already voided or has a recorded void status." };
   }
 
-  return { voidable: true, reason: "Fiscal document can be voided through the controlled Operator Console workflow." };
+  return { voidable: true, reason: "Sales Invoice can be voided through the controlled Operator Console workflow." };
 }
 
 function isFiscalVoidSuccess(status: string) {
@@ -1515,9 +1517,9 @@ function fiscalStatusPresentation(status: FiscalIssuanceStatus) {
 
   if (documentStatus === "VOIDED" || voidStatus === "RECORDED") {
     return {
-      label: "Fiscal document voided",
+      label: "Sales Invoice voided",
       badge: "Voided",
-      message: "Fiscal document is voided in POS Server. This view is observational only and does not authorize payment, exit, gate, refund, or replacement action.",
+      message: "Sales Invoice is voided in POS Server. This view is observational only and does not authorize payment, exit, gate, refund, or replacement action.",
       className: "pending-review",
       messageClass: "notice"
     };
@@ -1527,7 +1529,7 @@ function fiscalStatusPresentation(status: FiscalIssuanceStatus) {
     return {
       label: "Issued",
       badge: "Issued",
-      message: "Fiscal issuance was recorded and a Sales Invoice / fiscal document number is assigned.",
+      message: "Fiscal issuance was recorded and a Sales Invoice number is assigned.",
       className: "readiness-ready",
       messageClass: "successMessage"
     };
@@ -1537,7 +1539,7 @@ function fiscalStatusPresentation(status: FiscalIssuanceStatus) {
     return {
       label: "Recorded - number not available",
       badge: "Recorded",
-      message: "Fiscal issuance was recorded, but no Sales Invoice / fiscal document number is available in the status response.",
+      message: "Fiscal issuance was recorded, but no Sales Invoice number is available in the status response.",
       className: "pending-review",
       messageClass: "notice"
     };
