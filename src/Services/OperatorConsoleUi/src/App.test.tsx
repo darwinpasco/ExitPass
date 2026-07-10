@@ -10,6 +10,7 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
+  FiscalIssuanceVoidResult,
   FiscalStatusViewAuditReportResponse,
   FiscalIssuanceStatus,
   OperatorTicketLookupResult,
@@ -675,6 +676,134 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText("Void status").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /retry|reissue|replacement|payment|gate|refund/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void fiscal document/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/already voided or has a recorded void status/i)).toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_VoidButtonVisibleOnlyForVoidableDocumentWithPermission", async () => {
+    const { rerender } = render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalVoidAuthorized: false,
+          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByText("Fiscal void permission is required.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void fiscal document/i })).not.toBeInTheDocument();
+
+    rerender(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalVoidAuthorized: true,
+          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+
+    expect(await screen.findByRole("button", { name: /void fiscal document/i })).toBeInTheDocument();
+  });
+
+  it("FiscalStatusViewer_VoidConfirmationRequiresReasonAndExactPhrase", async () => {
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })]
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+    await userEvent.click(await screen.findByRole("button", { name: /void fiscal document/i }));
+
+    const submit = screen.getByRole("button", { name: /submit fiscal void request/i });
+    expect(submit).toBeDisabled();
+    expect(screen.getByText("This does not refund payment.")).toBeInTheDocument();
+    expect(screen.getByText("This does not open gate.")).toBeInTheDocument();
+    expect(screen.getByText("This does not call HikCentral.")).toBeInTheDocument();
+    expect(screen.getByText("This does not create replacement fiscal document.")).toBeInTheDocument();
+    expect(screen.getByText("This does not render final BIR receipt/report.")).toBeInTheDocument();
+    expect(screen.getAllByText("This only requests fiscal void/cancellation in POS Server.").length).toBeGreaterThan(0);
+
+    await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
+    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID");
+
+    expect(submit).toBeDisabled();
+
+    await userEvent.clear(screen.getByLabelText(/confirmation text/i));
+    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
+
+    expect(submit).toBeEnabled();
+  });
+
+  it("FiscalStatusViewer_SuccessfulVoidSubmitDisplaysSuccessAndRefreshesStatus", async () => {
+    const onFiscalVoid = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })],
+          onFiscalVoid
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+    await userEvent.click(await screen.findByRole("button", { name: /void fiscal document/i }));
+    await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
+    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
+    await userEvent.click(screen.getByRole("button", { name: /submit fiscal void request/i }));
+
+    expect(await screen.findByRole("heading", { name: "Fiscal void recorded" })).toBeInTheDocument();
+    await waitFor(() => expect(onFiscalVoid).toHaveBeenCalledTimes(1));
+    expect(onFiscalVoid.mock.calls[0][0]).toEqual(expect.objectContaining({
+      fiscalIssuanceReferenceId: fiscalReferenceId,
+      reasonCode: "operator_error",
+      reasonText: "Incorrect operator entry.",
+      confirmationText: "VOID FISCAL DOCUMENT"
+    }));
+    expect(await screen.findByRole("heading", { name: "Fiscal document voided" })).toBeInTheDocument();
+    expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
+  });
+
+  it("FiscalStatusViewer_ConflictVoidResultDisplaysFailClosedMessageWithoutAutoRetry", async () => {
+    const onFiscalVoid = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })],
+          fiscalVoidResult: fiscalVoidResult({
+            accepted: false,
+            status: "pos_server_void_conflict",
+            httpStatusCode: 409,
+            errors: ["fiscal_document_void_idempotency_conflict"],
+            errorPosture: "DO_NOT_RETRY_WITHOUT_REQUEST_CHANGE",
+            posServerResultClassification: "conflict"
+          }),
+          onFiscalVoid
+        })}
+        initialPath="/operator-console/fiscal-issuance-status"
+      />
+    );
+
+    await lookupFiscalStatus(fiscalReferenceId);
+    await userEvent.click(await screen.findByRole("button", { name: /void fiscal document/i }));
+    await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
+    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
+    await userEvent.click(screen.getByRole("button", { name: /submit fiscal void request/i }));
+
+    expect(await screen.findByRole("heading", { name: "Fiscal void failed closed" })).toBeInTheDocument();
+    expect(screen.getByText(/do not retry automatically/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(onFiscalVoid).toHaveBeenCalledTimes(1);
   });
 
   it("FiscalStatusViewer_RecordedWithoutFiscalDocumentNumberDoesNotShowIssued", async () => {
@@ -964,6 +1093,39 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(requestOptions?.method).toBeUndefined();
     expect(requestOptions?.body).toBeUndefined();
     expectOperatorContextHeaders(requestOptions?.headers);
+  });
+
+  it("OperatorConsoleApi_VoidsFiscalStatusThroughFacadeWithEncodedReference", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fiscalVoidResult()));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.voidFiscalIssuanceReference({
+      fiscalIssuanceReferenceId: "reference/with space",
+      operatorActionRequestId: "88000000-0000-0000-0000-000000000001",
+      reasonCode: "operator_error",
+      reasonText: "Incorrect operator entry.",
+      confirmationText: "VOID FISCAL DOCUMENT",
+      correlationId: "88000000-0000-0000-0000-000000000099"
+    });
+
+    expect(result.status).toBe("pos_server_void_recorded");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/fiscal-issuance/references/reference%2Fwith%20space/void",
+      expect.objectContaining({ method: "POST" })
+    );
+
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expectOperatorContextHeaders(requestOptions?.headers);
+    expect(requestOptions?.headers).toEqual(expect.objectContaining({ "Content-Type": "application/json" }));
+    expect(JSON.parse(requestOptions?.body as string)).toEqual({
+      operatorActionRequestId: "88000000-0000-0000-0000-000000000001",
+      reasonCode: "operator_error",
+      reasonText: "Incorrect operator entry.",
+      confirmationText: "VOID FISCAL DOCUMENT",
+      correlationId: "88000000-0000-0000-0000-000000000099"
+    });
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/internal/");
   });
 
   it("OperatorConsoleApi_LoadsFiscalStatusViewAuditReportWithFiltersAndEncodedReference", async () => {
@@ -1934,6 +2096,42 @@ function fiscalStatus(overrides: Partial<FiscalIssuanceStatus> = {}): FiscalIssu
     firstRecordedAt: "2026-07-08T08:00:00Z",
     lastUpdatedAt: "2026-07-08T08:00:00Z",
     correlationId: "5f000000-0000-0000-0000-000000000008",
+    ...overrides
+  };
+}
+
+function fiscalVoidResult(overrides: Partial<FiscalIssuanceVoidResult> = {}): FiscalIssuanceVoidResult {
+  return {
+    accessAllowed: true,
+    accessDecision: "ALLOWED",
+    accessDenialReasons: [],
+    accessPersisted: true,
+    accepted: true,
+    status: "pos_server_void_recorded",
+    httpStatusCode: 200,
+    errors: [],
+    fiscalIssuanceReferenceId: fiscalReferenceId,
+    posServerFiscalDocumentId: "5f000000-0000-0000-0000-000000000014",
+    fiscalDocumentNumber: "SI-00000001-UAT",
+    fiscalSequenceValue: 1,
+    fiscalDocumentStatusPosture: "voided",
+    voidStatus: "recorded",
+    voidReasonCode: "operator_error",
+    voidedAt: "2026-07-10T00:00:00Z",
+    posServerResultClassification: "newly_voided",
+    correlationId: "5f000000-0000-0000-0000-000000000008",
+    errorPosture: undefined,
+    newFiscalNumberAllocated: false,
+    paymentFinalityChanged: false,
+    exitAuthorizationIssued: false,
+    gateBehaviorTriggered: false,
+    refundOrReversalCreated: false,
+    hikCentralCalled: false,
+    paymentProviderCalled: false,
+    renderingGenerated: false,
+    replacementFiscalDocumentCreated: false,
+    fiscalSequenceChangedByCentralPms: false,
+    idempotentReplay: false,
     ...overrides
   };
 }

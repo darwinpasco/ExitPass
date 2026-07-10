@@ -12,6 +12,7 @@ import type {
   AuditReportQuery,
   AuditReportResponse,
   FiscalIssuanceStatus,
+  FiscalIssuanceVoidResult,
   FiscalStatusViewAuditReportItem,
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
@@ -728,18 +729,12 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
   const [submittedReferenceId, setSubmittedReferenceId] = useState("");
   const [statusState, setStatusState] = useState<LoadState<FiscalIssuanceStatus>>({ status: "idle" });
 
-  function submitLookup(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmed = referenceId.trim();
-    if (!trimmed) {
-      setStatusState({ status: "error", message: "Fiscal issuance reference ID is required." });
-      return;
+  function loadFiscalStatus(reference: string, showLoading = true) {
+    if (showLoading) {
+      setStatusState({ status: "loading" });
     }
-
-    setSubmittedReferenceId(trimmed);
-    setStatusState({ status: "loading" });
     void client
-      .getFiscalIssuanceStatus(trimmed)
+      .getFiscalIssuanceStatus(reference)
       .then((status) => setStatusState({ status: "loaded", data: status }))
       .catch((error) => {
         const mapped = mapApiError(error);
@@ -755,6 +750,18 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
 
         setStatusState({ status: "error", message: mapped.message });
       });
+  }
+
+  function submitLookup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmed = referenceId.trim();
+    if (!trimmed) {
+      setStatusState({ status: "error", message: "Fiscal issuance reference ID is required." });
+      return;
+    }
+
+    setSubmittedReferenceId(trimmed);
+    loadFiscalStatus(trimmed);
   }
 
   return (
@@ -797,7 +804,12 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
       {statusState.status === "access-denied" && <StateMessage title="Access denied" message={statusState.message} />}
       {statusState.status === "error" && <StateMessage title="Unable to load fiscal status" message={statusState.message} />}
       {statusState.status === "loaded" && (
-        <FiscalIssuanceStatusPanel status={statusState.data} requestedReferenceId={submittedReferenceId} />
+        <FiscalIssuanceStatusPanel
+          status={statusState.data}
+          requestedReferenceId={submittedReferenceId}
+          client={client}
+          onRefresh={() => loadFiscalStatus(submittedReferenceId, false)}
+        />
       )}
     </section>
   );
@@ -805,10 +817,14 @@ function FiscalIssuanceStatusPage({ client }: { client: OperatorConsoleApiClient
 
 function FiscalIssuanceStatusPanel({
   status,
-  requestedReferenceId
+  requestedReferenceId,
+  client,
+  onRefresh
 }: {
   status: FiscalIssuanceStatus;
   requestedReferenceId: string;
+  client: OperatorConsoleApiClient;
+  onRefresh: () => void;
 }) {
   const presentation = fiscalStatusPresentation(status);
   const mainItems: Array<[string, string]> = [
@@ -857,6 +873,8 @@ function FiscalIssuanceStatusPanel({
 
       <DescriptionList items={mainItems} />
 
+      <FiscalVoidActionPanel status={status} client={client} onRefresh={onRefresh} />
+
       <details className="diagnosticsPanel">
         <summary>Support/audit details</summary>
         <DescriptionList
@@ -895,6 +913,203 @@ function FiscalIssuanceStatusPanel({
         />
       </details>
     </section>
+  );
+}
+
+const fiscalVoidConfirmationPhrase = "VOID FISCAL DOCUMENT";
+
+function FiscalVoidActionPanel({
+  status,
+  client,
+  onRefresh
+}: {
+  status: FiscalIssuanceStatus;
+  client: OperatorConsoleApiClient;
+  onRefresh: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [operatorActionRequestId, setOperatorActionRequestId] = useState("");
+  const [reasonCode, setReasonCode] = useState("operator_error");
+  const [reasonText, setReasonText] = useState("");
+  const [confirmationText, setConfirmationText] = useState("");
+  const [submitState, setSubmitState] = useState<LoadState<FiscalIssuanceVoidResult>>({ status: "idle" });
+  const eligibility = fiscalVoidEligibility(status, Boolean(client.canVoidFiscalDocument?.()));
+  const canSubmit =
+    eligibility.voidable &&
+    reasonCode.trim().length > 0 &&
+    reasonText.trim().length > 0 &&
+    confirmationText.trim() === fiscalVoidConfirmationPhrase &&
+    submitState.status !== "loading";
+
+  function openVoidForm() {
+    setOperatorActionRequestId(newUiRequestId());
+    setIsOpen(true);
+    setSubmitState({ status: "idle" });
+  }
+
+  function submitVoid(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit) {
+      return;
+    }
+
+    setSubmitState({ status: "loading" });
+    void client
+      .voidFiscalIssuanceReference({
+        fiscalIssuanceReferenceId: status.fiscalIssuanceReferenceId,
+        operatorActionRequestId,
+        reasonCode: reasonCode.trim(),
+        reasonText: reasonText.trim(),
+        confirmationText: confirmationText.trim(),
+        correlationId: status.correlationId
+      })
+      .then((result) => {
+        setSubmitState({ status: "loaded", data: result });
+        if (isFiscalVoidSuccess(result.status)) {
+          onRefresh();
+        }
+      })
+      .catch((error) => {
+        const mapped = mapApiError(error);
+        setSubmitState({ status: mapped.status === "access-denied" ? "access-denied" : "error", message: mapped.message });
+      });
+  }
+
+  return (
+    <section className="diagnosticsPanel" aria-labelledby="fiscal-void-action-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Fiscal action</p>
+          <h4 id="fiscal-void-action-title">Fiscal void request</h4>
+          <p className="panelCopy">
+            This only requests fiscal void/cancellation in POS Server.
+          </p>
+        </div>
+        <span className={`statusPill ${eligibility.voidable ? "pending-review" : ""}`}>
+          {eligibility.voidable ? "Available" : "Not voidable"}
+        </span>
+      </div>
+
+      {!eligibility.voidable && <p className="notice">{eligibility.reason}</p>}
+
+      {eligibility.voidable && !isOpen && (
+        <button type="button" onClick={openVoidForm}>
+          Void fiscal document
+        </button>
+      )}
+
+      {eligibility.voidable && isOpen && (
+        <form className="detailForm" onSubmit={submitVoid}>
+          <div className="warningPanel">
+            <p>This does not refund payment.</p>
+            <p>This does not open gate.</p>
+            <p>This does not call HikCentral.</p>
+            <p>This does not create replacement fiscal document.</p>
+            <p>This does not render final BIR receipt/report.</p>
+            <p>This only requests fiscal void/cancellation in POS Server.</p>
+          </div>
+
+          <label>
+            Reason code
+            <select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>
+              <option value="operator_error">operator_error</option>
+            </select>
+          </label>
+
+          <label>
+            Reason text
+            <textarea
+              value={reasonText}
+              maxLength={500}
+              placeholder="Brief operator reason"
+              onChange={(event) => setReasonText(event.target.value)}
+            />
+          </label>
+
+          <label>
+            Confirmation text
+            <input
+              value={confirmationText}
+              placeholder={fiscalVoidConfirmationPhrase}
+              onChange={(event) => setConfirmationText(event.target.value)}
+            />
+          </label>
+
+          <p className="notice">Type {fiscalVoidConfirmationPhrase} to enable submit.</p>
+          <button type="submit" disabled={!canSubmit}>
+            Submit fiscal void request
+          </button>
+
+          {submitState.status === "loading" && (
+            <StateMessage title="Submitting fiscal void request" message="Requesting POS Server fiscal void through Central PMS." />
+          )}
+          {submitState.status === "loaded" && <FiscalVoidResultMessage result={submitState.data} />}
+          {submitState.status === "access-denied" && <StateMessage title="Access denied" message={submitState.message} />}
+          {submitState.status === "error" && <StateMessage title="Fiscal void request failed safely" message={submitState.message} />}
+        </form>
+      )}
+    </section>
+  );
+}
+
+function FiscalVoidResultMessage({ result }: { result: FiscalIssuanceVoidResult }) {
+  if (isFiscalVoidSuccess(result.status)) {
+    return (
+      <StateMessage
+        title="Fiscal void recorded"
+        message={`${displayStatusValue(result.status)}. Status will refresh to show the POS Server read-after-void posture.`}
+      />
+    );
+  }
+
+  if (normalizeStatus(result.status) === "POS_SERVER_VOID_CONFLICT") {
+    return (
+      <StateMessage
+        title="Fiscal void failed closed"
+        message="POS Server reported a semantic conflict. Do not retry automatically; escalate for support review."
+      />
+    );
+  }
+
+  return (
+    <StateMessage
+      title="Fiscal void failed safely"
+      message={result.errorPosture ?? result.errors[0] ?? "Central PMS did not accept the fiscal void request."}
+    />
+  );
+}
+
+function fiscalVoidEligibility(status: FiscalIssuanceStatus, hasPermission: boolean) {
+  if (!hasPermission) {
+    return { voidable: false, reason: "Fiscal void permission is required." };
+  }
+
+  const fiscalState = normalizeStatus(status.fiscalIssuanceState);
+  if (fiscalState !== "FISCAL_ISSUANCE_RECORDED" && fiscalState !== "FISCAL_ISSUANCE_REPLAYED") {
+    return { voidable: false, reason: "Only recorded fiscal issuance references with POS Server evidence can be voided." };
+  }
+
+  if (!status.posServerFiscalDocumentId) {
+    return { voidable: false, reason: "POS Server fiscal document ID is not available." };
+  }
+
+  if (normalizeStatus(status.posServerFiscalDocumentReadStatus) !== "AVAILABLE") {
+    return { voidable: false, reason: "POS Server fiscal document read status is not available." };
+  }
+
+  if (normalizeStatus(status.posServerFiscalDocumentStatusCodeKey) === "VOIDED" || normalizeStatus(status.posServerVoidStatus) === "RECORDED") {
+    return { voidable: false, reason: "Fiscal document is already voided or has a recorded void status." };
+  }
+
+  return { voidable: true, reason: "Fiscal document can be voided through the controlled Operator Console workflow." };
+}
+
+function isFiscalVoidSuccess(status: string) {
+  const normalized = normalizeStatus(status);
+  return (
+    normalized === "POS_SERVER_VOID_RECORDED" ||
+    normalized === "POS_SERVER_VOID_IDEMPOTENT_REPLAY" ||
+    normalized === "POS_SERVER_ALREADY_VOIDED"
   );
 }
 
@@ -3633,6 +3848,10 @@ function ticketLookupGuidance(result: OperatorTicketLookupResult) {
 
 function normalizeStatus(status?: string | null) {
   return status?.trim().toUpperCase().replaceAll(" ", "_") ?? "";
+}
+
+function newUiRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function displayValue(value?: string) {

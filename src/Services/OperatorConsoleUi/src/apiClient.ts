@@ -5,6 +5,8 @@ import type {
   AuditReportResponse,
   DraftStatus,
   EntitlementType,
+  FiscalIssuanceVoidInput,
+  FiscalIssuanceVoidResult,
   FiscalIssuanceStatus,
   FiscalStatusViewAuditReportQuery,
   FiscalStatusViewAuditReportResponse,
@@ -47,6 +49,7 @@ export interface OperatorConsoleApiClient {
   evaluateAccessReadiness(input: AccessReadinessRequest): Promise<AccessReadinessResponse>;
   lookupSessionByTicket(input: OperatorTicketLookupInput): Promise<OperatorTicketLookupResult>;
   getFiscalIssuanceStatus(fiscalIssuanceReferenceId: string): Promise<FiscalIssuanceStatus>;
+  voidFiscalIssuanceReference(input: FiscalIssuanceVoidInput): Promise<FiscalIssuanceVoidResult>;
   listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
@@ -68,6 +71,7 @@ export interface OperatorConsoleApiClient {
   getVendorSessionProjectionHealthTarget(projectionSyncTargetId: string): Promise<VendorSessionProjectionHealthTargetDetail>;
   getVendorSessionProjectionHealthSummary(): Promise<VendorSessionProjectionHealthSummary>;
   canDecideProductionPolicyImportReview?(): boolean;
+  canVoidFiscalDocument?(): boolean;
 }
 
 interface QueueResponse {
@@ -387,6 +391,8 @@ const reviewDecisionPermissions = new Set([
   "operator-console.policy-import-review.approve.db"
 ]);
 
+const fiscalVoidPermissions = new Set(["fiscal-issuance.void.command", "reconciliation.manage"]);
+
 const defaultOperatorPermissions = localFallback(
   import.meta.env.VITE_OPERATOR_CONSOLE_PERMISSIONS,
   [
@@ -398,7 +404,8 @@ const defaultOperatorPermissions = localFallback(
     "operator-console.policy-import-review.approve.qa",
     "operator-console.policy-import-review.approve.db",
     "operator-console.vendor-projection-health.view",
-    "fiscal-issuance.status.read"
+    "fiscal-issuance.status.read",
+    "fiscal-issuance.void.command"
   ].join(",")
 );
 
@@ -415,6 +422,10 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
   return {
     canDecideProductionPolicyImportReview() {
       return permissions.some((permission) => reviewDecisionPermissions.has(permission));
+    },
+
+    canVoidFiscalDocument() {
+      return permissions.some((permission) => fiscalVoidPermissions.has(permission));
     },
 
     async evaluateAccessReadiness(input) {
@@ -465,6 +476,26 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       );
 
       return parseResponse<FiscalIssuanceStatus>(response);
+    },
+
+    async voidFiscalIssuanceReference(input) {
+      const correlationId = input.correlationId ?? newCorrelationId();
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/fiscal-issuance/references/${encodeURIComponent(input.fiscalIssuanceReferenceId)}/void`,
+        {
+          method: "POST",
+          headers: operatorConsoleHeaders(correlationId, { json: true }),
+          body: JSON.stringify({
+            operatorActionRequestId: input.operatorActionRequestId,
+            reasonCode: input.reasonCode,
+            reasonText: input.reasonText,
+            confirmationText: input.confirmationText,
+            correlationId
+          })
+        }
+      );
+
+      return parseCommandResponse<FiscalIssuanceVoidResult>(response);
     },
 
     async listFiscalStatusViewAuditReport(input = {}) {
@@ -854,11 +885,15 @@ export function createMockOperatorConsoleApiClient(
     ticketLookupResults?: OperatorTicketLookupResult[];
     fiscalStatusError?: OperatorConsoleApiError;
     fiscalStatuses?: FiscalIssuanceStatus[];
+    fiscalVoidError?: OperatorConsoleApiError;
+    fiscalVoidResult?: FiscalIssuanceVoidResult;
+    fiscalVoidAuthorized?: boolean;
     fiscalStatusViewAuditReportError?: OperatorConsoleApiError;
     fiscalStatusViewAuditReport?: FiscalStatusViewAuditReportResponse;
     empty?: boolean;
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
     onFiscalStatusLookup?: (fiscalIssuanceReferenceId: string) => void;
+    onFiscalVoid?: (input: FiscalIssuanceVoidInput) => void;
     onFiscalStatusViewAuditReport?: (input: FiscalStatusViewAuditReportQuery) => void;
     onDecision?: (input: StatutoryDiscountDecisionInput) => void;
     onEvidenceCapture?: (input: StatutoryDiscountEvidenceCaptureInput) => void;
@@ -892,6 +927,10 @@ export function createMockOperatorConsoleApiClient(
   return {
     canDecideProductionPolicyImportReview() {
       return options.productionPolicyReviewDecisionAuthorized ?? true;
+    },
+
+    canVoidFiscalDocument() {
+      return options.fiscalVoidAuthorized ?? true;
     },
 
     async evaluateAccessReadiness(input) {
@@ -937,6 +976,26 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return { ...match };
+    },
+
+    async voidFiscalIssuanceReference(input) {
+      await delay();
+      options.onFiscalVoid?.(input);
+      if (options.fiscalVoidError) {
+        throw options.fiscalVoidError;
+      }
+
+      const result = options.fiscalVoidResult ?? mockFiscalVoidResult(input.fiscalIssuanceReferenceId);
+      const match = fiscalStatuses.find((item) => item.fiscalIssuanceReferenceId === input.fiscalIssuanceReferenceId);
+      if (match && ["pos_server_void_recorded", "pos_server_void_idempotent_replay", "pos_server_already_voided"].includes(result.status)) {
+        match.posServerFiscalDocumentReadStatus = "AVAILABLE";
+        match.posServerFiscalDocumentStatusCodeKey = "voided";
+        match.posServerVoidStatus = "recorded";
+        match.posServerVoidReasonCode = result.voidReasonCode ?? input.reasonCode;
+        match.posServerVoidedAt = result.voidedAt ?? new Date("2026-07-10T00:00:00Z").toISOString();
+      }
+
+      return { ...result };
     },
 
     async listFiscalStatusViewAuditReport(input = {}) {
@@ -1376,6 +1435,20 @@ async function parseResponse<T>(response: Response): Promise<T> {
   const text = await response.text();
   const body = text ? JSON.parse(text) : {};
   if (response.ok) {
+    return body as T;
+  }
+
+  throw {
+    status: response.status === 404 ? "not-found" : response.status === 401 || response.status === 403 ? "access-denied" : "error",
+    message: body.message ?? body.errorCode ?? "Operator Console request failed.",
+    errorCode: body.errorCode
+  } satisfies OperatorConsoleApiError;
+}
+
+async function parseCommandResponse<T extends { status?: string }>(response: Response): Promise<T> {
+  const text = await response.text();
+  const body = text ? JSON.parse(text) : {};
+  if (response.ok || typeof body.status === "string") {
     return body as T;
   }
 
@@ -2466,6 +2539,41 @@ function mockFiscalIssuanceStatuses(): FiscalIssuanceStatus[] {
       correlationId: "5f000000-0000-0000-0000-000000000008"
     }
   ];
+}
+
+function mockFiscalVoidResult(fiscalIssuanceReferenceId: string): FiscalIssuanceVoidResult {
+  return {
+    accessAllowed: true,
+    accessDecision: "ALLOWED",
+    accessDenialReasons: [],
+    accessPersisted: true,
+    accepted: true,
+    status: "pos_server_void_recorded",
+    httpStatusCode: 200,
+    errors: [],
+    fiscalIssuanceReferenceId,
+    posServerFiscalDocumentId: "5f000000-0000-0000-0000-000000000014",
+    fiscalDocumentNumber: "SI-00000001-UAT",
+    fiscalSequenceValue: 1,
+    fiscalDocumentStatusPosture: "voided",
+    voidStatus: "recorded",
+    voidReasonCode: "operator_error",
+    voidedAt: "2026-07-10T00:00:00Z",
+    posServerResultClassification: "newly_voided",
+    correlationId: newCorrelationId(),
+    errorPosture: undefined,
+    newFiscalNumberAllocated: false,
+    paymentFinalityChanged: false,
+    exitAuthorizationIssued: false,
+    gateBehaviorTriggered: false,
+    refundOrReversalCreated: false,
+    hikCentralCalled: false,
+    paymentProviderCalled: false,
+    renderingGenerated: false,
+    replacementFiscalDocumentCreated: false,
+    fiscalSequenceChangedByCentralPms: false,
+    idempotentReplay: false
+  };
 }
 
 function mockFiscalStatusViewAuditReport(): FiscalStatusViewAuditReportResponse {
