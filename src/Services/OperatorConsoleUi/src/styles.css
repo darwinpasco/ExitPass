@@ -14,6 +14,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
 }
 
 button {
@@ -66,6 +67,7 @@ code {
 .appShell {
   min-height: 100vh;
   padding: 28px;
+  width: 100%;
 }
 
 .appHeader {
@@ -74,7 +76,9 @@ code {
   gap: 24px;
   justify-content: space-between;
   margin: 0 auto 20px;
-  max-width: 1240px;
+  max-width: none;
+  min-width: 0;
+  width: min(100%, 1680px);
 }
 
 .appHeader h1,
@@ -132,7 +136,15 @@ code {
   gap: 16px;
   grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
   margin: 0 auto;
-  max-width: 1240px;
+  max-width: none;
+  min-width: 0;
+  width: min(100%, 1680px);
+}
+
+.platformShell > *,
+.workspace,
+.panel {
+  min-width: 0;
 }
 
 .moduleRail,
@@ -227,6 +239,7 @@ code {
 .workspace {
   display: grid;
   gap: 16px;
+  min-width: 0;
 }
 
 .pageTitle {
@@ -242,6 +255,7 @@ code {
 }
 
 .panel {
+  min-width: 0;
   padding: 22px;
 }
 
@@ -260,7 +274,14 @@ code {
 }
 
 .tableScroller {
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.fiscalVoidAuditTableScroller {
+  padding-bottom: 4px;
 }
 
 table {
@@ -291,6 +312,147 @@ td strong {
 td span {
   color: #5b6a76;
   margin-top: 3px;
+}
+
+.fiscalVoidAuditTable {
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.fiscalVoidAuditTable th,
+.fiscalVoidAuditTable td {
+  vertical-align: top;
+}
+
+.fiscalVoidAuditTable .auditDateColumn {
+  width: 150px;
+}
+
+.fiscalVoidAuditTable .auditResultColumn {
+  width: 125px;
+}
+
+.fiscalVoidAuditTable .auditInvoiceColumn {
+  width: 190px;
+}
+
+.fiscalVoidAuditTable .auditPriorityReferenceColumn {
+  width: 30%;
+}
+
+.fiscalVoidAuditTable .auditPriorityOperatorColumn {
+  width: 22%;
+}
+
+.fiscalVoidAuditTable .auditDetailsColumn {
+  width: 190px;
+}
+
+.auditDateCell,
+.auditInvoiceCell,
+.auditReferenceCell {
+  overflow-wrap: anywhere;
+}
+
+.auditReferenceCell {
+  font-family: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, monospace;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.auditResultCell .statusPill {
+  display: inline-flex;
+  margin-top: 0;
+}
+
+.auditDetailsCell {
+  min-width: 0;
+}
+
+button.auditDetailsToggle {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #c7d1d9;
+  border-radius: 6px;
+  color: #17465c;
+  display: inline-flex;
+  font-size: 0.88rem;
+  justify-content: center;
+  line-height: 1.2;
+  min-height: 36px;
+  padding: 8px 10px;
+  text-align: left;
+  white-space: normal;
+}
+
+button.auditDetailsToggle:hover:not(:disabled),
+button.auditDetailsToggle:focus-visible:not(:disabled) {
+  background: #eef3f6;
+  border-color: #9fb5c3;
+  color: #17465c;
+}
+
+.auditRowExpanded td {
+  border-bottom-color: #c9d9e3;
+}
+
+.auditDetailsRow td {
+  background: #fbfdfe;
+  border-bottom: 1px solid #c9d9e3;
+  padding: 0 12px 16px;
+}
+
+.auditDetailsFullPanel {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  margin-top: 4px;
+  padding: 16px;
+}
+
+.auditDetailsFullPanel h4 {
+  margin: 0;
+}
+
+.auditDetailsFullPanel p {
+  color: #465969;
+  margin: 6px 0 14px;
+}
+
+.auditDetailsFullPanel .summaryList {
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .fiscalVoidAuditTable .auditPriorityOperatorColumn,
+  .fiscalVoidAuditTable .auditPriorityOperatorHeader,
+  .fiscalVoidAuditTable .auditPriorityOperatorCell {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .fiscalVoidAuditTable .auditDateColumn {
+    width: 135px;
+  }
+
+  .fiscalVoidAuditTable .auditResultColumn {
+    width: 115px;
+  }
+
+  .fiscalVoidAuditTable .auditInvoiceColumn {
+    width: 180px;
+  }
+
+  .fiscalVoidAuditTable .auditPriorityReferenceColumn,
+  .fiscalVoidAuditTable .auditPriorityReferenceHeader,
+  .fiscalVoidAuditTable .auditPriorityReferenceCell {
+    display: none;
+  }
+
+  .fiscalVoidAuditTable .auditDetailsColumn {
+    width: 175px;
+  }
 }
 
 .detailGrid {

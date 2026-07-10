@@ -933,18 +933,23 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
         {reportState.status === "loaded" && (
           <>
             <p className="placeholderCopy">Report correlation ID: {reportState.data.correlationId}</p>
-            <div className="tableScroller">
-              <table>
+            <div className="tableScroller fiscalVoidAuditTableScroller">
+              <table className="fiscalVoidAuditTable">
+                <colgroup>
+                  <col className="auditDateColumn" />
+                  <col className="auditResultColumn" />
+                  <col className="auditInvoiceColumn" />
+                  <col className="auditPriorityReferenceColumn" />
+                  <col className="auditPriorityOperatorColumn" />
+                  <col className="auditDetailsColumn" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th>Submitted At</th>
                     <th>Result</th>
                     <th>Sales Invoice Number</th>
-                    <th>Sales Invoice Reference</th>
-                    <th>Operator/User</th>
-                    <th>Reason</th>
-                    <th>Correlation ID</th>
-                    <th>Side-Effect Posture</th>
+                    <th className="auditPriorityReferenceHeader">Sales Invoice Reference ID</th>
+                    <th className="auditPriorityOperatorHeader">Operator/User</th>
                     <th>Support / Audit</th>
                   </tr>
                 </thead>
@@ -974,57 +979,85 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
 }
 
 function FiscalVoidActionAuditReportRow({ item }: { item: FiscalVoidActionAuditReportItem }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const presentation = fiscalVoidAuditResultPresentation(item.resultClass);
+  const detailsId = `fiscal-void-audit-details-${item.actionLogEntryId}`;
+  const actionLabel = fiscalVoidAuditActionLabel(item.actionCode);
   return (
-    <tr>
-      <td>{formatDateTime(item.actionTimestamp)}</td>
-      <td>
-        <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
-      </td>
-      <td>{displayValue(item.fiscalDocumentNumber)}</td>
-      <td>{item.fiscalIssuanceReferenceId}</td>
-      <td>{item.operatorUserId}</td>
-      <td>{displayValue(item.reasonCode)}</td>
-      <td>{item.correlationId}</td>
-      <td>{sideEffectPosture(item)}</td>
-      <td>
-        <details className="diagnosticsPanel">
-          <summary>Support/audit details</summary>
-          <DescriptionList
-            items={[
-              ["Action-log entry ID", item.actionLogEntryId],
-              ["Action code", item.actionCode],
-              ["Result meaning", presentation.meaning],
-              ["Result class", item.resultClass],
-              ["Sales Invoice reference ID", item.fiscalIssuanceReferenceId],
-              ["Sales Invoice number", displayValue(item.fiscalDocumentNumber)],
-              ["POS Server Sales Invoice ID", displayValue(item.posServerFiscalDocumentId)],
-              ["Operator/user ID", item.operatorUserId],
-              ["Site ID", displayValue(item.siteId)],
-              ["Site group ID", displayValue(item.siteGroupId)],
-              ["Reason code", displayValue(item.reasonCode)],
-              ["Reason text", displayValue(item.reasonText)],
-              ["Correlation ID", item.correlationId],
-              ["Operator action request ID", displayValue(item.operatorActionRequestId)],
-              ["POS Server result classification", displayValue(item.posServerResultClassification)],
-              ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
-              ["Source module/screen", displayValue(item.sourceModule)],
-              ["Payment finality changed", displayBool(item.paymentFinalityChanged)],
-              ["ExitAuthorization issued", displayBool(item.exitAuthorizationIssued)],
-              ["Gate behavior triggered", displayBool(item.gateBehaviorTriggered)],
-              ["Refund/reversal created", displayBool(item.refundOrReversalCreated)],
-              ["HikCentral called", displayBool(item.hikCentralCalled)],
-              ["Payment provider called", displayBool(item.paymentProviderCalled)],
-              ["Rendering generated", displayBool(item.renderingGenerated)],
-              ["Replacement Sales Invoice created", displayBool(item.replacementFiscalDocumentCreated)],
-              ["New fiscal number allocated", displayBool(item.newFiscalNumberAllocated)],
-              ["Fiscal sequence changed by Central PMS", displayBool(item.fiscalSequenceChangedByCentralPms)]
-            ]}
-          />
-        </details>
-      </td>
-    </tr>
+    <>
+      <tr className={detailsOpen ? "auditRowExpanded" : undefined}>
+        <td className="auditDateCell">{formatDateTime(item.actionTimestamp)}</td>
+        <td className="auditResultCell">
+          <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
+        </td>
+        <td className="auditInvoiceCell">{displayValue(item.fiscalDocumentNumber)}</td>
+        <td className="auditReferenceCell auditPriorityReferenceCell">{item.fiscalIssuanceReferenceId}</td>
+        <td className="auditReferenceCell auditPriorityOperatorCell">{item.operatorUserId}</td>
+        <td className="auditDetailsCell">
+          <button
+            type="button"
+            className="auditDetailsToggle"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            onClick={() => setDetailsOpen((current) => !current)}
+          >
+            {detailsOpen ? "Hide support/audit details" : "View support/audit details"}
+          </button>
+        </td>
+      </tr>
+      {detailsOpen && (
+        <tr className="auditDetailsRow">
+          <td colSpan={6}>
+            <section className="auditDetailsFullPanel" id={detailsId} aria-label="Support/audit details">
+              <h4>Support/audit details</h4>
+              <p>Read-only metadata for the selected Sales Invoice void action row.</p>
+              <DescriptionList
+                items={[
+                  ["Reason", displayValue(item.reasonCode)],
+                  ["Correlation ID", item.correlationId],
+                  ["Side-effect posture", sideEffectPosture(item)],
+                  ["Action-log entry ID", item.actionLogEntryId],
+                  ["Action", actionLabel],
+                  ["Result meaning", presentation.meaning],
+                  ["Result class", item.resultClass],
+                  ["Sales Invoice reference ID", item.fiscalIssuanceReferenceId],
+                  ["Sales Invoice number", displayValue(item.fiscalDocumentNumber)],
+                  ["POS Server Sales Invoice ID", displayValue(item.posServerFiscalDocumentId)],
+                  ["Operator/user ID", item.operatorUserId],
+                  ["Site ID", displayValue(item.siteId)],
+                  ["Site group ID", displayValue(item.siteGroupId)],
+                  ["Reason code", displayValue(item.reasonCode)],
+                  ["Reason text", displayValue(item.reasonText)],
+                  ["Operator action request ID", displayValue(item.operatorActionRequestId)],
+                  ["POS Server result classification", displayValue(item.posServerResultClassification)],
+                  ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
+                  ["Source module/screen", displayValue(item.sourceModule)],
+                  ["Payment finality changed", displayBool(item.paymentFinalityChanged)],
+                  ["ExitAuthorization issued", displayBool(item.exitAuthorizationIssued)],
+                  ["Gate behavior triggered", displayBool(item.gateBehaviorTriggered)],
+                  ["Refund/reversal created", displayBool(item.refundOrReversalCreated)],
+                  ["HikCentral called", displayBool(item.hikCentralCalled)],
+                  ["Payment provider called", displayBool(item.paymentProviderCalled)],
+                  ["Rendering generated", displayBool(item.renderingGenerated)],
+                  ["Replacement Sales Invoice created", displayBool(item.replacementFiscalDocumentCreated)],
+                  ["New fiscal number allocated", displayBool(item.newFiscalNumberAllocated)],
+                  ["Fiscal sequence changed by Central PMS", displayBool(item.fiscalSequenceChangedByCentralPms)]
+                ]}
+              />
+            </section>
+          </td>
+        </tr>
+      )}
+    </>
   );
+}
+
+function fiscalVoidAuditActionLabel(actionCode: string) {
+  if (actionCode === "VOID_FISCAL_DOCUMENT") {
+    return "Sales Invoice void";
+  }
+
+  return displayValue(actionCode);
 }
 
 function fiscalVoidAuditResultPresentation(resultClass: string) {
