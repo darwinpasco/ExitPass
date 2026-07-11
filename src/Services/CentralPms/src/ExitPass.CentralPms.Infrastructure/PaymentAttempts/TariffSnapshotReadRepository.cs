@@ -193,6 +193,7 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
              */
             WITH applied_snapshots AS (
                 SELECT
+                    pba.statutory_discount_payable_basis_application_id,
                     ts.parking_session_id,
                     original.tariff_snapshot_id AS original_tariff_snapshot_id,
                     ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
@@ -207,13 +208,17 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                 JOIN discounts.statutory_discount_validations AS sdv
                   ON sdv.statutory_discount_validation_id = ts.statutory_discount_validation_id
                  AND sdv.parking_session_id = ts.parking_session_id
+                LEFT JOIN discounts.statutory_discount_payable_basis_applications AS pba
+                  ON pba.applied_tariff_snapshot_id = ts.tariff_snapshot_id
+                 AND pba.statutory_discount_validation_id = ts.statutory_discount_validation_id
+                 AND pba.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
                 WHERE ts.parking_session_id = @parking_session_id
                   AND ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
                   AND ts.statutory_discount_validation_id IS NOT NULL
                   AND ts.statutory_discount_amount > 0
             )
             SELECT
-                NULL::uuid AS statutory_discount_payable_basis_application_id,
+                app.statutory_discount_payable_basis_application_id,
                 app.parking_session_id,
                 app.original_tariff_snapshot_id,
                 app.applied_tariff_snapshot_id,

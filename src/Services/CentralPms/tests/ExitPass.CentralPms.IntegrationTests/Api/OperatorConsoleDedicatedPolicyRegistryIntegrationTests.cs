@@ -696,6 +696,15 @@ public sealed class OperatorConsoleDedicatedPolicyRegistryIntegrationTests
                   AND requested_by_user_id = @user_id
             );
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id
+              AND statutory_discount_validation_id IN (
+                SELECT statutory_discount_validation_id
+                FROM discounts.statutory_discount_validations
+                WHERE parking_session_id = @parking_session_id
+                  AND requested_by_user_id = @user_id
+            );
+
             DELETE FROM discounts.statutory_discount_validations
             WHERE parking_session_id = @parking_session_id
               AND requested_by_user_id = @user_id;

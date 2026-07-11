@@ -33,6 +33,16 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                 )
             );
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE statutory_discount_validation_id IN (
+                SELECT statutory_discount_validation_id
+                FROM discounts.statutory_discount_validations
+                WHERE requested_by_user_id IN (
+                    '77000000-0000-0000-0000-000000000010',
+                    '77000000-0000-0000-0000-000000000011'
+                )
+            );
+
             DELETE FROM discounts.statutory_discount_validations
             WHERE requested_by_user_id IN (
                 '77000000-0000-0000-0000-000000000010',

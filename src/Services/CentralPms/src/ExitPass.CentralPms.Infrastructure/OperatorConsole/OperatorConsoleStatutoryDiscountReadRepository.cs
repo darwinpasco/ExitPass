@@ -201,6 +201,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                     'requiresEvidence', p.requires_evidence_capture
                 )::text AS resolved_policy_snapshot_json,
                 latest_application.original_tariff_snapshot_id,
+                latest_application.payable_basis_application_id,
                 latest_application.application_status::text,
                 ROUND(COALESCE(sdv.gross_amount_at_validation, active_tariff.gross_amount) * 100)::bigint AS original_amount_minor_units,
                 COALESCE(
@@ -232,18 +233,16 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             ) AS active_tariff ON TRUE
             LEFT JOIN LATERAL (
                 SELECT
-                    original.tariff_snapshot_id AS original_tariff_snapshot_id,
-                    'APPLIED'::text AS application_status,
-                    ROUND(applied_ts.statutory_discount_amount * 100)::bigint AS statutory_discount_amount_minor_units,
-                    ROUND(applied_ts.net_amount * 100)::bigint AS final_payable_amount_minor_units,
-                    applied_ts.currency_code
-                FROM core.tariff_snapshots AS applied_ts
-                LEFT JOIN core.tariff_snapshots AS original
-                  ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
-                 AND original.parking_session_id = applied_ts.parking_session_id
-                WHERE applied_ts.statutory_discount_validation_id = sdv.statutory_discount_validation_id
-                  AND applied_ts.statutory_discount_amount > 0
-                ORDER BY applied_ts.calculated_at DESC, applied_ts.tariff_snapshot_id DESC
+                    app.original_tariff_snapshot_id,
+                    app.statutory_discount_payable_basis_application_id AS payable_basis_application_id,
+                    app.application_status::text AS application_status,
+                    app.statutory_discount_amount_minor_units,
+                    app.final_payable_amount_minor_units,
+                    app.currency_code
+                FROM discounts.statutory_discount_payable_basis_applications AS app
+                WHERE app.statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+                ORDER BY app.applied_at DESC NULLS LAST, app.updated_at DESC, app.statutory_discount_payable_basis_application_id DESC
                 LIMIT 1
             ) AS latest_application ON TRUE
             LEFT JOIN LATERAL (
@@ -547,7 +546,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             GetNullableString(reader, "stacking_policy"),
             GetNullableJson(reader, "resolved_policy_snapshot_json"),
             GetNullableGuid(reader, "original_tariff_snapshot_id"),
-            null,
+            GetNullableGuid(reader, "payable_basis_application_id"),
             applicationStatus,
             GetNullableLong(reader, "original_amount_minor_units"),
             GetNullableLong(reader, "statutory_discount_amount_minor_units"),

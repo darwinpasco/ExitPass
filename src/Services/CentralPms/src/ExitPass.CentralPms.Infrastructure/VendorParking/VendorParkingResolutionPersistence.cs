@@ -869,7 +869,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
     {
         const string sql = """
             SELECT
-                NULL::uuid AS statutory_discount_payable_basis_application_id,
+                pba.statutory_discount_payable_basis_application_id,
                 applied_ts.statutory_discount_validation_id,
                 original.tariff_snapshot_id AS original_tariff_snapshot_id,
                 applied_ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
@@ -882,6 +882,10 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             LEFT JOIN core.tariff_snapshots AS original
                 ON original.superseded_by_tariff_snapshot_id = applied_ts.tariff_snapshot_id
                AND original.parking_session_id = applied_ts.parking_session_id
+            LEFT JOIN discounts.statutory_discount_payable_basis_applications AS pba
+                ON pba.applied_tariff_snapshot_id = applied_ts.tariff_snapshot_id
+               AND pba.statutory_discount_validation_id = applied_ts.statutory_discount_validation_id
+               AND pba.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
             WHERE applied_ts.parking_session_id = @parking_session_id
               AND applied_ts.tariff_snapshot_id = @effective_tariff_snapshot_id
               AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum

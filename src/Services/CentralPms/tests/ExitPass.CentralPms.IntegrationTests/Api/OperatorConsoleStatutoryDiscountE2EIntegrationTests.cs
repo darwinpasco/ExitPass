@@ -52,156 +52,164 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
         await SeedManualFixtureAsync();
         await ResetE2EStateAsync();
-        await InsertE2EPolicyFixtureAsync();
-        await InsertParkingSessionAsync();
-        await InsertBaseTariffSnapshotAsync();
-
-        using var factory = new CustomWebApplicationFactory();
-        using var client = factory.CreateClient();
-        var beforeBoundaryCount = await CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync();
-
-        var lookup = await PostOkAsync<OperatorConsoleSessionLookupResponse>(
-            client,
-            SessionLookupEndpoint,
-            SessionLookupRequest());
-        lookup.AccessAllowed.Should().BeTrue();
-        lookup.SessionFound.Should().BeTrue();
-        lookup.SessionEligible.Should().BeTrue();
-        lookup.ParkingSessionId.Should().Be(ParkingSessionId);
-        lookup.CurrentPayableAmountMinorUnits.Should().Be(12500);
-        lookup.DiscountStatus.Should().Be("NOT_APPLIED");
-
-        var policy = await PostOkAsync<OperatorConsoleStatutoryDiscountPolicyResolutionResponse>(
-            client,
-            PolicyResolutionEndpoint,
-            PolicyResolutionRequest());
-        policy.AccessAllowed.Should().BeTrue();
-        policy.PolicyResolved.Should().BeTrue();
-        policy.StatutoryDiscountPolicyId.Should().Be(PolicyId);
-        policy.PolicyCode.Should().Be("INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231");
-        policy.RequiresEvidence.Should().BeTrue();
-
-        var draft = await PostOkAsync<OperatorConsoleStatutoryDiscountDraftResponse>(
-            client,
-            DraftEndpoint,
-            DraftRequest(evidenceCaptureRequested: true));
-        draft.AccessAllowed.Should().BeTrue();
-        draft.DraftAccepted.Should().BeTrue();
-        draft.DraftPersisted.Should().BeTrue();
-        draft.DraftId.Should().NotBeNull();
-        draft.EvidenceRequired.Should().BeTrue();
-        draft.PolicyCode.Should().Be("INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231");
-
-        var draftId = draft.DraftId!.Value;
-        var initialDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
-            client,
-            DraftDetailEndpoint(draftId));
-        initialDetail.ValidationStatus.Should().Be("REQUESTED");
-        initialDetail.EvidenceRequired.Should().BeTrue();
-        initialDetail.EvidenceRequiredSatisfied.Should().BeFalse();
-        initialDetail.RequiredEvidenceTypes.Should().ContainSingle().Which.Should().Be("SENIOR_CITIZEN_ID");
-
-        var applyBeforeApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
-            client,
-            ApplyEndpoint(draftId),
-            ApplyRequest());
-        applyBeforeApproval.ApplicationAccepted.Should().BeFalse();
-        applyBeforeApproval.ApplicationPersisted.Should().BeFalse();
-        applyBeforeApproval.ErrorCode.Should().Be("STATUTORY_DISCOUNT_NOT_APPROVED");
-        (await CountApplicationsAsync(draftId)).Should().Be(0);
-
-        var blockedApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountDecisionResponse>(
-            client,
-            DecisionEndpoint(draftId),
-            DecisionRequest("APPROVE"));
-        blockedApproval.DecisionAccepted.Should().BeFalse();
-        blockedApproval.DecisionPersisted.Should().BeFalse();
-        blockedApproval.ErrorCode.Should().Be("EVIDENCE_REQUIRED_NOT_CAPTURED");
-        (await ReadDraftStatusAsync(draftId)).Should().Be("REQUESTED");
-
-        using (var wrongEvidenceResponse = await client.PostAsJsonAsync(
-            EvidenceEndpoint(draftId),
-            EvidenceRequest("PWD_ID")))
+        try
         {
-            wrongEvidenceResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-            var error = await wrongEvidenceResponse.Content.ReadFromJsonAsync<ErrorResponse>();
-            error.Should().NotBeNull();
-            error!.ErrorCode.Should().Be("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_EVIDENCE_REQUEST");
+            await InsertE2EPolicyFixtureAsync();
+            await InsertParkingSessionAsync();
+            await InsertBaseTariffSnapshotAsync();
+
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
+            var beforeBoundaryCount = await CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync();
+
+            var lookup = await PostOkAsync<OperatorConsoleSessionLookupResponse>(
+                client,
+                SessionLookupEndpoint,
+                SessionLookupRequest());
+            lookup.AccessAllowed.Should().BeTrue();
+            lookup.SessionFound.Should().BeTrue();
+            lookup.SessionEligible.Should().BeTrue();
+            lookup.ParkingSessionId.Should().Be(ParkingSessionId);
+            lookup.CurrentPayableAmountMinorUnits.Should().Be(12500);
+            lookup.DiscountStatus.Should().Be("NOT_APPLIED");
+
+            var policy = await PostOkAsync<OperatorConsoleStatutoryDiscountPolicyResolutionResponse>(
+                client,
+                PolicyResolutionEndpoint,
+                PolicyResolutionRequest());
+            policy.AccessAllowed.Should().BeTrue();
+            policy.PolicyResolved.Should().BeTrue();
+            policy.StatutoryDiscountPolicyId.Should().Be(PolicyId);
+            policy.PolicyCode.Should().Be("PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231");
+            policy.RequiresEvidence.Should().BeTrue();
+
+            var draft = await PostOkAsync<OperatorConsoleStatutoryDiscountDraftResponse>(
+                client,
+                DraftEndpoint,
+                DraftRequest(evidenceCaptureRequested: true));
+            draft.AccessAllowed.Should().BeTrue();
+            draft.DraftAccepted.Should().BeTrue();
+            draft.DraftPersisted.Should().BeTrue();
+            draft.DraftId.Should().NotBeNull();
+            draft.EvidenceRequired.Should().BeTrue();
+            draft.PolicyCode.Should().Be("PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231");
+
+            var draftId = draft.DraftId!.Value;
+            var initialDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
+                client,
+                DraftDetailEndpoint(draftId));
+            initialDetail.ValidationStatus.Should().Be("REQUESTED");
+            initialDetail.EvidenceRequired.Should().BeTrue();
+            initialDetail.EvidenceRequiredSatisfied.Should().BeFalse();
+            initialDetail.RequiredEvidenceTypes.Should().ContainSingle().Which.Should().Be("SENIOR_CITIZEN_ID");
+
+            var applyBeforeApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
+                client,
+                ApplyEndpoint(draftId),
+                ApplyRequest());
+            applyBeforeApproval.ApplicationAccepted.Should().BeFalse();
+            applyBeforeApproval.ApplicationPersisted.Should().BeFalse();
+            applyBeforeApproval.ErrorCode.Should().Be("STATUTORY_DISCOUNT_NOT_APPROVED");
+            (await CountApplicationsAsync(draftId)).Should().Be(0);
+
+            var blockedApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountDecisionResponse>(
+                client,
+                DecisionEndpoint(draftId),
+                DecisionRequest("APPROVE"));
+            blockedApproval.DecisionAccepted.Should().BeFalse();
+            blockedApproval.DecisionPersisted.Should().BeFalse();
+            blockedApproval.ErrorCode.Should().Be("EVIDENCE_REQUIRED_NOT_CAPTURED");
+            (await ReadDraftStatusAsync(draftId)).Should().Be("REQUESTED");
+
+            using (var wrongEvidenceResponse = await client.PostAsJsonAsync(
+                EvidenceEndpoint(draftId),
+                EvidenceRequest("PWD_ID")))
+            {
+                wrongEvidenceResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+                var error = await wrongEvidenceResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+                error.Should().NotBeNull();
+                error!.ErrorCode.Should().Be("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_EVIDENCE_REQUEST");
+            }
+
+            var afterWrongEvidenceDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
+                client,
+                DraftDetailEndpoint(draftId));
+            afterWrongEvidenceDetail.EvidenceRequiredSatisfied.Should().BeFalse();
+            (await CountCapturedEvidenceAsync(draftId, "PWD_ID")).Should().Be(0);
+
+            var evidence = await PostOkAsync<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(
+                client,
+                EvidenceEndpoint(draftId),
+                EvidenceRequest("SENIOR_CITIZEN_ID"));
+            evidence.AccessAllowed.Should().BeTrue();
+            evidence.EvidenceRequiredSatisfied.Should().BeTrue();
+            evidence.VerificationStatus.Should().Be("CAPTURED");
+            evidence.StorageReference.Should().Be("operator-confirmed");
+            evidence.ReferenceNumberMasked.Should().BeNull();
+
+            var evidenceList = await GetOkAsync<OperatorConsoleStatutoryDiscountEvidenceListResponse>(
+                client,
+                EvidenceListEndpoint(draftId));
+            evidenceList.EvidenceRequired.Should().BeTrue();
+            evidenceList.EvidenceRequiredSatisfied.Should().BeTrue();
+            evidenceList.EvidenceCount.Should().BeGreaterThanOrEqualTo(1);
+            evidenceList.LatestEvidenceStatus.Should().Be("CAPTURED");
+            evidenceList.RequiredEvidenceTypes.Should().Contain("SENIOR_CITIZEN_ID");
+            evidenceList.Items.Should().Contain(item =>
+                item.EvidenceType == "SENIOR_CITIZEN_ID" &&
+                item.CaptureMethod == "OPERATOR_CONFIRMED" &&
+                item.VerificationStatus == "CAPTURED");
+
+            var approved = await PostOkAsync<OperatorConsoleStatutoryDiscountDecisionResponse>(
+                client,
+                DecisionEndpoint(draftId),
+                DecisionRequest("APPROVE"));
+            approved.AccessAllowed.Should().BeTrue();
+            approved.DecisionAccepted.Should().BeTrue();
+            approved.DecisionPersisted.Should().BeTrue();
+            approved.CurrentValidationStatus.Should().Be("APPROVED");
+
+            var applied = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
+                client,
+                ApplyEndpoint(draftId),
+                ApplyRequest());
+            applied.AccessAllowed.Should().BeTrue();
+            applied.ApplicationAccepted.Should().BeTrue();
+            applied.ApplicationPersisted.Should().BeTrue();
+            applied.ApplicationStatus.Should().Be("APPLIED");
+            applied.PayableBasisApplicationId.Should().NotBeNull();
+            applied.StatutoryDiscountValidationId.Should().Be(draftId);
+            applied.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
+            applied.AppliedTariffSnapshotId.Should().NotBeNull();
+            applied.StatutoryDiscountPolicyId.Should().Be(PolicyId);
+            applied.PolicyCode.Should().Be("PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231");
+            applied.PolicySnapshotUsed.Should().BeTrue();
+            applied.GrossAmountMinorUnits.Should().Be(12500);
+            applied.VatAmountMinorUnits.Should().Be(1339);
+            applied.VatExclusiveAmountMinorUnits.Should().Be(11161);
+            applied.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
+            applied.FinalPayableAmountMinorUnits.Should().Be(8929);
+
+            var finalDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
+                client,
+                DraftDetailEndpoint(draftId));
+            finalDetail.ValidationStatus.Should().Be("APPROVED");
+            finalDetail.EvidenceRequiredSatisfied.Should().BeTrue();
+            finalDetail.LatestEvidenceStatus.Should().Be("CAPTURED");
+            finalDetail.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId);
+            finalDetail.PayableBasisApplicationStatus.Should().Be("APPLIED");
+            finalDetail.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
+            finalDetail.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
+            finalDetail.PayableAmountMinorUnits.Should().Be(8929);
+
+            (await CountApplicationsAsync(draftId)).Should().Be(1);
+            var afterBoundaryCount = await CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync();
+            afterBoundaryCount.Should().Be(beforeBoundaryCount);
         }
-
-        var afterWrongEvidenceDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
-            client,
-            DraftDetailEndpoint(draftId));
-        afterWrongEvidenceDetail.EvidenceRequiredSatisfied.Should().BeFalse();
-        (await CountCapturedEvidenceAsync(draftId, "PWD_ID")).Should().Be(0);
-
-        var evidence = await PostOkAsync<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(
-            client,
-            EvidenceEndpoint(draftId),
-            EvidenceRequest("SENIOR_CITIZEN_ID"));
-        evidence.AccessAllowed.Should().BeTrue();
-        evidence.EvidenceRequiredSatisfied.Should().BeTrue();
-        evidence.VerificationStatus.Should().Be("CAPTURED");
-        evidence.StorageReference.Should().Be("operator-confirmed");
-        evidence.ReferenceNumberMasked.Should().BeNull();
-
-        var evidenceList = await GetOkAsync<OperatorConsoleStatutoryDiscountEvidenceListResponse>(
-            client,
-            EvidenceListEndpoint(draftId));
-        evidenceList.EvidenceRequired.Should().BeTrue();
-        evidenceList.EvidenceRequiredSatisfied.Should().BeTrue();
-        evidenceList.EvidenceCount.Should().BeGreaterThanOrEqualTo(1);
-        evidenceList.LatestEvidenceStatus.Should().Be("CAPTURED");
-        evidenceList.RequiredEvidenceTypes.Should().Contain("SENIOR_CITIZEN_ID");
-        evidenceList.Items.Should().Contain(item =>
-            item.EvidenceType == "SENIOR_CITIZEN_ID" &&
-            item.CaptureMethod == "OPERATOR_CONFIRMED" &&
-            item.VerificationStatus == "CAPTURED");
-
-        var approved = await PostOkAsync<OperatorConsoleStatutoryDiscountDecisionResponse>(
-            client,
-            DecisionEndpoint(draftId),
-            DecisionRequest("APPROVE"));
-        approved.AccessAllowed.Should().BeTrue();
-        approved.DecisionAccepted.Should().BeTrue();
-        approved.DecisionPersisted.Should().BeTrue();
-        approved.CurrentValidationStatus.Should().Be("APPROVED");
-
-        var applied = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
-            client,
-            ApplyEndpoint(draftId),
-            ApplyRequest());
-        applied.AccessAllowed.Should().BeTrue();
-        applied.ApplicationAccepted.Should().BeTrue();
-        applied.ApplicationPersisted.Should().BeTrue();
-        applied.ApplicationStatus.Should().Be("APPLIED");
-        applied.StatutoryDiscountValidationId.Should().Be(draftId);
-        applied.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
-        applied.AppliedTariffSnapshotId.Should().NotBeNull();
-        applied.StatutoryDiscountPolicyId.Should().Be(PolicyId);
-        applied.PolicyCode.Should().Be("INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231");
-        applied.PolicySnapshotUsed.Should().BeTrue();
-        applied.GrossAmountMinorUnits.Should().Be(12500);
-        applied.VatAmountMinorUnits.Should().Be(1339);
-        applied.VatExclusiveAmountMinorUnits.Should().Be(11161);
-        applied.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
-        applied.FinalPayableAmountMinorUnits.Should().Be(8929);
-
-        var finalDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
-            client,
-            DraftDetailEndpoint(draftId));
-        finalDetail.ValidationStatus.Should().Be("APPROVED");
-        finalDetail.EvidenceRequiredSatisfied.Should().BeTrue();
-        finalDetail.LatestEvidenceStatus.Should().Be("CAPTURED");
-        finalDetail.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId);
-        finalDetail.PayableBasisApplicationStatus.Should().Be("APPLIED");
-        finalDetail.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
-        finalDetail.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
-        finalDetail.PayableAmountMinorUnits.Should().Be(8929);
-
-        (await CountApplicationsAsync(draftId)).Should().Be(1);
-        var afterBoundaryCount = await CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync();
-        afterBoundaryCount.Should().Be(beforeBoundaryCount);
+        finally
+        {
+            await ResetE2EStateAsync();
+        }
     }
 
     private static OperatorConsoleSessionLookupRequest SessionLookupRequest() =>
@@ -390,6 +398,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                 WHERE parking_session_id = @parking_session_id
             );
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM discounts.statutory_discount_validations
             WHERE parking_session_id = @parking_session_id;
 
@@ -404,7 +415,10 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             WHERE parking_session_id = @parking_session_id;
 
             DELETE FROM discounts.discount_policy_references
-            WHERE policy_code = 'INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231';
+            WHERE policy_code = 'PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231';
+
+            DELETE FROM discounts.statutory_discount_policy_registry
+            WHERE policy_code = 'PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231';
 
             COMMIT;
             """;
@@ -445,22 +459,109 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             )
             VALUES (
                 @policy_id,
-                'INTEGRATION_E2E_REQUIRED_EVIDENCE_POLICY_231',
-                'Integration E2E Required Evidence Policy 231',
-                'Integration E2E test policy requiring metadata-only evidence.',
+                'PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231',
+                'ATC Senior Citizen Site Policy 231',
+                'Senior Citizen site policy requiring metadata-only evidence.',
                 'SITE_POLICY',
                 'SITE_POLICY',
                 'SENIOR_CITIZEN',
-                'INTEGRATION-E2E-ORD-231',
+                'ATC-ORD-231',
                 @lgu_code,
                 @site_id,
                 0,
-                'integration-v1',
+                'policy-v1',
                 true,
                 true,
                 now() - interval '1 day',
                 'ACTIVE'
             );
+
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_code,
+                jurisdiction_name,
+                site_group_id,
+                site_id,
+                beneficiary_residency_scope,
+                facility_scope,
+                requires_evidence,
+                required_evidence_type,
+                requires_operator_validation,
+                legal_basis_reference,
+                ordinance_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                effective_to,
+                notes,
+                correlation_id
+            )
+            VALUES (
+                @policy_id,
+                'PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231',
+                'ATC Senior Citizen Site Policy 231',
+                'Senior Citizen site policy requiring metadata-only evidence.',
+                'SENIOR_CITIZEN'::discounts.statutory_entitlement_type_enum,
+                'ACTIVE'::discounts.discount_policy_status_enum,
+                'ACTIVE_APPROVED'::discounts.policy_verification_status_enum,
+                'SITE_POLICY'::discounts.discount_policy_level_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_type_enum,
+                'SITE_POLICY_OPERATIONAL_ONLY'::discounts.policy_resolution_basis_enum,
+                'STATUTORY_DISCOUNT_VAT_EXEMPT'::discounts.parking_benefit_type_enum,
+                'VAT_EXCLUSIVE'::discounts.discount_base_scope_enum,
+                @lgu_code,
+                'ATC Jurisdiction',
+                @site_group_id,
+                @site_id,
+                'NON_RESIDENT_ALLOWED'::discounts.beneficiary_residency_scope_enum,
+                'ATC parking facility.',
+                true,
+                'SENIOR_CITIZEN_ID'::discounts.discount_evidence_type_enum,
+                true,
+                'ATC-ORD-231',
+                'ATC-ORD-231',
+                'policy-v1',
+                'policy-reviewer-231',
+                now() - interval '2 days',
+                'policy-approver-231',
+                now() - interval '1 day',
+                now() - interval '1 day',
+                NULL,
+                'Senior Citizen site policy requiring evidence capture.',
+                gen_random_uuid()
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET statutory_discount_policy_registry_id = EXCLUDED.statutory_discount_policy_registry_id,
+                policy_name = EXCLUDED.policy_name,
+                entitlement_type = EXCLUDED.entitlement_type,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                jurisdiction_code = EXCLUDED.jurisdiction_code,
+                site_group_id = EXCLUDED.site_group_id,
+                site_id = EXCLUDED.site_id,
+                requires_evidence = EXCLUDED.requires_evidence,
+                required_evidence_type = EXCLUDED.required_evidence_type,
+                reviewed_by = EXCLUDED.reviewed_by,
+                reviewed_at = EXCLUDED.reviewed_at,
+                approved_by = EXCLUDED.approved_by,
+                approved_at = EXCLUDED.approved_at,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
+                updated_at = now();
 
             COMMIT;
             """;
@@ -469,6 +570,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = E2ELguCode;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = SiteId;
+        command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = SiteGroupId;
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = PolicyId;
         await command.ExecuteNonQueryAsync();
     }
@@ -550,7 +652,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                 @parking_session_id,
                 @vendor_system_id,
                 'INTEGRATION-OPERATOR-CONSOLE-E2E-231',
-                'INTEGRATION-E2E-V1',
+                'ATC-POLICY-V1',
                 'PHP',
                 125.00,
                 0,
@@ -594,9 +696,8 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
     {
         const string sql = """
             SELECT COUNT(*)
-            FROM core.tariff_snapshots
+            FROM discounts.statutory_discount_payable_basis_applications
             WHERE statutory_discount_validation_id = @statutory_discount_validation_id
-              AND statutory_discount_amount > 0;
             """;
 
         await using var connection = await OpenConnectionAsync();

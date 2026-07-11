@@ -966,6 +966,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         Guid correlationId)
     {
         var validationId = Guid.NewGuid();
+        var applicationId = Guid.NewGuid();
         var appliedTariffSnapshotId = Guid.NewGuid();
 
         const string sql = """
@@ -1082,6 +1083,65 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
                 row_version = row_version + 1
             WHERE tariff_snapshot_id = @original_tariff_snapshot_id;
 
+            INSERT INTO discounts.statutory_discount_payable_basis_applications (
+                statutory_discount_payable_basis_application_id,
+                statutory_discount_validation_id,
+                parking_session_id,
+                original_tariff_snapshot_id,
+                applied_tariff_snapshot_id,
+                application_status,
+                application_channel,
+                gross_amount_minor_units,
+                vat_amount_minor_units,
+                vat_exclusive_amount_minor_units,
+                statutory_discount_amount_minor_units,
+                final_payable_amount_minor_units,
+                currency_code,
+                computation_basis_json,
+                rounding_mode,
+                applied_at,
+                applied_by_service_identity_id,
+                idempotency_key,
+                correlation_id,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            VALUES (
+                @application_id,
+                @validation_id,
+                @parking_session_id,
+                @original_tariff_snapshot_id,
+                @applied_tariff_snapshot_id,
+                'APPLIED'::discounts.statutory_discount_payable_application_status_enum,
+                'SYSTEM'::discounts.statutory_discount_payable_application_channel_enum,
+                10000,
+                1071,
+                8929,
+                1786,
+                7143,
+                'PHP',
+                jsonb_build_object(
+                    'policyContext',
+                    jsonb_build_object(
+                        'policyResolutionBasis', 'NATIONAL_LAW_FALLBACK',
+                        'benefitType', 'STATUTORY_DISCOUNT_VAT_EXEMPT'
+                    )
+                ),
+                'HALF_AWAY_FROM_ZERO',
+                NOW(),
+                @service_identity_id,
+                'vendor-parking-applied-payable-basis-fixture-' || @application_id::text,
+                @correlation_id,
+                NOW(),
+                @service_identity_id,
+                NOW(),
+                @service_identity_id,
+                1
+            );
+
             """;
 
         await using var connection = new NpgsqlConnection(
@@ -1089,6 +1149,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("validation_id", validationId);
+        command.Parameters.AddWithValue("application_id", applicationId);
         command.Parameters.AddWithValue("applied_tariff_snapshot_id", appliedTariffSnapshotId);
         command.Parameters.AddWithValue("parking_session_id", resolved.ParkingSessionId);
         command.Parameters.AddWithValue("original_tariff_snapshot_id", resolved.TariffSnapshotId);
@@ -1097,7 +1158,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
 
         await command.ExecuteNonQueryAsync();
 
-        return new AppliedPayableBasisFixture(validationId, null, appliedTariffSnapshotId);
+        return new AppliedPayableBasisFixture(validationId, applicationId, appliedTariffSnapshotId);
     }
 
     private static async Task<long> CountPaymentAttemptsAsync(Guid parkingSessionId)

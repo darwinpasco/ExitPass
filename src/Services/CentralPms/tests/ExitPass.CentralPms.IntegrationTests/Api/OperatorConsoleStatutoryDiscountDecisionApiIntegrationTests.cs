@@ -440,6 +440,9 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
                SET tariff_snapshot_id = NULL
              WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
             UPDATE core.tariff_snapshots
                SET superseded_by_tariff_snapshot_id = NULL,
                    statutory_discount_validation_id = NULL
@@ -462,6 +465,16 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         const string sql = """
             DELETE FROM discounts.discount_evidence_references
             WHERE statutory_discount_validation_id IN (
+                SELECT statutory_discount_validation_id
+                FROM discounts.statutory_discount_validations
+                WHERE parking_session_id = @parking_session_id
+                  AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
+                  AND validation_channel = 'OPERATOR_ASSISTED'
+            );
+
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id
+              AND statutory_discount_validation_id IN (
                 SELECT statutory_discount_validation_id
                 FROM discounts.statutory_discount_validations
                 WHERE parking_session_id = @parking_session_id
