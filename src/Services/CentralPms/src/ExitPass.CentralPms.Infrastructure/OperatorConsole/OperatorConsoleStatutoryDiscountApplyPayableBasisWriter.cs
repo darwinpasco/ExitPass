@@ -15,10 +15,7 @@ namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
     : IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter
 {
-    private const decimal VatRate = 0.12m;
-    private const decimal StatutoryDiscountRate = 0.20m;
     private const string ApplicationStatusApplied = "APPLIED";
-    private const string RoundingMode = "HALF_AWAY_FROM_ZERO";
 
     private readonly string _connectionString;
 
@@ -108,13 +105,23 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
                 return NotAccepted(validation, policy.IneligibilityReason!, policy.ErrorCode!);
             }
 
+            var computation = ComputeAmounts(validation, originalSnapshot, policy.Policy!);
+            if (computation.Computed is null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return NotAccepted(
+                    validation,
+                    computation.ErrorCode ?? "STATUTORY_DISCOUNT_COMPUTATION_NOT_SUPPORTED",
+                    computation.ErrorCode ?? "STATUTORY_DISCOUNT_COMPUTATION_NOT_SUPPORTED");
+            }
+
             var finalizedApplication = await ApplyLockedSchemaAsync(
                 connection,
                 transaction,
                 command,
                 validation,
                 originalSnapshot,
-                ComputeAmounts(originalSnapshot),
+                computation.Computed,
                 policy.Policy!,
                 cancellationToken);
 
@@ -642,27 +649,30 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         return null;
     }
 
-    private static ComputedPayableBasis ComputeAmounts(TariffSnapshotRow originalSnapshot)
+    private static (ComputedPayableBasis? Computed, string? ErrorCode) ComputeAmounts(
+        ValidationRow validation,
+        TariffSnapshotRow originalSnapshot,
+        PolicySnapshotContext policy)
     {
-        var grossMinorUnits = ToMinorUnits(originalSnapshot.GrossAmount);
-        var vatExclusiveMinorUnits = decimal.ToInt64(decimal.Round(
-            grossMinorUnits / (1m + VatRate),
-            0,
-            MidpointRounding.AwayFromZero));
-        var vatMinorUnits = grossMinorUnits - vatExclusiveMinorUnits;
-        var statutoryDiscountMinorUnits = decimal.ToInt64(decimal.Round(
-            vatExclusiveMinorUnits * StatutoryDiscountRate,
-            0,
-            MidpointRounding.AwayFromZero));
-        var finalPayableMinorUnits = vatExclusiveMinorUnits - statutoryDiscountMinorUnits;
+        var result = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            new OperatorConsoleStatutoryDiscountComputationRequest(
+                ToMinorUnits(originalSnapshot.GrossAmount),
+                validation.EntitlementType,
+                policy.BenefitType,
+                policy.DiscountBaseScope));
 
-        return new ComputedPayableBasis(
-            grossMinorUnits,
-            vatMinorUnits,
-            vatExclusiveMinorUnits,
-            statutoryDiscountMinorUnits,
-            finalPayableMinorUnits,
-            originalSnapshot.CurrencyCode);
+        if (!result.Accepted)
+        {
+            return (null, result.ErrorCode);
+        }
+
+        return (new ComputedPayableBasis(
+            result.GrossAmountMinorUnits,
+            result.VatAmountMinorUnits!.Value,
+            result.VatExclusiveAmountMinorUnits!.Value,
+            result.StatutoryDiscountAmountMinorUnits!.Value,
+            result.FinalPayableAmountMinorUnits!.Value,
+            originalSnapshot.CurrencyCode), null);
     }
 
     private static string BuildComputationBasisJson(TariffSnapshotRow originalSnapshot, PolicySnapshotContext policy) =>
@@ -670,10 +680,10 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisWriter
         {
             basis = "GROSS_INCLUSIVE_OF_VAT",
             sourceTariffSnapshotId = originalSnapshot.TariffSnapshotId,
-            vatRate = VatRate,
-            statutoryDiscountRate = StatutoryDiscountRate,
+            vatRate = OperatorConsoleStatutoryDiscountComputationContract.VatRate,
+            statutoryDiscountRate = OperatorConsoleStatutoryDiscountComputationContract.StatutoryDiscountRate,
             formula = "final_payable = round(gross / 1.12) - round(round(gross / 1.12) * 0.20)",
-            roundingMode = RoundingMode,
+            roundingMode = OperatorConsoleStatutoryDiscountComputationContract.RoundingMode,
             policyContext = new
             {
                 statutoryDiscountPolicyId = policy.StatutoryDiscountPolicyId,
