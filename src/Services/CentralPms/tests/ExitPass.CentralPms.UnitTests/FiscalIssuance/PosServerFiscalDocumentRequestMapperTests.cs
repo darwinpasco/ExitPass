@@ -68,6 +68,126 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
     }
 
     [Fact]
+    public void Map_WhenPwdStatutoryDiscountApplied_MapsDiscountedPayableAndPrivilegeMetadata()
+    {
+        var validationId = Guid.Parse("10101010-1010-4010-8010-101010101010");
+        var applicationId = Guid.Parse("20202020-2020-4020-8020-202020202020");
+        var appliedTariffSnapshotId = Guid.Parse("30303030-3030-4030-8030-303030303030");
+        var context = ValidContext() with
+        {
+            PayableBasis = new CentralPmsPayableBasisContext(
+                PayableBasisRef: appliedTariffSnapshotId.ToString("D"),
+                UpstreamFinalityRef: "pwd-discount-upstream-finality-ref",
+                CurrencyCode: "PHP",
+                PayableAmountMinorUnits: 8929,
+                DiscountReferences:
+                [
+                    new CentralPmsFiscalDiscountReferenceContext(
+                        DiscountValidationRef: validationId.ToString("D"),
+                        Status: "approved",
+                        AppliesStatutoryDiscountTreatment: true,
+                        ReferenceContext: new Dictionary<string, string>
+                        {
+                            ["payableBasisApplicationId"] = applicationId.ToString("D"),
+                            ["entitlementType"] = "PWD"
+                        })
+                ],
+                ReferenceContext: new Dictionary<string, string>
+                {
+                    ["appliedTariffSnapshotId"] = appliedTariffSnapshotId.ToString("D"),
+                    ["payableBasisApplicationId"] = applicationId.ToString("D"),
+                    ["entitlementType"] = "PWD"
+                }),
+            DocumentLines =
+            [
+                new CentralPmsFiscalDocumentLineContext(
+                    LineSequence: 1,
+                    LineTypeCodeId: null,
+                    Description: "Parking fee - statutory discount applied",
+                    Quantity: 1m,
+                    UnitAmountMinorUnits: 12500,
+                    GrossAmountMinorUnits: 12500,
+                    DiscountAmountMinorUnits: 2232,
+                    TaxAmountMinorUnits: 1339,
+                    NetAmountMinorUnits: 8929,
+                    CurrencyCode: "PHP",
+                    LineStatusCodeId: null,
+                    SourceRef: appliedTariffSnapshotId.ToString("D"),
+                    LineContext: new Dictionary<string, string> { ["entitlementType"] = "PWD" })
+            ],
+            Tenders =
+            [
+                new CentralPmsFiscalTenderContext(
+                    TenderTypeCodeId: null,
+                    AmountMinorUnits: 8929,
+                    CurrencyCode: "PHP",
+                    CentralPmsPaymentAttemptRef: "payment-attempt-ref",
+                    CentralPmsPaymentConfirmationRef: "payment-confirmation-ref",
+                    PaymentFinalityRef: "payment-finality-ref",
+                    ProviderRef: "provider-ref",
+                    TenderContext: new Dictionary<string, string> { ["channel"] = "webpay" })
+            ],
+            TaxDetails =
+            [
+                new CentralPmsFiscalTaxDetailContext(
+                    TaxTypeCodeId: null,
+                    TaxClassificationCodeId: null,
+                    TaxableAmountMinorUnits: 11161,
+                    TaxAmountMinorUnits: 1339,
+                    CurrencyCode: "PHP",
+                    LineSequence: 1,
+                    TaxRate: 12m,
+                    TaxContext: new Dictionary<string, string> { ["basis"] = "VAT_EXCLUSIVE" })
+            ],
+            DiscountPrivilegeDetails =
+            [
+                new CentralPmsFiscalDiscountPrivilegeDetailContext(
+                    DiscountPrivilegeTypeCodeId: null,
+                    BasisAmountMinorUnits: 11161,
+                    DiscountAmountMinorUnits: 2232,
+                    VatPrivilegeAmountMinorUnits: 1339,
+                    CurrencyCode: "PHP",
+                    LineSequence: 1,
+                    BeneficiaryRef: "metadata-only-beneficiary-ref",
+                    EvidenceRef: "metadata-only-evidence-captured",
+                    ApprovalRef: validationId.ToString("D"),
+                    DiscountPrivilegeContext: new Dictionary<string, string>
+                    {
+                        ["entitlementType"] = "PWD",
+                        ["payableBasisApplicationId"] = applicationId.ToString("D"),
+                        ["roundingMode"] = "HALF_AWAY_FROM_ZERO"
+                    })
+            ],
+            Totals =
+            [
+                new CentralPmsFiscalTotalContext(
+                    TotalTypeCodeId: null,
+                    AmountMinorUnits: 8929,
+                    CurrencyCode: "PHP",
+                    TotalContext: new Dictionary<string, string> { ["kind"] = "final_payable" })
+            ]
+        };
+
+        var result = _sut.Map(context);
+
+        result.PayableBasis.PayableAmountMinorUnits.Should().Be(8929);
+        result.Tenders.Should().ContainSingle().Which.AmountMinorUnits.Should().Be(8929);
+        result.DocumentLines.Should().ContainSingle().Which.Should().Match<PosServerFiscalDocumentLineRequest>(line =>
+            line.GrossAmountMinorUnits == 12500 &&
+            line.DiscountAmountMinorUnits == 2232 &&
+            line.TaxAmountMinorUnits == 1339 &&
+            line.NetAmountMinorUnits == 8929);
+        result.PayableBasis.DiscountReferences.Should().ContainSingle().Which.ReferenceContext
+            .Should().Contain("entitlementType", "PWD");
+        result.DiscountPrivilegeDetails.Should().ContainSingle().Which.Should()
+            .Match<PosServerFiscalDiscountPrivilegeDetailRequest>(discount =>
+                discount.BasisAmountMinorUnits == 11161 &&
+                discount.DiscountAmountMinorUnits == 2232 &&
+                discount.VatPrivilegeAmountMinorUnits == 1339 &&
+                discount.ApprovalRef == validationId.ToString("D"));
+    }
+
+    [Fact]
     public void RequestModels_DoNotExposeRawSensitivePayloadProperties()
     {
         var sensitiveTerms = new[] { "Pan", "Cvv", "Secret", "Token", "Credential", "Raw", "CallbackPayload" };

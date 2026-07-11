@@ -1,7 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Npgsql;
@@ -60,7 +65,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
             using var factory = new CustomWebApplicationFactory();
             using var client = factory.CreateClient();
-            var beforeBoundaryCount = await CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync();
+            var beforeUnsafeSideEffectCount = await CountUnsafeSideEffectRecordsAsync();
 
             var lookup = await PostOkAsync<OperatorConsoleSessionLookupResponse>(
                 client,
@@ -203,8 +208,95 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             finalDetail.PayableAmountMinorUnits.Should().Be(8929);
 
             (await CountApplicationsAsync(draftId)).Should().Be(1);
-            var afterBoundaryCount = await CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync();
-            afterBoundaryCount.Should().Be(beforeBoundaryCount);
+
+            var paymentAttempt = await CreatePaymentAttemptForAppliedBasisAsync(
+                applied.AppliedTariffSnapshotId!.Value,
+                $"operator-console-statutory-discount-e2e-payment-{Guid.NewGuid():N}");
+            paymentAttempt.ParkingSessionId.Should().Be(ParkingSessionId);
+            paymentAttempt.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId.Value);
+            paymentAttempt.AttemptStatus.Should().Be("REQUESTED");
+
+            var persistedAttempt = await ReadPaymentAttemptFinancialsAsync(paymentAttempt.PaymentAttemptId);
+            persistedAttempt.Should().NotBeNull();
+            persistedAttempt!.Amount.Should().Be(89.29m);
+            persistedAttempt.CurrencyCode.Should().Be("PHP");
+            persistedAttempt.GrossAmountSnapshot.Should().Be(125.00m);
+            persistedAttempt.StatutoryDiscountSnapshot.Should().Be(22.32m);
+            persistedAttempt.NetAmountSnapshot.Should().Be(89.29m);
+            persistedAttempt.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId.Value);
+
+            var paymentConfirmation = await RecordDiscountedPaymentConfirmationAsync(
+                paymentAttempt.PaymentAttemptId,
+                $"PCONF-STAT-DISCOUNT-{Guid.NewGuid():N}",
+                AmountConfirmed: 89.29m);
+            paymentConfirmation.PaymentAttemptId.Should().Be(paymentAttempt.PaymentAttemptId);
+
+            var persistedConfirmation = await PaymentRoutineTestHelper.GetPaymentConfirmationByIdAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                paymentConfirmation.PaymentConfirmationId);
+            persistedConfirmation.Should().NotBeNull();
+            persistedConfirmation!.AmountConfirmed.Should().Be(89.29m);
+            persistedConfirmation.CurrencyCode.Trim().Should().Be("PHP");
+
+            var fiscalReference = await PrepareFiscalIssuanceReferenceAsync(
+                paymentAttempt.PaymentAttemptId,
+                paymentConfirmation.PaymentConfirmationId,
+                applied.AppliedTariffSnapshotId!.Value);
+            fiscalReference.PaymentAttemptId.Should().Be(paymentAttempt.PaymentAttemptId);
+            fiscalReference.PaymentConfirmationId.Should().Be(paymentConfirmation.PaymentConfirmationId);
+            fiscalReference.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
+            fiscalReference.PayableBasisRef.Should().Be(applied.AppliedTariffSnapshotId.Value.ToString("D"));
+
+            var fiscalContext = BuildDiscountedFiscalContext(
+                draftId,
+                applied.PayableBasisApplicationId!.Value,
+                applied.AppliedTariffSnapshotId.Value,
+                paymentAttempt.PaymentAttemptId,
+                paymentConfirmation.PaymentConfirmationId,
+                fiscalReference);
+            var posServerRequest = new PosServerFiscalDocumentRequestMapper().Map(fiscalContext);
+
+            posServerRequest.PayableBasis.PayableAmountMinorUnits.Should().Be(8929);
+            posServerRequest.Tenders.Should().ContainSingle().Which.AmountMinorUnits.Should().Be(8929);
+            posServerRequest.DocumentLines.Should().ContainSingle().Which.Should().Match<PosServerFiscalDocumentLineRequest>(line =>
+                line.GrossAmountMinorUnits == 12500 &&
+                line.DiscountAmountMinorUnits == 2232 &&
+                line.TaxAmountMinorUnits == 1339 &&
+                line.NetAmountMinorUnits == 8929);
+            posServerRequest.TaxDetails.Should().ContainSingle().Which.Should().Match<PosServerFiscalTaxDetailRequest>(tax =>
+                tax.TaxableAmountMinorUnits == 11161 &&
+                tax.TaxAmountMinorUnits == 1339 &&
+                tax.TaxRate == 12m);
+            posServerRequest.PayableBasis.DiscountReferences.Should().ContainSingle().Which.Should()
+                .Match<PosServerFiscalDiscountReferenceRequest>(discount =>
+                    discount.DiscountValidationRef == draftId.ToString("D") &&
+                    discount.Status == "approved" &&
+                    discount.AppliesStatutoryDiscountTreatment);
+            posServerRequest.DiscountPrivilegeDetails.Should().ContainSingle().Which.Should()
+                .Match<PosServerFiscalDiscountPrivilegeDetailRequest>(discount =>
+                    discount.BasisAmountMinorUnits == 11161 &&
+                    discount.DiscountAmountMinorUnits == 2232 &&
+                    discount.VatPrivilegeAmountMinorUnits == 1339 &&
+                    discount.ApprovalRef == draftId.ToString("D"));
+            posServerRequest.ReferenceContext.Should().Contain("payableBasisApplicationId", applied.PayableBasisApplicationId.Value.ToString("D"));
+            posServerRequest.ReferenceContext.Should().Contain("statutoryDiscountValidationId", draftId.ToString("D"));
+            posServerRequest.PayableBasis.ReferenceContext.Should().Contain("appliedTariffSnapshotId", applied.AppliedTariffSnapshotId.Value.ToString("D"));
+            posServerRequest.PayableBasis.ReferenceContext.Should().Contain("entitlementType", "SENIOR_CITIZEN");
+
+            var semanticHash = new FiscalSemanticRequestHashCalculator().Calculate(posServerRequest);
+            semanticHash.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+
+            AssertNoSensitiveEvidenceOrPii(posServerRequest);
+
+            (await PaymentRoutineTestHelper.CountPaymentAttemptsForParkingSessionAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                ParkingSessionId)).Should().Be(1);
+            (await PaymentRoutineTestHelper.CountPaymentConfirmationsAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                paymentAttempt.PaymentAttemptId)).Should().Be(1);
+            (await CountFiscalIssuanceReferencesAsync()).Should().Be(1);
+            var afterUnsafeSideEffectCount = await CountUnsafeSideEffectRecordsAsync();
+            afterUnsafeSideEffectCount.Should().Be(beforeUnsafeSideEffectCount);
         }
         finally
         {
@@ -368,6 +460,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
               AND ea.parking_session_id = @parking_session_id;
 
             DELETE FROM core.exit_authorizations
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.fiscal_issuance_references
             WHERE parking_session_id = @parking_session_id;
 
             DELETE FROM core.payment_confirmations pc
@@ -724,16 +819,293 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
-    private static async Task<int> CountPaymentProviderGateCouponReconciliationBoundaryRecordsAsync()
+    private static async Task<PaymentAttemptFinancials?> ReadPaymentAttemptFinancialsAsync(Guid paymentAttemptId)
     {
         const string sql = """
             SELECT
-                (SELECT COUNT(*) FROM core.payment_attempts WHERE parking_session_id = @parking_session_id)
-              + (SELECT COUNT(*)
-                   FROM core.payment_confirmations pc
-                   JOIN core.payment_attempts pa ON pa.payment_attempt_id = pc.payment_attempt_id
-                  WHERE pa.parking_session_id = @parking_session_id)
-              + (SELECT COUNT(*) FROM core.exit_authorizations WHERE parking_session_id = @parking_session_id)
+                pa.payment_attempt_id,
+                pa.parking_session_id,
+                pa.tariff_snapshot_id,
+                pa.amount,
+                pa.currency_code::text AS currency_code,
+                ts.gross_amount,
+                ts.statutory_discount_amount,
+                ts.net_amount
+            FROM core.payment_attempts AS pa
+            JOIN core.tariff_snapshots AS ts
+                ON ts.tariff_snapshot_id = pa.tariff_snapshot_id
+            WHERE pa.payment_attempt_id = @payment_attempt_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("payment_attempt_id", NpgsqlDbType.Uuid).Value = paymentAttemptId;
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        return new PaymentAttemptFinancials(
+            reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            reader.GetDecimal(reader.GetOrdinal("amount")),
+            reader.GetString(reader.GetOrdinal("currency_code")).Trim(),
+            reader.GetDecimal(reader.GetOrdinal("gross_amount")),
+            reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount")),
+            reader.GetDecimal(reader.GetOrdinal("net_amount")));
+    }
+
+    private static async Task<PaymentRoutineTestHelper.CreateAttemptResult> CreatePaymentAttemptForAppliedBasisAsync(
+        Guid appliedTariffSnapshotId,
+        string idempotencyKey)
+    {
+        const string sql = """
+            SELECT
+                payment_attempt_id,
+                parking_session_id,
+                tariff_snapshot_id,
+                attempt_status,
+                payment_provider_code
+            FROM core.create_or_reuse_payment_attempt(
+                @p_parking_session_id,
+                @p_tariff_snapshot_id,
+                @p_payment_provider_code,
+                @p_idempotency_key,
+                @p_requested_by,
+                @p_correlation_id,
+                @p_now
+            );
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("p_parking_session_id", NpgsqlDbType.Uuid).Value = ParkingSessionId;
+        command.Parameters.Add("p_tariff_snapshot_id", NpgsqlDbType.Uuid).Value = appliedTariffSnapshotId;
+        command.Parameters.Add("p_payment_provider_code", NpgsqlDbType.Text).Value = "GCASH";
+        command.Parameters.Add("p_idempotency_key", NpgsqlDbType.Text).Value = idempotencyKey;
+        command.Parameters.Add("p_requested_by", NpgsqlDbType.Text).Value = "statutory-discount-payment-sales-invoice-proof";
+        command.Parameters.Add("p_correlation_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
+        command.Parameters.Add("p_now", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.UtcNow;
+
+        await using var reader = await command.ExecuteReaderAsync();
+        (await reader.ReadAsync()).Should().BeTrue();
+
+        return new PaymentRoutineTestHelper.CreateAttemptResult(
+            reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
+            reader.GetGuid(reader.GetOrdinal("parking_session_id")),
+            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            reader.GetString(reader.GetOrdinal("attempt_status")),
+            reader.GetString(reader.GetOrdinal("payment_provider_code")));
+    }
+
+    private static async Task<RecordPaymentConfirmationResult> RecordDiscountedPaymentConfirmationAsync(
+        Guid paymentAttemptId,
+        string providerReference,
+        decimal AmountConfirmed)
+    {
+        var service = new RecordPaymentConfirmationService(
+            new RecordPaymentConfirmationGateway(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString()));
+
+        return await service.ExecuteAsync(
+            new RecordPaymentConfirmationCommand(
+                paymentAttemptId,
+                providerReference,
+                "SUCCESS",
+                "statutory-discount-payment-sales-invoice-proof",
+                RawCallbackReference: null,
+                ProviderSignatureValid: true,
+                ProviderPayloadHash: null,
+                AmountConfirmed,
+                "PHP",
+                Guid.NewGuid()),
+            CancellationToken.None);
+    }
+
+    private static async Task<FiscalIssuanceReferenceRecord> PrepareFiscalIssuanceReferenceAsync(
+        Guid paymentAttemptId,
+        Guid paymentConfirmationId,
+        Guid appliedTariffSnapshotId)
+    {
+        var service = new FiscalIssuanceOrchestrationService(
+            new PostgresFiscalIssuanceReferenceRepository(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString()));
+
+        return await service.PreparePendingAsync(
+            new PrepareFiscalIssuanceCommand(
+                PaymentConfirmationId: paymentConfirmationId,
+                PaymentAttemptId: paymentAttemptId,
+                ParkingSessionId: ParkingSessionId,
+                TariffSnapshotId: appliedTariffSnapshotId,
+                SiteId: SiteId,
+                SitePosServerId: null,
+                SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+                FiscalDocumentTypeCodeId: null,
+                FiscalDocumentTypeCodeKey: "sales_invoice",
+                PayableBasisRef: appliedTariffSnapshotId.ToString("D"),
+                UpstreamFinalityReference: $"STAT-DISCOUNT-E2E:{paymentConfirmationId:D}:sales_invoice",
+                CorrelationId: Guid.NewGuid(),
+                ServiceIdentityId: ServiceIdentityId),
+            CancellationToken.None);
+    }
+
+    private static CentralPmsFiscalDocumentMappingContext BuildDiscountedFiscalContext(
+        Guid validationId,
+        Guid payableBasisApplicationId,
+        Guid appliedTariffSnapshotId,
+        Guid paymentAttemptId,
+        Guid paymentConfirmationId,
+        FiscalIssuanceReferenceRecord fiscalReference) =>
+        new(
+            SitePosServerId: null,
+            SitePosServerRef: "DEV-POS-SERVER-ATC-001",
+            FiscalDocumentTypeCodeId: null,
+            FiscalDocumentTypeCodeKey: "sales_invoice",
+            FiscalDocumentStatusCodeId: null,
+            BusinessDayDate: new DateOnly(2026, 7, 11),
+            CentralPmsParkingSessionRef: ParkingSessionId.ToString("D"),
+            CentralPmsPaymentAttemptRef: paymentAttemptId.ToString("D"),
+            CentralPmsPaymentConfirmationRef: paymentConfirmationId.ToString("D"),
+            PayableBasis: new CentralPmsPayableBasisContext(
+                PayableBasisRef: appliedTariffSnapshotId.ToString("D"),
+                UpstreamFinalityRef: fiscalReference.UpstreamFinalityReference,
+                CurrencyCode: "PHP",
+                PayableAmountMinorUnits: 8929,
+                DiscountReferences:
+                [
+                    new CentralPmsFiscalDiscountReferenceContext(
+                        DiscountValidationRef: validationId.ToString("D"),
+                        Status: "approved",
+                        AppliesStatutoryDiscountTreatment: true,
+                        ReferenceContext: new Dictionary<string, string>
+                        {
+                            ["payableBasisApplicationId"] = payableBasisApplicationId.ToString("D"),
+                            ["entitlementType"] = "SENIOR_CITIZEN",
+                            ["policyCode"] = "PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231"
+                        })
+                ],
+                ReferenceContext: new Dictionary<string, string>
+                {
+                    ["appliedTariffSnapshotId"] = appliedTariffSnapshotId.ToString("D"),
+                    ["originalTariffSnapshotId"] = OriginalTariffSnapshotId.ToString("D"),
+                    ["payableBasisApplicationId"] = payableBasisApplicationId.ToString("D"),
+                    ["entitlementType"] = "SENIOR_CITIZEN"
+                }),
+            DocumentLines:
+            [
+                new CentralPmsFiscalDocumentLineContext(
+                    LineSequence: 1,
+                    LineTypeCodeId: null,
+                    Description: "Parking fee - statutory discount applied",
+                    Quantity: 1m,
+                    UnitAmountMinorUnits: 12500,
+                    GrossAmountMinorUnits: 12500,
+                    DiscountAmountMinorUnits: 2232,
+                    TaxAmountMinorUnits: 1339,
+                    NetAmountMinorUnits: 8929,
+                    CurrencyCode: "PHP",
+                    LineStatusCodeId: null,
+                    SourceRef: appliedTariffSnapshotId.ToString("D"),
+                    LineContext: new Dictionary<string, string>
+                    {
+                        ["source"] = "central-pms-applied-payable-basis",
+                        ["entitlementType"] = "SENIOR_CITIZEN"
+                    })
+            ],
+            Tenders:
+            [
+                new CentralPmsFiscalTenderContext(
+                    TenderTypeCodeId: null,
+                    AmountMinorUnits: 8929,
+                    CurrencyCode: "PHP",
+                    CentralPmsPaymentAttemptRef: paymentAttemptId.ToString("D"),
+                    CentralPmsPaymentConfirmationRef: paymentConfirmationId.ToString("D"),
+                    PaymentFinalityRef: paymentConfirmationId.ToString("D"),
+                    ProviderRef: "statutory-discount-proof-provider-ref",
+                    TenderContext: new Dictionary<string, string> { ["paymentProvider"] = "GCASH" })
+            ],
+            TaxDetails:
+            [
+                new CentralPmsFiscalTaxDetailContext(
+                    TaxTypeCodeId: null,
+                    TaxClassificationCodeId: null,
+                    TaxableAmountMinorUnits: 11161,
+                    TaxAmountMinorUnits: 1339,
+                    CurrencyCode: "PHP",
+                    LineSequence: 1,
+                    TaxRate: 12m,
+                    TaxContext: new Dictionary<string, string> { ["basis"] = "VAT_EXCLUSIVE" })
+            ],
+            DiscountPrivilegeDetails:
+            [
+                new CentralPmsFiscalDiscountPrivilegeDetailContext(
+                    DiscountPrivilegeTypeCodeId: null,
+                    BasisAmountMinorUnits: 11161,
+                    DiscountAmountMinorUnits: 2232,
+                    VatPrivilegeAmountMinorUnits: 1339,
+                    CurrencyCode: "PHP",
+                    LineSequence: 1,
+                    BeneficiaryRef: "metadata-only-beneficiary-ref",
+                    EvidenceRef: "metadata-only-evidence-captured",
+                    ApprovalRef: validationId.ToString("D"),
+                    DiscountPrivilegeContext: new Dictionary<string, string>
+                    {
+                        ["entitlementType"] = "SENIOR_CITIZEN",
+                        ["discountBaseScope"] = "VAT_EXCLUSIVE",
+                        ["discountRateBasisPoints"] = "2000",
+                        ["roundingMode"] = "HALF_AWAY_FROM_ZERO",
+                        ["payableBasisApplicationId"] = payableBasisApplicationId.ToString("D")
+                    })
+            ],
+            Totals:
+            [
+                new CentralPmsFiscalTotalContext(
+                    TotalTypeCodeId: null,
+                    AmountMinorUnits: 8929,
+                    CurrencyCode: "PHP",
+                    TotalContext: new Dictionary<string, string> { ["kind"] = "final_payable" })
+            ],
+            ReferenceContext: new Dictionary<string, string>
+            {
+                ["statutoryDiscountValidationId"] = validationId.ToString("D"),
+                ["payableBasisApplicationId"] = payableBasisApplicationId.ToString("D"),
+                ["appliedTariffSnapshotId"] = appliedTariffSnapshotId.ToString("D"),
+                ["fiscalIssuanceReferenceId"] = fiscalReference.FiscalIssuanceReferenceId.ToString("D")
+            },
+            PaymentFinalityRef: paymentConfirmationId.ToString("D"),
+            VendorAckRef: null);
+
+    private static void AssertNoSensitiveEvidenceOrPii(PosServerFiscalDocumentCreateRequest request)
+    {
+        var serialized = System.Text.Json.JsonSerializer.Serialize(request).ToLowerInvariant();
+        serialized.Should().NotContain("raw_payload");
+        serialized.Should().NotContain("callback_payload");
+        serialized.Should().NotContain("entitlement_evidence_image");
+        serialized.Should().NotContain("base64");
+        serialized.Should().NotContain("1234");
+        serialized.Should().NotContain("osca");
+    }
+
+    private static async Task<int> CountFiscalIssuanceReferencesAsync()
+    {
+        const string sql = """
+            SELECT COUNT(*)::int
+            FROM core.fiscal_issuance_references
+            WHERE parking_session_id = @parking_session_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = ParkingSessionId;
+        return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    private static async Task<int> CountUnsafeSideEffectRecordsAsync()
+    {
+        const string sql = """
+            SELECT
+                (SELECT COUNT(*) FROM core.exit_authorizations WHERE parking_session_id = @parking_session_id)
               + (SELECT COUNT(*)
                    FROM gates.gate_authorization_consumptions gac
                    JOIN core.exit_authorizations ea ON ea.exit_authorization_id = gac.exit_authorization_id
@@ -754,6 +1126,16 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = ParkingSessionId;
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
+
+    private sealed record PaymentAttemptFinancials(
+        Guid PaymentAttemptId,
+        Guid ParkingSessionId,
+        Guid TariffSnapshotId,
+        decimal Amount,
+        string CurrencyCode,
+        decimal GrossAmountSnapshot,
+        decimal StatutoryDiscountSnapshot,
+        decimal NetAmountSnapshot);
 
     private static async Task<NpgsqlConnection> OpenConnectionAsync()
     {
