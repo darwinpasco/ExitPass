@@ -769,6 +769,9 @@ public sealed class RecordPaymentConfirmationIntegrationTests
                 row_version = row_version + 1
             WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM discounts.statutory_discount_validations
             WHERE parking_session_id = @parking_session_id;
             """;

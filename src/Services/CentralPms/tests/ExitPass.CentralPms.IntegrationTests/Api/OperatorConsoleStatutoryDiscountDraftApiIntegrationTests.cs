@@ -609,6 +609,9 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                SET tariff_snapshot_id = NULL
              WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
             UPDATE core.tariff_snapshots
                SET superseded_by_tariff_snapshot_id = NULL,
                    statutory_discount_validation_id = NULL

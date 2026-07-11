@@ -974,6 +974,9 @@ public sealed class ConsumeExitAuthorizationApiIntegrationTests
             WHERE parking_session_id = @parking_session_id
               AND statutory_discount_validation_id IS NOT NULL;
 
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM discounts.statutory_discount_validations
             WHERE parking_session_id = @parking_session_id;
             """;
