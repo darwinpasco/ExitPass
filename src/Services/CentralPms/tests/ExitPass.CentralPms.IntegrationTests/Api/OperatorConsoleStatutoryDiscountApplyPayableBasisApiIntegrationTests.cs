@@ -30,11 +30,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     private static readonly Guid FixtureOriginalTariffSnapshotId = Guid.Parse("4c000000-0000-0000-0000-000000000091");
     private static readonly Guid FixtureVendorSystemId = Guid.Parse("77000000-0000-0000-0000-000000000004");
     private static readonly Guid FixtureServiceIdentityId = Guid.Parse("77000000-0000-0000-0000-000000000003");
-    private const string FixtureLguCode = "PH-INT-NO-EVIDENCE-195";
     private static readonly Guid NoEvidencePolicyId = Guid.Parse("6f000000-0000-0000-0000-000000000101");
     private static readonly Guid MissingPolicyContextValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000195");
     private static readonly Guid EvaluatedOnlyPolicyContextValidationId = Guid.Parse("4c000000-0000-0000-0000-000000000196");
     private static readonly Guid PaymentAttemptGuardrailValidationId = Guid.Parse("4c000000-0000-0000-0000-00000000019a");
+    private static readonly Guid AlreadyDiscountedGuardrailValidationId = Guid.Parse("4c000000-0000-0000-0000-00000000019b");
+    private static readonly Guid CouponStackingGuardrailValidationId = Guid.Parse("4c000000-0000-0000-0000-00000000019c");
+    private static readonly Guid ExpiredTariffGuardrailValidationId = Guid.Parse("4c000000-0000-0000-0000-00000000019d");
+    private static readonly Guid StaleTariffGuardrailValidationId = Guid.Parse("4c000000-0000-0000-0000-00000000019e");
 
     /// <summary>
     /// Verifies the documented Operator Console apply-payable-basis route exists.
@@ -120,21 +123,22 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         applied.CurrencyCode.Should().Be("PHP");
         applied.StatutoryDiscountPolicyId.Should().Be(NoEvidencePolicyId);
         applied.ResolvedJurisdictionId.Should().BeNull();
-        applied.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
-        applied.PolicyCode.Should().Be("INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY");
+        applied.PolicyResolutionBasis.Should().Be("NATIONAL_LAW_FALLBACK");
+        applied.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
         applied.BenefitType.Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
-        applied.OrdinanceReference.Should().Be("INTEGRATION-NO-EVIDENCE-195");
+        applied.NationalLawReference.Should().Be("RA 9994");
+        applied.OrdinanceReference.Should().BeNull();
         applied.PolicySnapshotUsed.Should().BeTrue();
 
         var rowCount = await CountApplicationsAsync(draft.DraftId.Value);
         rowCount.Should().Be(1);
         var computationBasis = await ReadApplicationComputationBasisAsync(draft.DraftId.Value);
         computationBasis.GetProperty("policyContext").GetProperty("policyCode").GetString()
-            .Should().Be("INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY");
+            .Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
         computationBasis.GetProperty("policyContext").GetProperty("benefitType").GetString()
             .Should().Be("STATUTORY_DISCOUNT_VAT_EXEMPT");
-        computationBasis.GetProperty("policyContext").GetProperty("ordinanceReference").GetString()
-            .Should().Be("INTEGRATION-NO-EVIDENCE-195");
+        computationBasis.GetProperty("policyContext").GetProperty("nationalLawReference").GetString()
+            .Should().Be("RA 9994");
         var originalSnapshot = await ReadTariffSnapshotAsync(FixtureOriginalTariffSnapshotId);
         originalSnapshot.Status.Should().Be("SUPERSEDED");
         originalSnapshot.GrossAmount.Should().Be(125.00m);
@@ -270,7 +274,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         body!.ApplicationAccepted.Should().BeTrue();
         body.ApplicationPersisted.Should().BeTrue();
         body.StatutoryDiscountPolicyId.Should().Be(NoEvidencePolicyId);
-        body.PolicyCode.Should().Be("INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY");
+        body.PolicyCode.Should().Be("PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK");
         body.PolicySnapshotUsed.Should().BeTrue();
         (await CountApplicationsAsync(EvaluatedOnlyPolicyContextValidationId)).Should().Be(1);
     }
@@ -318,13 +322,151 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         originalSnapshot.NetAmount.Should().Be(125.00m);
     }
 
+    /// <summary>
+    /// Verifies an already-discounted original payable basis cannot receive another statutory discount.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenOriginalAlreadyHasStatutoryDiscount_FailsClosed()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync(statutoryDiscountAmount: 5.00m, netAmount: 120.00m);
+        await InsertApprovedValidationAsync(AlreadyDiscountedGuardrailValidationId, NoEvidencePolicyId);
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(AlreadyDiscountedGuardrailValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ApplicationPersisted.Should().BeFalse();
+        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_ALREADY_APPLIED");
+        (await CountAppliedTariffSnapshotsAsync(AlreadyDiscountedGuardrailValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies statutory discounts do not stack with an existing coupon/discount composition.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenOriginalHasCouponDiscount_FailsClosed()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync(couponDiscountAmount: 5.00m, netAmount: 120.00m);
+        await InsertApprovedValidationAsync(CouponStackingGuardrailValidationId, NoEvidencePolicyId);
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(CouponStackingGuardrailValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ApplicationPersisted.Should().BeFalse();
+        body.IneligibilityReason.Should().Be("COUPON_COMPOSITION_NOT_SUPPORTED");
+        body.ErrorCode.Should().Be("PAYABLE_BASIS_COMPONENTS_MISSING");
+        (await CountAppliedTariffSnapshotsAsync(CouponStackingGuardrailValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies expired original tariff snapshots are rejected and no applied snapshot is created.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenOriginalTariffExpired_FailsClosed()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync(expiresAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        await InsertApprovedValidationAsync(ExpiredTariffGuardrailValidationId, NoEvidencePolicyId);
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(ExpiredTariffGuardrailValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ApplicationPersisted.Should().BeFalse();
+        body.ErrorCode.Should().Be("SESSION_NOT_ELIGIBLE");
+        (await CountAppliedTariffSnapshotsAsync(ExpiredTariffGuardrailValidationId)).Should().Be(0);
+    }
+
+    /// <summary>
+    /// Verifies stale/non-active original tariff snapshots are rejected.
+    /// </summary>
+    [Fact]
+    public async Task ApplyPayableBasis_WhenOriginalTariffStale_FailsClosed()
+    {
+        if (!await CanOpenDatabaseAsync())
+        {
+            return;
+        }
+
+        await SeedManualFixtureAsync();
+        await ResetFixtureApplyStateAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync(snapshotStatus: "SUPERSEDED");
+        await InsertApprovedValidationAsync(StaleTariffGuardrailValidationId, NoEvidencePolicyId);
+
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsJsonAsync(
+            ApplyEndpoint(StaleTariffGuardrailValidationId),
+            ApplyRequest());
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
+        body.Should().NotBeNull();
+        body!.ApplicationAccepted.Should().BeFalse();
+        body.ApplicationPersisted.Should().BeFalse();
+        body.ErrorCode.Should().Be("TARIFF_SNAPSHOT_NOT_FOUND");
+        (await CountAppliedTariffSnapshotsAsync(StaleTariffGuardrailValidationId)).Should().Be(0);
+    }
+
     private static async Task<OperatorConsoleStatutoryDiscountDraftResponse> CreateDraftAsync(HttpClient client)
     {
         using var response = await client.PostAsJsonAsync(DraftEndpoint, DraftRequest());
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
         body.Should().NotBeNull();
-        body!.DraftAccepted.Should().BeTrue();
+        body!.DraftAccepted.Should().BeTrue(
+            "draft should be accepted; error={0} ineligibility={1} readiness={2} reason={3}",
+            body.ErrorCode,
+            body.IneligibilityReason,
+            body.PolicyReadinessClassification,
+            body.PolicyReadinessReason);
         body.DraftPersisted.Should().BeTrue();
         return body;
     }
@@ -396,16 +538,100 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     {
         await ClearPayableBasisApplyStateAsync();
         await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
-        await InsertNoEvidenceLocalPolicyAsync();
+        await InsertNoEvidenceNationalFallbackPolicyAsync();
     }
 
-    private static async Task InsertNoEvidenceLocalPolicyAsync()
+    private static async Task InsertNoEvidenceNationalFallbackPolicyAsync()
     {
         const string sql = """
-            UPDATE sites.sites
-               SET lgu_code = @lgu_code,
-                   updated_at = now()
-             WHERE site_id = @site_id;
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_code,
+                jurisdiction_name,
+                site_group_id,
+                site_id,
+                beneficiary_residency_scope,
+                facility_scope,
+                requires_evidence,
+                required_evidence_type,
+                requires_operator_validation,
+                legal_basis_reference,
+                ordinance_reference,
+                national_law_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                effective_to,
+                notes,
+                correlation_id
+            )
+            VALUES (
+                @policy_id,
+                'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'RA 9994 Senior Citizen National Fallback',
+                'Focused integration fixture for statutory discount payable-basis computation.',
+                'SENIOR_CITIZEN'::discounts.statutory_entitlement_type_enum,
+                'ACTIVE'::discounts.discount_policy_status_enum,
+                'VERIFIED_OFFICIAL'::discounts.policy_verification_status_enum,
+                'NATIONAL_LAW'::discounts.discount_policy_level_enum,
+                'LEGAL_REFERENCE'::discounts.discount_policy_type_enum,
+                'NATIONAL_LAW_FALLBACK'::discounts.policy_resolution_basis_enum,
+                'STATUTORY_DISCOUNT_VAT_EXEMPT'::discounts.parking_benefit_type_enum,
+                'VAT_EXCLUSIVE'::discounts.discount_base_scope_enum,
+                'PH',
+                'Philippines',
+                NULL,
+                NULL,
+                'NON_RESIDENT_ALLOWED'::discounts.beneficiary_residency_scope_enum,
+                'Operator Console apply-payable-basis fixture only.',
+                false,
+                NULL,
+                true,
+                'RA 9994',
+                NULL,
+                'RA 9994',
+                'central-pms-statutory-discount-computation-contract',
+                'central-pms-test',
+                now() - interval '2 days',
+                'central-pms-test',
+                now() - interval '1 day',
+                DATE '2026-01-01',
+                NULL,
+                'Focused non-production integration fixture.',
+                gen_random_uuid()
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET statutory_discount_policy_registry_id = EXCLUDED.statutory_discount_policy_registry_id,
+                policy_name = EXCLUDED.policy_name,
+                entitlement_type = EXCLUDED.entitlement_type,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                policy_level = EXCLUDED.policy_level,
+                policy_type = EXCLUDED.policy_type,
+                policy_resolution_basis = EXCLUDED.policy_resolution_basis,
+                benefit_type = EXCLUDED.benefit_type,
+                discount_base_scope = EXCLUDED.discount_base_scope,
+                requires_evidence = EXCLUDED.requires_evidence,
+                requires_operator_validation = EXCLUDED.requires_operator_validation,
+                legal_basis_reference = EXCLUDED.legal_basis_reference,
+                national_law_reference = EXCLUDED.national_law_reference,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
+                updated_at = now();
 
             INSERT INTO discounts.discount_policy_references (
                 discount_policy_reference_id,
@@ -416,6 +642,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
                 policy_level,
                 entitlement_type,
                 local_ordinance_reference,
+                national_law_reference,
                 lgu_code,
                 precedence_rank,
                 policy_version,
@@ -426,14 +653,15 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             )
             VALUES (
                 @policy_id,
-                'INTEGRATION_OPERATOR_CONSOLE_NO_EVIDENCE_POLICY',
-                'Integration Operator Console No Evidence Policy',
-                'Integration test local policy to keep existing decision/apply approval paths evidence-optional.',
-                'LOCAL_ORDINANCE',
-                'LOCAL_ORDINANCE',
+                'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'RA 9994 Senior Citizen National Fallback',
+                'Focused integration fixture for statutory discount payable-basis computation.',
+                'LEGAL_REFERENCE',
+                'NATIONAL_LAW',
                 'SENIOR_CITIZEN',
-                'INTEGRATION-NO-EVIDENCE-195',
-                @lgu_code,
+                NULL,
+                'RA 9994',
+                NULL,
                 10,
                 'integration-v1',
                 true,
@@ -443,6 +671,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             )
             ON CONFLICT (policy_code, policy_version) DO UPDATE
             SET lgu_code = EXCLUDED.lgu_code,
+                national_law_reference = EXCLUDED.national_law_reference,
                 requires_evidence_capture = EXCLUDED.requires_evidence_capture,
                 policy_status = EXCLUDED.policy_status,
                 updated_at = now();
@@ -451,8 +680,6 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = NoEvidencePolicyId;
-        command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = FixtureLguCode;
-        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = FixtureSiteId;
         await command.ExecuteNonQueryAsync();
     }
 
@@ -564,14 +791,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
                 SELECT statutory_discount_validation_id
                 FROM discounts.statutory_discount_validations
                 WHERE parking_session_id = @parking_session_id
-                  AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
-                  AND validation_channel = 'OPERATOR_ASSISTED'
             );
 
+            UPDATE discounts.statutory_discount_validations
+               SET tariff_snapshot_id = NULL
+             WHERE parking_session_id = @parking_session_id;
+
             DELETE FROM discounts.statutory_discount_validations
-            WHERE parking_session_id = @parking_session_id
-              AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD')
-              AND validation_channel = 'OPERATOR_ASSISTED';
+            WHERE parking_session_id = @parking_session_id;
 
             UPDATE core.tariff_snapshots
                SET superseded_by_tariff_snapshot_id = NULL
@@ -589,7 +816,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task InsertBaseTariffSnapshotAsync()
+    private static async Task InsertBaseTariffSnapshotAsync(
+        decimal grossAmount = 125.00m,
+        decimal statutoryDiscountAmount = 0.00m,
+        decimal couponDiscountAmount = 0.00m,
+        decimal? netAmount = null,
+        string snapshotStatus = "ACTIVE",
+        DateTimeOffset? expiresAt = null)
     {
         const string sql = """
             INSERT INTO core.tariff_snapshots (
@@ -617,13 +850,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
                 'INTEGRATION-OPERATOR-CONSOLE-APPLY',
                 'INTEGRATION-V1',
                 'PHP',
-                125.00,
-                0,
-                0,
-                125.00,
-                'ACTIVE'::core.tariff_snapshot_status_enum,
+                @gross_amount,
+                @statutory_discount_amount,
+                @coupon_discount_amount,
+                @net_amount,
+                CAST(@snapshot_status AS core.tariff_snapshot_status_enum),
                 now(),
-                now() + interval '1 hour',
+                @expires_at,
                 @correlation_id,
                 @created_by_service_identity_id,
                 @updated_by_service_identity_id
@@ -635,6 +868,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = FixtureOriginalTariffSnapshotId;
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = FixtureParkingSessionId;
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = FixtureVendorSystemId;
+        command.Parameters.Add("gross_amount", NpgsqlDbType.Numeric).Value = grossAmount;
+        command.Parameters.Add("statutory_discount_amount", NpgsqlDbType.Numeric).Value = statutoryDiscountAmount;
+        command.Parameters.Add("coupon_discount_amount", NpgsqlDbType.Numeric).Value = couponDiscountAmount;
+        command.Parameters.Add("net_amount", NpgsqlDbType.Numeric).Value =
+            netAmount ?? grossAmount - statutoryDiscountAmount - couponDiscountAmount;
+        command.Parameters.Add("snapshot_status", NpgsqlDbType.Varchar).Value = snapshotStatus;
+        command.Parameters.Add("expires_at", NpgsqlDbType.TimestampTz).Value = expiresAt ?? DateTimeOffset.UtcNow.AddHours(1);
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = Guid.NewGuid();
         command.Parameters.Add("created_by_service_identity_id", NpgsqlDbType.Uuid).Value = FixtureServiceIdentityId;
         command.Parameters.Add("updated_by_service_identity_id", NpgsqlDbType.Uuid).Value = FixtureServiceIdentityId;
