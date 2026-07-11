@@ -391,11 +391,13 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-0001");
+    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-0001");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByText("Vendor confirmation complete.")).toBeInTheDocument();
     expect(screen.getByText("Proceed to ticket exit validator.")).toBeInTheDocument();
+    expect(screen.getByText("Sales Invoice number")).toBeInTheDocument();
+    expect(screen.getAllByText("Not available").length).toBeGreaterThan(0);
     expect(screen.getByText("Unknown")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Session Information" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Tariff Information" })).toBeInTheDocument();
@@ -417,26 +419,26 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />
     );
 
-    await userEvent.type(await screen.findByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-0002");
+    await userEvent.type(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-0002");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect((await screen.findAllByText("Vendor confirmation unavailable")).length).toBeGreaterThan(0);
 
     rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
-    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter ticket number"));
-    await userEvent.type(screen.getByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-PENDING");
+    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"));
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-PENDING");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(await screen.findByText("Payment confirmed in ExitPass. Vendor confirmation pending.")).toBeInTheDocument();
 
     rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
-    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter ticket number"));
-    await userEvent.type(screen.getByPlaceholderText("Scan or enter ticket number"), "STAT-OP-SESSION-VENDOR-FAILED");
+    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"));
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "STAT-OP-SESSION-VENDOR-FAILED");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect((await screen.findAllByText("Vendor confirmation failed.")).length).toBeGreaterThan(0);
     expect(screen.getByText("Escalate to supervisor.")).toBeInTheDocument();
 
     rerender(<App apiClient={createMockOperatorConsoleApiClient()} initialPath="/operator-console/ticket-lookup" />);
-    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter ticket number"));
-    await userEvent.type(screen.getByPlaceholderText("Scan or enter ticket number"), "MISSING-TICKET");
+    await userEvent.clear(await screen.findByPlaceholderText("Scan or enter HikCentral ticket number"));
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "MISSING-TICKET");
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
     expect(await screen.findByText("Ticket not found")).toBeInTheDocument();
   });
@@ -492,13 +494,18 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Fiscal status view-audit report" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Sales Invoice status view audit report" })).toBeInTheDocument();
     expect(screen.getByText("View logs are observational only.")).toBeInTheDocument();
     expect(screen.getByText("View logs do not prove payment.")).toBeInTheDocument();
     expect(screen.getByText("View logs do not prove fiscal issuance.")).toBeInTheDocument();
     expect(screen.getByText("View logs do not authorize exit.")).toBeInTheDocument();
     expect(screen.getByText("View logs do not imply gate action.")).toBeInTheDocument();
-    expect((await screen.findAllByText("VIEW_FISCAL_ISSUANCE_STATUS")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Sales Invoice status viewed")).length).toBeGreaterThan(0);
+    expect(screen.getByText("SI-OCVOID-0001-UAT")).toBeInTheDocument();
+    expect(screen.getByText("Ops Supervisor")).toBeInTheDocument();
+    expect(screen.getAllByText("ATC Development Site").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ATC Site Group").length).toBeGreaterThan(0);
+    expect(screen.queryByText("VIEW_FISCAL_ISSUANCE_STATUS")).not.toBeInTheDocument();
     expect(screen.getAllByText("Succeeded").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Denied").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not found").length).toBeGreaterThan(0);
@@ -517,27 +524,22 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect((await screen.findAllByText("5f000000-0000-0000-0000-000000000101")).length).toBeGreaterThan(0);
     expect(screen.getByLabelText("Date from")).toBeInTheDocument();
     expect(screen.getByLabelText("Date to")).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText("Site ID"), "77000000-0000-0000-0000-000000000002");
-    await userEvent.type(screen.getByLabelText("Site group ID"), "77000000-0000-0000-0000-000000000001");
-    await userEvent.type(screen.getByLabelText("Operator/support user ID"), "77000000-0000-0000-0000-000000000010");
-    await userEvent.type(screen.getByLabelText("Sales Invoice reference ID"), "5f000000-0000-0000-0000-000000000104");
+    expect(await screen.findByText("SI-OCVOID-0001-UAT")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Site ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Site group ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Operator/support user ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Sales Invoice reference ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Correlation ID")).not.toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Result class"), "FAILED_SAFELY");
-    await userEvent.type(screen.getByLabelText("Correlation ID"), "6b000000-0000-0000-0000-000000000104");
     await userEvent.selectOptions(screen.getByLabelText("Limit"), "50");
     await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
 
     await waitFor(() => {
       expect(onFiscalStatusViewAuditReport).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          siteId: "77000000-0000-0000-0000-000000000002",
-          siteGroupId: "77000000-0000-0000-0000-000000000001",
-          operatorUserId: "77000000-0000-0000-0000-000000000010",
-          fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000104",
           resultClass: "FAILED_SAFELY",
-          correlationId: "6b000000-0000-0000-0000-000000000104",
           limit: 50,
           offset: 0
         })
@@ -557,7 +559,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect((await screen.findAllByText("5f000000-0000-0000-0000-000000000101")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("SI-OCVOID-0001-UAT")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));
 
     await waitFor(() => {
@@ -583,7 +585,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByText("Access denied")).toBeInTheDocument();
     expect(screen.getByText("Access denied.")).toBeInTheDocument();
-    expect(screen.queryByText("5f000000-0000-0000-0000-000000000101")).not.toBeInTheDocument();
+    expect(screen.queryByText("SI-OCVOID-0001-UAT")).not.toBeInTheDocument();
   });
 
   it("FiscalStatusViewAuditReport_DetailsCollapsedAndNoUnsafeFieldsOrActions", async () => {
@@ -594,9 +596,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect((await screen.findAllByText("5f000000-0000-0000-0000-000000000101")).length).toBeGreaterThan(0);
-    const detailSummary = screen.getAllByText("Support/audit details")[0];
-    expect(detailSummary.closest("details")).not.toHaveAttribute("open");
+    expect(await screen.findByText("SI-OCVOID-0001-UAT")).toBeInTheDocument();
+    const detailToggle = screen.getAllByRole("button", { name: "View support/audit details" })[0];
+    expect(detailToggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(detailToggle);
+    expect(screen.getByText("Read-only metadata for the selected Sales Invoice status view row.")).toBeInTheDocument();
+    expect(screen.getAllByText("Sales Invoice status viewed").length).toBeGreaterThan(0);
     expect(document.body.innerHTML).not.toMatch(
       /raw fiscal request|raw POS Server request|raw POS Server response|secret-token|stack trace|customer PII|payment provider raw payload|statutory evidence payload|raw payment callback|local environment variable|credential/i
     );
@@ -626,12 +631,14 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText(/It does not perform Sales Invoice void/)).toBeInTheDocument();
     expect(screen.getByLabelText("Sales Invoice number")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("e.g. SI-OCVOID-0001-UAT")).toBeInTheDocument();
-    expect(screen.getByLabelText("Sales Invoice reference ID")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("GUID/reference only")).toBeInTheDocument();
     expect(screen.getByLabelText("Result class")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Sales Invoice reference ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Correlation ID")).not.toBeInTheDocument();
     expect(screen.queryByText("Fiscal document number")).not.toBeInTheDocument();
     expect(screen.queryByText("Fiscal issuance reference ID")).not.toBeInTheDocument();
     expect(await screen.findAllByText("SI-OCVOID-0001-UAT")).not.toHaveLength(0);
+    expect(screen.getByText("TICKET-ATC-001")).toBeInTheDocument();
+    expect(screen.getByText("Ops Supervisor")).toBeInTheDocument();
 
     const detailsToggle = screen.getByRole("button", { name: "View support/audit details" });
     expect(detailsToggle).toHaveAttribute("aria-expanded", "false");
@@ -643,7 +650,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText("operator_error")).not.toHaveLength(0);
     expect(screen.getByText("No unsafe side effects recorded")).toBeInTheDocument();
     expect(screen.getByText("Sales Invoice void")).toBeInTheDocument();
+    expect(screen.getAllByText("ATC Development Site").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ATC Site Group").length).toBeGreaterThan(0);
     expect(screen.queryByText("VOID_FISCAL_DOCUMENT")).not.toBeInTheDocument();
+    expect(screen.queryByText("7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501")).not.toBeInTheDocument();
+    expect(screen.queryByText("3cddbc8e-28f8-49d2-93cf-b4a28a947501")).not.toBeInTheDocument();
+    expect(screen.queryByText("b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df")).not.toBeInTheDocument();
   });
 
   it("FiscalVoidActionAuditReport_FiltersSubmitExpectedQuery", async () => {
@@ -659,26 +671,21 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findAllByText("SI-OCVOID-0001-UAT")).not.toHaveLength(0);
-    await userEvent.type(screen.getByLabelText("Site ID"), "77000000-0000-0000-0000-000000000002");
-    await userEvent.type(screen.getByLabelText("Site group ID"), "77000000-0000-0000-0000-000000000001");
-    await userEvent.type(screen.getByLabelText("Operator/user ID"), "77000000-0000-0000-0000-000000000010");
-    await userEvent.type(screen.getByLabelText("Sales Invoice reference ID"), "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501");
+    expect(screen.queryByLabelText("Site ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Site group ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Operator/user ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Sales Invoice reference ID")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Correlation ID")).not.toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Sales Invoice number"), "SI-OCVOID-0001-UAT");
     await userEvent.selectOptions(screen.getByLabelText("Result class"), "CONFLICT");
-    await userEvent.type(screen.getByLabelText("Correlation ID"), "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df");
     await userEvent.selectOptions(screen.getByLabelText("Limit"), "50");
     await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
 
     await waitFor(() => {
       expect(onFiscalVoidActionAuditReport).toHaveBeenLastCalledWith(
         expect.objectContaining({
-          siteId: "77000000-0000-0000-0000-000000000002",
-          siteGroupId: "77000000-0000-0000-0000-000000000001",
-          operatorUserId: "77000000-0000-0000-0000-000000000010",
-          fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
           fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
           resultClass: "CONFLICT",
-          correlationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
           limit: 50,
           offset: 0
         })
@@ -2224,9 +2231,15 @@ function fiscalStatusViewAuditReportResponse(
         actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
         resultClass: "SUCCEEDED",
         operatorUserId: "77000000-0000-0000-0000-000000000010",
+        operatorUsername: "ops.supervisor",
+        operatorDisplayName: "Ops Supervisor",
         siteId: "77000000-0000-0000-0000-000000000002",
+        siteName: "ATC Development Site",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
+        siteGroupName: "ATC Site Group",
         fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000101",
+        fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
+        ticketNumber: "TICKET-ATC-001",
         correlationId: "6b000000-0000-0000-0000-000000000101",
         sourceModule: "FiscalStatusViewer"
       },
@@ -2236,9 +2249,13 @@ function fiscalStatusViewAuditReportResponse(
         actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
         resultClass: "DENIED",
         operatorUserId: "77000000-0000-0000-0000-000000000011",
+        operatorUsername: "support.viewer",
         siteId: "77000000-0000-0000-0000-000000000002",
+        siteName: "ATC Development Site",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
+        siteGroupName: "ATC Site Group",
         fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000102",
+        fiscalDocumentNumber: "SI-OCVOID-0002-UAT",
         correlationId: "6b000000-0000-0000-0000-000000000102",
         safeDenialOrErrorPosture: "Operator Console fiscal status view access was denied.",
         sourceModule: "FiscalStatusViewer"
@@ -2287,10 +2304,15 @@ function fiscalVoidActionAuditReportResponse(
         actionCode: "VOID_FISCAL_DOCUMENT",
         resultClass: "SUCCEEDED",
         operatorUserId: "77000000-0000-0000-0000-000000000010",
+        operatorUsername: "ops.supervisor",
+        operatorDisplayName: "Ops Supervisor",
         siteId: "77000000-0000-0000-0000-000000000002",
+        siteName: "ATC Development Site",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
+        siteGroupName: "ATC Site Group",
         fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
         fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
+        ticketNumber: "TICKET-ATC-001",
         posServerFiscalDocumentId: "3cddbc8e-28f8-49d2-93cf-b4a28a947501",
         reasonCode: "operator_error",
         correlationId: "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df",
