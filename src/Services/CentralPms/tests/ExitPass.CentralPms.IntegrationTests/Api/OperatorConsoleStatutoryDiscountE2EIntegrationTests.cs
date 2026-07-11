@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
@@ -37,6 +38,19 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
     private static readonly Guid ShiftId = Guid.Parse("77000000-0000-0000-0000-000000000050");
     private static readonly Guid VendorSystemId = Guid.Parse("77000000-0000-0000-0000-000000000004");
     private static readonly Guid ServiceIdentityId = Guid.Parse("77000000-0000-0000-0000-000000000003");
+    private static readonly Guid PosServerSitePosServerId = Guid.Parse("10000000-0000-4000-8000-000000000201");
+    private static readonly Guid PosServerFiscalDocumentTypeCodeId = Guid.Parse("10000000-0000-4000-8000-000000000103");
+    private static readonly Guid PosServerFiscalDocumentStatusCodeId = Guid.Parse("10000000-0000-4000-8000-000000000107");
+    private static readonly Guid PosServerFiscalLineTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000201");
+    private static readonly Guid PosServerFiscalTenderTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000301");
+    private static readonly Guid PosServerFiscalTaxTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000401");
+    private static readonly Guid PosServerFiscalTaxClassificationCodeId = Guid.Parse("10000000-0000-0000-0000-000000000402");
+    private static readonly Guid PosServerFiscalDiscountPrivilegeTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000501");
+    private static readonly Guid PosServerFiscalTotalTypeCodeId = Guid.Parse("10000000-0000-0000-0000-000000000601");
+
+    private const string LocalLivePosSmokeEnabledEnvVar = "EXITPASS_RUN_STATUTORY_DISCOUNT_LIVE_POS_SMOKE";
+    private const string LocalLivePosSmokeRunIdEnvVar = "EXITPASS_STATUTORY_DISCOUNT_LIVE_POS_SMOKE_RUN_ID";
+    private const string LocalLivePosSmokeBaseUrlEnvVar = "EXITPASS_STATUTORY_DISCOUNT_LIVE_POS_BASE_URL";
 
     private static readonly Guid JurisdictionId = Guid.Parse("23100000-0000-0000-0000-000000000001");
     private const string E2ELguCode = "PH-INT-E2E-231";
@@ -304,6 +318,206 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         }
     }
 
+    /// <summary>
+    /// Opt-in local runtime proof for Central PMS live POS Server recording of the statutory discount fiscal request.
+    /// </summary>
+    [Fact]
+    public async Task LocalRuntime_WhenEnabled_IssuesDiscountedSalesInvoiceThroughCentralPmsLivePosServer()
+    {
+        if (!IsLocalLivePosSmokeEnabled())
+        {
+            return;
+        }
+
+        if (!await CanOpenDatabaseAsync())
+        {
+            throw new InvalidOperationException(
+                "The opt-in local live POS smoke requires the Central PMS integration database to be available.");
+        }
+
+        var posServerBaseUrl = Environment.GetEnvironmentVariable(LocalLivePosSmokeBaseUrlEnvVar)
+            ?? "http://localhost:5000";
+        var runId = Environment.GetEnvironmentVariable(LocalLivePosSmokeRunIdEnvVar)
+            ?? DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+        var upstreamFinalityReference =
+            $"STAT-DISCOUNT-CPS-LIVE-POS:{runId}:SENIOR_CITIZEN:001";
+        var correlationId = Guid.NewGuid();
+
+        await EnsurePosServerRuntimeAvailableAsync(posServerBaseUrl);
+        await SeedManualFixtureAsync();
+        await ResetE2EStateAsync();
+
+        await InsertE2EPolicyFixtureAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+
+        var beforeUnsafeSideEffectCount = await CountUnsafeSideEffectRecordsAsync();
+
+        using var factory = new CustomWebApplicationFactory();
+        using var apiClient = factory.CreateClient();
+        apiClient.DefaultRequestHeaders.Add(
+            CentralPmsRbacPolicyCatalog.PermissionsHeaderName,
+            "fiscal-issuance.status.read");
+
+        using var posHttpClient = new HttpClient { BaseAddress = new Uri(posServerBaseUrl) };
+        var posClient = new HttpPosServerFiscalDocumentClient(posHttpClient);
+        var referenceRepository = new PostgresFiscalIssuanceReferenceRepository(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        var orchestrationService = new FiscalIssuanceOrchestrationService(referenceRepository);
+        var liveIntegration = new FiscalIssuancePosServerLiveIntegrationService(
+            new FiscalIssuancePosServerIntegrationOptions
+            {
+                EnablePosServerFiscalIssuanceLiveCall = true,
+                EnableControlledUatDiagnosticPath = true,
+                PosServerBaseUrl = posServerBaseUrl,
+                TimeoutSeconds = 10,
+                EnableLiveFiscalIssuanceFromPaymentFlow = false,
+                EnableLiveFiscalIssuanceFromExitFlow = false
+            },
+            new PosServerFiscalDocumentRequestMapper(),
+            new FiscalSemanticRequestHashCalculator(),
+            posClient,
+            orchestrationService);
+
+        var applied = await PrepareApprovedStatutoryDiscountApplicationAsync();
+        var paymentAttempt = await CreatePaymentAttemptForAppliedBasisAsync(
+            applied.AppliedTariffSnapshotId!.Value,
+            $"operator-console-statutory-discount-live-pos-payment-{runId}");
+        var paymentConfirmation = await RecordDiscountedPaymentConfirmationAsync(
+            paymentAttempt.PaymentAttemptId,
+            $"PCONF-STAT-DISCOUNT-LIVE-POS-{runId}",
+            AmountConfirmed: 89.29m);
+        var fiscalReference = await PrepareFiscalIssuanceReferenceAsync(
+            paymentAttempt.PaymentAttemptId,
+            paymentConfirmation.PaymentConfirmationId,
+            applied.AppliedTariffSnapshotId.Value,
+            upstreamFinalityReference);
+        var fiscalContext = BuildDiscountedFiscalContext(
+            applied.StatutoryDiscountValidationId!.Value,
+            applied.PayableBasisApplicationId!.Value,
+            applied.AppliedTariffSnapshotId.Value,
+            paymentAttempt.PaymentAttemptId,
+            paymentConfirmation.PaymentConfirmationId,
+            fiscalReference);
+
+        var firstResult = await liveIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+            fiscalReference.FiscalIssuanceReferenceId,
+            fiscalContext,
+            RecordingContext(fiscalReference, correlationId),
+            CancellationToken.None);
+
+        firstResult.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        firstResult.PosServerResult.Should().NotBeNull();
+        firstResult.PosServerResult!.Succeeded.Should().BeTrue(
+            $"{firstResult.PosServerResult.Code}: {firstResult.PosServerResult.Message}");
+        firstResult.PosServerResult.ResultClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
+        firstResult.FiscalIssuanceReference.Should().NotBeNull();
+        firstResult.FiscalIssuanceReference!.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+        firstResult.FiscalIssuanceReference.FiscalDocumentNumber.Should().NotBeNullOrWhiteSpace();
+        firstResult.FiscalIssuanceReference.FiscalSequenceValue.Should().NotBeNull();
+
+        var statusResponse = await apiClient.GetAsync(
+            $"/v1/fiscal-issuance/references/{fiscalReference.FiscalIssuanceReferenceId:D}");
+        statusResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var statusBody = await statusResponse.Content.ReadAsStringAsync();
+        statusBody.Should().Contain(firstResult.FiscalIssuanceReference.FiscalDocumentNumber!);
+        statusBody.Should().Contain("FISCAL_ISSUANCE_RECORDED");
+        statusBody.Should().Contain("NEWLY_CREATED");
+        statusBody.Should().Contain("FISCAL_DOCUMENT_NUMBER_ASSIGNED");
+        statusBody.Should().Contain("AVAILABLE");
+
+        var posRead = await posClient.GetFiscalDocumentAsync(
+            firstResult.PosServerResult.FiscalDocumentId!.Value,
+            CancellationToken.None);
+        posRead.Succeeded.Should().BeTrue();
+        posRead.FiscalDocumentId.Should().Be(firstResult.PosServerResult.FiscalDocumentId);
+        posRead.FiscalDocumentNumber.Should().Be(firstResult.FiscalIssuanceReference.FiscalDocumentNumber);
+        posRead.FiscalSequenceValue.Should().Be(firstResult.FiscalIssuanceReference.FiscalSequenceValue);
+        posRead.FiscalDocumentStatusCodeKey.Should().BeOneOf("issued", "central_pms_uat_created");
+
+        using var opsRequest = new HttpRequestMessage(
+            HttpMethod.Get,
+            $"/v1/ops/operator-console/fiscal-issuance/references/{fiscalReference.FiscalIssuanceReferenceId:D}");
+        AddOperatorHeaders(opsRequest);
+        opsRequest.Headers.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, "fiscal-issuance.status.read");
+        using var opsResponse = await apiClient.SendAsync(opsRequest);
+        opsResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var opsBody = await opsResponse.Content.ReadAsStringAsync();
+        opsBody.Should().Contain(firstResult.FiscalIssuanceReference.FiscalDocumentNumber!);
+
+        var replayResult = await liveIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+            fiscalReference.FiscalIssuanceReferenceId,
+            fiscalContext,
+            RecordingContext(fiscalReference, correlationId),
+            CancellationToken.None);
+        replayResult.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        replayResult.PosServerResult!.ResultClassification.Should().Be(FiscalIssuanceResultClassification.IdempotentReplay);
+        replayResult.PosServerResult.FiscalDocumentId.Should().Be(firstResult.PosServerResult.FiscalDocumentId);
+        replayResult.PosServerResult.FiscalDocumentNumber.Should().Be(firstResult.PosServerResult.FiscalDocumentNumber);
+        replayResult.PosServerResult.FiscalSequenceValue.Should().Be(firstResult.PosServerResult.FiscalSequenceValue);
+
+        var conflictContext = fiscalContext with
+        {
+            TaxDetails =
+            [
+                fiscalContext.TaxDetails[0] with
+                {
+                    TaxAmountMinorUnits = 1340,
+                    TaxContext = new Dictionary<string, string>
+                    {
+                        ["basis"] = "VAT_EXCLUSIVE",
+                        ["conflictProbe"] = "changed_tax_amount"
+                    }
+                }
+            ]
+        };
+        var conflictResult = await liveIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+            fiscalReference.FiscalIssuanceReferenceId,
+            conflictContext,
+            RecordingContext(fiscalReference, correlationId),
+            CancellationToken.None);
+        conflictResult.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        conflictResult.PosServerResult!.Outcome.Should().Be(PosServerFiscalDocumentOutcome.Conflict);
+        conflictResult.PosServerResult.Succeeded.Should().BeFalse();
+        conflictResult.PosServerResult.Code.Should().Be("fiscal_document_idempotency_conflict");
+        conflictResult.PosServerResult.FiscalDocumentNumber.Should().BeNull();
+        conflictResult.FiscalIssuanceReference!.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceConflict);
+
+        var restoredReplayResult = await liveIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+            fiscalReference.FiscalIssuanceReferenceId,
+            fiscalContext,
+            RecordingContext(fiscalReference, correlationId),
+            CancellationToken.None);
+        restoredReplayResult.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        restoredReplayResult.PosServerResult!.ResultClassification.Should().Be(FiscalIssuanceResultClassification.IdempotentReplay);
+        restoredReplayResult.PosServerResult.FiscalDocumentId.Should().Be(firstResult.PosServerResult.FiscalDocumentId);
+        restoredReplayResult.PosServerResult.FiscalDocumentNumber.Should().Be(firstResult.PosServerResult.FiscalDocumentNumber);
+        restoredReplayResult.PosServerResult.FiscalSequenceValue.Should().Be(firstResult.PosServerResult.FiscalSequenceValue);
+        restoredReplayResult.FiscalIssuanceReference!.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed);
+
+        var afterConflictRead = await posClient.GetFiscalDocumentAsync(
+            firstResult.PosServerResult.FiscalDocumentId!.Value,
+            CancellationToken.None);
+        afterConflictRead.Succeeded.Should().BeTrue();
+        afterConflictRead.FiscalDocumentNumber.Should().Be(firstResult.PosServerResult.FiscalDocumentNumber);
+        afterConflictRead.FiscalSequenceValue.Should().Be(firstResult.PosServerResult.FiscalSequenceValue);
+
+        var afterUnsafeSideEffectCount = await CountUnsafeSideEffectRecordsAsync();
+        afterUnsafeSideEffectCount.Should().Be(beforeUnsafeSideEffectCount);
+
+        Console.WriteLine(
+            "STATUTORY_DISCOUNT_LIVE_POS_SMOKE " +
+            $"runId={runId} " +
+            $"fiscalIssuanceReferenceId={fiscalReference.FiscalIssuanceReferenceId:D} " +
+            $"posServerFiscalDocumentId={firstResult.PosServerResult.FiscalDocumentId:D} " +
+            $"salesInvoiceNumber={firstResult.PosServerResult.FiscalDocumentNumber} " +
+            $"fiscalSequenceValue={firstResult.PosServerResult.FiscalSequenceValue} " +
+            $"first={firstResult.PosServerResult.ResultClassification} " +
+            $"replay={replayResult.PosServerResult.ResultClassification} " +
+            $"conflict={conflictResult.PosServerResult.Code} " +
+            $"restoredReplay={restoredReplayResult.PosServerResult.ResultClassification}");
+    }
+
     private static OperatorConsoleSessionLookupRequest SessionLookupRequest() =>
         new(
             UserId,
@@ -441,6 +655,74 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         request.Headers.Add("X-Operator-Shift-Id", ShiftId.ToString());
         request.Headers.Add("X-Site-Id", SiteId.ToString());
         request.Headers.Add("X-Site-Group-Id", SiteGroupId.ToString());
+    }
+
+    private static bool IsLocalLivePosSmokeEnabled() =>
+        string.Equals(
+            Environment.GetEnvironmentVariable(LocalLivePosSmokeEnabledEnvVar),
+            "true",
+            StringComparison.OrdinalIgnoreCase);
+
+    private static async Task EnsurePosServerRuntimeAvailableAsync(string posServerBaseUrl)
+    {
+        using var client = new HttpClient { BaseAddress = new Uri(posServerBaseUrl) };
+        using var response = await client.GetAsync("/v1/fiscal-documents/00000000-0000-0000-0000-000000000000");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    private static PosServerCreateResultRecordingContext RecordingContext(
+        FiscalIssuanceReferenceRecord fiscalReference,
+        Guid correlationId) =>
+        new(
+            UpstreamFinalityReference: fiscalReference.UpstreamFinalityReference,
+            SitePosServerId: fiscalReference.SitePosServerId,
+            FiscalDocumentTypeCodeId: fiscalReference.FiscalDocumentTypeCodeId,
+            CorrelationId: correlationId,
+            PosServerResponseTimestamp: DateTimeOffset.UtcNow,
+            ServiceIdentityId: ServiceIdentityId);
+
+    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse> PrepareApprovedStatutoryDiscountApplicationAsync()
+    {
+        using var factory = new CustomWebApplicationFactory();
+        using var client = factory.CreateClient();
+
+        var policy = await PostOkAsync<OperatorConsoleStatutoryDiscountPolicyResolutionResponse>(
+            client,
+            PolicyResolutionEndpoint,
+            PolicyResolutionRequest());
+        policy.PolicyResolved.Should().BeTrue();
+
+        var draft = await PostOkAsync<OperatorConsoleStatutoryDiscountDraftResponse>(
+            client,
+            DraftEndpoint,
+            DraftRequest(evidenceCaptureRequested: true));
+        draft.DraftAccepted.Should().BeTrue();
+        draft.DraftId.Should().NotBeNull();
+
+        var draftId = draft.DraftId!.Value;
+        var evidence = await PostOkAsync<OperatorConsoleStatutoryDiscountEvidenceCaptureResponse>(
+            client,
+            EvidenceEndpoint(draftId),
+            EvidenceRequest("SENIOR_CITIZEN_ID"));
+        evidence.EvidenceRequiredSatisfied.Should().BeTrue();
+
+        var approved = await PostOkAsync<OperatorConsoleStatutoryDiscountDecisionResponse>(
+            client,
+            DecisionEndpoint(draftId),
+            DecisionRequest("APPROVE"));
+        approved.DecisionAccepted.Should().BeTrue();
+
+        var applied = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
+            client,
+            ApplyEndpoint(draftId),
+            ApplyRequest());
+        applied.ApplicationAccepted.Should().BeTrue();
+        applied.ApplicationPersisted.Should().BeTrue();
+        applied.PayableBasisApplicationId.Should().NotBeNull();
+        applied.AppliedTariffSnapshotId.Should().NotBeNull();
+        applied.FinalPayableAmountMinorUnits.Should().Be(8929);
+
+        return applied;
     }
 
     private static async Task SeedManualFixtureAsync()
@@ -927,7 +1209,8 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
     private static async Task<FiscalIssuanceReferenceRecord> PrepareFiscalIssuanceReferenceAsync(
         Guid paymentAttemptId,
         Guid paymentConfirmationId,
-        Guid appliedTariffSnapshotId)
+        Guid appliedTariffSnapshotId,
+        string? upstreamFinalityReference = null)
     {
         var service = new FiscalIssuanceOrchestrationService(
             new PostgresFiscalIssuanceReferenceRepository(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString()));
@@ -939,12 +1222,12 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                 ParkingSessionId: ParkingSessionId,
                 TariffSnapshotId: appliedTariffSnapshotId,
                 SiteId: SiteId,
-                SitePosServerId: null,
+                SitePosServerId: PosServerSitePosServerId,
                 SitePosServerRef: "DEV-POS-SERVER-ATC-001",
-                FiscalDocumentTypeCodeId: null,
+                FiscalDocumentTypeCodeId: PosServerFiscalDocumentTypeCodeId,
                 FiscalDocumentTypeCodeKey: "sales_invoice",
                 PayableBasisRef: appliedTariffSnapshotId.ToString("D"),
-                UpstreamFinalityReference: $"STAT-DISCOUNT-E2E:{paymentConfirmationId:D}:sales_invoice",
+                UpstreamFinalityReference: upstreamFinalityReference ?? $"STAT-DISCOUNT-E2E:{paymentConfirmationId:D}:sales_invoice",
                 CorrelationId: Guid.NewGuid(),
                 ServiceIdentityId: ServiceIdentityId),
             CancellationToken.None);
@@ -958,11 +1241,11 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         Guid paymentConfirmationId,
         FiscalIssuanceReferenceRecord fiscalReference) =>
         new(
-            SitePosServerId: null,
+            SitePosServerId: PosServerSitePosServerId,
             SitePosServerRef: "DEV-POS-SERVER-ATC-001",
-            FiscalDocumentTypeCodeId: null,
+            FiscalDocumentTypeCodeId: PosServerFiscalDocumentTypeCodeId,
             FiscalDocumentTypeCodeKey: "sales_invoice",
-            FiscalDocumentStatusCodeId: null,
+            FiscalDocumentStatusCodeId: PosServerFiscalDocumentStatusCodeId,
             BusinessDayDate: new DateOnly(2026, 7, 11),
             CentralPmsParkingSessionRef: ParkingSessionId.ToString("D"),
             CentralPmsPaymentAttemptRef: paymentAttemptId.ToString("D"),
@@ -996,7 +1279,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             [
                 new CentralPmsFiscalDocumentLineContext(
                     LineSequence: 1,
-                    LineTypeCodeId: null,
+                    LineTypeCodeId: PosServerFiscalLineTypeCodeId,
                     Description: "Parking fee - statutory discount applied",
                     Quantity: 1m,
                     UnitAmountMinorUnits: 11161,
@@ -1019,7 +1302,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             Tenders:
             [
                 new CentralPmsFiscalTenderContext(
-                    TenderTypeCodeId: null,
+                    TenderTypeCodeId: PosServerFiscalTenderTypeCodeId,
                     AmountMinorUnits: 8929,
                     CurrencyCode: "PHP",
                     CentralPmsPaymentAttemptRef: paymentAttemptId.ToString("D"),
@@ -1031,8 +1314,8 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             TaxDetails:
             [
                 new CentralPmsFiscalTaxDetailContext(
-                    TaxTypeCodeId: null,
-                    TaxClassificationCodeId: null,
+                    TaxTypeCodeId: PosServerFiscalTaxTypeCodeId,
+                    TaxClassificationCodeId: PosServerFiscalTaxClassificationCodeId,
                     TaxableAmountMinorUnits: 11161,
                     TaxAmountMinorUnits: 1339,
                     CurrencyCode: "PHP",
@@ -1043,7 +1326,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             DiscountPrivilegeDetails:
             [
                 new CentralPmsFiscalDiscountPrivilegeDetailContext(
-                    DiscountPrivilegeTypeCodeId: null,
+                    DiscountPrivilegeTypeCodeId: PosServerFiscalDiscountPrivilegeTypeCodeId,
                     BasisAmountMinorUnits: 11161,
                     DiscountAmountMinorUnits: 2232,
                     VatPrivilegeAmountMinorUnits: 1339,
@@ -1064,7 +1347,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             Totals:
             [
                 new CentralPmsFiscalTotalContext(
-                    TotalTypeCodeId: null,
+                    TotalTypeCodeId: PosServerFiscalTotalTypeCodeId,
                     AmountMinorUnits: 8929,
                     CurrencyCode: "PHP",
                     TotalContext: new Dictionary<string, string> { ["kind"] = "final_payable" })
