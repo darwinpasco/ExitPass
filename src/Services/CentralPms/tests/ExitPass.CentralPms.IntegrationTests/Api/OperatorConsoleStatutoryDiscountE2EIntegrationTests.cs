@@ -259,9 +259,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             posServerRequest.PayableBasis.PayableAmountMinorUnits.Should().Be(8929);
             posServerRequest.Tenders.Should().ContainSingle().Which.AmountMinorUnits.Should().Be(8929);
             posServerRequest.DocumentLines.Should().ContainSingle().Which.Should().Match<PosServerFiscalDocumentLineRequest>(line =>
-                line.GrossAmountMinorUnits == 12500 &&
+                line.GrossAmountMinorUnits == 11161 &&
                 line.DiscountAmountMinorUnits == 2232 &&
-                line.TaxAmountMinorUnits == 1339 &&
+                line.TaxAmountMinorUnits == 0 &&
                 line.NetAmountMinorUnits == 8929);
             posServerRequest.TaxDetails.Should().ContainSingle().Which.Should().Match<PosServerFiscalTaxDetailRequest>(tax =>
                 tax.TaxableAmountMinorUnits == 11161 &&
@@ -999,10 +999,10 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                     LineTypeCodeId: null,
                     Description: "Parking fee - statutory discount applied",
                     Quantity: 1m,
-                    UnitAmountMinorUnits: 12500,
-                    GrossAmountMinorUnits: 12500,
+                    UnitAmountMinorUnits: 11161,
+                    GrossAmountMinorUnits: 11161,
                     DiscountAmountMinorUnits: 2232,
-                    TaxAmountMinorUnits: 1339,
+                    TaxAmountMinorUnits: 0,
                     NetAmountMinorUnits: 8929,
                     CurrencyCode: "PHP",
                     LineStatusCodeId: null,
@@ -1010,7 +1010,10 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                     LineContext: new Dictionary<string, string>
                     {
                         ["source"] = "central-pms-applied-payable-basis",
-                        ["entitlementType"] = "SENIOR_CITIZEN"
+                        ["entitlementType"] = "SENIOR_CITIZEN",
+                        ["originalGrossAmountMinorUnits"] = "12500",
+                        ["vatAmountMinorUnits"] = "1339",
+                        ["vatPrivilegeAmountMinorUnits"] = "1339"
                     })
             ],
             Tenders:
