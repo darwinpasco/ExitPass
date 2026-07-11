@@ -272,9 +272,15 @@ interface FiscalStatusViewAuditReportItemDto {
   actionCode: string;
   resultClass: string;
   operatorUserId: string;
+  operatorDisplayName?: string | null;
+  operatorUsername?: string | null;
   siteId?: string | null;
+  siteName?: string | null;
   siteGroupId?: string | null;
+  siteGroupName?: string | null;
   fiscalIssuanceReferenceId: string;
+  fiscalDocumentNumber?: string | null;
+  ticketNumber?: string | null;
   correlationId: string;
   safeDenialOrErrorPosture?: string | null;
   sourceModule?: string | null;
@@ -294,10 +300,15 @@ interface FiscalVoidActionAuditReportItemDto {
   actionCode: string;
   resultClass: string;
   operatorUserId: string;
+  operatorDisplayName?: string | null;
+  operatorUsername?: string | null;
   siteId?: string | null;
+  siteName?: string | null;
   siteGroupId?: string | null;
+  siteGroupName?: string | null;
   fiscalIssuanceReferenceId: string;
   fiscalDocumentNumber?: string | null;
+  ticketNumber?: string | null;
   posServerFiscalDocumentId?: string | null;
   reasonCode?: string | null;
   reasonText?: string | null;
@@ -2481,9 +2492,15 @@ function toFiscalStatusViewAuditReport(dto: FiscalStatusViewAuditReportResponseD
       actionCode: item.actionCode,
       resultClass: item.resultClass,
       operatorUserId: item.operatorUserId,
+      operatorDisplayName: item.operatorDisplayName ?? undefined,
+      operatorUsername: item.operatorUsername ?? undefined,
       siteId: item.siteId ?? undefined,
+      siteName: item.siteName ?? undefined,
       siteGroupId: item.siteGroupId ?? undefined,
+      siteGroupName: item.siteGroupName ?? undefined,
       fiscalIssuanceReferenceId: item.fiscalIssuanceReferenceId,
+      fiscalDocumentNumber: item.fiscalDocumentNumber ?? undefined,
+      ticketNumber: item.ticketNumber ?? undefined,
       correlationId: item.correlationId,
       safeDenialOrErrorPosture: item.safeDenialOrErrorPosture ?? undefined,
       sourceModule: item.sourceModule ?? undefined
@@ -2503,10 +2520,15 @@ function toFiscalVoidActionAuditReport(dto: FiscalVoidActionAuditReportResponseD
       actionCode: item.actionCode,
       resultClass: item.resultClass,
       operatorUserId: item.operatorUserId,
+      operatorDisplayName: item.operatorDisplayName ?? undefined,
+      operatorUsername: item.operatorUsername ?? undefined,
       siteId: item.siteId ?? undefined,
+      siteName: item.siteName ?? undefined,
       siteGroupId: item.siteGroupId ?? undefined,
+      siteGroupName: item.siteGroupName ?? undefined,
       fiscalIssuanceReferenceId: item.fiscalIssuanceReferenceId,
       fiscalDocumentNumber: item.fiscalDocumentNumber ?? undefined,
+      ticketNumber: item.ticketNumber ?? undefined,
       posServerFiscalDocumentId: item.posServerFiscalDocumentId ?? undefined,
       reasonCode: item.reasonCode ?? undefined,
       reasonText: item.reasonText ?? undefined,

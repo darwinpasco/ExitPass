@@ -499,8 +499,8 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
       <section className="pageTitle">
         <div>
           <p className="eyebrow">Audit / Reporting</p>
-          <h2>Fiscal status view-audit report</h2>
-          <p>Read-only report of Operator Console fiscal status view events.</p>
+          <h2>Sales Invoice status view audit report</h2>
+          <p>Read-only report of Operator Console Sales Invoice status view events.</p>
         </div>
       </section>
 
@@ -538,36 +538,6 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
             />
           </label>
           <label>
-            Site ID
-            <input
-              value={draftFilters.siteId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, siteId: event.target.value || undefined }))}
-            />
-          </label>
-          <label>
-            Site group ID
-            <input
-              value={draftFilters.siteGroupId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, siteGroupId: event.target.value || undefined }))}
-            />
-          </label>
-          <label>
-            Operator/support user ID
-            <input
-              value={draftFilters.operatorUserId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, operatorUserId: event.target.value || undefined }))}
-            />
-          </label>
-          <label>
-            Sales Invoice reference ID
-            <input
-              value={draftFilters.fiscalIssuanceReferenceId ?? ""}
-              onChange={(event) =>
-                setDraftFilters((current) => ({ ...current, fiscalIssuanceReferenceId: event.target.value || undefined }))
-              }
-            />
-          </label>
-          <label>
             Result class
             <select
               value={draftFilters.resultClass ?? ""}
@@ -579,13 +549,6 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
               <option value="NOT_FOUND">Not found</option>
               <option value="FAILED_SAFELY">Failed safely</option>
             </select>
-          </label>
-          <label>
-            Correlation ID
-            <input
-              value={draftFilters.correlationId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, correlationId: event.target.value || undefined }))}
-            />
           </label>
           <label>
             Limit
@@ -612,32 +575,38 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
         </div>
 
         {reportState.status === "loading" && (
-          <StateMessage title="Loading fiscal view audit report" message="Retrieving safe fiscal status view rows." />
+          <StateMessage title="Loading Sales Invoice view audit report" message="Retrieving safe Sales Invoice status view rows." />
         )}
         {reportState.status === "empty" && (
-          <StateMessage title="No fiscal view audit rows" message="No fiscal status view-audit rows matched the filters." />
+          <StateMessage title="No Sales Invoice view audit rows" message="No Sales Invoice status view audit rows matched the filters." />
         )}
         {reportState.status === "access-denied" && <StateMessage title="Access denied" message={reportState.message} />}
         {reportState.status === "error" && (
-          <StateMessage title="Unable to load fiscal view audit report" message={reportState.message} />
+          <StateMessage title="Unable to load Sales Invoice view audit report" message={reportState.message} />
         )}
         {reportState.status === "loaded" && (
           <>
-            <p className="placeholderCopy">Report correlation ID: {reportState.data.correlationId}</p>
-            <div className="tableScroller">
-              <table>
+            <div className="tableScroller fiscalViewAuditTableScroller">
+              <table className="fiscalViewAuditTable">
+                <colgroup>
+                  <col className="auditDateColumn" />
+                  <col className="auditActionColumn" />
+                  <col className="auditResultColumn" />
+                  <col className="auditInvoiceColumn" />
+                  <col className="auditOperatorColumn" />
+                  <col className="auditSiteColumn" />
+                  <col className="auditSiteGroupColumn" />
+                  <col className="auditDetailsColumn" />
+                </colgroup>
                 <thead>
                   <tr>
-                    <th>Action Timestamp</th>
-                    <th>Action Code</th>
-                    <th>Result Class</th>
-                    <th>Operator / Support User ID</th>
-                    <th>Site ID</th>
-                    <th>Site Group ID</th>
-                    <th>Sales Invoice Reference ID</th>
-                    <th>Correlation ID</th>
-                    <th>Safe Posture</th>
-                    <th>Source Module</th>
+                    <th>Viewed At</th>
+                    <th>Action</th>
+                    <th>Result</th>
+                    <th>Sales Invoice number</th>
+                    <th className="auditOperatorHeader">Operator</th>
+                    <th className="auditSiteHeader">Site</th>
+                    <th className="auditSiteGroupHeader">Site group</th>
                     <th>Support / Audit</th>
                   </tr>
                 </thead>
@@ -667,39 +636,71 @@ function FiscalStatusViewAuditReportPage({ client }: { client: OperatorConsoleAp
 }
 
 function FiscalStatusViewAuditReportRow({ item }: { item: FiscalStatusViewAuditReportItem }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const presentation = fiscalViewAuditResultPresentation(item.resultClass);
+  const detailsId = `fiscal-view-audit-details-${item.actionLogEntryId}`;
+  const actionLabel = fiscalViewAuditActionLabel(item.actionCode);
   return (
-    <tr>
-      <td>{formatDateTime(item.actionTimestamp)}</td>
-      <td>{item.actionCode}</td>
-      <td>
-        <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
-      </td>
-      <td>{item.operatorUserId}</td>
-      <td>{displayValue(item.siteId)}</td>
-      <td>{displayValue(item.siteGroupId)}</td>
-      <td>{item.fiscalIssuanceReferenceId}</td>
-      <td>{item.correlationId}</td>
-      <td>{displayValue(item.safeDenialOrErrorPosture)}</td>
-      <td>{displayValue(item.sourceModule)}</td>
-      <td>
-        <details className="diagnosticsPanel">
-          <summary>Support/audit details</summary>
-          <DescriptionList
-            items={[
-              ["Action-log entry ID", item.actionLogEntryId],
-              ["Result meaning", presentation.meaning],
-              ["Action code", item.actionCode],
-              ["Sales Invoice reference ID", item.fiscalIssuanceReferenceId],
-              ["Correlation ID", item.correlationId],
-              ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
-              ["Source module/screen", displayValue(item.sourceModule)]
-            ]}
-          />
-        </details>
-      </td>
-    </tr>
+    <>
+      <tr className={detailsOpen ? "auditRowExpanded" : undefined}>
+        <td className="auditDateCell">{formatDateTime(item.actionTimestamp)}</td>
+        <td className="auditActionCell">{actionLabel}</td>
+        <td className="auditResultCell">
+          <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
+        </td>
+        <td className="auditInvoiceCell">{displayValue(item.fiscalDocumentNumber)}</td>
+        <td className="auditOperatorCell">{operatorDisplayValue(item)}</td>
+        <td className="auditSiteCell">{siteDisplayValue(item)}</td>
+        <td className="auditSiteGroupCell">{siteGroupDisplayValue(item)}</td>
+        <td className="auditDetailsCell">
+          <button
+            type="button"
+            className="auditDetailsToggle"
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            onClick={() => setDetailsOpen((current) => !current)}
+          >
+            {detailsOpen ? "Hide support/audit details" : "View support/audit details"}
+          </button>
+        </td>
+      </tr>
+      {detailsOpen && (
+        <tr className="auditDetailsRow">
+          <td colSpan={8}>
+            <section className="auditDetailsFullPanel" id={detailsId} aria-label="Support/audit details">
+              <h4>Support/audit details</h4>
+              <p>Read-only metadata for the selected Sales Invoice status view row.</p>
+              <DescriptionList
+                items={[
+                  ["Action", actionLabel],
+                  ["Result meaning", presentation.meaning],
+                  ["Result class", item.resultClass],
+                  ["Sales Invoice number", displayValue(item.fiscalDocumentNumber)],
+                  ["Ticket number", displayValue(item.ticketNumber)],
+                  ["Operator", operatorDisplayValue(item)],
+                  ["Site", siteDisplayValue(item)],
+                  ["Site group", siteGroupDisplayValue(item)],
+                  ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
+                  ["Source module/screen", displayValue(item.sourceModule)]
+                ]}
+              />
+            </section>
+          </td>
+        </tr>
+      )}
+    </>
   );
+}
+
+function fiscalViewAuditActionLabel(actionCode: string) {
+  switch (actionCode) {
+    case "VIEW_FISCAL_ISSUANCE_STATUS":
+      return "Sales Invoice status viewed";
+    case "VIEW_FISCAL_STATUS_VIEW_AUDIT_REPORT":
+      return "Sales Invoice view audit report viewed";
+    default:
+      return "Sales Invoice audit activity";
+  }
 }
 
 function fiscalViewAuditResultPresentation(resultClass: string) {
@@ -834,37 +835,6 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
               onChange={(event) => setDraftFilters((current) => ({ ...current, to: event.target.value || undefined }))}
             />
           </label>
-          <label>
-            Site ID
-            <input
-              value={draftFilters.siteId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, siteId: event.target.value || undefined }))}
-            />
-          </label>
-          <label>
-            Site group ID
-            <input
-              value={draftFilters.siteGroupId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, siteGroupId: event.target.value || undefined }))}
-            />
-          </label>
-          <label>
-            Operator/user ID
-            <input
-              value={draftFilters.operatorUserId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, operatorUserId: event.target.value || undefined }))}
-            />
-          </label>
-          <label className="wideFilterField">
-            Sales Invoice reference ID
-            <input
-              placeholder="GUID/reference only"
-              value={draftFilters.fiscalIssuanceReferenceId ?? ""}
-              onChange={(event) =>
-                setDraftFilters((current) => ({ ...current, fiscalIssuanceReferenceId: event.target.value || undefined }))
-              }
-            />
-          </label>
           <label className="wideFilterField">
             Sales Invoice number
             <input
@@ -888,13 +858,6 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
               <option value="ALREADY_VOIDED">Already voided</option>
               <option value="FAILED_SAFELY">Failed safely</option>
             </select>
-          </label>
-          <label>
-            Correlation ID
-            <input
-              value={draftFilters.correlationId ?? ""}
-              onChange={(event) => setDraftFilters((current) => ({ ...current, correlationId: event.target.value || undefined }))}
-            />
           </label>
           <label>
             Limit
@@ -932,14 +895,13 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
         )}
         {reportState.status === "loaded" && (
           <>
-            <p className="placeholderCopy">Report correlation ID: {reportState.data.correlationId}</p>
             <div className="tableScroller fiscalVoidAuditTableScroller">
               <table className="fiscalVoidAuditTable">
                 <colgroup>
                   <col className="auditDateColumn" />
                   <col className="auditResultColumn" />
                   <col className="auditInvoiceColumn" />
-                  <col className="auditPriorityReferenceColumn" />
+                  <col className="auditTicketColumn" />
                   <col className="auditPriorityOperatorColumn" />
                   <col className="auditDetailsColumn" />
                 </colgroup>
@@ -947,9 +909,9 @@ function FiscalVoidActionAuditReportPage({ client }: { client: OperatorConsoleAp
                   <tr>
                     <th>Submitted At</th>
                     <th>Result</th>
-                    <th>Sales Invoice Number</th>
-                    <th className="auditPriorityReferenceHeader">Sales Invoice Reference ID</th>
-                    <th className="auditPriorityOperatorHeader">Operator/User</th>
+                    <th>Sales Invoice number</th>
+                    <th className="auditTicketHeader">Ticket number</th>
+                    <th className="auditPriorityOperatorHeader">Operator</th>
                     <th>Support / Audit</th>
                   </tr>
                 </thead>
@@ -991,8 +953,8 @@ function FiscalVoidActionAuditReportRow({ item }: { item: FiscalVoidActionAuditR
           <span className={`statusPill ${presentation.className}`}>{presentation.label}</span>
         </td>
         <td className="auditInvoiceCell">{displayValue(item.fiscalDocumentNumber)}</td>
-        <td className="auditReferenceCell auditPriorityReferenceCell">{item.fiscalIssuanceReferenceId}</td>
-        <td className="auditReferenceCell auditPriorityOperatorCell">{item.operatorUserId}</td>
+        <td className="auditTicketCell">{displayValue(item.ticketNumber)}</td>
+        <td className="auditPriorityOperatorCell">{operatorDisplayValue(item)}</td>
         <td className="auditDetailsCell">
           <button
             type="button"
@@ -1014,21 +976,17 @@ function FiscalVoidActionAuditReportRow({ item }: { item: FiscalVoidActionAuditR
               <DescriptionList
                 items={[
                   ["Reason", displayValue(item.reasonCode)],
-                  ["Correlation ID", item.correlationId],
                   ["Side-effect posture", sideEffectPosture(item)],
-                  ["Action-log entry ID", item.actionLogEntryId],
                   ["Action", actionLabel],
                   ["Result meaning", presentation.meaning],
                   ["Result class", item.resultClass],
-                  ["Sales Invoice reference ID", item.fiscalIssuanceReferenceId],
                   ["Sales Invoice number", displayValue(item.fiscalDocumentNumber)],
-                  ["POS Server Sales Invoice ID", displayValue(item.posServerFiscalDocumentId)],
-                  ["Operator/user ID", item.operatorUserId],
-                  ["Site ID", displayValue(item.siteId)],
-                  ["Site group ID", displayValue(item.siteGroupId)],
+                  ["Ticket number", displayValue(item.ticketNumber)],
+                  ["Operator", operatorDisplayValue(item)],
+                  ["Site", siteDisplayValue(item)],
+                  ["Site group", siteGroupDisplayValue(item)],
                   ["Reason code", displayValue(item.reasonCode)],
                   ["Reason text", displayValue(item.reasonText)],
-                  ["Operator action request ID", displayValue(item.operatorActionRequestId)],
                   ["POS Server result classification", displayValue(item.posServerResultClassification)],
                   ["Safe denial/error posture", displayValue(item.safeDenialOrErrorPosture)],
                   ["Source module/screen", displayValue(item.sourceModule)],
@@ -2578,7 +2536,10 @@ function TicketLookupPage({
         <div>
           <p className="eyebrow">Ticket Lookup</p>
           <h2>Ticket exit readiness</h2>
-          <p>Scan or enter a ticket number to review session, payment, and vendor confirmation state.</p>
+          <p>
+            Scan or enter a HikCentral-issued ticket number to review session, payment, and vendor confirmation state.
+            Sales Invoice numbers are issued separately by POS Server.
+          </p>
         </div>
       </section>
 
@@ -2597,7 +2558,7 @@ function TicketLookupPage({
               autoFocus
               inputMode="text"
               name="ticketReference"
-              placeholder="Scan or enter ticket number"
+              placeholder="Scan or enter HikCentral ticket number"
               value={ticketReference}
               onChange={(event) => setTicketReference(event.target.value)}
             />
@@ -2648,6 +2609,7 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
           <DescriptionList
             items={[
               ["Ticket number", displayValue(result.ticketNumber)],
+              ["Sales Invoice number", "Not available"],
               ["Card number", displayValue(result.cardNum)],
               ["Plate license", displayPlateLicense(result.plateLicense)],
               ["Parking in time", result.parkingInTime ? formatDateTime(result.parkingInTime) : "Not available"],
@@ -4286,6 +4248,18 @@ function newUiRequestId() {
 
 function displayValue(value?: string) {
   return value && value.trim().length > 0 ? value : "Not available";
+}
+
+function operatorDisplayValue(item: { operatorDisplayName?: string; operatorUsername?: string }) {
+  return displayValue(item.operatorDisplayName ?? item.operatorUsername ?? "Unknown user");
+}
+
+function siteDisplayValue(item: { siteName?: string }) {
+  return displayValue(item.siteName);
+}
+
+function siteGroupDisplayValue(item: { siteGroupName?: string }) {
+  return displayValue(item.siteGroupName);
 }
 
 function displayStatusValue(value?: string) {
