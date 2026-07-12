@@ -58,6 +58,16 @@ UPDATE core.tariff_snapshots
  WHERE parking_session_id = '23100000-0000-0000-0000-000000000003'
     OR tariff_snapshot_id = '23100000-0000-0000-0000-000000000004';
 
+DELETE FROM discounts.statutory_discount_payable_basis_applications
+ WHERE parking_session_id = '23100000-0000-0000-0000-000000000003'
+    OR original_tariff_snapshot_id = '23100000-0000-0000-0000-000000000004'
+    OR statutory_discount_validation_id IN (
+        SELECT statutory_discount_validation_id
+        FROM discounts.statutory_discount_validations
+        WHERE parking_session_id = '23100000-0000-0000-0000-000000000003'
+           OR requested_by_user_id = '77000000-0000-0000-0000-000000000010'
+    );
+
 DELETE FROM discounts.discount_evidence_references
  WHERE statutory_discount_validation_id IN (
     SELECT statutory_discount_validation_id
