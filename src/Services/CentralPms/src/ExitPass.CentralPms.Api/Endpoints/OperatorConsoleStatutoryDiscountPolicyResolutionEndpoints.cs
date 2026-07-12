@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -16,6 +17,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class OperatorConsoleStatutoryDiscountPolicyResolutionEndpoints
 {
+    private const string PolicyResolvePolicy = "OperatorConsoleStatutoryDiscountPolicyResolve";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountPolicyResolution");
 
     /// <summary>
@@ -34,6 +36,7 @@ public static class OperatorConsoleStatutoryDiscountPolicyResolutionEndpoints
             .Produces<OperatorConsoleStatutoryDiscountPolicyResolutionResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(PolicyResolvePolicy))
             .WithSummary("Resolve Operator Console statutory discount policy")
             .WithDescription("Resolves the verified local statutory discount policy for the site jurisdiction or mandatory RA 9994 / RA 10754 national fallback after evaluating and persisting Operator Console access. This endpoint is read-only except for access evaluation persistence and does not create drafts, apply discounts, mutate payable basis, or create payment, gate, provider, coupon, or reconciliation records.");
 

@@ -77,6 +77,54 @@ public static class CentralPmsRbacPolicyCatalog
                 "reconciliation.manage"
             ],
 
+            ["OperatorConsoleStatutoryDiscountSessionLookup"] =
+            [
+                "statutory-discounts.session.lookup",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountDraftView"] =
+            [
+                "statutory-discounts.draft.view",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountDraftCreate"] =
+            [
+                "statutory-discounts.draft.create",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountEvidenceView"] =
+            [
+                "statutory-discounts.evidence.view",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountEvidenceCapture"] =
+            [
+                "statutory-discounts.evidence.capture",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountDecisionReview"] =
+            [
+                "statutory-discounts.decision.review",
+                "statutory-discounts.decision.approve",
+                "statutory-discounts.decision.reject",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountPayableBasisApply"] =
+            [
+                "statutory-discounts.payable-basis.apply",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountPolicyResolve"] =
+            [
+                "statutory-discounts.policy.resolve",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountAuditRead"] =
+            [
+                "statutory-discounts.audit.read",
+                "reconciliation.manage"
+            ],
+
             ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
             ["OperatorConsolePolicyImportReviewViewer"] =
             [

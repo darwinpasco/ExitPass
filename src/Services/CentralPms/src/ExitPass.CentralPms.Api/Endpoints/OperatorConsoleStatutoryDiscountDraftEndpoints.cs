@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -21,6 +22,13 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 {
     private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
+    private const string DraftViewPolicy = "OperatorConsoleStatutoryDiscountDraftView";
+    private const string DraftCreatePolicy = "OperatorConsoleStatutoryDiscountDraftCreate";
+    private const string DecisionPolicy = "OperatorConsoleStatutoryDiscountDecisionReview";
+    private const string EvidenceCapturePolicy = "OperatorConsoleStatutoryDiscountEvidenceCapture";
+    private const string EvidenceViewPolicy = "OperatorConsoleStatutoryDiscountEvidenceView";
+    private const string ApplyPayableBasisPolicy = "OperatorConsoleStatutoryDiscountPayableBasisApply";
+    private const string AuditReadPolicy = "OperatorConsoleStatutoryDiscountAuditRead";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
     private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
@@ -41,6 +49,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<OperatorConsoleStatutoryDiscountDraftQueueResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DraftViewPolicy))
             .WithSummary("List Operator Console statutory discount validation drafts")
             .WithDescription("Returns a read-only queue of Operator Console statutory discount validation drafts from stored validation, policy, tariff, and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -51,6 +60,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DraftViewPolicy))
             .WithSummary("Get Operator Console statutory discount validation draft detail")
             .WithDescription("Returns read-only detail for one Operator Console statutory discount validation draft using the stored policy snapshot and payable-basis metadata. This endpoint does not resolve policies, apply discounts, upload evidence, or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -61,6 +71,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(AuditReadPolicy))
             .WithSummary("List Operator Console statutory discount audit/reporting rows")
             .WithDescription("Returns a read-only statutory discount/access audit report using safe masked fields only. This endpoint does not return raw evidence, raw ID numbers, payment authority, gate authority, coupon authority, or reconciliation mutation.");
 
@@ -72,6 +83,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<OperatorConsoleStatutoryDiscountDraftResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DraftCreatePolicy))
             .WithSummary("Draft Operator Console statutory discount validation")
             .WithDescription("Validates and drafts a privacy-minimized statutory discount validation request after evaluating and persisting Operator Console access. When evidence is requested, this endpoint may persist metadata-only evidence reference records without image upload or raw evidence storage. This endpoint does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -84,6 +96,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
             .WithSummary("Decide Operator Console statutory discount validation")
             .WithDescription("Approves or rejects an existing Operator Console statutory discount validation draft after evaluating and persisting Operator Console access. This endpoint only transitions validation decision status and does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -95,6 +108,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(EvidenceCapturePolicy))
             .WithSummary("Capture Operator Console statutory discount evidence metadata")
             .WithDescription("Captures metadata-only statutory discount evidence for an existing Operator Console validation draft. This endpoint stores no raw evidence bytes, performs no OCR or automated ID verification, and only updates evidence metadata and evidence satisfaction state.");
 
@@ -105,6 +119,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(EvidenceViewPolicy))
             .WithSummary("List Operator Console statutory discount evidence metadata")
             .WithDescription("Lists metadata-only statutory discount evidence records for an Operator Console validation draft. This endpoint does not return raw evidence, OCR data, raw ID numbers, or document verification results.");
 
@@ -117,6 +132,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(ApplyPayableBasisPolicy))
             .WithSummary("Apply Operator Console statutory discount payable basis")
             .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint uses the policy snapshot persisted on the validation and may create an applied tariff snapshot plus statutory discount payable-basis application evidence; it does not create payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
 
