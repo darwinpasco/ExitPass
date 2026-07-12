@@ -280,19 +280,33 @@ INSERT INTO identity.users (
     created_by_service_identity_id,
     updated_by_service_identity_id
 )
-VALUES (
-    '77000000-0000-0000-0000-000000000010',
-    'sandbox-oc-sd-pilot-operator',
-    'sandbox-oc-sd-pilot-operator@example.test',
-    'SANDBOX-OC-SD-PILOT-OPERATOR@EXAMPLE.TEST',
-    'Sandbox OC Statutory Discount Operator',
-    'SITE_OPERATOR',
-    'ACTIVE',
-    '2020-01-01T00:00:00Z',
-    '2035-01-01T00:00:00Z',
-    '77000000-0000-0000-0000-000000000003',
-    '77000000-0000-0000-0000-000000000003'
-)
+VALUES
+    (
+        '77000000-0000-0000-0000-000000000010',
+        'sandbox-oc-sd-pilot-operator',
+        'sandbox-oc-sd-pilot-operator@example.test',
+        'SANDBOX-OC-SD-PILOT-OPERATOR@EXAMPLE.TEST',
+        'Sandbox OC Statutory Discount Operator',
+        'SITE_OPERATOR',
+        'ACTIVE',
+        '2020-01-01T00:00:00Z',
+        '2035-01-01T00:00:00Z',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    ),
+    (
+        '77000000-0000-0000-0000-000000000012',
+        'sandbox-oc-sd-pilot-reviewer',
+        'sandbox-oc-sd-pilot-reviewer@example.test',
+        'SANDBOX-OC-SD-PILOT-REVIEWER@EXAMPLE.TEST',
+        'Sandbox OC Statutory Discount Reviewer',
+        'SITE_OPERATOR',
+        'ACTIVE',
+        '2020-01-01T00:00:00Z',
+        '2035-01-01T00:00:00Z',
+        '77000000-0000-0000-0000-000000000003',
+        '77000000-0000-0000-0000-000000000003'
+    )
 ON CONFLICT (user_id) DO UPDATE
 SET username = EXCLUDED.username,
     email = EXCLUDED.email,
@@ -465,19 +479,33 @@ BEGIN
                 created_by_user_id,
                 updated_by_user_id
             )
-            VALUES (
-                '77000000-0000-0000-0000-000000000020',
-                '77000000-0000-0000-0000-000000000010',
-                'SANDBOX_HR',
-                '7700000000000000000000000000002077000000000000000000000000000020',
-                'EMP-SANDBOX',
-                'ACTIVE',
-                '2020-01-01T00:00:00Z',
-                '2035-01-01T00:00:00Z',
-                gen_random_uuid(),
-                '77000000-0000-0000-0000-000000000010',
-                '77000000-0000-0000-0000-000000000010'
-            )
+            VALUES
+                (
+                    '77000000-0000-0000-0000-000000000020',
+                    '77000000-0000-0000-0000-000000000010',
+                    'SANDBOX_HR',
+                    '7700000000000000000000000000002077000000000000000000000000000020',
+                    'EMP-SANDBOX',
+                    'ACTIVE',
+                    '2020-01-01T00:00:00Z',
+                    '2035-01-01T00:00:00Z',
+                    gen_random_uuid(),
+                    '77000000-0000-0000-0000-000000000010',
+                    '77000000-0000-0000-0000-000000000010'
+                ),
+                (
+                    '77000000-0000-0000-0000-000000000022',
+                    '77000000-0000-0000-0000-000000000012',
+                    'SANDBOX_HR',
+                    '7700000000000000000000000000002277000000000000000000000000000022',
+                    'EMP-SANDBOX-REVIEWER',
+                    'ACTIVE',
+                    '2020-01-01T00:00:00Z',
+                    '2035-01-01T00:00:00Z',
+                    gen_random_uuid(),
+                    '77000000-0000-0000-0000-000000000012',
+                    '77000000-0000-0000-0000-000000000012'
+                )
             ON CONFLICT (hr_identity_mapping_id) DO UPDATE
             SET user_id = EXCLUDED.user_id,
                 hr_provider_code = EXCLUDED.hr_provider_code,
@@ -608,28 +636,51 @@ BEGIN
                 created_by_user_id,
                 updated_by_user_id
             )
-            VALUES (
-                '77000000-0000-0000-0000-000000000050',
-                'SANDBOX_HR',
-                '7700000000000000000000000000005077000000000000000000000000000050',
-                'SHIFT-SANDBOX',
-                '77000000-0000-0000-0000-000000000020',
-                '77000000-0000-0000-0000-000000000010',
-                '77000000-0000-0000-0000-000000000001',
-                '77000000-0000-0000-0000-000000000002',
-                now() - interval '1 hour',
-                now() + interval '8 hours',
-                now(),
-                'IMPORTED',
-                'SANDBOX_FIXTURE',
-                'ACTIVE',
-                'ACTIVE',
-                now() - interval '1 hour',
-                now() + interval '8 hours',
-                gen_random_uuid(),
-                '77000000-0000-0000-0000-000000000010',
-                '77000000-0000-0000-0000-000000000010'
-            )
+            VALUES
+                (
+                    '77000000-0000-0000-0000-000000000050',
+                    'SANDBOX_HR',
+                    '7700000000000000000000000000005077000000000000000000000000000050',
+                    'SHIFT-SANDBOX',
+                    '77000000-0000-0000-0000-000000000020',
+                    '77000000-0000-0000-0000-000000000010',
+                    '77000000-0000-0000-0000-000000000001',
+                    '77000000-0000-0000-0000-000000000002',
+                    now() - interval '1 hour',
+                    now() + interval '8 hours',
+                    now(),
+                    'IMPORTED',
+                    'SANDBOX_FIXTURE',
+                    'ACTIVE',
+                    'ACTIVE',
+                    now() - interval '1 hour',
+                    now() + interval '8 hours',
+                    gen_random_uuid(),
+                    '77000000-0000-0000-0000-000000000010',
+                    '77000000-0000-0000-0000-000000000010'
+                ),
+                (
+                    '77000000-0000-0000-0000-000000000052',
+                    'SANDBOX_HR',
+                    '7700000000000000000000000000005277000000000000000000000000000052',
+                    'SHIFT-SANDBOX-REVIEWER',
+                    '77000000-0000-0000-0000-000000000022',
+                    '77000000-0000-0000-0000-000000000012',
+                    '77000000-0000-0000-0000-000000000001',
+                    '77000000-0000-0000-0000-000000000002',
+                    now() - interval '1 hour',
+                    now() + interval '8 hours',
+                    now(),
+                    'IMPORTED',
+                    'SANDBOX_FIXTURE',
+                    'ACTIVE',
+                    'ACTIVE',
+                    now() - interval '1 hour',
+                    now() + interval '8 hours',
+                    gen_random_uuid(),
+                    '77000000-0000-0000-0000-000000000012',
+                    '77000000-0000-0000-0000-000000000012'
+                )
             ON CONFLICT (operator_shift_id) DO UPDATE
             SET hr_provider_code = EXCLUDED.hr_provider_code,
                 external_shift_id_hash = EXCLUDED.external_shift_id_hash,
@@ -662,8 +713,10 @@ SELECT
     '77000000-0000-0000-0000-000000000002'::uuid AS site_id,
     '77000000-0000-0000-0000-000000000001'::uuid AS site_group_id,
     '77000000-0000-0000-0000-000000000010'::uuid AS operator_user_id,
+    '77000000-0000-0000-0000-000000000012'::uuid AS reviewer_user_id,
     '77000000-0000-0000-0000-000000000030'::uuid AS operator_device_binding_id,
     '77000000-0000-0000-0000-000000000050'::uuid AS operator_shift_id,
+    '77000000-0000-0000-0000-000000000052'::uuid AS reviewer_shift_id,
     'E2E-231-SESSION-001' AS ticket_reference,
     '23100000-0000-0000-0000-000000000003'::uuid AS parking_session_id,
     '23100000-0000-0000-0000-000000000004'::uuid AS original_tariff_snapshot_id,

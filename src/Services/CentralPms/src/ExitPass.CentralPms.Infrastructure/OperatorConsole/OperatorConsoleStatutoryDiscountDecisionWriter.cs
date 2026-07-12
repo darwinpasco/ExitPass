@@ -7,8 +7,9 @@ namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 /// <summary>
 /// PostgreSQL-backed writer for Operator Console statutory discount validation decisions.
 ///
-/// ExitPass v1.2 Invariants Enforced:
+/// ExitPass v1.3 Invariants Enforced:
 /// - Writes are limited to discounts.statutory_discount_validations decision/status columns.
+/// - The requester who created the statutory discount validation cannot approve or reject it.
 /// - This writer does not apply discounts or create payment, gate, coupon, provider, settlement, evidence upload, fingerprint, or reconciliation records.
 /// </summary>
 public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorConsoleStatutoryDiscountDecisionWriter
@@ -99,6 +100,20 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorCo
                 errorCode: "STATUTORY_DISCOUNT_DRAFT_NOT_DECISIONABLE");
         }
 
+        if (current.RequestedByUserId == command.DecidedByUserId)
+        {
+            return ToResult(
+                command,
+                current,
+                current.ValidationStatus,
+                decisionAccepted: false,
+                decisionPersisted: false,
+                alreadyDecided: false,
+                decisionChanged: false,
+                ineligibilityReason: "REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT",
+                errorCode: "REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT");
+        }
+
         if (command.TargetValidationStatus == "APPROVED" &&
             current.EvidenceRequired &&
             !current.EvidenceCaptured)
@@ -142,6 +157,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorCo
                 validation_status::text,
                 evidence_required,
                 evidence_captured,
+                requested_by_user_id,
                 decision_reason_code
             FROM discounts.statutory_discount_validations
             WHERE statutory_discount_validation_id = @statutory_discount_validation_id
@@ -164,7 +180,8 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorCo
             reader.GetString(3),
             reader.GetBoolean(4),
             reader.GetBoolean(5),
-            reader.IsDBNull(6) ? null : reader.GetString(6));
+            reader.GetGuid(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7));
     }
 
     private static async Task<DraftDecisionRow> UpdateDecisionAsync(
@@ -191,6 +208,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorCo
                 validation_status::text,
                 evidence_required,
                 evidence_captured,
+                requested_by_user_id,
                 decision_reason_code;
             """;
 
@@ -215,7 +233,8 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorCo
             reader.GetString(3),
             reader.GetBoolean(4),
             reader.GetBoolean(5),
-            reader.IsDBNull(6) ? null : reader.GetString(6));
+            reader.GetGuid(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7));
     }
 
     private static OperatorConsoleStatutoryDiscountDecisionPersistenceResult ToResult(
@@ -271,5 +290,6 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionWriter : IOperatorCo
         string ValidationStatus,
         bool EvidenceRequired,
         bool EvidenceCaptured,
+        Guid RequestedByUserId,
         string? DecisionReasonCode);
 }

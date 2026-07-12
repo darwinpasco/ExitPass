@@ -36,6 +36,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
     private static readonly Guid FixtureSiteId = Guid.Parse("77000000-0000-0000-0000-000000000002");
     private static readonly Guid FixtureSiteGroupId = Guid.Parse("77000000-0000-0000-0000-000000000001");
     private static readonly Guid FixtureShiftId = Guid.Parse("77000000-0000-0000-0000-000000000050");
+    private static readonly Guid FixtureReviewerUserId = Guid.Parse("77000000-0000-0000-0000-000000000012");
     private static readonly Guid FixtureParkingSessionId = Guid.Parse("77000000-0000-0000-0000-000000000090");
     private static readonly Guid FixtureJurisdictionId = Guid.Parse("77000000-0000-0000-0000-000000000211");
     private const string FixtureLguCode = "PH-INT-NO-EVIDENCE-195";
@@ -148,12 +149,38 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         await SeedManualFixtureAsync();
         await ResetFixtureDecisionDraftsAsync();
 
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreateAllowedAccessFactory();
         using var client = factory.CreateClient();
         var beforeBoundaryCount = await CountPaymentBoundaryRecordsAsync(FixtureParkingSessionId);
 
         var draft = await CreateDraftAsync(client, entitlementType: "SENIOR_CITIZEN", evidenceCaptureRequested: false);
-        var approve = DecisionRequest("APPROVE", useFixtureAccessContext: true);
+        using var sameRequesterApproveResponse = await client.PostAsJsonAsync(
+            DecisionEndpoint(draft.DraftId!.Value),
+            DecisionRequest("APPROVE", useFixtureAccessContext: true));
+        sameRequesterApproveResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var sameRequesterApprove = await sameRequesterApproveResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
+        sameRequesterApprove.Should().NotBeNull();
+        sameRequesterApprove!.AccessAllowed.Should().BeTrue();
+        sameRequesterApprove.DecisionAccepted.Should().BeFalse();
+        sameRequesterApprove.DecisionPersisted.Should().BeFalse();
+        sameRequesterApprove.CurrentValidationStatus.Should().Be("REQUESTED");
+        sameRequesterApprove.ErrorCode.Should().Be("REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT");
+        (await ReadDraftStatusAsync(draft.DraftId.Value)).Should().Be("REQUESTED");
+        (await CountApplicationsForValidationAsync(draft.DraftId.Value)).Should().Be(0);
+
+        using var sameRequesterRejectResponse = await client.PostAsJsonAsync(
+            DecisionEndpoint(draft.DraftId.Value),
+            DecisionRequest("REJECT", "REQUESTER_SELF_REJECT", useFixtureAccessContext: true));
+        sameRequesterRejectResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var sameRequesterReject = await sameRequesterRejectResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
+        sameRequesterReject.Should().NotBeNull();
+        sameRequesterReject!.DecisionAccepted.Should().BeFalse();
+        sameRequesterReject.DecisionPersisted.Should().BeFalse();
+        sameRequesterReject.CurrentValidationStatus.Should().Be("REQUESTED");
+        sameRequesterReject.ErrorCode.Should().Be("REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT");
+        (await ReadDraftStatusAsync(draft.DraftId.Value)).Should().Be("REQUESTED");
+
+        var approve = DecisionRequest("APPROVE", useFixtureAccessContext: true, useFixtureReviewer: true);
         using var approveResponse = await client.PostAsJsonAsync(DecisionEndpoint(draft.DraftId!.Value), approve);
         approveResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var approved = await approveResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
@@ -167,6 +194,8 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
 
         var approvedRow = await ReadDraftStatusAsync(draft.DraftId.Value);
         approvedRow.Should().Be("APPROVED");
+        var approvedReviewer = await ReadValidatedByUserIdAsync(draft.DraftId.Value);
+        approvedReviewer.Should().Be(FixtureReviewerUserId);
 
         using var replayResponse = await client.PostAsJsonAsync(DecisionEndpoint(draft.DraftId.Value), approve);
         replayResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -175,7 +204,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         replay!.AlreadyDecided.Should().BeTrue();
         replay.DecisionChanged.Should().BeFalse();
 
-        using var conflictResponse = await client.PostAsJsonAsync(DecisionEndpoint(draft.DraftId.Value), DecisionRequest("REJECT", "OPPOSITE_DECISION", useFixtureAccessContext: true));
+        using var conflictResponse = await client.PostAsJsonAsync(DecisionEndpoint(draft.DraftId.Value), DecisionRequest("REJECT", "OPPOSITE_DECISION", useFixtureAccessContext: true, useFixtureReviewer: true));
         conflictResponse.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var conflict = await conflictResponse.Content.ReadFromJsonAsync<ErrorResponse>();
         conflict.Should().NotBeNull();
@@ -183,7 +212,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
 
         await ResetFixtureDecisionDraftsAsync();
         var evidenceDraft = await CreateDraftAsync(client, entitlementType: "SENIOR_CITIZEN", evidenceCaptureRequested: true);
-        using var blockedApproveResponse = await client.PostAsJsonAsync(DecisionEndpoint(evidenceDraft.DraftId!.Value), DecisionRequest("APPROVE", useFixtureAccessContext: true));
+        using var blockedApproveResponse = await client.PostAsJsonAsync(DecisionEndpoint(evidenceDraft.DraftId!.Value), DecisionRequest("APPROVE", useFixtureAccessContext: true, useFixtureReviewer: true));
         blockedApproveResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var blockedApprove = await blockedApproveResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
         blockedApprove.Should().NotBeNull();
@@ -191,7 +220,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         blockedApprove.ErrorCode.Should().Be("EVIDENCE_REQUIRED_NOT_CAPTURED");
         (await ReadDraftStatusAsync(evidenceDraft.DraftId.Value)).Should().Be("REQUESTED");
 
-        using var rejectResponse = await client.PostAsJsonAsync(DecisionEndpoint(evidenceDraft.DraftId.Value), DecisionRequest("REJECT", "ID_NOT_VALID", useFixtureAccessContext: true));
+        using var rejectResponse = await client.PostAsJsonAsync(DecisionEndpoint(evidenceDraft.DraftId.Value), DecisionRequest("REJECT", "ID_NOT_VALID", useFixtureAccessContext: true, useFixtureReviewer: true));
         rejectResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var rejected = await rejectResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
         rejected.Should().NotBeNull();
@@ -212,6 +241,16 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
                 services.RemoveAll<IOperatorConsoleStatutoryDiscountDecisionService>();
                 services.AddSingleton<IOperatorConsoleStatutoryDiscountDecisionService>(
                     new FakeStatutoryDiscountDecisionService(result, throwValidation));
+            });
+
+    private static CustomWebApplicationFactory CreateAllowedAccessFactory() =>
+        new CustomWebApplicationFactory()
+            .WithServiceOverrides(services =>
+            {
+                services.RemoveAll<IOperatorConsoleAccessEvaluationService>();
+                services.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
+                services.AddSingleton<IOperatorConsoleAccessEvaluationService>(new FakeAllowedAccessEvaluationService());
+                services.AddSingleton<IOperatorConsoleAccessEvaluationWriter>(new FakeAllowedAccessEvaluationWriter());
             });
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftResponse> CreateDraftAsync(
@@ -257,9 +296,10 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
     private static OperatorConsoleStatutoryDiscountDecisionRequest DecisionRequest(
         string decision,
         string? reason = null,
-        bool useFixtureAccessContext = false) =>
+        bool useFixtureAccessContext = false,
+        bool useFixtureReviewer = false) =>
         new(
-            useFixtureAccessContext ? FixtureUserId : UserId,
+            useFixtureAccessContext ? useFixtureReviewer ? FixtureReviewerUserId : FixtureUserId : UserId,
             useFixtureAccessContext ? FixtureDeviceBindingId : DeviceBindingId,
             useFixtureAccessContext ? FixtureSiteId : SiteId,
             useFixtureAccessContext ? FixtureSiteGroupId : SiteGroupId,
@@ -365,6 +405,49 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
             return Task.FromResult(_result);
         }
     }
+
+    private sealed class FakeAllowedAccessEvaluationService : IOperatorConsoleAccessEvaluationService
+    {
+        public Task<OperatorConsoleAccessEvaluationResult> EvaluateAsync(
+            OperatorConsoleAccessEvaluationCommand command,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AllowedAccessResult(command) with { EvaluationId = Guid.Empty, Persisted = false });
+    }
+
+    private sealed class FakeAllowedAccessEvaluationWriter : IOperatorConsoleAccessEvaluationWriter
+    {
+        public Task<OperatorConsoleAccessEvaluationResult> PersistAsync(
+            OperatorConsoleAccessEvaluationResult result,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result with { EvaluationId = Guid.NewGuid(), Persisted = true });
+    }
+
+    private static OperatorConsoleAccessEvaluationResult AllowedAccessResult(
+        OperatorConsoleAccessEvaluationCommand command) =>
+        new(
+            Guid.Empty,
+            Allowed: true,
+            "ALLOWED",
+            Array.Empty<string>(),
+            "OPERATOR",
+            new OperatorConsoleDeviceTrustResult(command.OperatorDeviceBindingId, "ACTIVE", "BROWSER_KEY_AND_MTLS", Trusted: true),
+            new OperatorConsoleShiftContextResult(command.OperatorShiftId, "ACTIVE", Active: true),
+            new OperatorConsoleSiteContextResult(command.SiteId, command.SiteGroupId, Assigned: true),
+            DateTimeOffset.Parse("2026-07-12T10:00:00+08:00"),
+            Persisted: false,
+            command.CorrelationId,
+            new OperatorConsoleAccessEvaluationPersistenceContext(
+                command.UserId,
+                HrIdentityMappingId: null,
+                command.OperatorDeviceBindingId,
+                command.OperatorShiftId,
+                ShiftTakeoverId: null,
+                command.SiteGroupId,
+                command.SiteId,
+                command.ControlledActionCode,
+                command.WorkflowCode,
+                command.ParkingSessionId.HasValue ? "PARKING_SESSION" : null,
+                command.ParkingSessionId));
 
     private static async Task SeedManualFixtureAsync()
     {
@@ -506,6 +589,35 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = draftId;
         return (string?)await command.ExecuteScalarAsync();
+    }
+
+    private static async Task<Guid?> ReadValidatedByUserIdAsync(Guid draftId)
+    {
+        const string sql = """
+            SELECT validated_by_user_id
+            FROM discounts.statutory_discount_validations
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = draftId;
+        var value = await command.ExecuteScalarAsync();
+        return value is DBNull or null ? null : (Guid)value;
+    }
+
+    private static async Task<int> CountApplicationsForValidationAsync(Guid validationId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM discounts.statutory_discount_payable_basis_applications
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private static async Task<int> CountPaymentBoundaryRecordsAsync(Guid parkingSessionId)

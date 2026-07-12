@@ -143,6 +143,42 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionServiceTests
     }
 
     /// <summary>
+    /// Verifies requester-versus-approver segregation denial is surfaced without decision persistence.
+    /// </summary>
+    [Fact]
+    public async Task DecideAsync_WhenRequesterApprovesOwnDraft_ReturnsSegregationDenial()
+    {
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDecisionWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDecisionPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDecisionPersistenceResult(
+                Found: true,
+                DecisionAccepted: false,
+                DecisionPersisted: false,
+                DraftId,
+                ParkingSessionId,
+                "SENIOR_CITIZEN",
+                "REQUESTED",
+                "REQUESTED",
+                "APPROVE",
+                DecisionReasonCode: null,
+                AlreadyDecided: false,
+                DecisionChanged: false,
+                IneligibilityReason: "REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT",
+                ErrorCode: "REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT"));
+
+        var sut = CreateSut(AccessResult(allowed: true, []), writer);
+
+        var result = await sut.DecideAsync(Command(), CancellationToken.None);
+
+        result.AccessAllowed.Should().BeTrue();
+        result.DecisionAccepted.Should().BeFalse();
+        result.DecisionPersisted.Should().BeFalse();
+        result.CurrentValidationStatus.Should().Be("REQUESTED");
+        result.IneligibilityReason.Should().Be("REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT");
+        result.ErrorCode.Should().Be("REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT");
+    }
+
+    /// <summary>
     /// Verifies unsupported decisions are rejected before persistence.
     /// </summary>
     [Fact]

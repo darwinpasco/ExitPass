@@ -1,10 +1,12 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Npgsql;
 using NpgsqlTypes;
 using System.Text.Json;
@@ -26,6 +28,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     private static readonly Guid FixtureSiteId = Guid.Parse("77000000-0000-0000-0000-000000000002");
     private static readonly Guid FixtureSiteGroupId = Guid.Parse("77000000-0000-0000-0000-000000000001");
     private static readonly Guid FixtureShiftId = Guid.Parse("77000000-0000-0000-0000-000000000050");
+    private static readonly Guid FixtureReviewerUserId = Guid.Parse("77000000-0000-0000-0000-000000000012");
     private static readonly Guid FixtureParkingSessionId = Guid.Parse("4c000000-0000-0000-0000-000000000090");
     private static readonly Guid FixtureOriginalTariffSnapshotId = Guid.Parse("4c000000-0000-0000-0000-000000000091");
     private static readonly Guid FixtureVendorSystemId = Guid.Parse("77000000-0000-0000-0000-000000000004");
@@ -64,7 +67,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
     [Fact]
     public async Task ApplyPayableBasisEndpointAppearsInSwagger()
     {
-        using var factory = new CustomWebApplicationFactory();
+        using var factory = CreateAllowedAccessFactory();
         using var client = factory.CreateClient();
 
         var swaggerJson = await client.GetStringAsync("/swagger/v1/swagger.json");
@@ -523,7 +526,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
 
     private static OperatorConsoleStatutoryDiscountDecisionRequest DecisionRequest() =>
         new(
-            FixtureUserId,
+            FixtureReviewerUserId,
             FixtureDeviceBindingId,
             FixtureSiteId,
             FixtureSiteGroupId,
@@ -534,6 +537,59 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             ReviewerAttestation: true,
             $"operator-console-statutory-discount-apply-decision-{Guid.NewGuid():N}",
             Guid.NewGuid());
+
+    private static CustomWebApplicationFactory CreateAllowedAccessFactory() =>
+        new CustomWebApplicationFactory()
+            .WithServiceOverrides(services =>
+            {
+                services.RemoveAll<IOperatorConsoleAccessEvaluationService>();
+                services.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
+                services.AddSingleton<IOperatorConsoleAccessEvaluationService>(new FakeAllowedAccessEvaluationService());
+                services.AddSingleton<IOperatorConsoleAccessEvaluationWriter>(new FakeAllowedAccessEvaluationWriter());
+            });
+
+    private sealed class FakeAllowedAccessEvaluationService : IOperatorConsoleAccessEvaluationService
+    {
+        public Task<OperatorConsoleAccessEvaluationResult> EvaluateAsync(
+            OperatorConsoleAccessEvaluationCommand command,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AllowedAccessResult(command) with { EvaluationId = Guid.Empty, Persisted = false });
+    }
+
+    private sealed class FakeAllowedAccessEvaluationWriter : IOperatorConsoleAccessEvaluationWriter
+    {
+        public Task<OperatorConsoleAccessEvaluationResult> PersistAsync(
+            OperatorConsoleAccessEvaluationResult result,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(result with { EvaluationId = Guid.NewGuid(), Persisted = true });
+    }
+
+    private static OperatorConsoleAccessEvaluationResult AllowedAccessResult(
+        OperatorConsoleAccessEvaluationCommand command) =>
+        new(
+            Guid.Empty,
+            Allowed: true,
+            "ALLOWED",
+            Array.Empty<string>(),
+            "OPERATOR",
+            new OperatorConsoleDeviceTrustResult(command.OperatorDeviceBindingId, "ACTIVE", "BROWSER_KEY_AND_MTLS", Trusted: true),
+            new OperatorConsoleShiftContextResult(command.OperatorShiftId, "ACTIVE", Active: true),
+            new OperatorConsoleSiteContextResult(command.SiteId, command.SiteGroupId, Assigned: true),
+            DateTimeOffset.Parse("2026-07-12T10:00:00+08:00"),
+            Persisted: false,
+            command.CorrelationId,
+            new OperatorConsoleAccessEvaluationPersistenceContext(
+                command.UserId,
+                HrIdentityMappingId: null,
+                command.OperatorDeviceBindingId,
+                command.OperatorShiftId,
+                ShiftTakeoverId: null,
+                command.SiteGroupId,
+                command.SiteId,
+                command.ControlledActionCode,
+                command.WorkflowCode,
+                command.ParkingSessionId.HasValue ? "PARKING_SESSION" : null,
+                command.ParkingSessionId));
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisRequest ApplyRequest() =>
         ApplyRequest(FixtureOriginalTariffSnapshotId);
