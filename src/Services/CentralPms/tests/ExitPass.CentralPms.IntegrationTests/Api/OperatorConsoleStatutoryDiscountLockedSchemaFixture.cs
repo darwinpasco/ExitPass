@@ -19,7 +19,8 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                 FROM discounts.statutory_discount_validations
                 WHERE requested_by_user_id IN (
                     '77000000-0000-0000-0000-000000000010',
-                    '77000000-0000-0000-0000-000000000011'
+                    '77000000-0000-0000-0000-000000000011',
+                    '77000000-0000-0000-0000-000000000012'
                 )
              );
 
@@ -29,7 +30,8 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                 FROM discounts.statutory_discount_validations
                 WHERE requested_by_user_id IN (
                     '77000000-0000-0000-0000-000000000010',
-                    '77000000-0000-0000-0000-000000000011'
+                    '77000000-0000-0000-0000-000000000011',
+                    '77000000-0000-0000-0000-000000000012'
                 )
             );
 
@@ -39,14 +41,16 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                 FROM discounts.statutory_discount_validations
                 WHERE requested_by_user_id IN (
                     '77000000-0000-0000-0000-000000000010',
-                    '77000000-0000-0000-0000-000000000011'
+                    '77000000-0000-0000-0000-000000000011',
+                    '77000000-0000-0000-0000-000000000012'
                 )
             );
 
             DELETE FROM discounts.statutory_discount_validations
             WHERE requested_by_user_id IN (
                 '77000000-0000-0000-0000-000000000010',
-                '77000000-0000-0000-0000-000000000011'
+                '77000000-0000-0000-0000-000000000011',
+                '77000000-0000-0000-0000-000000000012'
             );
 
             DELETE FROM discounts.discount_policy_references
@@ -271,6 +275,19 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                     'Manual Test Operator Access Inactive',
                     'SITE_OPERATOR',
                     'SUSPENDED',
+                    '2020-01-01T00:00:00Z',
+                    '2035-01-01T00:00:00Z',
+                    '77000000-0000-0000-0000-000000000003',
+                    '77000000-0000-0000-0000-000000000003'
+                ),
+                (
+                    '77000000-0000-0000-0000-000000000012',
+                    'manual-test-statutory-discount-reviewer',
+                    'manual-test-statutory-discount-reviewer@example.test',
+                    'MANUAL-TEST-STATUTORY-DISCOUNT-REVIEWER@EXAMPLE.TEST',
+                    'Manual Test Statutory Discount Reviewer',
+                    'SITE_OPERATOR',
+                    'ACTIVE',
                     '2020-01-01T00:00:00Z',
                     '2035-01-01T00:00:00Z',
                     '77000000-0000-0000-0000-000000000003',
