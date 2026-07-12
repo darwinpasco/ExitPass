@@ -56,6 +56,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       listFiscalVoidActionAuditReport: vi.fn(),
       listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
+      createStatutoryDiscountDraft: vi.fn(),
       listStatutoryDiscountDrafts: vi.fn(
         () =>
           new Promise<StatutoryDiscountQueueItem[]>((resolve) => {
@@ -117,6 +118,60 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText(firstDraftId)).toBeInTheDocument();
     expect(screen.getByText("Policy context")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "National fallback policy" })).toBeInTheDocument();
+  });
+
+  it("TicketLookup_CanStartMetadataOnlyStatutoryDiscountDraftFromEligibleSession", async () => {
+    const onDraftCreate = vi.fn();
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          ticketLookupResults: [
+            {
+              sessionFound: true,
+              accessAllowed: true,
+              sessionEligible: true,
+              parkingSessionId: "23100000-0000-0000-0000-000000000003",
+              siteId: "77000000-0000-0000-0000-000000000002",
+              siteGroupId: "77000000-0000-0000-0000-000000000001",
+              ticketNumber: "E2E-231-SESSION-001",
+              cardNum: "E2E-231-SESSION-001",
+              plateLicense: "UAT 231",
+              parkingInTime: "2026-07-12T08:00:00+08:00",
+              feeMinorUnits: 12500,
+              currencyCode: "PHP",
+              paymentStatus: "Not Started",
+              correlationId: "77000000-0000-0000-0000-000000000092"
+            }
+          ],
+          drafts: [],
+          onDraftCreate
+        })}
+        initialPath="/operator-console/ticket-lookup"
+      />
+    );
+
+    await userEvent.type(screen.getByPlaceholderText("Scan or enter HikCentral ticket number"), "E2E-231-SESSION-001");
+    await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
+
+    expect(await screen.findByRole("heading", { name: "Start statutory discount review" })).toBeInTheDocument();
+    expect(screen.getByText("Current payable minor units")).toBeInTheDocument();
+    expect(screen.getByText("12500")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Start statutory discount review" })).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByLabelText(/Operator confirms the entitlement information was reviewed/i)
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Create review draft" }));
+
+    await waitFor(() =>
+      expect(onDraftCreate).toHaveBeenCalledWith(expect.objectContaining({
+        parkingSessionId: "23100000-0000-0000-0000-000000000003",
+        entitlementType: "SENIOR_CITIZEN",
+        evidenceCaptureRequested: true,
+        operatorAttestation: true
+      }))
+    );
+    expect(await screen.findByRole("heading", { name: "E2E-231-SESSION-001" })).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_RendersNationalFallbackPolicyContext", async () => {
@@ -289,6 +344,41 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(await screen.findByText(/this did not create payment, exit authorization, coupon, or gate records/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
     expect(screen.getAllByText(/payable basis has already been applied/i).length).toBeGreaterThan(0);
+  });
+
+  it("StatutoryDiscountDetail_AllowsApplyWhenApprovedAndBackendDerivesOriginalTariffSnapshot", async () => {
+    const onPayableBasisApply = vi.fn();
+    const approvedDraftWithoutSnapshot: StatutoryDiscountDraftDetail = {
+      ...createApprovedDraft(),
+      originalTariffSnapshotId: undefined,
+      payableBasisApplicationStatus: undefined,
+      payableBasisApplicationId: undefined,
+      appliedTariffSnapshotId: undefined
+    };
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          drafts: [approvedDraftWithoutSnapshot],
+          onPayableBasisApply
+        })}
+        initialPath={`/operator-console/statutory-discounts/${approvedDraftWithoutSnapshot.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Apply payable basis" })).toBeInTheDocument();
+    expect(screen.getByText("Ready to apply")).toBeInTheDocument();
+    expect(screen.getByText("Original tariff snapshot").closest("div")).toHaveTextContent("Not available");
+
+    await userEvent.click(screen.getByRole("button", { name: "Apply payable basis" }));
+
+    expect(await screen.findByText("Payable basis applied.")).toBeInTheDocument();
+    expect(onPayableBasisApply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftId: approvedDraftWithoutSnapshot.draftId,
+        originalTariffSnapshotId: undefined
+      })
+    );
   });
 
   it("StatutoryDiscountDetail_CapturesEvidenceAndEnablesApprovalAfterRefresh", async () => {
@@ -1217,30 +1307,76 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(result.sessionFound).toBe(true);
     expect(result.ticketNumber).toBe("REAL-TICKET-001");
     expect(result.cardNum).toBe("REAL-TICKET-001");
+    expect(result.feeMinorUnits).toBe(12500);
     expect(result.paymentStatus).toBe("CONFIRMED");
-    expect(result.vendorConfirmationStatus).toBe("CONFIRMED");
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://central-pms.test/v1/ops/ticket-session-summary",
+      "http://central-pms.test/v1/ops/operator-console/sessions/lookup",
       expect.objectContaining({ method: "POST" })
     );
     const requestOptions = fetchMock.mock.calls[0][1];
     expectOperatorContextHeaders(requestOptions?.headers);
     expect(JSON.parse(requestOptions?.body as string)).toEqual(expect.objectContaining({
-      ticketNumber: "REAL-TICKET-001",
-      cardNum: null
-    }));
-    expect(JSON.parse(requestOptions?.body as string)).not.toEqual(expect.objectContaining({
-      plateNumber: expect.anything(),
-      parkingSessionId: expect.anything(),
-      lookupMode: expect.anything()
+      ticketReference: "REAL-TICKET-001",
+      parkingSessionId: null,
+      lookupMode: "TICKET_REFERENCE"
     }));
 
     const calledUrls = fetchMock.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(calledUrls).not.toMatch(/sessions\/lookup/i);
     expect(calledUrls).not.toMatch(/parkingfee/i);
     expect(calledUrls).not.toMatch(/confirm/i);
     expect(calledUrls).not.toMatch(/hikcentral/i);
     expect(calledUrls).not.toMatch(/gate/i);
+  });
+
+  it("OperatorConsoleApi_CreatesStatutoryDiscountDraftThroughSingularEndpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({
+      accessAllowed: true,
+      accessDecision: "ALLOWED",
+      accessDenialReasons: [],
+      draftAccepted: true,
+      draftPersisted: true,
+      draftId: firstDraftId,
+      parkingSessionId: "23100000-0000-0000-0000-000000000003",
+      entitlementType: "SENIOR_CITIZEN",
+      validationStatus: "REQUESTED",
+      evidenceCaptureRequired: true,
+      evidenceRequired: true,
+      evidenceReferenceCreated: true,
+      reusedExistingDraft: false,
+      correlationId: "0c000000-0000-0000-0000-000000000001"
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
+
+    const result = await client.createStatutoryDiscountDraft({
+      parkingSessionId: "23100000-0000-0000-0000-000000000003",
+      ticketReference: "E2E-231-SESSION-001",
+      entitlementType: "SENIOR_CITIZEN",
+      idDocumentType: "SENIOR_CITIZEN_ID",
+      issuingAuthority: "OSCA",
+      maskedIdReference: "SC-UAT-****-0001",
+      evidenceCaptureRequested: true,
+      operatorAttestation: true,
+      attestationNotes: "Manual UAT smoke."
+    });
+
+    expect(result.accepted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://central-pms.test/v1/ops/operator-console/statutory-discounts/draft",
+      expect.objectContaining({ method: "POST" })
+    );
+    const requestOptions = fetchMock.mock.calls[0][1];
+    expectOperatorContextHeaders(requestOptions?.headers);
+    expect(JSON.parse(requestOptions?.body as string)).toEqual(expect.objectContaining({
+      parkingSessionId: "23100000-0000-0000-0000-000000000003",
+      ticketReference: "E2E-231-SESSION-001",
+      entitlementType: "SENIOR_CITIZEN",
+      idDocumentType: "SENIOR_CITIZEN_ID",
+      issuingAuthority: "OSCA",
+      maskedIdReference: "SC-UAT-****-0001",
+      evidenceAccessIntent: "METADATA_ONLY",
+      operatorAttestation: true
+    }));
   });
 
   it("OperatorConsoleApi_GetsFiscalStatusThroughFacadeUsingGetHeadersAndEncodedReference", async () => {
@@ -2214,6 +2350,36 @@ function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
   };
 }
 
+function createApprovedDraft(): StatutoryDiscountDraftDetail {
+  return {
+    ...sandboxOnlyDraft(),
+    draftId: "47000000-0000-0000-0000-000000000088",
+    parkingSessionId: "25000000-0000-0000-0000-000000000088",
+    ticketReference: "STAT-OP-SESSION-0088",
+    status: "Approved",
+    evidenceCaptured: true,
+    evidenceRequiredSatisfied: true,
+    evidenceCount: 1,
+    latestEvidenceStatus: "CAPTURED",
+    originalAmountMinorUnits: 12500,
+    payableAmountMinorUnits: 12500,
+    finalPayableAmountMinorUnits: undefined,
+    statutoryDiscountAmountMinorUnits: undefined,
+    vatAmountMinorUnits: undefined,
+    vatExclusiveAmountMinorUnits: undefined,
+    currencyCode: "PHP",
+    policyContext: {
+      ...sandboxOnlyDraft().policyContext,
+      title: "Approved Senior Citizen statutory discount",
+      policyReadinessClassification: "READY_FOR_CONTROLLED_UAT",
+      policyReadinessReason: "CONTROLLED_UAT",
+      operatorMessage: "Controlled UAT policy is ready for manual statutory discount smoke.",
+      productionAutoApplicationEligible: false
+    },
+    auditActivity: ["Evidence captured.", "Decision approved."]
+  };
+}
+
 async function lookupFiscalStatus(referenceId: string) {
   await userEvent.clear(await screen.findByLabelText(/search by Sales Invoice number or reference ID/i));
   await userEvent.type(screen.getByLabelText(/search by Sales Invoice number or reference ID/i), referenceId);
@@ -2613,27 +2779,20 @@ function productionPolicyReviewListResponse(status: string): ProductionPolicyImp
 function ticketLookupResponse(): OperatorTicketLookupResult {
   return {
     sessionFound: true,
-    ticketNumber: "REAL-TICKET-001",
-    cardNum: "REAL-TICKET-001",
-    plateLicense: "Unknown",
-    parkingInTime: "2026-06-01T08:00:00+08:00",
-    parkingDurationSeconds: 3600,
-    feeMinorUnits: 12000,
+    accessAllowed: true,
+    sessionEligible: true,
+    parkingSessionId: "23100000-0000-0000-0000-000000000003",
+    siteId: "77000000-0000-0000-0000-000000000002",
+    siteGroupId: "77000000-0000-0000-0000-000000000001",
+    ticketReference: "REAL-TICKET-001",
+    plateNumber: "Unknown",
+    entryTime: "2026-06-01T08:00:00+08:00",
+    currentPayableAmountMinorUnits: 12500,
     currencyCode: "PHP",
-    feeRuleType: "STANDARD",
-    feeRuleIndexCode: "STD-REAL",
-    feeRuleName: "Standard Fee",
-    paymentAttemptStatus: "CONFIRMED",
     paymentStatus: "CONFIRMED",
-    paymentConfirmationStatus: "RECORDED",
-    vendorSystemCode: "HIKCENTRAL",
-    vendorConfirmationCode: "CONFIRMED",
-    vendorConfirmationStatus: "CONFIRMED",
-    vendorConfirmationTimestamp: "2026-06-01T09:00:00+08:00",
-    vendorMessage: "Accepted",
-    diagnostics: ["summary-only"],
+    alerts: [],
     correlationId: "77000000-0000-0000-0000-000000000092"
-  };
+  } as unknown as OperatorTicketLookupResult;
 }
 
 function vendorAcknowledgmentSearchResponse(): VendorPaymentAcknowledgmentSearchResult {

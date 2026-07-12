@@ -362,9 +362,13 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
             OriginalTariffSnapshotId: null,
             PayableBasisApplicationId: null,
             PayableBasisApplicationStatus: null,
+            AppliedTariffSnapshotId: null,
             OriginalAmountMinorUnits: 18000,
+            VatAmountMinorUnits: null,
+            VatExclusiveAmountMinorUnits: null,
             StatutoryDiscountAmountMinorUnits: 3600,
             PayableAmountMinorUnits: 14400,
+            FinalPayableAmountMinorUnits: null,
             "PHP",
             ["Draft requested at 2026-06-01T08:15:00.0000000+08:00."]);
 

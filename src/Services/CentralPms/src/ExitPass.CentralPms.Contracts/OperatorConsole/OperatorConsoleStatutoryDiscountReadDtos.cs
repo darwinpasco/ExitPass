@@ -81,9 +81,13 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResponse(
     Guid? OriginalTariffSnapshotId,
     Guid? PayableBasisApplicationId,
     string? PayableBasisApplicationStatus,
+    Guid? AppliedTariffSnapshotId,
     long? OriginalAmountMinorUnits,
+    long? VatAmountMinorUnits,
+    long? VatExclusiveAmountMinorUnits,
     long? StatutoryDiscountAmountMinorUnits,
     long? PayableAmountMinorUnits,
+    long? FinalPayableAmountMinorUnits,
     string? CurrencyCode,
     IReadOnlyList<string> Activity);
 

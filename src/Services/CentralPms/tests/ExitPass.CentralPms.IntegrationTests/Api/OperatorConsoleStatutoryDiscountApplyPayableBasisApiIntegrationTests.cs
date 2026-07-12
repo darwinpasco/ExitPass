@@ -100,7 +100,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         var decision = await ApproveDraftAsync(client, draft.DraftId!.Value);
         decision.CurrentValidationStatus.Should().Be("APPROVED");
 
-        var applyRequest = ApplyRequest();
+        var applyRequest = ApplyRequest(originalTariffSnapshotId: null);
         using var applyResponse = await client.PostAsJsonAsync(
             ApplyEndpoint(draft.DraftId.Value),
             applyRequest);
@@ -536,13 +536,16 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             Guid.NewGuid());
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisRequest ApplyRequest() =>
+        ApplyRequest(FixtureOriginalTariffSnapshotId);
+
+    private static OperatorConsoleStatutoryDiscountApplyPayableBasisRequest ApplyRequest(Guid? originalTariffSnapshotId) =>
         new(
             FixtureUserId,
             FixtureDeviceBindingId,
             FixtureSiteId,
             FixtureSiteGroupId,
             FixtureShiftId,
-            FixtureOriginalTariffSnapshotId,
+            originalTariffSnapshotId,
             $"operator-console-statutory-discount-apply-{Guid.NewGuid():N}",
             Guid.NewGuid());
 

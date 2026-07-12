@@ -731,6 +731,27 @@ dd {
   gap: 7px;
 }
 
+.draftStartForm {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 14px;
+}
+
+.draftStartForm label {
+  color: #465969;
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 7px;
+  min-width: 0;
+}
+
+.draftStartForm .checkboxField,
+.draftStartForm .actionBar {
+  grid-column: 1 / -1;
+}
+
 .lookupGuardrail {
   background: #f7fafb;
   border: 1px solid #dfe5ea;

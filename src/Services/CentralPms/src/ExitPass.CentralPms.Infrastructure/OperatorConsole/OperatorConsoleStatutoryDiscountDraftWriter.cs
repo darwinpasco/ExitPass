@@ -8,7 +8,7 @@ namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 /// <summary>
 /// PostgreSQL-backed writer for privacy-minimized Operator Console statutory discount validation drafts.
 ///
-/// ExitPass v1.2 Invariants Enforced:
+/// ExitPass v1.3 Invariants Enforced:
 /// - Writes are limited to discounts.statutory_discount_validations and metadata-only discounts.discount_evidence_references rows.
 /// - This writer does not upload raw evidence or create fingerprint, payment, gate, coupon, provider, settlement, or reconciliation records.
 /// </summary>
@@ -205,6 +205,12 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
         CancellationToken cancellationToken)
     {
+        var policyReferenceId = await ResolvePersistencePolicyReferenceIdAsync(
+            connection,
+            transaction,
+            command,
+            cancellationToken);
+
         const string sql = """
             INSERT INTO discounts.statutory_discount_validations (
                 parking_session_id,
@@ -232,7 +238,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
                 false,
                 @decision_reason_code,
                 @policy_reference_id,
-                @policy_reference_id,
+                NULL,
                 now(),
                 @requested_by_user_id,
                 @correlation_id,
@@ -247,7 +253,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("decision_reason_code", NpgsqlDbType.Varchar).Value = DbValue(command.ReasonCode);
-        npgsqlCommand.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = command.Policy.StatutoryDiscountPolicyId;
+        npgsqlCommand.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = policyReferenceId;
         npgsqlCommand.Parameters.Add("requested_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
         npgsqlCommand.Parameters.Add("created_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
@@ -267,6 +273,53 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             EvidenceReferenceCreated: false,
             EvidenceReferenceId: null,
             Policy: command.Policy);
+    }
+
+    private static async Task<Guid> ResolvePersistencePolicyReferenceIdAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        OperatorConsoleStatutoryDiscountDraftPersistenceCommand command,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT p.discount_policy_reference_id
+            FROM discounts.discount_policy_references AS p
+            WHERE p.entitlement_type = @entitlement_type::discounts.statutory_entitlement_type_enum
+              AND p.policy_status = 'ACTIVE'::discounts.discount_policy_status_enum
+              AND (
+                    p.discount_policy_reference_id = @resolved_policy_id
+                 OR p.policy_code = @policy_code
+              )
+              AND (
+                    p.site_id = @site_id
+                 OR p.site_group_id = @site_group_id
+                 OR (p.site_id IS NULL AND p.site_group_id IS NULL)
+              )
+            ORDER BY
+                CASE
+                    WHEN p.discount_policy_reference_id = @resolved_policy_id THEN 0
+                    WHEN p.site_id = @site_id THEN 1
+                    WHEN p.site_group_id = @site_group_id THEN 2
+                    ELSE 3
+                END,
+                p.effective_from DESC,
+                p.policy_code
+            LIMIT 1;
+            """;
+
+        await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
+        npgsqlCommand.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = command.EntitlementType;
+        npgsqlCommand.Parameters.Add("resolved_policy_id", NpgsqlDbType.Uuid).Value = command.Policy.StatutoryDiscountPolicyId;
+        npgsqlCommand.Parameters.Add("policy_code", NpgsqlDbType.Varchar).Value = command.Policy.PolicyCode;
+        npgsqlCommand.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = command.Policy.SiteId;
+        npgsqlCommand.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = command.Policy.SiteGroupId;
+
+        var value = await npgsqlCommand.ExecuteScalarAsync(cancellationToken);
+        return value is Guid policyReferenceId
+            ? policyReferenceId
+            : throw new OperatorConsoleStatutoryDiscountDraftPolicyReferenceMissingException(
+                command.Policy.PolicyCode,
+                command.EntitlementType);
     }
 
     private static async Task<OperatorConsoleStatutoryDiscountDraftPersistenceResult> EnsureEvidenceMetadataAsync(

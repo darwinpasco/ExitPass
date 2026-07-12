@@ -305,27 +305,34 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         await PrepareDraftPolicyFixtureAsync();
         await InsertDraftVerifiedLocalPolicyAsync();
 
-        using var factory = new CustomWebApplicationFactory();
-        using var client = factory.CreateClient();
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
 
-        using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
+            using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
-        body.Should().NotBeNull();
-        body!.DraftAccepted.Should().BeTrue();
-        body.StatutoryDiscountPolicyId.Should().Be(DraftVerifiedLocalPolicyId);
-        body.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
-        body.PolicyCode.Should().Be("INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY");
-        body.OrdinanceReference.Should().Be("INTEGRATION-DRAFT-ORD-195");
-        body.NationalLawReference.Should().BeNull();
-        body.FreeDurationMinutes.Should().BeNull();
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+            body.Should().NotBeNull();
+            body!.DraftAccepted.Should().BeTrue();
+            body.StatutoryDiscountPolicyId.Should().Be(DraftVerifiedLocalPolicyId);
+            body.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+            body.PolicyCode.Should().Be("INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY");
+            body.OrdinanceReference.Should().Be("INTEGRATION-DRAFT-ORD-195");
+            body.NationalLawReference.Should().BeNull();
+            body.FreeDurationMinutes.Should().BeNull();
 
-        var stored = await ReadDraftPolicyContextAsync(body.DraftId!.Value);
-        stored.Should().NotBeNull();
-        stored!.PolicyId.Should().Be(DraftVerifiedLocalPolicyId);
-        stored.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
-        stored.Snapshot.GetProperty("ordinanceReference").GetString().Should().Be("INTEGRATION-DRAFT-ORD-195");
+            var stored = await ReadDraftPolicyContextAsync(body.DraftId!.Value);
+            stored.Should().NotBeNull();
+            stored!.PolicyId.Should().Be(DraftVerifiedLocalPolicyId);
+            stored.PolicyResolutionBasis.Should().Be("LOCAL_ORDINANCE_APPLIED");
+            stored.Snapshot.GetProperty("ordinanceReference").GetString().Should().Be("INTEGRATION-DRAFT-ORD-195");
+        }
+        finally
+        {
+            await CleanupDraftLocalPolicyFixtureAsync();
+        }
     }
 
     /// <summary>
@@ -343,21 +350,28 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
         await PrepareDraftPolicyFixtureAsync();
         await InsertDraftUnverifiedLocalPolicyAsync();
 
-        using var factory = new CustomWebApplicationFactory();
-        using var client = factory.CreateClient();
+        try
+        {
+            using var factory = new CustomWebApplicationFactory();
+            using var client = factory.CreateClient();
 
-        using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
+            using var response = await client.PostAsJsonAsync(Endpoint, ManualFixtureRequest(evidenceCaptureRequested: false));
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
-        body.Should().NotBeNull();
-        body!.DraftAccepted.Should().BeFalse();
-        body.DraftPersisted.Should().BeFalse();
-        body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_UNVERIFIED");
-        body.DraftId.Should().BeNull();
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+            var body = await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDraftResponse>();
+            body.Should().NotBeNull();
+            body!.DraftAccepted.Should().BeFalse();
+            body.DraftPersisted.Should().BeFalse();
+            body.ErrorCode.Should().Be("STATUTORY_DISCOUNT_POLICY_UNVERIFIED");
+            body.DraftId.Should().BeNull();
 
-        var activeDraftCount = await CountActiveDraftsAsync(ManualFixtureParkingSessionId, "SENIOR_CITIZEN");
-        activeDraftCount.Should().Be(0);
+            var activeDraftCount = await CountActiveDraftsAsync(ManualFixtureParkingSessionId, "SENIOR_CITIZEN");
+            activeDraftCount.Should().Be(0);
+        }
+        finally
+        {
+            await CleanupDraftLocalPolicyFixtureAsync();
+        }
     }
 
     /// <summary>
@@ -487,7 +501,7 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
             entitlementType == "PWD" ? "NCDA" : "OSCA",
             ExpiryDate: null,
-            entitlementType == "PWD" ? "PWD4" : "1234",
+            entitlementType == "PWD" ? "PWD-UAT-****-0001" : "SC-UAT-****-0001",
             EntitlementFingerprint: null,
             EvidenceCaptureRequested: evidenceCaptureRequested,
             EvidenceAccessIntent: null,
@@ -609,7 +623,17 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
                SET tariff_snapshot_id = NULL
              WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM discounts.discount_evidence_references
+            WHERE statutory_discount_validation_id IN (
+                SELECT statutory_discount_validation_id
+                FROM discounts.statutory_discount_validations
+                WHERE parking_session_id = @parking_session_id
+            );
+
             DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_validations
             WHERE parking_session_id = @parking_session_id;
 
             UPDATE core.tariff_snapshots
@@ -636,6 +660,14 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             SET CONSTRAINTS ALL DEFERRED;
 
             DELETE FROM discounts.discount_policy_references
+            WHERE policy_code IN (
+                'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'PH_RA10754_PWD_NATIONAL_FALLBACK',
+                'INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY',
+                'INTEGRATION_DRAFT_UNVERIFIED_LOCAL_POLICY'
+            );
+
+            DELETE FROM discounts.statutory_discount_policy_registry
             WHERE policy_code IN (
                 'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
                 'PH_RA10754_PWD_NATIONAL_FALLBACK',
@@ -684,6 +716,96 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             SET policy_status = EXCLUDED.policy_status,
                 updated_at = now();
 
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_code,
+                jurisdiction_name,
+                beneficiary_residency_scope,
+                facility_scope,
+                requires_evidence,
+                required_evidence_type,
+                requires_operator_validation,
+                legal_basis_reference,
+                national_law_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                effective_to,
+                notes,
+                correlation_id
+            )
+            VALUES (
+                '6f000000-0000-0000-0000-000000000101',
+                'PH_RA9994_SENIOR_CITIZEN_NATIONAL_FALLBACK',
+                'RA 9994 Senior Citizen National Fallback',
+                'Integration fallback policy.',
+                'SENIOR_CITIZEN',
+                'ACTIVE',
+                'VERIFIED_OFFICIAL',
+                'NATIONAL_LAW',
+                'LEGAL_REFERENCE',
+                'NATIONAL_LAW_FALLBACK',
+                'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                'VAT_EXCLUSIVE',
+                'PH',
+                'Philippines',
+                'NON_RESIDENT_ALLOWED',
+                'Integration draft test fallback.',
+                false,
+                NULL,
+                true,
+                'RA 9994',
+                'RA 9994',
+                'integration-draft-v1',
+                'integration-test-reviewer',
+                now() - interval '2 days',
+                'integration-test-approver',
+                now() - interval '1 day',
+                now() - interval '1 day',
+                NULL,
+                'Integration fallback policy.',
+                gen_random_uuid()
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET statutory_discount_policy_registry_id = EXCLUDED.statutory_discount_policy_registry_id,
+                policy_name = EXCLUDED.policy_name,
+                entitlement_type = EXCLUDED.entitlement_type,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                policy_level = EXCLUDED.policy_level,
+                policy_type = EXCLUDED.policy_type,
+                policy_resolution_basis = EXCLUDED.policy_resolution_basis,
+                benefit_type = EXCLUDED.benefit_type,
+                discount_base_scope = EXCLUDED.discount_base_scope,
+                jurisdiction_code = EXCLUDED.jurisdiction_code,
+                requires_evidence = EXCLUDED.requires_evidence,
+                required_evidence_type = EXCLUDED.required_evidence_type,
+                requires_operator_validation = EXCLUDED.requires_operator_validation,
+                legal_basis_reference = EXCLUDED.legal_basis_reference,
+                national_law_reference = EXCLUDED.national_law_reference,
+                source_reference = EXCLUDED.source_reference,
+                reviewed_by = EXCLUDED.reviewed_by,
+                reviewed_at = EXCLUDED.reviewed_at,
+                approved_by = EXCLUDED.approved_by,
+                approved_at = EXCLUDED.approved_at,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
+                updated_at = now();
+
             INSERT INTO discounts.discount_policy_references (
                 discount_policy_reference_id,
                 policy_code,
@@ -720,12 +842,133 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             SET policy_status = EXCLUDED.policy_status,
                 updated_at = now();
 
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_code,
+                jurisdiction_name,
+                beneficiary_residency_scope,
+                facility_scope,
+                requires_evidence,
+                required_evidence_type,
+                requires_operator_validation,
+                legal_basis_reference,
+                national_law_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                effective_to,
+                notes,
+                correlation_id
+            )
+            VALUES (
+                '6f000000-0000-0000-0000-000000000102',
+                'PH_RA10754_PWD_NATIONAL_FALLBACK',
+                'RA 10754 PWD National Fallback',
+                'Integration fallback policy.',
+                'PWD',
+                'ACTIVE',
+                'VERIFIED_OFFICIAL',
+                'NATIONAL_LAW',
+                'LEGAL_REFERENCE',
+                'NATIONAL_LAW_FALLBACK',
+                'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                'VAT_EXCLUSIVE',
+                'PH',
+                'Philippines',
+                'NON_RESIDENT_ALLOWED',
+                'Integration draft test fallback.',
+                false,
+                NULL,
+                true,
+                'RA 10754',
+                'RA 10754',
+                'integration-draft-v1',
+                'integration-test-reviewer',
+                now() - interval '2 days',
+                'integration-test-approver',
+                now() - interval '1 day',
+                now() - interval '1 day',
+                NULL,
+                'Integration fallback policy.',
+                gen_random_uuid()
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET statutory_discount_policy_registry_id = EXCLUDED.statutory_discount_policy_registry_id,
+                policy_name = EXCLUDED.policy_name,
+                entitlement_type = EXCLUDED.entitlement_type,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                policy_level = EXCLUDED.policy_level,
+                policy_type = EXCLUDED.policy_type,
+                policy_resolution_basis = EXCLUDED.policy_resolution_basis,
+                benefit_type = EXCLUDED.benefit_type,
+                discount_base_scope = EXCLUDED.discount_base_scope,
+                jurisdiction_code = EXCLUDED.jurisdiction_code,
+                requires_evidence = EXCLUDED.requires_evidence,
+                required_evidence_type = EXCLUDED.required_evidence_type,
+                requires_operator_validation = EXCLUDED.requires_operator_validation,
+                legal_basis_reference = EXCLUDED.legal_basis_reference,
+                national_law_reference = EXCLUDED.national_law_reference,
+                source_reference = EXCLUDED.source_reference,
+                reviewed_by = EXCLUDED.reviewed_by,
+                reviewed_at = EXCLUDED.reviewed_at,
+                approved_by = EXCLUDED.approved_by,
+                approved_at = EXCLUDED.approved_at,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
+                updated_at = now();
+
             COMMIT;
             """;
 
         await using var connection = await OpenConnectionAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("lgu_code", NpgsqlDbType.Varchar).Value = DraftPolicyLguCode;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = ManualFixtureSiteId;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task CleanupDraftLocalPolicyFixtureAsync()
+    {
+        const string sql = """
+            UPDATE discounts.discount_policy_references
+               SET policy_status = 'DRAFT'::discounts.discount_policy_status_enum,
+                   updated_at = now()
+            WHERE policy_code IN (
+                'INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY',
+                'INTEGRATION_DRAFT_UNVERIFIED_LOCAL_POLICY'
+            );
+
+            UPDATE discounts.statutory_discount_policy_registry
+               SET policy_status = 'DRAFT'::discounts.discount_policy_status_enum,
+                   updated_at = now()
+            WHERE policy_code IN (
+                'INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY',
+                'INTEGRATION_DRAFT_UNVERIFIED_LOCAL_POLICY'
+            );
+
+            UPDATE sites.sites
+               SET lgu_code = 'PH-INT-DRAFT-CLEANED',
+                   updated_at = now()
+             WHERE site_id = @site_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = ManualFixtureSiteId;
         await command.ExecuteNonQueryAsync();
     }
@@ -770,6 +1013,96 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             ON CONFLICT (policy_code, policy_version) DO UPDATE
             SET lgu_code = EXCLUDED.lgu_code,
                 policy_status = EXCLUDED.policy_status,
+                updated_at = now();
+
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_code,
+                jurisdiction_name,
+                beneficiary_residency_scope,
+                facility_scope,
+                requires_evidence,
+                required_evidence_type,
+                requires_operator_validation,
+                legal_basis_reference,
+                ordinance_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                effective_to,
+                notes,
+                correlation_id
+            )
+            VALUES (
+                @policy_id,
+                'INTEGRATION_DRAFT_VERIFIED_LOCAL_POLICY',
+                'Integration Draft Verified Local Policy',
+                'Integration test verified local draft policy.',
+                'SENIOR_CITIZEN',
+                'ACTIVE',
+                'VERIFIED_OFFICIAL',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE_APPLIED',
+                'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                'VAT_EXCLUSIVE',
+                @lgu_code,
+                'Integration Draft Jurisdiction',
+                'NON_RESIDENT_ALLOWED',
+                'Integration draft test local policy.',
+                true,
+                'SENIOR_CITIZEN_ID',
+                true,
+                'INTEGRATION-DRAFT-ORD-195',
+                'INTEGRATION-DRAFT-ORD-195',
+                'integration-draft-v1',
+                'integration-test-reviewer',
+                now() - interval '2 days',
+                'integration-test-approver',
+                now() - interval '1 day',
+                now() - interval '1 day',
+                NULL,
+                'Integration verified local policy.',
+                gen_random_uuid()
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET statutory_discount_policy_registry_id = EXCLUDED.statutory_discount_policy_registry_id,
+                policy_name = EXCLUDED.policy_name,
+                entitlement_type = EXCLUDED.entitlement_type,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                policy_level = EXCLUDED.policy_level,
+                policy_type = EXCLUDED.policy_type,
+                policy_resolution_basis = EXCLUDED.policy_resolution_basis,
+                benefit_type = EXCLUDED.benefit_type,
+                discount_base_scope = EXCLUDED.discount_base_scope,
+                jurisdiction_code = EXCLUDED.jurisdiction_code,
+                requires_evidence = EXCLUDED.requires_evidence,
+                required_evidence_type = EXCLUDED.required_evidence_type,
+                requires_operator_validation = EXCLUDED.requires_operator_validation,
+                legal_basis_reference = EXCLUDED.legal_basis_reference,
+                ordinance_reference = EXCLUDED.ordinance_reference,
+                source_reference = EXCLUDED.source_reference,
+                reviewed_by = EXCLUDED.reviewed_by,
+                reviewed_at = EXCLUDED.reviewed_at,
+                approved_by = EXCLUDED.approved_by,
+                approved_at = EXCLUDED.approved_at,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
                 updated_at = now();
             """;
 
@@ -820,6 +1153,96 @@ public sealed class OperatorConsoleStatutoryDiscountDraftApiIntegrationTests
             ON CONFLICT (policy_code, policy_version) DO UPDATE
             SET lgu_code = EXCLUDED.lgu_code,
                 policy_status = EXCLUDED.policy_status,
+                updated_at = now();
+
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                policy_description,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_code,
+                jurisdiction_name,
+                beneficiary_residency_scope,
+                facility_scope,
+                requires_evidence,
+                required_evidence_type,
+                requires_operator_validation,
+                legal_basis_reference,
+                ordinance_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                effective_to,
+                notes,
+                correlation_id
+            )
+            VALUES (
+                @policy_id,
+                'INTEGRATION_DRAFT_UNVERIFIED_LOCAL_POLICY',
+                'Integration Draft Unverified Local Policy',
+                'Integration test unverified local draft policy.',
+                'SENIOR_CITIZEN',
+                'DRAFT',
+                'PROPOSED_ONLY',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE',
+                'LOCAL_ORDINANCE_APPLIED',
+                'STATUTORY_DISCOUNT_VAT_EXEMPT',
+                'VAT_EXCLUSIVE',
+                @lgu_code,
+                'Integration Draft Jurisdiction',
+                'NON_RESIDENT_ALLOWED',
+                'Integration draft test unverified policy.',
+                true,
+                'SENIOR_CITIZEN_ID',
+                true,
+                'INTEGRATION-DRAFT-UNVERIFIED-195',
+                'INTEGRATION-DRAFT-UNVERIFIED-195',
+                'integration-draft-v1',
+                'integration-test-reviewer',
+                now() - interval '2 days',
+                NULL,
+                NULL,
+                now() - interval '1 day',
+                NULL,
+                'Integration unverified local policy.',
+                gen_random_uuid()
+            )
+            ON CONFLICT (policy_code) DO UPDATE
+            SET statutory_discount_policy_registry_id = EXCLUDED.statutory_discount_policy_registry_id,
+                policy_name = EXCLUDED.policy_name,
+                entitlement_type = EXCLUDED.entitlement_type,
+                policy_status = EXCLUDED.policy_status,
+                verification_status = EXCLUDED.verification_status,
+                policy_level = EXCLUDED.policy_level,
+                policy_type = EXCLUDED.policy_type,
+                policy_resolution_basis = EXCLUDED.policy_resolution_basis,
+                benefit_type = EXCLUDED.benefit_type,
+                discount_base_scope = EXCLUDED.discount_base_scope,
+                jurisdiction_code = EXCLUDED.jurisdiction_code,
+                requires_evidence = EXCLUDED.requires_evidence,
+                required_evidence_type = EXCLUDED.required_evidence_type,
+                requires_operator_validation = EXCLUDED.requires_operator_validation,
+                legal_basis_reference = EXCLUDED.legal_basis_reference,
+                ordinance_reference = EXCLUDED.ordinance_reference,
+                source_reference = EXCLUDED.source_reference,
+                reviewed_by = EXCLUDED.reviewed_by,
+                reviewed_at = EXCLUDED.reviewed_at,
+                approved_by = EXCLUDED.approved_by,
+                approved_at = EXCLUDED.approved_at,
+                effective_from = EXCLUDED.effective_from,
+                effective_to = EXCLUDED.effective_to,
                 updated_at = now();
             """;
 

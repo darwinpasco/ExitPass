@@ -101,21 +101,30 @@ public sealed class TicketSessionSummaryReadRepository : ITicketSessionSummaryRe
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            var attemptStatus = GetNullableString(reader, "payment_attempt_status");
-            var confirmationStatus = GetNullableString(reader, "payment_confirmation_status");
-            var vendorConfirmationStatus = GetNullableString(reader, "vendor_confirmation_status");
+            var parkingSessionId = reader.GetGuid(0);
+            var paymentAttemptId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
+            var attemptStatus = reader.IsDBNull(2) ? null : reader.GetString(2);
+            var confirmationStatus = reader.IsDBNull(3) ? null : reader.GetString(3);
+            var vendorSystemCode = reader.IsDBNull(4) ? null : reader.GetString(4);
+            var vendorConfirmationStatus = reader.IsDBNull(5) ? null : reader.GetString(5);
+            var vendorConfirmationCode = reader.IsDBNull(6) ? null : reader.GetString(6);
+            var vendorMessage = reader.IsDBNull(7) ? null : reader.GetString(7);
+            var vendorConfirmationTimestamp = reader.IsDBNull(8)
+                ? (DateTimeOffset?)null
+                : reader.GetFieldValue<DateTimeOffset>(8);
+
             matches.Add(new TicketSessionLocalStatusReadModel(
-                reader.GetGuid(reader.GetOrdinal("parking_session_id")),
-                GetNullableGuid(reader, "payment_attempt_id"),
+                parkingSessionId,
+                paymentAttemptId,
                 attemptStatus,
                 MapPaymentStatus(attemptStatus, confirmationStatus),
                 confirmationStatus,
-                VendorSystemCode: GetNullableString(reader, "vendor_ack_vendor_system_code"),
-                VendorConfirmationCode: GetNullableString(reader, "vendor_confirmation_code") ??
+                VendorSystemCode: vendorSystemCode,
+                VendorConfirmationCode: vendorConfirmationCode ??
                     (vendorConfirmationStatus is null ? null : $"VENDOR_ACK_{vendorConfirmationStatus}"),
-                VendorMessage: GetNullableString(reader, "vendor_message"),
+                VendorMessage: vendorMessage,
                 VendorConfirmationStatus: vendorConfirmationStatus,
-                VendorConfirmationTimestamp: GetNullableDateTimeOffset(reader, "vendor_confirmation_timestamp")));
+                VendorConfirmationTimestamp: vendorConfirmationTimestamp));
         }
 
         return matches.Count switch
