@@ -6,7 +6,7 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// <summary>
 /// Access-gated Operator Console statutory discount validation draft service.
 ///
-/// ExitPass v1.2 Invariants Enforced:
+/// ExitPass v1.3 Invariants Enforced:
 /// - Access evaluation is persisted before a statutory discount validation draft is created.
 /// - Denied access does not create statutory discount validation drafts.
 /// - This service never applies a discount or mutates tariff, payable, payment, provider, gate, coupon, settlement, or reconciliation records.
@@ -285,8 +285,12 @@ public sealed class OperatorConsoleStatutoryDiscountDraftService : IOperatorCons
         }
 
         var trimmed = value.Trim();
+        var containsMaskMarker = trimmed.Contains('*', StringComparison.Ordinal) ||
+            trimmed.Contains('x', StringComparison.OrdinalIgnoreCase);
         var compactLength = trimmed.Count(char.IsLetterOrDigit);
-        if (trimmed.Length > 16 || compactLength > 8 || FullIdentifierPattern.IsMatch(trimmed))
+        if (trimmed.Length > 32 ||
+            FullIdentifierPattern.IsMatch(trimmed) ||
+            (!containsMaskMarker && compactLength > 8))
         {
             throw new ArgumentException("MaskedIdReference must contain only a masked or last-four style reference.", nameof(value));
         }

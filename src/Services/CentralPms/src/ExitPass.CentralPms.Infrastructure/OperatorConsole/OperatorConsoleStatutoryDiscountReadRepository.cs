@@ -200,9 +200,12 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                     'stackingPolicy', 'STATUTORY_FIRST',
                     'requiresEvidence', p.requires_evidence_capture
                 )::text AS resolved_policy_snapshot_json,
-                latest_application.original_tariff_snapshot_id,
+                COALESCE(latest_application.original_tariff_snapshot_id, sdv.tariff_snapshot_id, active_tariff.tariff_snapshot_id) AS original_tariff_snapshot_id,
                 latest_application.payable_basis_application_id,
                 latest_application.application_status::text,
+                latest_application.applied_tariff_snapshot_id,
+                latest_application.vat_amount_minor_units,
+                latest_application.vat_exclusive_amount_minor_units,
                 ROUND(COALESCE(sdv.gross_amount_at_validation, active_tariff.gross_amount) * 100)::bigint AS original_amount_minor_units,
                 COALESCE(
                     latest_application.statutory_discount_amount_minor_units,
@@ -212,6 +215,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                     latest_application.final_payable_amount_minor_units,
                     ROUND(COALESCE(sdv.net_amount_after_discount, active_tariff.net_amount) * 100)::bigint
                 ) AS payable_amount_minor_units,
+                latest_application.final_payable_amount_minor_units,
                 COALESCE(sdv.currency_code, latest_application.currency_code, active_tariff.currency_code) AS currency_code
             FROM discounts.statutory_discount_validations AS sdv
             JOIN core.parking_sessions AS ps
@@ -236,6 +240,9 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                     app.original_tariff_snapshot_id,
                     app.statutory_discount_payable_basis_application_id AS payable_basis_application_id,
                     app.application_status::text AS application_status,
+                    app.applied_tariff_snapshot_id,
+                    app.vat_amount_minor_units,
+                    app.vat_exclusive_amount_minor_units,
                     app.statutory_discount_amount_minor_units,
                     app.final_payable_amount_minor_units,
                     app.currency_code
@@ -548,9 +555,13 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             GetNullableGuid(reader, "original_tariff_snapshot_id"),
             GetNullableGuid(reader, "payable_basis_application_id"),
             applicationStatus,
+            GetNullableGuid(reader, "applied_tariff_snapshot_id"),
             GetNullableLong(reader, "original_amount_minor_units"),
+            GetNullableLong(reader, "vat_amount_minor_units"),
+            GetNullableLong(reader, "vat_exclusive_amount_minor_units"),
             GetNullableLong(reader, "statutory_discount_amount_minor_units"),
             GetNullableLong(reader, "payable_amount_minor_units"),
+            GetNullableLong(reader, "final_payable_amount_minor_units"),
             GetNullableString(reader, "currency_code"),
             BuildActivity(status, evidenceRequired, evidenceCaptured, requestedAt, validatedAt, applicationStatus));
     }

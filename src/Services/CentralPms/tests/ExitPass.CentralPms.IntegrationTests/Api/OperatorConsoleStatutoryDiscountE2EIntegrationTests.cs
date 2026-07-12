@@ -121,6 +121,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             initialDetail.EvidenceRequired.Should().BeTrue();
             initialDetail.EvidenceRequiredSatisfied.Should().BeFalse();
             initialDetail.RequiredEvidenceTypes.Should().ContainSingle().Which.Should().Be("SENIOR_CITIZEN_ID");
+            initialDetail.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
 
             var applyBeforeApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
                 client,
@@ -218,8 +219,12 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             finalDetail.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId);
             finalDetail.PayableBasisApplicationStatus.Should().Be("APPLIED");
             finalDetail.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
+            finalDetail.AppliedTariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
+            finalDetail.VatAmountMinorUnits.Should().Be(1339);
+            finalDetail.VatExclusiveAmountMinorUnits.Should().Be(11161);
             finalDetail.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
             finalDetail.PayableAmountMinorUnits.Should().Be(8929);
+            finalDetail.FinalPayableAmountMinorUnits.Should().Be(8929);
 
             (await CountApplicationsAsync(draftId)).Should().Be(1);
 
@@ -558,7 +563,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             "SENIOR_CITIZEN_ID",
             "OSCA",
             ExpiryDate: null,
-            "1234",
+            "SC-UAT-****-0001",
             EntitlementFingerprint: null,
             evidenceCaptureRequested,
             evidenceCaptureRequested ? "SUPERVISOR_REVIEW" : null,

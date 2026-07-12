@@ -227,7 +227,7 @@ export function App({ apiClient, initialPath }: AppProps) {
               readinessBlockReason={readinessBlockReason}
             />
           ) : path === routes.ticketLookup ? (
-            <TicketLookupPage client={client} readinessBlockReason={readinessBlockReason} />
+            <TicketLookupPage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.fiscalStatus ? (
             <FiscalIssuanceStatusPage client={client} />
           ) : path === routes.queue ? (
@@ -2500,13 +2500,21 @@ function OperatorConsoleHome({
 
 function TicketLookupPage({
   client,
+  navigate,
   readinessBlockReason
 }: {
   client: OperatorConsoleApiClient;
+  navigate: (path: string) => void;
   readinessBlockReason: string | null;
 }) {
   const [ticketReference, setTicketReference] = useState("");
   const [lookupState, setLookupState] = useState<LoadState<OperatorTicketLookupResult>>({ status: "idle" });
+  const [draftState, setDraftState] = useState<LoadState<string>>({ status: "idle" });
+  const [entitlementType, setEntitlementType] = useState<"SENIOR_CITIZEN" | "PWD">("SENIOR_CITIZEN");
+  const [idDocumentType, setIdDocumentType] = useState("SENIOR_CITIZEN_ID");
+  const [issuingAuthority, setIssuingAuthority] = useState("OSCA");
+  const [maskedIdReference, setMaskedIdReference] = useState("SC-UAT-****-0001");
+  const [operatorAttestation, setOperatorAttestation] = useState(false);
 
   async function submitLookup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2517,6 +2525,7 @@ function TicketLookupPage({
     }
 
     setLookupState({ status: "loading" });
+    setDraftState({ status: "idle" });
     try {
       const result = await client.lookupSessionByTicket({ ticketNumber: normalizedTicket });
       setLookupState(result.sessionFound ? { status: "loaded", data: result } : { status: "not-found" });
@@ -2527,6 +2536,53 @@ function TicketLookupPage({
           ? { status: "access-denied", message: mapped.message }
           : { status: "error", message: mapped.message }
       );
+    }
+  }
+
+  async function createDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (lookupState.status !== "loaded") {
+      return;
+    }
+
+    const result = lookupState.data;
+    if (!result.parkingSessionId) {
+      setDraftState({ status: "error", message: "Parking session ID is required before starting statutory discount review." });
+      return;
+    }
+
+    if (!operatorAttestation) {
+      setDraftState({ status: "error", message: "Operator attestation is required before creating the draft." });
+      return;
+    }
+
+    setDraftState({ status: "loading" });
+    try {
+      const draft = await client.createStatutoryDiscountDraft({
+        parkingSessionId: result.parkingSessionId,
+        ticketReference: result.ticketNumber ?? result.cardNum,
+        plateNumber: result.plateLicense,
+        siteId: result.siteId,
+        siteGroupId: result.siteGroupId,
+        entitlementType,
+        idDocumentType,
+        issuingAuthority,
+        maskedIdReference,
+        evidenceCaptureRequested: true,
+        operatorAttestation,
+        attestationNotes: "Metadata-only statutory discount UAT smoke draft.",
+        reasonCode: "CONTROLLED_UAT_STATUTORY_DISCOUNT_SMOKE"
+      });
+
+      if (!draft.accepted || !draft.draftId) {
+        setDraftState({ status: "error", message: draft.message });
+        return;
+      }
+
+      setDraftState({ status: "loaded", data: draft.message });
+      navigate(`${routes.detail}${draft.draftId}`);
+    } catch (error) {
+      setDraftState({ status: "error", message: mapApiError(error).message });
     }
   }
 
@@ -2579,7 +2635,77 @@ function TicketLookupPage({
       {lookupState.status === "not-found" && <StateMessage title="Ticket not found" message="No active session was found for this ticket." />}
       {lookupState.status === "access-denied" && <StateMessage title="Access denied" message={lookupState.message} />}
       {lookupState.status === "error" && <StateMessage title="Unable to look up ticket" message={lookupState.message} />}
-      {lookupState.status === "loaded" && <TicketLookupSummary result={lookupState.data} />}
+      {lookupState.status === "loaded" && (
+        <>
+          <TicketLookupSummary result={lookupState.data} />
+          <section className="panel" aria-labelledby="statutory-discount-start-title">
+            <div className="panelHeader">
+              <h3 id="statutory-discount-start-title">Start statutory discount review</h3>
+              <span className="statusPill">Metadata-only evidence</span>
+            </div>
+            <p className="notice">
+              This creates an Operator Console review draft only. It does not collect payment, open gate, call HikCentral,
+              create Sales Invoice, or render final BIR documents.
+            </p>
+            {draftState.status === "error" && <p className="errorMessage">{draftState.message}</p>}
+            {draftState.status === "loaded" && <p className="successMessage">{draftState.data}</p>}
+            <form className="draftStartForm" onSubmit={createDraft}>
+              <label>
+                Entitlement type
+                <select
+                  value={entitlementType}
+                  onChange={(event) => {
+                    const next = event.target.value as "SENIOR_CITIZEN" | "PWD";
+                    setEntitlementType(next);
+                    setIdDocumentType(next === "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID");
+                    setIssuingAuthority(next === "PWD" ? "PDAO" : "OSCA");
+                    setMaskedIdReference(next === "PWD" ? "PWD-UAT-****-0001" : "SC-UAT-****-0001");
+                  }}
+                >
+                  <option value="SENIOR_CITIZEN">Senior Citizen</option>
+                  <option value="PWD">PWD</option>
+                </select>
+              </label>
+              <label>
+                ID document type
+                <input value={idDocumentType} onChange={(event) => setIdDocumentType(event.target.value)} />
+              </label>
+              <label>
+                Issuing authority
+                <input value={issuingAuthority} onChange={(event) => setIssuingAuthority(event.target.value)} />
+              </label>
+              <label>
+                Masked ID reference
+                <input value={maskedIdReference} onChange={(event) => setMaskedIdReference(event.target.value)} />
+              </label>
+              <label className="checkboxField">
+                <input
+                  type="checkbox"
+                  checked={operatorAttestation}
+                  onChange={(event) => setOperatorAttestation(event.target.checked)}
+                />
+                Operator confirms the entitlement information was reviewed and only metadata evidence will be captured.
+              </label>
+              <div className="actionBar">
+                <button
+                  type="submit"
+                  disabled={
+                    readinessBlockReason !== null ||
+                    draftState.status === "loading" ||
+                    lookupState.data.sessionEligible === false ||
+                    !operatorAttestation
+                  }
+                >
+                  {draftState.status === "loading" ? "Creating draft" : "Create review draft"}
+                </button>
+                {lookupState.data.sessionEligible === false && (
+                  <span className="notice">{lookupState.data.message ?? "Session is not eligible for operator workflow."}</span>
+                )}
+              </div>
+            </form>
+          </section>
+        </>
+      )}
     </>
   );
 }
@@ -2622,7 +2748,7 @@ function TicketLookupSummary({ result }: { result: OperatorTicketLookupResult })
           <h4 id="ticket-tariff-heading">Tariff Information</h4>
           <DescriptionList
             items={[
-              ["Fee minor units", formatMinorUnits(result.feeMinorUnits)],
+              ["Current payable minor units", formatMinorUnits(result.feeMinorUnits)],
               ["Currency code", displayValue(result.currencyCode)],
               ["Fee rule type", displayValue(result.feeRuleType)],
               ["Fee rule index code", displayValue(result.feeRuleIndexCode)],
@@ -3642,7 +3768,7 @@ function DraftDetail({
       <section className="panel" aria-labelledby="payable-basis-title">
         <div className="panelHeader">
           <h3 id="payable-basis-title">Apply payable basis</h3>
-          <span className="statusPill">{isPayableBasisApplied(detail) ? "Applied" : "Awaiting approval"}</span>
+          <span className="statusPill">{payableBasisStatusLabel(detail)}</span>
         </div>
         <DescriptionList
           items={[
@@ -4138,10 +4264,6 @@ function payableBasisBlockReason(detail: StatutoryDiscountDraftDetail, submittin
     return "Payable basis has already been applied.";
   }
 
-  if (!detail.originalTariffSnapshotId) {
-    return "Original tariff snapshot is required before applying payable basis.";
-  }
-
   return null;
 }
 
@@ -4156,6 +4278,18 @@ function readinessLabel(ready: boolean, status: string) {
 
 function isPayableBasisApplied(detail: StatutoryDiscountDraftDetail) {
   return detail.payableBasisApplicationStatus?.toUpperCase() === "APPLIED";
+}
+
+function payableBasisStatusLabel(detail: StatutoryDiscountDraftDetail) {
+  if (isPayableBasisApplied(detail)) {
+    return "Applied";
+  }
+
+  if (detail.status === "Approved") {
+    return "Ready to apply";
+  }
+
+  return "Awaiting approval";
 }
 
 function DescriptionList({ items }: { items: Array<[string, string]> }) {

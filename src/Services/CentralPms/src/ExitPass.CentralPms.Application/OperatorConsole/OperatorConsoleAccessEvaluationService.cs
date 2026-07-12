@@ -27,6 +27,7 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         OperatorConsoleActionCodes.ViewEvidence,
         OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis,
         OperatorConsoleActionCodes.ViewPolicyResolution,
+        OperatorConsoleActionCodes.ViewAuditReport,
         OperatorConsoleActionCodes.ViewFiscalIssuanceStatus,
         OperatorConsoleActionCodes.VoidFiscalDocument,
         OperatorConsoleActionCodes.ViewFiscalStatusViewAuditReport,

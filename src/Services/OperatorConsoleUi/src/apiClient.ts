@@ -24,6 +24,8 @@ import type {
   ProductionPolicyImportReviewSubmitInput,
   StatutoryDiscountDecisionInput,
   StatutoryDiscountDecisionResult,
+  StatutoryDiscountDraftCreateInput,
+  StatutoryDiscountDraftCreateResult,
   StatutoryDiscountDraftDetail,
   StatutoryDiscountEvidenceCaptureInput,
   StatutoryDiscountEvidenceCaptureResult,
@@ -56,6 +58,7 @@ export interface OperatorConsoleApiClient {
   listFiscalVoidActionAuditReport(input?: FiscalVoidActionAuditReportQuery): Promise<FiscalVoidActionAuditReportResponse>;
   listFiscalStatusViewAuditReport(input?: FiscalStatusViewAuditReportQuery): Promise<FiscalStatusViewAuditReportResponse>;
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
+  createStatutoryDiscountDraft(input: StatutoryDiscountDraftCreateInput): Promise<StatutoryDiscountDraftCreateResult>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
@@ -149,6 +152,27 @@ interface DetailDto extends QueueItemDto {
   statutoryDiscountAmountMinorUnits?: number | null;
   finalPayableAmountMinorUnits?: number | null;
   activity: string[];
+}
+
+interface DraftCreateResponseDto {
+  accessAllowed: boolean;
+  accessDecision: string;
+  accessDenialReasons: string[];
+  draftAccepted: boolean;
+  draftPersisted: boolean;
+  draftId?: string | null;
+  parkingSessionId?: string | null;
+  entitlementType?: string | null;
+  validationStatus?: string | null;
+  evidenceCaptureRequired: boolean;
+  evidenceRequired: boolean;
+  evidenceReferenceCreated: boolean;
+  reusedExistingDraft: boolean;
+  ineligibilityReason?: string | null;
+  errorCode?: string | null;
+  policyReadinessClassification?: string | null;
+  operatorMessage?: string | null;
+  correlationId?: string | null;
 }
 
 interface DecisionResponse {
@@ -338,9 +362,24 @@ interface FiscalVoidActionAuditReportResponseDto {
 }
 
 interface OperatorTicketLookupResponseDto {
+  accessAllowed?: boolean | null;
+  accessDecision?: string | null;
+  accessDenialReasons?: string[] | null;
+  accessPersisted?: boolean | null;
+  sessionFound?: boolean | null;
+  sessionEligible?: boolean | null;
+  ineligibilityReason?: string | null;
+  parkingSessionId?: string | null;
+  ticketReference?: string | null;
   ticketNumber?: string | null;
   cardNum?: string | null;
   plateLicense?: string | null;
+  plateNumber?: string | null;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  sessionStatus?: string | null;
+  entryTime?: string | null;
+  currentPayableAmountMinorUnits?: number | null;
   parkingInTime?: string | null;
   parkingDurationSeconds?: number | null;
   feeMinorUnits?: number | null;
@@ -351,6 +390,9 @@ interface OperatorTicketLookupResponseDto {
   paymentAttemptStatus?: string | null;
   paymentStatus?: string | null;
   paymentConfirmationStatus?: string | null;
+  discountStatus?: string | null;
+  exitAuthorizationStatus?: string | null;
+  alerts?: string[] | null;
   vendorSystemCode?: string | null;
   vendorConfirmationCode?: string | null;
   vendorConfirmationStatus?: string | null;
@@ -431,8 +473,8 @@ const defaultOperatorContext: OperatorConsoleOperatorContext = {
     "77000000-0000-0000-0000-000000000030"
   ),
   operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000050"),
-  siteId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID, "00000000-0000-4000-8000-000000000402"),
-  siteGroupId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_GROUP_ID, "")
+  siteId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID, "77000000-0000-0000-0000-000000000002"),
+  siteGroupId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_GROUP_ID, "77000000-0000-0000-0000-000000000001")
 };
 
 const reviewDecisionPermissions = new Set([
@@ -509,12 +551,20 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
 
     async lookupSessionByTicket(input) {
       const correlationId = newCorrelationId();
-      const response = await fetch(`${baseUrl}/v1/ops/ticket-session-summary`, {
+      const response = await fetch(`${baseUrl}/v1/ops/operator-console/sessions/lookup`, {
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          ticketNumber: input.ticketNumber,
-          cardNum: input.cardNum ?? null,
+          userId: defaultOperatorContext.userId,
+          operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
+          siteId: defaultOperatorContext.siteId,
+          siteGroupId: defaultOperatorContext.siteGroupId,
+          operatorShiftId: defaultOperatorContext.operatorShiftId,
+          parkingSessionId: null,
+          ticketReference: input.ticketNumber,
+          plateNumber: null,
+          lookupMode: "TICKET_REFERENCE",
+          idempotencyKey: `operator-console-ui-session-lookup-${input.ticketNumber}-${correlationId}`,
           correlationId
         })
       });
@@ -627,6 +677,38 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
       });
 
       return toAuditReport(await parseResponse<AuditReportResponseDto>(response));
+    },
+
+    async createStatutoryDiscountDraft(input) {
+      const correlationId = newCorrelationId();
+      const response = await fetch(`${baseUrl}/v1/ops/operator-console/statutory-discounts/draft`, {
+        method: "POST",
+        headers: operatorConsoleHeaders(correlationId, { json: true }),
+        body: JSON.stringify({
+          userId: defaultOperatorContext.userId,
+          operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
+          siteId: input.siteId ?? defaultOperatorContext.siteId,
+          siteGroupId: input.siteGroupId ?? defaultOperatorContext.siteGroupId,
+          operatorShiftId: defaultOperatorContext.operatorShiftId,
+          parkingSessionId: input.parkingSessionId,
+          ticketReference: input.ticketReference ?? null,
+          plateNumber: input.plateNumber ?? null,
+          entitlementType: input.entitlementType,
+          idDocumentType: input.idDocumentType,
+          issuingAuthority: input.issuingAuthority,
+          expiryDate: null,
+          maskedIdReference: input.maskedIdReference,
+          entitlementFingerprint: null,
+          evidenceCaptureRequested: input.evidenceCaptureRequested,
+          evidenceAccessIntent: "METADATA_ONLY",
+          operatorAttestation: input.operatorAttestation,
+          attestationNotes: input.attestationNotes ?? null,
+          reasonCode: input.reasonCode ?? "OPERATOR_UAT_SMOKE",
+          idempotencyKey: `operator-console-ui-statutory-discount-draft-${input.parkingSessionId}-${input.entitlementType}`,
+          correlationId
+        })
+      });
+      return toDraftCreateResult(await parseResponse<DraftCreateResponseDto>(response));
     },
 
     async listStatutoryDiscountDrafts() {
@@ -984,6 +1066,7 @@ export function createMockOperatorConsoleApiClient(
     fiscalStatusViewAuditReport?: FiscalStatusViewAuditReportResponse;
     empty?: boolean;
     onTicketLookup?: (input: OperatorTicketLookupInput) => void;
+    onDraftCreate?: (input: StatutoryDiscountDraftCreateInput) => void;
     onFiscalStatusLookup?: (query: string) => void;
     onFiscalVoid?: (input: FiscalIssuanceVoidInput) => void;
     onFiscalVoidActionAuditReport?: (input: FiscalVoidActionAuditReportQuery) => void;
@@ -1049,6 +1132,60 @@ export function createMockOperatorConsoleApiClient(
         ticketNumber: input.ticketNumber,
         correlationId: newCorrelationId(),
         message: "Ticket not found."
+      };
+    },
+
+    async createStatutoryDiscountDraft(input) {
+      await delay();
+      options.onDraftCreate?.(input);
+      const existing = drafts.find(
+        (draft) => draft.parkingSessionId === input.parkingSessionId && draft.entitlementType === input.entitlementType
+      );
+      if (existing) {
+        return {
+          accepted: true,
+          persisted: true,
+          draftId: existing.draftId,
+          parkingSessionId: existing.parkingSessionId,
+          entitlementType: existing.entitlementType,
+          validationStatus: existing.status,
+          evidenceCaptureRequired: existing.policyContext.evidenceRequired,
+          evidenceRequired: existing.policyContext.evidenceRequired,
+          evidenceReferenceCreated: false,
+          reusedExistingDraft: true,
+          message: "Existing statutory discount draft opened."
+        };
+      }
+
+      const created = {
+        ...mockDrafts[0],
+        draftId: "47000000-0000-0000-0000-000000000099",
+        parkingSessionId: input.parkingSessionId,
+        ticketReference: input.ticketReference ?? "UAT-TICKET",
+        plateNumber: input.plateNumber ?? "Unknown",
+        siteId: input.siteId ?? defaultOperatorContext.siteId,
+        siteGroupId: input.siteGroupId ?? defaultOperatorContext.siteGroupId,
+        entitlementType: input.entitlementType === "PWD" ? "PWD" : "Senior Citizen",
+        status: "Requested" as DraftStatus,
+        maskedIdReference: input.maskedIdReference,
+        issuingAuthority: input.issuingAuthority,
+        evidenceCaptured: false,
+        evidenceRequiredSatisfied: false,
+        evidenceCount: 0
+      };
+      drafts.unshift(created);
+      return {
+        accepted: true,
+        persisted: true,
+        draftId: created.draftId,
+        parkingSessionId: created.parkingSessionId,
+        entitlementType: created.entitlementType,
+        validationStatus: created.status,
+        evidenceCaptureRequired: created.policyContext.evidenceRequired,
+        evidenceRequired: created.policyContext.evidenceRequired,
+        evidenceReferenceCreated: false,
+        reusedExistingDraft: false,
+        message: "Statutory discount draft created."
       };
     },
 
@@ -1615,13 +1752,18 @@ async function parseTicketLookupResponse(response: Response): Promise<OperatorTi
 
 function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTicketLookupResult {
   return {
-    sessionFound: true,
-    ticketNumber: body.ticketNumber ?? undefined,
-    cardNum: body.cardNum ?? undefined,
-    plateLicense: body.plateLicense ?? undefined,
-    parkingInTime: body.parkingInTime ?? undefined,
+    sessionFound: body.sessionFound ?? true,
+    accessAllowed: body.accessAllowed ?? undefined,
+    sessionEligible: body.sessionEligible ?? undefined,
+    parkingSessionId: body.parkingSessionId ?? undefined,
+    siteId: body.siteId ?? undefined,
+    siteGroupId: body.siteGroupId ?? undefined,
+    ticketNumber: body.ticketReference ?? body.ticketNumber ?? undefined,
+    cardNum: body.cardNum ?? body.ticketReference ?? body.ticketNumber ?? undefined,
+    plateLicense: body.plateNumber ?? body.plateLicense ?? undefined,
+    parkingInTime: body.entryTime ?? body.parkingInTime ?? undefined,
     parkingDurationSeconds: body.parkingDurationSeconds ?? undefined,
-    feeMinorUnits: body.feeMinorUnits ?? undefined,
+    feeMinorUnits: body.currentPayableAmountMinorUnits ?? body.feeMinorUnits ?? undefined,
     currencyCode: body.currencyCode ?? undefined,
     feeRuleType: body.feeRuleType ?? undefined,
     feeRuleIndexCode: body.feeRuleIndexCode ?? undefined,
@@ -1634,9 +1776,30 @@ function toTicketLookupResult(body: OperatorTicketLookupResponseDto): OperatorTi
     vendorConfirmationStatus: body.vendorConfirmationStatus ?? undefined,
     vendorConfirmationTimestamp: body.vendorConfirmationTimestamp ?? undefined,
     vendorMessage: body.vendorMessage ?? undefined,
-    diagnostics: body.diagnostics ?? undefined,
+    diagnostics: body.diagnostics ?? body.alerts ?? undefined,
     correlationId: body.correlationId ?? undefined,
-    message: body.message ?? body.errorCode ?? undefined
+    message: body.message ?? body.ineligibilityReason ?? body.errorCode ?? undefined
+  };
+}
+
+function toDraftCreateResult(body: DraftCreateResponseDto): StatutoryDiscountDraftCreateResult {
+  return {
+    accepted: body.draftAccepted,
+    persisted: body.draftPersisted,
+    draftId: body.draftId ?? undefined,
+    parkingSessionId: body.parkingSessionId ?? undefined,
+    entitlementType: body.entitlementType ?? undefined,
+    validationStatus: body.validationStatus ? mapStatus(body.validationStatus) : undefined,
+    evidenceCaptureRequired: body.evidenceCaptureRequired,
+    evidenceRequired: body.evidenceRequired,
+    evidenceReferenceCreated: body.evidenceReferenceCreated,
+    reusedExistingDraft: body.reusedExistingDraft,
+    errorCode: body.errorCode ?? undefined,
+    message: body.draftAccepted
+      ? body.reusedExistingDraft
+        ? "Existing statutory discount draft opened."
+        : "Statutory discount draft created."
+      : body.operatorMessage ?? body.ineligibilityReason ?? body.errorCode ?? "Statutory discount draft was not accepted."
   };
 }
 

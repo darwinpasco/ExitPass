@@ -105,3 +105,29 @@ public sealed class OperatorConsoleStatutoryDiscountDraftAlreadyExistsException 
     /// </summary>
     public string EntitlementType { get; }
 }
+
+/// <summary>
+/// Raised when a resolved statutory discount policy cannot be represented in the current validation persistence schema.
+/// </summary>
+public sealed class OperatorConsoleStatutoryDiscountDraftPolicyReferenceMissingException : InvalidOperationException
+{
+    /// <summary>
+    /// Creates a missing policy reference exception.
+    /// </summary>
+    public OperatorConsoleStatutoryDiscountDraftPolicyReferenceMissingException(string policyCode, string entitlementType)
+        : base("The resolved statutory discount policy is not mapped to a payable validation policy reference.")
+    {
+        PolicyCode = policyCode;
+        EntitlementType = entitlementType;
+    }
+
+    /// <summary>
+    /// Resolved policy code without a persistence mapping.
+    /// </summary>
+    public string PolicyCode { get; }
+
+    /// <summary>
+    /// Entitlement type for the failed policy mapping.
+    /// </summary>
+    public string EntitlementType { get; }
+}

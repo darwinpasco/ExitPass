@@ -299,6 +299,38 @@ public sealed class OperatorConsoleStatutoryDiscountDraftServiceTests
     }
 
     /// <summary>
+    /// Verifies masked references with non-sensitive prefix/suffix context are accepted.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_WhenMaskedIdReferenceHasPrefixAndLastFour_AcceptsDraft()
+    {
+        var repository = Substitute.For<IOperatorConsoleSessionLookupReadRepository>();
+        repository.FindAsync(Arg.Any<OperatorConsoleSessionLookupReadRequest>(), Arg.Any<CancellationToken>())
+            .Returns(Session("ACTIVE"));
+
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountDraftWriter>();
+        writer.PersistAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(), Arg.Any<CancellationToken>())
+            .Returns(new OperatorConsoleStatutoryDiscountDraftPersistenceResult(
+                DraftId,
+                "REQUESTED",
+                Persisted: true,
+                ReusedExistingDraft: false,
+                EvidenceRequired: true,
+                EvidenceReferenceCreated: true,
+                EvidenceReferenceId,
+                Policy(requiresEvidence: true)));
+        var sut = CreateSut(AccessResult(allowed: true, []), repository, writer);
+
+        var result = await sut.DraftAsync(Command(maskedIdReference: "SC-UAT-****-0001"), CancellationToken.None);
+
+        result.DraftAccepted.Should().BeTrue();
+        result.DraftPersisted.Should().BeTrue();
+        await writer.Received(1).PersistAsync(
+            Arg.Any<OperatorConsoleStatutoryDiscountDraftPersistenceCommand>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    /// <summary>
     /// Verifies operator attestation is required.
     /// </summary>
     [Fact]

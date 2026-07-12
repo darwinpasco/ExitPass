@@ -50,6 +50,7 @@ public sealed class OperatorConsoleAccessEvaluationServiceTests
     [InlineData(OperatorConsoleActionCodes.ViewEvidence)]
     [InlineData(OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis)]
     [InlineData(OperatorConsoleActionCodes.ViewPolicyResolution)]
+    [InlineData(OperatorConsoleActionCodes.ViewAuditReport)]
     [InlineData(OperatorConsoleActionCodes.ViewFiscalIssuanceStatus)]
     public async Task EvaluateAsync_WhenActionCodeMappedForOperatorConsole_AllowsAction(string actionCode)
     {

@@ -9,7 +9,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// <summary>
 /// Operator Console statutory discount validation draft endpoint.
 ///
-/// ExitPass v1.2 Invariants Enforced:
+/// ExitPass v1.3 Invariants Enforced:
 /// - This endpoint persists Operator Console access evaluation evidence before draft creation.
 /// - This endpoint may persist a privacy-minimized statutory discount validation draft and metadata-only evidence reference.
 /// - This endpoint may persist a review decision status transition on an existing validation draft.
@@ -449,6 +449,19 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             return Results.Conflict(BuildError("STATUTORY_DISCOUNT_DRAFT_ALREADY_EXISTS", ex.Message, request.CorrelationId));
         }
+        catch (OperatorConsoleStatutoryDiscountDraftPolicyReferenceMissingException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            logger.LogWarning(
+                ex,
+                "Operator Console statutory discount draft policy reference mapping missing for policy_code={PolicyCode} entitlement_type={EntitlementType}.",
+                ex.PolicyCode,
+                ex.EntitlementType);
+            return Results.Conflict(BuildError(
+                "STATUTORY_DISCOUNT_POLICY_REFERENCE_NOT_MAPPED",
+                "The resolved statutory discount policy is not ready for draft persistence.",
+                request.CorrelationId));
+        }
         catch (Exception ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
@@ -544,9 +557,13 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.OriginalTariffSnapshotId,
             result.PayableBasisApplicationId,
             result.PayableBasisApplicationStatus,
+            result.AppliedTariffSnapshotId,
             result.OriginalAmountMinorUnits,
+            result.VatAmountMinorUnits,
+            result.VatExclusiveAmountMinorUnits,
             result.StatutoryDiscountAmountMinorUnits,
             result.PayableAmountMinorUnits,
+            result.FinalPayableAmountMinorUnits,
             result.CurrencyCode,
             result.Activity);
 

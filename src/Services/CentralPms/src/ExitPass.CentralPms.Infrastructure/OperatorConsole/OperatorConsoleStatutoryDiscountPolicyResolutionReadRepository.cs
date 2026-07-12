@@ -9,7 +9,7 @@ namespace ExitPass.CentralPms.Infrastructure.OperatorConsole;
 /// <summary>
 /// PostgreSQL-backed read-only repository for statutory discount policy resolution.
 ///
-/// ExitPass v1.2 Invariants Enforced:
+/// ExitPass v1.3 Invariants Enforced:
 /// - Reads only site and statutory discount policy reference state.
 /// - Does not create drafts, mutate payable basis, create payment attempts, call providers, open gates,
 ///   create coupons, or create reconciliation records.
@@ -71,15 +71,20 @@ public sealed class OperatorConsoleStatutoryDiscountPolicyResolutionReadReposito
 
         var verifiedLocalPolicy = capabilities.HasDedicatedRegistry
             ? await ReadDedicatedLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken)
-            : await ReadCompatibilityLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken);
+            : null;
+        verifiedLocalPolicy ??= capabilities.HasCompatibilityTable
+            ? await ReadCompatibilityLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken)
+            : null;
         if (verifiedLocalPolicy is not null)
         {
             return Resolved(verifiedLocalPolicy);
         }
 
-        var hasUnverifiedLocalPolicy = capabilities.HasDedicatedRegistry
-            ? await HasDedicatedUnreadyLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken)
-            : await HasCompatibilityUnverifiedLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken);
+        var hasUnverifiedLocalPolicy =
+            (capabilities.HasDedicatedRegistry &&
+                await HasDedicatedUnreadyLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken)) ||
+            (capabilities.HasCompatibilityTable &&
+                await HasCompatibilityUnverifiedLocalPolicyAsync(connection, site, request.EntitlementType, request.EffectiveDate, cancellationToken));
         if (hasUnverifiedLocalPolicy)
         {
             return NotResolved(

@@ -108,6 +108,11 @@ export interface OperatorTicketLookupInput {
 
 export interface OperatorTicketLookupResult {
   sessionFound: boolean;
+  accessAllowed?: boolean;
+  sessionEligible?: boolean;
+  parkingSessionId?: string;
+  siteId?: string;
+  siteGroupId?: string;
   ticketNumber?: string;
   cardNum?: string;
   plateLicense?: string;
@@ -129,6 +134,37 @@ export interface OperatorTicketLookupResult {
   diagnostics?: string[];
   correlationId?: string;
   message?: string;
+}
+
+export interface StatutoryDiscountDraftCreateInput {
+  parkingSessionId: string;
+  ticketReference?: string;
+  plateNumber?: string;
+  siteId?: string;
+  siteGroupId?: string;
+  entitlementType: "SENIOR_CITIZEN" | "PWD";
+  idDocumentType: string;
+  issuingAuthority: string;
+  maskedIdReference: string;
+  evidenceCaptureRequested: boolean;
+  operatorAttestation: boolean;
+  attestationNotes?: string;
+  reasonCode?: string;
+}
+
+export interface StatutoryDiscountDraftCreateResult {
+  accepted: boolean;
+  persisted: boolean;
+  draftId?: string;
+  parkingSessionId?: string;
+  entitlementType?: string;
+  validationStatus?: DraftStatus;
+  evidenceCaptureRequired: boolean;
+  evidenceRequired: boolean;
+  evidenceReferenceCreated: boolean;
+  reusedExistingDraft: boolean;
+  errorCode?: string;
+  message: string;
 }
 
 export interface FiscalIssuanceStatus {
