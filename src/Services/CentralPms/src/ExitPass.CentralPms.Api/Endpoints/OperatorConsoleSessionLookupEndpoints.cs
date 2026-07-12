@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
@@ -17,6 +18,7 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// </summary>
 public static class OperatorConsoleSessionLookupEndpoints
 {
+    private const string SessionLookupPolicy = "OperatorConsoleStatutoryDiscountSessionLookup";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleSessionLookup");
 
     /// <summary>
@@ -35,6 +37,7 @@ public static class OperatorConsoleSessionLookupEndpoints
             .Produces<OperatorConsoleSessionLookupResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(SessionLookupPolicy))
             .WithSummary("Lookup Operator Console session")
             .WithDescription("Looks up read-only parking session context after evaluating and persisting Operator Console access. This endpoint does not mutate payment, gate, coupon, provider, statutory discount, settlement, or reconciliation state.");
 
