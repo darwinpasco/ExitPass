@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.IntegrationTests.Shared;
@@ -49,7 +50,7 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
         persisted.RequestedAction.Should().Be(OperatorConsoleActionCodes.SessionLookup);
         persisted.EvaluationStatus.Should().Be("ALLOWED");
         persisted.OperatorUserId.Should().Be(context.UserId);
-        persisted.HrIdentityMappingId.Should().Be(context.HrIdentityMappingId);
+        persisted.HrIdentityMappingId.Should().BeNull("the current v1.3 writer persists access evidence through operator action logs, not the legacy operator_console access-evaluation table");
         persisted.OperatorDeviceBindingId.Should().Be(context.OperatorDeviceBindingId);
         persisted.OperatorShiftId.Should().Be(context.OperatorShiftId);
         persisted.SiteGroupId.Should().Be(context.SiteGroupId);
@@ -82,7 +83,6 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
         body.Persisted.Should().BeTrue();
         body.EvaluationId.Should().NotBe(Guid.Empty);
         body.DenialReasons.Should().ContainInOrder(
-            "HR_IDENTITY_MAPPING_NOT_FOUND",
             "DEVICE_BINDING_NOT_FOUND",
             "DEVICE_SITE_ASSIGNMENT_NOT_FOUND",
             "NO_ACTIVE_SHIFT");
@@ -98,7 +98,7 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
         persisted.SiteGroupId.Should().Be(context.SiteGroupId);
         persisted.SiteId.Should().Be(context.SiteId);
         persisted.Reasons.Select(reason => reason.ReasonCode).Should().ContainInOrder(body.DenialReasons);
-        persisted.Reasons.Select(reason => reason.DisplayOrder).Should().Equal(0, 1, 2, 3);
+        persisted.Reasons.Select(reason => reason.DisplayOrder).Should().Equal(0, 1, 2);
     }
 
     private static async Task<TestAccessEvaluationContext> SeedAllowedContextAsync()
@@ -333,19 +333,23 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
     {
         const string evaluationSql = """
             SELECT
-                operator_access_evaluation_id,
+                operator_action_log_id AS operator_access_evaluation_id,
                 correlation_id,
-                requested_action,
-                evaluation_status::text AS evaluation_status,
+                action_reason_code AS requested_action,
+                CASE action_status::text
+                    WHEN 'SUCCESS' THEN 'ALLOWED'
+                    ELSE action_status::text
+                END AS evaluation_status,
                 operator_user_id,
-                hr_identity_mapping_id,
-                operator_device_binding_id,
-                operator_shift_id,
-                site_group_id,
+                NULL::uuid AS hr_identity_mapping_id,
+                NULLIF(action_notes::jsonb #>> '{DeviceTrust,OperatorDeviceBindingId}', '')::uuid AS operator_device_binding_id,
+                NULLIF(action_notes::jsonb #>> '{ShiftContext,OperatorShiftId}', '')::uuid AS operator_shift_id,
+                NULLIF(action_notes::jsonb ->> 'SiteGroupId', '')::uuid AS site_group_id,
                 site_id,
-                evaluated_at
-            FROM operator_console.operator_access_evaluations
-            WHERE operator_access_evaluation_id = @operator_access_evaluation_id;
+                performed_at AS evaluated_at,
+                action_notes
+            FROM operations.operator_action_logs
+            WHERE operator_action_log_id = @operator_access_evaluation_id;
             """;
 
         await using var connection = await OpenConnectionAsync();
@@ -368,34 +372,30 @@ public sealed class OperatorConsoleAccessEvaluationPersistenceIntegrationTests
                     reader.GetNullableGuid("operator_shift_id"),
                     reader.GetNullableGuid("site_group_id"),
                     reader.GetNullableGuid("site_id"),
-                    Array.Empty<PersistedReason>());
+                    ReadPersistedReasons(reader.GetString("action_notes")));
             }
         }
 
-        if (evaluation is null)
+        return evaluation;
+    }
+
+    private static IReadOnlyList<PersistedReason> ReadPersistedReasons(string actionNotes)
+    {
+        using var document = JsonDocument.Parse(actionNotes);
+        if (!document.RootElement.TryGetProperty("DenialReasons", out var reasonsElement) ||
+            reasonsElement.ValueKind != JsonValueKind.Array)
         {
-            return null;
+            return Array.Empty<PersistedReason>();
         }
 
-        const string reasonsSql = """
-            SELECT reason_code, display_order
-            FROM operator_console.operator_access_evaluation_reasons
-            WHERE operator_access_evaluation_id = @operator_access_evaluation_id
-            ORDER BY display_order, operator_access_evaluation_reason_id;
-            """;
-
-        await using var reasonsCommand = new NpgsqlCommand(reasonsSql, connection);
-        reasonsCommand.Parameters.Add("operator_access_evaluation_id", NpgsqlDbType.Uuid).Value = evaluationId;
         var reasons = new List<PersistedReason>();
-        await using (var reader = await reasonsCommand.ExecuteReaderAsync())
+        var displayOrder = 0;
+        foreach (var reason in reasonsElement.EnumerateArray())
         {
-            while (await reader.ReadAsync())
-            {
-                reasons.Add(new PersistedReason(reader.GetString("reason_code"), reader.GetInt32("display_order")));
-            }
+            reasons.Add(new PersistedReason(reason.GetString() ?? string.Empty, displayOrder++));
         }
 
-        return evaluation with { Reasons = reasons };
+        return reasons;
     }
 
     private static void AddContextParameters(NpgsqlCommand command, TestAccessEvaluationContext context)
