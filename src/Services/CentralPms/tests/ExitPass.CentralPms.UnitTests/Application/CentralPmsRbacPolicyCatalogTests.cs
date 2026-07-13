@@ -23,6 +23,7 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("FiscalIssuanceStatusRead", "fiscal-issuance.status.read")]
     [InlineData("FiscalIssuanceVoidCommand", "fiscal-issuance.void.command")]
     [InlineData("FiscalVoidActionAuditReview", "fiscal-issuance.void.audit.read")]
+    [InlineData("ManagementPlatformIdentityRbacInventoryRead", "management-platform.identity-rbac.inventory.read")]
     [InlineData("OperatorConsoleStatutoryDiscountSessionLookup", "statutory-discounts.session.lookup")]
     [InlineData("OperatorConsoleStatutoryDiscountDraftView", "statutory-discounts.draft.view")]
     [InlineData("OperatorConsoleStatutoryDiscountDraftCreate", "statutory-discounts.draft.create")]
@@ -79,5 +80,16 @@ public sealed class CentralPmsRbacPolicyCatalogTests
             .ToArray();
 
         policyImportPermissions.Should().NotContain(permission => permission.StartsWith("statutory-discounts.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ListPolicyMappings_ReturnsInventoryPolicyMapping()
+    {
+        var mappings = CentralPmsRbacPolicyCatalog.ListPolicyMappings();
+
+        mappings.Should().ContainKey("ManagementPlatformIdentityRbacInventoryRead");
+        mappings["ManagementPlatformIdentityRbacInventoryRead"]
+            .Should()
+            .Contain("management-platform.identity-rbac.inventory.read");
     }
 }

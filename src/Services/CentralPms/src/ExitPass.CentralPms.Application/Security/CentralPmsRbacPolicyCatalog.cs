@@ -76,6 +76,10 @@ public static class CentralPmsRbacPolicyCatalog
                 "reconciliation.view",
                 "reconciliation.manage"
             ],
+            ["ManagementPlatformIdentityRbacInventoryRead"] =
+            [
+                "management-platform.identity-rbac.inventory.read"
+            ],
 
             ["OperatorConsoleStatutoryDiscountSessionLookup"] =
             [
@@ -154,4 +158,10 @@ public static class CentralPmsRbacPolicyCatalog
         PolicyPermissions.TryGetValue(policyName, out var permissions)
             ? permissions
             : [policyName];
+
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> ListPolicyMappings() =>
+        PolicyPermissions.ToDictionary(
+            pair => pair.Key,
+            pair => (IReadOnlyList<string>)pair.Value.ToArray(),
+            StringComparer.OrdinalIgnoreCase);
 }
