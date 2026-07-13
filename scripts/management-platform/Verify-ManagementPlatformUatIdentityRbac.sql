@@ -47,7 +47,7 @@ BEGIN
             SELECT COUNT(*)
             FROM operator_console.operator_device_bindings
             WHERE operator_device_binding_id = '77000000-0000-0000-0000-000000000030'
-              AND binding_status = 'ACTIVE'
+              AND device_status = 'ACTIVE'
         $sql$ INTO v_device_binding_count;
 
         UPDATE management_platform_uat_operator_console_fixture_counts
@@ -59,7 +59,7 @@ BEGIN
             SELECT COUNT(*)
             FROM operator_console.operator_shifts
             WHERE operator_shift_id IN ('77000000-0000-0000-0000-000000000050', '77000000-0000-0000-0000-000000000052')
-              AND shift_status = 'ACTIVE'
+              AND operational_status = 'ACTIVE'
         $sql$ INTO v_active_shift_count;
 
         UPDATE management_platform_uat_operator_console_fixture_counts
