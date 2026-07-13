@@ -27,6 +27,7 @@ using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Operations;
@@ -42,6 +43,7 @@ using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
@@ -152,6 +154,7 @@ app.MapVendorSessionProjectionHealthEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
+app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -609,6 +612,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
         new OperatorConsoleProductionPolicyImportReviewQueueRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewService, OperatorConsoleProductionPolicyImportReviewService>();
+    builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryRepository>(_ =>
+        new ManagementPlatformIdentityRbacInventoryRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
