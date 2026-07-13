@@ -33,9 +33,14 @@ $expectedParkingSessionId = "23100000-0000-0000-0000-000000000003"
 $expectedTariffSnapshotId = "23100000-0000-0000-0000-000000000004"
 $expectedAmountMinorUnits = 12500
 $expectedCurrency = "PHP"
+$requesterPermissions = "statutory-discounts.session.lookup,statutory-discounts.draft.view,statutory-discounts.draft.create,statutory-discounts.evidence.view,statutory-discounts.evidence.capture,statutory-discounts.policy.resolve,fiscal-issuance.status.read,ticket.lookup,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
+$reviewerPermissions = "statutory-discounts.draft.view,statutory-discounts.evidence.view,statutory-discounts.decision.review,statutory-discounts.decision.approve,statutory-discounts.decision.reject,statutory-discounts.payable-basis.apply,statutory-discounts.policy.resolve,fiscal-issuance.status.read,fiscal-issuance.void.command,operator-workflow-audit.view,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
 
 $seedSqlPath = Join-Path $PSScriptRoot "Seed-StatutoryDiscountPilotFixture.sql"
 $verifySqlPath = Join-Path $PSScriptRoot "Verify-StatutoryDiscountPilotFixture.sql"
+$managementPlatformScriptRoot = Join-Path (Split-Path $PSScriptRoot -Parent) "management-platform"
+$managementPlatformSeedSqlPath = Join-Path $managementPlatformScriptRoot "Seed-ManagementPlatformUatIdentityRbac.sql"
+$managementPlatformVerifySqlPath = Join-Path $managementPlatformScriptRoot "Verify-ManagementPlatformUatIdentityRbac.sql"
 
 function Invoke-PsqlText {
     param(
@@ -94,9 +99,11 @@ Write-Host "Ticket/reference: $TicketReference"
 
 if (-not $SkipSeed) {
     Invoke-PsqlFile -Path $seedSqlPath
+    Invoke-PsqlFile -Path $managementPlatformSeedSqlPath
 }
 
 Invoke-PsqlFile -Path $verifySqlPath
+Invoke-PsqlFile -Path $managementPlatformVerifySqlPath
 
 $fixtureSql = @"
 COPY (
@@ -223,7 +230,7 @@ $headers = @{
     "X-Correlation-Id" = $correlationId
     "X-Operator-User-Id" = $expectedOperatorUserId
     "X-ExitPass-User-Id" = $expectedOperatorUserId
-    "X-ExitPass-Permissions" = "operator-console.policy-import-review.submit,operator-console.policy-import-review.view-own,operator-console.policy-import-review.review,fiscal-issuance.status.read"
+    "X-ExitPass-Permissions" = $requesterPermissions
     "X-Operator-Device-Binding-Id" = $expectedDeviceBindingId
     "X-Operator-Shift-Id" = $expectedShiftId
     "X-Site-Id" = $expectedSiteId
@@ -261,8 +268,10 @@ Write-Host "Requester context for lookup/draft/evidence/apply:"
 Write-Host "  VITE_OPERATOR_CONSOLE_USER_ID=$expectedOperatorUserId"
 Write-Host "  VITE_OPERATOR_CONSOLE_SHIFT_ID=$expectedShiftId"
 Write-Host "  VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID=$expectedDeviceBindingId"
+Write-Host "  X-ExitPass-Permissions=$requesterPermissions"
 Write-Host ""
 Write-Host "Reviewer context for approve/reject under requester-vs-approver segregation:"
 Write-Host "  VITE_OPERATOR_CONSOLE_USER_ID=$expectedReviewerUserId"
 Write-Host "  VITE_OPERATOR_CONSOLE_SHIFT_ID=$expectedReviewerShiftId"
 Write-Host "  VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID=$expectedDeviceBindingId"
+Write-Host "  X-ExitPass-Permissions=$reviewerPermissions"
