@@ -1,10 +1,10 @@
 -- ExitPass v1.3 local/UAT Management Platform identity and RBAC verification.
--- Pinned to exitpass_v12_dev. Read-only verification only.
+-- Local/UAT-only read-only verification.
 
 DO $$
 BEGIN
-    IF current_database() <> 'exitpass_v12_dev' THEN
-        RAISE EXCEPTION 'Refusing to verify Management Platform UAT identity/RBAC against database %. Expected exitpass_v12_dev.', current_database();
+    IF current_database() NOT IN ('exitpass_v12_dev', 'centralpms_operator_uat_aligned_local') THEN
+        RAISE EXCEPTION 'Refusing to verify Management Platform UAT identity/RBAC against database %. Expected exitpass_v12_dev or centralpms_operator_uat_aligned_local.', current_database();
     END IF;
 END $$;
 
