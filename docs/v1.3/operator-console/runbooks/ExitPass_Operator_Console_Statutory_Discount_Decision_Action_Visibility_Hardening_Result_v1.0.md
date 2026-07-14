@@ -73,6 +73,24 @@ Manual browser smoke is recommended:
 3. After approval/apply, decision controls should remain read-only.
 4. Final payable should remain PHP 89.29 for the aligned UAT fixture.
 
+## Manual Browser Smoke Result
+
+Result: PASSED.
+
+Evidence source: Darwin manual confirmation in chat; screenshots were not captured.
+
+Confirmed behavior:
+
+- Requester profile did not see active Approve/Reject controls after evidence capture.
+- Requester view showed read-only decision posture.
+- Reviewer profile could proceed with eligible decision actions.
+- After approval/apply, decision controls remained read-only.
+- Final payable remained PHP 89.29.
+
+Safety assertion: no payment provider, HikCentral, gate, ExitAuthorization, refund/reversal, POS Server Sales Invoice, fiscal number allocation, BIR rendering, or raw evidence byte path was used.
+
+Remaining gap: no in-app local UAT identity selector. This remains an ergonomic-only gap; it does not change the UAT correctness result.
+
 ## Files Changed
 
 - `src/Services/OperatorConsoleUi/src/App.tsx`
