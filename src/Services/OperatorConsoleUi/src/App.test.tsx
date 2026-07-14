@@ -290,6 +290,86 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
   });
 
+  it("StatutoryDiscountDetail_HidesDecisionControlsForRequesterViewingOwnValidation", async () => {
+    const onDecision = vi.fn();
+    const ownDraft = decisionEligibleDraft({
+      draftId: "47000000-0000-0000-0000-000000000201",
+      requestedBy: "77000000-0000-0000-0000-000000000010"
+    });
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [ownDraft], onDecision })}
+        initialPath={`/operator-console/statutory-discounts/${ownDraft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(screen.getByText("You cannot approve or reject your own statutory discount request.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(onDecision).not.toHaveBeenCalled();
+  });
+
+  it("StatutoryDiscountDetail_HidesDecisionControlsWhenOperatorLacksDecisionPermission", async () => {
+    const onDecision = vi.fn();
+    const draft = decisionEligibleDraft({ draftId: "47000000-0000-0000-0000-000000000202" });
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({
+          drafts: [draft],
+          onDecision,
+          statutoryDiscountDecisionAuthorized: false
+        })}
+        initialPath={`/operator-console/statutory-discounts/${draft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(screen.getByText("Decision requires an authorized reviewer.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(onDecision).not.toHaveBeenCalled();
+  });
+
+  it("StatutoryDiscountDetail_ShowsDecisionControlsForAuthorizedReviewerWhenEligible", async () => {
+    const draft = decisionEligibleDraft({ draftId: "47000000-0000-0000-0000-000000000203" });
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [draft] })}
+        initialPath={`/operator-console/statutory-discounts/${draft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
+
+  it("StatutoryDiscountDetail_HidesDecisionControlsAfterApprovalAndPayableBasisApplication", async () => {
+    const appliedDraft: StatutoryDiscountDraftDetail = {
+      ...createApprovedDraft(),
+      draftId: "47000000-0000-0000-0000-000000000204",
+      payableBasisApplicationStatus: "APPLIED",
+      payableBasisApplicationId: "54128dcc-dfd5-4ec4-9377-5759f202269c",
+      appliedTariffSnapshotId: "5c2a9ad0-84e0-47fb-9f78-4deaa9990396"
+    };
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [appliedDraft] })}
+        initialPath={`/operator-console/statutory-discounts/${appliedDraft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(screen.getByText("Decision is read-only because payable basis has already been applied.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
   it("StatutoryDiscountDetail_ShowsEvidencePanelAndBlocksApprovalWhenEvidenceRequired", async () => {
     render(
       <App
@@ -2296,6 +2376,26 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(document.body.innerHTML).not.toMatch(/\/v1\/public\/coupons/i);
   });
 });
+
+function decisionEligibleDraft(overrides: Partial<StatutoryDiscountDraftDetail> = {}): StatutoryDiscountDraftDetail {
+  return {
+    ...createApprovedDraft(),
+    draftId: "47000000-0000-0000-0000-000000000200",
+    parkingSessionId: "25000000-0000-0000-0000-000000000200",
+    ticketReference: "STAT-OP-SESSION-0200",
+    status: "Requested",
+    requestedBy: "77000000-0000-0000-0000-000000000011",
+    evidenceCaptured: true,
+    evidenceRequiredSatisfied: true,
+    evidenceCount: 1,
+    latestEvidenceStatus: "CAPTURED",
+    payableBasisApplicationStatus: undefined,
+    payableBasisApplicationId: undefined,
+    appliedTariffSnapshotId: undefined,
+    auditActivity: ["Evidence captured.", "Awaiting reviewer decision."],
+    ...overrides
+  };
+}
 
 function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
   return {
