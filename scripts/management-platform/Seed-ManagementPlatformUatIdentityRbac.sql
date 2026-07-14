@@ -12,9 +12,10 @@ BEGIN
     IF current_database() NOT IN (
         'exitpass_v12_dev',
         'centralpms_operator_uat_aligned_local',
-        'centralpms_aligned_discount_payment_si_runtime_local'
+        'centralpms_aligned_discount_payment_si_runtime_local',
+        'centralpms_aligned_discount_exit_authorization_runtime_local'
     ) THEN
-        RAISE EXCEPTION 'Refusing to run Management Platform UAT identity/RBAC seed against database %. Expected exitpass_v12_dev, centralpms_operator_uat_aligned_local, or centralpms_aligned_discount_payment_si_runtime_local.', current_database();
+        RAISE EXCEPTION 'Refusing to run Management Platform UAT identity/RBAC seed against database %. Expected exitpass_v12_dev, centralpms_operator_uat_aligned_local, centralpms_aligned_discount_payment_si_runtime_local, or centralpms_aligned_discount_exit_authorization_runtime_local.', current_database();
     END IF;
 
     IF to_regclass('identity.users') IS NULL
