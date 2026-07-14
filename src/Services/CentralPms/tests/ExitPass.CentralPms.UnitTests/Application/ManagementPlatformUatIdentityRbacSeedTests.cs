@@ -129,6 +129,7 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         var sql = ReadRepoFile("scripts", "management-platform", "Verify-ManagementPlatformUatIdentityRbac.sql");
 
         sql.Should().Contain("centralpms_operator_uat_aligned_local");
+        sql.Should().Contain("centralpms_aligned_discount_payment_si_runtime_local");
         sql.Should().Contain("system_rbac_admin_lacks_business_mutation");
         sql.Should().Contain("executive_management_is_read_only");
         sql.Should().Contain("operator_support_requester_only");
@@ -169,6 +170,21 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         script.Should().Contain("Requester/evidence actor");
         script.Should().Contain("Reviewer/apply actor");
         script.Should().Contain("gross=12500 vatExclusive=11161 vat=1339 discount=2232 final=8929");
+    }
+
+    [Fact]
+    public void AlignedDbPaymentSalesInvoiceRuntimeProof_UsesCanonicalDbOutputAndLivePosProof()
+    {
+        var script = ReadRepoFile("scripts", "central-pms", "Invoke-AlignedDbStatutoryDiscountPaymentSalesInvoiceRuntimeProof.ps1");
+
+        script.Should().Contain("exitpass-full-object.generated.sql");
+        script.Should().Contain("Validate-V13CentralPmsAlignment.sql");
+        script.Should().Contain("centralpms_aligned_discount_payment_si_runtime_local");
+        script.Should().Contain("Seed-ManagementPlatformUatIdentityRbac.sql");
+        script.Should().Contain("Seed-StatutoryDiscountPilotFixture.sql");
+        script.Should().Contain("EXITPASS_RUN_STATUTORY_DISCOUNT_LIVE_POS_SMOKE");
+        script.Should().Contain("LocalRuntime_WhenEnabled_IssuesDiscountedSalesInvoiceThroughCentralPmsLivePosServer");
+        script.Should().Contain("http://localhost:5000");
     }
 
     private static Dictionary<string, HashSet<string>> ExtractRolePermissions(string sql)
