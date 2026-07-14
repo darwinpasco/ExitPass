@@ -1,6 +1,6 @@
 -- ExitPass v1.3 local/UAT Management Platform identity and RBAC seed.
 -- Not production seed data. Do not include in baseline DDL or migrations.
--- This script is deterministic, idempotent, and pinned to exitpass_v12_dev.
+-- This script is deterministic, idempotent, and local/UAT-only.
 -- It does not create mutation APIs, payment state, fiscal state, gate state,
 -- HikCentral state, refunds, rendered artifacts, secrets, or raw evidence.
 
@@ -9,8 +9,8 @@ SET CONSTRAINTS ALL DEFERRED;
 
 DO $$
 BEGIN
-    IF current_database() <> 'exitpass_v12_dev' THEN
-        RAISE EXCEPTION 'Refusing to run Management Platform UAT identity/RBAC seed against database %. Expected exitpass_v12_dev.', current_database();
+    IF current_database() NOT IN ('exitpass_v12_dev', 'centralpms_operator_uat_aligned_local') THEN
+        RAISE EXCEPTION 'Refusing to run Management Platform UAT identity/RBAC seed against database %. Expected exitpass_v12_dev or centralpms_operator_uat_aligned_local.', current_database();
     END IF;
 
     IF to_regclass('identity.users') IS NULL
