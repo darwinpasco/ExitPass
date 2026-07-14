@@ -37,9 +37,7 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
                 options: effectiveOptions);
         }
 
-        if (evaluation.Status is
-            FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext or
-            FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking)
+        if (evaluation.Status == FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking)
         {
             return Create(
                 decision: FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable,
@@ -151,7 +149,7 @@ public static class FiscalIssuanceExitAuthorizationEnforcementPolicy
             isNotRequiredByPolicy,
             evidenceState,
             options.EnableFiscalBeforeExitAuthorizationEnforcement,
-            enforcementWiredForBlocking: false);
+            enforcementWiredForBlocking: options.EnableFiscalBeforeExitAuthorizationEnforcement);
 
     private static FiscalIssuanceExitAuthorizationEnforcementDecision Create(
         string decision,

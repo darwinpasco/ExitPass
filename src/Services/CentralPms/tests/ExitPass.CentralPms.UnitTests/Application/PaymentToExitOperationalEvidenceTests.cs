@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.PaymentAttempts.Commands;
@@ -8,6 +9,7 @@ using ExitPass.CentralPms.Application.PaymentAttempts.Results;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
 using ExitPass.CentralPms.Domain.PaymentAttempts;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Domain.Sessions;
@@ -492,7 +494,9 @@ public sealed class PaymentToExitOperationalEvidenceTests
             Substitute.For<IIntegrationEventPublisher>(),
             clock,
             new CentralPmsMetrics(),
-            NullLogger<IssueExitAuthorizationHandler>.Instance);
+            NullLogger<IssueExitAuthorizationHandler>.Instance,
+            ReadyFiscalGatingEvaluator(),
+            VerifiedPaymentFinalityReader());
 
         await sut.ExecuteAsync(
             new IssueExitAuthorizationCommand(
@@ -604,6 +608,72 @@ public sealed class PaymentToExitOperationalEvidenceTests
             CorrelationId = CorrelationId
         };
     }
+
+    private static IExitAuthorizationFiscalGatingShadowEvaluator ReadyFiscalGatingEvaluator()
+    {
+        var evaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+        evaluator
+            .EvaluateAsync(Arg.Any<ExitAuthorizationFiscalGatingShadowContext>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var context = call.ArgAt<ExitAuthorizationFiscalGatingShadowContext>(0);
+                var reference = CompleteFiscalReference(context);
+                var evaluation = FiscalIssuanceExitAuthorizationGateEvaluator.Evaluate(
+                    reference,
+                    new FiscalIssuanceGatingEvaluationContext(context.IsPaymentFinalityVerified));
+
+                return FiscalGatingShadowEvaluation.FromGatingEvaluation(evaluation, reference);
+            });
+
+        return evaluator;
+    }
+
+    private static IExitAuthorizationPaymentFinalityReadRepository VerifiedPaymentFinalityReader()
+    {
+        var reader = Substitute.For<IExitAuthorizationPaymentFinalityReadRepository>();
+        reader
+            .IsPaymentFinalityVerifiedAsync(Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        return reader;
+    }
+
+    private static FiscalIssuanceReferenceRecord CompleteFiscalReference(
+        ExitAuthorizationFiscalGatingShadowContext context) =>
+        new(
+            FiscalIssuanceReferenceId: Guid.Parse("10000000-0000-0000-0000-000000000011"),
+            PaymentConfirmationId: Guid.Parse("10000000-0000-0000-0000-000000000012"),
+            PaymentAttemptId: context.PaymentAttemptId,
+            ParkingSessionId: context.ParkingSessionId,
+            TariffSnapshotId: Guid.Parse("10000000-0000-0000-0000-000000000013"),
+            SiteId: Guid.Parse("10000000-0000-0000-0000-000000000014"),
+            SitePosServerId: Guid.Parse("10000000-0000-0000-0000-000000000015"),
+            SitePosServerRef: "site-pos-server-observability",
+            PayableBasisRef: "tariff-snapshot-observability",
+            UpstreamFinalityReference: "provider-finality-observability",
+            PosServerFiscalDocumentId: Guid.Parse("10000000-0000-0000-0000-000000000016"),
+            FiscalIdentityId: Guid.Parse("10000000-0000-0000-0000-000000000017"),
+            FiscalSequencePolicyId: Guid.Parse("10000000-0000-0000-0000-000000000018"),
+            FiscalSequenceValue: 101,
+            FiscalDocumentNumber: "SI-000101",
+            FiscalSeries: "SI",
+            FiscalNumberPrefixText: "SI-",
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: Now,
+            FiscalNumberAssignedByRef: "pos-server-sequence",
+            FiscalDocumentStatusCodeId: Guid.Parse("10000000-0000-0000-0000-000000000019"),
+            ResultClassification: FiscalIssuanceResultClassification.NewlyCreated,
+            FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+            FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+            FiscalIssuanceState: FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+            LatestExceptionReason: null,
+            LatestErrorCode: null,
+            LatestErrorPosture: null,
+            CorrelationId: context.CorrelationId,
+            PosServerResponseTimestamp: Now,
+            FirstRecordedAt: Now,
+            LastUpdatedAt: Now,
+            RecordedByServiceIdentityId: Guid.Parse("10000000-0000-0000-0000-000000000020"));
 
     private static void AssertTag(Activity activity, string key, object expected)
     {
