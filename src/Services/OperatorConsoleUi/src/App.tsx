@@ -3505,6 +3505,7 @@ function StatutoryDiscountDetailPage({
 }) {
   const [detailState, setDetailState] = useState<LoadState<StatutoryDiscountDraftDetail>>({ status: "loading" });
   const [refreshToken, setRefreshToken] = useState(0);
+  const operatorContext = useMemo(() => getDefaultOperatorConsoleContext(), []);
 
   useEffect(() => {
     let active = true;
@@ -3553,6 +3554,7 @@ function StatutoryDiscountDetailPage({
           client={client}
           refreshDetail={() => setRefreshToken((value) => value + 1)}
           readinessBlockReason={readinessBlockReason}
+          currentOperatorUserId={operatorContext.userId}
         />
       )}
     </>
@@ -3563,12 +3565,14 @@ function DraftDetail({
   detail,
   client,
   refreshDetail,
-  readinessBlockReason
+  readinessBlockReason,
+  currentOperatorUserId
 }: {
   detail: StatutoryDiscountDraftDetail;
   client: OperatorConsoleApiClient;
   refreshDetail: () => void;
   readinessBlockReason: string | null;
+  currentOperatorUserId: string;
 }) {
   const [rejectReason, setRejectReason] = useState("");
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
@@ -3580,6 +3584,16 @@ function DraftDetail({
   const [latestPayableBasisResult, setLatestPayableBasisResult] =
     useState<StatutoryDiscountPayableBasisApplicationResult | null>(null);
   const decisionable = detail.status === "Requested" || detail.status === "Pending Review";
+  const canApproveDecision = client.canApproveStatutoryDiscount?.() ?? true;
+  const canRejectDecision = client.canRejectStatutoryDiscount?.() ?? true;
+  const decisionReadOnlyReason = statutoryDiscountDecisionReadOnlyReason(
+    detail,
+    currentOperatorUserId,
+    canApproveDecision,
+    canRejectDecision,
+    decisionable
+  );
+  const showDecisionControls = decisionReadOnlyReason === null;
   const approvalDisabledReason = readinessBlockReason ?? approvalBlockReason(detail, submittingDecision !== null);
   const rejectDisabledReason =
     readinessBlockReason ?? (!decisionable ? "Decision is read-only for the current validation status." : null);
@@ -3732,37 +3746,48 @@ function DraftDetail({
       <section className="panel" aria-labelledby="decision-title">
         <div className="panelHeader">
           <h3 id="decision-title">Decision actions</h3>
-          <span className="statusPill">{decisionable ? "Ready" : "Read-only status"}</span>
+          <span className="statusPill">{showDecisionControls ? "Ready" : "Read-only status"}</span>
         </div>
-        {approvalDisabledReason && <p className="notice">{approvalDisabledReason}</p>}
-        {rejectDisabledReason && <p className="notice">{rejectDisabledReason}</p>}
+        {decisionReadOnlyReason && <p className="notice">{decisionReadOnlyReason}</p>}
+        {showDecisionControls && approvalDisabledReason && <p className="notice">{approvalDisabledReason}</p>}
+        {showDecisionControls && rejectDisabledReason && <p className="notice">{rejectDisabledReason}</p>}
         {decisionMessage && <p className="successMessage">{decisionMessage}</p>}
         {decisionError && <p className="errorMessage">{decisionError}</p>}
-        <label className="reasonField">
-          Reject reason code
-          <input
-            type="text"
-            value={rejectReason}
-            placeholder="ID_NOT_VALID"
-            onChange={(event) => setRejectReason(event.target.value)}
-          />
-        </label>
-        <div className="actionBar">
-          <button
-            type="button"
-            disabled={approvalDisabledReason !== null}
-            onClick={() => void submitDecision("APPROVE")}
-          >
-            {submittingDecision === "APPROVE" ? "Approving" : "Approve"}
-          </button>
-          <button
-            type="button"
-            disabled={rejectDisabledReason !== null || submittingDecision !== null}
-            onClick={() => void submitDecision("REJECT")}
-          >
-            {submittingDecision === "REJECT" ? "Rejecting" : "Reject"}
-          </button>
-        </div>
+        {showDecisionControls && (
+          <>
+            {canRejectDecision && (
+              <label className="reasonField">
+                Reject reason code
+                <input
+                  type="text"
+                  value={rejectReason}
+                  placeholder="ID_NOT_VALID"
+                  onChange={(event) => setRejectReason(event.target.value)}
+                />
+              </label>
+            )}
+            <div className="actionBar">
+              {canApproveDecision && (
+                <button
+                  type="button"
+                  disabled={approvalDisabledReason !== null}
+                  onClick={() => void submitDecision("APPROVE")}
+                >
+                  {submittingDecision === "APPROVE" ? "Approving" : "Approve"}
+                </button>
+              )}
+              {canRejectDecision && (
+                <button
+                  type="button"
+                  disabled={rejectDisabledReason !== null || submittingDecision !== null}
+                  onClick={() => void submitDecision("REJECT")}
+                >
+                  {submittingDecision === "REJECT" ? "Rejecting" : "Reject"}
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </section>
 
       <section className="panel" aria-labelledby="payable-basis-title">
@@ -4245,6 +4270,36 @@ function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: b
   }
 
   return null;
+}
+
+function statutoryDiscountDecisionReadOnlyReason(
+  detail: StatutoryDiscountDraftDetail,
+  currentOperatorUserId: string,
+  canApproveDecision: boolean,
+  canRejectDecision: boolean,
+  decisionable: boolean
+) {
+  if (isPayableBasisApplied(detail)) {
+    return "Decision is read-only because payable basis has already been applied.";
+  }
+
+  if (!decisionable || ["Approved", "Rejected", "Cancelled", "Expired", "Blocked"].includes(detail.status)) {
+    return "Decision is read-only for the current validation status.";
+  }
+
+  if (sameIdentity(detail.requestedBy, currentOperatorUserId)) {
+    return "You cannot approve or reject your own statutory discount request.";
+  }
+
+  if (!canApproveDecision && !canRejectDecision) {
+    return "Decision requires an authorized reviewer.";
+  }
+
+  return null;
+}
+
+function sameIdentity(left?: string | null, right?: string | null) {
+  return (left ?? "").trim().toLowerCase() === (right ?? "").trim().toLowerCase();
 }
 
 function payableBasisBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean) {

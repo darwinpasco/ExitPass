@@ -77,6 +77,8 @@ export interface OperatorConsoleApiClient {
   listVendorSessionProjectionHealthTargets(): Promise<VendorSessionProjectionHealthTargetsResponse>;
   getVendorSessionProjectionHealthTarget(projectionSyncTargetId: string): Promise<VendorSessionProjectionHealthTargetDetail>;
   getVendorSessionProjectionHealthSummary(): Promise<VendorSessionProjectionHealthSummary>;
+  canApproveStatutoryDiscount?(): boolean;
+  canRejectStatutoryDiscount?(): boolean;
   canDecideProductionPolicyImportReview?(): boolean;
   canVoidFiscalDocument?(): boolean;
 }
@@ -486,6 +488,8 @@ const reviewDecisionPermissions = new Set([
   "operator-console.policy-import-review.approve.db"
 ]);
 
+const statutoryDiscountApprovePermission = "statutory-discounts.decision.approve";
+const statutoryDiscountRejectPermission = "statutory-discounts.decision.reject";
 const fiscalVoidPermissions = new Set(["fiscal-issuance.void.command", "reconciliation.manage"]);
 
 const defaultOperatorPermissions = localFallback(
@@ -516,6 +520,14 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
   const permissions = parsePermissions(defaultOperatorPermissions);
 
   return {
+    canApproveStatutoryDiscount() {
+      return permissions.includes(statutoryDiscountApprovePermission);
+    },
+
+    canRejectStatutoryDiscount() {
+      return permissions.includes(statutoryDiscountRejectPermission);
+    },
+
     canDecideProductionPolicyImportReview() {
       return permissions.some((permission) => reviewDecisionPermissions.has(permission));
     },
@@ -1085,6 +1097,9 @@ export function createMockOperatorConsoleApiClient(
     onVendorSessionProjectionHealthTargets?: () => void;
     onVendorSessionProjectionHealthTargetDetail?: (projectionSyncTargetId: string) => void;
     onVendorSessionProjectionHealthSummary?: () => void;
+    statutoryDiscountDecisionAuthorized?: boolean;
+    statutoryDiscountApproveAuthorized?: boolean;
+    statutoryDiscountRejectAuthorized?: boolean;
     productionPolicyReviewDecisionAuthorized?: boolean;
   } = {}
 ): OperatorConsoleApiClient {
@@ -1101,6 +1116,14 @@ export function createMockOperatorConsoleApiClient(
   const evidence = new Map<string, StatutoryDiscountEvidenceItem[]>();
   let productionPolicyReview: ProductionPolicyImportReviewResult | null = null;
   return {
+    canApproveStatutoryDiscount() {
+      return options.statutoryDiscountApproveAuthorized ?? options.statutoryDiscountDecisionAuthorized ?? true;
+    },
+
+    canRejectStatutoryDiscount() {
+      return options.statutoryDiscountRejectAuthorized ?? options.statutoryDiscountDecisionAuthorized ?? true;
+    },
+
     canDecideProductionPolicyImportReview() {
       return options.productionPolicyReviewDecisionAuthorized ?? true;
     },
