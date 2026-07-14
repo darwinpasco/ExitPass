@@ -533,6 +533,216 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             $"restoredReplay={restoredReplayResult.PosServerResult.ResultClassification}");
     }
 
+    /// <summary>
+    /// Opt-in local runtime proof that discounted payment plus recorded fiscal issuance is ready for ExitAuthorization.
+    /// </summary>
+    [Fact]
+    public async Task LocalRuntime_WhenEnabled_DiscountedPaymentAndFiscalIssuanceAreReadyForExitAuthorization()
+    {
+        if (!IsLocalLivePosSmokeEnabled())
+        {
+            return;
+        }
+
+        if (!await CanOpenDatabaseAsync())
+        {
+            throw new InvalidOperationException(
+                "The opt-in local live POS smoke requires the Central PMS integration database to be available.");
+        }
+
+        var posServerBaseUrl = Environment.GetEnvironmentVariable(LocalLivePosSmokeBaseUrlEnvVar)
+            ?? "http://localhost:5000";
+        var runId = Environment.GetEnvironmentVariable(LocalLivePosSmokeRunIdEnvVar)
+            ?? DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+        var upstreamFinalityReference =
+            $"STAT-DISCOUNT-EXIT-AUTH-READY:{runId}:SENIOR_CITIZEN:001";
+        var correlationId = Guid.NewGuid();
+
+        await EnsurePosServerRuntimeAvailableAsync(posServerBaseUrl);
+        await SeedManualFixtureAsync();
+        await ResetE2EStateAsync();
+
+        await InsertE2EPolicyFixtureAsync();
+        await InsertParkingSessionAsync();
+        await InsertBaseTariffSnapshotAsync();
+
+        try
+        {
+            using var posHttpClient = new HttpClient { BaseAddress = new Uri(posServerBaseUrl) };
+            var posClient = new HttpPosServerFiscalDocumentClient(posHttpClient);
+            var referenceRepository = new PostgresFiscalIssuanceReferenceRepository(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+            var orchestrationService = new FiscalIssuanceOrchestrationService(referenceRepository);
+            var liveIntegration = new FiscalIssuancePosServerLiveIntegrationService(
+                new FiscalIssuancePosServerIntegrationOptions
+                {
+                    EnablePosServerFiscalIssuanceLiveCall = true,
+                    EnableControlledUatDiagnosticPath = true,
+                    PosServerBaseUrl = posServerBaseUrl,
+                    TimeoutSeconds = 10,
+                    EnableLiveFiscalIssuanceFromPaymentFlow = false,
+                    EnableLiveFiscalIssuanceFromExitFlow = false
+                },
+                new PosServerFiscalDocumentRequestMapper(),
+                new FiscalSemanticRequestHashCalculator(),
+                posClient,
+                orchestrationService);
+
+            var applied = await PrepareApprovedStatutoryDiscountApplicationAsync();
+            var paymentAttempt = await CreatePaymentAttemptForAppliedBasisAsync(
+                applied.AppliedTariffSnapshotId!.Value,
+                $"operator-console-statutory-discount-exit-auth-payment-{runId}");
+            var paymentConfirmation = await RecordDiscountedPaymentConfirmationAsync(
+                paymentAttempt.PaymentAttemptId,
+                $"PCONF-STAT-DISCOUNT-EXIT-AUTH-{runId}",
+                AmountConfirmed: 89.29m);
+            var fiscalReference = await PrepareFiscalIssuanceReferenceAsync(
+                paymentAttempt.PaymentAttemptId,
+                paymentConfirmation.PaymentConfirmationId,
+                applied.AppliedTariffSnapshotId.Value,
+                upstreamFinalityReference);
+            var fiscalContext = BuildDiscountedFiscalContext(
+                applied.StatutoryDiscountValidationId!.Value,
+                applied.PayableBasisApplicationId!.Value,
+                applied.AppliedTariffSnapshotId.Value,
+                paymentAttempt.PaymentAttemptId,
+                paymentConfirmation.PaymentConfirmationId,
+                fiscalReference);
+
+            var firstResult = await liveIntegration.TryIssueFiscalDocumentViaPosServerAsync(
+                fiscalReference.FiscalIssuanceReferenceId,
+                fiscalContext,
+                RecordingContext(fiscalReference, correlationId),
+                CancellationToken.None);
+
+            firstResult.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+            firstResult.PosServerResult.Should().NotBeNull();
+            firstResult.PosServerResult!.Succeeded.Should().BeTrue(
+                $"{firstResult.PosServerResult.Code}: {firstResult.PosServerResult.Message}");
+            firstResult.PosServerResult.ResultClassification.Should().Be(FiscalIssuanceResultClassification.NewlyCreated);
+            firstResult.FiscalIssuanceReference.Should().NotBeNull();
+            firstResult.FiscalIssuanceReference!.FiscalIssuanceState.Should().Be(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded);
+
+            var readyEvaluation = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+                firstResult.FiscalIssuanceReference,
+                new FiscalIssuanceGatingEvaluationContext(IsPaymentFinalityVerified: true),
+                new FiscalIssuanceExitAuthorizationGatingOptions
+                {
+                    EnableFiscalBeforeExitAuthorizationEnforcement = true,
+                    EnableShadowEvaluation = true
+                });
+
+            readyEvaluation.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldAllow);
+            readyEvaluation.WouldAllowNormalExitAuthorization.Should().BeTrue();
+            readyEvaluation.EnforcementConfigured.Should().BeTrue();
+            readyEvaluation.EnforcementWiredForBlocking.Should().BeFalse();
+            readyEvaluation.ConfigurationStatus.Should().Be(
+                FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredReadinessOnly);
+
+            var missingFiscalEvaluation = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+                reference: null,
+                new FiscalIssuanceGatingEvaluationContext(IsPaymentFinalityVerified: true));
+            missingFiscalEvaluation.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock);
+            missingFiscalEvaluation.BlockedReason.Should().Be("fiscal_reference_not_recorded");
+
+            var missingPaymentEvaluation = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+                firstResult.FiscalIssuanceReference,
+                new FiscalIssuanceGatingEvaluationContext(IsPaymentFinalityVerified: false));
+            missingPaymentEvaluation.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock);
+            missingPaymentEvaluation.BlockedReason.Should().Be("payment_finality_not_verified");
+
+            var unsafeFiscalReference = firstResult.FiscalIssuanceReference with
+            {
+                FiscalIssuanceState = FiscalIssuanceIntegrationState.FiscalIssuanceConflict,
+                FiscalIssuanceEvidenceStatus = null,
+                FiscalNumberAssignmentState = FiscalNumberAssignmentState.NotAssigned
+            };
+            var unsafeFiscalEvaluation = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
+                unsafeFiscalReference,
+                new FiscalIssuanceGatingEvaluationContext(IsPaymentFinalityVerified: true));
+            unsafeFiscalEvaluation.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock);
+            unsafeFiscalEvaluation.BlockedReason.Should().Be("fiscal_issuance_conflict");
+
+            var authorization = await PaymentRoutineTestHelper.IssueExitAuthorizationAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                paymentAttempt.ParkingSessionId,
+                paymentAttempt.PaymentAttemptId,
+                ServiceIdentityId,
+                correlationId);
+
+            authorization.Should().NotBeNull();
+            authorization!.AuthorizationStatus.Should().Be("ISSUED");
+            authorization.ParkingSessionId.Should().Be(ParkingSessionId);
+            authorization.PaymentAttemptId.Should().Be(paymentAttempt.PaymentAttemptId);
+            authorization.AuthorizationToken.Should().NotBeNullOrWhiteSpace();
+
+            var replayAuthorization = await PaymentRoutineTestHelper.IssueExitAuthorizationAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                paymentAttempt.ParkingSessionId,
+                paymentAttempt.PaymentAttemptId,
+                ServiceIdentityId,
+                correlationId);
+
+            replayAuthorization.Should().NotBeNull();
+            replayAuthorization!.ExitAuthorizationId.Should().Be(authorization.ExitAuthorizationId);
+
+            var persistedAuthorization = await PaymentRoutineTestHelper.GetExitAuthorizationByIdAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                authorization.ExitAuthorizationId);
+            persistedAuthorization.Should().NotBeNull();
+            persistedAuthorization!.AuthorizationStatus.Should().Be("ISSUED");
+            persistedAuthorization.PaymentAttemptId.Should().Be(paymentAttempt.PaymentAttemptId);
+            persistedAuthorization.ParkingSessionId.Should().Be(ParkingSessionId);
+            persistedAuthorization.ConsumedAt.Should().BeNull();
+
+            (await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                ParkingSessionId,
+                issuedOnly: false)).Should().Be(1);
+            (await PaymentRoutineTestHelper.CountGateAuthorizationConsumptionsAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                authorization.ExitAuthorizationId)).Should().Be(0);
+            (await CountGateAndExternalSideEffectRecordsAsync()).Should().Be(0);
+
+            var paymentFinancials = await ReadPaymentAttemptFinancialsAsync(paymentAttempt.PaymentAttemptId);
+            paymentFinancials.TariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId.Value);
+            paymentFinancials.Amount.Should().Be(89.29m);
+            paymentFinancials.NetAmountSnapshot.Should().Be(89.29m);
+            paymentFinancials.StatutoryDiscountSnapshot.Should().Be(22.32m);
+
+            var confirmation = await PaymentRoutineTestHelper.GetPaymentConfirmationByIdAsync(
+                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
+                paymentConfirmation.PaymentConfirmationId);
+            confirmation.Should().NotBeNull();
+            confirmation!.AmountConfirmed.Should().Be(89.29m);
+
+            Console.WriteLine(
+                "STATUTORY_DISCOUNT_EXIT_AUTH_READY " +
+                $"runId={runId} " +
+                $"statutoryDiscountValidationId={applied.StatutoryDiscountValidationId:D} " +
+                $"payableBasisApplicationId={applied.PayableBasisApplicationId:D} " +
+                $"appliedTariffSnapshotId={applied.AppliedTariffSnapshotId:D} " +
+                $"paymentAttemptId={paymentAttempt.PaymentAttemptId:D} " +
+                $"paymentConfirmationId={paymentConfirmation.PaymentConfirmationId:D} " +
+                $"fiscalIssuanceReferenceId={fiscalReference.FiscalIssuanceReferenceId:D} " +
+                $"posServerFiscalDocumentId={firstResult.PosServerResult.FiscalDocumentId:D} " +
+                $"salesInvoiceNumber={firstResult.PosServerResult.FiscalDocumentNumber} " +
+                $"fiscalSequenceValue={firstResult.PosServerResult.FiscalSequenceValue} " +
+                $"exitAuthorizationId={authorization.ExitAuthorizationId:D} " +
+                $"readiness={readyEvaluation.ReadinessStatus} " +
+                $"enforcementWiredForBlocking={readyEvaluation.EnforcementWiredForBlocking} " +
+                $"replayExitAuthorizationId={replayAuthorization.ExitAuthorizationId:D} " +
+                $"missingFiscalBlock={missingFiscalEvaluation.BlockedReason} " +
+                $"missingPaymentBlock={missingPaymentEvaluation.BlockedReason} " +
+                $"unsafeFiscalBlock={unsafeFiscalEvaluation.BlockedReason} " +
+                "amounts=12500/11161/1339/2232/8929");
+        }
+        finally
+        {
+            await ResetE2EStateAsync();
+        }
+    }
+
     private static OperatorConsoleSessionLookupRequest SessionLookupRequest() =>
         new(
             UserId,
@@ -1469,6 +1679,31 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                    FROM payments.provider_outcomes po
                    JOIN core.payment_attempts pa ON pa.payment_attempt_id = po.payment_attempt_id
                   WHERE pa.parking_session_id = @parking_session_id)
+              + (SELECT COUNT(*)
+                   FROM reconciliation.reconciliation_items ri
+                   JOIN core.payment_attempts pa ON pa.payment_attempt_id = ri.payment_attempt_id
+                  WHERE pa.parking_session_id = @parking_session_id) AS boundary_count;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = ParkingSessionId;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<int> CountGateAndExternalSideEffectRecordsAsync()
+    {
+        const string sql = """
+            SELECT
+                (SELECT COUNT(*)
+                   FROM gates.gate_authorization_consumptions gac
+                   JOIN core.exit_authorizations ea ON ea.exit_authorization_id = gac.exit_authorization_id
+                  WHERE ea.parking_session_id = @parking_session_id)
+              + (SELECT COUNT(*)
+                   FROM payments.provider_outcomes po
+                   JOIN core.payment_attempts pa ON pa.payment_attempt_id = po.payment_attempt_id
+                  WHERE pa.parking_session_id = @parking_session_id)
+              + (SELECT COUNT(*) FROM coupons.coupon_applications WHERE parking_session_id = @parking_session_id)
               + (SELECT COUNT(*)
                    FROM reconciliation.reconciliation_items ri
                    JOIN core.payment_attempts pa ON pa.payment_attempt_id = ri.payment_attempt_id
