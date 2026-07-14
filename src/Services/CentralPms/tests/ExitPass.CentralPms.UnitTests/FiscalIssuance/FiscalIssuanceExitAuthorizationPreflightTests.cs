@@ -11,7 +11,7 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 public sealed class FiscalIssuanceExitAuthorizationPreflightTests
 {
     [Fact]
-    public void GatingOptions_Defaults_PrepareReadinessOnlyShadowMode()
+    public void GatingOptions_Defaults_PrepareHardBlockingShadowMode()
     {
         var options = new FiscalIssuanceExitAuthorizationGatingOptions();
         var readiness = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
@@ -19,19 +19,19 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
             DefaultContext(),
             options);
 
-        options.EnableFiscalBeforeExitAuthorizationEnforcement.Should().BeFalse();
+        options.EnableFiscalBeforeExitAuthorizationEnforcement.Should().BeTrue();
         options.EnableShadowEvaluation.Should().BeTrue();
-        options.ReadinessMode.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessModes.ReadinessOnly);
-        readiness.EnforcementConfigured.Should().BeFalse();
-        readiness.EnforcementWiredForBlocking.Should().BeFalse();
+        options.ReadinessMode.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessModes.HardBlocking);
+        readiness.EnforcementConfigured.Should().BeTrue();
+        readiness.EnforcementWiredForBlocking.Should().BeTrue();
         readiness.ConfigurationStatus.Should().Be(
-            FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementOffDefault);
+            FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredHardBlocking);
     }
 
     [Theory]
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded)]
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceReplayed)]
-    public void EnforcementDecision_WhenCompleteRecordedOrReplayedEvidence_WouldAllowButDoesNotWireBlocking(
+    public void EnforcementDecision_WhenCompleteRecordedOrReplayedEvidence_WouldAllowWithBlockingWired(
         FiscalIssuanceIntegrationState state)
     {
         var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.Evaluate(
@@ -41,8 +41,8 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
         decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow);
         decision.WouldAllowNormalExitAuthorization.Should().BeTrue();
         decision.WouldBlockNormalExitAuthorization.Should().BeFalse();
-        decision.EnforcementEnabled.Should().BeFalse();
-        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.EnforcementEnabled.Should().BeTrue();
+        decision.EnforcementWiredForBlocking.Should().BeTrue();
     }
 
     [Theory]
@@ -53,7 +53,7 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration, "fiscal_issuance_failed_configuration")]
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceFailedService, "fiscal_issuance_failed_service")]
     [InlineData(FiscalIssuanceIntegrationState.FiscalIssuanceUnknown, "fiscal_issuance_unknown")]
-    public void EnforcementDecision_WhenFiscalStateIsNotReady_WouldBlockButDoesNotWireBlocking(
+    public void EnforcementDecision_WhenFiscalStateIsNotReady_WouldBlockAndWireBlocking(
         FiscalIssuanceIntegrationState state,
         string blockedReason)
     {
@@ -65,8 +65,8 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
         decision.BlockedReason.Should().Be(blockedReason);
         decision.WouldAllowNormalExitAuthorization.Should().BeFalse();
         decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
-        decision.EnforcementEnabled.Should().BeFalse();
-        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.EnforcementEnabled.Should().BeTrue();
+        decision.EnforcementWiredForBlocking.Should().BeTrue();
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
         decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.NotRequiredByPolicy);
         decision.IsNotRequiredByPolicy.Should().BeTrue();
         decision.WouldAllowNormalExitAuthorization.Should().BeTrue();
-        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.EnforcementWiredForBlocking.Should().BeTrue();
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
         decision.IsExceptionReleaseOnly.Should().BeTrue();
         decision.WouldAllowNormalExitAuthorization.Should().BeFalse();
         decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
-        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.EnforcementWiredForBlocking.Should().BeTrue();
     }
 
     [Fact]
@@ -106,19 +106,20 @@ public sealed class FiscalIssuanceExitAuthorizationPreflightTests
         decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.ManualReviewRequired);
         decision.RequiresManualReview.Should().BeTrue();
         decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
-        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.EnforcementWiredForBlocking.Should().BeTrue();
     }
 
     [Fact]
-    public void EnforcementDecision_WhenFiscalContextIsMissing_ReportsNotEvaluable()
+    public void EnforcementDecision_WhenFiscalContextIsMissing_Blocks()
     {
         var decision = FiscalIssuanceExitAuthorizationEnforcementPolicy.FromShadowEvaluation(
             FiscalGatingShadowEvaluation.NotEvaluatedMissingFiscalContext());
 
-        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable);
+        decision.Decision.Should().Be(FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        decision.BlockedReason.Should().Be("fiscal_reference_not_recorded");
         decision.WouldBlockNormalExitAuthorization.Should().BeTrue();
-        decision.EnforcementEnabled.Should().BeFalse();
-        decision.EnforcementWiredForBlocking.Should().BeFalse();
+        decision.EnforcementEnabled.Should().BeTrue();
+        decision.EnforcementWiredForBlocking.Should().BeTrue();
     }
 
     [Fact]

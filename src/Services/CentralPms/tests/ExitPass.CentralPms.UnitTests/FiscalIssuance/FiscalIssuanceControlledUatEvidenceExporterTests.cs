@@ -74,8 +74,8 @@ public sealed class FiscalIssuanceControlledUatEvidenceExporterTests
         readiness.BaseUrlConfigured.Should().BeTrue();
         readiness.PaymentFlowGuardEnabled.Should().BeFalse();
         readiness.ExitFlowGuardEnabled.Should().BeFalse();
-        readiness.FiscalGatingEnforcementEnabled.Should().BeFalse();
-        readiness.EnforcementWiredForBlocking.Should().BeFalse();
+        readiness.FiscalGatingEnforcementEnabled.Should().BeTrue();
+        readiness.EnforcementWiredForBlocking.Should().BeTrue();
         json.Should().NotContain("https://pos-server.local");
     }
 

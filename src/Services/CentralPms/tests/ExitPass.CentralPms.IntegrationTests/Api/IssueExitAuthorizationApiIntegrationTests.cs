@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Contracts.Common;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using Xunit;
 using static ExitPass.CentralPms.IntegrationTests.Shared.PaymentRoutineTestHelper;
@@ -58,15 +61,8 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
             var attempt = await CreateAttemptAsync(
                 ConnectionString,
                 context,
-                "idem-issue-auth-api-success",
+                ScopedIdempotencyKey("idem-issue-auth-api-success", context),
                 "issue-auth-api-test");
-
-            await FinalizeAttemptAsync(
-                ConnectionString,
-                attempt.PaymentAttemptId,
-                "CONFIRMED",
-                "central-pms-finalizer",
-                context.CorrelationId);
 
             var confirmation = await RecordPaymentConfirmationAsync(
                 ConnectionString,
@@ -76,6 +72,7 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
                 context.CorrelationId);
 
             Assert.NotNull(confirmation);
+            await RecordReadyFiscalReferenceAsync(context, attempt, confirmation!);
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
@@ -142,7 +139,7 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
             var attempt = await CreateAttemptAsync(
                 ConnectionString,
                 context,
-                "idem-issue-auth-api-applied-effective",
+                ScopedIdempotencyKey("idem-issue-auth-api-applied-effective", context),
                 "issue-auth-api-test");
 
             Assert.Equal(context.TariffSnapshotId, attempt.TariffSnapshotId);
@@ -155,6 +152,7 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
                 context.CorrelationId);
 
             Assert.NotNull(confirmed);
+            await RecordReadyFiscalReferenceAsync(context, attempt, confirmed!);
 
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
@@ -295,7 +293,7 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
             var attempt = await CreateAttemptAsync(
                 ConnectionString,
                 context,
-                "idem-issue-auth-api-not-confirmed",
+                ScopedIdempotencyKey("idem-issue-auth-api-not-confirmed", context),
                 "issue-auth-api-test");
 
             using var request = new HttpRequestMessage(
@@ -315,8 +313,54 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
 
             var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
             Assert.NotNull(body);
-            Assert.Equal("PAYMENT_ATTEMPT_NOT_CONFIRMED", body!.ErrorCode);
+            Assert.Equal("payment_finality_not_verified", body!.ErrorCode);
             Assert.Equal(context.CorrelationId, body.CorrelationId);
+        }
+        finally
+        {
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    /// <summary>
+    /// Verifies hard issue-time blocking when payment finality exists but no fiscal issuance reference is recorded.
+    /// </summary>
+    [Fact]
+    public async Task IssueExitAuthorization_WhenFiscalReferenceIsMissing_ReturnsConflictAndDoesNotIssue()
+    {
+        var context = PaymentTestContext.Create(
+            nameof(IssueExitAuthorization_WhenFiscalReferenceIsMissing_ReturnsConflictAndDoesNotIssue));
+
+        await PaymentTestDataHelper.ResetAndSeedAsync(
+            ConnectionString,
+            context,
+            "Seed data for issue-exit-authorization missing-fiscal API tests");
+
+        try
+        {
+            var attempt = await CreateConfirmedAttemptAsync(
+                context,
+                "idem-issue-auth-api-missing-fiscal",
+                recordFiscalReference: false);
+
+            using var response = await PostIssueAuthorizationAsync(
+                attempt.PaymentAttemptId,
+                attempt.ParkingSessionId,
+                context.RequestedByUserId,
+                context.CorrelationId,
+                "idem-http-issue-auth-missing-fiscal");
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+            var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+            Assert.NotNull(body);
+            Assert.Equal("fiscal_reference_not_recorded", body!.ErrorCode);
+            Assert.Equal(context.CorrelationId, body.CorrelationId);
+
+            Assert.Equal(0, await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
+                ConnectionString,
+                attempt.ParkingSessionId,
+                issuedOnly: false));
         }
         finally
         {
@@ -357,7 +401,7 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
 
             var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
             Assert.NotNull(body);
-            Assert.Equal("PAYMENT_AMOUNT_MISMATCH", body!.ErrorCode);
+            Assert.Equal("payment_finality_not_verified", body!.ErrorCode);
 
             Assert.Equal(0, await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
                 ConnectionString,
@@ -403,7 +447,7 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
 
             var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
             Assert.NotNull(body);
-            Assert.Equal("PAYMENT_CURRENCY_MISMATCH", body!.ErrorCode);
+            Assert.Equal("payment_finality_not_verified", body!.ErrorCode);
 
             Assert.Equal(0, await PaymentRoutineTestHelper.CountExitAuthorizationsAsync(
                 ConnectionString,
@@ -514,12 +558,13 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
 
     private async Task<PaymentRoutineTestHelper.CreateAttemptResult> CreateConfirmedAttemptAsync(
         PaymentTestContext context,
-        string idempotencyKey)
+        string idempotencyKey,
+        bool recordFiscalReference = true)
     {
         var attempt = await CreateAttemptAsync(
             ConnectionString,
             context,
-            idempotencyKey,
+            ScopedIdempotencyKey(idempotencyKey, context),
             "issue-auth-api-test");
 
         var confirmation = await RecordPaymentConfirmationAsync(
@@ -530,7 +575,60 @@ public sealed class IssueExitAuthorizationApiIntegrationTests
             context.CorrelationId);
 
         Assert.NotNull(confirmation);
+        if (recordFiscalReference)
+        {
+            await RecordReadyFiscalReferenceAsync(context, attempt, confirmation!);
+        }
+
         return attempt;
+    }
+
+    private static string ScopedIdempotencyKey(string key, PaymentTestContext context) =>
+        $"{key}-{context.CorrelationId:N}";
+
+    private static async Task RecordReadyFiscalReferenceAsync(
+        PaymentTestContext context,
+        PaymentRoutineTestHelper.CreateAttemptResult attempt,
+        PaymentRoutineTestHelper.RecordPaymentConfirmationResult confirmation)
+    {
+        var repository = new PostgresFiscalIssuanceReferenceRepository(ConnectionString);
+        var sequenceValue = Math.Abs(attempt.PaymentAttemptId.GetHashCode()) + 1L;
+
+        await repository.CreateAsync(
+            new CreateFiscalIssuanceReferenceRequest(
+                PaymentConfirmationId: confirmation.PaymentConfirmationId,
+                PaymentAttemptId: attempt.PaymentAttemptId,
+                ParkingSessionId: attempt.ParkingSessionId,
+                TariffSnapshotId: attempt.TariffSnapshotId,
+                SiteId: context.SiteId,
+                SitePosServerId: Guid.NewGuid(),
+                SitePosServerRef: $"site-pos-server-{context.SiteCode}",
+                FiscalDocumentTypeCodeId: null,
+                FiscalDocumentTypeCodeKey: "SALES_INVOICE",
+                PayableBasisRef: $"tariff-snapshot:{attempt.TariffSnapshotId:N}",
+                UpstreamFinalityReference: confirmation.ProviderReference,
+                PosServerFiscalDocumentId: Guid.NewGuid(),
+                FiscalIdentityId: Guid.NewGuid(),
+                FiscalSequencePolicyId: Guid.NewGuid(),
+                FiscalSequenceValue: sequenceValue,
+                FiscalDocumentNumber: $"SI-{sequenceValue:000000}-TEST",
+                FiscalSeries: "SI",
+                FiscalNumberPrefixText: "SI-",
+                FiscalNumberSuffixText: "-TEST",
+                FiscalNumberAssignedAt: DateTimeOffset.UtcNow,
+                FiscalNumberAssignedByRef: "integration-test",
+                FiscalDocumentStatusCodeId: Guid.NewGuid(),
+                ResultClassification: FiscalIssuanceResultClassification.NewlyCreated,
+                FiscalIssuanceEvidenceStatus: FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned,
+                FiscalNumberAssignmentState: FiscalNumberAssignmentState.Assigned,
+                FiscalIssuanceState: FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
+                LatestExceptionReason: null,
+                LatestErrorCode: null,
+                LatestErrorPosture: null,
+                CorrelationId: context.CorrelationId,
+                PosServerResponseTimestamp: DateTimeOffset.UtcNow,
+                RecordedByServiceIdentityId: context.RequestedByUserId),
+            CancellationToken.None);
     }
 
     private async Task<HttpResponseMessage> PostIssueAuthorizationAsync(

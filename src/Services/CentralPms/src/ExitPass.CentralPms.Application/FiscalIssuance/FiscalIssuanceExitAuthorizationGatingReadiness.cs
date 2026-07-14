@@ -6,16 +6,17 @@ public sealed class FiscalIssuanceExitAuthorizationGatingOptions
 {
     public const string SectionName = "FiscalIssuance:ExitAuthorizationGating";
 
-    public bool EnableFiscalBeforeExitAuthorizationEnforcement { get; set; }
+    public bool EnableFiscalBeforeExitAuthorizationEnforcement { get; set; } = true;
 
     public bool EnableShadowEvaluation { get; set; } = true;
 
-    public string ReadinessMode { get; set; } = FiscalIssuanceExitAuthorizationGatingReadinessModes.ReadinessOnly;
+    public string ReadinessMode { get; set; } = FiscalIssuanceExitAuthorizationGatingReadinessModes.HardBlocking;
 }
 
 public static class FiscalIssuanceExitAuthorizationGatingReadinessModes
 {
     public const string ReadinessOnly = "readiness_only";
+    public const string HardBlocking = "hard_blocking";
 }
 
 public static class FiscalIssuanceExitAuthorizationGatingReadinessEvaluator
@@ -30,7 +31,7 @@ public static class FiscalIssuanceExitAuthorizationGatingReadinessEvaluator
 
         return new FiscalIssuanceExitAuthorizationGatingReadiness(
             EnforcementConfigured: effectiveOptions.EnableFiscalBeforeExitAuthorizationEnforcement,
-            EnforcementWiredForBlocking: false,
+            EnforcementWiredForBlocking: effectiveOptions.EnableFiscalBeforeExitAuthorizationEnforcement,
             ShadowEvaluationEnabled: effectiveOptions.EnableShadowEvaluation,
             ReadinessMode: string.IsNullOrWhiteSpace(effectiveOptions.ReadinessMode)
                 ? FiscalIssuanceExitAuthorizationGatingReadinessModes.ReadinessOnly
@@ -46,7 +47,7 @@ public static class FiscalIssuanceExitAuthorizationGatingReadinessEvaluator
 
     private static string ResolveConfigurationStatus(FiscalIssuanceExitAuthorizationGatingOptions options) =>
         options.EnableFiscalBeforeExitAuthorizationEnforcement
-            ? FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredReadinessOnly
+            ? FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredHardBlocking
             : FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementOffDefault;
 
     private static string ResolveReadinessStatus(
@@ -92,6 +93,7 @@ public static class FiscalIssuanceExitAuthorizationGatingConfigurationStatuses
 {
     public const string EnforcementOffDefault = "enforcement_off_default";
     public const string EnforcementConfiguredReadinessOnly = "enforcement_configured_readiness_only";
+    public const string EnforcementConfiguredHardBlocking = "enforcement_configured_hard_blocking";
 }
 
 public static class FiscalIssuanceExitAuthorizationGatingReadinessStatuses

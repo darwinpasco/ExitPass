@@ -92,7 +92,7 @@ public sealed record FiscalGatingShadowEvaluation(
         new(
             Status: FiscalGatingShadowEvaluationStatuses.NotEvaluatedMissingFiscalContext,
             IsReadyForNormalExitAuthorization: false,
-            BlockedReason: null,
+            BlockedReason: "fiscal_reference_not_recorded",
             State: null,
             RequiresManualReview: false,
             IsExceptionReleaseOnly: false);

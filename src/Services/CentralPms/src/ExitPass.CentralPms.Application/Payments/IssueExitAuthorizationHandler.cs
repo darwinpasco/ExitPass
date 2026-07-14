@@ -42,6 +42,8 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     private readonly CentralPmsMetrics _metrics;
     private readonly ILogger<IssueExitAuthorizationHandler> _logger;
     private readonly IExitAuthorizationFiscalGatingShadowEvaluator _fiscalGatingShadowEvaluator;
+    private readonly IExitAuthorizationPaymentFinalityReadRepository _paymentFinalityReadRepository;
+    private readonly FiscalIssuanceExitAuthorizationGatingOptions _fiscalGatingOptions;
 
     /// <summary>
     /// Creates a handler for issuing exit authorizations through the canonical DB routine.
@@ -51,14 +53,18 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
     /// <param name="systemClock">System clock used for canonical request timestamps.</param>
     /// <param name="metrics">Shared Central PMS business metrics publisher.</param>
     /// <param name="logger">Application logger.</param>
-    /// <param name="fiscalGatingShadowEvaluator">Optional non-enforcing fiscal gating shadow evaluator.</param>
+    /// <param name="fiscalGatingShadowEvaluator">Fiscal gating evaluator used before issuing authorization.</param>
+    /// <param name="paymentFinalityReadRepository">Read-only payment finality preflight repository.</param>
+    /// <param name="fiscalGatingOptions">Fiscal-before-exit gating options.</param>
     public IssueExitAuthorizationHandler(
         IIssueExitAuthorizationGateway gateway,
         IIntegrationEventPublisher eventPublisher,
         ISystemClock systemClock,
         CentralPmsMetrics metrics,
         ILogger<IssueExitAuthorizationHandler> logger,
-        IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null)
+        IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null,
+        IExitAuthorizationPaymentFinalityReadRepository? paymentFinalityReadRepository = null,
+        FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null)
     {
         _gateway = gateway;
         _eventPublisher = eventPublisher;
@@ -67,6 +73,9 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         _logger = logger;
         _fiscalGatingShadowEvaluator =
             fiscalGatingShadowEvaluator ?? ExitAuthorizationFiscalGatingShadowEvaluator.Instance;
+        _paymentFinalityReadRepository =
+            paymentFinalityReadRepository ?? OptimisticExitAuthorizationPaymentFinalityReadRepository.Instance;
+        _fiscalGatingOptions = fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions();
     }
 
     /// <summary>
@@ -103,7 +112,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         {
             ValidateCommand(command);
 
-            await EvaluateFiscalGatingShadowAsync(command, activity, cancellationToken);
+            await EvaluateFiscalGatingPreflightAsync(command, activity, cancellationToken);
 
             var dbStart = _systemClock.UtcNow;
 
@@ -194,7 +203,7 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         }
     }
 
-    private async Task EvaluateFiscalGatingShadowAsync(
+    private async Task EvaluateFiscalGatingPreflightAsync(
         IssueExitAuthorizationCommand command,
         Activity? activity,
         CancellationToken cancellationToken)
@@ -203,24 +212,44 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
 
         try
         {
-            evaluation = await _fiscalGatingShadowEvaluator.EvaluateAsync(
-                new ExitAuthorizationFiscalGatingShadowContext(
-                    ParkingSessionId: command.ParkingSessionId,
-                    PaymentAttemptId: command.PaymentAttemptId,
-                    CorrelationId: command.CorrelationId,
-                    IsPaymentFinalityVerified: true),
+            var isPaymentFinalityVerified = await _paymentFinalityReadRepository.IsPaymentFinalityVerifiedAsync(
+                command.ParkingSessionId,
+                command.PaymentAttemptId,
                 cancellationToken);
+
+            if (!isPaymentFinalityVerified)
+            {
+                evaluation = FiscalGatingShadowEvaluation.FromGatingEvaluation(
+                    new FiscalIssuanceGatingEvaluation(
+                        IsReadyForNormalExitAuthorization: false,
+                        BlockedReason: "payment_finality_not_verified",
+                        State: null,
+                        RequiresManualReview: false,
+                        IsExceptionReleaseOnly: false));
+            }
+            else
+            {
+                evaluation = await _fiscalGatingShadowEvaluator.EvaluateAsync(
+                    new ExitAuthorizationFiscalGatingShadowContext(
+                        ParkingSessionId: command.ParkingSessionId,
+                        PaymentAttemptId: command.PaymentAttemptId,
+                        CorrelationId: command.CorrelationId,
+                        IsPaymentFinalityVerified: true),
+                    cancellationToken);
+            }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not KeyNotFoundException)
         {
             evaluation = FiscalGatingShadowEvaluation.EvaluationFailedNonBlocking(ex.GetType().Name);
 
             _logger.LogWarning(
                 ex,
-                "Non-enforcing fiscal gating shadow evaluation failed. ExitAuthorization issuance will continue unchanged.");
+                "Fiscal gating preflight evaluation failed. ExitAuthorization issuance will fail closed while hard blocking is enabled.");
         }
 
-        var enforcementDecision = FiscalIssuanceExitAuthorizationEnforcementPolicy.FromShadowEvaluation(evaluation);
+        var enforcementDecision = FiscalIssuanceExitAuthorizationEnforcementPolicy.FromShadowEvaluation(
+            evaluation,
+            _fiscalGatingOptions);
 
         activity?.SetTag("fiscal_gating_shadow.status", evaluation.Status);
         activity?.SetTag("fiscal_gating_shadow.ready", evaluation.IsReadyForNormalExitAuthorization);
@@ -247,6 +276,21 @@ public sealed class IssueExitAuthorizationHandler : IIssueExitAuthorizationUseCa
         await PublishFiscalGatingShadowObservationBestEffortAsync(
             CreateFiscalGatingShadowObservationEvent(command, evaluation, enforcementDecision),
             cancellationToken);
+
+        if (enforcementDecision.EnforcementWiredForBlocking &&
+            enforcementDecision.WouldBlockNormalExitAuthorization)
+        {
+            var blockedReason = string.IsNullOrWhiteSpace(enforcementDecision.BlockedReason)
+                ? enforcementDecision.Decision
+                : enforcementDecision.BlockedReason;
+
+            activity?.SetStatus(ActivityStatusCode.Error, blockedReason);
+            activity?.SetTag("rejection_reason", blockedReason);
+
+            throw new ExitAuthorizationIssuanceConflictException(
+                blockedReason,
+                $"ExitAuthorization blocked by fiscal/payment readiness: {blockedReason}.");
+        }
     }
 
     /// <summary>

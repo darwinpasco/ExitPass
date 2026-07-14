@@ -1,18 +1,23 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
+using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.Payments;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
@@ -635,9 +640,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             readyEvaluation.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldAllow);
             readyEvaluation.WouldAllowNormalExitAuthorization.Should().BeTrue();
             readyEvaluation.EnforcementConfigured.Should().BeTrue();
-            readyEvaluation.EnforcementWiredForBlocking.Should().BeFalse();
+            readyEvaluation.EnforcementWiredForBlocking.Should().BeTrue();
             readyEvaluation.ConfigurationStatus.Should().Be(
-                FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredReadinessOnly);
+                FiscalIssuanceExitAuthorizationGatingConfigurationStatuses.EnforcementConfiguredHardBlocking);
 
             var missingFiscalEvaluation = FiscalIssuanceExitAuthorizationGatingReadinessEvaluator.Evaluate(
                 reference: null,
@@ -663,12 +668,14 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             unsafeFiscalEvaluation.ReadinessStatus.Should().Be(FiscalIssuanceExitAuthorizationGatingReadinessStatuses.WouldBlock);
             unsafeFiscalEvaluation.BlockedReason.Should().Be("fiscal_issuance_conflict");
 
-            var authorization = await PaymentRoutineTestHelper.IssueExitAuthorizationAsync(
-                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
-                paymentAttempt.ParkingSessionId,
-                paymentAttempt.PaymentAttemptId,
-                ServiceIdentityId,
-                correlationId);
+            var issueHandler = CreateIssueExitAuthorizationHandler(referenceRepository);
+            var authorization = await issueHandler.ExecuteAsync(
+                new IssueExitAuthorizationCommand(
+                    paymentAttempt.ParkingSessionId,
+                    paymentAttempt.PaymentAttemptId,
+                    ServiceIdentityId,
+                    correlationId),
+                CancellationToken.None);
 
             authorization.Should().NotBeNull();
             authorization!.AuthorizationStatus.Should().Be("ISSUED");
@@ -676,15 +683,16 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             authorization.PaymentAttemptId.Should().Be(paymentAttempt.PaymentAttemptId);
             authorization.AuthorizationToken.Should().NotBeNullOrWhiteSpace();
 
-            var replayAuthorization = await PaymentRoutineTestHelper.IssueExitAuthorizationAsync(
-                CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
-                paymentAttempt.ParkingSessionId,
-                paymentAttempt.PaymentAttemptId,
-                ServiceIdentityId,
-                correlationId);
+            var replayAuthorization = await issueHandler.ExecuteAsync(
+                new IssueExitAuthorizationCommand(
+                    paymentAttempt.ParkingSessionId,
+                    paymentAttempt.PaymentAttemptId,
+                    ServiceIdentityId,
+                    correlationId),
+                CancellationToken.None);
 
             replayAuthorization.Should().NotBeNull();
-            replayAuthorization!.ExitAuthorizationId.Should().Be(authorization.ExitAuthorizationId);
+            replayAuthorization.ExitAuthorizationId.Should().Be(authorization.ExitAuthorizationId);
 
             var persistedAuthorization = await PaymentRoutineTestHelper.GetExitAuthorizationByIdAsync(
                 CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString(),
@@ -1716,6 +1724,28 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private static IssueExitAuthorizationHandler CreateIssueExitAuthorizationHandler(
+        IFiscalIssuanceReferenceRepository fiscalReferenceRepository)
+    {
+        var connectionString = CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString();
+
+        return new IssueExitAuthorizationHandler(
+            new IssueExitAuthorizationGateway(
+                connectionString,
+                NullLogger<IssueExitAuthorizationGateway>.Instance),
+            NoopIntegrationEventPublisher.Instance,
+            new SystemClock(),
+            new CentralPmsMetrics(),
+            NullLogger<IssueExitAuthorizationHandler>.Instance,
+            new ExitAuthorizationFiscalGatingShadowEvaluator(fiscalReferenceRepository),
+            new ExitAuthorizationPaymentFinalityReadRepository(connectionString),
+            new FiscalIssuanceExitAuthorizationGatingOptions
+            {
+                EnableFiscalBeforeExitAuthorizationEnforcement = true,
+                EnableShadowEvaluation = true
+            });
+    }
+
     private sealed record PaymentAttemptFinancials(
         Guid PaymentAttemptId,
         Guid ParkingSessionId,
@@ -1764,5 +1794,17 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         }
 
         throw new FileNotFoundException($"{Path.Combine(pathParts)} was not found from the test output path.");
+    }
+
+    private sealed class NoopIntegrationEventPublisher : IIntegrationEventPublisher
+    {
+        public static readonly NoopIntegrationEventPublisher Instance = new();
+
+        private NoopIntegrationEventPublisher()
+        {
+        }
+
+        public Task PublishAsync(IntegrationEventEnvelope envelope, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 }

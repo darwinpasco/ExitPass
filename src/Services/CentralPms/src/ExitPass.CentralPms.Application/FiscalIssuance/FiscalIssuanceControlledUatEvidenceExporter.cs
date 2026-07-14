@@ -165,7 +165,7 @@ public sealed class FiscalIssuanceControlledUatEvidenceExporter : IFiscalIssuanc
             PaymentFlowGuardEnabled: request.PosServerOptions.EnableLiveFiscalIssuanceFromPaymentFlow,
             ExitFlowGuardEnabled: request.PosServerOptions.EnableLiveFiscalIssuanceFromExitFlow,
             FiscalGatingEnforcementEnabled: gatingOptions.EnableFiscalBeforeExitAuthorizationEnforcement,
-            EnforcementWiredForBlocking: false);
+            EnforcementWiredForBlocking: gatingOptions.EnableFiscalBeforeExitAuthorizationEnforcement);
 
     private static FiscalIssuanceControlledUatFiscalRequestFacts BuildFiscalRequestFacts(
         FiscalIssuanceControlledUatEvidenceExportRequest request) =>

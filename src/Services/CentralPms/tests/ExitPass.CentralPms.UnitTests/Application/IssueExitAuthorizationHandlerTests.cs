@@ -138,19 +138,23 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenFiscalContextIsMissing_StillIssuesAndRecordsShadowDiagnostic()
+    public async Task ExecuteAsync_WhenFiscalContextIsMissing_BlocksBeforeDbIssueAndRecordsDiagnostic()
     {
         using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
         _systemClock.UtcNow.Returns(now);
 
         ConfigureGatewaySuccess(now);
+        var shadowEvaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+        shadowEvaluator
+            .EvaluateAsync(Arg.Any<ExitAuthorizationFiscalGatingShadowContext>(), Arg.Any<CancellationToken>())
+            .Returns(FiscalGatingShadowEvaluation.NotEvaluatedMissingFiscalContext());
 
-        var sut = CreateSut();
+        var sut = CreateSut(shadowEvaluator);
 
-        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
-
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
+        Assert.Equal("fiscal_reference_not_recorded", ex.ErrorCode);
 
         var activity = Assert.Single(
             listener.StoppedActivities,
@@ -166,16 +170,17 @@ public sealed class IssueExitAuthorizationHandlerTests
         AssertTag(
             activity,
             "fiscal_gating_shadow.enforcement_decision",
-            FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable);
-        AssertTag(activity, "fiscal_gating_shadow.enforcement_enabled", false);
-        AssertTag(activity, "fiscal_gating_shadow.enforcement_wired_for_blocking", false);
+            FiscalIssuanceExitAuthorizationEnforcementDecisions.Block);
+        AssertTag(activity, "fiscal_gating_shadow.enforcement_enabled", true);
+        AssertTag(activity, "fiscal_gating_shadow.enforcement_wired_for_blocking", true);
+        _ = _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => IsMissingContextShadowObservation(x)),
             Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenShadowFiscalGatingIsBlocked_StillIssuesAuthorization()
+    public async Task ExecuteAsync_WhenFiscalGatingIsBlocked_BlocksBeforeDbIssue()
     {
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
         _systemClock.UtcNow.Returns(now);
@@ -193,15 +198,17 @@ public sealed class IssueExitAuthorizationHandlerTests
 
         var sut = CreateSut(shadowEvaluator);
 
-        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("fiscal_issuance_unknown", ex.ErrorCode);
         await shadowEvaluator.Received(1).EvaluateAsync(
             Arg.Is<ExitAuthorizationFiscalGatingShadowContext>(context =>
                 context.PaymentAttemptId == ValidCommand().PaymentAttemptId &&
                 context.FiscalReference == null &&
                 context.IsPaymentFinalityVerified),
             Arg.Any<CancellationToken>());
+        _ = _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
     }
 
     [Fact]
@@ -230,7 +237,23 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenShadowFiscalGatingFails_StillIssuesAuthorization()
+    public async Task ExecuteAsync_WhenPaymentFinalityIsMissing_BlocksBeforeDbIssue()
+    {
+        var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
+        _systemClock.UtcNow.Returns(now);
+        ConfigureGatewaySuccess(now);
+
+        var sut = CreateSut(isPaymentFinalityVerified: false);
+
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
+
+        Assert.Equal("payment_finality_not_verified", ex.ErrorCode);
+        _ = _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenFiscalGatingFails_BlocksBeforeDbIssue()
     {
         using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
@@ -244,9 +267,10 @@ public sealed class IssueExitAuthorizationHandlerTests
 
         var sut = CreateSut(shadowEvaluator);
 
-        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal(nameof(InvalidOperationException), ex.ErrorCode);
 
         var activity = Assert.Single(
             listener.StoppedActivities,
@@ -262,6 +286,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => IsFailureShadowObservation(x, nameof(InvalidOperationException))),
             Arg.Any<CancellationToken>());
+        _ = _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
     }
 
     [Fact]
@@ -290,7 +315,7 @@ public sealed class IssueExitAuthorizationHandlerTests
         AssertTag(activity, "fiscal_gating_shadow.fiscal_document_number", fiscalReference.FiscalDocumentNumber!);
         AssertTag(activity, "fiscal_gating_shadow.enforcement_decision", FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow);
         AssertTag(activity, "fiscal_gating_shadow.would_allow_normal_exit_authorization", true);
-        AssertTag(activity, "fiscal_gating_shadow.enforcement_wired_for_blocking", false);
+        AssertTag(activity, "fiscal_gating_shadow.enforcement_wired_for_blocking", true);
         await repository.Received(1).FindLatestByPaymentAttemptIdAsync(
             command.PaymentAttemptId,
             Arg.Any<CancellationToken>());
@@ -300,7 +325,7 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenFiscalLookupFindsBlockedReference_StillIssuesAndRecordsBlockedDiagnostic()
+    public async Task ExecuteAsync_WhenFiscalLookupFindsBlockedReference_BlocksBeforeDbIssue()
     {
         using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
@@ -313,13 +338,15 @@ public sealed class IssueExitAuthorizationHandlerTests
             .Returns(MinimalFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceUnknown));
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
-        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(command, CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("fiscal_issuance_unknown", ex.ErrorCode);
         var activity = AssertShadowActivity(
             listener,
             FiscalGatingShadowEvaluationStatuses.EvaluatedBlocked);
         AssertTag(activity, "fiscal_gating_shadow.blocked_reason", "fiscal_issuance_unknown");
+        _ = _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => IsBlockedShadowObservation(
                 x,
@@ -329,7 +356,7 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenFiscalLookupFails_StillIssuesAndRecordsNonBlockingFailure()
+    public async Task ExecuteAsync_WhenFiscalLookupFails_BlocksBeforeDbIssue()
     {
         using var listener = new ActivityCapture("ExitPass.CentralPms.Application.Payments");
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
@@ -342,13 +369,15 @@ public sealed class IssueExitAuthorizationHandlerTests
             .Returns<Task<FiscalIssuanceReferenceRecord?>>(_ => throw new InvalidOperationException("lookup failed"));
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
-        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(command, CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal(nameof(InvalidOperationException), ex.ErrorCode);
         var activity = AssertShadowActivity(
             listener,
             FiscalGatingShadowEvaluationStatuses.EvaluationFailedNonBlocking);
         AssertTag(activity, "fiscal_gating_shadow.blocked_reason", nameof(InvalidOperationException));
+        _ = _gateway.DidNotReceiveWithAnyArgs().IssueAsync(default!, default);
     }
 
     [Fact]
@@ -369,16 +398,17 @@ public sealed class IssueExitAuthorizationHandlerTests
             .Returns(fiscalReference);
         var sut = CreateSut(new ExitAuthorizationFiscalGatingShadowEvaluator(repository));
 
-        var result = await sut.ExecuteAsync(command, CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(command, CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("fiscal_issuance_failed_configuration", ex.ErrorCode);
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => IsFailureMetadataShadowObservation(x)),
             Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenShadowFiscalGatingWouldBlock_ShadowObservationIncludesFutureBlockDecision()
+    public async Task ExecuteAsync_WhenFiscalGatingWouldBlock_ShadowObservationIncludesBlockDecision()
     {
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
         _systemClock.UtcNow.Returns(now);
@@ -394,9 +424,10 @@ public sealed class IssueExitAuthorizationHandlerTests
                 IsExceptionReleaseOnly: false)));
         var sut = CreateSut(shadowEvaluator);
 
-        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("fiscal_issuance_pending", ex.ErrorCode);
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => ShadowObservationHasDecision(
                 x,
@@ -439,7 +470,7 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenShadowFiscalGatingIsExceptionReleaseOnly_ShadowObservationIncludesExceptionReleaseDecision()
+    public async Task ExecuteAsync_WhenFiscalGatingIsExceptionReleaseOnly_BlocksAndRecordsDecision()
     {
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
         _systemClock.UtcNow.Returns(now);
@@ -455,9 +486,10 @@ public sealed class IssueExitAuthorizationHandlerTests
                 IsExceptionReleaseOnly: true)));
         var sut = CreateSut(shadowEvaluator);
 
-        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("fiscal_issuance_exception_release_only", ex.ErrorCode);
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => ShadowObservationHasDecision(
                 x,
@@ -472,7 +504,7 @@ public sealed class IssueExitAuthorizationHandlerTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenShadowFiscalGatingRequiresManualReview_ShadowObservationIncludesManualReviewDecision()
+    public async Task ExecuteAsync_WhenFiscalGatingRequiresManualReview_BlocksAndRecordsDecision()
     {
         var now = new DateTimeOffset(2026, 4, 5, 10, 0, 0, TimeSpan.Zero);
         _systemClock.UtcNow.Returns(now);
@@ -488,9 +520,10 @@ public sealed class IssueExitAuthorizationHandlerTests
                 IsExceptionReleaseOnly: false)));
         var sut = CreateSut(shadowEvaluator);
 
-        var result = await sut.ExecuteAsync(ValidCommand(), CancellationToken.None);
+        var ex = await Assert.ThrowsAsync<ExitAuthorizationIssuanceConflictException>(() =>
+            sut.ExecuteAsync(ValidCommand(), CancellationToken.None));
 
-        Assert.Equal("ISSUED", result.AuthorizationStatus);
+        Assert.Equal("fiscal_issuance_manual_review", ex.ErrorCode);
         await _eventPublisher.Received(1).PublishAsync(
             Arg.Is<IntegrationEventEnvelope>(x => ShadowObservationHasDecision(
                 x,
@@ -643,15 +676,53 @@ public sealed class IssueExitAuthorizationHandlerTests
     /// </summary>
     /// <returns>A configured <see cref="IssueExitAuthorizationHandler"/> instance.</returns>
     private IssueExitAuthorizationHandler CreateSut(
-        IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null)
+        IExitAuthorizationFiscalGatingShadowEvaluator? fiscalGatingShadowEvaluator = null,
+        bool isPaymentFinalityVerified = true,
+        FiscalIssuanceExitAuthorizationGatingOptions? fiscalGatingOptions = null)
     {
+        var effectiveFiscalGatingEvaluator = fiscalGatingShadowEvaluator ?? ReadyFiscalGatingEvaluator();
+        var paymentFinalityReader = Substitute.For<IExitAuthorizationPaymentFinalityReadRepository>();
+        paymentFinalityReader
+            .IsPaymentFinalityVerifiedAsync(Arg.Any<Guid>(), Arg.Any<Guid>(), Arg.Any<CancellationToken>())
+            .Returns(isPaymentFinalityVerified);
+
         return new IssueExitAuthorizationHandler(
             _gateway,
             _eventPublisher,
             _systemClock,
             _metrics,
             NullLogger<IssueExitAuthorizationHandler>.Instance,
-            fiscalGatingShadowEvaluator);
+            effectiveFiscalGatingEvaluator,
+            paymentFinalityReader,
+            fiscalGatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions());
+    }
+
+    private static IExitAuthorizationFiscalGatingShadowEvaluator ReadyFiscalGatingEvaluator()
+    {
+        var command = ValidCommand();
+        var evaluator = Substitute.For<IExitAuthorizationFiscalGatingShadowEvaluator>();
+        evaluator
+            .EvaluateAsync(Arg.Any<ExitAuthorizationFiscalGatingShadowContext>(), Arg.Any<CancellationToken>())
+            .Returns(call =>
+            {
+                var context = call.Arg<ExitAuthorizationFiscalGatingShadowContext>();
+                return FiscalGatingShadowEvaluation.FromGatingEvaluation(
+                    FiscalIssuanceExitAuthorizationGateEvaluator.Evaluate(
+                        CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+                        {
+                            ParkingSessionId = context.ParkingSessionId,
+                            PaymentAttemptId = context.PaymentAttemptId,
+                            CorrelationId = context.CorrelationId
+                        },
+                        new FiscalIssuanceGatingEvaluationContext(context.IsPaymentFinalityVerified)),
+                    CompleteFiscalReference(command, FiscalIssuanceIntegrationState.FiscalIssuanceRecorded) with
+                    {
+                        ParkingSessionId = context.ParkingSessionId,
+                        PaymentAttemptId = context.PaymentAttemptId,
+                        CorrelationId = context.CorrelationId
+                    });
+            });
+        return evaluator;
     }
 
     private void ConfigureGatewaySuccess(DateTimeOffset now)
@@ -756,10 +827,11 @@ public sealed class IssueExitAuthorizationHandlerTests
             payload.PaymentAttemptId == command.PaymentAttemptId &&
             payload.ParkingSessionId == command.ParkingSessionId &&
             payload.PaymentConfirmationId == null &&
-            payload.EnforcementDecision == FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable &&
-            !payload.EnforcementEnabled &&
-            !payload.EnforcementWiredForBlocking &&
-            payload.IsNotEvaluable;
+            payload.BlockedReason == "fiscal_reference_not_recorded" &&
+            payload.EnforcementDecision == FiscalIssuanceExitAuthorizationEnforcementDecisions.Block &&
+            payload.EnforcementEnabled &&
+            payload.EnforcementWiredForBlocking &&
+            !payload.IsNotEvaluable;
     }
 
     private static bool IsFailureShadowObservation(IntegrationEventEnvelope envelope, string blockedReason)
@@ -771,8 +843,8 @@ public sealed class IssueExitAuthorizationHandlerTests
             payload.BlockedReason == blockedReason &&
             payload.EnforcementDecision == FiscalIssuanceExitAuthorizationEnforcementDecisions.NotEvaluable &&
             payload.IsNotEvaluable &&
-            !payload.EnforcementEnabled &&
-            !payload.EnforcementWiredForBlocking;
+            payload.EnforcementEnabled &&
+            payload.EnforcementWiredForBlocking;
     }
 
     private static bool IsReadyShadowObservation(
@@ -790,8 +862,8 @@ public sealed class IssueExitAuthorizationHandlerTests
             payload.EnforcementDecision == FiscalIssuanceExitAuthorizationEnforcementDecisions.Allow &&
             payload.WouldAllowNormalExitAuthorization &&
             !payload.WouldBlockNormalExitAuthorization &&
-            !payload.EnforcementEnabled &&
-            !payload.EnforcementWiredForBlocking &&
+            payload.EnforcementEnabled &&
+            payload.EnforcementWiredForBlocking &&
             payload.PaymentAttemptId == command.PaymentAttemptId &&
             payload.ParkingSessionId == command.ParkingSessionId &&
             payload.PaymentConfirmationId == fiscalReference.PaymentConfirmationId &&
@@ -850,8 +922,8 @@ public sealed class IssueExitAuthorizationHandlerTests
             payload.IsExceptionReleaseOnly == isExceptionReleaseOnly &&
             payload.RequiresManualReview == requiresManualReview &&
             payload.IsNotEvaluable == isNotEvaluable &&
-            !payload.EnforcementEnabled &&
-            !payload.EnforcementWiredForBlocking;
+            payload.EnforcementEnabled &&
+            payload.EnforcementWiredForBlocking;
     }
 
     private static ExitAuthorizationFiscalGatingShadowObservedPayload? GetShadowPayload(IntegrationEventEnvelope envelope)

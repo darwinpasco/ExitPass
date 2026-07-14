@@ -465,6 +465,23 @@ public static class PaymentTestDataHelper
                     )
                );
 
+            DELETE FROM core.fiscal_issuance_references
+            WHERE parking_session_id = @parking_session_id
+               OR payment_attempt_id IN (
+                    SELECT payment_attempt_id
+                    FROM core.payment_attempts
+                    WHERE parking_session_id = @parking_session_id
+               )
+               OR payment_confirmation_id IN (
+                    SELECT payment_confirmation_id
+                    FROM core.payment_confirmations
+                    WHERE payment_attempt_id IN (
+                        SELECT payment_attempt_id
+                        FROM core.payment_attempts
+                        WHERE parking_session_id = @parking_session_id
+                    )
+               );
+
             DELETE FROM core.payment_confirmations
             WHERE payment_attempt_id IN (
                 SELECT payment_attempt_id
@@ -711,6 +728,23 @@ public static class PaymentTestDataHelper
                );
 
             DELETE FROM integration.vendor_payment_acknowledgments
+            WHERE parking_session_id = @parking_session_id
+               OR payment_attempt_id IN (
+                    SELECT payment_attempt_id
+                    FROM core.payment_attempts
+                    WHERE parking_session_id = @parking_session_id
+               )
+               OR payment_confirmation_id IN (
+                    SELECT payment_confirmation_id
+                    FROM core.payment_confirmations
+                    WHERE payment_attempt_id IN (
+                        SELECT payment_attempt_id
+                        FROM core.payment_attempts
+                        WHERE parking_session_id = @parking_session_id
+                    )
+               );
+
+            DELETE FROM core.fiscal_issuance_references
             WHERE parking_session_id = @parking_session_id
                OR payment_attempt_id IN (
                     SELECT payment_attempt_id
