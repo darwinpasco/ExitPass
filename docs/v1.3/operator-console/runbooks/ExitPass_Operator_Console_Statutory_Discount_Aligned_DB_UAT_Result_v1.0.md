@@ -2,9 +2,11 @@
 
 ## Result
 
-READY_WITH_ENV_PROFILE_IDENTITY_SWITCH.
+PASSED.
 
-The aligned canonical database path is ready for Darwin manual browser rerun. The backend/API proof completed the v1.3 two-user statutory discount UAT flow against a fresh database built from canonical `exitpassdb_v1.2` generated SQL. The current Operator Console UI does not expose an in-app requester/reviewer identity switch; local browser UAT must restart or run the UI with the printed requester/reviewer Vite environment profiles.
+Darwin completed the manual browser UAT using environment-profile identity switching. The backend/API proof completed the v1.3 two-user statutory discount UAT flow against a fresh database built from canonical `exitpassdb_v1.2` generated SQL, and the browser flow proved the operator-facing review/apply path.
+
+The remaining browser ergonomics gap is no in-app local UAT identity selector. This is not a blocker for UAT correctness because backend RBAC/SoD and the browser environment-profile flow are both proven.
 
 ## Database Source
 
@@ -84,7 +86,7 @@ Proof covered:
 
 ## Browser Readiness
 
-Status: READY_WITH_ENV_PROFILE_IDENTITY_SWITCH.
+Status: PASSED with environment-profile identity switching.
 
 The browser can execute the workflow with local/dev operator identity profiles. The UI currently reads the local operator identity and permission posture from Vite environment variables at startup. It does not yet provide an in-app local UAT identity selector.
 
@@ -116,6 +118,65 @@ $env:VITE_OPERATOR_CONSOLE_SITE_ID="77000000-0000-0000-0000-000000000002"
 $env:VITE_OPERATOR_CONSOLE_PERMISSIONS="statutory-discounts.session.lookup,statutory-discounts.draft.view,statutory-discounts.draft.create,statutory-discounts.evidence.view,statutory-discounts.evidence.capture,statutory-discounts.policy.resolve,fiscal-issuance.status.read,ticket.lookup,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
 npm.cmd --prefix src\Services\OperatorConsoleUi run dev -- --host localhost --port 5175
 ```
+
+## Manual Browser Result
+
+Result: PASSED.
+
+Observed at local time: 2026-07-14 12:01:29 +08:00.
+
+Screenshots/evidence location: Darwin-provided screenshots in chat; no screenshot files were committed.
+
+### Requester Profile Result
+
+Darwin used the requester/operator profile for `uat-operator-support` / `77000000-0000-0000-0000-000000000010`.
+
+Browser observations:
+
+- Ticket lookup for `E2E-231-SESSION-001` worked.
+- Senior Citizen statutory discount draft was created.
+- Draft detail showed ticket `E2E-231-SESSION-001`.
+- Draft detail showed plate `SANDBOX-231`.
+- Original tariff showed PHP 125.00.
+- Requester user was `77000000-0000-0000-0000-000000000010`.
+- Evidence required: Yes.
+- Evidence captured: Yes.
+- Evidence satisfied: Yes.
+- Latest evidence status: `CAPTURED`.
+- Policy context showed the sandbox/test policy warning and manual review required.
+- Requester approval attempt was safely denied in browser because the requester profile lacked the required Central PMS approval permission.
+
+RBAC/SoD nuance: the browser denial evidence is a permission/RBAC denial. The API proof in this branch separately covered explicit same-requester SoD denial with `REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT`. The browser did not display `REQUESTER_CANNOT_APPROVE_OWN_DISCOUNT`.
+
+### Reviewer/Apply Profile Result
+
+Darwin then used the reviewer/apply profile for `uat-operations-supervisor` / `77000000-0000-0000-0000-000000000012`.
+
+Browser observations:
+
+- Reviewer/apply profile approved the statutory discount.
+- Reviewer/apply profile applied payable basis.
+- Apply payable basis showed status `APPLIED`.
+- Apply payable basis showed a non-null application ID.
+- Original tariff snapshot was present.
+- Final verification showed validation status `Approved`.
+- Final verification showed payable basis status `APPLIED`.
+- Applied tariff snapshot ID was present.
+
+### Manual Browser Amount Proof
+
+| Amount | Display | Minor units |
+| --- | --- | ---: |
+| Original amount | PHP 125.00 | `12500` |
+| VAT-exclusive amount | PHP 111.61 | `11161` |
+| VAT amount | PHP 13.39 | `1339` |
+| Statutory discount amount | PHP 22.32 | `2232` |
+| Final payable amount | PHP 89.29 | `8929` |
+| Currency | PHP | n/a |
+
+### Manual Browser Safety Assertion
+
+No payment provider, HikCentral, gate, ExitAuthorization, refund/reversal, POS Server Sales Invoice creation, fiscal number allocation, final BIR rendering, or raw evidence image/byte path appeared in the manual browser UAT.
 
 ### Reviewer/Apply UI Profile
 
