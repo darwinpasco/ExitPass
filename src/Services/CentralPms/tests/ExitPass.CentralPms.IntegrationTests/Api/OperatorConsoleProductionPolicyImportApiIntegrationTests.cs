@@ -851,13 +851,16 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
                 return;
             }
 
-            var patchPath = ResolveRepoPath("infra", "db", "patches", "ExitPass_ProductionPolicyImportReviewQueue_v1.2.sql");
-            var sql = await File.ReadAllTextAsync(patchPath);
+            if (!await ReviewQueueSchemaExistsAsync())
+            {
+                var patchPath = ResolveRepoPath("infra", "db", "patches", "ExitPass_ProductionPolicyImportReviewQueue_v1.2.sql");
+                var sql = await File.ReadAllTextAsync(patchPath);
 
-            await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
-            await connection.OpenAsync();
-            await using var command = new NpgsqlCommand(sql, connection);
-            await command.ExecuteNonQueryAsync();
+                await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+                await connection.OpenAsync();
+                await using var command = new NpgsqlCommand(sql, connection);
+                await command.ExecuteNonQueryAsync();
+            }
 
             s_schemaEnsured = true;
         }
@@ -865,6 +868,27 @@ public sealed class OperatorConsoleProductionPolicyImportApiIntegrationTests
         {
             SchemaSemaphore.Release();
         }
+    }
+
+    private static async Task<bool> ReviewQueueSchemaExistsAsync()
+    {
+        const string sql = """
+            SELECT COUNT(*) = 4
+            FROM (
+                VALUES
+                    ('operator_console.production_policy_import_review_submissions'),
+                    ('operator_console.production_policy_import_review_decisions'),
+                    ('operator_console.production_policy_import_review_history'),
+                    ('operator_console.production_policy_import_review_findings')
+            ) AS required_objects(object_name)
+            WHERE to_regclass(required_objects.object_name) IS NOT NULL;
+            """;
+
+        await using var connection = new NpgsqlConnection(CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        var value = await command.ExecuteScalarAsync();
+        return value is true;
     }
 
     private static string ResolveRepoPath(params string[] parts)
