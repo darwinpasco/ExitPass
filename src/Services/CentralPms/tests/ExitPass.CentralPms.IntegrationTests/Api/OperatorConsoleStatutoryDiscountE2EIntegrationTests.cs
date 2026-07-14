@@ -517,10 +517,16 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         Console.WriteLine(
             "STATUTORY_DISCOUNT_LIVE_POS_SMOKE " +
             $"runId={runId} " +
+            $"statutoryDiscountValidationId={applied.StatutoryDiscountValidationId:D} " +
+            $"payableBasisApplicationId={applied.PayableBasisApplicationId:D} " +
+            $"appliedTariffSnapshotId={applied.AppliedTariffSnapshotId:D} " +
+            $"paymentAttemptId={paymentAttempt.PaymentAttemptId:D} " +
+            $"paymentConfirmationId={paymentConfirmation.PaymentConfirmationId:D} " +
             $"fiscalIssuanceReferenceId={fiscalReference.FiscalIssuanceReferenceId:D} " +
             $"posServerFiscalDocumentId={firstResult.PosServerResult.FiscalDocumentId:D} " +
             $"salesInvoiceNumber={firstResult.PosServerResult.FiscalDocumentNumber} " +
             $"fiscalSequenceValue={firstResult.PosServerResult.FiscalSequenceValue} " +
+            "amounts=12500/11161/1339/2232/8929 " +
             $"first={firstResult.PosServerResult.ResultClassification} " +
             $"replay={replayResult.PosServerResult.ResultClassification} " +
             $"conflict={conflictResult.PosServerResult.Code} " +
