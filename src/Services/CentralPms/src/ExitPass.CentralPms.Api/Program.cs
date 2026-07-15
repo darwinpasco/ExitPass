@@ -36,6 +36,7 @@ using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
@@ -53,6 +54,7 @@ using ExitPass.CentralPms.Infrastructure.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.Operations;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.Security;
+using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
@@ -158,6 +160,7 @@ app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
+app.MapTerminalCashPaymentEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -635,6 +638,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryRepository>(_ =>
         new ManagementPlatformIdentityRbacInventoryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
+    builder.Services.AddScoped<ITerminalCashPaymentRepository>(_ =>
+        new TerminalCashPaymentRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<ITerminalCashPaymentService, TerminalCashPaymentService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();

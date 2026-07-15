@@ -482,6 +482,25 @@ public static class PaymentTestDataHelper
                     )
                );
 
+            SELECT set_config('exitpass.test.parking_session_id', @parking_session_id::text, true);
+
+            DO $$
+            DECLARE
+                v_parking_session_id uuid := current_setting('exitpass.test.parking_session_id')::uuid;
+            BEGIN
+                IF to_regclass('core.terminal_cash_payment_commands') IS NOT NULL THEN
+                    DELETE FROM core.terminal_cash_payment_command_audits
+                    WHERE terminal_cash_payment_command_id IN (
+                        SELECT terminal_cash_payment_command_id
+                        FROM core.terminal_cash_payment_commands
+                        WHERE parking_session_id = v_parking_session_id
+                    );
+
+                    DELETE FROM core.terminal_cash_payment_commands
+                    WHERE parking_session_id = v_parking_session_id;
+                END IF;
+            END $$;
+
             DELETE FROM core.payment_confirmations
             WHERE payment_attempt_id IN (
                 SELECT payment_attempt_id
@@ -760,6 +779,25 @@ public static class PaymentTestDataHelper
                         WHERE parking_session_id = @parking_session_id
                     )
                );
+
+            SELECT set_config('exitpass.test.parking_session_id', @parking_session_id::text, true);
+
+            DO $$
+            DECLARE
+                v_parking_session_id uuid := current_setting('exitpass.test.parking_session_id')::uuid;
+            BEGIN
+                IF to_regclass('core.terminal_cash_payment_commands') IS NOT NULL THEN
+                    DELETE FROM core.terminal_cash_payment_command_audits
+                    WHERE terminal_cash_payment_command_id IN (
+                        SELECT terminal_cash_payment_command_id
+                        FROM core.terminal_cash_payment_commands
+                        WHERE parking_session_id = v_parking_session_id
+                    );
+
+                    DELETE FROM core.terminal_cash_payment_commands
+                    WHERE parking_session_id = v_parking_session_id;
+                END IF;
+            END $$;
 
             DELETE FROM core.payment_confirmations
             WHERE payment_attempt_id IN (
