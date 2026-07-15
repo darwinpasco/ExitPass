@@ -27,6 +27,7 @@ using ExitPass.CentralPms.Api.Validation;
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
+using ExitPass.CentralPms.Application.Gates;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
@@ -43,6 +44,7 @@ using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
+using ExitPass.CentralPms.Infrastructure.Gates;
 using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
@@ -136,6 +138,7 @@ app.MapInternalFiscalExceptionQueueSemanticHashBackfillEndpoints();
 app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();
+app.MapInternalGateCommandStateEndpoints();
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
@@ -248,6 +251,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImport")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
                 .AddSource("ExitPass.CentralPms.Api.EventRecovery")
+                .AddSource("ExitPass.CentralPms.Api.GateCommandState")
                 .AddSource("ExitPass.CentralPms.Application.PaymentAttempts")
                 .AddSource("ExitPass.CentralPms.Application.VendorParking")
                 .AddSource("ExitPass.CentralPms.Application.Payments")
@@ -548,6 +552,8 @@ static void ConfigureApplicationServices(
         new ConsumeExitAuthorizationGateway(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<ConsumeExitAuthorizationGateway>>()));
+    builder.Services.AddScoped<IGateCommandStateReadRepository>(_ =>
+        new GateCommandStateReadRepository(mainDatabaseConnectionString));
 
     builder.Services.AddScoped<IReconciliationWorkflowService, ReconciliationWorkflowService>();
     builder.Services.AddScoped<IReconciliationWorkflowRepository>(serviceProvider =>
