@@ -37,6 +37,10 @@ PASSED. Central PMS canonical aligned-DB validation now passes against `exitpass
 | `ExitPass_Core_RecordPaymentConfirmation_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | Typed `core.record_payment_confirmation(uuid, text, text, text, uuid, timestamptz)` is in canonical generated SQL. | No active source/test apply reference found. | Keep as historical reference. |
 | `ExitPass_Core_IssueExitAuthorization_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | Typed `core.issue_exit_authorization(uuid, uuid, uuid, uuid, timestamptz)` is in canonical generated SQL. | No active source/test apply reference found. | Keep as historical reference. |
 | `ExitPass_Core_ConsumeExitAuthorization_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | Typed `core.consume_exit_authorization(uuid, uuid, uuid, timestamptz)` is in canonical generated SQL. | No active source/test apply reference found. | Keep as historical reference. |
+| `ExitPass_GateAuthorizationConsumedProcessingInbox_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | `gates.gate_authorization_consumed_processing` is in canonical generated SQL. | Moved to `infra\db\patches\retired`; absent from top-level active patch inventory. | Historical reference only; canonical `exitpassdb_v1.2` object source is authoritative. |
+| `ExitPass_GateCommandLifecycle_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | `gates.gate_commands` lifecycle table, constraints, and indexes are in canonical generated SQL. | Moved to `infra\db\patches\retired`; absent from top-level active patch inventory. | Historical reference only; canonical `exitpassdb_v1.2` object source is authoritative. |
+| `ExitPass_GateCommandRetryFailurePolicy_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | `gates.gate_commands` retry and terminal-failure fields, constraints, and indexes are in canonical generated SQL. | Moved to `infra\db\patches\retired`; absent from top-level active patch inventory. | Historical reference only; canonical `exitpassdb_v1.2` object source is authoritative. |
+| `ExitPass_HikCentralGateActionAudit_v1.2.sql` | `RETIRED_CANONICAL_SUPERSEDED` | `gates.hikcentral_gate_action_audits` is in canonical generated SQL. | Moved to `infra\db\patches\retired`; absent from top-level active patch inventory. | Historical reference only; canonical `exitpassdb_v1.2` object source is authoritative. |
 
 ## Partial Supersession
 
@@ -50,10 +54,6 @@ These patches were not proven superseded by the Central PMS aligned-exitpassdb v
 
 | Patch | Classification | Reason |
 | --- | --- | --- |
-| `ExitPass_GateAuthorizationConsumedProcessingInbox_v1.2.sql` | `STILL_ACTIVE` | Gate-processing app-local scope was not part of the Central PMS canonical retirement proof. |
-| `ExitPass_GateCommandLifecycle_v1.2.sql` | `STILL_ACTIVE` | Gate-command lifecycle app-local scope was not part of the Central PMS canonical retirement proof. |
-| `ExitPass_GateCommandRetryFailurePolicy_v1.2.sql` | `STILL_ACTIVE` | Gate-command retry policy app-local scope was not part of the Central PMS canonical retirement proof. |
-| `ExitPass_HikCentralGateActionAudit_v1.2.sql` | `STILL_ACTIVE` | HikCentral/gate audit app-local scope was not part of the Central PMS canonical retirement proof. |
 | `ExitPass_PaymentProviderRoutingPolicy_v1.2.sql` | `STILL_ACTIVE` | Still referenced by Payment Orchestrator routing integration tests. |
 | `ExitPass_PayMongoPaymentRailReferenceData_v1.2.sql` | `STILL_ACTIVE` | Still referenced by Payment Orchestrator persistence tests. |
 | `ExitPass_QrphPayMongoRoutingOverride_v1.2.sql` | `STILL_ACTIVE` | Still referenced by Payment Orchestrator routing integration tests. |
@@ -65,6 +65,7 @@ These patches were not proven superseded by the Central PMS aligned-exitpassdb v
 | `src\Services\CentralPms\tests\ExitPass.CentralPms.IntegrationTests\Shared\FiscalReferenceStatePatchHarness.cs` | Legacy fallback only. It applies `ExitPass_CentralPms_FiscalReferenceStatePersistence_v1.3.sql` only when canonical fiscal reference objects are missing. |
 | `src\Services\CentralPms\tests\ExitPass.CentralPms.IntegrationTests\Api\OperatorConsoleProductionPolicyImportApiIntegrationTests.cs` | Updated in this slice to apply `ExitPass_ProductionPolicyImportReviewQueue_v1.2.sql` only when canonical review queue objects are missing. |
 | `src\Services\PaymentOrchestrator\tests\...` | Payment Orchestrator patches remain out of scope and active for their existing tests. |
+| `infra\db\patches\validation\Validate_RetiredCanonicalGatePatches.ps1` | Static guard only. It verifies the four gate patches are absent from the top-level active patch inventory and that canonical generated SQL contains the replacement objects. |
 
 ## Rules for Future Work
 
