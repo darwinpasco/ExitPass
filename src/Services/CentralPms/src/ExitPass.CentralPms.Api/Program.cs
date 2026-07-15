@@ -552,6 +552,9 @@ static void ConfigureApplicationServices(
         new ConsumeExitAuthorizationGateway(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<ILogger<ConsumeExitAuthorizationGateway>>()));
+    builder.Services.AddScoped<IGateCommandCreationService, GateCommandCreationService>();
+    builder.Services.AddScoped<IGateCommandCreationRepository>(_ =>
+        new GateCommandCreationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandStateReadRepository>(_ =>
         new GateCommandStateReadRepository(mainDatabaseConnectionString));
 
