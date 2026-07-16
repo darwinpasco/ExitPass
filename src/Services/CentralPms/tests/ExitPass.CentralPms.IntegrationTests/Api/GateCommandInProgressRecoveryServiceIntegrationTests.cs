@@ -1,9 +1,14 @@
 using System.Reflection;
+using System.Threading.Channels;
+using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Gates;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Infrastructure.Gates;
 using ExitPass.CentralPms.IntegrationTests.Shared;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
@@ -656,6 +661,501 @@ public sealed class GateCommandInProgressRecoveryServiceIntegrationTests
         Assert.DoesNotContain(resultPropertyNames, name => name.Contains("Opened", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task RecoveryWorker_WhenOptionsAreDefault_DoesNotInvokeCycle()
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions(),
+            new RecordingRecoveryCycleService(_ => RecoveryCycleNoWorkAsync()),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(25));
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(0, harness.Cycle.CallCount);
+        Assert.Equal(0, harness.Delay.CallCount);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenEnabled_HonorsInitialDelayBeforeCycle()
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 5,
+                IntervalSeconds = 10,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(_ => RecoveryCycleNoWorkAsync()),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        var initialDelay = await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(TimeSpan.FromSeconds(5), initialDelay.Delay);
+        Assert.Equal(0, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenEnabled_CalculatesStaleBeforeAndRetryDelay()
+    {
+        var currentUtc = DateTimeOffset.Parse("2026-07-16T12:00:00Z");
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 30,
+                StaleAfterSeconds = 90,
+                RetryDelaySeconds = 240
+            },
+            new RecordingRecoveryCycleService(_ => RecoveryCycleNoWorkAsync()),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(currentUtc));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        var call = await harness.Cycle.ReadNextCallAsync();
+
+        Assert.Equal(currentUtc.AddSeconds(-90), call.StaleBefore);
+        Assert.Equal(TimeSpan.FromSeconds(240), call.RetryDelay);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(GateCommandRecoveryCycleOutcome.NoWork)]
+    [InlineData(GateCommandRecoveryCycleOutcome.RecoveredRetryable)]
+    [InlineData(GateCommandRecoveryCycleOutcome.RecoveredTerminalFailure)]
+    [InlineData(GateCommandRecoveryCycleOutcome.LostRaceOrIneligible)]
+    public async Task RecoveryWorker_WhenCycleReturnsControlledOutcome_WaitsForInterval(
+        GateCommandRecoveryCycleOutcome outcome)
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 7,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(_ => Task.FromResult(CreateRecoveryCycleResult(outcome))),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        var interval = await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+        Assert.Equal(TimeSpan.FromSeconds(7), interval.Delay);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenIntervalCompletes_RunsNextCycle()
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 3,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(_ => RecoveryCycleNoWorkAsync()),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        var interval = await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+
+        interval.Complete();
+        await harness.Cycle.ReadNextCallAsync();
+
+        Assert.Equal(2, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenCycleIsSlow_DoesNotOverlapCycleCalls()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 1,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(async _ =>
+            {
+                await release.Task;
+                return CreateRecoveryCycleResult(GateCommandRecoveryCycleOutcome.NoWork);
+            }),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+        Assert.Equal(0, harness.Delay.CallCount);
+
+        release.SetResult();
+        await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenCycleThrows_WaitsForIntervalWithoutTightLoop()
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 9,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(_ => throw new InvalidOperationException("controlled recovery worker test failure")),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        var interval = await harness.Delay.ReadNextAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(TimeSpan.FromSeconds(9), interval.Delay);
+        Assert.Equal(1, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenCancelledDuringInitialDelay_StopsWithoutCycle()
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 5,
+                IntervalSeconds = 10,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(_ => RecoveryCycleNoWorkAsync()),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Delay.ReadNextAsync();
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(0, harness.Cycle.CallCount);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenCancelledDuringInterval_StopsCleanly()
+    {
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 10,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(_ => RecoveryCycleNoWorkAsync()),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        await harness.Delay.ReadNextAsync();
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenStoppedDuringActiveCycle_PassesCancellationToCycle()
+    {
+        var observedToken = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var harness = CreateRecoveryWorkerHarness(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 1,
+                StaleAfterSeconds = 60,
+                RetryDelaySeconds = 120
+            },
+            new RecordingRecoveryCycleService(async call =>
+            {
+                observedToken.SetResult(call.CancellationToken);
+                await Task.Delay(Timeout.InfiniteTimeSpan, call.CancellationToken);
+                return CreateRecoveryCycleResult(GateCommandRecoveryCycleOutcome.NoWork);
+            }),
+            new RecordingRecoveryWorkerDelay(),
+            new FixedTimeProvider(DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        var token = await observedToken.Task;
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.True(token.IsCancellationRequested);
+        Assert.Equal(1, harness.Cycle.CallCount);
+    }
+
+    [Theory]
+    [InlineData(-1, 30, 60, 120)]
+    [InlineData(0, 0, 60, 120)]
+    [InlineData(0, 30, 0, 120)]
+    [InlineData(0, 30, 60, 0)]
+    public void RecoveryWorkerOptions_WhenInvalidConfiguration_ReportsValidationErrors(
+        int initialDelaySeconds,
+        int intervalSeconds,
+        int staleAfterSeconds,
+        int retryDelaySeconds)
+    {
+        var options = new GateCommandRecoveryWorkerOptions
+        {
+            Enabled = true,
+            InitialDelaySeconds = initialDelaySeconds,
+            IntervalSeconds = intervalSeconds,
+            StaleAfterSeconds = staleAfterSeconds,
+            RetryDelaySeconds = retryDelaySeconds
+        };
+
+        Assert.NotEmpty(options.Validate());
+        Assert.Throws<InvalidOperationException>(() => options.ThrowIfInvalid());
+    }
+
+    [Fact]
+    public void RecoveryWorker_DoesNotDependOnGateRepositoriesHikCentralAdapterOrSqlDirectly()
+    {
+        var constructorParameters = typeof(GateCommandRecoveryWorker)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.DoesNotContain(typeof(IGateCommandInProgressRecoveryRepository), constructorParameters);
+        Assert.DoesNotContain(typeof(IGateCommandExecutionRepository), constructorParameters);
+        Assert.DoesNotContain(typeof(IGateCommandRecoveryCandidateRepository), constructorParameters);
+        Assert.DoesNotContain(typeof(IHikCentralGateActionAdapter), constructorParameters);
+        Assert.DoesNotContain(constructorParameters, type => type.Name.Contains("Npgsql", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(constructorParameters, type => type.Name.Contains("HikCentral", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenEnabledInControlledComposition_RecoversOneStaleCommand()
+    {
+        var first = await PrepareFixtureWithCommandAsync("recovery-worker-first");
+        var second = await PrepareFixtureWithCommandAsync("recovery-worker-second");
+        await MarkInProgressAsync(first, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: first.Now.AddMinutes(-20));
+        await MarkInProgressAsync(second, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: first.Now.AddMinutes(-10));
+        var delay = new RecordingRecoveryWorkerDelay();
+        var currentUtc = first.Now.AddMinutes(10);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ISystemClock>(new FixedClock(currentUtc));
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IGateCommandInProgressRecoveryRepository>(_ => new GateCommandInProgressRecoveryRepository(ConnectionString));
+        services.AddScoped<IGateCommandInProgressRecoveryService, GateCommandInProgressRecoveryService>();
+        services.AddScoped<IGateCommandRecoveryCandidateRepository>(_ => new GateCommandRecoveryCandidateRepository(ConnectionString));
+        services.AddScoped<IGateCommandRecoveryCycleService, GateCommandRecoveryCycleService>();
+        services.AddSingleton<IOptions<GateCommandRecoveryWorkerOptions>>(Options.Create(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 3_600,
+                StaleAfterSeconds = 300,
+                RetryDelaySeconds = 600
+            }));
+        services.AddSingleton<IGateCommandRecoveryWorkerDelay>(delay);
+        await using var provider = services.BuildServiceProvider();
+        var worker = new GateCommandRecoveryWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IOptions<GateCommandRecoveryWorkerOptions>>(),
+            delay,
+            new FixedTimeProvider(currentUtc),
+            NullLogger<GateCommandRecoveryWorker>.Instance);
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await delay.ReadNextAsync();
+            var firstState = await ReadStateAsync(first.CommandId);
+            var secondState = await ReadStateAsync(second.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(first.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal("RETRYABLE", firstState.CommandStatus);
+            Assert.Equal(1, firstState.AttemptCount);
+            AssertNearlyEqual(currentUtc.AddMinutes(10), firstState.NextAttemptAt);
+            Assert.Equal(0, firstState.AuditCount);
+            Assert.Equal("IN_PROGRESS", secondState.CommandStatus);
+            Assert.Equal(1, secondState.AttemptCount);
+            Assert.Equal(0, secondState.AuditCount);
+            Assert.NotNull(inventory);
+            Assert.Equal("RETRYABLE", inventory!.GateCommand!.CommandStatus);
+            Assert.Empty(inventory.HikCentralActionAttempts);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+            await CleanupAsync(first);
+            await CleanupAsync(second);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryWorker_WhenEnabledAndStaleCommandIsExhausted_RecoversTerminalFailure()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("recovery-worker-terminal");
+        await MarkInProgressAsync(fixture, attemptCount: 3, maxAttempts: 3, lastAttemptedAt: fixture.Now.AddMinutes(-20));
+        var delay = new RecordingRecoveryWorkerDelay();
+        var currentUtc = fixture.Now.AddMinutes(10);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ISystemClock>(new FixedClock(currentUtc));
+        services.AddSingleton(TimeProvider.System);
+        services.AddScoped<IGateCommandInProgressRecoveryRepository>(_ => new GateCommandInProgressRecoveryRepository(ConnectionString));
+        services.AddScoped<IGateCommandInProgressRecoveryService, GateCommandInProgressRecoveryService>();
+        services.AddScoped<IGateCommandRecoveryCandidateRepository>(_ => new GateCommandRecoveryCandidateRepository(ConnectionString));
+        services.AddScoped<IGateCommandRecoveryCycleService, GateCommandRecoveryCycleService>();
+        services.AddSingleton<IOptions<GateCommandRecoveryWorkerOptions>>(Options.Create(
+            new GateCommandRecoveryWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 3_600,
+                StaleAfterSeconds = 300,
+                RetryDelaySeconds = 600
+            }));
+        services.AddSingleton<IGateCommandRecoveryWorkerDelay>(delay);
+        await using var provider = services.BuildServiceProvider();
+        var worker = new GateCommandRecoveryWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IOptions<GateCommandRecoveryWorkerOptions>>(),
+            delay,
+            new FixedTimeProvider(currentUtc),
+            NullLogger<GateCommandRecoveryWorker>.Instance);
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await delay.ReadNextAsync();
+            var state = await ReadStateAsync(fixture.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(fixture.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal("TERMINAL_FAILURE", state.CommandStatus);
+            Assert.Equal(3, state.AttemptCount);
+            Assert.Null(state.NextAttemptAt);
+            AssertNearlyEqual(currentUtc, state.TerminalFailureAt);
+            Assert.Equal(0, state.AuditCount);
+            Assert.NotNull(inventory);
+            Assert.Equal("TERMINAL_FAILURE", inventory!.GateCommand!.CommandStatus);
+            Assert.Empty(inventory.HikCentralActionAttempts);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+            await CleanupAsync(fixture);
+        }
+    }
+
+    private static Task<GateCommandRecoveryCycleResult> RecoveryCycleNoWorkAsync() =>
+        Task.FromResult(CreateRecoveryCycleResult(GateCommandRecoveryCycleOutcome.NoWork));
+
+    private static GateCommandRecoveryCycleResult CreateRecoveryCycleResult(GateCommandRecoveryCycleOutcome outcome) =>
+        outcome switch
+        {
+            GateCommandRecoveryCycleOutcome.NoWork => new GateCommandRecoveryCycleResult(
+                GateCommandId: null,
+                GateCommandRecoveryCycleOutcome.NoWork,
+                FinalCommandStatus: null,
+                NextAttemptAt: null,
+                TerminalFailureAt: null,
+                Mutated: false,
+                ErrorCode: null,
+                Message: "No stale IN_PROGRESS gate command was found."),
+            GateCommandRecoveryCycleOutcome.RecoveredRetryable => new GateCommandRecoveryCycleResult(
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                GateCommandRecoveryCycleOutcome.RecoveredRetryable,
+                FinalCommandStatus: "RETRYABLE",
+                NextAttemptAt: DateTimeOffset.Parse("2026-07-16T00:10:00Z"),
+                TerminalFailureAt: null,
+                Mutated: true,
+                ErrorCode: null,
+                Message: null),
+            GateCommandRecoveryCycleOutcome.RecoveredTerminalFailure => new GateCommandRecoveryCycleResult(
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                GateCommandRecoveryCycleOutcome.RecoveredTerminalFailure,
+                FinalCommandStatus: "TERMINAL_FAILURE",
+                NextAttemptAt: null,
+                TerminalFailureAt: DateTimeOffset.Parse("2026-07-16T00:00:00Z"),
+                Mutated: true,
+                ErrorCode: null,
+                Message: null),
+            GateCommandRecoveryCycleOutcome.LostRaceOrIneligible => new GateCommandRecoveryCycleResult(
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                GateCommandRecoveryCycleOutcome.LostRaceOrIneligible,
+                FinalCommandStatus: "IN_PROGRESS",
+                NextAttemptAt: null,
+                TerminalFailureAt: null,
+                Mutated: false,
+                ErrorCode: "GATE_COMMAND_RECOVERY_CANDIDATE_NOT_RECOVERED",
+                Message: "Selected gate command was not recovered."),
+            _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, null)
+        };
+
+    private static RecoveryWorkerHarness CreateRecoveryWorkerHarness(
+        GateCommandRecoveryWorkerOptions options,
+        RecordingRecoveryCycleService cycle,
+        RecordingRecoveryWorkerDelay delay,
+        TimeProvider timeProvider)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IGateCommandRecoveryCycleService>(cycle);
+        var provider = services.BuildServiceProvider();
+        var worker = new GateCommandRecoveryWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(options),
+            delay,
+            timeProvider,
+            NullLogger<GateCommandRecoveryWorker>.Instance);
+
+        return new RecoveryWorkerHarness(worker, provider, cycle, delay);
+    }
+
     private static GateCommandInProgressRecoveryService CreateService(GateCommandRecoveryFixture? fixture) =>
         new(
             new GateCommandInProgressRecoveryRepository(ConnectionString),
@@ -1187,6 +1687,121 @@ public sealed class GateCommandInProgressRecoveryServiceIntegrationTests
         }
 
         public DateTimeOffset UtcNow { get; }
+    }
+
+    private sealed class FixedTimeProvider : TimeProvider
+    {
+        private readonly DateTimeOffset _utcNow;
+
+        public FixedTimeProvider(DateTimeOffset utcNow)
+        {
+            _utcNow = utcNow;
+        }
+
+        public override DateTimeOffset GetUtcNow() => _utcNow;
+    }
+
+    private sealed class RecoveryWorkerHarness : IAsyncDisposable
+    {
+        public RecoveryWorkerHarness(
+            GateCommandRecoveryWorker worker,
+            ServiceProvider provider,
+            RecordingRecoveryCycleService cycle,
+            RecordingRecoveryWorkerDelay delay)
+        {
+            Worker = worker;
+            Provider = provider;
+            Cycle = cycle;
+            Delay = delay;
+        }
+
+        public GateCommandRecoveryWorker Worker { get; }
+
+        public ServiceProvider Provider { get; }
+
+        public RecordingRecoveryCycleService Cycle { get; }
+
+        public RecordingRecoveryWorkerDelay Delay { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Worker.StopAsync(CancellationToken.None);
+            await Provider.DisposeAsync();
+        }
+    }
+
+    private sealed class RecordingRecoveryCycleService : IGateCommandRecoveryCycleService
+    {
+        private readonly Func<RecoveryCycleCall, Task<GateCommandRecoveryCycleResult>> _handler;
+        private readonly Channel<RecoveryCycleCall> _calls = Channel.CreateUnbounded<RecoveryCycleCall>();
+        private int _callCount;
+
+        public RecordingRecoveryCycleService(
+            Func<RecoveryCycleCall, Task<GateCommandRecoveryCycleResult>> handler)
+        {
+            _handler = handler;
+        }
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public async Task<RecoveryCycleCall> ReadNextCallAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            return await _calls.Reader.ReadAsync(timeout.Token);
+        }
+
+        public async Task<GateCommandRecoveryCycleResult> RunOnceAsync(
+            DateTimeOffset staleBefore,
+            TimeSpan retryDelay,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            var call = new RecoveryCycleCall(staleBefore, retryDelay, cancellationToken);
+            await _calls.Writer.WriteAsync(call, cancellationToken);
+            return await _handler(call);
+        }
+    }
+
+    private sealed class RecordingRecoveryWorkerDelay : IGateCommandRecoveryWorkerDelay
+    {
+        private readonly Channel<RecoveryDelayCall> _calls = Channel.CreateUnbounded<RecoveryDelayCall>();
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _calls.Writer.WriteAsync(new RecoveryDelayCall(delay, completion), cancellationToken);
+            await completion.Task.WaitAsync(cancellationToken);
+        }
+
+        public async Task<RecoveryDelayCall> ReadNextAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            return await _calls.Reader.ReadAsync(timeout.Token);
+        }
+    }
+
+    private sealed record RecoveryCycleCall(
+        DateTimeOffset StaleBefore,
+        TimeSpan RetryDelay,
+        CancellationToken CancellationToken);
+
+    private sealed class RecoveryDelayCall
+    {
+        private readonly TaskCompletionSource _completion;
+
+        public RecoveryDelayCall(TimeSpan delay, TaskCompletionSource completion)
+        {
+            Delay = delay;
+            _completion = completion;
+        }
+
+        public TimeSpan Delay { get; }
+
+        public void Complete() => _completion.TrySetResult();
     }
 
     private sealed class BarrierRecoveryCandidateRepository : IGateCommandRecoveryCandidateRepository
