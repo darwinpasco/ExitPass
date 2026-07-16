@@ -1,10 +1,15 @@
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.Gates;
+using ExitPass.CentralPms.Api.Services;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Infrastructure.Gates;
 using ExitPass.CentralPms.IntegrationTests.Shared;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
+using System.Threading.Channels;
 using Xunit;
 using static ExitPass.CentralPms.IntegrationTests.Shared.PaymentRoutineTestHelper;
 
@@ -1088,6 +1093,370 @@ public sealed class GateCommandExecutionServiceIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task DispatchWorker_WhenOptionsAreDefault_DoesNotInvokeCycle()
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions(),
+            new RecordingDispatchCycleService(_ => DispatchNoWorkAsync()),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(25));
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(0, harness.Cycle.CallCount);
+        Assert.Equal(0, harness.Delay.CallCount);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenEnabled_HonorsInitialDelayBeforeCycle()
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 5,
+                IntervalSeconds = 10
+            },
+            new RecordingDispatchCycleService(_ => DispatchNoWorkAsync()),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        var initialDelay = await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(TimeSpan.FromSeconds(5), initialDelay.Delay);
+        Assert.Equal(0, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Theory]
+    [InlineData(GateCommandDispatchCycleOutcome.NoWork)]
+    [InlineData(GateCommandDispatchCycleOutcome.Dispatched)]
+    [InlineData(GateCommandDispatchCycleOutcome.LostRaceOrIneligible)]
+    public async Task DispatchWorker_WhenCycleReturnsControlledOutcome_WaitsForInterval(
+        GateCommandDispatchCycleOutcome outcome)
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 7
+            },
+            new RecordingDispatchCycleService(_ => Task.FromResult(CreateDispatchResult(outcome))),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        var interval = await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+        Assert.Equal(TimeSpan.FromSeconds(7), interval.Delay);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenIntervalCompletes_RunsNextCycle()
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 3
+            },
+            new RecordingDispatchCycleService(_ => DispatchNoWorkAsync()),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        var interval = await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+
+        interval.Complete();
+        await harness.Cycle.ReadNextCallAsync();
+
+        Assert.Equal(2, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenCycleIsSlow_DoesNotOverlapCycleCalls()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 1
+            },
+            new RecordingDispatchCycleService(async _ =>
+            {
+                await release.Task;
+                return CreateDispatchResult(GateCommandDispatchCycleOutcome.NoWork);
+            }),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+        Assert.Equal(0, harness.Delay.CallCount);
+
+        release.SetResult();
+        await harness.Delay.ReadNextAsync();
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenCycleThrows_WaitsForIntervalWithoutTightLoop()
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 9
+            },
+            new RecordingDispatchCycleService(_ => throw new InvalidOperationException("controlled worker test failure")),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        var interval = await harness.Delay.ReadNextAsync();
+        await Task.Delay(TimeSpan.FromMilliseconds(25));
+
+        Assert.Equal(TimeSpan.FromSeconds(9), interval.Delay);
+        Assert.Equal(1, harness.Cycle.CallCount);
+
+        await harness.Worker.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenCancelledDuringInitialDelay_StopsWithoutCycle()
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 5,
+                IntervalSeconds = 10
+            },
+            new RecordingDispatchCycleService(_ => DispatchNoWorkAsync()),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Delay.ReadNextAsync();
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(0, harness.Cycle.CallCount);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenCancelledDuringInterval_StopsCleanly()
+    {
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 10
+            },
+            new RecordingDispatchCycleService(_ => DispatchNoWorkAsync()),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        await harness.Cycle.ReadNextCallAsync();
+        await harness.Delay.ReadNextAsync();
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.Equal(1, harness.Cycle.CallCount);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenStoppedDuringActiveCycle_PassesCancellationToCycle()
+    {
+        var observedToken = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var harness = CreateWorkerHarness(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 1
+            },
+            new RecordingDispatchCycleService(async token =>
+            {
+                observedToken.SetResult(token);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return CreateDispatchResult(GateCommandDispatchCycleOutcome.NoWork);
+            }),
+            new RecordingWorkerDelay());
+
+        await harness.Worker.StartAsync(CancellationToken.None);
+        var token = await observedToken.Task;
+        await harness.Worker.StopAsync(CancellationToken.None);
+
+        Assert.True(token.IsCancellationRequested);
+        Assert.Equal(1, harness.Cycle.CallCount);
+    }
+
+    [Theory]
+    [InlineData(-1, 30)]
+    [InlineData(0, 0)]
+    [InlineData(30, 0)]
+    public void DispatchWorkerOptions_WhenInvalidConfiguration_ReportsValidationErrors(
+        int initialDelaySeconds,
+        int intervalSeconds)
+    {
+        var options = new GateCommandDispatchWorkerOptions
+        {
+            Enabled = true,
+            InitialDelaySeconds = initialDelaySeconds,
+            IntervalSeconds = intervalSeconds
+        };
+
+        Assert.NotEmpty(options.Validate());
+        Assert.Throws<InvalidOperationException>(() => options.ThrowIfInvalid());
+    }
+
+    [Fact]
+    public void DispatchWorker_DoesNotDependOnGateRepositoriesOrHikCentralAdapterDirectly()
+    {
+        var constructorParameters = typeof(GateCommandDispatchWorker)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.DoesNotContain(typeof(IGateCommandExecutionRepository), constructorParameters);
+        Assert.DoesNotContain(typeof(IGateCommandDispatchCandidateRepository), constructorParameters);
+        Assert.DoesNotContain(typeof(IHikCentralGateActionAdapter), constructorParameters);
+    }
+
+    [Fact]
+    public async Task DispatchWorker_WhenEnabledInControlledComposition_DispatchesOneRequestedCommand()
+    {
+        var first = await PrepareFixtureWithCommandAsync("dispatch-worker-first");
+        var second = await PrepareFixtureWithCommandAsync("dispatch-worker-second");
+        await SetCommandRequestedAtAsync(first.CommandId, first.Now.AddMinutes(-20));
+        await SetCommandRequestedAtAsync(second.CommandId, first.Now.AddMinutes(-10));
+        var adapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var delay = new RecordingWorkerDelay();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ISystemClock>(new FixedClock(first.Now.AddMinutes(10)));
+        services.AddSingleton<IHikCentralGateActionAdapter>(adapter);
+        services.AddScoped<IGateCommandExecutionRepository>(_ => new GateCommandExecutionRepository(ConnectionString));
+        services.AddScoped<IGateCommandExecutionService, GateCommandExecutionService>();
+        services.AddScoped<IGateCommandDispatchCandidateRepository>(_ => new GateCommandDispatchCandidateRepository(ConnectionString));
+        services.AddScoped<IGateCommandDispatchCycleService, GateCommandDispatchCycleService>();
+        services.AddSingleton<IOptions<GateCommandDispatchWorkerOptions>>(Options.Create(
+            new GateCommandDispatchWorkerOptions
+            {
+                Enabled = true,
+                InitialDelaySeconds = 0,
+                IntervalSeconds = 3_600
+            }));
+        services.AddSingleton<IGateCommandDispatchWorkerDelay>(delay);
+        await using var provider = services.BuildServiceProvider();
+        var worker = new GateCommandDispatchWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<IOptions<GateCommandDispatchWorkerOptions>>(),
+            delay,
+            NullLogger<GateCommandDispatchWorker>.Instance);
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await delay.ReadNextAsync();
+            var firstState = await ReadExecutionStateAsync(first.CommandId);
+            var secondState = await ReadExecutionStateAsync(second.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(first.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal(1, adapter.CallCount);
+            Assert.Equal("SUCCEEDED", firstState.CommandStatus);
+            Assert.Equal(1, firstState.AuditCount);
+            Assert.Equal("REQUESTED", secondState.CommandStatus);
+            Assert.Equal(0, secondState.AuditCount);
+            Assert.NotNull(inventory);
+            Assert.Equal("SUCCEEDED", inventory!.GateCommand!.CommandStatus);
+            Assert.Single(inventory.HikCentralActionAttempts);
+            Assert.DoesNotContain("/artemis/api/", inventory.HikCentralActionAttempts[0].RequestPath, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual("PHYSICAL_GATE_OPENED", inventory.HikCentralActionAttempts[0].ActionOutcome);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+            await CleanupAsync(first);
+            await CleanupAsync(second);
+        }
+    }
+
+    private static Task<GateCommandDispatchCycleResult> DispatchNoWorkAsync() =>
+        Task.FromResult(CreateDispatchResult(GateCommandDispatchCycleOutcome.NoWork));
+
+    private static GateCommandDispatchCycleResult CreateDispatchResult(GateCommandDispatchCycleOutcome outcome) =>
+        outcome switch
+        {
+            GateCommandDispatchCycleOutcome.NoWork => new GateCommandDispatchCycleResult(
+                GateCommandId: null,
+                GateCommandDispatchCycleOutcome.NoWork,
+                CandidateStatus: null,
+                FinalCommandStatus: null,
+                HikCentralGateActionAuditId: null,
+                AdapterInvoked: false,
+                ErrorCode: null,
+                Message: "No eligible gate command was found."),
+            GateCommandDispatchCycleOutcome.Dispatched => new GateCommandDispatchCycleResult(
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                GateCommandDispatchCycleOutcome.Dispatched,
+                CandidateStatus: "REQUESTED",
+                FinalCommandStatus: "SUCCEEDED",
+                HikCentralGateActionAuditId: Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                AdapterInvoked: true,
+                ErrorCode: null,
+                Message: null),
+            GateCommandDispatchCycleOutcome.LostRaceOrIneligible => new GateCommandDispatchCycleResult(
+                Guid.Parse("11111111-2222-3333-4444-555555555555"),
+                GateCommandDispatchCycleOutcome.LostRaceOrIneligible,
+                CandidateStatus: "REQUESTED",
+                FinalCommandStatus: "IN_PROGRESS",
+                HikCentralGateActionAuditId: null,
+                AdapterInvoked: false,
+                ErrorCode: "GATE_COMMAND_STATUS_NOT_REQUESTED",
+                Message: "Selected gate command was not executed."),
+            _ => throw new ArgumentOutOfRangeException(nameof(outcome), outcome, null)
+        };
+
+    private static WorkerHarness CreateWorkerHarness(
+        GateCommandDispatchWorkerOptions options,
+        RecordingDispatchCycleService cycle,
+        RecordingWorkerDelay delay)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IGateCommandDispatchCycleService>(cycle);
+        var provider = services.BuildServiceProvider();
+        var worker = new GateCommandDispatchWorker(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(options),
+            delay,
+            NullLogger<GateCommandDispatchWorker>.Instance);
+
+        return new WorkerHarness(worker, provider, cycle, delay);
+    }
+
     private static GateCommandExecutionService CreateExecutionService(
         GateCommandExecutionFixture? fixture,
         IHikCentralGateActionAdapter adapter) =>
@@ -1661,6 +2030,100 @@ public sealed class GateCommandExecutionServiceIntegrationTests
             await _allCandidatesRead.Task.WaitAsync(cancellationToken);
             return candidate;
         }
+    }
+
+    private sealed class WorkerHarness : IAsyncDisposable
+    {
+        public WorkerHarness(
+            GateCommandDispatchWorker worker,
+            ServiceProvider provider,
+            RecordingDispatchCycleService cycle,
+            RecordingWorkerDelay delay)
+        {
+            Worker = worker;
+            Provider = provider;
+            Cycle = cycle;
+            Delay = delay;
+        }
+
+        public GateCommandDispatchWorker Worker { get; }
+
+        public ServiceProvider Provider { get; }
+
+        public RecordingDispatchCycleService Cycle { get; }
+
+        public RecordingWorkerDelay Delay { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            await Worker.StopAsync(CancellationToken.None);
+            await Provider.DisposeAsync();
+        }
+    }
+
+    private sealed class RecordingDispatchCycleService : IGateCommandDispatchCycleService
+    {
+        private readonly Func<CancellationToken, Task<GateCommandDispatchCycleResult>> _handler;
+        private readonly Channel<CancellationToken> _calls = Channel.CreateUnbounded<CancellationToken>();
+        private int _callCount;
+
+        public RecordingDispatchCycleService(
+            Func<CancellationToken, Task<GateCommandDispatchCycleResult>> handler)
+        {
+            _handler = handler;
+        }
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public async Task<CancellationToken> ReadNextCallAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            return await _calls.Reader.ReadAsync(timeout.Token);
+        }
+
+        public async Task<GateCommandDispatchCycleResult> RunOnceAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            await _calls.Writer.WriteAsync(cancellationToken, cancellationToken);
+            return await _handler(cancellationToken);
+        }
+    }
+
+    private sealed class RecordingWorkerDelay : IGateCommandDispatchWorkerDelay
+    {
+        private readonly Channel<DelayCall> _calls = Channel.CreateUnbounded<DelayCall>();
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            await _calls.Writer.WriteAsync(new DelayCall(delay, completion), cancellationToken);
+            await completion.Task.WaitAsync(cancellationToken);
+        }
+
+        public async Task<DelayCall> ReadNextAsync()
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            return await _calls.Reader.ReadAsync(timeout.Token);
+        }
+    }
+
+    private sealed class DelayCall
+    {
+        private readonly TaskCompletionSource _completion;
+
+        public DelayCall(TimeSpan delay, TaskCompletionSource completion)
+        {
+            Delay = delay;
+            _completion = completion;
+        }
+
+        public TimeSpan Delay { get; }
+
+        public void Complete() => _completion.TrySetResult();
     }
 
     private sealed class CountingAdapter : IHikCentralGateActionAdapter

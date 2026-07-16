@@ -560,6 +560,25 @@ static void ConfigureApplicationServices(
         new GateCommandCreationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandStateReadRepository>(_ =>
         new GateCommandStateReadRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IGateCommandExecutionRepository>(_ =>
+        new GateCommandExecutionRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IGateCommandExecutionService>(serviceProvider =>
+        new GateCommandExecutionService(
+            serviceProvider.GetRequiredService<IGateCommandExecutionRepository>(),
+            serviceProvider.GetRequiredService<IHikCentralGateActionAdapter>(),
+            serviceProvider.GetRequiredService<ISystemClock>()));
+    builder.Services.AddScoped<IGateCommandDispatchCandidateRepository>(_ =>
+        new GateCommandDispatchCandidateRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IGateCommandDispatchCycleService, GateCommandDispatchCycleService>();
+    builder.Services
+        .AddOptions<GateCommandDispatchWorkerOptions>()
+        .Bind(builder.Configuration.GetSection(GateCommandDispatchWorkerOptions.SectionName))
+        .Validate(
+            options => options.Validate().Count == 0,
+            $"Invalid {GateCommandDispatchWorkerOptions.SectionName} configuration.")
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IGateCommandDispatchWorkerDelay, GateCommandDispatchWorkerDelay>();
+    builder.Services.AddHostedService<GateCommandDispatchWorker>();
 
     builder.Services.AddScoped<IReconciliationWorkflowService, ReconciliationWorkflowService>();
     builder.Services.AddScoped<IReconciliationWorkflowRepository>(serviceProvider =>
