@@ -150,3 +150,79 @@ public enum GateCommandExecutionOutcome
     /// </summary>
     Rejected
 }
+
+/// <summary>
+/// Application service boundary for explicitly recovering one stale IN_PROGRESS gate command.
+/// </summary>
+public interface IGateCommandInProgressRecoveryService
+{
+    /// <summary>
+    /// Recovers one stale IN_PROGRESS command without executing it.
+    /// </summary>
+    Task<GateCommandRecoveryResult> RecoverAsync(
+        Guid gateCommandId,
+        DateTimeOffset staleBefore,
+        TimeSpan retryDelay,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Persistence boundary for stale IN_PROGRESS gate command recovery.
+/// </summary>
+public interface IGateCommandInProgressRecoveryRepository
+{
+    /// <summary>
+    /// Atomically recovers one eligible stale IN_PROGRESS command to RETRYABLE or TERMINAL_FAILURE.
+    /// </summary>
+    Task<GateCommandRecoveryResult> RecoverAsync(
+        GateCommandRecoveryRequest request,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Recovery request for one explicitly supplied command.
+/// </summary>
+public sealed record GateCommandRecoveryRequest(
+    Guid GateCommandId,
+    DateTimeOffset StaleBefore,
+    TimeSpan RetryDelay,
+    DateTimeOffset RecoveredAt);
+
+/// <summary>
+/// Result of a stale IN_PROGRESS recovery attempt.
+/// </summary>
+public sealed record GateCommandRecoveryResult(
+    Guid GateCommandId,
+    GateCommandRecoveryOutcome Outcome,
+    string CommandStatus,
+    DateTimeOffset? NextAttemptAt,
+    DateTimeOffset? TerminalFailureAt,
+    bool Mutated,
+    string? ErrorCode,
+    string? Message);
+
+/// <summary>
+/// Stale command recovery result classification.
+/// </summary>
+public enum GateCommandRecoveryOutcome
+{
+    /// <summary>
+    /// The stale IN_PROGRESS command was recovered to RETRYABLE.
+    /// </summary>
+    RecoveredRetryable,
+
+    /// <summary>
+    /// The stale IN_PROGRESS command was recovered to TERMINAL_FAILURE.
+    /// </summary>
+    RecoveredTerminalFailure,
+
+    /// <summary>
+    /// The command had already left IN_PROGRESS and was not changed.
+    /// </summary>
+    AlreadyRecovered,
+
+    /// <summary>
+    /// The command was not eligible for stale recovery.
+    /// </summary>
+    Rejected
+}
