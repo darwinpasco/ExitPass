@@ -174,6 +174,60 @@ public static class PosServerFiscalDocumentResponseParser
             VoidedAt: envelope.VoidedAt ?? envelope.Document?.VoidedAt);
     }
 
+    public static PosServerFiscalDocumentPresentationReadResult ParsePresentationResponse(
+        int httpStatusCode,
+        string responseBody)
+    {
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(responseBody);
+        }
+        catch (JsonException)
+        {
+            return InvalidPresentationResponse(
+                httpStatusCode,
+                "invalid_json_response",
+                "POS Server presentation response body was not valid JSON.");
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            var succeeded = httpStatusCode == (int)HttpStatusCode.OK &&
+                TryGetBoolean(root, "succeeded") == true;
+            var code = TryGetString(root, "code") ?? "pos_server_presentation_failure";
+            var message = TryGetString(root, "message") ?? string.Empty;
+            var fiscalDocumentId = TryGetGuid(root, "fiscalDocumentId");
+
+            return new PosServerFiscalDocumentPresentationReadResult(
+                Outcome: succeeded ? PosServerFiscalDocumentOutcome.Accepted : MapFailureOutcome(httpStatusCode, code, null),
+                Succeeded: succeeded,
+                HttpStatusCode: httpStatusCode,
+                Code: code,
+                Message: message,
+                FiscalDocumentId: fiscalDocumentId,
+                FiscalDocumentNumber: TryGetString(root, "fiscalDocumentNumber"),
+                FiscalDocumentStatus: TryGetString(root, "fiscalDocumentStatus"),
+                FiscalNumberAssignmentState: TryGetString(root, "fiscalNumberAssignmentState"),
+                FiscalDocumentStatusCodeId: TryGetGuid(root, "fiscalDocumentStatusCodeId"),
+                FiscalDocumentType: TryGetString(root, "fiscalDocumentType"),
+                FiscalDocumentTypeCodeId: TryGetGuid(root, "fiscalDocumentTypeCodeId"),
+                FiscalSeries: TryGetString(root, "fiscalSeries"),
+                FiscalNumberPrefixText: TryGetString(root, "fiscalNumberPrefixText"),
+                FiscalNumberSuffixText: TryGetString(root, "fiscalNumberSuffixText"),
+                FiscalNumberAssignedAt: TryGetDateTimeOffset(root, "fiscalNumberAssignedAt"),
+                RecordedAt: TryGetDateTimeOffset(root, "recordedAt"),
+                VoidStatus: TryGetString(root, "voidStatus"),
+                VoidReasonCode: TryGetString(root, "voidReasonCode"),
+                VoidedAt: TryGetDateTimeOffset(root, "voidedAt"),
+                PresentationVersion: TryGetString(root, "presentationVersion"),
+                TemplateVersion: TryGetString(root, "templateVersion"),
+                ContentType: TryGetString(root, "contentType"),
+                AuthoritativeResponse: root.Clone());
+        }
+    }
+
     public static PosServerFiscalDocumentVoidResult ParseVoidResponse(
         int httpStatusCode,
         string responseBody)
@@ -311,6 +365,76 @@ public static class PosServerFiscalDocumentResponseParser
             ResultClassification: null,
             CorrelationId: null,
             ErrorPosture: null);
+
+    private static PosServerFiscalDocumentPresentationReadResult InvalidPresentationResponse(
+        int httpStatusCode,
+        string code,
+        string message) =>
+        new(
+            Outcome: PosServerFiscalDocumentOutcome.InvalidResponse,
+            Succeeded: false,
+            HttpStatusCode: httpStatusCode,
+            Code: code,
+            Message: message,
+            FiscalDocumentId: null,
+            FiscalDocumentNumber: null,
+            FiscalDocumentStatus: null,
+            FiscalNumberAssignmentState: null,
+            FiscalDocumentStatusCodeId: null,
+            FiscalDocumentType: null,
+            FiscalDocumentTypeCodeId: null,
+            FiscalSeries: null,
+            FiscalNumberPrefixText: null,
+            FiscalNumberSuffixText: null,
+            FiscalNumberAssignedAt: null,
+            RecordedAt: null,
+            VoidStatus: null,
+            VoidReasonCode: null,
+            VoidedAt: null,
+            PresentationVersion: null,
+            TemplateVersion: null,
+            ContentType: null,
+            AuthoritativeResponse: null);
+
+    private static string? TryGetString(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : property.ToString();
+    }
+
+    private static bool? TryGetBoolean(JsonElement root, string propertyName)
+    {
+        if (!root.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            _ => null
+        };
+    }
+
+    private static Guid? TryGetGuid(JsonElement root, string propertyName)
+    {
+        var value = TryGetString(root, propertyName);
+        return Guid.TryParse(value, out var guid) ? guid : null;
+    }
+
+    private static DateTimeOffset? TryGetDateTimeOffset(JsonElement root, string propertyName)
+    {
+        var value = TryGetString(root, propertyName);
+        return DateTimeOffset.TryParse(value, out var timestamp) ? timestamp : null;
+    }
 
     private static PosServerFiscalDocumentVoidOutcome MapVoidOutcome(
         int httpStatusCode,

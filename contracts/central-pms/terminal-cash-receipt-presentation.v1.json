@@ -1,0 +1,129 @@
+{
+  "contractVersion": "terminal-cash-receipt-presentation.v1",
+  "owner": "Central PMS",
+  "sourceRepository": "ExitPass-APT",
+  "sourceBranch": "feature/central-pms-terminal-cash-receipt-readback",
+  "sourcePosServerRepository": "ExitPass-PoSServer",
+  "sourcePosServerCommit": "5d9addfb9f39eda885de9ab1866f41d51d4de446",
+  "method": "GET",
+  "route": "/v1/terminal-cash-payments/references/{terminalCashTenderId}/receipt-presentation",
+  "readOnly": true,
+  "requiredHeaders": [
+    {
+      "name": "X-Correlation-Id",
+      "value": "caller supplied GUID correlation id",
+      "required": true
+    }
+  ],
+  "posServerDelegation": {
+    "method": "GET",
+    "route": "/v1/fiscal-documents/{fiscalDocumentId}/digital-sales-invoice/presentation",
+    "contract": "fiscal-document-presentation.v1",
+    "contentType": "application/json",
+    "presentationVersion": "digital-sales-invoice-presentation-json-v1",
+    "templateVersion": "digital-sales-invoice-json-v1"
+  },
+  "responseFields": [
+    "terminalCashTenderId",
+    "paymentAttemptId",
+    "paymentConfirmationId",
+    "fiscalIssuanceReferenceId",
+    "fiscalIssuanceState",
+    "posFiscalDocumentId",
+    "fiscalDocumentNumber",
+    "fiscalDocumentStatus",
+    "receiptAvailabilityState",
+    "presentationVersion",
+    "templateVersion",
+    "contentType",
+    "authoritativePresentation",
+    "voidStatus",
+    "voidReasonCode",
+    "voidedAt",
+    "createdAt",
+    "updatedAt",
+    "correlationId"
+  ],
+  "authoritativePresentation": {
+    "owner": "POS Server",
+    "shape": "GetDigitalSalesInvoicePresentationResponse",
+    "notes": [
+      "Central PMS transports the complete POS Server response envelope.",
+      "Central PMS must not reconstruct lines, totals, taxes, tenders, fiscal numbers, wording, template content, or presentation content.",
+      "Central PMS does not mark the receipt rendered, printed, reprinted, emailed, or delivered."
+    ]
+  },
+  "preconditions": [
+    "terminal cash payment exists",
+    "canonical payment is confirmed",
+    "payment confirmation exists and remains recorded",
+    "terminal cash fiscal issuance exists",
+    "fiscal issuance is recorded, replayed, or reconciled",
+    "POS Server fiscal document id exists",
+    "terminal cash, payment confirmation, fiscal reference, and POS document references are consistent",
+    "void posture is represented from the POS Server presentation response"
+  ],
+  "statusCodes": [
+    {
+      "httpStatus": 200,
+      "meaning": "Authoritative POS Server receipt presentation returned."
+    },
+    {
+      "httpStatus": 400,
+      "code": "INVALID_REQUEST",
+      "meaning": "Required correlation header is missing or invalid."
+    },
+    {
+      "httpStatus": 404,
+      "code": "TERMINAL_CASH_PAYMENT_NOT_FOUND",
+      "meaning": "Terminal cash payment does not exist."
+    },
+    {
+      "httpStatus": 404,
+      "code": "TERMINAL_CASH_FISCAL_ISSUANCE_NOT_FOUND",
+      "meaning": "Fiscal issuance has not been created for the terminal cash tender."
+    },
+    {
+      "httpStatus": 409,
+      "code": "TERMINAL_CASH_PAYMENT_NOT_CONFIRMED",
+      "meaning": "Canonical Central PMS payment confirmation is not recorded."
+    },
+    {
+      "httpStatus": 409,
+      "code": "TERMINAL_CASH_RECEIPT_PRESENTATION_NOT_READY",
+      "meaning": "Fiscal issuance is pending, readback-required, retry-pending, or uncertain."
+    },
+    {
+      "httpStatus": 409,
+      "code": "POS_FISCAL_DOCUMENT_ID_MISSING",
+      "meaning": "Recorded fiscal issuance lacks a POS fiscal document id."
+    },
+    {
+      "httpStatus": 409,
+      "code": "POS_FISCAL_DOCUMENT_PRESENTATION_INCONSISTENT",
+      "meaning": "POS Server did not return the recorded fiscal document."
+    },
+    {
+      "httpStatus": 409,
+      "code": "POS_SERVER_RECEIPT_PRESENTATION_NOT_READY",
+      "meaning": "POS Server reports presentation is not safely ready."
+    },
+    {
+      "httpStatus": 503,
+      "code": "POS_SERVER_RECEIPT_PRESENTATION_UNAVAILABLE",
+      "meaning": "POS Server presentation read path is unavailable."
+    }
+  ],
+  "sideEffectsProhibited": [
+    "create fiscal issuance",
+    "create POS fiscal document",
+    "allocate fiscal number",
+    "modify canonical payment",
+    "modify fiscal state",
+    "mark receipt rendered",
+    "mark receipt printed",
+    "issue exit authorization",
+    "create gate command or event",
+    "invoke Payment Orchestrator"
+  ]
+}
