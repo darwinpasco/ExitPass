@@ -408,14 +408,421 @@ public sealed class GateCommandExecutionServiceIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task RetryAsync_WhenDueRetryableCommandSucceeds_FinalizesSucceededAndWritesAdditionalAudit()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-success");
+        var retryAdapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var service = CreateExecutionServiceAt(fixture, retryAdapter, fixture.Now.AddMinutes(10));
+
+        try
+        {
+            var before = await ReadExecutionStateAsync(fixture.CommandId);
+            var result = await service.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(fixture.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal(GateCommandExecutionOutcome.Executed, result.Outcome);
+            Assert.True(result.AdapterInvoked);
+            Assert.Equal(1, retryAdapter.CallCount);
+            Assert.Equal("SUCCEEDED", result.CommandStatus);
+            Assert.Equal("SUCCEEDED", state.CommandStatus);
+            Assert.Equal(2, state.AttemptCount);
+            Assert.Equal(2, state.AuditCount);
+            Assert.NotNull(before.Audit);
+            Assert.NotNull(state.Audit);
+            Assert.NotEqual(before.Audit!.HikCentralGateActionAuditId, state.Audit!.HikCentralGateActionAuditId);
+            Assert.Equal("SUCCEEDED", state.Audit.ActionOutcome);
+            Assert.Contains("__fake__", state.Audit.RequestPath, StringComparison.Ordinal);
+            Assert.DoesNotContain("/artemis/api/", state.Audit.RequestPath, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEqual("PHYSICAL_GATE_OPENED", state.Audit.ActionOutcome);
+            Assert.NotNull(inventory);
+            Assert.Equal("SUCCEEDED", inventory!.GateCommand!.CommandStatus);
+            Assert.Equal(2, inventory.GateCommand.AttemptCount);
+            Assert.Equal(2, inventory.HikCentralActionAttempts.Count);
+            Assert.Equal("SUCCEEDED", inventory.HikCentralActionAttempts[0].ActionOutcome);
+            Assert.Equal("RETRYABLE_FAILURE", inventory.HikCentralActionAttempts[1].ActionOutcome);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task ClaimRetryAsync_WhenDueRetryableCommandIsClaimed_ClearsNextAttemptAndIncrementsOnce()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("retry-claim");
+        await SetCommandRetryableAsync(fixture.CommandId, fixture.Now.AddMinutes(-5));
+        var repository = new GateCommandExecutionRepository(ConnectionString);
+
+        try
+        {
+            var result = await repository.ClaimRetryAsync(
+                fixture.CommandId,
+                fixture.Now.AddMinutes(3),
+                CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+
+            Assert.Equal(GateCommandClaimOutcome.Claimed, result.Outcome);
+            Assert.NotNull(result.Claim);
+            Assert.Equal("IN_PROGRESS", state.CommandStatus);
+            Assert.Equal(2, state.AttemptCount);
+            Assert.Null(state.NextAttemptAt);
+            Assert.Null(state.CompletedAt);
+            Assert.Null(state.TerminalFailureAt);
+            Assert.Equal(0, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenFakeReturnsRetryableOutcome_SchedulesNextRetryAndImmediateRepeatDoesNotCreateAudit()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-repeat-not-due");
+        var retryAdapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.RetryableFailure));
+        var retryService = CreateExecutionServiceAt(fixture, retryAdapter, fixture.Now.AddMinutes(10));
+
+        try
+        {
+            var first = await retryService.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var afterFirst = await ReadExecutionStateAsync(fixture.CommandId);
+            var repeatAdapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+            var repeatService = CreateExecutionServiceAt(fixture, repeatAdapter, fixture.Now.AddMinutes(11));
+
+            var repeat = await repeatService.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var afterRepeat = await ReadExecutionStateAsync(fixture.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(fixture.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal(GateCommandExecutionOutcome.Executed, first.Outcome);
+            Assert.Equal("RETRYABLE", first.CommandStatus);
+            Assert.Equal(1, retryAdapter.CallCount);
+            Assert.Equal("RETRYABLE", afterFirst.CommandStatus);
+            Assert.Equal(2, afterFirst.AttemptCount);
+            AssertNearlyEqual(fixture.Now.AddMinutes(15).AddMilliseconds(40), afterFirst.NextAttemptAt);
+            Assert.Equal(2, afterFirst.AuditCount);
+            Assert.Equal(GateCommandExecutionOutcome.Rejected, repeat.Outcome);
+            Assert.Equal("GATE_COMMAND_RETRY_NOT_DUE", repeat.ErrorCode);
+            Assert.False(repeat.AdapterInvoked);
+            Assert.Equal(0, repeatAdapter.CallCount);
+            Assert.Equal(afterFirst.NextAttemptAt, afterRepeat.NextAttemptAt);
+            Assert.Equal(2, afterRepeat.AuditCount);
+            Assert.Equal(2, inventory!.HikCentralActionAttempts.Count);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenRetryableOutcomeExhaustsAttempts_FinalizesTerminalFailure()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-exhausted");
+        await SetCommandAttemptsAsync(fixture.CommandId, attemptCount: 2, maxAttempts: 3);
+        var retryAdapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Timeout));
+        var service = CreateExecutionServiceAt(fixture, retryAdapter, fixture.Now.AddMinutes(10));
+
+        try
+        {
+            var result = await service.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(fixture.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal(GateCommandExecutionOutcome.Executed, result.Outcome);
+            Assert.Equal("TERMINAL_FAILURE", result.CommandStatus);
+            Assert.Equal(1, retryAdapter.CallCount);
+            Assert.Equal("TERMINAL_FAILURE", state.CommandStatus);
+            Assert.Equal(3, state.AttemptCount);
+            Assert.Null(state.NextAttemptAt);
+            Assert.NotNull(state.TerminalFailureAt);
+            Assert.Equal("TIMEOUT", state.Audit!.ActionOutcome);
+            Assert.True(state.Audit.TimedOut);
+            Assert.Equal(2, state.AuditCount);
+            Assert.Equal(2, inventory!.HikCentralActionAttempts.Count);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenCommandIsNotDue_RejectsWithoutAdapterCall()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-future");
+        var adapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var service = CreateExecutionServiceAt(fixture, adapter, fixture.Now.AddMinutes(5));
+
+        try
+        {
+            await SetNextAttemptAtAsync(fixture.CommandId, fixture.Now.AddMinutes(20));
+            var result = await service.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+
+            Assert.Equal(GateCommandExecutionOutcome.Rejected, result.Outcome);
+            Assert.Equal("GATE_COMMAND_RETRY_NOT_DUE", result.ErrorCode);
+            Assert.False(result.AdapterInvoked);
+            Assert.Equal(0, adapter.CallCount);
+            Assert.Equal("RETRYABLE", state.CommandStatus);
+            Assert.Equal(1, state.AttemptCount);
+            Assert.Equal(1, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenCommandIsNotRetryable_RejectsWithoutAdapterCall()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("retry-not-retryable");
+        var adapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var service = CreateExecutionServiceAt(fixture, adapter, fixture.Now.AddMinutes(10));
+
+        try
+        {
+            var result = await service.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+
+            Assert.Equal(GateCommandExecutionOutcome.Rejected, result.Outcome);
+            Assert.Equal("GATE_COMMAND_STATUS_NOT_RETRYABLE", result.ErrorCode);
+            Assert.False(result.AdapterInvoked);
+            Assert.Equal(0, adapter.CallCount);
+            Assert.Equal("REQUESTED", state.CommandStatus);
+            Assert.Equal(0, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenCommandTypeIsUnsupported_RejectsWithoutAdapterCall()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("retry-unsupported-type");
+        await SetCommandRetryableAsync(fixture.CommandId, fixture.Now.AddMinutes(-5));
+        await UpdateCommandTypeAsync(fixture.CommandId, "CLOSE_GATE");
+        var adapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var service = CreateExecutionServiceAt(fixture, adapter, fixture.Now.AddMinutes(10));
+
+        try
+        {
+            var result = await service.RetryAsync(fixture.CommandId, CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+
+            Assert.Equal(GateCommandExecutionOutcome.Rejected, result.Outcome);
+            Assert.Equal("GATE_COMMAND_TYPE_UNSUPPORTED", result.ErrorCode);
+            Assert.Equal(0, adapter.CallCount);
+            Assert.Equal("RETRYABLE", state.CommandStatus);
+            Assert.Equal(0, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenCommandIsMissing_RejectsWithoutAdapterCall()
+    {
+        var adapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var service = CreateExecutionServiceAt(null, adapter, DateTimeOffset.Parse("2026-07-16T00:00:00Z"));
+        var commandId = Guid.Parse("cccccccc-1111-2222-3333-444444444444");
+
+        var result = await service.RetryAsync(commandId, CancellationToken.None);
+
+        Assert.Equal(GateCommandExecutionOutcome.Rejected, result.Outcome);
+        Assert.Equal("GATE_COMMAND_NOT_FOUND", result.ErrorCode);
+        Assert.Equal(0, adapter.CallCount);
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenDueRetryableCommandIsHandledConcurrently_InvokesAdapterOnce()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-concurrent");
+        var adapter = new CountingAdapter(
+            new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success),
+            TimeSpan.FromMilliseconds(100));
+        var service = CreateExecutionServiceAt(fixture, adapter, fixture.Now.AddMinutes(10));
+
+        try
+        {
+            var tasks = Enumerable.Range(0, 6)
+                .Select(_ => service.RetryAsync(fixture.CommandId, CancellationToken.None))
+                .ToArray();
+
+            var results = await Task.WhenAll(tasks);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+
+            Assert.Equal(1, adapter.CallCount);
+            Assert.Equal(1, results.Count(result => result.AdapterInvoked));
+            Assert.Equal(2, state.AuditCount);
+            Assert.Equal(2, state.AttemptCount);
+            Assert.Equal("SUCCEEDED", state.CommandStatus);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenCancelledBeforeClaim_MutatesNothing()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-cancel-before");
+        var adapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.Success));
+        var service = CreateExecutionServiceAt(fixture, adapter, fixture.Now.AddMinutes(10));
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                service.RetryAsync(fixture.CommandId, cancellation.Token));
+
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+            Assert.Equal("RETRYABLE", state.CommandStatus);
+            Assert.Equal(1, state.AttemptCount);
+            Assert.Equal(1, state.AuditCount);
+            Assert.Equal(0, adapter.CallCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenCancelledAfterClaim_LeavesInProgressAndRecoveryCanRecover()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-cancel-after");
+        var adapter = new CancellingAdapter();
+        var service = CreateExecutionServiceAt(fixture, adapter, fixture.Now.AddMinutes(10));
+        var recovery = new GateCommandInProgressRecoveryService(
+            new GateCommandInProgressRecoveryRepository(ConnectionString),
+            new FixedClock(fixture.Now.AddMinutes(20)));
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                service.RetryAsync(fixture.CommandId, CancellationToken.None));
+
+            var interrupted = await ReadExecutionStateAsync(fixture.CommandId);
+            var recovered = await recovery.RecoverAsync(
+                fixture.CommandId,
+                fixture.Now.AddMinutes(15),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+
+            Assert.Equal(1, adapter.CallCount);
+            Assert.Equal("IN_PROGRESS", interrupted.CommandStatus);
+            Assert.Equal(2, interrupted.AttemptCount);
+            Assert.Equal(1, interrupted.AuditCount);
+            Assert.Equal(GateCommandRecoveryOutcome.RecoveredRetryable, recovered.Outcome);
+            Assert.Equal("RETRYABLE", state.CommandStatus);
+            Assert.Equal(2, state.AttemptCount);
+            Assert.Equal(1, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task FinalizeAsync_WhenRetryAuditInsertFails_RollsBackNewAuditAndLeavesRetryClaimInProgress()
+    {
+        var fixture = await PrepareRetryableFixtureWithAuditAsync("retry-finalize-rollback");
+        var repository = new GateCommandExecutionRepository(ConnectionString);
+
+        try
+        {
+            var claimResult = await repository.ClaimRetryAsync(
+                fixture.CommandId,
+                fixture.Now.AddMinutes(10),
+                CancellationToken.None);
+            Assert.Equal(GateCommandClaimOutcome.Claimed, claimResult.Outcome);
+            var invalidResult = new HikCentralGateActionResult(
+                HikCentralGateActionConstants.VendorCode,
+                HikCentralGateActionConstants.RequestMethod,
+                HikCentralGateActionConstants.OpenGateOperation,
+                fixture.TargetResourceCode,
+                "INVALID_OUTCOME",
+                Retryable: false,
+                FailureRecorded: true,
+                DurationMs: 1,
+                TimedOut: false,
+                VendorUnavailable: false,
+                TransportFailure: false,
+                HttpStatusCode: 500,
+                VendorResultCode: "INVALID_OUTCOME",
+                VendorResultMessage: "Invalid outcome for retry rollback proof.",
+                fixture.CorrelationId,
+                "FAKE-HIKCENTRAL-INVALID-RETRY",
+                fixture.Now.AddMinutes(10),
+                fixture.Now.AddMinutes(10).AddMilliseconds(1));
+
+            await Assert.ThrowsAsync<PostgresException>(() =>
+                repository.FinalizeAsync(
+                    claimResult.Claim!,
+                    invalidResult,
+                    fixture.Now.AddMinutes(11),
+                    TimeSpan.FromMinutes(5),
+                    CancellationToken.None));
+
+            var state = await ReadExecutionStateAsync(fixture.CommandId);
+            Assert.Equal("IN_PROGRESS", state.CommandStatus);
+            Assert.Equal(2, state.AttemptCount);
+            Assert.Equal(1, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
     private static GateCommandExecutionService CreateExecutionService(
         GateCommandExecutionFixture? fixture,
         IHikCentralGateActionAdapter adapter) =>
+        CreateExecutionServiceAt(
+            fixture,
+            adapter,
+            fixture?.Now.AddMinutes(3) ?? DateTimeOffset.Parse("2026-07-16T00:00:00Z"));
+
+    private static GateCommandExecutionService CreateExecutionServiceAt(
+        GateCommandExecutionFixture? fixture,
+        IHikCentralGateActionAdapter adapter,
+        DateTimeOffset utcNow) =>
         new(
             new GateCommandExecutionRepository(ConnectionString),
             adapter,
-            new FixedClock(fixture?.Now.AddMinutes(3) ?? DateTimeOffset.Parse("2026-07-16T00:00:00Z")),
+            new FixedClock(utcNow),
             new GateCommandExecutionOptions(TimeSpan.FromMinutes(5)));
+
+    private static async Task<GateCommandExecutionFixture> PrepareRetryableFixtureWithAuditAsync(string scope)
+    {
+        var fixture = await PrepareFixtureWithCommandAsync(scope);
+        var initialAdapter = new CountingAdapter(new FakeHikCentralGateActionAdapter(FakeHikCentralGateActionScenario.RetryableFailure));
+        var initialService = CreateExecutionServiceAt(fixture, initialAdapter, fixture.Now.AddMinutes(3));
+        var result = await initialService.ExecuteAsync(fixture.CommandId, CancellationToken.None);
+
+        Assert.Equal(GateCommandExecutionOutcome.Executed, result.Outcome);
+        Assert.Equal("RETRYABLE", result.CommandStatus);
+        Assert.Equal(1, initialAdapter.CallCount);
+
+        await SetNextAttemptAtAsync(fixture.CommandId, fixture.Now.AddMinutes(9));
+        return fixture;
+    }
 
     private static async Task<GateCommandExecutionFixture> PrepareFixtureWithCommandAsync(
         string scope,
@@ -686,6 +1093,23 @@ public sealed class GateCommandExecutionServiceIntegrationTests
         });
     }
 
+    private static async Task SetNextAttemptAtAsync(Guid commandId, DateTimeOffset nextAttemptAt)
+    {
+        const string sql = """
+            UPDATE gates.gate_commands
+            SET next_attempt_at = @next_attempt_at,
+                updated_at = @now
+            WHERE command_id = @command_id;
+            """;
+
+        await ExecuteAsync(sql, command =>
+        {
+            command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = commandId;
+            command.Parameters.Add("next_attempt_at", NpgsqlDbType.TimestampTz).Value = nextAttemptAt;
+            command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.UtcNow;
+        });
+    }
+
     private static async Task<GateCommandExecutionState> ReadExecutionStateAsync(Guid commandId)
     {
         const string sql = """
@@ -819,6 +1243,14 @@ public sealed class GateCommandExecutionServiceIntegrationTests
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
+    }
+
+    private static void AssertNearlyEqual(DateTimeOffset expected, DateTimeOffset? actual)
+    {
+        Assert.NotNull(actual);
+        Assert.True(
+            (actual.Value - expected).Duration() <= TimeSpan.FromMilliseconds(1),
+            $"Expected {expected:O} but got {actual.Value:O}.");
     }
 
     private static Guid DeterministicGuid(Guid baseId, int suffix)

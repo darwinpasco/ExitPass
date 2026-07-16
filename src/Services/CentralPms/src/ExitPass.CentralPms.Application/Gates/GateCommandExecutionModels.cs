@@ -11,6 +11,13 @@ public interface IGateCommandExecutionService
     Task<GateCommandExecutionResult> ExecuteAsync(
         Guid gateCommandId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes one explicitly supplied due RETRYABLE gate command through the configured gate-action adapter.
+    /// </summary>
+    Task<GateCommandExecutionResult> RetryAsync(
+        Guid gateCommandId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -22,6 +29,14 @@ public interface IGateCommandExecutionRepository
     /// Claims one eligible REQUESTED command and returns the safe execution context.
     /// </summary>
     Task<GateCommandClaimResult> ClaimAsync(
+        Guid gateCommandId,
+        DateTimeOffset claimedAt,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Claims one eligible due RETRYABLE command and returns the safe execution context.
+    /// </summary>
+    Task<GateCommandClaimResult> ClaimRetryAsync(
         Guid gateCommandId,
         DateTimeOffset claimedAt,
         CancellationToken cancellationToken);

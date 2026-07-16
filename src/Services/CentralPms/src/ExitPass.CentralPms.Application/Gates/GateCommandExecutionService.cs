@@ -37,6 +37,28 @@ public sealed class GateCommandExecutionService : IGateCommandExecutionService
         Guid gateCommandId,
         CancellationToken cancellationToken)
     {
+        return await ExecuteClaimedAsync(
+            gateCommandId,
+            static (repository, commandId, now, token) => repository.ClaimAsync(commandId, now, token),
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<GateCommandExecutionResult> RetryAsync(
+        Guid gateCommandId,
+        CancellationToken cancellationToken)
+    {
+        return await ExecuteClaimedAsync(
+            gateCommandId,
+            static (repository, commandId, now, token) => repository.ClaimRetryAsync(commandId, now, token),
+            cancellationToken);
+    }
+
+    private async Task<GateCommandExecutionResult> ExecuteClaimedAsync(
+        Guid gateCommandId,
+        Func<IGateCommandExecutionRepository, Guid, DateTimeOffset, CancellationToken, Task<GateCommandClaimResult>> claimCommand,
+        CancellationToken cancellationToken)
+    {
         if (gateCommandId == Guid.Empty)
         {
             return Rejected(gateCommandId, "GATE_COMMAND_ID_REQUIRED", "Gate command id is required.");
@@ -44,7 +66,7 @@ public sealed class GateCommandExecutionService : IGateCommandExecutionService
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var claimResult = await _repository.ClaimAsync(gateCommandId, _clock.UtcNow, cancellationToken);
+        var claimResult = await claimCommand(_repository, gateCommandId, _clock.UtcNow, cancellationToken);
         if (claimResult.Outcome == GateCommandClaimOutcome.AlreadyCompleted)
         {
             return new GateCommandExecutionResult(
