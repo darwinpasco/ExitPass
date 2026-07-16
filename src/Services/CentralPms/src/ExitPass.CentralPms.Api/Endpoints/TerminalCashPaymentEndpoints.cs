@@ -2,6 +2,7 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
+using ExitPass.CentralPms.Domain.FiscalIssuance;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
@@ -32,6 +33,18 @@ public static class TerminalCashPaymentEndpoints
         group.MapGet("/references/{terminalCashTenderId:guid}", ReadbackAsync)
             .WithName("GetTerminalCashPaymentByTenderReference")
             .Produces<TerminalCashPaymentReadbackResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound);
+
+        group.MapPost("/references/{terminalCashTenderId:guid}/fiscal-issuance", IssueFiscalAsync)
+            .WithName("IssueTerminalCashPaymentFiscalIssuance")
+            .Produces<TerminalCashFiscalIssuanceResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict);
+
+        group.MapGet("/references/{terminalCashTenderId:guid}/fiscal-issuance", ReadFiscalAsync)
+            .WithName("GetTerminalCashPaymentFiscalIssuance")
+            .Produces<TerminalCashFiscalIssuanceResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound);
 
         return app;
@@ -142,6 +155,95 @@ public static class TerminalCashPaymentEndpoints
         return Results.Ok(ToReadbackResponse(readback));
     }
 
+    private static async Task<IResult> IssueFiscalAsync(
+        Guid terminalCashTenderId,
+        TerminalCashFiscalIssuanceRequest? body,
+        HttpRequest request,
+        ITerminalCashFiscalIssuanceService service,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("IssueTerminalCashFiscalIssuance", ActivityKind.Server);
+        activity?.SetTag("http.route", "POST /v1/terminal-cash-payments/references/{terminalCashTenderId}/fiscal-issuance");
+        activity?.SetTag("terminal_cash_tender_id", terminalCashTenderId);
+
+        if (body is null)
+        {
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "Request body is required.", Guid.Empty));
+        }
+
+        if (!TryReadHeaders(request, out var idempotencyKey, out var correlationId, out var headerError))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, headerError!.Message);
+            return Results.BadRequest(headerError);
+        }
+
+        try
+        {
+            var result = await service.IssueOrReadAsync(
+                    new TerminalCashFiscalIssuanceCommand(terminalCashTenderId, idempotencyKey!, correlationId),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("payment_confirmation_id", result.PaymentConfirmationId);
+            activity?.SetTag("fiscal_issuance_reference_id", result.FiscalIssuanceReferenceId);
+            return Results.Ok(ToFiscalResponse(result));
+        }
+        catch (TerminalCashFiscalIssuanceRejectedException ex) when (ex.IsNotFound)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.NotFound(BuildError(ex.ErrorCode, ex.Message, correlationId));
+        }
+        catch (TerminalCashFiscalIssuanceRejectedException ex) when (IsBadRequest(ex.ErrorCode))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.BadRequest(BuildError(ex.ErrorCode, ex.Message, correlationId));
+        }
+        catch (TerminalCashFiscalIssuanceRejectedException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.Conflict(BuildError(ex.ErrorCode, ex.Message, correlationId));
+        }
+    }
+
+    private static async Task<IResult> ReadFiscalAsync(
+        Guid terminalCashTenderId,
+        HttpRequest request,
+        ITerminalCashFiscalIssuanceService service,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("GetTerminalCashFiscalIssuance", ActivityKind.Server);
+        activity?.SetTag("http.route", "GET /v1/terminal-cash-payments/references/{terminalCashTenderId}/fiscal-issuance");
+        activity?.SetTag("terminal_cash_tender_id", terminalCashTenderId);
+
+        Guid? correlationId = null;
+        if (request.Headers.TryGetValue("X-Correlation-Id", out var correlationHeader) &&
+            Guid.TryParse(correlationHeader.ToString(), out var parsedCorrelationId))
+        {
+            correlationId = parsedCorrelationId;
+        }
+
+        var result = await service.GetByTerminalCashTenderIdAsync(
+                terminalCashTenderId,
+                correlationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (result is null)
+        {
+            return Results.NotFound(BuildError(
+                "TERMINAL_CASH_FISCAL_ISSUANCE_NOT_FOUND",
+                "Fiscal issuance was not found for the terminal cash tender reference.",
+                correlationId ?? Guid.Empty));
+        }
+
+        activity?.SetStatus(ActivityStatusCode.Ok);
+        activity?.SetTag("fiscal_issuance_reference_id", result.FiscalIssuanceReferenceId);
+        return Results.Ok(ToFiscalResponse(result));
+    }
+
     private static bool TryReadHeaders(
         HttpRequest request,
         out string? idempotencyKey,
@@ -197,6 +299,7 @@ public static class TerminalCashPaymentEndpoints
     {
         return new TerminalCashPaymentReadbackResponse(
             readback.TerminalCashTenderId,
+            readback.PaymentAttemptId,
             readback.CashCustodySessionId,
             readback.ParkingSessionId,
             readback.TariffSnapshotId,
@@ -221,6 +324,57 @@ public static class TerminalCashPaymentEndpoints
             readback.CorrelationId,
             readback.FiscalStatus);
     }
+
+    private static TerminalCashFiscalIssuanceResponse ToFiscalResponse(TerminalCashFiscalIssuanceResult result)
+    {
+        return new TerminalCashFiscalIssuanceResponse(
+            result.TerminalCashTenderId,
+            result.PaymentAttemptId,
+            result.PaymentConfirmationId,
+            result.FiscalIssuanceReferenceId,
+            ToWireValue(result.FiscalIssuanceState),
+            ToWireValue(result.ResultClassification),
+            result.PosFiscalDocumentId,
+            result.FiscalDocumentNumber,
+            result.FiscalNumberAssignedAt,
+            result.SemanticHashSourceVersion,
+            result.CreatedAt,
+            result.UpdatedAt,
+            result.CorrelationId,
+            result.SafeErrorCode,
+            result.SafeErrorPosture,
+            result.PosServerCallAttempted,
+            result.ExitAuthorizationIssued,
+            result.GateBehaviorTriggered);
+    }
+
+    private static string ToWireValue(FiscalIssuanceIntegrationState value) =>
+        value switch
+        {
+            FiscalIssuanceIntegrationState.NotRequired => "NOT_REQUIRED",
+            FiscalIssuanceIntegrationState.PendingFiscalIssuance => "PENDING_FISCAL_ISSUANCE",
+            FiscalIssuanceIntegrationState.FiscalIssuanceRequested => "FISCAL_ISSUANCE_REQUESTED",
+            FiscalIssuanceIntegrationState.FiscalIssuanceRecorded => "FISCAL_ISSUANCE_RECORDED",
+            FiscalIssuanceIntegrationState.FiscalIssuanceReplayed => "FISCAL_ISSUANCE_REPLAYED",
+            FiscalIssuanceIntegrationState.FiscalIssuanceConflict => "FISCAL_ISSUANCE_CONFLICT",
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedRequest => "FISCAL_ISSUANCE_FAILED_REQUEST",
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedConfiguration => "FISCAL_ISSUANCE_FAILED_CONFIGURATION",
+            FiscalIssuanceIntegrationState.FiscalIssuanceFailedService => "FISCAL_ISSUANCE_FAILED_SERVICE",
+            FiscalIssuanceIntegrationState.FiscalIssuanceUnknown => "FISCAL_ISSUANCE_UNKNOWN",
+            FiscalIssuanceIntegrationState.FiscalIssuanceManualReview => "FISCAL_ISSUANCE_MANUAL_REVIEW",
+            FiscalIssuanceIntegrationState.FiscalIssuanceExceptionReleased => "FISCAL_ISSUANCE_EXCEPTION_RELEASED",
+            FiscalIssuanceIntegrationState.FiscalIssuanceReconciled => "FISCAL_ISSUANCE_RECONCILED",
+            _ => value.ToString()
+        };
+
+    private static string? ToWireValue(FiscalIssuanceResultClassification? value) =>
+        value switch
+        {
+            FiscalIssuanceResultClassification.NewlyCreated => "NEWLY_CREATED",
+            FiscalIssuanceResultClassification.IdempotentReplay => "IDEMPOTENT_REPLAY",
+            null => null,
+            _ => value.ToString()
+        };
 
     private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId)
     {
