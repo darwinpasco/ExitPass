@@ -84,6 +84,54 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
     }
 
     /// <inheritdoc />
+    public async Task<GateCommandClaimResult> ClaimRetryAsync(
+        Guid gateCommandId,
+        DateTimeOffset claimedAt,
+        CancellationToken cancellationToken)
+    {
+        if (gateCommandId == Guid.Empty)
+        {
+            return Rejected(null, "GATE_COMMAND_ID_REQUIRED", "Gate command id is required.", null);
+        }
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        try
+        {
+            var command = await ReadCommandForClaimAsync(connection, transaction, gateCommandId, cancellationToken);
+            if (command is null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return Rejected(null, "GATE_COMMAND_NOT_FOUND", "Gate command does not exist.", null);
+            }
+
+            var rejection = ValidateRetryClaimEligibility(command, claimedAt);
+            if (rejection is not null)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return rejection;
+            }
+
+            var claimed = await MarkRetryClaimedAsync(connection, transaction, command, claimedAt, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return new GateCommandClaimResult(
+                GateCommandClaimOutcome.Claimed,
+                claimed,
+                InProgressStatus,
+                ErrorCode: null,
+                Message: null);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<GateCommandFinalizationResult> FinalizeAsync(
         GateCommandExecutionClaim claim,
         HikCentralGateActionResult actionResult,
@@ -182,6 +230,7 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
                 gc.max_attempts,
                 gc.retry_policy_code,
                 gc.requested_at,
+                gc.next_attempt_at,
                 gc.correlation_id,
                 gd.vendor_device_ref,
                 gac.gate_authorization_consumption_id AS existing_consumption_id
@@ -224,6 +273,7 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
             reader.GetInt32("max_attempts"),
             reader.GetString("retry_policy_code"),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("requested_at")),
+            GetNullableDateTimeOffset(reader, "next_attempt_at"),
             reader.GetGuid("correlation_id"),
             GetNullableString(reader, "vendor_device_ref"),
             GetNullableGuid(reader, "existing_consumption_id"));
@@ -255,6 +305,73 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
                 command.CommandStatus);
         }
 
+        var requiredContextRejection = ValidateRequiredExecutionContext(command);
+        if (requiredContextRejection is not null)
+        {
+            return requiredContextRejection;
+        }
+
+        return null;
+    }
+
+    private static GateCommandClaimResult? ValidateRetryClaimEligibility(
+        CommandForClaim command,
+        DateTimeOffset claimedAt)
+    {
+        if (!string.Equals(command.CommandType, OpenGateCommandType, StringComparison.Ordinal))
+        {
+            return Rejected(command.CommandStatus, "GATE_COMMAND_TYPE_UNSUPPORTED", "Only OPEN_GATE commands are supported.", command.CommandStatus);
+        }
+
+        if (string.Equals(command.CommandStatus, SucceededStatus, StringComparison.Ordinal) ||
+            string.Equals(command.CommandStatus, TerminalFailureStatus, StringComparison.Ordinal))
+        {
+            return new GateCommandClaimResult(
+                GateCommandClaimOutcome.AlreadyCompleted,
+                Claim: null,
+                command.CommandStatus,
+                "GATE_COMMAND_ALREADY_TERMINAL",
+                "Gate command already reached a terminal lifecycle state and will not be retried.");
+        }
+
+        if (!string.Equals(command.CommandStatus, RetryableStatus, StringComparison.Ordinal))
+        {
+            return Rejected(
+                command.CommandStatus,
+                "GATE_COMMAND_STATUS_NOT_RETRYABLE",
+                "Gate command must be RETRYABLE for this explicit retry execution slice.",
+                command.CommandStatus);
+        }
+
+        if (command.NextAttemptAt is null)
+        {
+            return Rejected(
+                command.CommandStatus,
+                "GATE_COMMAND_NEXT_ATTEMPT_REQUIRED",
+                "Gate command next_attempt_at is required for retry execution.",
+                command.CommandStatus);
+        }
+
+        if (command.NextAttemptAt > claimedAt)
+        {
+            return Rejected(
+                command.CommandStatus,
+                "GATE_COMMAND_RETRY_NOT_DUE",
+                "Gate command retry is not due yet.",
+                command.CommandStatus);
+        }
+
+        var requiredContextRejection = ValidateRequiredExecutionContext(command);
+        if (requiredContextRejection is not null)
+        {
+            return requiredContextRejection;
+        }
+
+        return null;
+    }
+
+    private static GateCommandClaimResult? ValidateRequiredExecutionContext(CommandForClaim command)
+    {
         if (command.AttemptCount >= command.MaxAttempts)
         {
             return Rejected(command.CommandStatus, "GATE_COMMAND_ATTEMPTS_EXHAUSTED", "Gate command has no remaining attempts.", command.CommandStatus);
@@ -313,7 +430,7 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
             SET
                 command_status = 'IN_PROGRESS',
                 attempt_count = attempt_count + 1,
-                started_at = @claimed_at,
+                started_at = COALESCE(started_at, @claimed_at),
                 last_attempted_at = @claimed_at,
                 next_attempt_at = NULL,
                 updated_at = @claimed_at
@@ -331,6 +448,70 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
         if (!await reader.ReadAsync(cancellationToken))
         {
             throw new InvalidOperationException("Gate command claim update did not affect the expected REQUESTED row.");
+        }
+
+        var gateDeviceId = commandForClaim.GateDeviceId!.Value;
+        var vendorSystemId = commandForClaim.VendorSystemId!.Value;
+        return new GateCommandExecutionClaim(
+            commandForClaim.CommandId,
+            commandForClaim.CommandType,
+            commandForClaim.SourceProcessingId,
+            commandForClaim.SourceEventId,
+            commandForClaim.SourceEventRef,
+            commandForClaim.GateAuthorizationConsumptionId,
+            commandForClaim.ExitAuthorizationId,
+            commandForClaim.ParkingSessionId,
+            commandForClaim.PaymentAttemptId,
+            commandForClaim.TariffSnapshotId,
+            gateDeviceId,
+            commandForClaim.ServiceIdentityId,
+            commandForClaim.LaneId,
+            commandForClaim.SiteId,
+            vendorSystemId,
+            commandForClaim.CorrelationId,
+            reader.GetInt32("attempt_count"),
+            commandForClaim.MaxAttempts,
+            commandForClaim.RetryPolicyCode,
+            commandForClaim.RequestedAt,
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("started_at")),
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("last_attempted_at")),
+            commandForClaim.TargetResourceCode!.Trim());
+    }
+
+    private static async Task<GateCommandExecutionClaim> MarkRetryClaimedAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        CommandForClaim commandForClaim,
+        DateTimeOffset claimedAt,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE gates.gate_commands
+            SET
+                command_status = 'IN_PROGRESS',
+                attempt_count = attempt_count + 1,
+                started_at = COALESCE(started_at, @claimed_at),
+                last_attempted_at = @claimed_at,
+                next_attempt_at = NULL,
+                completed_at = NULL,
+                terminal_failure_at = NULL,
+                updated_at = @claimed_at
+            WHERE command_id = @command_id
+              AND command_status = 'RETRYABLE'
+              AND next_attempt_at IS NOT NULL
+              AND next_attempt_at <= @claimed_at
+              AND attempt_count < max_attempts
+            RETURNING attempt_count, started_at, last_attempted_at;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
+        command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = commandForClaim.CommandId;
+        command.Parameters.Add("claimed_at", NpgsqlDbType.TimestampTz).Value = claimedAt;
+
+        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            throw new InvalidOperationException("Gate command retry claim update did not affect the expected RETRYABLE row.");
         }
 
         var gateDeviceId = commandForClaim.GateDeviceId!.Value;
@@ -686,6 +867,12 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
         return reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
     }
 
+    private static DateTimeOffset? GetNullableDateTimeOffset(DbDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
+    }
+
     private sealed record CommandForClaim(
         Guid CommandId,
         string CommandType,
@@ -707,6 +894,7 @@ public sealed class GateCommandExecutionRepository : IGateCommandExecutionReposi
         int MaxAttempts,
         string RetryPolicyCode,
         DateTimeOffset RequestedAt,
+        DateTimeOffset? NextAttemptAt,
         Guid CorrelationId,
         string? TargetResourceCode,
         Guid? ExistingConsumptionId);
