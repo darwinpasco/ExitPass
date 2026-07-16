@@ -570,6 +570,12 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IGateCommandDispatchCandidateRepository>(_ =>
         new GateCommandDispatchCandidateRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandDispatchCycleService, GateCommandDispatchCycleService>();
+    builder.Services.AddScoped<IGateCommandInProgressRecoveryRepository>(_ =>
+        new GateCommandInProgressRecoveryRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IGateCommandInProgressRecoveryService, GateCommandInProgressRecoveryService>();
+    builder.Services.AddScoped<IGateCommandRecoveryCandidateRepository>(_ =>
+        new GateCommandRecoveryCandidateRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IGateCommandRecoveryCycleService, GateCommandRecoveryCycleService>();
     builder.Services
         .AddOptions<GateCommandDispatchWorkerOptions>()
         .Bind(builder.Configuration.GetSection(GateCommandDispatchWorkerOptions.SectionName))
