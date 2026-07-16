@@ -167,6 +167,72 @@ public enum GateCommandExecutionOutcome
 }
 
 /// <summary>
+/// Application service boundary for one deterministic gate command dispatch cycle.
+/// </summary>
+public interface IGateCommandDispatchCycleService
+{
+    /// <summary>
+    /// Selects and processes at most one eligible canonical gate command.
+    /// </summary>
+    Task<GateCommandDispatchCycleResult> RunOnceAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Read-only candidate discovery boundary for one gate command dispatch cycle.
+/// </summary>
+public interface IGateCommandDispatchCandidateRepository
+{
+    /// <summary>
+    /// Finds the next eligible canonical gate command without mutating command state.
+    /// </summary>
+    Task<GateCommandDispatchCandidate?> FindNextEligibleAsync(
+        DateTimeOffset asOf,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Candidate selected for one dispatch-cycle execution attempt.
+/// </summary>
+public sealed record GateCommandDispatchCandidate(
+    Guid GateCommandId,
+    string CommandStatus,
+    DateTimeOffset EligibilityTimestamp);
+
+/// <summary>
+/// Result of one deterministic dispatch cycle.
+/// </summary>
+public sealed record GateCommandDispatchCycleResult(
+    Guid? GateCommandId,
+    GateCommandDispatchCycleOutcome Outcome,
+    string? CandidateStatus,
+    string? FinalCommandStatus,
+    Guid? HikCentralGateActionAuditId,
+    bool AdapterInvoked,
+    string? ErrorCode,
+    string? Message);
+
+/// <summary>
+/// Dispatch-cycle outcome classification.
+/// </summary>
+public enum GateCommandDispatchCycleOutcome
+{
+    /// <summary>
+    /// No eligible command was found.
+    /// </summary>
+    NoWork,
+
+    /// <summary>
+    /// One selected command was executed through the existing explicit execution service.
+    /// </summary>
+    Dispatched,
+
+    /// <summary>
+    /// The selected command became ineligible after discovery and no alternate command was processed.
+    /// </summary>
+    LostRaceOrIneligible
+}
+
+/// <summary>
 /// Application service boundary for explicitly recovering one stale IN_PROGRESS gate command.
 /// </summary>
 public interface IGateCommandInProgressRecoveryService
