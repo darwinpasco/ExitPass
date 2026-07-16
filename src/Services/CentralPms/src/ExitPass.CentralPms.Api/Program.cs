@@ -576,6 +576,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IGateCommandRecoveryCandidateRepository>(_ =>
         new GateCommandRecoveryCandidateRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandRecoveryCycleService, GateCommandRecoveryCycleService>();
+    builder.Services.AddSingleton(TimeProvider.System);
     builder.Services
         .AddOptions<GateCommandDispatchWorkerOptions>()
         .Bind(builder.Configuration.GetSection(GateCommandDispatchWorkerOptions.SectionName))
@@ -585,6 +586,15 @@ static void ConfigureApplicationServices(
         .ValidateOnStart();
     builder.Services.AddSingleton<IGateCommandDispatchWorkerDelay, GateCommandDispatchWorkerDelay>();
     builder.Services.AddHostedService<GateCommandDispatchWorker>();
+    builder.Services
+        .AddOptions<GateCommandRecoveryWorkerOptions>()
+        .Bind(builder.Configuration.GetSection(GateCommandRecoveryWorkerOptions.SectionName))
+        .Validate(
+            options => options.Validate().Count == 0,
+            $"Invalid {GateCommandRecoveryWorkerOptions.SectionName} configuration.")
+        .ValidateOnStart();
+    builder.Services.AddSingleton<IGateCommandRecoveryWorkerDelay, GateCommandRecoveryWorkerDelay>();
+    builder.Services.AddHostedService<GateCommandRecoveryWorker>();
 
     builder.Services.AddScoped<IReconciliationWorkflowService, ReconciliationWorkflowService>();
     builder.Services.AddScoped<IReconciliationWorkflowRepository>(serviceProvider =>
