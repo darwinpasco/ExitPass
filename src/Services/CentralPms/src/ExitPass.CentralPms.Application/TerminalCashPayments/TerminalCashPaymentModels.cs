@@ -107,6 +107,7 @@ public sealed record TerminalCashPaymentResult(
 public sealed record TerminalCashPaymentReadback(
     Guid TerminalCashPaymentCommandId,
     Guid TerminalCashTenderId,
+    Guid PaymentAttemptId,
     Guid CashCustodySessionId,
     Guid ParkingSessionId,
     Guid TariffSnapshotId,

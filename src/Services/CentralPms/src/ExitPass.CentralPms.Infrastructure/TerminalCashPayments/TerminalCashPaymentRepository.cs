@@ -172,6 +172,7 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
             SELECT
                 terminal_cash_payment_command_id,
                 terminal_cash_tender_id,
+                payment_attempt_id,
                 cash_custody_session_id,
                 parking_session_id,
                 tariff_snapshot_id,
@@ -773,6 +774,7 @@ public sealed class TerminalCashPaymentRepository : ITerminalCashPaymentReposito
         return new TerminalCashPaymentReadback(
             reader.GetGuid(reader.GetOrdinal("terminal_cash_payment_command_id")),
             reader.GetGuid(reader.GetOrdinal("terminal_cash_tender_id")),
+            reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
             reader.GetGuid(reader.GetOrdinal("cash_custody_session_id")),
             reader.GetGuid(reader.GetOrdinal("parking_session_id")),
             reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
