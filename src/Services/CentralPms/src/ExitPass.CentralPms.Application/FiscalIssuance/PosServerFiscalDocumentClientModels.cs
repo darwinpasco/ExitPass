@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 
 namespace ExitPass.CentralPms.Application.FiscalIssuance;
@@ -10,6 +11,11 @@ public interface IPosServerFiscalDocumentClient
 
     Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
         Guid fiscalDocumentId,
+        CancellationToken cancellationToken);
+
+    Task<PosServerFiscalDocumentPresentationReadResult> GetFiscalDocumentPresentationAsync(
+        Guid fiscalDocumentId,
+        Guid? correlationId,
         CancellationToken cancellationToken);
 
     Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
@@ -256,6 +262,32 @@ public sealed record PosServerFiscalDocumentReadResult(
     string? VoidStatus = null,
     string? VoidReasonCode = null,
     DateTimeOffset? VoidedAt = null);
+
+public sealed record PosServerFiscalDocumentPresentationReadResult(
+    PosServerFiscalDocumentOutcome Outcome,
+    bool Succeeded,
+    int HttpStatusCode,
+    string Code,
+    string Message,
+    Guid? FiscalDocumentId,
+    string? FiscalDocumentNumber,
+    string? FiscalDocumentStatus,
+    string? FiscalNumberAssignmentState,
+    Guid? FiscalDocumentStatusCodeId,
+    string? FiscalDocumentType,
+    Guid? FiscalDocumentTypeCodeId,
+    string? FiscalSeries,
+    string? FiscalNumberPrefixText,
+    string? FiscalNumberSuffixText,
+    DateTimeOffset? FiscalNumberAssignedAt,
+    DateTimeOffset? RecordedAt,
+    string? VoidStatus,
+    string? VoidReasonCode,
+    DateTimeOffset? VoidedAt,
+    string? PresentationVersion,
+    string? TemplateVersion,
+    string? ContentType,
+    JsonElement? AuthoritativeResponse);
 
 public sealed record PosServerFiscalDocumentVoidRequest(
     string IdempotencyKey,

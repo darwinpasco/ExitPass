@@ -47,6 +47,14 @@ public static class TerminalCashPaymentEndpoints
             .Produces<TerminalCashFiscalIssuanceResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound);
 
+        group.MapGet("/references/{terminalCashTenderId:guid}/receipt-presentation", ReadReceiptPresentationAsync)
+            .WithName("GetTerminalCashPaymentReceiptPresentation")
+            .Produces<TerminalCashReceiptPresentationResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable);
+
         return app;
     }
 
@@ -244,6 +252,45 @@ public static class TerminalCashPaymentEndpoints
         return Results.Ok(ToFiscalResponse(result));
     }
 
+    private static async Task<IResult> ReadReceiptPresentationAsync(
+        Guid terminalCashTenderId,
+        HttpRequest request,
+        ITerminalCashReceiptPresentationService service,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("GetTerminalCashReceiptPresentation", ActivityKind.Server);
+        activity?.SetTag("http.route", "GET /v1/terminal-cash-payments/references/{terminalCashTenderId}/receipt-presentation");
+        activity?.SetTag("terminal_cash_tender_id", terminalCashTenderId);
+
+        if (!TryReadCorrelationId(request, out var correlationId, out var headerError))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, headerError!.Message);
+            return Results.BadRequest(headerError);
+        }
+
+        try
+        {
+            var result = await service.GetByTerminalCashTenderIdAsync(
+                    terminalCashTenderId,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("fiscal_issuance_reference_id", result.FiscalIssuanceReferenceId);
+            activity?.SetTag("pos_fiscal_document_id", result.PosFiscalDocumentId);
+            return Results.Ok(ToReceiptPresentationResponse(result));
+        }
+        catch (TerminalCashReceiptPresentationRejectedException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.Json(
+                BuildError(ex.ErrorCode, ex.Message, correlationId),
+                statusCode: ex.HttpStatusCode);
+        }
+    }
+
     private static bool TryReadHeaders(
         HttpRequest request,
         out string? idempotencyKey,
@@ -268,6 +315,22 @@ public static class TerminalCashPaymentEndpoints
 
         error = null;
         idempotencyKey = idempotencyKey.Trim();
+        return true;
+    }
+
+    private static bool TryReadCorrelationId(
+        HttpRequest request,
+        out Guid correlationId,
+        out ErrorResponse? error)
+    {
+        var correlationIdRaw = request.Headers["X-Correlation-Id"].FirstOrDefault();
+        if (!Guid.TryParse(correlationIdRaw, out correlationId))
+        {
+            error = BuildError("INVALID_REQUEST", "X-Correlation-Id header is required.", Guid.Empty);
+            return false;
+        }
+
+        error = null;
         return true;
     }
 
@@ -346,6 +409,31 @@ public static class TerminalCashPaymentEndpoints
             result.PosServerCallAttempted,
             result.ExitAuthorizationIssued,
             result.GateBehaviorTriggered);
+    }
+
+    private static TerminalCashReceiptPresentationResponse ToReceiptPresentationResponse(
+        TerminalCashReceiptPresentationResult result)
+    {
+        return new TerminalCashReceiptPresentationResponse(
+            result.TerminalCashTenderId,
+            result.PaymentAttemptId,
+            result.PaymentConfirmationId,
+            result.FiscalIssuanceReferenceId,
+            ToWireValue(result.FiscalIssuanceState),
+            result.PosFiscalDocumentId,
+            result.FiscalDocumentNumber,
+            result.FiscalDocumentStatus,
+            result.ReceiptAvailabilityState,
+            result.PresentationVersion,
+            result.TemplateVersion,
+            result.ContentType,
+            result.AuthoritativePresentation,
+            result.VoidStatus,
+            result.VoidReasonCode,
+            result.VoidedAt,
+            result.CreatedAt,
+            result.UpdatedAt,
+            result.CorrelationId);
     }
 
     private static string ToWireValue(FiscalIssuanceIntegrationState value) =>

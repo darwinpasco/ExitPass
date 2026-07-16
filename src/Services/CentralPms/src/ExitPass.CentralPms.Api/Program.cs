@@ -677,6 +677,7 @@ static void ConfigureApplicationServices(
         new TerminalCashPaymentRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashPaymentService, TerminalCashPaymentService>();
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
+    builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();

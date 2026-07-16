@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ExitPass.CentralPms.Contracts.TerminalCashPayments;
 
 /// <summary>
@@ -105,3 +107,27 @@ public sealed record TerminalCashFiscalIssuanceResponse(
     bool PosServerCallAttempted,
     bool ExitAuthorizationIssued,
     bool GateBehaviorTriggered);
+
+/// <summary>
+/// Terminal cash receipt-presentation readback response.
+/// </summary>
+public sealed record TerminalCashReceiptPresentationResponse(
+    Guid TerminalCashTenderId,
+    Guid PaymentAttemptId,
+    Guid PaymentConfirmationId,
+    Guid FiscalIssuanceReferenceId,
+    string FiscalIssuanceState,
+    Guid PosFiscalDocumentId,
+    string? FiscalDocumentNumber,
+    string? FiscalDocumentStatus,
+    string ReceiptAvailabilityState,
+    string? PresentationVersion,
+    string? TemplateVersion,
+    string? ContentType,
+    JsonElement AuthoritativePresentation,
+    string? VoidStatus,
+    string? VoidReasonCode,
+    DateTimeOffset? VoidedAt,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset UpdatedAt,
+    Guid CorrelationId);
