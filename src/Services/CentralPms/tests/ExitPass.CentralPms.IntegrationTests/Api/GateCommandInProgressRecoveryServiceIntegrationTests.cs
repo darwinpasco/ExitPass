@@ -319,10 +319,370 @@ public sealed class GateCommandInProgressRecoveryServiceIntegrationTests
         Assert.DoesNotContain(resultPropertyNames, name => name.Contains("Opened", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenNoStaleCommandExists_ReturnsNoWorkWithoutMutation()
+    {
+        var requested = await PrepareFixtureWithCommandAsync("recovery-cycle-nowork-requested");
+        var fresh = await PrepareFixtureWithCommandAsync("recovery-cycle-nowork-fresh");
+        var retryable = await PrepareFixtureWithCommandAsync("recovery-cycle-nowork-retryable");
+        var succeeded = await PrepareFixtureWithCommandAsync("recovery-cycle-nowork-succeeded");
+        var terminal = await PrepareFixtureWithCommandAsync("recovery-cycle-nowork-terminal");
+        var unsupported = await PrepareFixtureWithCommandAsync("recovery-cycle-nowork-unsupported");
+        var fixtures = new[] { requested, fresh, retryable, succeeded, terminal, unsupported };
+
+        await MarkInProgressAsync(fresh, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: fresh.Now.AddMinutes(-1));
+        await MarkInProgressAsync(retryable, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: retryable.Now.AddMinutes(-10));
+        await CreateService(retryable).RecoverAsync(
+            retryable.CommandId,
+            retryable.Now.AddMinutes(-5),
+            TimeSpan.FromMinutes(5),
+            CancellationToken.None);
+        await MarkSucceededAsync(succeeded);
+        await MarkInProgressAsync(terminal, attemptCount: 3, maxAttempts: 3, lastAttemptedAt: terminal.Now.AddMinutes(-10));
+        await CreateService(terminal).RecoverAsync(
+            terminal.CommandId,
+            terminal.Now.AddMinutes(-5),
+            TimeSpan.FromMinutes(5),
+            CancellationToken.None);
+        await MarkInProgressAsync(unsupported, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: unsupported.Now.AddMinutes(-10));
+        await UpdateCommandTypeAsync(unsupported.CommandId, "CLOSE_GATE");
+        var service = CreateCycleService();
+
+        try
+        {
+            var result = await service.RunOnceAsync(
+                requested.Now.AddMinutes(-5),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+
+            Assert.Equal(GateCommandRecoveryCycleOutcome.NoWork, result.Outcome);
+            Assert.False(result.Mutated);
+            Assert.Equal("REQUESTED", (await ReadStateAsync(requested.CommandId)).CommandStatus);
+            Assert.Equal("IN_PROGRESS", (await ReadStateAsync(fresh.CommandId)).CommandStatus);
+            Assert.Equal("RETRYABLE", (await ReadStateAsync(retryable.CommandId)).CommandStatus);
+            Assert.Equal("SUCCEEDED", (await ReadStateAsync(succeeded.CommandId)).CommandStatus);
+            Assert.Equal("TERMINAL_FAILURE", (await ReadStateAsync(terminal.CommandId)).CommandStatus);
+            Assert.Equal("IN_PROGRESS", (await ReadStateAsync(unsupported.CommandId)).CommandStatus);
+            Assert.Equal(0, (await ReadStateAsync(requested.CommandId)).AuditCount);
+        }
+        finally
+        {
+            foreach (var fixture in fixtures)
+            {
+                await CleanupAsync(fixture);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenStaleCommandsExist_SelectsOldestAndRecoversOnlyOne()
+    {
+        var older = await PrepareFixtureWithCommandAsync("recovery-cycle-older");
+        var newer = await PrepareFixtureWithCommandAsync("recovery-cycle-newer");
+        await MarkInProgressAsync(older, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: older.Now.AddMinutes(-30));
+        await MarkInProgressAsync(newer, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: older.Now.AddMinutes(-10));
+        var service = CreateCycleServiceAt(older.Now.AddMinutes(3));
+
+        try
+        {
+            var result = await service.RunOnceAsync(
+                older.Now.AddMinutes(-5),
+                TimeSpan.FromMinutes(7),
+                CancellationToken.None);
+            var olderState = await ReadStateAsync(older.CommandId);
+            var newerState = await ReadStateAsync(newer.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(older.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal(GateCommandRecoveryCycleOutcome.RecoveredRetryable, result.Outcome);
+            Assert.Equal(older.CommandId, result.GateCommandId);
+            Assert.True(result.Mutated);
+            Assert.Equal("RETRYABLE", olderState.CommandStatus);
+            Assert.Equal(1, olderState.AttemptCount);
+            AssertNearlyEqual(older.Now.AddMinutes(10), olderState.NextAttemptAt);
+            Assert.Equal("IN_PROGRESS", newerState.CommandStatus);
+            Assert.Equal(0, olderState.AuditCount);
+            Assert.Equal(0, newerState.AuditCount);
+            Assert.NotNull(inventory);
+            Assert.Equal("RETRYABLE", inventory!.GateCommand!.CommandStatus);
+            Assert.Empty(inventory.HikCentralActionAttempts);
+        }
+        finally
+        {
+            await CleanupAsync(older);
+            await CleanupAsync(newer);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenCandidatesTie_SelectsLowestCommandId()
+    {
+        var first = await PrepareFixtureWithCommandAsync("recovery-cycle-tie-first");
+        var second = await PrepareFixtureWithCommandAsync("recovery-cycle-tie-second");
+        var staleAt = first.Now.AddMinutes(-20);
+        await MarkInProgressAsync(first, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: staleAt);
+        await MarkInProgressAsync(second, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: staleAt);
+        await SetCommandRequestedAtAsync(first.CommandId, staleAt.AddMinutes(-2));
+        await SetCommandRequestedAtAsync(second.CommandId, staleAt.AddMinutes(-2));
+        var expected = first.CommandId.CompareTo(second.CommandId) <= 0 ? first : second;
+        var other = expected.CommandId == first.CommandId ? second : first;
+        var service = CreateCycleService();
+
+        try
+        {
+            var result = await service.RunOnceAsync(
+                first.Now.AddMinutes(-5),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+
+            Assert.Equal(GateCommandRecoveryCycleOutcome.RecoveredRetryable, result.Outcome);
+            Assert.Equal(expected.CommandId, result.GateCommandId);
+            Assert.Equal("RETRYABLE", (await ReadStateAsync(expected.CommandId)).CommandStatus);
+            Assert.Equal("IN_PROGRESS", (await ReadStateAsync(other.CommandId)).CommandStatus);
+        }
+        finally
+        {
+            await CleanupAsync(first);
+            await CleanupAsync(second);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenAttemptsAreExhausted_RecoversTerminalFailure()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("recovery-cycle-terminal");
+        await MarkInProgressAsync(fixture, attemptCount: 3, maxAttempts: 3, lastAttemptedAt: fixture.Now.AddMinutes(-10));
+        var service = CreateCycleServiceAt(fixture.Now.AddMinutes(3));
+
+        try
+        {
+            var result = await service.RunOnceAsync(
+                fixture.Now.AddMinutes(-5),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+            var state = await ReadStateAsync(fixture.CommandId);
+            var inventory = await new GateCommandStateReadRepository(ConnectionString)
+                .GetByConsumptionIdAsync(fixture.ConsumptionId, CancellationToken.None);
+
+            Assert.Equal(GateCommandRecoveryCycleOutcome.RecoveredTerminalFailure, result.Outcome);
+            Assert.Equal(fixture.CommandId, result.GateCommandId);
+            Assert.Equal("TERMINAL_FAILURE", state.CommandStatus);
+            Assert.Equal(3, state.AttemptCount);
+            Assert.Null(state.NextAttemptAt);
+            AssertNearlyEqual(fixture.Now.AddMinutes(3), state.TerminalFailureAt);
+            Assert.Equal(GateCommandInProgressRecoveryRepository.AbandonedInProgressFailureCode, state.LastFailureCode);
+            Assert.Equal(0, state.AuditCount);
+            Assert.Equal("TERMINAL_FAILURE", inventory!.GateCommand!.CommandStatus);
+            Assert.Empty(inventory.HikCentralActionAttempts);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenConcurrentCyclesSelectSameCommand_OnlyOneMutates()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("recovery-cycle-concurrent");
+        await MarkInProgressAsync(fixture, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: fixture.Now.AddMinutes(-10));
+        var candidateRepository = new BarrierRecoveryCandidateRepository(
+            new GateCommandRecoveryCandidateRepository(ConnectionString),
+            expectedParticipants: 2);
+        var firstService = CreateCycleService(candidateRepository);
+        var secondService = CreateCycleService(candidateRepository);
+
+        try
+        {
+            var results = await Task.WhenAll(
+                firstService.RunOnceAsync(fixture.Now.AddMinutes(-5), TimeSpan.FromMinutes(5), CancellationToken.None),
+                secondService.RunOnceAsync(fixture.Now.AddMinutes(-5), TimeSpan.FromMinutes(5), CancellationToken.None));
+            var state = await ReadStateAsync(fixture.CommandId);
+
+            Assert.Single(results, result => result.Outcome == GateCommandRecoveryCycleOutcome.RecoveredRetryable);
+            Assert.Single(results, result => result.Outcome == GateCommandRecoveryCycleOutcome.LostRaceOrIneligible);
+            Assert.Equal("RETRYABLE", state.CommandStatus);
+            Assert.Equal(1, state.AttemptCount);
+            Assert.Equal(0, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenCandidateLosesRace_DoesNotRecoverAnotherCommand()
+    {
+        var selected = await PrepareFixtureWithCommandAsync("recovery-cycle-lost-selected");
+        var alternate = await PrepareFixtureWithCommandAsync("recovery-cycle-lost-alternate");
+        await MarkInProgressAsync(selected, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: selected.Now.AddMinutes(-20));
+        await MarkInProgressAsync(alternate, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: selected.Now.AddMinutes(-10));
+        var recoveryService = new RacingRecoveryService(
+            selected.CommandId,
+            async token => await MarkSucceededAsync(selected),
+            CreateService(selected));
+        var service = CreateCycleService(
+            new GateCommandRecoveryCandidateRepository(ConnectionString),
+            recoveryService);
+
+        try
+        {
+            var result = await service.RunOnceAsync(
+                selected.Now.AddMinutes(-5),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+            var selectedState = await ReadStateAsync(selected.CommandId);
+            var alternateState = await ReadStateAsync(alternate.CommandId);
+
+            Assert.Equal(GateCommandRecoveryCycleOutcome.LostRaceOrIneligible, result.Outcome);
+            Assert.Equal(selected.CommandId, result.GateCommandId);
+            Assert.Equal("SUCCEEDED", selectedState.CommandStatus);
+            Assert.Equal("IN_PROGRESS", alternateState.CommandStatus);
+            Assert.Equal(0, selectedState.AuditCount);
+            Assert.Equal(0, alternateState.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(selected);
+            await CleanupAsync(alternate);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenCancelledBeforeDiscovery_MutatesNothing()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("recovery-cycle-cancel-before");
+        await MarkInProgressAsync(fixture, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: fixture.Now.AddMinutes(-10));
+        var service = CreateCycleService();
+        using var cancellation = new CancellationTokenSource();
+        await cancellation.CancelAsync();
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                service.RunOnceAsync(
+                    fixture.Now.AddMinutes(-5),
+                    TimeSpan.FromMinutes(5),
+                    cancellation.Token));
+            var state = await ReadStateAsync(fixture.CommandId);
+
+            Assert.Equal("IN_PROGRESS", state.CommandStatus);
+            Assert.Equal(1, state.AttemptCount);
+            Assert.Equal(0, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenCancelledAfterSelection_PassesCancellationToRecoveryService()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("recovery-cycle-cancel-after");
+        await MarkInProgressAsync(fixture, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: fixture.Now.AddMinutes(-10));
+        var recoveryService = new CancellingRecoveryService();
+        var service = CreateCycleService(
+            new GateCommandRecoveryCandidateRepository(ConnectionString),
+            recoveryService);
+
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(() =>
+                service.RunOnceAsync(
+                    fixture.Now.AddMinutes(-5),
+                    TimeSpan.FromMinutes(5),
+                    CancellationToken.None));
+            var state = await ReadStateAsync(fixture.CommandId);
+
+            Assert.Equal(1, recoveryService.CallCount);
+            Assert.Equal("IN_PROGRESS", state.CommandStatus);
+            Assert.Equal(1, state.AttemptCount);
+            Assert.Equal(0, state.AuditCount);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public async Task RecoveryCycleRunOnceAsync_WhenExistingAuditRowsExist_DoesNotChangeOrCreateAudits()
+    {
+        var fixture = await PrepareFixtureWithCommandAsync("recovery-cycle-existing-audit");
+        await MarkInProgressAsync(fixture, attemptCount: 1, maxAttempts: 3, lastAttemptedAt: fixture.Now.AddMinutes(-10));
+        var auditId = await InsertExistingAuditAsync(fixture);
+        var service = CreateCycleService();
+
+        try
+        {
+            var before = await ReadStateAsync(fixture.CommandId);
+            var result = await service.RunOnceAsync(
+                fixture.Now.AddMinutes(-5),
+                TimeSpan.FromMinutes(5),
+                CancellationToken.None);
+            var after = await ReadStateAsync(fixture.CommandId);
+
+            Assert.Equal(GateCommandRecoveryCycleOutcome.RecoveredRetryable, result.Outcome);
+            Assert.Equal(1, before.AuditCount);
+            Assert.Equal(1, after.AuditCount);
+            Assert.Equal(auditId, after.Audit!.HikCentralGateActionAuditId);
+            Assert.Equal("SUCCEEDED", after.Audit.ActionOutcome);
+        }
+        finally
+        {
+            await CleanupAsync(fixture);
+        }
+    }
+
+    [Fact]
+    public void RecoveryCycle_DoesNotDeclareAdapterNetworkOrPhysicalGateContract()
+    {
+        var constructorParameters = typeof(GateCommandRecoveryCycleService)
+            .GetConstructors(BindingFlags.Instance | BindingFlags.Public)
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        var resultPropertyNames = typeof(GateCommandRecoveryCycleResult)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Select(property => property.Name)
+            .ToArray();
+
+        Assert.DoesNotContain(typeof(IHikCentralGateActionAdapter), constructorParameters);
+        Assert.DoesNotContain(constructorParameters, type => type.Name.Contains("Http", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(resultPropertyNames, name => name.Contains("Physical", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(resultPropertyNames, name => name.Contains("Opened", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static GateCommandInProgressRecoveryService CreateService(GateCommandRecoveryFixture? fixture) =>
         new(
             new GateCommandInProgressRecoveryRepository(ConnectionString),
             new FixedClock(fixture?.Now.AddMinutes(3) ?? DateTimeOffset.Parse("2026-07-16T00:00:00Z")));
+
+    private static GateCommandRecoveryCycleService CreateCycleService() =>
+        CreateCycleService(new GateCommandRecoveryCandidateRepository(ConnectionString));
+
+    private static GateCommandRecoveryCycleService CreateCycleServiceAt(DateTimeOffset recoveredAt) =>
+        CreateCycleService(
+            new GateCommandRecoveryCandidateRepository(ConnectionString),
+            new GateCommandInProgressRecoveryService(
+                new GateCommandInProgressRecoveryRepository(ConnectionString),
+                new FixedClock(recoveredAt)));
+
+    private static GateCommandRecoveryCycleService CreateCycleService(
+        IGateCommandRecoveryCandidateRepository candidateRepository) =>
+        CreateCycleService(
+            candidateRepository,
+            new GateCommandInProgressRecoveryService(
+                new GateCommandInProgressRecoveryRepository(ConnectionString),
+                new FixedClock(DateTimeOffset.UtcNow)));
+
+    private static GateCommandRecoveryCycleService CreateCycleService(
+        IGateCommandRecoveryCandidateRepository candidateRepository,
+        IGateCommandInProgressRecoveryService recoveryService) =>
+        new(candidateRepository, recoveryService);
 
     private static async Task<GateCommandRecoveryFixture> PrepareFixtureWithCommandAsync(string scope)
     {
@@ -398,6 +758,62 @@ public sealed class GateCommandInProgressRecoveryServiceIntegrationTests
             command.Parameters.Add("max_attempts", NpgsqlDbType.Integer).Value = maxAttempts;
             command.Parameters.Add("started_at", NpgsqlDbType.TimestampTz).Value = lastAttemptedAt;
             command.Parameters.Add("last_attempted_at", NpgsqlDbType.TimestampTz).Value = lastAttemptedAt;
+        });
+    }
+
+    private static async Task MarkSucceededAsync(GateCommandRecoveryFixture fixture)
+    {
+        const string sql = """
+            UPDATE gates.gate_commands
+            SET
+                command_status = 'SUCCEEDED',
+                attempt_count = 1,
+                started_at = @at,
+                last_attempted_at = @at,
+                next_attempt_at = NULL,
+                completed_at = @at,
+                terminal_failure_at = NULL,
+                updated_at = @at
+            WHERE command_id = @command_id;
+            """;
+
+        await ExecuteAsync(sql, command =>
+        {
+            command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = fixture.CommandId;
+            command.Parameters.Add("at", NpgsqlDbType.TimestampTz).Value = fixture.Now.AddMinutes(1);
+        });
+    }
+
+    private static async Task SetCommandRequestedAtAsync(Guid commandId, DateTimeOffset requestedAt)
+    {
+        const string sql = """
+            UPDATE gates.gate_commands
+            SET requested_at = @requested_at,
+                updated_at = @requested_at
+            WHERE command_id = @command_id;
+            """;
+
+        await ExecuteAsync(sql, command =>
+        {
+            command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = commandId;
+            command.Parameters.Add("requested_at", NpgsqlDbType.TimestampTz).Value = requestedAt;
+        });
+    }
+
+    private static async Task UpdateCommandTypeAsync(Guid commandId, string commandType)
+    {
+        const string sql = """
+            UPDATE gates.gate_commands
+            SET command_type = @command_type,
+                updated_at = @now
+            WHERE command_id = @command_id;
+            """;
+
+        await ExecuteAsync(sql, command =>
+        {
+            command.Parameters.Add("command_id", NpgsqlDbType.Uuid).Value = commandId;
+            command.Parameters.Add("command_type", NpgsqlDbType.Varchar).Value = commandType;
+            command.Parameters.Add("now", NpgsqlDbType.TimestampTz).Value = DateTimeOffset.UtcNow;
         });
     }
 
@@ -771,6 +1187,85 @@ public sealed class GateCommandInProgressRecoveryServiceIntegrationTests
         }
 
         public DateTimeOffset UtcNow { get; }
+    }
+
+    private sealed class BarrierRecoveryCandidateRepository : IGateCommandRecoveryCandidateRepository
+    {
+        private readonly IGateCommandRecoveryCandidateRepository _inner;
+        private readonly int _expectedParticipants;
+        private readonly TaskCompletionSource _allCandidatesRead =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _participants;
+
+        public BarrierRecoveryCandidateRepository(
+            IGateCommandRecoveryCandidateRepository inner,
+            int expectedParticipants)
+        {
+            _inner = inner;
+            _expectedParticipants = expectedParticipants;
+        }
+
+        public async Task<GateCommandRecoveryCandidate?> FindNextStaleAsync(
+            DateTimeOffset staleBefore,
+            CancellationToken cancellationToken)
+        {
+            var candidate = await _inner.FindNextStaleAsync(staleBefore, cancellationToken);
+            if (Interlocked.Increment(ref _participants) >= _expectedParticipants)
+            {
+                _allCandidatesRead.TrySetResult();
+            }
+
+            await _allCandidatesRead.Task.WaitAsync(cancellationToken);
+            return candidate;
+        }
+    }
+
+    private sealed class RacingRecoveryService : IGateCommandInProgressRecoveryService
+    {
+        private readonly Guid _raceCommandId;
+        private readonly Func<CancellationToken, Task> _beforeRecover;
+        private readonly IGateCommandInProgressRecoveryService _inner;
+
+        public RacingRecoveryService(
+            Guid raceCommandId,
+            Func<CancellationToken, Task> beforeRecover,
+            IGateCommandInProgressRecoveryService inner)
+        {
+            _raceCommandId = raceCommandId;
+            _beforeRecover = beforeRecover;
+            _inner = inner;
+        }
+
+        public async Task<GateCommandRecoveryResult> RecoverAsync(
+            Guid gateCommandId,
+            DateTimeOffset staleBefore,
+            TimeSpan retryDelay,
+            CancellationToken cancellationToken)
+        {
+            if (gateCommandId == _raceCommandId)
+            {
+                await _beforeRecover(cancellationToken);
+            }
+
+            return await _inner.RecoverAsync(gateCommandId, staleBefore, retryDelay, cancellationToken);
+        }
+    }
+
+    private sealed class CancellingRecoveryService : IGateCommandInProgressRecoveryService
+    {
+        private int _callCount;
+
+        public int CallCount => Volatile.Read(ref _callCount);
+
+        public Task<GateCommandRecoveryResult> RecoverAsync(
+            Guid gateCommandId,
+            DateTimeOffset staleBefore,
+            TimeSpan retryDelay,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _callCount);
+            throw new OperationCanceledException(cancellationToken);
+        }
     }
 
     private sealed class GateCommandRecoveryFixture

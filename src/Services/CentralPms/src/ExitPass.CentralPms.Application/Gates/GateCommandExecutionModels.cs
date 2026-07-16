@@ -307,3 +307,78 @@ public enum GateCommandRecoveryOutcome
     /// </summary>
     Rejected
 }
+
+/// <summary>
+/// Application service boundary for one deterministic stale gate command recovery cycle.
+/// </summary>
+public interface IGateCommandRecoveryCycleService
+{
+    /// <summary>
+    /// Selects and recovers at most one stale IN_PROGRESS canonical gate command.
+    /// </summary>
+    Task<GateCommandRecoveryCycleResult> RunOnceAsync(
+        DateTimeOffset staleBefore,
+        TimeSpan retryDelay,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Read-only stale candidate discovery boundary for one gate command recovery cycle.
+/// </summary>
+public interface IGateCommandRecoveryCandidateRepository
+{
+    /// <summary>
+    /// Finds the next stale IN_PROGRESS canonical gate command without mutating command state.
+    /// </summary>
+    Task<GateCommandRecoveryCandidate?> FindNextStaleAsync(
+        DateTimeOffset staleBefore,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Stale command candidate selected for one recovery-cycle attempt.
+/// </summary>
+public sealed record GateCommandRecoveryCandidate(
+    Guid GateCommandId,
+    DateTimeOffset LastAttemptedAt,
+    int AttemptCount,
+    int MaxAttempts);
+
+/// <summary>
+/// Result of one deterministic stale command recovery cycle.
+/// </summary>
+public sealed record GateCommandRecoveryCycleResult(
+    Guid? GateCommandId,
+    GateCommandRecoveryCycleOutcome Outcome,
+    string? FinalCommandStatus,
+    DateTimeOffset? NextAttemptAt,
+    DateTimeOffset? TerminalFailureAt,
+    bool Mutated,
+    string? ErrorCode,
+    string? Message);
+
+/// <summary>
+/// Recovery-cycle outcome classification.
+/// </summary>
+public enum GateCommandRecoveryCycleOutcome
+{
+    /// <summary>
+    /// No stale IN_PROGRESS command was found.
+    /// </summary>
+    NoWork,
+
+    /// <summary>
+    /// One stale command was recovered to RETRYABLE.
+    /// </summary>
+    RecoveredRetryable,
+
+    /// <summary>
+    /// One stale command was recovered to TERMINAL_FAILURE.
+    /// </summary>
+    RecoveredTerminalFailure,
+
+    /// <summary>
+    /// The selected command became ineligible after discovery and no alternate command was processed.
+    /// </summary>
+    LostRaceOrIneligible
+}
