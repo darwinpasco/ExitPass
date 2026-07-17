@@ -1,6 +1,17 @@
 namespace ExitPass.CentralPms.Application.Gates;
 
 /// <summary>
+/// Builds deterministic HikCentral signing material without loading secrets or calculating the final signature.
+/// </summary>
+public interface IHikCentralRequestSigningMaterialBuilder
+{
+    /// <summary>
+    /// Builds signing material for a guide-confirmed request plan.
+    /// </summary>
+    HikCentralSigningMaterial Build(HikCentralSigningMaterialInput input);
+}
+
+/// <summary>
 /// Safe HikCentral signing header name and value used for canonicalization only.
 /// </summary>
 public sealed record HikCentralSigningHeader(string Name, string Value);
