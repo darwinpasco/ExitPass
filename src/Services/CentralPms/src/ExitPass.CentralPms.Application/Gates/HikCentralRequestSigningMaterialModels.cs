@@ -48,6 +48,7 @@ public static class HikCentralRequestSigningMaterialConstants
     public const string HeaderClientKey = "X-Ca-Key";
     public const string HeaderNonce = "X-Ca-Nonce";
     public const string HeaderTimestamp = "X-Ca-Timestamp";
+    public const string HeaderSignatureMethod = "X-Ca-Signature-Method";
     public const string HeaderSignatureHeaders = "X-Ca-Signature-Headers";
     public const string HeaderSignature = "X-Ca-Signature";
 }
