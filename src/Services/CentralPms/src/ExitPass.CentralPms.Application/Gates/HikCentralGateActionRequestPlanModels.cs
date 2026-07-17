@@ -1,6 +1,19 @@
 namespace ExitPass.CentralPms.Application.Gates;
 
 /// <summary>
+/// Builds a deterministic HikCentral gate-action request plan without signing or sending.
+/// </summary>
+public interface IHikCentralGateActionRequestPlanBuilder
+{
+    /// <summary>
+    /// Builds the request plan for one validated gate-action request and explicit control profile.
+    /// </summary>
+    HikCentralGateActionRequestPlan Build(
+        HikCentralGateActionRequest request,
+        HikCentralGateControlProfile profile);
+}
+
+/// <summary>
 /// HikCentral gate-control mechanisms that may be considered by request planning.
 /// </summary>
 public enum HikCentralGateControlMechanism

@@ -8,7 +8,7 @@ namespace ExitPass.CentralPms.Infrastructure.Gates;
 /// <summary>
 /// Builds deterministic HikCentral AK/SK signing material without loading secrets or calculating the final signature.
 /// </summary>
-public sealed class HikCentralRequestSigningMaterialBuilder
+public sealed class HikCentralRequestSigningMaterialBuilder : IHikCentralRequestSigningMaterialBuilder
 {
     private static readonly StringComparer HeaderNameComparer = StringComparer.OrdinalIgnoreCase;
     private static readonly HashSet<string> BuiltInSignedHeaderNames = new(HeaderNameComparer)
@@ -18,9 +18,7 @@ public sealed class HikCentralRequestSigningMaterialBuilder
         "x-ca-timestamp"
     };
 
-    /// <summary>
-    /// Builds side-effect-free signing material for a guide-confirmed HikCentral request plan.
-    /// </summary>
+    /// <inheritdoc />
     public HikCentralSigningMaterial Build(HikCentralSigningMaterialInput input)
     {
         ValidateInput(input);

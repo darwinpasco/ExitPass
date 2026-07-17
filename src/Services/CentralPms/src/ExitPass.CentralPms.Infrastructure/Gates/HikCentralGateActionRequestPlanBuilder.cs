@@ -7,11 +7,9 @@ namespace ExitPass.CentralPms.Infrastructure.Gates;
 /// <summary>
 /// Side-effect-free builder for guide-approved HikCentral gate action HTTP request plans.
 /// </summary>
-public sealed class HikCentralGateActionRequestPlanBuilder
+public sealed class HikCentralGateActionRequestPlanBuilder : IHikCentralGateActionRequestPlanBuilder
 {
-    /// <summary>
-    /// Builds a deterministic request plan without signing or sending an HTTP request.
-    /// </summary>
+    /// <inheritdoc />
     public HikCentralGateActionRequestPlan Build(
         HikCentralGateActionRequest request,
         HikCentralGateControlProfile profile)
