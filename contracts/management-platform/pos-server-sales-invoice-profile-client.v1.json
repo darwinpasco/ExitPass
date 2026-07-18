@@ -1,0 +1,152 @@
+{
+  "contractId": "management-platform.pos-server-sales-invoice-profile-client.v1",
+  "owner": "ExitPass Management Platform backend",
+  "downstreamAuthority": "POS Server",
+  "boundary": "Management Platform is the administrative control plane and does not duplicate POS Server Fiscal Identity or Sales Invoice Header Profile rules.",
+  "configuration": {
+    "section": "ManagementPlatform:PosServerSalesInvoiceProfileAdministration",
+    "requiredWhenEnabled": [
+      "Enabled",
+      "BaseUrl",
+      "ApiKey",
+      "TimeoutSeconds"
+    ],
+    "disabledBehavior": "Return deterministic integration-disabled outcome and perform no HTTP call.",
+    "secrets": [
+      "ApiKey is server-side only.",
+      "Do not place real keys in source-controlled configuration.",
+      "Do not return keys to browser DTOs, diagnostics, logs, telemetry, proof output, or exceptions."
+    ]
+  },
+  "authentication": {
+    "scheme": "PosServerAdminApiKey",
+    "requiredHeader": "X-PosServer-Admin-Key",
+    "requiredPolicy": "SalesInvoiceHeaderProfileAdministration",
+    "requiredPermission": "sales_invoice_header_profile.admin",
+    "optionalCompatibilityHeader": "X-PosServer-Admin-Permission",
+    "optionalCompatibilityHeaderDefault": "omitted"
+  },
+  "correlation": {
+    "requestHeader": "X-Correlation-Id",
+    "behavior": "Use current inbound correlation id when supplied; otherwise generate one id for the logical operation and reuse it across bounded GET retry attempts.",
+    "responseBehavior": "Preserve the POS Server response correlation id when supplied; otherwise return the outbound correlation id."
+  },
+  "operations": [
+    {
+      "name": "CreateFiscalIdentity",
+      "method": "POST",
+      "path": "/v1/admin/fiscal-identities",
+      "mutation": true
+    },
+    {
+      "name": "GetFiscalIdentity",
+      "method": "GET",
+      "path": "/v1/admin/fiscal-identities/{fiscalIdentityId}",
+      "mutation": false
+    },
+    {
+      "name": "UpdateFiscalIdentity",
+      "method": "PUT",
+      "path": "/v1/admin/fiscal-identities/{fiscalIdentityId}",
+      "mutation": true
+    },
+    {
+      "name": "CreateProfile",
+      "method": "POST",
+      "path": "/v1/admin/sales-invoice-header-profiles",
+      "mutation": true
+    },
+    {
+      "name": "GetProfile",
+      "method": "GET",
+      "path": "/v1/admin/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}",
+      "mutation": false
+    },
+    {
+      "name": "ListProfiles",
+      "method": "GET",
+      "path": "/v1/admin/sales-invoice-header-profiles",
+      "mutation": false
+    },
+    {
+      "name": "UpdateDraftProfile",
+      "method": "PUT",
+      "path": "/v1/admin/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/draft",
+      "mutation": true
+    },
+    {
+      "name": "ValidateProfile",
+      "method": "POST",
+      "path": "/v1/admin/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/validate",
+      "mutation": false
+    },
+    {
+      "name": "ApproveProfile",
+      "method": "POST",
+      "path": "/v1/admin/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/approve",
+      "mutation": true
+    },
+    {
+      "name": "RetireProfile",
+      "method": "POST",
+      "path": "/v1/admin/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/retire",
+      "mutation": true
+    },
+    {
+      "name": "GetEffectiveReadiness",
+      "method": "GET",
+      "path": "/v1/admin/sales-invoice-header-profiles/effective-readiness",
+      "mutation": false
+    },
+    {
+      "name": "GetProfileUsage",
+      "method": "GET",
+      "path": "/v1/admin/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/usage",
+      "mutation": false
+    }
+  ],
+  "supportedLifecycleValues": [
+    "DRAFT",
+    "APPROVED",
+    "RETIRED"
+  ],
+  "readinessValues": [
+    "READY",
+    "NO_EFFECTIVE_PROFILE",
+    "INCOMPLETE",
+    "EXPIRED",
+    "AMBIGUOUS",
+    "UNSUPPORTED_VERSION",
+    "RETIRED"
+  ],
+  "forwardCompatibility": {
+    "validationCodes": "Preserve unknown missing or invalid field codes as safe strings.",
+    "readinessValues": "Preserve unknown future readiness values as safe strings."
+  },
+  "errorMapping": {
+    "400": "InvalidRequest",
+    "401": "AuthenticationFailed",
+    "403": "PermissionDenied",
+    "404": "NotFound",
+    "409": "Conflict",
+    "422": "ValidationFailure",
+    "429": "Throttled",
+    "5xx": "PosServerUnavailable",
+    "timeout": "Timeout",
+    "networkFailure": "NetworkFailure",
+    "malformedResponse": "MalformedResponse"
+  },
+  "retryPosture": {
+    "getOperations": "Bounded transient retry may be used.",
+    "mutationOperations": "No blind automatic retry. Timeout or connection loss after send returns uncertain safe failure posture."
+  },
+  "outOfScope": [
+    "Management Platform UI",
+    "POS Server changes",
+    "local authoritative profile persistence",
+    "receipt preview or printing",
+    "fiscal issuance",
+    "exit authorization",
+    "gate behavior"
+  ]
+}
