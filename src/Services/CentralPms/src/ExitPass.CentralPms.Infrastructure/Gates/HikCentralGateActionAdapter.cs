@@ -62,7 +62,7 @@ public sealed class HikCentralGateActionAdapter : IHikCentralGateActionAdapter
                 runtimeMaterial.TimestampMilliseconds,
                 runtimeMaterial.Nonce,
                 runtimeMaterial.SignatureMethod));
-            var signature = _signatureCalculator.Calculate(signingMaterial, runtimeMaterial.AppSecretBytes);
+            var signature = _signatureCalculator.Calculate(signingMaterial, runtimeMaterial.SecretBytes);
 
             signedRequest = _signedRequestBuilder.Build(
                 runtimeMaterial.BaseAddress,
