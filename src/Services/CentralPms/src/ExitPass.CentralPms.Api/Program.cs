@@ -160,6 +160,7 @@ app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
+app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
 app.MapTerminalCashPaymentEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
