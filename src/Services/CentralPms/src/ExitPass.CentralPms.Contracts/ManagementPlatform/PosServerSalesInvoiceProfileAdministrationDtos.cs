@@ -1,5 +1,11 @@
 namespace ExitPass.CentralPms.Contracts.ManagementPlatform;
 
+public sealed record ManagementPlatformFiscalIdentityMutationRequestDto(
+    string RegisteredBusinessName,
+    string RegisteredBusinessAddress,
+    string Tin,
+    string TaxpayerPosture);
+
 public sealed record ManagementPlatformFiscalIdentityDto(
     Guid FiscalIdentityId,
     string RegisteredBusinessName,
@@ -11,6 +17,26 @@ public sealed record ManagementPlatformFiscalIdentityDto(
     DateTimeOffset? UpdatedAt,
     string CreatedByRef,
     string? UpdatedByRef);
+
+public sealed record ManagementPlatformSalesInvoiceHeaderProfileMutationRequestDto(
+    Guid FiscalIdentityId,
+    Guid SiteId,
+    Guid SitePosServerId,
+    int ProfileVersion,
+    string TemplateVersion,
+    string PresentationVersion,
+    string PosSerialNumber,
+    string MachineIdentificationNumber,
+    string ParkingLocationDisplay,
+    string BirAccreditationNumber,
+    DateOnly? BirAccreditationIssuedDate,
+    DateOnly? BirAccreditationValidUntil,
+    string PtuNumber,
+    DateOnly? PtuIssuedDate,
+    string SalesInvoiceLegalStatement,
+    string CustomerServiceFooter,
+    DateTimeOffset EffectiveFrom,
+    DateTimeOffset? EffectiveTo);
 
 public sealed record ManagementPlatformSalesInvoiceHeaderProfileDto(
     Guid SalesInvoiceHeaderProfileId,
@@ -38,6 +64,8 @@ public sealed record ManagementPlatformSalesInvoiceHeaderProfileDto(
     DateTimeOffset? RetiredAt,
     DateTimeOffset CreatedAt,
     DateTimeOffset? UpdatedAt);
+
+public sealed record ManagementPlatformSalesInvoiceHeaderProfileRetirementRequestDto(DateTimeOffset? RetireAt);
 
 public sealed record ManagementPlatformSalesInvoiceHeaderProfileValidationDto(
     Guid SalesInvoiceHeaderProfileId,

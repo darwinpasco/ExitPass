@@ -1,0 +1,125 @@
+{
+  "contract": "management-platform-sales-invoice-profile-api",
+  "version": 1,
+  "authorityBoundary": {
+    "centralPmsRole": "Authenticated and authorized Management Platform API boundary.",
+    "posServerRole": "Authoritative source for Fiscal Identity and Sales Invoice Header Profile persistence, lifecycle, validation, readiness, and usage.",
+    "localAuthority": false
+  },
+  "routeGroups": [
+    "/v1/management-platform/fiscal-identities",
+    "/v1/management-platform/sales-invoice-header-profiles"
+  ],
+  "routes": [
+    { "method": "POST", "path": "/v1/management-platform/fiscal-identities", "policy": "SalesInvoiceProfileManage" },
+    { "method": "GET", "path": "/v1/management-platform/fiscal-identities/{fiscalIdentityId}", "policy": "SalesInvoiceProfileRead" },
+    { "method": "PATCH", "path": "/v1/management-platform/fiscal-identities/{fiscalIdentityId}", "policy": "SalesInvoiceProfileManage" },
+    { "method": "POST", "path": "/v1/management-platform/sales-invoice-header-profiles", "policy": "SalesInvoiceProfileManage" },
+    { "method": "GET", "path": "/v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}", "policy": "SalesInvoiceProfileRead" },
+    { "method": "GET", "path": "/v1/management-platform/sales-invoice-header-profiles", "policy": "SalesInvoiceProfileRead" },
+    { "method": "PATCH", "path": "/v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}", "policy": "SalesInvoiceProfileManage" },
+    { "method": "POST", "path": "/v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/validate", "policy": "SalesInvoiceProfileRead" },
+    { "method": "POST", "path": "/v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/approve", "policy": "SalesInvoiceProfileApprove" },
+    { "method": "POST", "path": "/v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/retire", "policy": "SalesInvoiceProfileApprove" },
+    { "method": "GET", "path": "/v1/management-platform/sales-invoice-header-profiles/effective-readiness", "policy": "SalesInvoiceProfileRead" },
+    { "method": "GET", "path": "/v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/usage", "policy": "SalesInvoiceProfileRead" }
+  ],
+  "authentication": {
+    "anonymousAllowed": false,
+    "centralPmsRbacMetadataRequired": true
+  },
+  "permissionMapping": {
+    "SalesInvoiceProfileRead": [ "sales-invoice-profile.read" ],
+    "SalesInvoiceProfileManage": [ "sales-invoice-profile.manage" ],
+    "SalesInvoiceProfileApprove": [ "sales-invoice-profile.approve" ]
+  },
+  "siteScope": {
+    "requestSiteIdsAreUntrustedUntilAuthorized": true,
+    "bodyAndQuerySiteIdsCheckedAgainstCallerSiteHeaderWhenPresent": true,
+    "resourceOnlyRoutesCheckReturnedProfileSiteBeforeReturningOrMutating": true,
+    "siteHeader": "X-Site-Id"
+  },
+  "actorDerivation": {
+    "browserActorFieldsAuthoritative": false,
+    "source": "Authenticated Central PMS user id or subject.",
+    "format": "central-pms-user:{userId}"
+  },
+  "browserRequestFields": {
+    "fiscalIdentity": [
+      "registeredBusinessName",
+      "registeredBusinessAddress",
+      "tin",
+      "taxpayerPosture"
+    ],
+    "salesInvoiceHeaderProfile": [
+      "fiscalIdentityId",
+      "siteId",
+      "sitePosServerId",
+      "profileVersion",
+      "templateVersion",
+      "presentationVersion",
+      "posSerialNumber",
+      "machineIdentificationNumber",
+      "parkingLocationDisplay",
+      "birAccreditationNumber",
+      "birAccreditationIssuedDate",
+      "birAccreditationValidUntil",
+      "ptuNumber",
+      "ptuIssuedDate",
+      "salesInvoiceLegalStatement",
+      "customerServiceFooter",
+      "effectiveFrom",
+      "effectiveTo"
+    ]
+  },
+  "browserResponseFields": [
+    "Fiscal Identity",
+    "Sales Invoice Header Profile",
+    "validation",
+    "readiness",
+    "usage",
+    "safe error",
+    "correlationId"
+  ],
+  "correlation": {
+    "requestHeader": "X-Correlation-Id",
+    "generatedWhenAbsent": true,
+    "sameLogicalCorrelationForwardedToApplicationService": true
+  },
+  "safeErrorMapping": {
+    "invalidRequest": 400,
+    "centralPmsUnauthenticated": 401,
+    "centralPmsForbiddenOrSiteScopeDenied": 403,
+    "notFound": 404,
+    "conflict": 409,
+    "validationFailure": 422,
+    "throttled": 429,
+    "downstreamAuthenticationOrPermissionFailure": 502,
+    "malformedDownstreamResponse": 502,
+    "downstreamUnavailable": 503,
+    "downstreamTimeout": 504
+  },
+  "integrationDisabled": {
+    "configurationFlag": "ManagementPlatform:PosServerSalesInvoiceProfileAdministration:Enabled",
+    "responseCode": 503,
+    "errorCode": "SALES_INVOICE_PROFILE_ADMINISTRATION_DISABLED",
+    "downstreamCall": false
+  },
+  "browserSecretBoundary": {
+    "posServerAdminApiKeyVisibleToBrowser": false,
+    "downstreamBaseUrlVisibleToBrowser": false,
+    "downstreamAuthorizationHeadersVisibleToBrowser": false,
+    "browserDirectPosServerAdminApiCall": false
+  },
+  "unsupportedInThisSlice": [
+    "Management Platform UI",
+    "Operator Console UI",
+    "Assisted Payment Terminal changes",
+    "POS Server changes",
+    "Central PMS authoritative profile persistence",
+    "receipt printing",
+    "fiscal issuance",
+    "exit authorization",
+    "gate behavior"
+  ]
+}
