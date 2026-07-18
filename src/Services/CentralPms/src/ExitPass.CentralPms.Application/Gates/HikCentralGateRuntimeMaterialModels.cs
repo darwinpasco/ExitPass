@@ -16,7 +16,7 @@ public interface IHikCentralGateRuntimeMaterialProvider
 }
 
 /// <summary>
-/// Owns one HikCentral runtime-material snapshot, including clearable in-memory AppSecret bytes.
+/// Owns one HikCentral runtime-material snapshot, including clearable in-memory secret bytes.
 /// </summary>
 public sealed class HikCentralGateRuntimeMaterial : IDisposable
 {
@@ -30,7 +30,7 @@ public sealed class HikCentralGateRuntimeMaterial : IDisposable
         Uri baseAddress,
         HikCentralGateControlProfile controlProfile,
         string clientKeyIdentifier,
-        ReadOnlySpan<byte> appSecretBytes,
+        ReadOnlySpan<byte> secretBytes,
         string timestampMilliseconds,
         string nonce,
         string signatureMethod)
@@ -49,12 +49,12 @@ public sealed class HikCentralGateRuntimeMaterial : IDisposable
         SignatureMethod = !string.IsNullOrWhiteSpace(signatureMethod)
             ? signatureMethod
             : throw new ArgumentException("HikCentral signature method is required.", nameof(signatureMethod));
-        if (appSecretBytes.IsEmpty)
+        if (secretBytes.IsEmpty)
         {
-            throw new ArgumentException("HikCentral AppSecret bytes are required.", nameof(appSecretBytes));
+            throw new ArgumentException("HikCentral secret bytes are required.", nameof(secretBytes));
         }
 
-        _appSecretBytes = appSecretBytes.ToArray();
+        _appSecretBytes = secretBytes.ToArray();
     }
 
     /// <summary>
@@ -93,9 +93,9 @@ public sealed class HikCentralGateRuntimeMaterial : IDisposable
     public bool IsDisposed => _disposed;
 
     /// <summary>
-    /// Owned AppSecret bytes for immediate signature calculation. Do not log, persist, or retain.
+    /// Owned secret bytes for immediate signature calculation. Do not log, persist, or retain.
     /// </summary>
-    public ReadOnlySpan<byte> AppSecretBytes
+    public ReadOnlySpan<byte> SecretBytes
     {
         get
         {
@@ -117,5 +117,5 @@ public sealed class HikCentralGateRuntimeMaterial : IDisposable
     }
 
     public override string ToString() =>
-        $"{nameof(HikCentralGateRuntimeMaterial)} {{ {nameof(BaseAddress)} = [REDACTED], {nameof(ControlProfile)} = {ControlProfile.ProfileCode}, {nameof(ClientKeyIdentifier)} = [REDACTED], {nameof(TimestampMilliseconds)} = [REDACTED], {nameof(Nonce)} = [REDACTED], {nameof(SignatureMethod)} = {SignatureMethod}, AppSecretBytes = [REDACTED] }}";
+        $"{nameof(HikCentralGateRuntimeMaterial)} {{ {nameof(BaseAddress)} = [REDACTED], {nameof(ControlProfile)} = {ControlProfile.ProfileCode}, {nameof(ClientKeyIdentifier)} = [REDACTED], {nameof(TimestampMilliseconds)} = [REDACTED], {nameof(Nonce)} = [REDACTED], {nameof(SignatureMethod)} = {SignatureMethod}, SecretBytes = [REDACTED] }}";
 }
