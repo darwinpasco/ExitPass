@@ -673,6 +673,29 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryRepository>(_ =>
         new ManagementPlatformIdentityRbacInventoryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
+    builder.Services.Configure<PosServerSalesInvoiceProfileAdministrationOptions>(
+        builder.Configuration.GetSection(PosServerSalesInvoiceProfileAdministrationOptions.SectionName));
+    builder.Services.AddScoped(serviceProvider =>
+        serviceProvider.GetRequiredService<IOptions<PosServerSalesInvoiceProfileAdministrationOptions>>().Value);
+    builder.Services.AddScoped<ISalesInvoiceProfileAdministrationService, SalesInvoiceProfileAdministrationService>();
+    builder.Services
+        .AddHttpClient<IPosServerSalesInvoiceProfileAdminClient, HttpPosServerSalesInvoiceProfileAdminClient>(
+            (serviceProvider, httpClient) =>
+            {
+                var options = serviceProvider
+                    .GetRequiredService<IOptions<PosServerSalesInvoiceProfileAdministrationOptions>>()
+                    .Value;
+
+                if (Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri))
+                {
+                    httpClient.BaseAddress = baseUri;
+                }
+
+                if (options.TimeoutSeconds > 0)
+                {
+                    httpClient.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
+                }
+            });
     builder.Services.AddScoped<ITerminalCashPaymentRepository>(_ =>
         new TerminalCashPaymentRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashPaymentService, TerminalCashPaymentService>();
