@@ -1,0 +1,210 @@
+{
+  "contractId": "management-platform.sales-invoice-profile-manage-ui.v1",
+  "featureRoute": "/management-platform/sales-invoice-profiles",
+  "requiredPermission": "sales-invoice-profile.manage",
+  "scope": "Manage-only browser workflows for Fiscal Identity create/update and DRAFT Sales Invoice Header Profile create/edit.",
+  "authorityBoundary": {
+    "browser": "Collects permitted administrative input and displays authoritative Central PMS responses.",
+    "centralPms": "Authenticated browser-facing API boundary that derives actor identity and enforces Site/resource scope.",
+    "posServer": "Authoritative Fiscal Identity and Sales Invoice Header Profile persistence, validation, lifecycle, overlap, approval, retirement, readiness, and usage authority."
+  },
+  "fiscalIdentityForms": {
+    "createAction": "Create Fiscal Identity",
+    "updateAction": "Save Fiscal Identity",
+    "fields": [
+      "registeredBusinessName",
+      "registeredBusinessAddress",
+      "tin",
+      "taxpayerRegistrationPosture"
+    ],
+    "forbiddenBrowserFields": [
+      "createdByRef",
+      "updatedByRef",
+      "approvedByRef",
+      "retiredByRef",
+      "posServerApiKey",
+      "posServerBaseUrl"
+    ]
+  },
+  "draftHeaderProfileForms": {
+    "createAction": "Create Draft Profile",
+    "updateAction": "Save Draft Changes",
+    "lifecycle": "DRAFT",
+    "fields": [
+      "fiscalIdentityId",
+      "siteId",
+      "sitePosServerId",
+      "profileVersion",
+      "templateVersion",
+      "presentationVersion",
+      "posSerialNumber",
+      "machineIdentificationNumber",
+      "parkingLocationDisplay",
+      "birAccreditationNumber",
+      "birAccreditationIssuedDate",
+      "birAccreditationValidUntil",
+      "ptuNumber",
+      "ptuIssuedDate",
+      "salesInvoiceLegalStatement",
+      "customerServiceFooter",
+      "effectiveFrom",
+      "effectiveTo"
+    ],
+    "controlledVersionValues": {
+      "templateVersion": [
+        "digital-sales-invoice-json-v1"
+      ],
+      "presentationVersion": [
+        "digital-sales-invoice-presentation-json-v1"
+      ]
+    },
+    "forbiddenBrowserFields": [
+      "terminalId",
+      "createdByRef",
+      "updatedByRef",
+      "approvedByRef",
+      "retiredByRef",
+      "lifecycleState"
+    ]
+  },
+  "siteScope": {
+    "source": "Current authorized Management Platform Site context.",
+    "freeFormSiteAuthority": false,
+    "siteSwitchWithUnsavedChanges": "Requires confirmation before discarding unsaved in-memory form state.",
+    "siteSwitchDuringMutation": "Prevented by pending mutation posture."
+  },
+  "actorDerivationBoundary": {
+    "browserSuppliedActor": false,
+    "derivedBy": "Central PMS backend from the authenticated Management Platform principal."
+  },
+  "excludedLifecycleActions": [
+    "approval",
+    "retirement",
+    "delete",
+    "create-new-version-from-approved"
+  ],
+  "mutationRetry": "Mutation requests are sent once and are not automatically retried.",
+  "uncertainResultBehavior": "Timeout or connection-loss mutation failures show refresh-and-verify guidance with a safe correlation support reference when available.",
+  "errorMapping": {
+    "400": "Review submitted fields.",
+    "401": "Authentication is required or expired.",
+    "403": "Insufficient Manage permission or Site scope.",
+    "404": "Fiscal Identity or Header Profile no longer exists.",
+    "409": "Duplicate version, lifecycle conflict, overlap, immutability, or invalid state.",
+    "422": "Profile validation failed.",
+    "429": "Service is temporarily throttled.",
+    "502_503": "Profile administration is unavailable.",
+    "504": "Mutation result is uncertain. Refresh and verify before retrying.",
+    "malformedResponse": "Safe integration-contract failure."
+  },
+  "developmentScenarios": [
+    "manage",
+    "read-only",
+    "fiscal-identity-create-success",
+    "fiscal-identity-create-conflict",
+    "fiscal-identity-update-success",
+    "fiscal-identity-update-immutable",
+    "profile-create-success",
+    "profile-create-conflict",
+    "profile-create-timeout",
+    "draft-edit-success",
+    "draft-edit-conflict",
+    "approved-read-only",
+    "retired-read-only",
+    "forbidden-manage",
+    "disabled-manage",
+    "unavailable-manage"
+  ],
+  "browserSecurity": {
+    "allowedRoutePrefix": "/v1/management-platform",
+    "forbiddenRoutes": [
+      "/v1/admin/"
+    ],
+    "forbiddenHeaders": [
+      "X-PosServer-Admin-Key",
+      "X-PosServer-Admin-Permission"
+    ],
+    "forbiddenConfiguration": [
+      "POS Server URL",
+      "POS Server API key",
+      "server-side secret reference"
+    ],
+    "browserStorage": "Fiscal Identity, Header Profile, statutory fields, credentials, and Site authorization are not stored in localStorage, sessionStorage, or IndexedDB."
+  },
+  "playwrightE2eAutomation": {
+    "framework": "Playwright",
+    "browser": "Chromium",
+    "projectLocation": "src/Services/ManagementPlatformUi",
+    "primaryScript": "npm run test:e2e",
+    "proofHarness": "scripts/Invoke-ManagementPlatformSalesInvoiceProfileManageUiE2eProof.ps1",
+    "serverLifecycle": "Playwright starts and stops controlled Vite development and production-preview servers automatically.",
+    "defaultPorts": {
+      "development": 5177,
+      "productionPreview": 5178
+    },
+    "automatedScenarioCoverage": [
+      "read-only permission posture",
+      "manage permission posture",
+      "Fiscal Identity create success and conflict",
+      "Fiscal Identity update success and immutability conflict",
+      "DRAFT Header Profile create success, conflict, and timeout uncertainty",
+      "DRAFT Header Profile edit success and conflict",
+      "APPROVED and RETIRED read-only posture",
+      "forbidden, disabled, and unavailable manage postures",
+      "cancel behavior",
+      "unsaved Site-switch confirmation",
+      "pending mutation posture",
+      "double-submit prevention",
+      "responsive layout",
+      "keyboard accessibility",
+      "browser route, header, storage, and console safety",
+      "production scenario isolation"
+    ],
+    "browserSecurityAssertions": [
+      "all browser API requests remain under /v1/management-platform",
+      "no downstream POS Server administration header is sent",
+      "no direct /v1/admin route is requested",
+      "no POS Server URL or API key is exposed",
+      "no profile or credential browser storage is used"
+    ],
+    "productionScenarioIsolation": "Production build ignores mpScenario and mpProfileScenario and exposes no development scenario indicator.",
+    "generatedArtifacts": [
+      "src/Services/ManagementPlatformUi/test-results",
+      "src/Services/ManagementPlatformUi/playwright-report"
+    ],
+    "generatedArtifactPosture": "Screenshots, traces, videos, and reports are generated evidence only and are ignored by Git.",
+    "manualSmokeAfterAutomation": [
+      "open the Manage scenario at 1366x768",
+      "confirm branding and overall layout",
+      "open one Fiscal Identity form",
+      "open one Draft Profile form",
+      "confirm no visual overlap",
+      "confirm no Approve or Retire controls"
+    ]
+  },
+  "accessibility": [
+    "forms have labels",
+    "field errors are associated through a validation summary",
+    "pending states disable submit",
+    "keyboard users can submit and cancel",
+    "status is not conveyed by color alone"
+  ],
+  "responsive": [
+    "forms use responsive sections",
+    "sections stack at narrower widths",
+    "long identifiers wrap safely",
+    "primary actions remain reachable"
+  ],
+  "nonGoals": [
+    "approval",
+    "retirement",
+    "delete",
+    "create-new-version",
+    "receipt printing",
+    "fiscal issuance",
+    "Operator Console",
+    "Assisted Payment Terminal",
+    "exit authorization",
+    "gate behavior"
+  ]
+}

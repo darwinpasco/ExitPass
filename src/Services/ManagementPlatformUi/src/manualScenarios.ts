@@ -38,10 +38,13 @@ export function resolveManagementPlatformManualScenario(
   search: string
 ): ManagementPlatformManualScenario {
   if (!isDevelopment) {
-    return authenticatedScenario(false);
+    return authenticatedScenario(false, defaultDevelopmentPermissions);
   }
 
-  const scenarioName = normalizeScenarioName(new URLSearchParams(search).get("mpScenario"));
+  const searchParams = new URLSearchParams(search);
+  const scenarioName = normalizeScenarioName(searchParams.get("mpScenario"));
+  const profileScenarioName = searchParams.get("mpProfileScenario");
+  const scenarioPermissions = resolveDevelopmentPermissions(profileScenarioName);
 
   switch (scenarioName) {
     case "unauthenticated":
@@ -70,7 +73,7 @@ export function resolveManagementPlatformManualScenario(
           status: "authenticated",
           principal: createDevelopmentPrincipal({
             displayName: "Development Multi Site User",
-            permissions: defaultDevelopmentPermissions,
+            permissions: scenarioPermissions,
             authorizedSites: [oneSite, secondSite]
           })
         },
@@ -83,7 +86,7 @@ export function resolveManagementPlatformManualScenario(
           status: "authenticated",
           principal: createDevelopmentPrincipal({
             displayName: "Development No Site User",
-            permissions: defaultDevelopmentPermissions,
+            permissions: scenarioPermissions,
             authorizedSites: []
           })
         },
@@ -96,7 +99,7 @@ export function resolveManagementPlatformManualScenario(
           status: "authenticated",
           principal: createDevelopmentPrincipal({
             displayName: "Development Unavailable User",
-            permissions: defaultDevelopmentPermissions,
+            permissions: scenarioPermissions,
             authorizedSites: [oneSite]
           })
         },
@@ -112,23 +115,23 @@ export function resolveManagementPlatformManualScenario(
       };
     case "not-found":
       return {
-        ...authenticatedScenario(true),
+        ...authenticatedScenario(true, scenarioPermissions),
         name: scenarioName,
         initialPath: "/management-platform/development-not-found"
       };
     case "authenticated":
     default:
-      return authenticatedScenario(true);
+      return authenticatedScenario(true, scenarioPermissions);
   }
 }
 
-function authenticatedScenario(showIndicator: boolean): ManagementPlatformManualScenario {
+function authenticatedScenario(showIndicator: boolean, permissions: string[]): ManagementPlatformManualScenario {
   return {
     name: "authenticated",
     authState: {
       status: "authenticated",
       principal: createDevelopmentPrincipal({
-        permissions: defaultDevelopmentPermissions,
+        permissions,
         authorizedSites: [oneSite]
       })
     },
@@ -147,5 +150,36 @@ function normalizeScenarioName(value: string | null): ManagementPlatformManualSc
       return value;
     default:
       return "authenticated";
+  }
+}
+
+function resolveDevelopmentPermissions(profileScenarioName: string | null): string[] {
+  if (isManageProfileScenario(profileScenarioName)) {
+    return [...defaultDevelopmentPermissions, futureSalesInvoiceProfilePermissions.manage];
+  }
+
+  return defaultDevelopmentPermissions;
+}
+
+function isManageProfileScenario(value: string | null): boolean {
+  switch (value) {
+    case "manage":
+    case "fiscal-identity-create-success":
+    case "fiscal-identity-create-conflict":
+    case "fiscal-identity-update-success":
+    case "fiscal-identity-update-immutable":
+    case "profile-create-success":
+    case "profile-create-conflict":
+    case "profile-create-timeout":
+    case "draft-edit-success":
+    case "draft-edit-conflict":
+    case "approved-read-only":
+    case "retired-read-only":
+    case "forbidden-manage":
+    case "disabled-manage":
+    case "unavailable-manage":
+      return true;
+    default:
+      return false;
   }
 }

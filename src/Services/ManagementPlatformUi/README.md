@@ -124,3 +124,103 @@ Use these URLs with the local dev server:
 - `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=unavailable`
 
 Scenarios are never stored in browser storage, cookies, IndexedDB, or server configuration. They use controlled in-memory browser adapters and contain only obvious development data.
+
+## Sales Invoice Profile Manage-only workflows
+
+Required permission:
+
+```text
+sales-invoice-profile.manage
+```
+
+Manage-authorized users can create and update Fiscal Identities and create or edit Sales Invoice Header Profiles only while the profile is `DRAFT`. Read-only users continue to see the list, detail, validation, readiness, and usage surfaces without active mutation controls.
+
+Fiscal Identity forms send only:
+
+- `registeredBusinessName`
+- `registeredBusinessAddress`
+- `tin`
+- `taxpayerRegistrationPosture`
+
+DRAFT Header Profile forms send only governed profile fields, with Site and Site POS Server derived from the current authorized Site context. Template and presentation versions are controlled to:
+
+- `digital-sales-invoice-json-v1`
+- `digital-sales-invoice-presentation-json-v1`
+
+The browser does not send actor-reference fields. Central PMS derives the actor from the authenticated Management Platform principal. The browser does not expose approval, retirement, delete, create-new-version, terminal ID, downstream credential, or POS Server administration fields.
+
+Mutation requests are sent once and are not automatically retried. If a create or update times out or loses connectivity after send, the UI shows a Mutation result uncertain posture and tells the user to refresh and verify authoritative state before retrying.
+
+Unsaved form state remains only in component memory. Site switching while a form has unsaved changes requires confirmation before the form is discarded. No Fiscal Identity, Header Profile, statutory data, validation result, credential, or Site authorization data is stored in localStorage, sessionStorage, IndexedDB, or cookies.
+
+### Manage workflow development scenarios
+
+Use these URLs with the local dev server. They are active only while `import.meta.env.DEV === true` and are ignored by production builds.
+
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=manage`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=read-only`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=fiscal-identity-create-success`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=fiscal-identity-create-conflict`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=fiscal-identity-update-success`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=fiscal-identity-update-immutable`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=profile-create-success`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=profile-create-conflict`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=profile-create-timeout`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=draft-edit-success`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=draft-edit-conflict`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approved-read-only`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retired-read-only`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=forbidden-manage`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=disabled-manage`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=unavailable-manage`
+
+## Playwright E2E validation
+
+Install the Chromium browser managed by Playwright once per machine or agent image:
+
+```powershell
+npx playwright install chromium
+```
+
+Run the automated browser matrix:
+
+```powershell
+npm run test:e2e
+```
+
+Interactive variants:
+
+```powershell
+npm run test:e2e:headed
+npm run test:e2e:debug
+```
+
+The Playwright suite starts and stops a controlled Vite server automatically on port `5177` by default. Override it with `MANAGEMENT_PLATFORM_E2E_PORT` when needed. It also serves a production bundle on port `5178` by default to prove production builds ignore `mpScenario` and `mpProfileScenario`.
+
+Generated Playwright artifacts are written to:
+
+- `test-results`
+- `playwright-report`
+
+These directories are generated evidence only and are ignored by Git.
+
+## Complete Manage UI proof
+
+Use this command for the complete Management Platform Sales Invoice Profile Manage UI validation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Invoke-ManagementPlatformSalesInvoiceProfileManageUiE2eProof.ps1
+```
+
+The proof runs install, typecheck, unit tests, production build, Playwright E2E, foundation proof, read UI proof, manage UI proof, and static browser-boundary scans.
+
+## Remaining manual smoke
+
+After the automated Playwright proof passes, the remaining manual browser validation is a short visual smoke check:
+
+1. Open the Manage scenario at `1366x768`.
+2. Confirm branding and overall layout look correct.
+3. Open one Fiscal Identity form.
+4. Open one Draft Profile form.
+5. Confirm no obvious visual overlap.
+6. Confirm no Approve or Retire controls.

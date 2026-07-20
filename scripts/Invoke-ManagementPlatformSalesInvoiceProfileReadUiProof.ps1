@@ -93,18 +93,15 @@ foreach ($forbidden in $forbiddenBrowserTokens) {
 }
 
 $forbiddenMutationLabels = @(
-    "Create Fiscal Identity",
-    "Update Fiscal Identity",
-    "Create Header Profile",
-    "Update Header Profile",
     "Approve profile",
     "Retire profile",
-    "Create New Version"
+    "Create New Version",
+    "Delete Profile"
 )
 
 foreach ($forbidden in $forbiddenMutationLabels) {
     if ($productionSourceText.Contains($forbidden) -or $distText.Contains($forbidden)) {
-        throw "Forbidden read-only mutation control found: $forbidden"
+        throw "Forbidden read UI lifecycle or destructive control found: $forbidden"
     }
 }
 
@@ -134,7 +131,8 @@ Write-Host "Proof passed: no static terminal-ID profile field exists."
 Write-Host "Proof passed: Complete, Incomplete, unknown validation, READY, governed non-ready, and unknown readiness states are covered."
 Write-Host "Proof passed: usage displays aggregate identifiers only and no receipt or snapshot payload."
 Write-Host "Proof passed: disabled, forbidden, unavailable, and safe error postures are covered."
-Write-Host "Proof passed: no create, edit, approve, retire, delete, or new-version controls exist."
+Write-Host "Proof passed: read-only tests cover no mutation controls for read-only users."
+Write-Host "Proof passed: no approve, retire, delete, or new-version controls exist."
 Write-Host "Proof passed: production browser source and dist contain no direct downstream route, key header, permission header, or profile storage implementation."
 Write-Host "Proof passed: production build ignores development scenarios by construction and focused test coverage."
 Write-Host "Proof passed: existing foundation tests remain part of npm test."

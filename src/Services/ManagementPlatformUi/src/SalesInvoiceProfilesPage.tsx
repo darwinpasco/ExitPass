@@ -1,11 +1,14 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
-import { groupValidationCode, isManagementPlatformUiError, readinessStatusText, readinessTone, type EffectiveReadinessResult, type FiscalIdentityDetail, type SalesInvoiceHeaderProfile, type SalesInvoiceHeaderProfileSummary, type SalesInvoiceProfileReadClient, type SalesInvoiceProfileReadScenarioName, type SalesInvoiceProfileUsageResult, type SalesInvoiceProfileValidationResult } from "./salesInvoiceProfiles";
+import { controlledSalesInvoicePresentationVersion, controlledSalesInvoiceTemplateVersion, groupValidationCode, isManagementPlatformUiError, readinessStatusText, readinessTone, type EffectiveReadinessResult, type FiscalIdentityDetail, type FiscalIdentityMutationRequest, type SalesInvoiceHeaderProfile, type SalesInvoiceHeaderProfileMutationRequest, type SalesInvoiceHeaderProfileSummary, type SalesInvoiceProfileClient, type SalesInvoiceProfileReadScenarioName, type SalesInvoiceProfileUsageResult, type SalesInvoiceProfileValidationResult } from "./salesInvoiceProfiles";
+import type { ReactNode } from "react";
 import type { ManagementPlatformSite, ManagementPlatformUiError } from "./types";
 
 interface SalesInvoiceProfilesPageProps {
   currentSite?: ManagementPlatformSite;
-  client: SalesInvoiceProfileReadClient;
+  client: SalesInvoiceProfileClient;
   developmentScenarioName?: SalesInvoiceProfileReadScenarioName;
+  canManage?: boolean;
+  onFormStateChange?: (state: { hasUnsavedChanges: boolean; mutationPending: boolean }) => void;
 }
 
 type LoadState<T> = {
@@ -14,7 +17,16 @@ type LoadState<T> = {
   error?: ManagementPlatformUiError;
 };
 
-export function SalesInvoiceProfilesPage({ currentSite, client, developmentScenarioName }: SalesInvoiceProfilesPageProps) {
+type ActiveForm = "fiscal-create" | "fiscal-edit" | "profile-create" | "profile-edit";
+type MutationState = { pending: boolean; success?: string; error?: ManagementPlatformUiError };
+
+export function SalesInvoiceProfilesPage({
+  currentSite,
+  client,
+  developmentScenarioName,
+  canManage = false,
+  onFormStateChange
+}: SalesInvoiceProfilesPageProps) {
   const [profilesState, setProfilesState] = useState<LoadState<SalesInvoiceHeaderProfileSummary[]>>({ loading: false });
   const [selectedProfileId, setSelectedProfileId] = useState<string | undefined>();
   const [profileState, setProfileState] = useState<LoadState<SalesInvoiceHeaderProfile>>({ loading: false });
@@ -23,9 +35,35 @@ export function SalesInvoiceProfilesPage({ currentSite, client, developmentScena
   const [usageState, setUsageState] = useState<LoadState<SalesInvoiceProfileUsageResult>>({ loading: false });
   const [readinessState, setReadinessState] = useState<LoadState<EffectiveReadinessResult>>({ loading: false });
   const [effectiveAt, setEffectiveAt] = useState(() => toDateTimeLocal(new Date("2026-07-20T04:30:00Z")));
+  const [activeForm, setActiveForm] = useState<ActiveForm | undefined>();
+  const [fiscalForm, setFiscalForm] = useState<FiscalIdentityMutationRequest>(() => emptyFiscalForm());
+  const [profileForm, setProfileForm] = useState<SalesInvoiceHeaderProfileMutationRequest>(() => emptyProfileForm(currentSite));
+  const [formDirty, setFormDirty] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<string[]>([]);
+  const [mutationState, setMutationState] = useState<MutationState>({ pending: false });
+  const [mutationAttemptCount, setMutationAttemptCount] = useState(0);
   const profileRequestSequence = useRef(0);
   const validationInFlightRef = useRef(false);
+  const mutationInFlightRef = useRef(false);
   const selectedProfile = profileState.value;
+
+  useEffect(() => {
+    onFormStateChange?.({ hasUnsavedChanges: formDirty, mutationPending: mutationState.pending });
+    return () => onFormStateChange?.({ hasUnsavedChanges: false, mutationPending: false });
+  }, [formDirty, mutationState.pending, onFormStateChange]);
+
+  useEffect(() => {
+    if (!formDirty) {
+      return;
+    }
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [formDirty]);
 
   useEffect(() => {
     setSelectedProfileId(undefined);
@@ -33,6 +71,11 @@ export function SalesInvoiceProfilesPage({ currentSite, client, developmentScena
     setFiscalIdentityState({ loading: false });
     setValidationState({ loading: false });
     setUsageState({ loading: false });
+    setActiveForm(undefined);
+    setFormDirty(false);
+    setFieldErrors([]);
+    setMutationState({ pending: false });
+    setMutationAttemptCount(0);
 
     if (!currentSite) {
       setProfilesState({ loading: false, value: [] });
@@ -144,6 +187,110 @@ export function SalesInvoiceProfilesPage({ currentSite, client, developmentScena
       .catch((error) => setValidationState({ loading: false, error: toSafeError(error) }));
   }
 
+  function openFiscalCreate() {
+    setFiscalForm(emptyFiscalForm());
+    openForm("fiscal-create");
+  }
+
+  function openFiscalEdit(identity: FiscalIdentityDetail) {
+    setFiscalForm({
+      registeredBusinessName: identity.registeredBusinessName,
+      registeredBusinessAddress: identity.registeredBusinessAddress,
+      tin: identity.tin,
+      taxpayerRegistrationPosture: identity.taxpayerRegistrationPosture
+    });
+    openForm("fiscal-edit");
+  }
+
+  function openProfileCreate() {
+    setProfileForm(emptyProfileForm(currentSite, fiscalIdentityState.value?.fiscalIdentityId));
+    openForm("profile-create");
+  }
+
+  function openProfileEdit(profile: SalesInvoiceHeaderProfile) {
+    setProfileForm(formFromProfile(profile));
+    openForm("profile-edit");
+  }
+
+  function openForm(form: ActiveForm) {
+    setActiveForm(form);
+    setFormDirty(false);
+    setFieldErrors([]);
+    setMutationState({ pending: false });
+  }
+
+  function cancelForm() {
+    setActiveForm(undefined);
+    setFormDirty(false);
+    setFieldErrors([]);
+    setMutationState({ pending: false });
+  }
+
+  async function submitFiscalForm() {
+    if (!activeForm || mutationInFlightRef.current) {
+      return;
+    }
+
+    const errors = validateFiscalForm(fiscalForm);
+    if (errors.length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+
+    mutationInFlightRef.current = true;
+    setMutationAttemptCount((count) => count + 1);
+    setMutationState({ pending: true });
+    try {
+      const controller = new AbortController();
+      const result = activeForm === "fiscal-edit" && fiscalIdentityState.value
+        ? await client.updateFiscalIdentity(fiscalIdentityState.value.fiscalIdentityId, fiscalForm, controller.signal)
+        : await client.createFiscalIdentity(fiscalForm, controller.signal);
+
+      setFiscalIdentityState({ loading: false, value: result });
+      setMutationState({ pending: false, success: activeForm === "fiscal-edit" ? "Fiscal Identity refreshed from authoritative update." : "Fiscal Identity created from authoritative response." });
+      setFormDirty(false);
+      setActiveForm(undefined);
+    } catch (error) {
+      setMutationState({ pending: false, error: toSafeError(error) });
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }
+
+  async function submitProfileForm() {
+    if (!activeForm || !currentSite || mutationInFlightRef.current) {
+      return;
+    }
+
+    const request = { ...profileForm, siteId: currentSite.siteId, sitePosServerId: currentSite.sitePosServerId ?? "" };
+    const errors = validateProfileForm(request);
+    if (errors.length > 0) {
+      setFieldErrors(errors);
+      return;
+    }
+
+    mutationInFlightRef.current = true;
+    setMutationAttemptCount((count) => count + 1);
+    setMutationState({ pending: true });
+    try {
+      const controller = new AbortController();
+      const result = activeForm === "profile-edit" && selectedProfile
+        ? await client.updateDraftProfile(selectedProfile.salesInvoiceHeaderProfileId, request, controller.signal)
+        : await client.createProfile(request, controller.signal);
+
+      setProfileState({ loading: false, value: result });
+      setSelectedProfileId(result.salesInvoiceHeaderProfileId);
+      setMutationState({ pending: false, success: activeForm === "profile-edit" ? "Draft profile refreshed from authoritative update." : "Draft profile created from authoritative response." });
+      setFormDirty(false);
+      setActiveForm(undefined);
+      refreshProfiles();
+    } catch (error) {
+      setMutationState({ pending: false, error: toSafeError(error) });
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }
+
   if (!currentSite) {
     return <StateBlock title="No authorized Site" message="Select an authorized Site before viewing Sales Invoice Header Profiles." tone="warning" />;
   }
@@ -153,13 +300,26 @@ export function SalesInvoiceProfilesPage({ currentSite, client, developmentScena
       <div className="pageTitle">
         <div>
           <p className="eyebrow">Sales Invoice Profiles</p>
-          <h2 id="sales-profile-title">Read-only profile administration status</h2>
+          <h2 id="sales-profile-title">Profile administration status</h2>
         </div>
-        <button type="button" onClick={refreshProfiles} disabled={profilesState.loading}>Refresh</button>
+        <div className="actionRow">
+          {canManage && (
+            <>
+              <button type="button" onClick={openFiscalCreate}>Create Fiscal Identity</button>
+              <button type="button" onClick={openProfileCreate}>Create Draft Profile</button>
+            </>
+          )}
+          <button type="button" onClick={refreshProfiles} disabled={profilesState.loading}>Refresh</button>
+        </div>
       </div>
       {developmentScenarioName && (
         <div className="developmentScenario compact" role="status" aria-label="Development profile scenario">
           Development profile scenario: <strong>{developmentScenarioName}</strong>
+        </div>
+      )}
+      {developmentScenarioName && (
+        <div className="developmentScenario compact" role="status" aria-label="Development mutation attempts">
+          Development mutation attempts: <strong>{mutationAttemptCount}</strong>
         </div>
       )}
       <div className="siteSummary" aria-label="Current profile Site scope">
@@ -174,7 +334,45 @@ export function SalesInvoiceProfilesPage({ currentSite, client, developmentScena
         />
         <div className="detailStack">
           <ReadinessPanel state={readinessState} effectiveAt={effectiveAt} onEffectiveAtChange={setEffectiveAt} />
-          <ProfileDetail profileState={profileState} fiscalIdentityState={fiscalIdentityState} />
+          {activeForm && (
+            <MutationFormPanel
+              activeForm={activeForm}
+              currentSite={currentSite}
+              fiscalForm={fiscalForm}
+              profileForm={profileForm}
+              fieldErrors={fieldErrors}
+              mutationState={mutationState}
+              onFiscalFormChange={(next) => { setFiscalForm(next); setFormDirty(true); }}
+              onProfileFormChange={(next) => { setProfileForm(next); setFormDirty(true); }}
+              onSubmitFiscal={submitFiscalForm}
+              onSubmitProfile={submitProfileForm}
+              onCancel={cancelForm}
+            />
+          )}
+          {!activeForm && mutationState.success && <StateBlock title="Mutation accepted" message={mutationState.success} />}
+          {!activeForm && mutationState.error && (
+            mutationState.error.mutationUncertain
+              ? <StateBlock title="Mutation result uncertain" message={safeErrorMessage(mutationState.error)} tone="warning" />
+              : <StateBlock title="Mutation failed safely" message={safeErrorMessage(mutationState.error)} tone="danger" />
+          )}
+          {!selectedProfile && fiscalIdentityState.value && (
+            <section className="subPanel" aria-labelledby="fiscal-result-title">
+              <h3 id="fiscal-result-title">Fiscal Identity result</h3>
+              <DetailList items={[
+                ["Fiscal Identity ID", fiscalIdentityState.value.fiscalIdentityId],
+                ["Registered business name", fiscalIdentityState.value.registeredBusinessName],
+                ["Updated at", formatDateTime(fiscalIdentityState.value.updatedAt)],
+                ["Created at", formatDateTime(fiscalIdentityState.value.createdAt)]
+              ]} />
+            </section>
+          )}
+          <ProfileDetail
+            profileState={profileState}
+            fiscalIdentityState={fiscalIdentityState}
+            canManage={canManage}
+            onEditFiscalIdentity={openFiscalEdit}
+            onEditDraftProfile={openProfileEdit}
+          />
           {selectedProfile && (
             <ValidationPanel state={validationState} onValidate={validateSelectedProfile} />
           )}
@@ -244,9 +442,12 @@ function ProfileList({ state, selectedProfileId, onSelect }: {
   );
 }
 
-function ProfileDetail({ profileState, fiscalIdentityState }: {
+function ProfileDetail({ profileState, fiscalIdentityState, canManage, onEditFiscalIdentity, onEditDraftProfile }: {
   profileState: LoadState<SalesInvoiceHeaderProfile>;
   fiscalIdentityState: LoadState<FiscalIdentityDetail>;
+  canManage: boolean;
+  onEditFiscalIdentity: (identity: FiscalIdentityDetail) => void;
+  onEditDraftProfile: (profile: SalesInvoiceHeaderProfile) => void;
 }) {
   if (!profileState.loading && !profileState.value && !profileState.error) {
     return <StateBlock title="Select a profile" message="Choose a Header Profile to view details, Fiscal Identity, validation, readiness, and usage." />;
@@ -265,8 +466,22 @@ function ProfileDetail({ profileState, fiscalIdentityState }: {
     <section className="subPanel" aria-labelledby="profile-detail-title">
       <div className="sectionHeader">
         <h3 id="profile-detail-title">Profile detail</h3>
-        <span className="readOnlyBadge">Read-only</span>
+        <div className="actionRow">
+          {canManage && fiscalIdentityState.value && (
+            <button type="button" onClick={() => onEditFiscalIdentity(fiscalIdentityState.value!)}>Edit Fiscal Identity</button>
+          )}
+          {canManage && profile.lifecycleState === "DRAFT" && (
+            <button type="button" onClick={() => onEditDraftProfile(profile)}>Edit Draft Profile</button>
+          )}
+          <span className="readOnlyBadge">{profile.lifecycleState === "DRAFT" ? "Draft" : "Read-only"}</span>
+        </div>
       </div>
+      {canManage && profile.lifecycleState === "APPROVED" && (
+        <StateBlock title="Approved profile is read-only" message="Statutory changes require a new draft version. This slice does not create new versions." />
+      )}
+      {canManage && profile.lifecycleState === "RETIRED" && (
+        <StateBlock title="Retired profile is read-only" message="Retired profiles cannot be edited or reactivated in this UI." />
+      )}
       <div className="detailGrid">
         <DetailGroup title="Identity and scope" items={[
           ["Profile ID", profile.salesInvoiceHeaderProfileId],
@@ -449,6 +664,203 @@ function UsagePanel({ state }: { state: LoadState<SalesInvoiceProfileUsageResult
   );
 }
 
+function MutationFormPanel({
+  activeForm,
+  currentSite,
+  fiscalForm,
+  profileForm,
+  fieldErrors,
+  mutationState,
+  onFiscalFormChange,
+  onProfileFormChange,
+  onSubmitFiscal,
+  onSubmitProfile,
+  onCancel
+}: {
+  activeForm: ActiveForm;
+  currentSite: ManagementPlatformSite;
+  fiscalForm: FiscalIdentityMutationRequest;
+  profileForm: SalesInvoiceHeaderProfileMutationRequest;
+  fieldErrors: string[];
+  mutationState: MutationState;
+  onFiscalFormChange: (next: FiscalIdentityMutationRequest) => void;
+  onProfileFormChange: (next: SalesInvoiceHeaderProfileMutationRequest) => void;
+  onSubmitFiscal: () => void;
+  onSubmitProfile: () => void;
+  onCancel: () => void;
+}) {
+  const isFiscal = activeForm === "fiscal-create" || activeForm === "fiscal-edit";
+  const title = formTitle(activeForm);
+  return (
+    <section className="subPanel mutationPanel" aria-labelledby="mutation-form-title">
+      <div className="sectionHeader">
+        <h3 id="mutation-form-title">{title}</h3>
+        <span className="statusPill compactPill">Manage</span>
+      </div>
+      <p className="formHelp">Central PMS derives the actor identity. This browser form sends only governed Management Platform fields.</p>
+      {fieldErrors.length > 0 && (
+        <div className="formSummary" role="alert" aria-label="Form validation summary">
+          <h4>Review submitted fields.</h4>
+          <ul>{fieldErrors.map((error) => <li key={error}>{error}</li>)}</ul>
+        </div>
+      )}
+      {mutationState.error && (
+        mutationState.error.mutationUncertain
+          ? <StateBlock title="Mutation result uncertain" message={safeErrorMessage(mutationState.error)} tone="warning" />
+          : <StateBlock title="Mutation failed safely" message={safeErrorMessage(mutationState.error)} tone="danger" />
+      )}
+      {mutationState.success && <StateBlock title="Mutation accepted" message={mutationState.success} />}
+      {isFiscal ? (
+        <FiscalIdentityForm
+          value={fiscalForm}
+          pending={mutationState.pending}
+          submitLabel={activeForm === "fiscal-create" ? "Create Fiscal Identity" : "Save Fiscal Identity"}
+          onChange={onFiscalFormChange}
+          onSubmit={onSubmitFiscal}
+          onCancel={onCancel}
+        />
+      ) : (
+        <HeaderProfileForm
+          value={{ ...profileForm, siteId: currentSite.siteId, sitePosServerId: currentSite.sitePosServerId ?? "" }}
+          pending={mutationState.pending}
+          submitLabel={activeForm === "profile-create" ? "Create Draft Profile" : "Save Draft Changes"}
+          onChange={onProfileFormChange}
+          onSubmit={onSubmitProfile}
+          onCancel={onCancel}
+        />
+      )}
+    </section>
+  );
+}
+
+function FiscalIdentityForm({ value, pending, submitLabel, onChange, onSubmit, onCancel }: {
+  value: FiscalIdentityMutationRequest;
+  pending: boolean;
+  submitLabel: string;
+  onChange: (next: FiscalIdentityMutationRequest) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <form className="managedForm" aria-label={submitLabel} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <FormSection title="Fiscal Identity">
+        <TextField id="registered-business-name" label="Registered business name" value={value.registeredBusinessName} onChange={(registeredBusinessName) => onChange({ ...value, registeredBusinessName })} required />
+        <TextField id="registered-business-address" label="Registered business address" value={value.registeredBusinessAddress} onChange={(registeredBusinessAddress) => onChange({ ...value, registeredBusinessAddress })} required textarea />
+        <TextField id="tin" label="TIN" value={value.tin} onChange={(tin) => onChange({ ...value, tin })} required />
+        <TextField id="taxpayer-posture" label="Taxpayer/VAT registration posture" value={value.taxpayerRegistrationPosture} onChange={(taxpayerRegistrationPosture) => onChange({ ...value, taxpayerRegistrationPosture })} required />
+      </FormSection>
+      <FormActions pending={pending} submitLabel={submitLabel} onCancel={onCancel} />
+    </form>
+  );
+}
+
+function HeaderProfileForm({ value, pending, submitLabel, onChange, onSubmit, onCancel }: {
+  value: SalesInvoiceHeaderProfileMutationRequest;
+  pending: boolean;
+  submitLabel: string;
+  onChange: (next: SalesInvoiceHeaderProfileMutationRequest) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <form className="managedForm" aria-label={submitLabel} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      <FormSection title="Fiscal Identity and scope">
+        <TextField id="profile-fiscal-identity" label="Fiscal Identity ID" value={value.fiscalIdentityId} onChange={(fiscalIdentityId) => onChange({ ...value, fiscalIdentityId })} required />
+        <TextField id="profile-site-id" label="Site ID" value={value.siteId} onChange={() => undefined} readOnly />
+        <TextField id="profile-site-pos-server-id" label="Site POS Server ID" value={value.sitePosServerId} onChange={() => undefined} readOnly />
+        <TextField id="profile-version" label="Profile version" value={value.profileVersion} onChange={(profileVersion) => onChange({ ...value, profileVersion })} required />
+      </FormSection>
+      <FormSection title="Supported template versions">
+        <SelectField id="template-version" label="Template version" value={value.templateVersion} onChange={(templateVersion) => onChange({ ...value, templateVersion })} options={[controlledSalesInvoiceTemplateVersion]} />
+        <SelectField id="presentation-version" label="Presentation version" value={value.presentationVersion} onChange={(presentationVersion) => onChange({ ...value, presentationVersion })} options={[controlledSalesInvoicePresentationVersion]} />
+      </FormSection>
+      <FormSection title="Device registration">
+        <TextField id="pos-serial-number" label="POS serial number" value={value.posSerialNumber} onChange={(posSerialNumber) => onChange({ ...value, posSerialNumber })} required />
+        <TextField id="machine-identification-number" label="Machine Identification Number" value={value.machineIdentificationNumber} onChange={(machineIdentificationNumber) => onChange({ ...value, machineIdentificationNumber })} required />
+      </FormSection>
+      <FormSection title="Parking-location display">
+        <TextField id="parking-location-display" label="Parking-location display" value={value.parkingLocationDisplay} onChange={(parkingLocationDisplay) => onChange({ ...value, parkingLocationDisplay })} required />
+      </FormSection>
+      <FormSection title="BIR accreditation">
+        <TextField id="bir-accreditation-number" label="BIR accreditation number" value={value.birAccreditationNumber} onChange={(birAccreditationNumber) => onChange({ ...value, birAccreditationNumber })} required />
+        <TextField id="bir-accreditation-issued-date" label="BIR accreditation date issued" value={value.birAccreditationIssuedDate} onChange={(birAccreditationIssuedDate) => onChange({ ...value, birAccreditationIssuedDate })} required type="date" />
+        <TextField id="bir-accreditation-valid-until" label="BIR accreditation valid until" value={value.birAccreditationValidUntil} onChange={(birAccreditationValidUntil) => onChange({ ...value, birAccreditationValidUntil })} required type="date" />
+      </FormSection>
+      <FormSection title="PTU">
+        <TextField id="ptu-number" label="PTU number" value={value.ptuNumber} onChange={(ptuNumber) => onChange({ ...value, ptuNumber })} required />
+        <TextField id="ptu-issued-date" label="PTU date issued" value={value.ptuIssuedDate} onChange={(ptuIssuedDate) => onChange({ ...value, ptuIssuedDate })} required type="date" />
+      </FormSection>
+      <FormSection title="Sales Invoice wording">
+        <TextField id="sales-invoice-legal-statement" label="Sales Invoice legal statement" value={value.salesInvoiceLegalStatement} onChange={(salesInvoiceLegalStatement) => onChange({ ...value, salesInvoiceLegalStatement })} required textarea />
+        <TextField id="customer-service-footer" label="Customer-service footer" value={value.customerServiceFooter} onChange={(customerServiceFooter) => onChange({ ...value, customerServiceFooter })} textarea />
+      </FormSection>
+      <FormSection title="Effective period">
+        <TextField id="effective-from" label="Effective from" value={value.effectiveFrom} onChange={(effectiveFrom) => onChange({ ...value, effectiveFrom })} required type="datetime-local" />
+        <TextField id="effective-to" label="Effective to" value={value.effectiveTo ?? ""} onChange={(effectiveTo) => onChange({ ...value, effectiveTo })} type="datetime-local" />
+      </FormSection>
+      <FormActions pending={pending} submitLabel={submitLabel} onCancel={onCancel} />
+    </form>
+  );
+}
+
+function FormSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <fieldset className="formSection">
+      <legend>{title}</legend>
+      <div className="formGrid">{children}</div>
+    </fieldset>
+  );
+}
+
+function TextField({ id, label, value, onChange, required = false, readOnly = false, textarea = false, type = "text" }: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+  readOnly?: boolean;
+  textarea?: boolean;
+  type?: string;
+}) {
+  return (
+    <label className="formField" htmlFor={id}>
+      <span>{label}{required ? " *" : ""}</span>
+      {textarea ? (
+        <textarea id={id} value={value} readOnly={readOnly} aria-required={required} onChange={(event) => onChange(event.target.value)} />
+      ) : (
+        <input id={id} type={type} value={value} readOnly={readOnly} aria-required={required} onChange={(event) => onChange(event.target.value)} />
+      )}
+    </label>
+  );
+}
+
+function SelectField({ id, label, value, options, onChange }: {
+  id: string;
+  label: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="formField" htmlFor={id}>
+      <span>{label}</span>
+      <select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function FormActions({ pending, submitLabel, onCancel }: { pending: boolean; submitLabel: string; onCancel: () => void }) {
+  return (
+    <div className="formActions">
+      <button type="submit" disabled={pending}>{pending ? "Saving..." : submitLabel}</button>
+      <button type="button" className="secondaryButton" onClick={onCancel} disabled={pending}>Cancel</button>
+      {pending && <span role="status">Saving authoritative change.</span>}
+    </div>
+  );
+}
+
 function DetailGroup({ title, items }: { title: string; items: Array<[string, string | undefined]> }) {
   const headingId = `detail-${slug(title)}`;
   return (
@@ -494,6 +906,110 @@ function groupCodes(codes: string[]): Array<{ name: string; codes: string[] }> {
   return [...groups.entries()].map(([name, groupedCodes]) => ({ name, codes: groupedCodes }));
 }
 
+function emptyFiscalForm(): FiscalIdentityMutationRequest {
+  return {
+    registeredBusinessName: "",
+    registeredBusinessAddress: "",
+    tin: "",
+    taxpayerRegistrationPosture: "VAT_REGISTERED"
+  };
+}
+
+function emptyProfileForm(site?: ManagementPlatformSite, fiscalIdentityId = ""): SalesInvoiceHeaderProfileMutationRequest {
+  return {
+    fiscalIdentityId,
+    siteId: site?.siteId ?? "",
+    sitePosServerId: site?.sitePosServerId ?? "",
+    profileVersion: "",
+    templateVersion: controlledSalesInvoiceTemplateVersion,
+    presentationVersion: controlledSalesInvoicePresentationVersion,
+    posSerialNumber: "",
+    machineIdentificationNumber: "",
+    parkingLocationDisplay: "",
+    birAccreditationNumber: "",
+    birAccreditationIssuedDate: "",
+    birAccreditationValidUntil: "",
+    ptuNumber: "",
+    ptuIssuedDate: "",
+    salesInvoiceLegalStatement: "",
+    customerServiceFooter: "",
+    effectiveFrom: "",
+    effectiveTo: ""
+  };
+}
+
+function formFromProfile(profile: SalesInvoiceHeaderProfile): SalesInvoiceHeaderProfileMutationRequest {
+  return {
+    fiscalIdentityId: profile.fiscalIdentityId,
+    siteId: profile.siteId,
+    sitePosServerId: profile.sitePosServerId,
+    profileVersion: profile.profileVersion,
+    templateVersion: profile.templateVersion,
+    presentationVersion: profile.presentationVersion,
+    posSerialNumber: profile.posSerialNumber ?? "",
+    machineIdentificationNumber: profile.machineIdentificationNumber ?? "",
+    parkingLocationDisplay: profile.parkingLocationDisplay,
+    birAccreditationNumber: profile.birAccreditationNumber ?? "",
+    birAccreditationIssuedDate: profile.birAccreditationIssuedDate ?? "",
+    birAccreditationValidUntil: profile.birAccreditationValidUntil ?? "",
+    ptuNumber: profile.ptuNumber ?? "",
+    ptuIssuedDate: profile.ptuIssuedDate ?? "",
+    salesInvoiceLegalStatement: profile.salesInvoiceLegalStatement ?? "",
+    customerServiceFooter: profile.customerServiceFooter ?? "",
+    effectiveFrom: toDateTimeLocalValue(profile.effectiveFrom),
+    effectiveTo: toDateTimeLocalValue(profile.effectiveTo)
+  };
+}
+
+function validateFiscalForm(form: FiscalIdentityMutationRequest): string[] {
+  return requiredErrors([
+    ["Registered business name", form.registeredBusinessName],
+    ["Registered business address", form.registeredBusinessAddress],
+    ["TIN", form.tin],
+    ["Taxpayer/VAT registration posture", form.taxpayerRegistrationPosture]
+  ]);
+}
+
+function validateProfileForm(form: SalesInvoiceHeaderProfileMutationRequest): string[] {
+  return requiredErrors([
+    ["Fiscal Identity ID", form.fiscalIdentityId],
+    ["Site ID", form.siteId],
+    ["Site POS Server ID", form.sitePosServerId],
+    ["Profile version", form.profileVersion],
+    ["Template version", form.templateVersion],
+    ["Presentation version", form.presentationVersion],
+    ["POS serial number", form.posSerialNumber],
+    ["Machine Identification Number", form.machineIdentificationNumber],
+    ["Parking-location display", form.parkingLocationDisplay],
+    ["BIR accreditation number", form.birAccreditationNumber],
+    ["BIR accreditation date issued", form.birAccreditationIssuedDate],
+    ["BIR accreditation valid until", form.birAccreditationValidUntil],
+    ["PTU number", form.ptuNumber],
+    ["PTU date issued", form.ptuIssuedDate],
+    ["Sales Invoice legal statement", form.salesInvoiceLegalStatement],
+    ["Effective from", form.effectiveFrom]
+  ]);
+}
+
+function requiredErrors(fields: Array<[string, string | undefined]>): string[] {
+  return fields
+    .filter(([, value]) => !value?.trim())
+    .map(([label]) => `${label} is required.`);
+}
+
+function formTitle(form: ActiveForm): string {
+  switch (form) {
+    case "fiscal-create":
+      return "Create Fiscal Identity";
+    case "fiscal-edit":
+      return "Edit Fiscal Identity";
+    case "profile-create":
+      return "Create Draft Header Profile";
+    case "profile-edit":
+      return "Edit Draft Header Profile";
+  }
+}
+
 function toSafeError(error: unknown): ManagementPlatformUiError {
   if (isManagementPlatformUiError(error)) {
     return error;
@@ -528,6 +1044,14 @@ function toIsoFromDateTimeLocal(value: string): string {
     return new Date("2026-07-20T04:30:00Z").toISOString();
   }
   return new Date(value).toISOString();
+}
+
+function toDateTimeLocalValue(value?: string): string {
+  if (!value) {
+    return "";
+  }
+
+  return value.slice(0, 16);
 }
 
 function slug(value: string): string {
