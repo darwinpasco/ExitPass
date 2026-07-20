@@ -203,7 +203,23 @@ export type SalesInvoiceProfileReadScenarioName =
   | "retire-timeout"
   | "retired-history"
   | "approve-forbidden"
-  | "retire-forbidden";
+  | "retire-forbidden"
+  | "new-version-manage"
+  | "new-version-read-only"
+  | "new-version-approve-only"
+  | "new-version-success"
+  | "new-version-duplicate-conflict"
+  | "new-version-overlap-conflict"
+  | "new-version-timeout"
+  | "new-version-site-mismatch"
+  | "new-version-source-not-active"
+  | "new-version-source-not-found"
+  | "new-version-cancel"
+  | "new-version-unsaved-site-switch"
+  | "new-version-pending-site-switch"
+  | "new-version-double-submit"
+  | "new-version-source-preserved"
+  | "new-version-unknown-status";
 
 export interface SalesInvoiceProfileReadScenario {
   name: SalesInvoiceProfileReadScenarioName;
@@ -340,6 +356,9 @@ function createSalesInvoiceProfileScenarioClient(scenario: SalesInvoiceProfileRe
     async getProfile(profileId, signal) {
       await scenarioDelay(signal);
       throwScenarioErrorIfNeeded(scenario);
+      if (scenario === "new-version-source-not-found") {
+        throw createUiError("not-found", "SALES_INVOICE_SETUP_NOT_FOUND", "The selected Sales Invoice Setup could not be found. Refresh and select an available source setup.", "dev-new-version-source-not-found", 404, false, false);
+      }
       return scenarioProfile(scenario, profileId);
     },
     async getFiscalIdentity(fiscalIdentityId, signal) {
@@ -390,7 +409,7 @@ function createSalesInvoiceProfileScenarioClient(scenario: SalesInvoiceProfileRe
     async createProfile(request, signal) {
       await scenarioDelay(signal);
       throwMutationScenarioErrorIfNeeded(scenario, "profile-create");
-      return profileFromRequest("sip-dev-profile-created", request, "DRAFT");
+      return profileFromRequest(scenario === "new-version-success" || scenario === "new-version-source-preserved" ? "sip-dev-profile-new-version" : "sip-dev-profile-created", request, "DRAFT");
     },
     async updateDraftProfile(profileId, request, signal) {
       await scenarioDelay(signal);
@@ -467,6 +486,22 @@ function normalizeProfileScenarioName(value: string | null): SalesInvoiceProfile
     case "retired-history":
     case "approve-forbidden":
     case "retire-forbidden":
+    case "new-version-manage":
+    case "new-version-read-only":
+    case "new-version-approve-only":
+    case "new-version-success":
+    case "new-version-duplicate-conflict":
+    case "new-version-overlap-conflict":
+    case "new-version-timeout":
+    case "new-version-site-mismatch":
+    case "new-version-source-not-active":
+    case "new-version-source-not-found":
+    case "new-version-cancel":
+    case "new-version-unsaved-site-switch":
+    case "new-version-pending-site-switch":
+    case "new-version-double-submit":
+    case "new-version-source-preserved":
+    case "new-version-unknown-status":
       return value;
     default:
       return undefined;
@@ -507,12 +542,13 @@ function sanitizeProfileRequest(request: SalesInvoiceHeaderProfileMutationReques
 
 function scenarioProfiles(scenario: SalesInvoiceProfileReadScenarioName, site: ManagementPlatformSite): SalesInvoiceHeaderProfileSummary[] {
   const firstProfile = scenarioProfile(scenario, "sip-dev-profile-001");
+  const useSourceScope = scenario === "new-version-site-mismatch";
   return [
     {
       salesInvoiceHeaderProfileId: firstProfile.salesInvoiceHeaderProfileId,
       fiscalIdentityId: firstProfile.fiscalIdentityId,
-      siteId: site.siteId,
-      sitePosServerId: site.sitePosServerId ?? "dev-pos-server",
+      siteId: useSourceScope ? firstProfile.siteId : site.siteId,
+      sitePosServerId: useSourceScope ? firstProfile.sitePosServerId : site.sitePosServerId ?? "dev-pos-server",
       profileVersion: firstProfile.profileVersion,
       templateVersion: firstProfile.templateVersion,
       presentationVersion: firstProfile.presentationVersion,
@@ -543,12 +579,14 @@ function scenarioProfiles(scenario: SalesInvoiceProfileReadScenarioName, site: M
 
 function scenarioProfile(scenario: SalesInvoiceProfileReadScenarioName, profileId: string): SalesInvoiceHeaderProfile {
   const retired = scenario === "retired" || scenario === "retired-read-only" || scenario === "retired-history";
-  const draft = scenario === "manage" || scenario === "profile-create-success" || scenario === "draft-edit-success" || scenario === "draft-edit-conflict" || scenario === "approve-user" || scenario === "manage-without-approve" || scenario === "approve-draft-complete" || scenario === "approve-draft-incomplete" || scenario === "approve-success" || scenario === "approve-conflict" || scenario === "approve-timeout" || scenario === "approve-forbidden";
+  const draft = scenario === "manage" || scenario === "profile-create-success" || scenario === "draft-edit-success" || scenario === "draft-edit-conflict" || scenario === "approve-user" || scenario === "manage-without-approve" || scenario === "approve-draft-complete" || scenario === "approve-draft-incomplete" || scenario === "approve-success" || scenario === "approve-conflict" || scenario === "approve-timeout" || scenario === "approve-forbidden" || scenario === "new-version-source-not-active";
+  const siteMismatch = scenario === "new-version-site-mismatch";
+  const unknownStatus = scenario === "new-version-unknown-status";
   return {
     salesInvoiceHeaderProfileId: profileId,
     fiscalIdentityId: "fiscal-dev-identity-001",
-    siteId: "71000000-0000-0000-0000-000000000101",
-    sitePosServerId: "72000000-0000-0000-0000-000000000101",
+    siteId: siteMismatch ? "71000000-0000-0000-0000-000000000102" : "71000000-0000-0000-0000-000000000101",
+    sitePosServerId: siteMismatch ? "72000000-0000-0000-0000-000000000102" : "72000000-0000-0000-0000-000000000101",
     profileVersion: retired ? "2025.12" : "2026.01",
     templateVersion: "digital-sales-invoice-json-v1",
     presentationVersion: "digital-sales-invoice-presentation-json-v1",
@@ -564,9 +602,9 @@ function scenarioProfile(scenario: SalesInvoiceProfileReadScenarioName, profileI
     customerServiceFooter: "Development customer-service footer.",
     effectiveFrom: "2026-02-01T00:00:00Z",
     effectiveTo: "2027-01-31T23:59:59Z",
-    lifecycleState: retired ? "RETIRED" : draft ? "DRAFT" : "APPROVED",
-    approvedAt: draft ? undefined : "2026-01-25T04:00:00Z",
-    approvedByRef: draft ? undefined : "dev-approver-ref",
+    lifecycleState: unknownStatus ? "PENDING_REVIEW" : retired ? "RETIRED" : draft ? "DRAFT" : "APPROVED",
+    approvedAt: draft || unknownStatus ? undefined : "2026-01-25T04:00:00Z",
+    approvedByRef: draft || unknownStatus ? undefined : "dev-approver-ref",
     retiredAt: retired ? "2026-07-01T00:00:00Z" : undefined,
     createdAt: "2026-01-10T02:00:00Z",
     updatedAt: "2026-07-19T07:10:00Z"
@@ -723,11 +761,20 @@ function throwMutationScenarioErrorIfNeeded(
   if (scenario === "profile-create-conflict" && operation === "profile-create") {
     throw createUiError("conflict", "SALES_INVOICE_PROFILE_DUPLICATE_VERSION", "The Draft Sales Invoice Setup conflicts with version or effective-window rules.", "dev-profile-create-conflict", 409, false, false);
   }
+  if (scenario === "new-version-duplicate-conflict" && operation === "profile-create") {
+    throw createUiError("conflict", "SALES_INVOICE_SETUP_DUPLICATE_VERSION", "The new setup version already exists. Keep the form values, choose an explicit different version, and submit again only after review.", "dev-new-version-duplicate-conflict", 409, false, false);
+  }
+  if (scenario === "new-version-overlap-conflict" && operation === "profile-create") {
+    throw createUiError("conflict", "SALES_INVOICE_SETUP_EFFECTIVE_PERIOD_OVERLAP", "The effective period conflicts with another Active setup. Keep the form values and review the authoritative effective period before submitting again.", "dev-new-version-overlap-conflict", 409, false, false);
+  }
   if (scenario === "draft-edit-conflict" && operation === "profile-update") {
     throw createUiError("conflict", "SALES_INVOICE_PROFILE_LIFECYCLE_CONFLICT", "The Draft Sales Invoice Setup can no longer be updated in place.", "dev-draft-edit-conflict", 409, false, false);
   }
   if (scenario === "profile-create-timeout" && operation === "profile-create") {
     throw createUiError("timeout", "SALES_INVOICE_PROFILE_MUTATION_TIMEOUT", "Mutation result is uncertain. Refresh and verify before retrying.", "dev-profile-create-timeout", 504, true, true);
+  }
+  if (scenario === "new-version-timeout" && operation === "profile-create") {
+    throw createUiError("timeout", "SALES_INVOICE_SETUP_NEW_VERSION_TIMEOUT", "Create result is uncertain. Refresh and verify whether the Draft was created before trying again.", "dev-new-version-timeout", 504, true, true);
   }
   if ((scenario === "approve-forbidden" && operation === "approve") || (scenario === "retire-forbidden" && operation === "retire")) {
     throw createUiError("permission-denied", "SALES_INVOICE_SETUP_APPROVE_DENIED", "You do not have permission to change this Sales Invoice Setup status.", "dev-approve-forbidden-correlation", 403);
