@@ -443,7 +443,7 @@ test.describe("Management Platform Sales Invoice Profile Manage UI E2E", () => {
     }
     await assertBrowserStorageSafe(page);
 
-    const productionPort = Number(process.env.MANAGEMENT_PLATFORM_E2E_PRODUCTION_PORT ?? 5178);
+    const productionPort = Number(process.env.MANAGEMENT_PLATFORM_E2E_PRODUCTION_PORT ?? 5180);
     const productionPage = await browser.newPage();
     try {
       await productionPage.goto(`http://127.0.0.1:${productionPort}${route}?mpScenario=authenticated&mpProfileScenario=manage`);

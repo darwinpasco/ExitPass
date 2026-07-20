@@ -570,6 +570,163 @@ describe("Sales Invoice Profile Manage-only workflows", () => {
   });
 });
 
+describe("Sales Invoice Setup Create New Version workflow", () => {
+  it("enforces Manage permission and Active source eligibility", async () => {
+    const activeClient = makeClient();
+    const { unmount: unmountReadOnly } = render(<SalesInvoiceProfilesPage currentSite={siteA} client={activeClient} canManage={false} canApprove={false} />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    expect(screen.queryByRole("button", { name: "Create New Setup Version" })).not.toBeInTheDocument();
+    unmountReadOnly();
+
+    const approveOnlyClient = makeClient();
+    const { unmount: unmountApproveOnly } = render(<SalesInvoiceProfilesPage currentSite={siteA} client={approveOnlyClient} canManage={false} canApprove />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    expect(screen.queryByRole("button", { name: "Create New Setup Version" })).not.toBeInTheDocument();
+    unmountApproveOnly();
+
+    const manageClient = makeClient();
+    render(<SalesInvoiceProfilesPage currentSite={siteA} client={manageClient} canManage />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    expect(await screen.findByRole("button", { name: "Create New Setup Version" })).toBeInTheDocument();
+  });
+
+  it("hides Create New Setup Version for Draft, Retired, unknown status, and Site mismatch", async () => {
+    for (const source of [
+      draftProfile("profile-draft-001"),
+      { ...profile("profile-retired-001"), lifecycleState: "RETIRED", retiredAt: "2026-07-01T00:00:00Z" },
+      { ...profile("profile-unknown-001"), lifecycleState: "PENDING_REVIEW" },
+      { ...profile("profile-mismatch-001"), siteId: siteB.siteId, sitePosServerId: siteB.sitePosServerId! }
+    ]) {
+      const client = makeClient({
+        listProfiles: vi.fn(async () => [{ ...profileSummary(siteA), salesInvoiceHeaderProfileId: source.salesInvoiceHeaderProfileId, lifecycleState: source.lifecycleState }]),
+        getProfile: vi.fn(async () => source)
+      });
+      const { unmount } = render(<SalesInvoiceProfilesPage currentSite={siteA} client={client} canManage />);
+      await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+      expect(screen.queryByRole("button", { name: "Create New Setup Version" })).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("opens a source-summary form with governed prefill and explicit version/effective dates", async () => {
+    render(<SalesInvoiceProfilesPage currentSite={siteA} client={makeClient()} canManage />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Create New Setup Version" }));
+
+    expect(screen.getByRole("heading", { name: "Create New Sales Invoice Setup Version" })).toBeInTheDocument();
+    const form = screen.getByRole("form", { name: "Create Draft Setup" });
+    expect(form).toHaveTextContent("Source Sales Invoice Setup ID");
+    expect(form).toHaveTextContent("Source setup version");
+    expect(form).toHaveTextContent("Source status");
+    expect(form).toHaveTextContent("Registered Business");
+    expect(form).toHaveTextContent("Site POS Server");
+    expect(form).toHaveTextContent("A new Draft setup will be created.");
+    expect(within(form).getByLabelText("Registered Business *")).toHaveAttribute("readonly");
+    expect(within(form).getByLabelText("Site *")).toHaveAttribute("readonly");
+    expect(within(form).getByLabelText("Site POS Server *")).toHaveAttribute("readonly");
+    expect(within(form).getByLabelText("New setup version *")).toHaveValue("");
+    expect(within(form).getByLabelText("Effective from *")).toHaveValue("");
+    expect(within(form).getByLabelText("Effective to")).toHaveValue("");
+    expect(within(form).getByLabelText("Template version")).toHaveValue(controlledSalesInvoiceTemplateVersion);
+    expect(within(form).getByLabelText("Presentation version")).toHaveValue(controlledSalesInvoicePresentationVersion);
+    expect(within(form).getByLabelText("POS serial number *")).toHaveValue("DEV-POS-001");
+    expect(within(form).getByLabelText("Machine Identification Number *")).toHaveValue("DEV-MIN-001");
+    expect(within(form).getByLabelText("Parking-location display *")).toHaveValue("Development Site Alpha");
+    expect(within(form).getByLabelText("BIR accreditation date issued *")).toHaveValue("2026-01-15");
+    expect(within(form).getByLabelText("BIR accreditation valid until *")).toHaveValue("2027-01-15");
+    expect(within(form).getByLabelText("PTU date issued *")).toHaveValue("2026-01-20");
+    expect(form).not.toHaveTextContent(/Terminal ID|actor|lifecycle selector|Activate after creation|retire source/i);
+  });
+
+  it("requires an explicit different new version and sends one POST without source metadata", async () => {
+    const createProfile = vi.fn(async (request: SalesInvoiceHeaderProfileMutationRequest) => profileFromMutation("profile-new-version-001", request));
+    const updateDraftProfile = vi.fn();
+    const approveProfile = vi.fn();
+    const retireProfile = vi.fn();
+    render(<SalesInvoiceProfilesPage currentSite={siteA} client={makeClient({ createProfile, updateDraftProfile, approveProfile, retireProfile })} canManage />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Create New Setup Version" }));
+    const form = screen.getByRole("form", { name: "Create Draft Setup" });
+    await userEvent.click(within(form).getByRole("button", { name: "Create Draft Setup" }));
+    expect(await screen.findByRole("alert", { name: "Form validation summary" })).toHaveTextContent("New setup version is required.");
+    await userEvent.type(within(form).getByLabelText("New setup version *"), "2026.01");
+    fireEvent.change(within(form).getByLabelText("Effective from *"), { target: { value: "2026-08-01T00:00" } });
+    await userEvent.click(within(form).getByRole("button", { name: "Create Draft Setup" }));
+    expect(await screen.findByRole("alert", { name: "Form validation summary" })).toHaveTextContent("New setup version must differ from the source setup version.");
+    await userEvent.clear(within(form).getByLabelText("New setup version *"));
+    await userEvent.type(within(form).getByLabelText("New setup version *"), "2026.02");
+    await userEvent.dblClick(within(form).getByRole("button", { name: "Create Draft Setup" }));
+
+    await waitFor(() => expect(createProfile).toHaveBeenCalledTimes(1));
+    const submitted = createProfile.mock.calls[0][0] as unknown as Record<string, unknown>;
+    expect(submitted).toMatchObject({
+      fiscalIdentityId: "fiscal-001",
+      siteId: siteA.siteId,
+      sitePosServerId: siteA.sitePosServerId,
+      profileVersion: "2026.02",
+      templateVersion: controlledSalesInvoiceTemplateVersion,
+      presentationVersion: controlledSalesInvoicePresentationVersion,
+      effectiveFrom: "2026-08-01T00:00"
+    });
+    for (const excluded of ["salesInvoiceHeaderProfileId", "lifecycleState", "approvedAt", "approvedByRef", "retiredAt", "createdAt", "updatedAt", "firstSnapshotAt", "latestSnapshotAt", "safeFiscalDocumentIds", "readiness", "validation"]) {
+      expect(submitted).not.toHaveProperty(excluded);
+    }
+    expect(updateDraftProfile).not.toHaveBeenCalled();
+    expect(approveProfile).not.toHaveBeenCalled();
+    expect(retireProfile).not.toHaveBeenCalled();
+    expect(await screen.findByRole("status", { name: "Draft Sales Invoice Setup created" })).toBeInTheDocument();
+    expect(await screen.findByText("profile-new-version-001")).toBeInTheDocument();
+  });
+
+  it("preserves new-version form values on conflict and timeout uncertainty without retry", async () => {
+    const conflictClient = makeClient({
+      createProfile: vi.fn(async () => {
+        throw createUiError("conflict", "SALES_INVOICE_SETUP_DUPLICATE_VERSION", "The new setup version already exists.", "corr-new-version-conflict", 409);
+      })
+    });
+    const { unmount: unmountConflict } = render(<SalesInvoiceProfilesPage currentSite={siteA} client={conflictClient} canManage />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Create New Setup Version" }));
+    let form = screen.getByRole("form", { name: "Create Draft Setup" });
+    await userEvent.type(within(form).getByLabelText("New setup version *"), "2026.02");
+    fireEvent.change(within(form).getByLabelText("Effective from *"), { target: { value: "2026-08-01T00:00" } });
+    await userEvent.click(within(form).getByRole("button", { name: "Create Draft Setup" }));
+    expect(await screen.findByRole("alert", { name: "Changes failed safely" })).toHaveTextContent("corr-new-version-conflict");
+    expect(within(form).getByLabelText("New setup version *")).toHaveValue("2026.02");
+    expect(conflictClient.createProfile).toHaveBeenCalledTimes(1);
+    unmountConflict();
+
+    const timeoutCreate = vi.fn(async () => {
+      throw createUiError("timeout", "SALES_INVOICE_SETUP_NEW_VERSION_TIMEOUT", "Create result is uncertain. Refresh and verify whether the Draft was created before trying again.", "corr-new-version-timeout", 504, true, true);
+    });
+    render(<SalesInvoiceProfilesPage currentSite={siteA} client={makeClient({ createProfile: timeoutCreate })} canManage />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Create New Setup Version" }));
+    form = screen.getByRole("form", { name: "Create Draft Setup" });
+    await userEvent.type(within(form).getByLabelText("New setup version *"), "2026.03");
+    fireEvent.change(within(form).getByLabelText("Effective from *"), { target: { value: "2026-09-01T00:00" } });
+    await userEvent.click(within(form).getByRole("button", { name: "Create Draft Setup" }));
+    expect(await screen.findByRole("status", { name: "Result uncertain" })).toHaveTextContent("Refresh and verify whether the Draft was created");
+    expect(timeoutCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses App unsaved and pending Site-switch posture for new-version forms", async () => {
+    const client = makeClient();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<App authState={authState([managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions.read, futureSalesInvoiceProfilePermissions.manage])} initialPath={salesInvoiceProfileReadRoute} salesInvoiceProfilesClient={client} />);
+    await userEvent.click(await screen.findByRole("button", { name: "2026.01" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Create New Setup Version" }));
+    await userEvent.type(screen.getByLabelText("New setup version *"), "2026.02");
+    await userEvent.selectOptions(screen.getByLabelText("Current Site"), siteB.siteId);
+    expect(confirmSpy).toHaveBeenCalledWith("Discard unsaved Sales Invoice Setup changes before switching Site?");
+    expect(screen.getByLabelText("Current Site")).toHaveValue(siteA.siteId);
+    await userEvent.selectOptions(screen.getByLabelText("Current Site"), siteB.siteId);
+    expect(screen.getByLabelText("Current Site")).toHaveValue(siteB.siteId);
+    expect(screen.queryByRole("form", { name: "Create Draft Setup" })).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+});
+
 describe("Sales Invoice Setup activation and retirement workflows", () => {
   const approvePermissions = [managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions.read, futureSalesInvoiceProfilePermissions.approve];
 

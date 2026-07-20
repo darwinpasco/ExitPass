@@ -180,6 +180,7 @@ function isApproveOnlyProfileScenario(value: string | null): boolean {
     case "retired-history":
     case "approve-forbidden":
     case "retire-forbidden":
+    case "new-version-approve-only":
       return true;
     default:
       return false;
@@ -204,6 +205,20 @@ function isManageProfileScenario(value: string | null): boolean {
     case "forbidden-manage":
     case "disabled-manage":
     case "unavailable-manage":
+    case "new-version-manage":
+    case "new-version-success":
+    case "new-version-duplicate-conflict":
+    case "new-version-overlap-conflict":
+    case "new-version-timeout":
+    case "new-version-site-mismatch":
+    case "new-version-source-not-active":
+    case "new-version-source-not-found":
+    case "new-version-cancel":
+    case "new-version-unsaved-site-switch":
+    case "new-version-pending-site-switch":
+    case "new-version-double-submit":
+    case "new-version-source-preserved":
+    case "new-version-unknown-status":
       return true;
     default:
       return false;

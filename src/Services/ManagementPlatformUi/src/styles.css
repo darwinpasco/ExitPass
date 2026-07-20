@@ -494,6 +494,10 @@ textarea:focus-visible {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.formGridSpan {
+  grid-column: 1 / -1;
+}
+
 .formField {
   display: grid;
   gap: 6px;

@@ -18,7 +18,7 @@ type LoadState<T> = {
   error?: ManagementPlatformUiError;
 };
 
-type ActiveForm = "fiscal-create" | "fiscal-edit" | "profile-create" | "profile-edit";
+type ActiveForm = "fiscal-create" | "fiscal-edit" | "profile-create" | "profile-edit" | "profile-new-version";
 type LifecycleAction = "activate" | "retire";
 type MutationState = { pending: boolean; success?: string; error?: ManagementPlatformUiError };
 
@@ -220,6 +220,25 @@ export function SalesInvoiceProfilesPage({
     openForm("profile-edit");
   }
 
+  function openProfileNewVersion(profile: SalesInvoiceHeaderProfile) {
+    if (!currentSite || !isCreateNewVersionEligible(profile, currentSite, canManage, Boolean(activeForm), mutationState.pending)) {
+      setMutationState({
+        pending: false,
+        error: {
+          kind: "validation",
+          code: "SALES_INVOICE_SETUP_SOURCE_SCOPE_BLOCKED",
+          message: "Create New Setup Version is available only for an Active source setup in the current authorized Site and Site POS Server.",
+          retryable: false,
+          mutationUncertain: false
+        }
+      });
+      return;
+    }
+
+    setProfileForm(newVersionFormFromProfile(profile, currentSite));
+    openForm("profile-new-version");
+  }
+
   function openForm(form: ActiveForm) {
     setActiveForm(form);
     setLifecycleAction(undefined);
@@ -288,8 +307,22 @@ export function SalesInvoiceProfilesPage({
       return;
     }
 
+    if (activeForm === "profile-new-version" && (!selectedProfile || !isCreateNewVersionEligible(selectedProfile, currentSite, canManage, false, mutationState.pending))) {
+      setMutationState({
+        pending: false,
+        error: {
+          kind: "validation",
+          code: "SALES_INVOICE_SETUP_SOURCE_NO_LONGER_ELIGIBLE",
+          message: "The source setup is no longer eligible for a new Draft version. Refresh and verify the current Site and source status.",
+          retryable: false,
+          mutationUncertain: false
+        }
+      });
+      return;
+    }
+
     const request = { ...profileForm, siteId: currentSite.siteId, sitePosServerId: currentSite.sitePosServerId ?? "" };
-    const errors = validateProfileForm(request);
+    const errors = validateProfileForm(request, activeForm === "profile-new-version" ? selectedProfile : undefined);
     if (errors.length > 0) {
       setFieldErrors(errors);
       return;
@@ -408,6 +441,8 @@ export function SalesInvoiceProfilesPage({
               profileForm={profileForm}
               fieldErrors={fieldErrors}
               mutationState={mutationState}
+              sourceProfile={activeForm === "profile-new-version" ? selectedProfile : undefined}
+              sourceRegisteredBusinessName={activeForm === "profile-new-version" ? fiscalIdentityState.value?.registeredBusinessName : undefined}
               onFiscalFormChange={(next) => { setFiscalForm(next); setFormDirty(true); }}
               onProfileFormChange={(next) => { setProfileForm(next); setFormDirty(true); }}
               onSubmitFiscal={submitFiscalForm}
@@ -439,8 +474,11 @@ export function SalesInvoiceProfilesPage({
             canApprove={canApprove}
             validationComplete={displayedValidationIsComplete}
             hasUnsavedChanges={formDirty || Boolean(activeForm)}
+            mutationPending={mutationState.pending}
+            currentSite={currentSite}
             onEditFiscalIdentity={openFiscalEdit}
             onEditDraftProfile={openProfileEdit}
+            onCreateNewVersion={openProfileNewVersion}
             onActivate={() => openLifecycleAction("activate")}
             onRetire={() => openLifecycleAction("retire")}
           />
@@ -524,15 +562,18 @@ function ProfileList({ state, selectedProfileId, onSelect }: {
   );
 }
 
-function ProfileDetail({ profileState, fiscalIdentityState, canManage, canApprove, validationComplete, hasUnsavedChanges, onEditFiscalIdentity, onEditDraftProfile, onActivate, onRetire }: {
+function ProfileDetail({ profileState, fiscalIdentityState, canManage, canApprove, validationComplete, hasUnsavedChanges, mutationPending, currentSite, onEditFiscalIdentity, onEditDraftProfile, onCreateNewVersion, onActivate, onRetire }: {
   profileState: LoadState<SalesInvoiceHeaderProfile>;
   fiscalIdentityState: LoadState<FiscalIdentityDetail>;
   canManage: boolean;
   canApprove: boolean;
   validationComplete: boolean;
   hasUnsavedChanges: boolean;
+  mutationPending: boolean;
+  currentSite: ManagementPlatformSite;
   onEditFiscalIdentity: (identity: FiscalIdentityDetail) => void;
   onEditDraftProfile: (profile: SalesInvoiceHeaderProfile) => void;
+  onCreateNewVersion: (profile: SalesInvoiceHeaderProfile) => void;
   onActivate: () => void;
   onRetire: () => void;
 }) {
@@ -550,6 +591,8 @@ function ProfileDetail({ profileState, fiscalIdentityState, canManage, canApprov
 
   const profile = profileState.value!;
   const status = lifecycleDisplay(profile.lifecycleState);
+  const canCreateNewVersion = isCreateNewVersionEligible(profile, currentSite, canManage, hasUnsavedChanges, mutationPending);
+  const hasSourceScopeMismatch = canManage && profile.lifecycleState === "APPROVED" && !siteMatchesSource(profile, currentSite);
   return (
     <section className="subPanel" aria-labelledby="profile-detail-title">
       <div className="sectionHeader">
@@ -561,6 +604,9 @@ function ProfileDetail({ profileState, fiscalIdentityState, canManage, canApprov
           {canManage && profile.lifecycleState === "DRAFT" && (
             <button type="button" onClick={() => onEditDraftProfile(profile)}>Edit Draft Sales Invoice Setup</button>
           )}
+          {canCreateNewVersion && (
+            <button type="button" onClick={() => onCreateNewVersion(profile)}>Create New Setup Version</button>
+          )}
           {canApprove && profile.lifecycleState === "DRAFT" && validationComplete && !hasUnsavedChanges && (
             <button type="button" onClick={onActivate}>Activate Sales Invoice Setup</button>
           )}
@@ -571,7 +617,10 @@ function ProfileDetail({ profileState, fiscalIdentityState, canManage, canApprov
         </div>
       </div>
       {canManage && profile.lifecycleState === "APPROVED" && (
-        <StateBlock title="Active setup is read-only" message="Statutory changes require a governed new Draft version. This slice does not create new versions." />
+        <StateBlock title="Active setup is read-only" message="Use Create New Setup Version to prepare a separate Draft. The Active source setup and its issuance history remain unchanged." />
+      )}
+      {hasSourceScopeMismatch && (
+        <StateBlock title="Site scope does not match" message="This source setup is outside the current authorized Site or Site POS Server. Create New Setup Version is blocked until the Site context matches the source setup." tone="warning" />
       )}
       {canManage && profile.lifecycleState === "RETIRED" && (
         <StateBlock title="Retired setup is read-only" message="Retired Sales Invoice Setups cannot be edited or reactivated in this UI." />
@@ -836,6 +885,8 @@ function MutationFormPanel({
   profileForm,
   fieldErrors,
   mutationState,
+  sourceProfile,
+  sourceRegisteredBusinessName,
   onFiscalFormChange,
   onProfileFormChange,
   onSubmitFiscal,
@@ -848,6 +899,8 @@ function MutationFormPanel({
   profileForm: SalesInvoiceHeaderProfileMutationRequest;
   fieldErrors: string[];
   mutationState: MutationState;
+  sourceProfile?: SalesInvoiceHeaderProfile;
+  sourceRegisteredBusinessName?: string;
   onFiscalFormChange: (next: FiscalIdentityMutationRequest) => void;
   onProfileFormChange: (next: SalesInvoiceHeaderProfileMutationRequest) => void;
   onSubmitFiscal: () => void;
@@ -856,8 +909,12 @@ function MutationFormPanel({
 }) {
   const isFiscal = activeForm === "fiscal-create" || activeForm === "fiscal-edit";
   const title = formTitle(activeForm);
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
   return (
-    <section className="subPanel mutationPanel" aria-labelledby="mutation-form-title">
+    <section className="subPanel mutationPanel" aria-labelledby="mutation-form-title" ref={panelRef} tabIndex={-1}>
       <div className="sectionHeader">
         <h3 id="mutation-form-title">{title}</h3>
         <span className="statusPill compactPill">Manage</span>
@@ -888,7 +945,10 @@ function MutationFormPanel({
         <HeaderProfileForm
           value={{ ...profileForm, siteId: currentSite.siteId, sitePosServerId: currentSite.sitePosServerId ?? "" }}
           pending={mutationState.pending}
-          submitLabel={activeForm === "profile-create" ? "Create Draft Sales Invoice Setup" : "Save Draft Changes"}
+          submitLabel={activeForm === "profile-edit" ? "Save Draft Changes" : activeForm === "profile-new-version" ? "Create Draft Setup" : "Create Draft Sales Invoice Setup"}
+          sourceProfile={sourceProfile}
+          sourceRegisteredBusinessName={sourceRegisteredBusinessName}
+          isNewVersion={activeForm === "profile-new-version"}
           onChange={onProfileFormChange}
           onSubmit={onSubmitProfile}
           onCancel={onCancel}
@@ -919,21 +979,46 @@ function FiscalIdentityForm({ value, pending, submitLabel, onChange, onSubmit, o
   );
 }
 
-function HeaderProfileForm({ value, pending, submitLabel, onChange, onSubmit, onCancel }: {
+function HeaderProfileForm({ value, pending, submitLabel, sourceProfile, sourceRegisteredBusinessName, onChange, onSubmit, onCancel }: {
   value: SalesInvoiceHeaderProfileMutationRequest;
   pending: boolean;
   submitLabel: string;
+  sourceProfile?: SalesInvoiceHeaderProfile;
+  sourceRegisteredBusinessName?: string;
+  isNewVersion?: boolean;
   onChange: (next: SalesInvoiceHeaderProfileMutationRequest) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  const versionLabel = sourceProfile ? "New setup version" : "Setup version";
   return (
     <form className="managedForm" aria-label={submitLabel} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
+      {sourceProfile && (
+        <FormSection title="Source setup">
+          <div className="formGridSpan">
+            <DetailList items={[
+              ["Source Sales Invoice Setup ID", sourceProfile.salesInvoiceHeaderProfileId],
+              ["Source setup version", sourceProfile.profileVersion],
+              ["Source status", lifecycleDisplay(sourceProfile.lifecycleState)],
+              ["Registered Business", sourceRegisteredBusinessName ?? sourceProfile.fiscalIdentityId],
+              ["Site", sourceProfile.siteId],
+              ["Site POS Server", sourceProfile.sitePosServerId],
+              ["Source effective period", `${formatDateTime(sourceProfile.effectiveFrom)} to ${formatDateTime(sourceProfile.effectiveTo)}`]
+            ]} />
+          </div>
+        </FormSection>
+      )}
+      {sourceProfile && (
+        <>
+          <p className="formHelp">A new Draft setup will be created. The Active source setup and previously issued Sales Invoices will remain unchanged.</p>
+          <p className="formHelp">The new Draft cannot be activated while its effective period overlaps another Active setup. Overlap is checked authoritatively when the setup is validated or activated.</p>
+        </>
+      )}
       <FormSection title="Registered Business and scope">
-        <TextField id="profile-fiscal-identity" label="Registered Business ID" value={value.fiscalIdentityId} onChange={(fiscalIdentityId) => onChange({ ...value, fiscalIdentityId })} required />
-        <TextField id="profile-site-id" label="Site ID" value={value.siteId} onChange={() => undefined} readOnly />
-        <TextField id="profile-site-pos-server-id" label="Site POS Server ID" value={value.sitePosServerId} onChange={() => undefined} readOnly />
-        <TextField id="profile-version" label="Setup version" value={value.profileVersion} onChange={(profileVersion) => onChange({ ...value, profileVersion })} required />
+        <TextField id="profile-fiscal-identity" label={sourceProfile ? "Registered Business" : "Registered Business ID"} value={value.fiscalIdentityId} onChange={sourceProfile ? () => undefined : (fiscalIdentityId) => onChange({ ...value, fiscalIdentityId })} required readOnly={Boolean(sourceProfile)} />
+        <TextField id="profile-site-id" label={sourceProfile ? "Site" : "Site ID"} value={value.siteId} onChange={() => undefined} readOnly required={Boolean(sourceProfile)} />
+        <TextField id="profile-site-pos-server-id" label={sourceProfile ? "Site POS Server" : "Site POS Server ID"} value={value.sitePosServerId} onChange={() => undefined} readOnly required={Boolean(sourceProfile)} />
+        <TextField id="profile-version" label={versionLabel} value={value.profileVersion} onChange={(profileVersion) => onChange({ ...value, profileVersion })} required />
       </FormSection>
       <FormSection title="Supported template versions">
         <SelectField id="template-version" label="Template version" value={value.templateVersion} onChange={(templateVersion) => onChange({ ...value, templateVersion })} options={[controlledSalesInvoiceTemplateVersion]} />
@@ -1126,6 +1211,29 @@ function formFromProfile(profile: SalesInvoiceHeaderProfile): SalesInvoiceHeader
   };
 }
 
+function newVersionFormFromProfile(profile: SalesInvoiceHeaderProfile, site: ManagementPlatformSite): SalesInvoiceHeaderProfileMutationRequest {
+  return {
+    fiscalIdentityId: profile.fiscalIdentityId,
+    siteId: site.siteId,
+    sitePosServerId: site.sitePosServerId ?? "",
+    profileVersion: "",
+    templateVersion: profile.templateVersion,
+    presentationVersion: profile.presentationVersion,
+    posSerialNumber: profile.posSerialNumber ?? "",
+    machineIdentificationNumber: profile.machineIdentificationNumber ?? "",
+    parkingLocationDisplay: profile.parkingLocationDisplay,
+    birAccreditationNumber: profile.birAccreditationNumber ?? "",
+    birAccreditationIssuedDate: profile.birAccreditationIssuedDate ?? "",
+    birAccreditationValidUntil: profile.birAccreditationValidUntil ?? "",
+    ptuNumber: profile.ptuNumber ?? "",
+    ptuIssuedDate: profile.ptuIssuedDate ?? "",
+    salesInvoiceLegalStatement: profile.salesInvoiceLegalStatement ?? "",
+    customerServiceFooter: profile.customerServiceFooter ?? "",
+    effectiveFrom: "",
+    effectiveTo: ""
+  };
+}
+
 function validateFiscalForm(form: FiscalIdentityMutationRequest): string[] {
   return requiredErrors([
     ["Registered business name", form.registeredBusinessName],
@@ -1135,12 +1243,12 @@ function validateFiscalForm(form: FiscalIdentityMutationRequest): string[] {
   ]);
 }
 
-function validateProfileForm(form: SalesInvoiceHeaderProfileMutationRequest): string[] {
-  return requiredErrors([
+function validateProfileForm(form: SalesInvoiceHeaderProfileMutationRequest, sourceProfile?: SalesInvoiceHeaderProfile): string[] {
+  const errors = requiredErrors([
     ["Registered Business ID", form.fiscalIdentityId],
     ["Site ID", form.siteId],
     ["Site POS Server ID", form.sitePosServerId],
-    ["Setup version", form.profileVersion],
+    [sourceProfile ? "New setup version" : "Setup version", form.profileVersion],
     ["Template version", form.templateVersion],
     ["Presentation version", form.presentationVersion],
     ["POS serial number", form.posSerialNumber],
@@ -1154,6 +1262,18 @@ function validateProfileForm(form: SalesInvoiceHeaderProfileMutationRequest): st
     ["Sales Invoice legal statement", form.salesInvoiceLegalStatement],
     ["Effective from", form.effectiveFrom]
   ]);
+  if (sourceProfile && form.profileVersion) {
+    if (form.profileVersion !== form.profileVersion.trim()) {
+      errors.push("New setup version must not include leading or trailing whitespace.");
+    }
+    if (form.profileVersion.trim() === sourceProfile.profileVersion) {
+      errors.push("New setup version must differ from the source setup version.");
+    }
+    if (form.profileVersion.trim().length > 64) {
+      errors.push("New setup version must be 64 characters or fewer.");
+    }
+  }
+  return errors;
 }
 
 function requiredErrors(fields: Array<[string, string | undefined]>): string[] {
@@ -1172,7 +1292,21 @@ function formTitle(form: ActiveForm): string {
       return "Create Draft Sales Invoice Setup";
     case "profile-edit":
       return "Edit Draft Sales Invoice Setup";
+    case "profile-new-version":
+      return "Create New Sales Invoice Setup Version";
   }
+}
+
+function isCreateNewVersionEligible(profile: SalesInvoiceHeaderProfile, site: ManagementPlatformSite, canManage: boolean, hasUnsavedChanges: boolean, mutationPending: boolean): boolean {
+  return canManage &&
+    profile.lifecycleState === "APPROVED" &&
+    !hasUnsavedChanges &&
+    !mutationPending &&
+    siteMatchesSource(profile, site);
+}
+
+function siteMatchesSource(profile: SalesInvoiceHeaderProfile, site: ManagementPlatformSite): boolean {
+  return profile.siteId === site.siteId && profile.sitePosServerId === (site.sitePosServerId ?? "");
 }
 
 function toSafeError(error: unknown): ManagementPlatformUiError {

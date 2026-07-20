@@ -1,0 +1,281 @@
+{
+  "contractId": "management-platform.sales-invoice-setup-new-version-ui.v1",
+  "featureRoute": "/management-platform/sales-invoice-profiles",
+  "workflow": "Create New Sales Invoice Setup Version",
+  "requiredPermission": "sales-invoice-profile.manage",
+  "eligibleSourceStatus": "APPROVED",
+  "browserActionLabel": "Create New Setup Version",
+  "browserFormHeading": "Create New Sales Invoice Setup Version",
+  "createRoute": "POST /v1/management-platform/sales-invoice-header-profiles",
+  "authorityBoundary": {
+    "browser": "Collects an explicit new setup version and effective period, prefills permitted configuration from the selected Active source setup, and submits one create request.",
+    "centralPms": "Browser-facing backend that enforces authentication, Manage permission, Site scope, correlation handling, and server-side actor derivation.",
+    "posServer": "Authoritative system for persistence, validation, lifecycle, overlap detection, completeness, activation, retirement, readiness, and issuance history."
+  },
+  "sourceEligibility": {
+    "required": [
+      "caller has sales-invoice-profile.manage",
+      "selected setup status is Active",
+      "no mutation is pending",
+      "no unsaved edit form is open",
+      "current Site context matches the source setup Site",
+      "current Site POS Server matches the source setup Site POS Server"
+    ],
+    "ineligible": [
+      "Draft",
+      "Retired",
+      "unknown status",
+      "read-only user",
+      "approve-only user without Manage",
+      "unauthorized Site scope",
+      "mismatched Site POS Server",
+      "pending mutation"
+    ]
+  },
+  "copiedFields": [
+    "fiscalIdentityId",
+    "templateVersion",
+    "presentationVersion",
+    "posSerialNumber",
+    "machineIdentificationNumber",
+    "parkingLocationDisplay",
+    "birAccreditationNumber",
+    "birAccreditationIssuedDate",
+    "birAccreditationValidUntil",
+    "ptuNumber",
+    "ptuIssuedDate",
+    "salesInvoiceLegalStatement",
+    "customerServiceFooter"
+  ],
+  "excludedFields": [
+    "salesInvoiceHeaderProfileId",
+    "profileVersion",
+    "lifecycle status",
+    "approvedAt",
+    "approvedByRef",
+    "retiredAt",
+    "createdAt",
+    "updatedAt",
+    "createdByRef",
+    "updatedByRef",
+    "actor references",
+    "usage counts",
+    "first recorded use",
+    "latest recorded use",
+    "fiscal-document IDs",
+    "Issuance history entries",
+    "readiness result",
+    "validation result",
+    "correlation ID",
+    "source status",
+    "source activation timestamp",
+    "source retirement timestamp",
+    "source effective dates as accepted values"
+  ],
+  "newRequiredValues": {
+    "newSetupVersion": "Required, explicit user entry, must differ from the source setup version.",
+    "effectiveFrom": "Required, explicit user entry.",
+    "effectiveTo": "Optional when backend contract permits it."
+  },
+  "versionBehavior": {
+    "autoIncrement": false,
+    "suggestNextVersion": false,
+    "clientChecks": [
+      "blank version",
+      "version equal to source version",
+      "leading whitespace",
+      "trailing whitespace",
+      "obvious configured length violations"
+    ],
+    "backendAuthority": [
+      "format",
+      "uniqueness",
+      "duplicate conflicts",
+      "lifecycle conflicts"
+    ]
+  },
+  "effectivePeriodBehavior": {
+    "sourceEffectivePeriodDisplayedForReference": true,
+    "sourceEffectiveToModified": false,
+    "sourceRetiredAutomatically": false,
+    "nonOverlapInferredByBrowser": false,
+    "warning": "The new Draft cannot be activated while its effective period overlaps another Active setup. Overlap is checked authoritatively when the setup is validated or activated.",
+    "backendAuthority": [
+      "date ordering",
+      "effective-period validity",
+      "overlap",
+      "lifecycle transitions"
+    ]
+  },
+  "siteScopeBehavior": {
+    "newDraftSite": "source setup Site and current authorized Site context",
+    "newDraftSitePosServer": "source Site POS Server and current authorized Site POS Server context",
+    "freeFormSiteId": false,
+    "freeFormSitePosServerId": false,
+    "freeFormTenantAuthority": false,
+    "siteMismatch": "Workflow is blocked, stale source selection is cleared on Site change, and no request is submitted."
+  },
+  "registeredBusinessPosture": "The source Registered Business is fixed for this slice; no free-form Registered Business ID input is introduced by Create New Setup Version.",
+  "controlledVersions": {
+    "templateVersion": "digital-sales-invoice-json-v1",
+    "presentationVersion": "digital-sales-invoice-presentation-json-v1",
+    "freeTextVersionFields": false
+  },
+  "sourceImmutability": {
+    "sourcePatchSent": false,
+    "sourceStatusChanged": false,
+    "sourceEffectivePeriodChanged": false,
+    "sourceIssuanceHistoryChanged": false,
+    "sourceConfigurationChanged": false,
+    "sourceReadinessChangedByWorkflow": false,
+    "sourceRegisteredBusinessChanged": false
+  },
+  "draftOnlyResult": {
+    "createdStatus": "DRAFT",
+    "successMessage": "Draft Sales Invoice Setup created",
+    "showAuthoritativeNewSetupId": true,
+    "showAuthoritativeVersion": true,
+    "showAuthoritativeTimestamps": true,
+    "selectNewDraft": true,
+    "refreshSetupList": true,
+    "noLifecycleSelector": true,
+    "noAutomaticValidation": true,
+    "noAutomaticActivation": true,
+    "noAutomaticRetirement": true
+  },
+  "mutationSafety": {
+    "singleSubmit": true,
+    "doubleClickPrevented": true,
+    "repeatedEnterPrevented": true,
+    "siteSwitchWhilePending": "disabled",
+    "sourceSelectionWhilePending": "not changed by the workflow",
+    "correlationId": "One correlation ID is preserved for the logical request by the shared Management Platform API client.",
+    "automaticRetry": false
+  },
+  "timeoutUncertainty": "Timeout or connection uncertainty does not claim success or definitive failure; the user is instructed to refresh and verify whether the Draft was created using the safe support reference.",
+  "conflictHandling": {
+    "duplicateVersion": "preserve form values and do not auto-increment",
+    "overlap": "preserve form values and do not alter effective dates",
+    "invalidEffectivePeriod": "preserve form values",
+    "invalidRegisteredBusiness": "preserve form values",
+    "siteScopeConflict": "preserve form values and block unsafe submit",
+    "lifecycleConflict": "preserve form values",
+    "sourceNoLongerActive": "block safely",
+    "sourceNoLongerExists": "block safely",
+    "sourceModifiedSinceLoad": "backend authoritative conflict"
+  },
+  "unsavedChangeBehavior": {
+    "cancel": "Sends no POST or PATCH, discards only in-memory new-version form state, returns to source setup detail, preserves Issuance history, and writes nothing to browser storage.",
+    "siteSwitchCancel": "Keeps the form and current Site.",
+    "siteSwitchConfirm": "Discards in-memory state, clears the source selection through Site reload, and makes no source setup change.",
+    "browserStorage": false
+  },
+  "developmentScenarios": [
+    "new-version-manage",
+    "new-version-read-only",
+    "new-version-approve-only",
+    "new-version-success",
+    "new-version-duplicate-conflict",
+    "new-version-overlap-conflict",
+    "new-version-timeout",
+    "new-version-site-mismatch",
+    "new-version-source-not-active",
+    "new-version-source-not-found",
+    "new-version-cancel",
+    "new-version-unsaved-site-switch",
+    "new-version-pending-site-switch",
+    "new-version-double-submit",
+    "new-version-source-preserved",
+    "new-version-unknown-status"
+  ],
+  "playwrightCoverage": [
+    "permission boundary",
+    "source status eligibility",
+    "Site mismatch",
+    "source-not-active",
+    "source-not-found",
+    "read-only source summary",
+    "fixed Site and Site POS Server",
+    "fixed Registered Business posture",
+    "controlled template and presentation versions",
+    "distinct BIR and PTU dates",
+    "excluded Terminal ID, actor, lifecycle, auto-activation, and source-retirement controls",
+    "success creates one Draft and selects it",
+    "source preservation",
+    "duplicate conflict",
+    "overlap conflict",
+    "timeout uncertainty",
+    "cancel",
+    "unsaved Site switch",
+    "pending Site switch",
+    "double-submit and repeated Enter",
+    "keyboard focus",
+    "768x900 and 1024x768 responsive checks",
+    "browser storage",
+    "production ignores development scenarios",
+    "business terminology"
+  ],
+  "parallelWorkPortIsolation": {
+    "developmentDefault": 5178,
+    "playwrightE2eDefault": 5179,
+    "productionPreviewDefault": 5180,
+    "override": "MANAGEMENT_PLATFORM_E2E_PORT"
+  },
+  "browserSecurity": {
+    "allowedRoutePrefix": "/v1/management-platform",
+    "forbiddenRoutes": [
+      "/v1/admin/"
+    ],
+    "forbiddenDirectAccess": [
+      "POS Server hostnames",
+      "POS Server base URLs",
+      "POS Server credentials",
+      "downstream administration headers"
+    ],
+    "browserStorage": false
+  },
+  "terminologyStandard": {
+    "requiredBusinessTerms": [
+      "Registered Business",
+      "Sales Invoice Setup",
+      "Sales Invoice Configuration",
+      "Create New Setup Version",
+      "Create New Sales Invoice Setup Version",
+      "New setup version",
+      "Source setup",
+      "Draft",
+      "Active",
+      "Retired",
+      "Effective period",
+      "Changes saved",
+      "Draft Sales Invoice Setup created",
+      "Issuance history",
+      "Effective period and status history"
+    ],
+    "forbiddenBrowserTerms": [
+      "Fiscal Identity",
+      "Header Profile",
+      "Profile administration",
+      "Mutation accepted",
+      "Clone Profile",
+      "Copy Header Profile",
+      "Lifecycle metadata",
+      "Approve Profile",
+      "Immutable usage",
+      "Effective readiness"
+    ]
+  },
+  "nonGoals": [
+    "automatic activation",
+    "automatic retirement",
+    "deletion",
+    "reactivation",
+    "Operator Console changes",
+    "Assisted Payment Terminal changes",
+    "POS Server changes",
+    "receipt printing",
+    "fiscal issuance",
+    "exit authorization",
+    "gate behavior"
+  ]
+}

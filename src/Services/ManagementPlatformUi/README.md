@@ -147,11 +147,80 @@ Draft Sales Invoice Setup forms send only governed setup fields, with Site and S
 - `digital-sales-invoice-json-v1`
 - `digital-sales-invoice-presentation-json-v1`
 
-The browser does not send actor-reference fields. Central PMS derives the actor from the authenticated Management Platform principal. The browser does not expose approval, retirement, delete, create-new-version, terminal ID, downstream credential, or POS Server administration fields.
+The browser does not send actor-reference fields. Central PMS derives the actor from the authenticated Management Platform principal. The browser does not expose approval, retirement, delete, terminal ID, downstream credential, or POS Server administration fields.
 
 Mutation requests are sent once and are not automatically retried. If a create or update times out or loses connectivity after send, the UI shows a Result uncertain posture and tells the user to refresh and verify authoritative state before retrying.
 
 Unsaved form state remains only in component memory. Site switching while a form has unsaved changes requires confirmation before the form is discarded. No Registered Business, Sales Invoice Setup, statutory data, validation result, credential, or Site authorization data is stored in localStorage, sessionStorage, IndexedDB, or cookies.
+
+## Create New Setup Version
+
+Required permission:
+
+```text
+sales-invoice-profile.manage
+```
+
+Manage-authorized users can use **Create New Setup Version** from an Active Sales Invoice Setup only when the selected source setup belongs to the current authorized Site and Site POS Server, no mutation is pending, and no unsaved edit form is open. Read-only users and approve-only users without Manage cannot create a new version.
+
+The workflow opens **Create New Sales Invoice Setup Version** and creates a separate Draft Sales Invoice Setup through:
+
+```text
+POST /v1/management-platform/sales-invoice-header-profiles
+```
+
+The Active source setup is never patched, retired, ended, reactivated, or automatically replaced. Source Issuance history, effective period, activation timestamp, retirement timestamp, configuration values, readiness state, and Registered Business remain unchanged by this workflow.
+
+The form copies only permitted configuration values from the Active source:
+
+- `fiscalIdentityId`
+- `templateVersion`
+- `presentationVersion`
+- `posSerialNumber`
+- `machineIdentificationNumber`
+- `parkingLocationDisplay`
+- `birAccreditationNumber`
+- `birAccreditationIssuedDate`
+- `birAccreditationValidUntil`
+- `ptuNumber`
+- `ptuIssuedDate`
+- `salesInvoiceLegalStatement`
+- `customerServiceFooter`
+
+The form does not copy setup ID, source setup version, status, actor metadata, approval metadata, retirement metadata, timestamps, usage counts, first/latest recorded use, fiscal-document IDs, Issuance history entries, readiness results, validation results, source activation timestamp, source retirement timestamp, or source effective dates as accepted new values.
+
+The user must explicitly enter **New setup version** and **Effective from**. **Effective to** remains optional when the backend contract permits it. The browser rejects blank versions, versions equal to the source version, leading/trailing whitespace, and obvious length violations, but Central PMS/POS Server remain authoritative for version format, uniqueness, effective-period validity, overlap, lifecycle conflicts, and completeness.
+
+Registered Business is fixed to the source Registered Business for this slice. The workflow does not introduce a free-form Registered Business ID, Site ID, Site POS Server ID, tenant authority, or Site authorization input. Template and presentation versions remain controlled to:
+
+- `digital-sales-invoice-json-v1`
+- `digital-sales-invoice-presentation-json-v1`
+
+On success the UI shows **Draft Sales Invoice Setup created**, displays the authoritative new setup ID, version, Draft status, and timestamps, refreshes the setup list, and selects the new Draft. It does not validate, activate, approve, retire, or change the source setup automatically. Activation remains a separate explicit workflow.
+
+Duplicate-version, overlap, invalid effective period, invalid Registered Business, Site-scope, lifecycle, source-not-Active, source-not-found, and source-modified conflicts preserve form values and do not automatically change the version or effective dates. Timeout or connection uncertainty shows **Result uncertain** guidance with the safe support reference and instructs the user to refresh and verify whether the Draft was created before retrying. The browser sends the create request once and does not retry automatically.
+
+Cancel sends no request, discards only in-memory new-version form state, returns to the source setup detail, preserves source Issuance history, and writes nothing to browser storage. Site switching with unsaved new-version changes requires confirmation; cancelling the confirmation keeps the form and current Site, while confirming discards only in-memory form state and loads the new Site. Site switching is disabled while the create request is pending.
+
+### Create New Setup Version development scenarios
+
+Use these URLs with the local dev server. They are active only while `import.meta.env.DEV === true` and are ignored by production builds.
+
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-manage`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-read-only`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-approve-only`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-success`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-duplicate-conflict`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-overlap-conflict`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-timeout`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-site-mismatch`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-source-not-active`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-source-not-found`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-cancel`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=multi-site&mpProfileScenario=new-version-unsaved-site-switch`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=multi-site&mpProfileScenario=new-version-pending-site-switch`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-double-submit`
+- `http://127.0.0.1:5178/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=new-version-source-preserved`
 
 ## Sales Invoice Setup activation and retirement
 
@@ -230,7 +299,7 @@ npm run test:e2e:headed
 npm run test:e2e:debug
 ```
 
-The Playwright suite starts and stops a controlled Vite server automatically on port `5177` by default. Override it with `MANAGEMENT_PLATFORM_E2E_PORT` when needed. It also serves a production bundle on port `5178` by default to prove production builds ignore `mpScenario` and `mpProfileScenario`.
+The Playwright suite starts and stops a controlled Vite server automatically on port `5179` by default for Codex H parallel-work isolation. Override it with `MANAGEMENT_PLATFORM_E2E_PORT` when needed. It also serves a production bundle on port `5180` by default to prove production builds ignore `mpScenario` and `mpProfileScenario`. Use local development port `5178` when manually running the Vite development server for this worktree.
 
 Generated Playwright artifacts are written to:
 
@@ -239,22 +308,27 @@ Generated Playwright artifacts are written to:
 
 These directories are generated evidence only and are ignored by Git.
 
-## Complete lifecycle UI proof
+## Complete new-version UI proof
 
-Use this command for the complete Management Platform Sales Invoice Setup lifecycle validation:
+Use this command for the complete Management Platform Sales Invoice Setup Create New Setup Version validation:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Invoke-ManagementPlatformSalesInvoiceProfileApproveRetireUiE2eProof.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Invoke-ManagementPlatformSalesInvoiceSetupNewVersionUiE2eProof.ps1
 ```
 
-The proof runs install, typecheck, unit tests, production build, Playwright E2E, foundation proof, read UI proof, manage UI proof, approve/retire UI proof, terminology scans, and static browser-boundary scans.
+The proof runs install, Chromium availability check, typecheck, unit tests, production build, Playwright E2E on the isolated port, foundation proof, read UI proof, Manage UI proof, activation/retirement proof, new-version proof, terminology scans, static browser-boundary scans, browser-storage implementation scan, and generated-artifact staging checks.
 
 ## Remaining manual smoke
 
 After the automated Playwright proof passes, the remaining manual browser validation is a short visual smoke check:
 
-1. Open an activation-eligible Draft Sales Invoice Setup at `1366x768`.
-2. Open the Activate confirmation and confirm user-friendly wording with no overlap.
-3. Open an Active Sales Invoice Setup.
-4. Open the Retire confirmation and confirm historical-preservation wording with no overlap.
-5. Confirm no `Mutation accepted`, `Fiscal Identity`, or `Header Profile` browser labels remain on the touched surfaces.
+1. Open an Active Sales Invoice Setup at `1366x768`.
+2. Click **Create New Setup Version**.
+3. Confirm the source summary is readable.
+4. Confirm the new Draft form is readable.
+5. Confirm **New setup version** is visible.
+6. Confirm **Effective from** and **Effective to** are visible.
+7. Confirm controlled template and presentation versions.
+8. Confirm **Create Draft Setup** and **Cancel** are reachable.
+9. Confirm no overlap.
+10. Confirm no actor, lifecycle, Terminal ID, automatic activation, or source-retirement controls.
