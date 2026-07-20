@@ -141,6 +141,7 @@ app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();
 app.MapInternalGateCommandStateEndpoints();
+app.MapInternalControlledGateExecutionEndpoints(app.Configuration);
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
