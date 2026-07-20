@@ -1,0 +1,90 @@
+{
+  "contractId": "management-platform-ui-foundation.v1",
+  "projectLocation": "src/Services/ManagementPlatformUi",
+  "applicationName": "ExitPass Management Platform",
+  "browserBaseRoute": "/management-platform",
+  "routes": [
+    {
+      "path": "/management-platform",
+      "behavior": "resolves-to-overview"
+    },
+    {
+      "path": "/management-platform/overview",
+      "behavior": "overview"
+    },
+    {
+      "path": "/management-platform/*",
+      "behavior": "scoped-not-found"
+    }
+  ],
+  "authenticationAbstraction": {
+    "safeFields": ["authenticated", "subjectRef", "displayName", "permissions", "authorizedSites", "loadingPosture"],
+    "forbiddenFields": ["tokens", "cookies", "apiKeys", "rawClaims", "authorizationHeaders"]
+  },
+  "permissionAbstraction": {
+    "operations": ["hasPermission", "hasAnyPermission", "hasAllPermissions"],
+    "authoritativeBoundary": "Central PMS backend authorization remains authoritative"
+  },
+  "siteContext": {
+    "supports": ["currentSite", "authorizedSites", "siteSwitch"],
+    "forbidden": ["freeFormSiteAuthority", "browserAuthoritativeTenantRules"]
+  },
+  "centralPmsApiClientBoundary": {
+    "allowedRoutePrefix": "/v1/management-platform",
+    "requiresRelativeRoutes": true,
+    "sendsCorrelationHeader": true,
+    "mutationRetry": "none",
+    "forbidden": ["downstreamAdministrationRoutes", "serverToServerSecretHeaders", "absoluteDownstreamBaseUrls"]
+  },
+  "correlationBehavior": {
+    "header": "X-Correlation-Id",
+    "generatedWhenAbsent": true,
+    "availableInSafeSupportDetails": true,
+    "notUsedAsActorIdentity": true
+  },
+  "browserSafeConfiguration": {
+    "allowed": ["applicationBasePath", "relativeCentralPmsApiBasePath", "environmentDisplayName", "featureFlags"],
+    "forbidden": ["downstreamServiceUrls", "apiKeys", "databaseConnections", "serverSecretReferences"]
+  },
+  "errorCategories": [
+    "validation",
+    "authentication-required",
+    "permission-denied",
+    "site-scope-denied",
+    "not-found",
+    "conflict",
+    "throttled",
+    "integration-unavailable",
+    "timeout",
+    "mutation-uncertain",
+    "malformed-response",
+    "feature-disabled",
+    "unknown"
+  ],
+  "noDirectDownstreamRule": true,
+  "noBrowserSecretRule": true,
+  "accessibilityBaseline": [
+    "semanticLandmarks",
+    "keyboardNavigation",
+    "visibleFocus",
+    "accessibleNavigationLabels",
+    "labeledSiteSelector",
+    "accessibleLoadingAndErrors",
+    "statusNotColorOnly"
+  ],
+  "responsiveBaseline": ["1366x768", "narrowDesktopOrTablet", "reachableNavigation", "safeLongIdentifierWrapping"],
+  "initialPage": "Overview",
+  "futureModuleExtensionPoints": ["routeRegistry", "permissionAwareNavigation", "CentralPmsFeatureClients", "SiteScopedFeatureState"],
+  "nonGoals": [
+    "SalesInvoiceProfileScreens",
+    "FiscalIdentityForms",
+    "OperatorConsoleChanges",
+    "WebPayChanges",
+    "AptChanges",
+    "PosServerChanges",
+    "FiscalIssuance",
+    "ReceiptPrinting",
+    "ExitAuthorization",
+    "GateBehavior"
+  ]
+}
