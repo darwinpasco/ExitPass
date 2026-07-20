@@ -141,7 +141,6 @@ app.MapInternalOutboxDispatcherEndpoints();
 app.MapInternalEventRecoveryEndpoints();
 app.MapInternalVendorSessionProjectionEndpoints();
 app.MapInternalGateCommandStateEndpoints();
-app.MapInternalControlledGateExecutionEndpoints(app.Configuration);
 app.MapGateExitAuthorizationConsumeEndpoints();
 app.MapReconciliationWorkflowEndpoints();
 app.MapMopsTransactionEndpoints();
@@ -564,15 +563,6 @@ static void ConfigureApplicationServices(
         new GateCommandStateReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandExecutionRepository>(_ =>
         new GateCommandExecutionRepository(mainDatabaseConnectionString));
-    builder.Services.AddHikCentralGateIntegration(builder.Configuration);
-    builder.Services.AddScoped<IGateCommandExecutionService>(serviceProvider =>
-        new GateCommandExecutionService(
-            serviceProvider.GetRequiredService<IGateCommandExecutionRepository>(),
-            serviceProvider.GetRequiredService<IHikCentralGateActionAdapter>(),
-            serviceProvider.GetRequiredService<ISystemClock>()));
-    builder.Services.AddScoped<IGateCommandDispatchCandidateRepository>(_ =>
-        new GateCommandDispatchCandidateRepository(mainDatabaseConnectionString));
-    builder.Services.AddScoped<IGateCommandDispatchCycleService, GateCommandDispatchCycleService>();
     builder.Services.AddScoped<IGateCommandInProgressRecoveryRepository>(_ =>
         new GateCommandInProgressRecoveryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandInProgressRecoveryService, GateCommandInProgressRecoveryService>();
@@ -580,15 +570,6 @@ static void ConfigureApplicationServices(
         new GateCommandRecoveryCandidateRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandRecoveryCycleService, GateCommandRecoveryCycleService>();
     builder.Services.AddSingleton(TimeProvider.System);
-    builder.Services
-        .AddOptions<GateCommandDispatchWorkerOptions>()
-        .Bind(builder.Configuration.GetSection(GateCommandDispatchWorkerOptions.SectionName))
-        .Validate(
-            options => options.Validate().Count == 0,
-            $"Invalid {GateCommandDispatchWorkerOptions.SectionName} configuration.")
-        .ValidateOnStart();
-    builder.Services.AddSingleton<IGateCommandDispatchWorkerDelay, GateCommandDispatchWorkerDelay>();
-    builder.Services.AddHostedService<GateCommandDispatchWorker>();
     builder.Services
         .AddOptions<GateCommandRecoveryWorkerOptions>()
         .Bind(builder.Configuration.GetSection(GateCommandRecoveryWorkerOptions.SectionName))
