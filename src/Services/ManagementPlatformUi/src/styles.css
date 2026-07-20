@@ -1,0 +1,298 @@
+﻿:root {
+  background: #f4f6f8;
+  color: #1b252f;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 17px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  overflow-x: hidden;
+}
+
+button,
+select {
+  font: inherit;
+}
+
+button {
+  background: #245b74;
+  border: 1px solid #245b74;
+  border-radius: 6px;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  min-height: 40px;
+  padding: 9px 14px;
+}
+
+button:hover:not(:disabled),
+button:focus-visible:not(:disabled) {
+  background: #17465c;
+}
+
+button:disabled {
+  background: #dbe2e8;
+  border-color: #c7d1d9;
+  color: #61717e;
+  cursor: not-allowed;
+}
+
+select {
+  border: 1px solid #c7d1d9;
+  border-radius: 6px;
+  color: #1b252f;
+  min-height: 40px;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+button:focus-visible,
+select:focus-visible {
+  outline: 3px solid #7ba6b6;
+  outline-offset: 2px;
+}
+
+.appShell {
+  min-height: 100vh;
+  padding: 28px;
+  width: 100%;
+}
+
+.appHeader {
+  align-items: flex-start;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+  margin: 0 auto 20px;
+  max-width: none;
+  min-width: 0;
+  width: min(100%, 1680px);
+}
+
+.appHeader h1,
+.panelHeader h2,
+.pageTitle h2,
+.stateMessage h2 {
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.appHeader h1 {
+  font-size: 2.2rem;
+  line-height: 1.12;
+}
+
+.headerCopy,
+.stateMessage p,
+.overviewGrid p,
+.sitePanel p {
+  color: #344756;
+  margin: 8px 0 0;
+}
+
+.eyebrow {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+.identityPanel,
+.moduleRail,
+.panel,
+.stateMessage {
+  background: #fff;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgb(25 39 52 / 7%);
+}
+
+.identityPanel {
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+  padding: 14px;
+}
+
+.identityPanel span,
+.identityPanel small,
+.sitePanel label {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.platformShell {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
+  margin: 0 auto;
+  max-width: none;
+  min-width: 0;
+  width: min(100%, 1680px);
+}
+
+.platformShell > *,
+.workspace,
+.panel,
+.moduleRail {
+  min-width: 0;
+}
+
+.moduleRail,
+.workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.moduleRail {
+  padding: 18px;
+}
+
+.moduleRail nav {
+  display: grid;
+  gap: 8px;
+}
+
+.navLink {
+  background: #f7fafb;
+  border-color: #dfe5ea;
+  color: #1b252f;
+  text-align: left;
+}
+
+.navLinkActive {
+  background: #e7f2f5;
+  border-color: #7ba6b6;
+  color: #17465c;
+}
+
+.navMeta {
+  color: #61717e;
+  display: block;
+  font-size: 0.78rem;
+  margin-top: 2px;
+}
+
+.sitePanel {
+  border-top: 1px solid #eef2f4;
+  display: grid;
+  gap: 8px;
+  padding-top: 16px;
+}
+
+.panel,
+.stateMessage {
+  padding: 22px;
+}
+
+.pageTitle {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.pageTitle h2,
+.panelHeader h2,
+.stateMessage h2 {
+  font-size: 1.5rem;
+}
+
+.statusPill {
+  background: #e4f4ed;
+  border: 1px solid #a8d9c4;
+  border-radius: 999px;
+  color: #1f6a4b;
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.overviewGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 18px;
+}
+
+.overviewGrid article {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.overviewGrid h3 {
+  margin: 0;
+}
+
+.stateMessage {
+  box-shadow: none;
+}
+
+.stateMessage.warning {
+  background: #fff6df;
+  border-color: #ecd289;
+  color: #654d12;
+}
+
+.stateMessage.danger {
+  background: #fae7e7;
+  border-color: #e5b0b0;
+  color: #7a2727;
+}
+
+.stateMessage.neutral {
+  background: #f7fafb;
+}
+
+@media (max-width: 860px) {
+  .appShell {
+    padding: 18px;
+  }
+
+  .appHeader,
+  .platformShell,
+  .pageTitle,
+  .overviewGrid {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .identityPanel {
+    min-width: 0;
+  }
+}
+
+.developmentScenario {
+  background: #fff6df;
+  border: 1px solid #ecd289;
+  border-radius: 8px;
+  color: #654d12;
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0 auto 16px;
+  padding: 10px 12px;
+  width: min(100%, 1680px);
+}
+
+.developmentScenario strong {
+  overflow-wrap: anywhere;
+}
