@@ -563,6 +563,7 @@ static void ConfigureApplicationServices(
         new GateCommandStateReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IGateCommandExecutionRepository>(_ =>
         new GateCommandExecutionRepository(mainDatabaseConnectionString));
+    builder.Services.AddHikCentralGateIntegration(builder.Configuration);
     builder.Services.AddScoped<IGateCommandExecutionService>(serviceProvider =>
         new GateCommandExecutionService(
             serviceProvider.GetRequiredService<IGateCommandExecutionRepository>(),
