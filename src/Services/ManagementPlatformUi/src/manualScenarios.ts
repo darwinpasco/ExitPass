@@ -1,5 +1,5 @@
 ﻿import { createDevelopmentPrincipal } from "./auth";
-import { managementPlatformOverviewPermission } from "./permissions";
+import { futureSalesInvoiceProfilePermissions, managementPlatformOverviewPermission } from "./permissions";
 import type { ManagementPlatformAuthState, ManagementPlatformSite, ManagementPlatformUiError } from "./types";
 
 export type ManagementPlatformManualScenarioName =
@@ -30,6 +30,8 @@ const secondSite: ManagementPlatformSite = {
   sitePosServerId: "72000000-0000-0000-0000-000000000102",
   displayName: "Development Site Beta"
 };
+
+const defaultDevelopmentPermissions = [managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions.read];
 
 export function resolveManagementPlatformManualScenario(
   isDevelopment: boolean,
@@ -68,7 +70,7 @@ export function resolveManagementPlatformManualScenario(
           status: "authenticated",
           principal: createDevelopmentPrincipal({
             displayName: "Development Multi Site User",
-            permissions: [managementPlatformOverviewPermission],
+            permissions: defaultDevelopmentPermissions,
             authorizedSites: [oneSite, secondSite]
           })
         },
@@ -81,7 +83,7 @@ export function resolveManagementPlatformManualScenario(
           status: "authenticated",
           principal: createDevelopmentPrincipal({
             displayName: "Development No Site User",
-            permissions: [managementPlatformOverviewPermission],
+            permissions: defaultDevelopmentPermissions,
             authorizedSites: []
           })
         },
@@ -94,7 +96,7 @@ export function resolveManagementPlatformManualScenario(
           status: "authenticated",
           principal: createDevelopmentPrincipal({
             displayName: "Development Unavailable User",
-            permissions: [managementPlatformOverviewPermission],
+            permissions: defaultDevelopmentPermissions,
             authorizedSites: [oneSite]
           })
         },
@@ -126,7 +128,7 @@ function authenticatedScenario(showIndicator: boolean): ManagementPlatformManual
     authState: {
       status: "authenticated",
       principal: createDevelopmentPrincipal({
-        permissions: [managementPlatformOverviewPermission],
+        permissions: defaultDevelopmentPermissions,
         authorizedSites: [oneSite]
       })
     },

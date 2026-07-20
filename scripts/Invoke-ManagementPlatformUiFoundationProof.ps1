@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ProjectPath = "src\Services\ManagementPlatformUi"
 )
 
@@ -111,8 +111,20 @@ if (-not $productionSourceText.Contains("/v1/management-platform")) {
     throw "Central PMS Management Platform API route foundation is missing."
 }
 
-if ($productionSourceText.Contains("registeredBusinessName") -or $productionSourceText.Contains("birAccreditationNumber") -or $productionSourceText.Contains("ptuNumber")) {
-    throw "Sales Invoice Profile administration form fields were introduced in the foundation slice."
+$forbiddenMutationLabels = @(
+    "Create Fiscal Identity",
+    "Update Fiscal Identity",
+    "Create Header Profile",
+    "Update Header Profile",
+    "Approve profile",
+    "Retire profile",
+    "Create New Version"
+)
+
+foreach ($forbidden in $forbiddenMutationLabels) {
+    if ($productionSourceText.Contains($forbidden) -or $distText.Contains($forbidden)) {
+        throw "Sales Invoice Profile mutation control was introduced in the read-only UI foundation: $forbidden"
+    }
 }
 
 if ($productionSourceText.Contains("Operator Console") -or $productionSourceText.Contains("WebPay")) {
@@ -137,5 +149,5 @@ Write-Host "Proof passed: browser source contains no downstream admin key header
 Write-Host "Proof passed: browser configuration contains no downstream URL or API-key field."
 Write-Host "Proof passed: browser storage contains no credential persistence implementation."
 Write-Host "Proof passed: safe error components expose support details without raw bodies."
-Write-Host "Proof passed: no Sales Invoice Profile feature form is implemented."
+Write-Host "Proof passed: no Sales Invoice Profile mutation form or lifecycle action is implemented."
 Write-Host "Proof passed: no Operator Console, WebPay, APT, printing, fiscal issuance, exit, or gate behavior is introduced."

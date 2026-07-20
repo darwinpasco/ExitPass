@@ -1,28 +1,53 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import { createCentralPmsApiClient } from "./apiClient";
 import { createDevelopmentAuthState } from "./auth";
 import { getManagementPlatformConfig } from "./config";
 import { resolveManagementPlatformManualScenario, type ManagementPlatformManualScenarioName } from "./manualScenarios";
 import { managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions, hasPermission } from "./permissions";
+import { SalesInvoiceProfilesPage } from "./SalesInvoiceProfilesPage";
+import { createSalesInvoiceProfileReadClient, resolveSalesInvoiceProfileReadScenario, salesInvoiceProfileReadRoute, type SalesInvoiceProfileReadClient } from "./salesInvoiceProfiles";
 import { useManagementPlatformSiteSelection } from "./siteContext";
 import type { ManagementPlatformAuthState, ManagementPlatformConfig, ManagementPlatformUiError } from "./types";
 
 const routes = {
   root: "/management-platform",
-  overview: "/management-platform/overview"
+  overview: "/management-platform/overview",
+  salesInvoiceProfiles: salesInvoiceProfileReadRoute
 };
 
 interface AppProps {
   authState?: ManagementPlatformAuthState;
   initialPath?: string;
   config?: ManagementPlatformConfig;
+  salesInvoiceProfilesClient?: SalesInvoiceProfileReadClient;
   developmentScenariosEnabled?: boolean;
+  profileScenariosEnabled?: boolean;
 }
 
-export function App({ authState, initialPath, config, developmentScenariosEnabled = import.meta.env.DEV }: AppProps) {
+export function App({
+  authState,
+  initialPath,
+  config,
+  salesInvoiceProfilesClient,
+  developmentScenariosEnabled = import.meta.env.DEV,
+  profileScenariosEnabled = import.meta.env.DEV
+}: AppProps) {
   const resolvedConfig = useMemo(() => config ?? getManagementPlatformConfig(), [config]);
   const manualScenario = useMemo(
     () => authState ? undefined : resolveManagementPlatformManualScenario(developmentScenariosEnabled, window.location.search),
     [authState, developmentScenariosEnabled]
+  );
+  const profileScenario = useMemo(
+    () => salesInvoiceProfilesClient ? undefined : resolveSalesInvoiceProfileReadScenario(profileScenariosEnabled, window.location.search),
+    [salesInvoiceProfilesClient, profileScenariosEnabled]
+  );
+  const centralPmsClient = useMemo(
+    () => createCentralPmsApiClient({ basePath: resolvedConfig.centralPmsApiBasePath }),
+    [resolvedConfig.centralPmsApiBasePath]
+  );
+  const profileClient = useMemo(
+    () => salesInvoiceProfilesClient ?? profileScenario?.client ?? createSalesInvoiceProfileReadClient(centralPmsClient),
+    [salesInvoiceProfilesClient, profileScenario?.client, centralPmsClient]
   );
   const state = authState ?? manualScenario?.authState ?? createDevelopmentAuthState();
   const scenarioInitialPath = authState ? undefined : manualScenario?.initialPath;
@@ -68,7 +93,7 @@ export function App({ authState, initialPath, config, developmentScenariosEnable
   const siteSelection = useManagementPlatformSiteSelection(principal.authorizedSites);
   const canViewOverview = hasPermission(principal.permissions, managementPlatformOverviewPermission);
   const canReadSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.read);
-  const isKnownRoute = path === routes.root || path === routes.overview;
+  const isKnownRoute = path === routes.root || path === routes.overview || path === routes.salesInvoiceProfiles;
   const shellProps = {
     principalName: principal.displayName,
     siteSelection,
@@ -84,12 +109,28 @@ export function App({ authState, initialPath, config, developmentScenariosEnable
     return <Shell {...shellProps}><NotFound /></Shell>;
   }
 
-  if (!canViewOverview) {
+  if ((path === routes.root || path === routes.overview) && !canViewOverview) {
+    return <Shell {...shellProps}><PermissionDenied /></Shell>;
+  }
+
+  if (path === routes.salesInvoiceProfiles && !canReadSalesInvoiceProfiles) {
     return <Shell {...shellProps}><PermissionDenied /></Shell>;
   }
 
   if (manualScenario?.error) {
     return <Shell {...shellProps}><PageError error={manualScenario.error} /></Shell>;
+  }
+
+  if (path === routes.salesInvoiceProfiles) {
+    return (
+      <Shell {...shellProps}>
+        <SalesInvoiceProfilesPage
+          currentSite={siteSelection.currentSite}
+          client={profileClient}
+          developmentScenarioName={profileScenario?.name}
+        />
+      </Shell>
+    );
   }
 
   return (
@@ -139,9 +180,11 @@ function Shell({ principalName, siteSelection, path, navigate, canViewOverview, 
                 Overview
               </button>
             )}
-            <button className="navLink" type="button" disabled={!canReadSalesInvoiceProfiles} aria-disabled={!canReadSalesInvoiceProfiles}>
-              Sales Invoice Profiles <span className="navMeta">future module</span>
-            </button>
+            {canReadSalesInvoiceProfiles && (
+              <button className={`navLink ${path === routes.salesInvoiceProfiles ? "navLinkActive" : ""}`} type="button" onClick={() => navigate(routes.salesInvoiceProfiles)}>
+                Sales Invoice Profiles <span className="navMeta">read-only status</span>
+              </button>
+            )}
           </nav>
           <SiteSelector siteSelection={siteSelection} />
         </aside>
@@ -204,7 +247,7 @@ function OverviewPage({ subjectRef, currentSiteName, hasSites }: { subjectRef?: 
           <p>{hasSites ? `Current Site: ${currentSiteName}` : "No authorized Site is available."}</p>
         </article>
       </div>
-      <StateMessage title="Future administrative modules" message="Sales Invoice Profile administration will be added in a separate feature slice. This shell does not edit fiscal data, issue documents, print receipts, authorize exits, or operate gates." />
+      <StateMessage title="Administrative modules" message="Sales Invoice Profile status is available to read-authorized users. This shell does not edit fiscal data, issue documents, print receipts, authorize exits, or operate gates." />
     </section>
   );
 }
@@ -247,6 +290,10 @@ function StateMessage({ title, message, tone = "neutral" }: { title: string; mes
 }
 
 function routeTitle(path: string): string {
+  if (path === routes.salesInvoiceProfiles) {
+    return "Sales Invoice Profiles - ExitPass Management Platform";
+  }
+
   if (path === routes.root || path === routes.overview) {
     return "Overview - ExitPass Management Platform";
   }
