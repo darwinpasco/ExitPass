@@ -5,7 +5,7 @@ import { getManagementPlatformConfig } from "./config";
 import { resolveManagementPlatformManualScenario, type ManagementPlatformManualScenarioName } from "./manualScenarios";
 import { managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions, hasPermission } from "./permissions";
 import { SalesInvoiceProfilesPage } from "./SalesInvoiceProfilesPage";
-import { createSalesInvoiceProfileReadClient, resolveSalesInvoiceProfileReadScenario, salesInvoiceProfileReadRoute, type SalesInvoiceProfileReadClient } from "./salesInvoiceProfiles";
+import { createSalesInvoiceProfileReadClient, resolveSalesInvoiceProfileReadScenario, salesInvoiceProfileReadRoute, type SalesInvoiceProfileClient } from "./salesInvoiceProfiles";
 import { useManagementPlatformSiteSelection } from "./siteContext";
 import type { ManagementPlatformAuthState, ManagementPlatformConfig, ManagementPlatformUiError } from "./types";
 
@@ -19,7 +19,7 @@ interface AppProps {
   authState?: ManagementPlatformAuthState;
   initialPath?: string;
   config?: ManagementPlatformConfig;
-  salesInvoiceProfilesClient?: SalesInvoiceProfileReadClient;
+  salesInvoiceProfilesClient?: SalesInvoiceProfileClient;
   developmentScenariosEnabled?: boolean;
   profileScenariosEnabled?: boolean;
 }
@@ -52,6 +52,7 @@ export function App({
   const state = authState ?? manualScenario?.authState ?? createDevelopmentAuthState();
   const scenarioInitialPath = authState ? undefined : manualScenario?.initialPath;
   const [path, setPath] = useState(initialPath ?? scenarioInitialPath ?? normalizePath(window.location.pathname));
+  const [salesInvoiceFormState, setSalesInvoiceFormState] = useState({ hasUnsavedChanges: false, mutationPending: false });
   const scenarioIndicator = manualScenario?.showIndicator
     ? <DevelopmentScenarioIndicator scenarioName={manualScenario.name} />
     : null;
@@ -93,6 +94,7 @@ export function App({
   const siteSelection = useManagementPlatformSiteSelection(principal.authorizedSites);
   const canViewOverview = hasPermission(principal.permissions, managementPlatformOverviewPermission);
   const canReadSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.read);
+  const canManageSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.manage);
   const isKnownRoute = path === routes.root || path === routes.overview || path === routes.salesInvoiceProfiles;
   const shellProps = {
     principalName: principal.displayName,
@@ -101,6 +103,7 @@ export function App({
     navigate,
     canViewOverview,
     canReadSalesInvoiceProfiles,
+    salesInvoiceFormState,
     environmentName: resolvedConfig.environmentName,
     scenarioIndicator
   };
@@ -128,6 +131,8 @@ export function App({
           currentSite={siteSelection.currentSite}
           client={profileClient}
           developmentScenarioName={profileScenario?.name}
+          canManage={canManageSalesInvoiceProfiles}
+          onFormStateChange={setSalesInvoiceFormState}
         />
       </Shell>
     );
@@ -140,13 +145,14 @@ export function App({
   );
 }
 
-function Shell({ principalName, siteSelection, path, navigate, canViewOverview, canReadSalesInvoiceProfiles, environmentName, scenarioIndicator, children }: {
+function Shell({ principalName, siteSelection, path, navigate, canViewOverview, canReadSalesInvoiceProfiles, salesInvoiceFormState, environmentName, scenarioIndicator, children }: {
   principalName?: string;
   siteSelection: ReturnType<typeof useManagementPlatformSiteSelection>;
   path: string;
   navigate: (path: string) => void;
   canViewOverview: boolean;
   canReadSalesInvoiceProfiles: boolean;
+  salesInvoiceFormState: { hasUnsavedChanges: boolean; mutationPending: boolean };
   environmentName: string;
   scenarioIndicator?: React.ReactNode;
   children: React.ReactNode;
@@ -182,11 +188,11 @@ function Shell({ principalName, siteSelection, path, navigate, canViewOverview, 
             )}
             {canReadSalesInvoiceProfiles && (
               <button className={`navLink ${path === routes.salesInvoiceProfiles ? "navLinkActive" : ""}`} type="button" onClick={() => navigate(routes.salesInvoiceProfiles)}>
-                Sales Invoice Profiles <span className="navMeta">read-only status</span>
+                Sales Invoice Profiles <span className="navMeta">administration status</span>
               </button>
             )}
           </nav>
-          <SiteSelector siteSelection={siteSelection} />
+          <SiteSelector siteSelection={siteSelection} formState={salesInvoiceFormState} />
         </aside>
 
         <section className="workspace" aria-live="polite">
@@ -205,7 +211,10 @@ function DevelopmentScenarioIndicator({ scenarioName }: { scenarioName: Manageme
   );
 }
 
-function SiteSelector({ siteSelection }: { siteSelection: ReturnType<typeof useManagementPlatformSiteSelection> }) {
+function SiteSelector({ siteSelection, formState }: {
+  siteSelection: ReturnType<typeof useManagementPlatformSiteSelection>;
+  formState: { hasUnsavedChanges: boolean; mutationPending: boolean };
+}) {
   if (!siteSelection.hasSites) {
     return <StateMessage title="No authorized Sites" message="No Sites are currently available for your Management Platform permissions." tone="warning" />;
   }
@@ -213,7 +222,19 @@ function SiteSelector({ siteSelection }: { siteSelection: ReturnType<typeof useM
   return (
     <div className="sitePanel">
       <label htmlFor="site-selector">Current Site</label>
-      <select id="site-selector" value={siteSelection.currentSite?.siteId ?? ""} onChange={(event) => siteSelection.switchSite(event.target.value)}>
+      <select
+        id="site-selector"
+        value={siteSelection.currentSite?.siteId ?? ""}
+        disabled={formState.mutationPending}
+        onChange={(event) => {
+          if (formState.hasUnsavedChanges && !window.confirm("Discard unsaved Sales Invoice Profile form changes before switching Site?")) {
+            event.currentTarget.value = siteSelection.currentSite?.siteId ?? "";
+            return;
+          }
+
+          siteSelection.switchSite(event.target.value);
+        }}
+      >
         {siteSelection.sites.map((site) => (
           <option key={site.siteId} value={site.siteId}>{site.displayName}</option>
         ))}

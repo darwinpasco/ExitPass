@@ -8,6 +8,9 @@ export const salesInvoiceProfileApiRoutes = {
   fiscalIdentities: "/v1/management-platform/fiscal-identities"
 } as const;
 
+export const controlledSalesInvoiceTemplateVersion = "digital-sales-invoice-json-v1";
+export const controlledSalesInvoicePresentationVersion = "digital-sales-invoice-presentation-json-v1";
+
 export type SalesInvoiceProfileLifecycleState = "DRAFT" | "APPROVED" | "RETIRED" | string;
 export type EffectiveReadinessStatus =
   | "READY"
@@ -110,6 +113,34 @@ export interface SalesInvoiceProfileUsageResult {
   correlationId?: string;
 }
 
+export interface FiscalIdentityMutationRequest {
+  registeredBusinessName: string;
+  registeredBusinessAddress: string;
+  tin: string;
+  taxpayerRegistrationPosture: string;
+}
+
+export interface SalesInvoiceHeaderProfileMutationRequest {
+  fiscalIdentityId: string;
+  siteId: string;
+  sitePosServerId: string;
+  profileVersion: string;
+  templateVersion: string;
+  presentationVersion: string;
+  posSerialNumber: string;
+  machineIdentificationNumber: string;
+  parkingLocationDisplay: string;
+  birAccreditationNumber: string;
+  birAccreditationIssuedDate: string;
+  birAccreditationValidUntil: string;
+  ptuNumber: string;
+  ptuIssuedDate: string;
+  salesInvoiceLegalStatement: string;
+  customerServiceFooter: string;
+  effectiveFrom: string;
+  effectiveTo?: string;
+}
+
 export interface SalesInvoiceProfileReadClient {
   listProfiles(site: ManagementPlatformSite, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfileSummary[]>;
   getProfile(profileId: string, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
@@ -117,6 +148,13 @@ export interface SalesInvoiceProfileReadClient {
   validateProfile(profileId: string, signal?: AbortSignal): Promise<SalesInvoiceProfileValidationResult>;
   getEffectiveReadiness(site: ManagementPlatformSite, effectiveAt: string, signal?: AbortSignal): Promise<EffectiveReadinessResult>;
   getProfileUsage(profileId: string, signal?: AbortSignal): Promise<SalesInvoiceProfileUsageResult>;
+}
+
+export interface SalesInvoiceProfileClient extends SalesInvoiceProfileReadClient {
+  createFiscalIdentity(request: FiscalIdentityMutationRequest, signal?: AbortSignal): Promise<FiscalIdentityDetail>;
+  updateFiscalIdentity(fiscalIdentityId: string, request: FiscalIdentityMutationRequest, signal?: AbortSignal): Promise<FiscalIdentityDetail>;
+  createProfile(request: SalesInvoiceHeaderProfileMutationRequest, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
+  updateDraftProfile(profileId: string, request: SalesInvoiceHeaderProfileMutationRequest, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
 }
 
 export type SalesInvoiceProfileReadScenarioName =
@@ -133,15 +171,31 @@ export type SalesInvoiceProfileReadScenarioName =
   | "usage"
   | "disabled"
   | "forbidden"
-  | "unavailable";
+  | "unavailable"
+  | "manage"
+  | "read-only"
+  | "fiscal-identity-create-success"
+  | "fiscal-identity-create-conflict"
+  | "fiscal-identity-update-success"
+  | "fiscal-identity-update-immutable"
+  | "profile-create-success"
+  | "profile-create-conflict"
+  | "profile-create-timeout"
+  | "draft-edit-success"
+  | "draft-edit-conflict"
+  | "approved-read-only"
+  | "retired-read-only"
+  | "forbidden-manage"
+  | "disabled-manage"
+  | "unavailable-manage";
 
 export interface SalesInvoiceProfileReadScenario {
   name: SalesInvoiceProfileReadScenarioName;
-  client: SalesInvoiceProfileReadClient;
+  client: SalesInvoiceProfileClient;
   showIndicator: boolean;
 }
 
-export function createSalesInvoiceProfileReadClient(apiClient: CentralPmsApiClient): SalesInvoiceProfileReadClient {
+export function createSalesInvoiceProfileReadClient(apiClient: CentralPmsApiClient): SalesInvoiceProfileClient {
   return {
     listProfiles(site, signal) {
       const query = new URLSearchParams({ siteId: site.siteId, sitePosServerId: site.sitePosServerId ?? "" });
@@ -162,6 +216,18 @@ export function createSalesInvoiceProfileReadClient(apiClient: CentralPmsApiClie
     },
     getProfileUsage(profileId, signal) {
       return apiClient.request<SalesInvoiceProfileUsageResult>(`${salesInvoiceProfileApiRoutes.profiles}/${encodeURIComponent(profileId)}/usage`, { signal });
+    },
+    createFiscalIdentity(request, signal) {
+      return apiClient.request<FiscalIdentityDetail>(salesInvoiceProfileApiRoutes.fiscalIdentities, { method: "POST", body: sanitizeFiscalIdentityRequest(request), signal });
+    },
+    updateFiscalIdentity(fiscalIdentityId, request, signal) {
+      return apiClient.request<FiscalIdentityDetail>(`${salesInvoiceProfileApiRoutes.fiscalIdentities}/${encodeURIComponent(fiscalIdentityId)}`, { method: "PATCH", body: sanitizeFiscalIdentityRequest(request), signal });
+    },
+    createProfile(request, signal) {
+      return apiClient.request<SalesInvoiceHeaderProfile>(salesInvoiceProfileApiRoutes.profiles, { method: "POST", body: sanitizeProfileRequest(request), signal });
+    },
+    updateDraftProfile(profileId, request, signal) {
+      return apiClient.request<SalesInvoiceHeaderProfile>(`${salesInvoiceProfileApiRoutes.profiles}/${encodeURIComponent(profileId)}`, { method: "PATCH", body: sanitizeProfileRequest(request), signal });
     }
   };
 }
@@ -239,7 +305,7 @@ export function isManagementPlatformUiError(error: unknown): error is Management
   return typeof error === "object" && error !== null && "kind" in error && "message" in error;
 }
 
-function createSalesInvoiceProfileScenarioClient(scenario: SalesInvoiceProfileReadScenarioName): SalesInvoiceProfileReadClient {
+function createSalesInvoiceProfileScenarioClient(scenario: SalesInvoiceProfileReadScenarioName): SalesInvoiceProfileClient {
   return {
     async listProfiles(site, signal) {
       await scenarioDelay(signal);
@@ -273,6 +339,41 @@ function createSalesInvoiceProfileScenarioClient(scenario: SalesInvoiceProfileRe
       await scenarioDelay(signal);
       throwScenarioErrorIfNeeded(scenario);
       return scenarioUsage(profileId);
+    },
+    async createFiscalIdentity(request, signal) {
+      await scenarioDelay(signal);
+      throwMutationScenarioErrorIfNeeded(scenario, "fiscal-create");
+      return {
+        ...scenarioFiscalIdentity("fiscal-dev-identity-created"),
+        registeredBusinessName: request.registeredBusinessName,
+        registeredBusinessAddress: request.registeredBusinessAddress,
+        tin: request.tin,
+        taxpayerRegistrationPosture: request.taxpayerRegistrationPosture,
+        createdAt: "2026-07-20T05:00:00Z",
+        updatedAt: "2026-07-20T05:00:00Z"
+      };
+    },
+    async updateFiscalIdentity(fiscalIdentityId, request, signal) {
+      await scenarioDelay(signal);
+      throwMutationScenarioErrorIfNeeded(scenario, "fiscal-update");
+      return {
+        ...scenarioFiscalIdentity(fiscalIdentityId),
+        registeredBusinessName: request.registeredBusinessName,
+        registeredBusinessAddress: request.registeredBusinessAddress,
+        tin: request.tin,
+        taxpayerRegistrationPosture: request.taxpayerRegistrationPosture,
+        updatedAt: "2026-07-20T05:10:00Z"
+      };
+    },
+    async createProfile(request, signal) {
+      await scenarioDelay(signal);
+      throwMutationScenarioErrorIfNeeded(scenario, "profile-create");
+      return profileFromRequest("sip-dev-profile-created", request, "DRAFT");
+    },
+    async updateDraftProfile(profileId, request, signal) {
+      await scenarioDelay(signal);
+      throwMutationScenarioErrorIfNeeded(scenario, "profile-update");
+      return profileFromRequest(profileId, request, "DRAFT");
     }
   };
 }
@@ -293,10 +394,58 @@ function normalizeProfileScenarioName(value: string | null): SalesInvoiceProfile
     case "disabled":
     case "forbidden":
     case "unavailable":
+    case "manage":
+    case "read-only":
+    case "fiscal-identity-create-success":
+    case "fiscal-identity-create-conflict":
+    case "fiscal-identity-update-success":
+    case "fiscal-identity-update-immutable":
+    case "profile-create-success":
+    case "profile-create-conflict":
+    case "profile-create-timeout":
+    case "draft-edit-success":
+    case "draft-edit-conflict":
+    case "approved-read-only":
+    case "retired-read-only":
+    case "forbidden-manage":
+    case "disabled-manage":
+    case "unavailable-manage":
       return value;
     default:
       return undefined;
   }
+}
+
+function sanitizeFiscalIdentityRequest(request: FiscalIdentityMutationRequest): FiscalIdentityMutationRequest {
+  return {
+    registeredBusinessName: request.registeredBusinessName.trim(),
+    registeredBusinessAddress: request.registeredBusinessAddress.trim(),
+    tin: request.tin.trim(),
+    taxpayerRegistrationPosture: request.taxpayerRegistrationPosture.trim()
+  };
+}
+
+function sanitizeProfileRequest(request: SalesInvoiceHeaderProfileMutationRequest): SalesInvoiceHeaderProfileMutationRequest {
+  return {
+    fiscalIdentityId: request.fiscalIdentityId.trim(),
+    siteId: request.siteId.trim(),
+    sitePosServerId: request.sitePosServerId.trim(),
+    profileVersion: request.profileVersion.trim(),
+    templateVersion: request.templateVersion.trim(),
+    presentationVersion: request.presentationVersion.trim(),
+    posSerialNumber: request.posSerialNumber.trim(),
+    machineIdentificationNumber: request.machineIdentificationNumber.trim(),
+    parkingLocationDisplay: request.parkingLocationDisplay.trim(),
+    birAccreditationNumber: request.birAccreditationNumber.trim(),
+    birAccreditationIssuedDate: request.birAccreditationIssuedDate.trim(),
+    birAccreditationValidUntil: request.birAccreditationValidUntil.trim(),
+    ptuNumber: request.ptuNumber.trim(),
+    ptuIssuedDate: request.ptuIssuedDate.trim(),
+    salesInvoiceLegalStatement: request.salesInvoiceLegalStatement.trim(),
+    customerServiceFooter: request.customerServiceFooter.trim(),
+    effectiveFrom: request.effectiveFrom.trim(),
+    effectiveTo: request.effectiveTo?.trim() || undefined
+  };
 }
 
 function scenarioProfiles(scenario: SalesInvoiceProfileReadScenarioName, site: ManagementPlatformSite): SalesInvoiceHeaderProfileSummary[] {
@@ -336,7 +485,8 @@ function scenarioProfiles(scenario: SalesInvoiceProfileReadScenarioName, site: M
 }
 
 function scenarioProfile(scenario: SalesInvoiceProfileReadScenarioName, profileId: string): SalesInvoiceHeaderProfile {
-  const retired = scenario === "retired";
+  const retired = scenario === "retired" || scenario === "retired-read-only";
+  const draft = scenario === "manage" || scenario === "profile-create-success" || scenario === "draft-edit-success" || scenario === "draft-edit-conflict";
   return {
     salesInvoiceHeaderProfileId: profileId,
     fiscalIdentityId: "fiscal-dev-identity-001",
@@ -357,12 +507,43 @@ function scenarioProfile(scenario: SalesInvoiceProfileReadScenarioName, profileI
     customerServiceFooter: "Development customer-service footer.",
     effectiveFrom: "2026-02-01T00:00:00Z",
     effectiveTo: "2027-01-31T23:59:59Z",
-    lifecycleState: retired ? "RETIRED" : "APPROVED",
-    approvedAt: "2026-01-25T04:00:00Z",
-    approvedByRef: "dev-approver-ref",
+    lifecycleState: retired ? "RETIRED" : draft ? "DRAFT" : "APPROVED",
+    approvedAt: draft ? undefined : "2026-01-25T04:00:00Z",
+    approvedByRef: draft ? undefined : "dev-approver-ref",
     retiredAt: retired ? "2026-07-01T00:00:00Z" : undefined,
     createdAt: "2026-01-10T02:00:00Z",
     updatedAt: "2026-07-19T07:10:00Z"
+  };
+}
+
+function profileFromRequest(
+  profileId: string,
+  request: SalesInvoiceHeaderProfileMutationRequest,
+  lifecycleState: SalesInvoiceProfileLifecycleState
+): SalesInvoiceHeaderProfile {
+  return {
+    salesInvoiceHeaderProfileId: profileId,
+    fiscalIdentityId: request.fiscalIdentityId,
+    siteId: request.siteId,
+    sitePosServerId: request.sitePosServerId,
+    profileVersion: request.profileVersion,
+    templateVersion: request.templateVersion,
+    presentationVersion: request.presentationVersion,
+    posSerialNumber: request.posSerialNumber,
+    machineIdentificationNumber: request.machineIdentificationNumber,
+    parkingLocationDisplay: request.parkingLocationDisplay,
+    birAccreditationNumber: request.birAccreditationNumber,
+    birAccreditationIssuedDate: request.birAccreditationIssuedDate,
+    birAccreditationValidUntil: request.birAccreditationValidUntil,
+    ptuNumber: request.ptuNumber,
+    ptuIssuedDate: request.ptuIssuedDate,
+    salesInvoiceLegalStatement: request.salesInvoiceLegalStatement,
+    customerServiceFooter: request.customerServiceFooter,
+    effectiveFrom: request.effectiveFrom,
+    effectiveTo: request.effectiveTo,
+    lifecycleState,
+    createdAt: "2026-07-20T05:15:00Z",
+    updatedAt: "2026-07-20T05:15:00Z"
   };
 }
 
@@ -458,14 +639,37 @@ function scenarioUsage(profileId: string): SalesInvoiceProfileUsageResult {
 }
 
 function throwScenarioErrorIfNeeded(scenario: SalesInvoiceProfileReadScenarioName): void {
-  if (scenario === "disabled") {
+  if (scenario === "disabled" || scenario === "disabled-manage") {
     throw createUiError("feature-disabled", "SALES_INVOICE_PROFILE_ADMINISTRATION_DISABLED", "Sales Invoice Profile administration is not enabled for this environment.", "dev-disabled-correlation", 503);
   }
-  if (scenario === "forbidden") {
+  if (scenario === "forbidden" || scenario === "forbidden-manage") {
     throw createUiError("permission-denied", "SITE_SCOPE_DENIED", "You do not have permission for this Site scope.", "dev-forbidden-correlation", 403);
   }
-  if (scenario === "unavailable") {
+  if (scenario === "unavailable" || scenario === "unavailable-manage") {
     throw createUiError("integration-unavailable", "PROFILE_ADMINISTRATION_UNAVAILABLE", "Profile administration is unavailable.", "dev-unavailable-correlation", 503, true);
+  }
+}
+
+function throwMutationScenarioErrorIfNeeded(
+  scenario: SalesInvoiceProfileReadScenarioName,
+  operation: "fiscal-create" | "fiscal-update" | "profile-create" | "profile-update"
+): void {
+  throwScenarioErrorIfNeeded(scenario);
+
+  if (scenario === "fiscal-identity-create-conflict" && operation === "fiscal-create") {
+    throw createUiError("conflict", "FISCAL_IDENTITY_DUPLICATE_OR_IMMUTABLE", "The Fiscal Identity conflicts with authoritative state.", "dev-fiscal-create-conflict", 409, false, false);
+  }
+  if (scenario === "fiscal-identity-update-immutable" && operation === "fiscal-update") {
+    throw createUiError("conflict", "FISCAL_IDENTITY_IMMUTABLE", "The Fiscal Identity cannot be changed in its current authoritative state.", "dev-fiscal-update-conflict", 409, false, false);
+  }
+  if (scenario === "profile-create-conflict" && operation === "profile-create") {
+    throw createUiError("conflict", "SALES_INVOICE_PROFILE_DUPLICATE_VERSION", "The draft profile conflicts with version or effective-window rules.", "dev-profile-create-conflict", 409, false, false);
+  }
+  if (scenario === "draft-edit-conflict" && operation === "profile-update") {
+    throw createUiError("conflict", "SALES_INVOICE_PROFILE_LIFECYCLE_CONFLICT", "The draft profile can no longer be updated in place.", "dev-draft-edit-conflict", 409, false, false);
+  }
+  if (scenario === "profile-create-timeout" && operation === "profile-create") {
+    throw createUiError("timeout", "SALES_INVOICE_PROFILE_MUTATION_TIMEOUT", "Mutation result is uncertain. Refresh and verify before retrying.", "dev-profile-create-timeout", 504, true, true);
   }
 }
 
@@ -475,10 +679,19 @@ function scenarioDelay(signal?: AbortSignal): Promise<void> {
   }
 
   return new Promise((resolve, reject) => {
-    const timeoutId = window.setTimeout(resolve, 1);
+    const timeoutId = window.setTimeout(resolve, developmentScenarioDelayMs());
     signal?.addEventListener("abort", () => {
       window.clearTimeout(timeoutId);
       reject(new DOMException("cancelled", "AbortError"));
     }, { once: true });
   });
+}
+
+function developmentScenarioDelayMs(): number {
+  const parsedDelay = Number(new URLSearchParams(window.location.search).get("mpProfileDelayMs"));
+  if (!Number.isFinite(parsedDelay)) {
+    return 1;
+  }
+
+  return Math.min(Math.max(parsedDelay, 1), 1_000);
 }
