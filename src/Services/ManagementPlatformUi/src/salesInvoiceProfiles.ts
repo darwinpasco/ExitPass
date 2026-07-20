@@ -155,6 +155,8 @@ export interface SalesInvoiceProfileClient extends SalesInvoiceProfileReadClient
   updateFiscalIdentity(fiscalIdentityId: string, request: FiscalIdentityMutationRequest, signal?: AbortSignal): Promise<FiscalIdentityDetail>;
   createProfile(request: SalesInvoiceHeaderProfileMutationRequest, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
   updateDraftProfile(profileId: string, request: SalesInvoiceHeaderProfileMutationRequest, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
+  approveProfile(profileId: string, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
+  retireProfile(profileId: string, signal?: AbortSignal): Promise<SalesInvoiceHeaderProfile>;
 }
 
 export type SalesInvoiceProfileReadScenarioName =
@@ -187,7 +189,21 @@ export type SalesInvoiceProfileReadScenarioName =
   | "retired-read-only"
   | "forbidden-manage"
   | "disabled-manage"
-  | "unavailable-manage";
+  | "unavailable-manage"
+  | "approve-user"
+  | "manage-without-approve"
+  | "approve-draft-complete"
+  | "approve-draft-incomplete"
+  | "approve-success"
+  | "approve-conflict"
+  | "approve-timeout"
+  | "retire-approved"
+  | "retire-success"
+  | "retire-conflict"
+  | "retire-timeout"
+  | "retired-history"
+  | "approve-forbidden"
+  | "retire-forbidden";
 
 export interface SalesInvoiceProfileReadScenario {
   name: SalesInvoiceProfileReadScenarioName;
@@ -228,6 +244,12 @@ export function createSalesInvoiceProfileReadClient(apiClient: CentralPmsApiClie
     },
     updateDraftProfile(profileId, request, signal) {
       return apiClient.request<SalesInvoiceHeaderProfile>(`${salesInvoiceProfileApiRoutes.profiles}/${encodeURIComponent(profileId)}`, { method: "PATCH", body: sanitizeProfileRequest(request), signal });
+    },
+    approveProfile(profileId, signal) {
+      return apiClient.request<SalesInvoiceHeaderProfile>(`${salesInvoiceProfileApiRoutes.profiles}/${encodeURIComponent(profileId)}/approve`, { method: "POST", signal });
+    },
+    retireProfile(profileId, signal) {
+      return apiClient.request<SalesInvoiceHeaderProfile>(`${salesInvoiceProfileApiRoutes.profiles}/${encodeURIComponent(profileId)}/retire`, { method: "POST", signal });
     }
   };
 }
@@ -254,9 +276,9 @@ export function readinessStatusText(status: EffectiveReadinessStatus): string {
     case "READY":
       return "Ready for Sales Invoice issuance";
     case "NO_EFFECTIVE_PROFILE":
-      return "No effective Sales Invoice Header Profile";
+      return "No effective Sales Invoice Setup";
     case "INCOMPLETE":
-      return "Profile configuration is incomplete";
+      return "Setup configuration is incomplete";
     case "EXPIRED":
       return "BIR accreditation or effective profile is expired";
     case "AMBIGUOUS":
@@ -264,7 +286,7 @@ export function readinessStatusText(status: EffectiveReadinessStatus): string {
     case "UNSUPPORTED_VERSION":
       return "Template or presentation version is unsupported";
     case "RETIRED":
-      return "Profile is retired and unavailable for new issuance";
+      return "Setup is retired and unavailable for new issuance";
     default:
       return `Unknown readiness: ${status}`;
   }
@@ -277,7 +299,7 @@ export function readinessTone(status: EffectiveReadinessStatus): "ready" | "warn
 export function groupValidationCode(code: string): string {
   const normalized = code.toUpperCase();
   if (normalized.includes("FISCAL_IDENTITY") || normalized.includes("TIN") || normalized.includes("BUSINESS")) {
-    return "Fiscal Identity";
+    return "Registered Business";
   }
   if (normalized.includes("SITE")) {
     return "Site and Site POS Server";
@@ -374,6 +396,27 @@ function createSalesInvoiceProfileScenarioClient(scenario: SalesInvoiceProfileRe
       await scenarioDelay(signal);
       throwMutationScenarioErrorIfNeeded(scenario, "profile-update");
       return profileFromRequest(profileId, request, "DRAFT");
+    },
+    async approveProfile(profileId, signal) {
+      await scenarioDelay(signal);
+      throwMutationScenarioErrorIfNeeded(scenario, "approve");
+      return {
+        ...scenarioProfile(scenario, profileId),
+        lifecycleState: "APPROVED",
+        approvedAt: "2026-07-20T06:00:00Z",
+        retiredAt: undefined,
+        updatedAt: "2026-07-20T06:00:00Z"
+      };
+    },
+    async retireProfile(profileId, signal) {
+      await scenarioDelay(signal);
+      throwMutationScenarioErrorIfNeeded(scenario, "retire");
+      return {
+        ...scenarioProfile(scenario, profileId),
+        lifecycleState: "RETIRED",
+        retiredAt: "2026-07-20T06:30:00Z",
+        updatedAt: "2026-07-20T06:30:00Z"
+      };
     }
   };
 }
@@ -410,6 +453,20 @@ function normalizeProfileScenarioName(value: string | null): SalesInvoiceProfile
     case "forbidden-manage":
     case "disabled-manage":
     case "unavailable-manage":
+    case "approve-user":
+    case "manage-without-approve":
+    case "approve-draft-complete":
+    case "approve-draft-incomplete":
+    case "approve-success":
+    case "approve-conflict":
+    case "approve-timeout":
+    case "retire-approved":
+    case "retire-success":
+    case "retire-conflict":
+    case "retire-timeout":
+    case "retired-history":
+    case "approve-forbidden":
+    case "retire-forbidden":
       return value;
     default:
       return undefined;
@@ -485,8 +542,8 @@ function scenarioProfiles(scenario: SalesInvoiceProfileReadScenarioName, site: M
 }
 
 function scenarioProfile(scenario: SalesInvoiceProfileReadScenarioName, profileId: string): SalesInvoiceHeaderProfile {
-  const retired = scenario === "retired" || scenario === "retired-read-only";
-  const draft = scenario === "manage" || scenario === "profile-create-success" || scenario === "draft-edit-success" || scenario === "draft-edit-conflict";
+  const retired = scenario === "retired" || scenario === "retired-read-only" || scenario === "retired-history";
+  const draft = scenario === "manage" || scenario === "profile-create-success" || scenario === "draft-edit-success" || scenario === "draft-edit-conflict" || scenario === "approve-user" || scenario === "manage-without-approve" || scenario === "approve-draft-complete" || scenario === "approve-draft-incomplete" || scenario === "approve-success" || scenario === "approve-conflict" || scenario === "approve-timeout" || scenario === "approve-forbidden";
   return {
     salesInvoiceHeaderProfileId: profileId,
     fiscalIdentityId: "fiscal-dev-identity-001",
@@ -561,15 +618,15 @@ function scenarioFiscalIdentity(fiscalIdentityId: string): FiscalIdentityDetail 
 }
 
 function scenarioValidation(scenario: SalesInvoiceProfileReadScenarioName, profileId: string): SalesInvoiceProfileValidationResult {
-  const incomplete = scenario === "incomplete";
+  const incomplete = scenario === "incomplete" || scenario === "approve-draft-incomplete";
   return {
     salesInvoiceHeaderProfileId: profileId,
-    lifecycleState: scenario === "retired" ? "RETIRED" : "APPROVED",
+    lifecycleState: draftValidationScenario(scenario) ? "DRAFT" : scenario === "retired" ? "RETIRED" : "APPROVED",
     isComplete: !incomplete,
     missingOrInvalidFieldCodes: incomplete
       ? ["FISCAL_IDENTITY_TIN_REQUIRED", "BIR_ACCREDITATION_VALID_UNTIL_REQUIRED", "PTU_ISSUED_DATE_REQUIRED", "EFFECTIVE_WINDOW_OVERLAP", "UNKNOWN_FUTURE_CODE"]
       : [],
-    messages: incomplete ? ["Fiscal Identity TIN is required.", "Unknown future validation code was preserved safely."] : ["Profile configuration is complete."],
+    messages: incomplete ? ["Registered Business TIN is required.", "Unknown future validation code was preserved safely."] : ["Setup configuration is complete."],
     templateVersionPosture: "SUPPORTED",
     presentationVersionPosture: "SUPPORTED",
     effectiveWindowPosture: incomplete ? "OVERLAP" : "VALID",
@@ -640,37 +697,64 @@ function scenarioUsage(profileId: string): SalesInvoiceProfileUsageResult {
 
 function throwScenarioErrorIfNeeded(scenario: SalesInvoiceProfileReadScenarioName): void {
   if (scenario === "disabled" || scenario === "disabled-manage") {
-    throw createUiError("feature-disabled", "SALES_INVOICE_PROFILE_ADMINISTRATION_DISABLED", "Sales Invoice Profile administration is not enabled for this environment.", "dev-disabled-correlation", 503);
+    throw createUiError("feature-disabled", "SALES_INVOICE_PROFILE_ADMINISTRATION_DISABLED", "Sales Invoice Configuration is not enabled for this environment.", "dev-disabled-correlation", 503);
   }
   if (scenario === "forbidden" || scenario === "forbidden-manage") {
     throw createUiError("permission-denied", "SITE_SCOPE_DENIED", "You do not have permission for this Site scope.", "dev-forbidden-correlation", 403);
   }
   if (scenario === "unavailable" || scenario === "unavailable-manage") {
-    throw createUiError("integration-unavailable", "PROFILE_ADMINISTRATION_UNAVAILABLE", "Profile administration is unavailable.", "dev-unavailable-correlation", 503, true);
+    throw createUiError("integration-unavailable", "PROFILE_ADMINISTRATION_UNAVAILABLE", "Sales Invoice Configuration is unavailable.", "dev-unavailable-correlation", 503, true);
   }
 }
 
 function throwMutationScenarioErrorIfNeeded(
   scenario: SalesInvoiceProfileReadScenarioName,
   operation: "fiscal-create" | "fiscal-update" | "profile-create" | "profile-update"
+    | "approve" | "retire"
 ): void {
   throwScenarioErrorIfNeeded(scenario);
 
   if (scenario === "fiscal-identity-create-conflict" && operation === "fiscal-create") {
-    throw createUiError("conflict", "FISCAL_IDENTITY_DUPLICATE_OR_IMMUTABLE", "The Fiscal Identity conflicts with authoritative state.", "dev-fiscal-create-conflict", 409, false, false);
+    throw createUiError("conflict", "FISCAL_IDENTITY_DUPLICATE_OR_IMMUTABLE", "The Registered Business conflicts with authoritative state.", "dev-fiscal-create-conflict", 409, false, false);
   }
   if (scenario === "fiscal-identity-update-immutable" && operation === "fiscal-update") {
-    throw createUiError("conflict", "FISCAL_IDENTITY_IMMUTABLE", "The Fiscal Identity cannot be changed in its current authoritative state.", "dev-fiscal-update-conflict", 409, false, false);
+    throw createUiError("conflict", "FISCAL_IDENTITY_IMMUTABLE", "The Registered Business cannot be changed in its current authoritative state.", "dev-fiscal-update-conflict", 409, false, false);
   }
   if (scenario === "profile-create-conflict" && operation === "profile-create") {
-    throw createUiError("conflict", "SALES_INVOICE_PROFILE_DUPLICATE_VERSION", "The draft profile conflicts with version or effective-window rules.", "dev-profile-create-conflict", 409, false, false);
+    throw createUiError("conflict", "SALES_INVOICE_PROFILE_DUPLICATE_VERSION", "The Draft Sales Invoice Setup conflicts with version or effective-window rules.", "dev-profile-create-conflict", 409, false, false);
   }
   if (scenario === "draft-edit-conflict" && operation === "profile-update") {
-    throw createUiError("conflict", "SALES_INVOICE_PROFILE_LIFECYCLE_CONFLICT", "The draft profile can no longer be updated in place.", "dev-draft-edit-conflict", 409, false, false);
+    throw createUiError("conflict", "SALES_INVOICE_PROFILE_LIFECYCLE_CONFLICT", "The Draft Sales Invoice Setup can no longer be updated in place.", "dev-draft-edit-conflict", 409, false, false);
   }
   if (scenario === "profile-create-timeout" && operation === "profile-create") {
     throw createUiError("timeout", "SALES_INVOICE_PROFILE_MUTATION_TIMEOUT", "Mutation result is uncertain. Refresh and verify before retrying.", "dev-profile-create-timeout", 504, true, true);
   }
+  if ((scenario === "approve-forbidden" && operation === "approve") || (scenario === "retire-forbidden" && operation === "retire")) {
+    throw createUiError("permission-denied", "SALES_INVOICE_SETUP_APPROVE_DENIED", "You do not have permission to change this Sales Invoice Setup status.", "dev-approve-forbidden-correlation", 403);
+  }
+  if (scenario === "approve-conflict" && operation === "approve") {
+    throw createUiError("conflict", "SALES_INVOICE_SETUP_ACTIVATION_CONFLICT", "The Sales Invoice Setup could not be activated because authoritative validation or status changed.", "dev-approve-conflict", 409, false, false);
+  }
+  if (scenario === "approve-timeout" && operation === "approve") {
+    throw createUiError("timeout", "SALES_INVOICE_SETUP_ACTIVATION_TIMEOUT", "Activation result is uncertain. Refresh and verify the authoritative status before trying again.", "dev-approve-timeout", 504, true, true);
+  }
+  if (scenario === "retire-conflict" && operation === "retire") {
+    throw createUiError("conflict", "SALES_INVOICE_SETUP_RETIREMENT_CONFLICT", "The Sales Invoice Setup could not be retired because authoritative status changed.", "dev-retire-conflict", 409, false, false);
+  }
+  if (scenario === "retire-timeout" && operation === "retire") {
+    throw createUiError("timeout", "SALES_INVOICE_SETUP_RETIREMENT_TIMEOUT", "Retirement result is uncertain. Refresh and verify the authoritative status before trying again.", "dev-retire-timeout", 504, true, true);
+  }
+}
+
+function draftValidationScenario(scenario: SalesInvoiceProfileReadScenarioName): boolean {
+  return scenario === "approve-user" ||
+    scenario === "manage-without-approve" ||
+    scenario === "approve-draft-complete" ||
+    scenario === "approve-draft-incomplete" ||
+    scenario === "approve-success" ||
+    scenario === "approve-conflict" ||
+    scenario === "approve-timeout" ||
+    scenario === "approve-forbidden";
 }
 
 function scenarioDelay(signal?: AbortSignal): Promise<void> {

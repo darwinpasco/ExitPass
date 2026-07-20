@@ -1,0 +1,174 @@
+{
+  "contractId": "management-platform.sales-invoice-profile-approve-retire-ui.v1",
+  "featureRoute": "/management-platform/sales-invoice-profiles",
+  "requiredPermission": "sales-invoice-profile.approve",
+  "scope": "Approve-authorized browser workflows for activating a complete Draft Sales Invoice Setup and retiring an Active Sales Invoice Setup.",
+  "terminologyStandard": {
+    "registeredBusiness": "Registered Business",
+    "setup": "Sales Invoice Setup",
+    "configuration": "Sales Invoice Configuration",
+    "setupVersion": "Setup version",
+    "status": "Status",
+    "draft": "Draft",
+    "active": "Active",
+    "retired": "Retired",
+    "readiness": "Sales Invoice readiness",
+    "history": "Issuance history",
+    "activationAction": "Activate Sales Invoice Setup",
+    "retirementAction": "Retire Sales Invoice Setup",
+    "forbiddenBrowserLabels": [
+      "Fiscal Identity",
+      "Header Profile",
+      "Profile administration",
+      "Mutation accepted",
+      "Effective readiness",
+      "Immutable usage"
+    ]
+  },
+  "permissionBoundary": {
+    "readPermission": "sales-invoice-profile.read",
+    "managePermission": "sales-invoice-profile.manage",
+    "approvePermission": "sales-invoice-profile.approve",
+    "readOnly": "Can view setup data, validation, readiness, and issuance history, but cannot create, edit, activate, or retire.",
+    "manageOnly": "Can create and edit Draft resources where permitted, but cannot activate or retire.",
+    "approveAuthorized": "Can activate eligible complete Draft setups and retire eligible Active setups.",
+    "approveDoesNotGrantManage": true
+  },
+  "activationWorkflow": {
+    "customerFacingAction": "Activate Sales Invoice Setup",
+    "backendOperation": "POST /v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/approve",
+    "eligibility": [
+      "caller has sales-invoice-profile.approve",
+      "selected setup status is Draft",
+      "latest displayed authoritative validation result is Complete for the selected setup",
+      "no unsaved Draft edit form is active"
+    ],
+    "confirmationSummary": [
+      "Sales Invoice Setup ID",
+      "Setup version",
+      "Registered Business",
+      "Site",
+      "Site POS Server",
+      "Effective from",
+      "Effective to",
+      "BIR accreditation valid until",
+      "PTU number"
+    ],
+    "actorFieldsAcceptedFromBrowser": false,
+    "singleSubmit": true,
+    "automaticRetry": false,
+    "successMessage": "Sales Invoice Setup activated",
+    "timeoutPosture": "Result uncertain. Refresh and verify authoritative status before retrying."
+  },
+  "retirementWorkflow": {
+    "customerFacingAction": "Retire Sales Invoice Setup",
+    "backendOperation": "POST /v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/retire",
+    "eligibility": [
+      "caller has sales-invoice-profile.approve",
+      "selected setup status is Active",
+      "selected setup is not already Retired"
+    ],
+    "confirmationPosture": [
+      "setup is not deleted",
+      "Historical Sales Invoices and recorded setup details remain unchanged",
+      "Issuance history remains available",
+      "retirement cannot be reversed through this UI"
+    ],
+    "actorFieldsAcceptedFromBrowser": false,
+    "singleSubmit": true,
+    "automaticRetry": false,
+    "successMessage": "Sales Invoice Setup retired",
+    "timeoutPosture": "Result uncertain. Refresh and verify authoritative status before retrying."
+  },
+  "statusDisplayMapping": {
+    "DRAFT": "Draft",
+    "APPROVED": "Active",
+    "RETIRED": "Retired"
+  },
+  "completenessReadinessBoundary": {
+    "configurationCompleteness": [
+      "Complete",
+      "Incomplete"
+    ],
+    "salesInvoiceReadiness": "Displayed only from the authoritative readiness response.",
+    "completeIsNotReady": true,
+    "activeIsNotReadyWithoutReadyResponse": true
+  },
+  "uncertaintyAndPendingPosture": {
+    "mutationRequestsSentOnce": true,
+    "doubleClickPrevention": true,
+    "repeatedEnterPrevention": true,
+    "siteSwitchDuringPendingMutation": "Blocked by pending-operation posture.",
+    "automaticMutationRetry": false
+  },
+  "developmentScenarios": [
+    "approve-user",
+    "manage-without-approve",
+    "approve-draft-complete",
+    "approve-draft-incomplete",
+    "approve-success",
+    "approve-conflict",
+    "approve-timeout",
+    "retire-approved",
+    "retire-success",
+    "retire-conflict",
+    "retire-timeout",
+    "retired-history",
+    "approve-forbidden",
+    "retire-forbidden"
+  ],
+  "playwrightCoverage": [
+    "read-only user has no Activate or Retire",
+    "manage-only user has no Activate or Retire",
+    "Approve-authorized user sees Activate for complete Draft",
+    "incomplete Draft cannot be activated",
+    "validation is required before activation",
+    "activation confirmation contains safe business summary",
+    "activation submits once and double-click is bounded",
+    "activation success refreshes Active status",
+    "activation conflict preserves Draft",
+    "activation timeout shows uncertain-result guidance",
+    "Active setup exposes Retire to approve-authorized user",
+    "retirement confirmation explains historical preservation",
+    "retirement submits once and double-click is bounded",
+    "retirement success refreshes Retired status",
+    "Issuance history remains visible after retirement",
+    "retirement conflict preserves Active",
+    "retirement timeout shows uncertain-result guidance",
+    "Site switching is blocked during pending lifecycle mutations",
+    "keyboard confirmation and cancellation work",
+    "responsive confirmation dialogs remain usable",
+    "technical browser wording is absent",
+    "production ignores development scenarios",
+    "no direct POS Server route, URL, key, or header exists",
+    "no browser storage contains statutory or mutation data"
+  ],
+  "browserSecurity": {
+    "allowedRoutePrefix": "/v1/management-platform",
+    "forbiddenRoutes": [
+      "/v1/admin/"
+    ],
+    "forbiddenHeaders": [
+      "X-PosServer-Admin-Key",
+      "X-PosServer-Admin-Permission"
+    ],
+    "forbiddenConfiguration": [
+      "POS Server URL",
+      "POS Server API key",
+      "server-side secret reference"
+    ],
+    "browserStorage": "Registered Business, Sales Invoice Setup, statutory fields, mutation data, credentials, and Site authorization are not stored in localStorage, sessionStorage, or IndexedDB."
+  },
+  "nonGoals": [
+    "create-new-version",
+    "delete",
+    "reactivation",
+    "receipt printing",
+    "fiscal issuance",
+    "Operator Console",
+    "Assisted Payment Terminal",
+    "POS Server changes",
+    "exit authorization",
+    "gate behavior"
+  ]
+}

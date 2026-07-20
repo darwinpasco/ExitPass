@@ -4,7 +4,7 @@ const e2ePort = Number(process.env.MANAGEMENT_PLATFORM_E2E_PORT ?? 5177);
 const productionPort = Number(process.env.MANAGEMENT_PLATFORM_E2E_PRODUCTION_PORT ?? 5178);
 const e2eEnv = {
   ...process.env,
-  VITE_MANAGEMENT_PLATFORM_PERMISSIONS: "management-platform.overview.read,sales-invoice-profile.read,sales-invoice-profile.manage"
+  VITE_MANAGEMENT_PLATFORM_PERMISSIONS: "management-platform.overview.read,sales-invoice-profile.read,sales-invoice-profile.manage,sales-invoice-profile.approve"
 };
 
 export default defineConfig({

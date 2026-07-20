@@ -154,6 +154,10 @@ function normalizeScenarioName(value: string | null): ManagementPlatformManualSc
 }
 
 function resolveDevelopmentPermissions(profileScenarioName: string | null): string[] {
+  if (isApproveOnlyProfileScenario(profileScenarioName)) {
+    return [...defaultDevelopmentPermissions, futureSalesInvoiceProfilePermissions.approve];
+  }
+
   if (isManageProfileScenario(profileScenarioName)) {
     return [...defaultDevelopmentPermissions, futureSalesInvoiceProfilePermissions.manage];
   }
@@ -161,9 +165,31 @@ function resolveDevelopmentPermissions(profileScenarioName: string | null): stri
   return defaultDevelopmentPermissions;
 }
 
+function isApproveOnlyProfileScenario(value: string | null): boolean {
+  switch (value) {
+    case "approve-user":
+    case "approve-draft-complete":
+    case "approve-draft-incomplete":
+    case "approve-success":
+    case "approve-conflict":
+    case "approve-timeout":
+    case "retire-approved":
+    case "retire-success":
+    case "retire-conflict":
+    case "retire-timeout":
+    case "retired-history":
+    case "approve-forbidden":
+    case "retire-forbidden":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function isManageProfileScenario(value: string | null): boolean {
   switch (value) {
     case "manage":
+    case "manage-without-approve":
     case "fiscal-identity-create-success":
     case "fiscal-identity-create-conflict":
     case "fiscal-identity-update-success":

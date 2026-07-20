@@ -95,6 +95,7 @@ export function App({
   const canViewOverview = hasPermission(principal.permissions, managementPlatformOverviewPermission);
   const canReadSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.read);
   const canManageSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.manage);
+  const canApproveSalesInvoiceProfiles = hasPermission(principal.permissions, futureSalesInvoiceProfilePermissions.approve);
   const isKnownRoute = path === routes.root || path === routes.overview || path === routes.salesInvoiceProfiles;
   const shellProps = {
     principalName: principal.displayName,
@@ -132,6 +133,7 @@ export function App({
           client={profileClient}
           developmentScenarioName={profileScenario?.name}
           canManage={canManageSalesInvoiceProfiles}
+          canApprove={canApproveSalesInvoiceProfiles}
           onFormStateChange={setSalesInvoiceFormState}
         />
       </Shell>
@@ -188,7 +190,7 @@ function Shell({ principalName, siteSelection, path, navigate, canViewOverview, 
             )}
             {canReadSalesInvoiceProfiles && (
               <button className={`navLink ${path === routes.salesInvoiceProfiles ? "navLinkActive" : ""}`} type="button" onClick={() => navigate(routes.salesInvoiceProfiles)}>
-                Sales Invoice Profiles <span className="navMeta">administration status</span>
+                Sales Invoice Configuration <span className="navMeta">Sales Invoice Setups</span>
               </button>
             )}
           </nav>
@@ -227,7 +229,7 @@ function SiteSelector({ siteSelection, formState }: {
         value={siteSelection.currentSite?.siteId ?? ""}
         disabled={formState.mutationPending}
         onChange={(event) => {
-          if (formState.hasUnsavedChanges && !window.confirm("Discard unsaved Sales Invoice Profile form changes before switching Site?")) {
+          if (formState.hasUnsavedChanges && !window.confirm("Discard unsaved Sales Invoice Setup changes before switching Site?")) {
             event.currentTarget.value = siteSelection.currentSite?.siteId ?? "";
             return;
           }
@@ -268,7 +270,7 @@ function OverviewPage({ subjectRef, currentSiteName, hasSites }: { subjectRef?: 
           <p>{hasSites ? `Current Site: ${currentSiteName}` : "No authorized Site is available."}</p>
         </article>
       </div>
-      <StateMessage title="Administrative modules" message="Sales Invoice Profile status is available to read-authorized users. This shell does not edit fiscal data, issue documents, print receipts, authorize exits, or operate gates." />
+      <StateMessage title="Administrative modules" message="Sales Invoice Configuration is available to read-authorized users. This shell does not edit fiscal data, issue documents, print receipts, authorize exits, or operate gates." />
     </section>
   );
 }
@@ -312,7 +314,7 @@ function StateMessage({ title, message, tone = "neutral" }: { title: string; mes
 
 function routeTitle(path: string): string {
   if (path === routes.salesInvoiceProfiles) {
-    return "Sales Invoice Profiles - ExitPass Management Platform";
+    return "Sales Invoice Configuration - ExitPass Management Platform";
   }
 
   if (path === routes.root || path === routes.overview) {

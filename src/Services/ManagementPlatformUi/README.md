@@ -84,7 +84,7 @@ Use these URLs with the local dev server:
 
 When `mpScenario` is absent or unknown, the development build falls back to the authenticated scenario. Scenarios are never stored in browser storage, cookies, IndexedDB, or server configuration.
 
-## Sales Invoice Profile read-only module
+## Sales Invoice Setup read-only module
 
 Route:
 
@@ -98,7 +98,7 @@ Required permission:
 sales-invoice-profile.read
 ```
 
-The module is read-only. It supports Site-scoped Header Profile listing, profile detail, linked Fiscal Identity detail, authoritative completeness validation, effective readiness, and immutable usage visibility. It does not create or edit Fiscal Identities, create or edit Header Profiles, approve, retire, create new versions, issue fiscal documents, print receipts, authorize exits, or operate gates.
+The module is read-only. It supports Site-scoped Sales Invoice Setup listing, setup detail, linked Registered Business detail, authoritative completeness validation, Sales Invoice readiness, and Issuance history visibility. It does not create or edit Registered Businesses, create or edit Sales Invoice Setups, activate, retire, create new versions, issue fiscal documents, print receipts, authorize exits, or operate gates.
 
 The feature client uses only relative Central PMS routes under `/v1/management-platform`. Browser code must not call downstream administration routes directly and must not contain server-to-server credentials, downstream base URLs, or server-only headers.
 
@@ -125,7 +125,7 @@ Use these URLs with the local dev server:
 
 Scenarios are never stored in browser storage, cookies, IndexedDB, or server configuration. They use controlled in-memory browser adapters and contain only obvious development data.
 
-## Sales Invoice Profile Manage-only workflows
+## Sales Invoice Setup Manage-only workflows
 
 Required permission:
 
@@ -133,25 +133,60 @@ Required permission:
 sales-invoice-profile.manage
 ```
 
-Manage-authorized users can create and update Fiscal Identities and create or edit Sales Invoice Header Profiles only while the profile is `DRAFT`. Read-only users continue to see the list, detail, validation, readiness, and usage surfaces without active mutation controls.
+Manage-authorized users can create and update Registered Businesses and create or edit Sales Invoice Setups only while the setup is Draft. Read-only users continue to see the list, detail, validation, Sales Invoice readiness, and Issuance history surfaces without active mutation controls.
 
-Fiscal Identity forms send only:
+Registered Business forms send only:
 
 - `registeredBusinessName`
 - `registeredBusinessAddress`
 - `tin`
 - `taxpayerRegistrationPosture`
 
-DRAFT Header Profile forms send only governed profile fields, with Site and Site POS Server derived from the current authorized Site context. Template and presentation versions are controlled to:
+Draft Sales Invoice Setup forms send only governed setup fields, with Site and Site POS Server derived from the current authorized Site context. Template and presentation versions are controlled to:
 
 - `digital-sales-invoice-json-v1`
 - `digital-sales-invoice-presentation-json-v1`
 
 The browser does not send actor-reference fields. Central PMS derives the actor from the authenticated Management Platform principal. The browser does not expose approval, retirement, delete, create-new-version, terminal ID, downstream credential, or POS Server administration fields.
 
-Mutation requests are sent once and are not automatically retried. If a create or update times out or loses connectivity after send, the UI shows a Mutation result uncertain posture and tells the user to refresh and verify authoritative state before retrying.
+Mutation requests are sent once and are not automatically retried. If a create or update times out or loses connectivity after send, the UI shows a Result uncertain posture and tells the user to refresh and verify authoritative state before retrying.
 
-Unsaved form state remains only in component memory. Site switching while a form has unsaved changes requires confirmation before the form is discarded. No Fiscal Identity, Header Profile, statutory data, validation result, credential, or Site authorization data is stored in localStorage, sessionStorage, IndexedDB, or cookies.
+Unsaved form state remains only in component memory. Site switching while a form has unsaved changes requires confirmation before the form is discarded. No Registered Business, Sales Invoice Setup, statutory data, validation result, credential, or Site authorization data is stored in localStorage, sessionStorage, IndexedDB, or cookies.
+
+## Sales Invoice Setup activation and retirement
+
+Required permission:
+
+```text
+sales-invoice-profile.approve
+```
+
+Approve-authorized users can activate a complete Draft Sales Invoice Setup and retire an Active Sales Invoice Setup. The UI uses the customer-facing actions **Activate Sales Invoice Setup** and **Retire Sales Invoice Setup** while the internal backend route remains the approved Central PMS lifecycle API.
+
+Activation requires the latest displayed authoritative validation result to be Complete for the selected setup. The server remains authoritative for the final activation decision. The browser never sends actor fields such as `approvedByRef` or `retiredByRef`; Central PMS derives actor identity from the authenticated principal.
+
+Activation and retirement requests are sent once and are not automatically retried. Timeout or connection-loss outcomes show Result uncertain guidance with a safe support reference and instruct the user to refresh and verify authoritative status before retrying.
+
+Retirement is not deletion. Historical Sales Invoices and their recorded setup details remain unchanged, and Issuance history remains visible after retirement.
+
+### Activate/retire development scenarios
+
+Use these URLs with the local dev server. They are active only while `import.meta.env.DEV === true` and are ignored by production builds.
+
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-user`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=manage-without-approve`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-draft-complete`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-draft-incomplete`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-success`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-conflict`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-timeout`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retire-approved`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retire-success`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retire-conflict`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retire-timeout`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retired-history`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=approve-forbidden`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retire-forbidden`
 
 ### Manage workflow development scenarios
 
@@ -204,23 +239,22 @@ Generated Playwright artifacts are written to:
 
 These directories are generated evidence only and are ignored by Git.
 
-## Complete Manage UI proof
+## Complete lifecycle UI proof
 
-Use this command for the complete Management Platform Sales Invoice Profile Manage UI validation:
+Use this command for the complete Management Platform Sales Invoice Setup lifecycle validation:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Invoke-ManagementPlatformSalesInvoiceProfileManageUiE2eProof.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Invoke-ManagementPlatformSalesInvoiceProfileApproveRetireUiE2eProof.ps1
 ```
 
-The proof runs install, typecheck, unit tests, production build, Playwright E2E, foundation proof, read UI proof, manage UI proof, and static browser-boundary scans.
+The proof runs install, typecheck, unit tests, production build, Playwright E2E, foundation proof, read UI proof, manage UI proof, approve/retire UI proof, terminology scans, and static browser-boundary scans.
 
 ## Remaining manual smoke
 
 After the automated Playwright proof passes, the remaining manual browser validation is a short visual smoke check:
 
-1. Open the Manage scenario at `1366x768`.
-2. Confirm branding and overall layout look correct.
-3. Open one Fiscal Identity form.
-4. Open one Draft Profile form.
-5. Confirm no obvious visual overlap.
-6. Confirm no Approve or Retire controls.
+1. Open an activation-eligible Draft Sales Invoice Setup at `1366x768`.
+2. Open the Activate confirmation and confirm user-friendly wording with no overlap.
+3. Open an Active Sales Invoice Setup.
+4. Open the Retire confirmation and confirm historical-preservation wording with no overlap.
+5. Confirm no `Mutation accepted`, `Fiscal Identity`, or `Header Profile` browser labels remain on the touched surfaces.

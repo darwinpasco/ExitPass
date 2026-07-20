@@ -63,8 +63,8 @@ $requiredSourceTokens = @(
     "sales-invoice-profile.read",
     "Validate configuration",
     "Ready for Sales Invoice issuance",
-    "No effective Sales Invoice Header Profile",
-    "Profile configuration is incomplete",
+    "No effective Sales Invoice Setup",
+    "Setup configuration is incomplete",
     "Template or presentation version is unsupported"
 )
 
@@ -106,7 +106,7 @@ foreach ($forbidden in $forbiddenMutationLabels) {
 }
 
 if ($productionSourceText.Contains("terminalId")) {
-    throw "Static Header Profile terminalId field was introduced."
+    throw "Static Sales Invoice Setup terminalId field was introduced."
 }
 
 if (-not $productionSourceText.Contains("BIR accreditation issued date") -or
@@ -125,7 +125,7 @@ if (-not $readmeText.Contains("mpProfileScenario") -or -not $readmeText.Contains
 
 Write-Host "Proof passed: navigation requires sales-invoice-profile.read and focused tests cover denial."
 Write-Host "Proof passed: read-authorized users can open the Site-scoped module."
-Write-Host "Proof passed: profile list, detail, linked Fiscal Identity, validation, readiness, and usage are covered."
+Write-Host "Proof passed: setup list, detail, linked Registered Business, validation, readiness, and issuance history are covered."
 Write-Host "Proof passed: BIR issued date, BIR valid-until date, and PTU issued date remain distinct."
 Write-Host "Proof passed: no static terminal-ID profile field exists."
 Write-Host "Proof passed: Complete, Incomplete, unknown validation, READY, governed non-ready, and unknown readiness states are covered."

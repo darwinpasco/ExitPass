@@ -8,6 +8,7 @@ interface SalesInvoiceProfilesPageProps {
   client: SalesInvoiceProfileClient;
   developmentScenarioName?: SalesInvoiceProfileReadScenarioName;
   canManage?: boolean;
+  canApprove?: boolean;
   onFormStateChange?: (state: { hasUnsavedChanges: boolean; mutationPending: boolean }) => void;
 }
 
@@ -18,6 +19,7 @@ type LoadState<T> = {
 };
 
 type ActiveForm = "fiscal-create" | "fiscal-edit" | "profile-create" | "profile-edit";
+type LifecycleAction = "activate" | "retire";
 type MutationState = { pending: boolean; success?: string; error?: ManagementPlatformUiError };
 
 export function SalesInvoiceProfilesPage({
@@ -25,6 +27,7 @@ export function SalesInvoiceProfilesPage({
   client,
   developmentScenarioName,
   canManage = false,
+  canApprove = false,
   onFormStateChange
 }: SalesInvoiceProfilesPageProps) {
   const [profilesState, setProfilesState] = useState<LoadState<SalesInvoiceHeaderProfileSummary[]>>({ loading: false });
@@ -42,10 +45,13 @@ export function SalesInvoiceProfilesPage({
   const [fieldErrors, setFieldErrors] = useState<string[]>([]);
   const [mutationState, setMutationState] = useState<MutationState>({ pending: false });
   const [mutationAttemptCount, setMutationAttemptCount] = useState(0);
+  const [lifecycleAction, setLifecycleAction] = useState<LifecycleAction | undefined>();
   const profileRequestSequence = useRef(0);
   const validationInFlightRef = useRef(false);
   const mutationInFlightRef = useRef(false);
   const selectedProfile = profileState.value;
+  const displayedValidationIsComplete =
+    Boolean(selectedProfile && validationState.value?.salesInvoiceHeaderProfileId === selectedProfile.salesInvoiceHeaderProfileId && validationState.value.isComplete);
 
   useEffect(() => {
     onFormStateChange?.({ hasUnsavedChanges: formDirty, mutationPending: mutationState.pending });
@@ -76,6 +82,7 @@ export function SalesInvoiceProfilesPage({
     setFieldErrors([]);
     setMutationState({ pending: false });
     setMutationAttemptCount(0);
+    setLifecycleAction(undefined);
 
     if (!currentSite) {
       setProfilesState({ loading: false, value: [] });
@@ -111,6 +118,7 @@ export function SalesInvoiceProfilesPage({
     setValidationState({ loading: false });
     setFiscalIdentityState({ loading: false });
     setUsageState({ loading: false });
+    setLifecycleAction(undefined);
 
     if (!selectedProfileId) {
       setProfileState({ loading: false });
@@ -214,6 +222,7 @@ export function SalesInvoiceProfilesPage({
 
   function openForm(form: ActiveForm) {
     setActiveForm(form);
+    setLifecycleAction(undefined);
     setFormDirty(false);
     setFieldErrors([]);
     setMutationState({ pending: false });
@@ -221,9 +230,26 @@ export function SalesInvoiceProfilesPage({
 
   function cancelForm() {
     setActiveForm(undefined);
+    setLifecycleAction(undefined);
     setFormDirty(false);
     setFieldErrors([]);
     setMutationState({ pending: false });
+  }
+
+  function openLifecycleAction(action: LifecycleAction) {
+    if (mutationInFlightRef.current || activeForm || formDirty) {
+      return;
+    }
+
+    setLifecycleAction(action);
+    setMutationState({ pending: false });
+  }
+
+  function cancelLifecycleAction() {
+    if (!mutationState.pending) {
+      setLifecycleAction(undefined);
+      setMutationState({ pending: false });
+    }
   }
 
   async function submitFiscalForm() {
@@ -247,7 +273,7 @@ export function SalesInvoiceProfilesPage({
         : await client.createFiscalIdentity(fiscalForm, controller.signal);
 
       setFiscalIdentityState({ loading: false, value: result });
-      setMutationState({ pending: false, success: activeForm === "fiscal-edit" ? "Fiscal Identity refreshed from authoritative update." : "Fiscal Identity created from authoritative response." });
+      setMutationState({ pending: false, success: activeForm === "fiscal-edit" ? "Changes saved" : "Registered business created" });
       setFormDirty(false);
       setActiveForm(undefined);
     } catch (error) {
@@ -280,7 +306,7 @@ export function SalesInvoiceProfilesPage({
 
       setProfileState({ loading: false, value: result });
       setSelectedProfileId(result.salesInvoiceHeaderProfileId);
-      setMutationState({ pending: false, success: activeForm === "profile-edit" ? "Draft profile refreshed from authoritative update." : "Draft profile created from authoritative response." });
+      setMutationState({ pending: false, success: activeForm === "profile-edit" ? "Changes saved" : "Draft Sales Invoice Setup created" });
       setFormDirty(false);
       setActiveForm(undefined);
       refreshProfiles();
@@ -291,22 +317,62 @@ export function SalesInvoiceProfilesPage({
     }
   }
 
+  async function submitLifecycleAction(action: LifecycleAction) {
+    if (!selectedProfile || mutationInFlightRef.current) {
+      return;
+    }
+
+    if (action === "activate" && !displayedValidationIsComplete) {
+      setMutationState({
+        pending: false,
+        error: {
+          kind: "validation",
+          code: "VALIDATION_REQUIRED",
+          message: "Validate configuration and resolve any incomplete items before activating this Sales Invoice Setup.",
+          retryable: false,
+          mutationUncertain: false
+        }
+      });
+      return;
+    }
+
+    mutationInFlightRef.current = true;
+    setMutationAttemptCount((count) => count + 1);
+    setMutationState({ pending: true });
+    try {
+      const controller = new AbortController();
+      const result = action === "activate"
+        ? await client.approveProfile(selectedProfile.salesInvoiceHeaderProfileId, controller.signal)
+        : await client.retireProfile(selectedProfile.salesInvoiceHeaderProfileId, controller.signal);
+
+      setProfileState({ loading: false, value: result });
+      setSelectedProfileId(result.salesInvoiceHeaderProfileId);
+      setMutationState({ pending: false, success: action === "activate" ? "Sales Invoice Setup activated" : "Sales Invoice Setup retired" });
+      setLifecycleAction(undefined);
+      refreshProfiles();
+    } catch (error) {
+      setMutationState({ pending: false, error: toSafeError(error) });
+    } finally {
+      mutationInFlightRef.current = false;
+    }
+  }
+
   if (!currentSite) {
-    return <StateBlock title="No authorized Site" message="Select an authorized Site before viewing Sales Invoice Header Profiles." tone="warning" />;
+    return <StateBlock title="No authorized Site" message="Select an authorized Site before viewing Sales Invoice Setups." tone="warning" />;
   }
 
   return (
     <section className="panel salesProfilePage" aria-labelledby="sales-profile-title">
       <div className="pageTitle">
         <div>
-          <p className="eyebrow">Sales Invoice Profiles</p>
-          <h2 id="sales-profile-title">Profile administration status</h2>
+          <p className="eyebrow">Sales Invoice Configuration</p>
+          <h2 id="sales-profile-title">Sales Invoice Setups</h2>
         </div>
         <div className="actionRow">
           {canManage && (
             <>
-              <button type="button" onClick={openFiscalCreate}>Create Fiscal Identity</button>
-              <button type="button" onClick={openProfileCreate}>Create Draft Profile</button>
+              <button type="button" onClick={openFiscalCreate}>Create Registered Business</button>
+              <button type="button" onClick={openProfileCreate}>Create Draft Sales Invoice Setup</button>
             </>
           )}
           <button type="button" onClick={refreshProfiles} disabled={profilesState.loading}>Refresh</button>
@@ -349,17 +415,17 @@ export function SalesInvoiceProfilesPage({
               onCancel={cancelForm}
             />
           )}
-          {!activeForm && mutationState.success && <StateBlock title="Mutation accepted" message={mutationState.success} />}
-          {!activeForm && mutationState.error && (
+          {!activeForm && !lifecycleAction && mutationState.success && <StateBlock title={mutationState.success} message="Authoritative Sales Invoice Configuration state has been refreshed." />}
+          {!activeForm && !lifecycleAction && mutationState.error && (
             mutationState.error.mutationUncertain
-              ? <StateBlock title="Mutation result uncertain" message={safeErrorMessage(mutationState.error)} tone="warning" />
-              : <StateBlock title="Mutation failed safely" message={safeErrorMessage(mutationState.error)} tone="danger" />
+              ? <StateBlock title="Result uncertain" message={safeErrorMessage(mutationState.error)} tone="warning" />
+              : <StateBlock title="Status change failed safely" message={safeErrorMessage(mutationState.error)} tone="danger" />
           )}
           {!selectedProfile && fiscalIdentityState.value && (
             <section className="subPanel" aria-labelledby="fiscal-result-title">
-              <h3 id="fiscal-result-title">Fiscal Identity result</h3>
+              <h3 id="fiscal-result-title">Registered business created</h3>
               <DetailList items={[
-                ["Fiscal Identity ID", fiscalIdentityState.value.fiscalIdentityId],
+                ["Registered Business ID", fiscalIdentityState.value.fiscalIdentityId],
                 ["Registered business name", fiscalIdentityState.value.registeredBusinessName],
                 ["Updated at", formatDateTime(fiscalIdentityState.value.updatedAt)],
                 ["Created at", formatDateTime(fiscalIdentityState.value.createdAt)]
@@ -370,9 +436,25 @@ export function SalesInvoiceProfilesPage({
             profileState={profileState}
             fiscalIdentityState={fiscalIdentityState}
             canManage={canManage}
+            canApprove={canApprove}
+            validationComplete={displayedValidationIsComplete}
+            hasUnsavedChanges={formDirty || Boolean(activeForm)}
             onEditFiscalIdentity={openFiscalEdit}
             onEditDraftProfile={openProfileEdit}
+            onActivate={() => openLifecycleAction("activate")}
+            onRetire={() => openLifecycleAction("retire")}
           />
+          {lifecycleAction && selectedProfile && (
+            <LifecycleConfirmationPanel
+              action={lifecycleAction}
+              profile={selectedProfile}
+              registeredBusinessName={fiscalIdentityState.value?.registeredBusinessName}
+              pending={mutationState.pending}
+              error={mutationState.error}
+              onConfirm={() => submitLifecycleAction(lifecycleAction)}
+              onCancel={cancelLifecycleAction}
+            />
+          )}
           {selectedProfile && (
             <ValidationPanel state={validationState} onValidate={validateSelectedProfile} />
           )}
@@ -389,31 +471,31 @@ function ProfileList({ state, selectedProfileId, onSelect }: {
   onSelect: (profileId: string) => void;
 }) {
   if (state.loading) {
-    return <StateBlock title="Loading profiles" message="Loading Site-scoped Sales Invoice Header Profiles." />;
+    return <StateBlock title="Loading Sales Invoice Setups" message="Loading Site-scoped Sales Invoice Setups." />;
   }
 
   if (state.error) {
-    return <StateBlock title="Profile list unavailable" message={safeErrorMessage(state.error)} tone="danger" />;
+    return <StateBlock title="Sales Invoice Setups unavailable" message={safeErrorMessage(state.error)} tone="danger" />;
   }
 
   const profiles = state.value ?? [];
   if (profiles.length === 0) {
-    return <StateBlock title="No profiles" message="No Sales Invoice Header Profiles are available for the selected Site and Site POS Server." />;
+    return <StateBlock title="No Sales Invoice Setups" message="No Sales Invoice Setups are available for the selected Site and Site POS Server." />;
   }
 
   return (
     <section className="subPanel" aria-labelledby="profile-list-title">
       <div className="sectionHeader">
-        <h3 id="profile-list-title">Header Profiles</h3>
+        <h3 id="profile-list-title">Sales Invoice Setups</h3>
         <span className="countBadge">{profiles.length}</span>
       </div>
       <div className="tableScroller">
         <table className="dataTable">
           <thead>
             <tr>
-              <th scope="col">Profile</th>
-              <th scope="col">Lifecycle</th>
-              <th scope="col">Fiscal Identity</th>
+              <th scope="col">Setup version</th>
+              <th scope="col">Status</th>
+              <th scope="col">Registered Business</th>
               <th scope="col">Effective window</th>
               <th scope="col">Versions</th>
               <th scope="col">Updated</th>
@@ -442,52 +524,67 @@ function ProfileList({ state, selectedProfileId, onSelect }: {
   );
 }
 
-function ProfileDetail({ profileState, fiscalIdentityState, canManage, onEditFiscalIdentity, onEditDraftProfile }: {
+function ProfileDetail({ profileState, fiscalIdentityState, canManage, canApprove, validationComplete, hasUnsavedChanges, onEditFiscalIdentity, onEditDraftProfile, onActivate, onRetire }: {
   profileState: LoadState<SalesInvoiceHeaderProfile>;
   fiscalIdentityState: LoadState<FiscalIdentityDetail>;
   canManage: boolean;
+  canApprove: boolean;
+  validationComplete: boolean;
+  hasUnsavedChanges: boolean;
   onEditFiscalIdentity: (identity: FiscalIdentityDetail) => void;
   onEditDraftProfile: (profile: SalesInvoiceHeaderProfile) => void;
+  onActivate: () => void;
+  onRetire: () => void;
 }) {
   if (!profileState.loading && !profileState.value && !profileState.error) {
-    return <StateBlock title="Select a profile" message="Choose a Header Profile to view details, Fiscal Identity, validation, readiness, and usage." />;
+    return <StateBlock title="Select a Sales Invoice Setup" message="Choose a Sales Invoice Setup to view details, Registered Business, validation, readiness, and issuance history." />;
   }
 
   if (profileState.loading) {
-    return <StateBlock title="Loading profile" message="Loading authoritative Header Profile details." />;
+    return <StateBlock title="Loading Sales Invoice Setup" message="Loading authoritative Sales Invoice Setup details." />;
   }
 
   if (profileState.error) {
-    return <StateBlock title="Profile unavailable" message={safeErrorMessage(profileState.error)} tone="danger" />;
+    return <StateBlock title="Sales Invoice Setup unavailable" message={safeErrorMessage(profileState.error)} tone="danger" />;
   }
 
   const profile = profileState.value!;
+  const status = lifecycleDisplay(profile.lifecycleState);
   return (
     <section className="subPanel" aria-labelledby="profile-detail-title">
       <div className="sectionHeader">
-        <h3 id="profile-detail-title">Profile detail</h3>
+        <h3 id="profile-detail-title">Sales Invoice Setup details</h3>
         <div className="actionRow">
           {canManage && fiscalIdentityState.value && (
-            <button type="button" onClick={() => onEditFiscalIdentity(fiscalIdentityState.value!)}>Edit Fiscal Identity</button>
+            <button type="button" onClick={() => onEditFiscalIdentity(fiscalIdentityState.value!)}>Edit Registered Business</button>
           )}
           {canManage && profile.lifecycleState === "DRAFT" && (
-            <button type="button" onClick={() => onEditDraftProfile(profile)}>Edit Draft Profile</button>
+            <button type="button" onClick={() => onEditDraftProfile(profile)}>Edit Draft Sales Invoice Setup</button>
           )}
-          <span className="readOnlyBadge">{profile.lifecycleState === "DRAFT" ? "Draft" : "Read-only"}</span>
+          {canApprove && profile.lifecycleState === "DRAFT" && validationComplete && !hasUnsavedChanges && (
+            <button type="button" onClick={onActivate}>Activate Sales Invoice Setup</button>
+          )}
+          {canApprove && profile.lifecycleState === "APPROVED" && (
+            <button type="button" onClick={onRetire}>Retire Sales Invoice Setup</button>
+          )}
+          <span className="readOnlyBadge">{status}</span>
         </div>
       </div>
       {canManage && profile.lifecycleState === "APPROVED" && (
-        <StateBlock title="Approved profile is read-only" message="Statutory changes require a new draft version. This slice does not create new versions." />
+        <StateBlock title="Active setup is read-only" message="Statutory changes require a governed new Draft version. This slice does not create new versions." />
       )}
       {canManage && profile.lifecycleState === "RETIRED" && (
-        <StateBlock title="Retired profile is read-only" message="Retired profiles cannot be edited or reactivated in this UI." />
+        <StateBlock title="Retired setup is read-only" message="Retired Sales Invoice Setups cannot be edited or reactivated in this UI." />
+      )}
+      {canApprove && profile.lifecycleState === "DRAFT" && !validationComplete && (
+        <StateBlock title="Validation required before activation" message="Run Validate configuration and resolve any incomplete items before activating this Sales Invoice Setup." />
       )}
       <div className="detailGrid">
         <DetailGroup title="Identity and scope" items={[
-          ["Profile ID", profile.salesInvoiceHeaderProfileId],
-          ["Version", profile.profileVersion],
-          ["Lifecycle", profile.lifecycleState],
-          ["Fiscal Identity ID", profile.fiscalIdentityId],
+          ["Sales Invoice Setup ID", profile.salesInvoiceHeaderProfileId],
+          ["Setup version", profile.profileVersion],
+          ["Status", status],
+          ["Registered Business ID", profile.fiscalIdentityId],
           ["Site", profile.siteId],
           ["Site POS Server", profile.sitePosServerId]
         ]} />
@@ -512,10 +609,10 @@ function ProfileDetail({ profileState, fiscalIdentityState, canManage, onEditFis
           ["Sales Invoice legal statement", profile.salesInvoiceLegalStatement],
           ["Customer-service footer", profile.customerServiceFooter]
         ]} />
-        <DetailGroup title="Effective and lifecycle metadata" items={[
+        <DetailGroup title="Effective period and status history" items={[
           ["Effective from", formatDateTime(profile.effectiveFrom)],
           ["Effective to", formatDateTime(profile.effectiveTo)],
-          ["Approved at", formatDateTime(profile.approvedAt)],
+          ["Activated at", formatDateTime(profile.approvedAt)],
           ["Retired at", formatDateTime(profile.retiredAt)],
           ["Created at", formatDateTime(profile.createdAt)],
           ["Updated at", formatDateTime(profile.updatedAt)]
@@ -527,18 +624,18 @@ function ProfileDetail({ profileState, fiscalIdentityState, canManage, onEditFis
 
 function FiscalIdentityPanel({ state }: { state: LoadState<FiscalIdentityDetail> }) {
   if (state.loading) {
-    return <DetailGroup title="Registered business" items={[["Status", "Loading Fiscal Identity"]]} />;
+    return <DetailGroup title="Registered Business" items={[["Status", "Loading Registered Business"]]} />;
   }
   if (state.error) {
-    return <DetailGroup title="Registered business" items={[["Status", safeErrorMessage(state.error)]]} />;
+    return <DetailGroup title="Registered Business" items={[["Status", safeErrorMessage(state.error)]]} />;
   }
   const identity = state.value;
-  return <DetailGroup title="Registered business" items={[
+  return <DetailGroup title="Registered Business" items={[
     ["Registered business name", identity?.registeredBusinessName],
     ["Registered business address", identity?.registeredBusinessAddress],
     ["TIN", identity?.tin],
     ["Taxpayer/VAT posture", identity?.taxpayerRegistrationPosture],
-    ["Lifecycle/status", identity?.lifecycleState ?? identity?.status],
+    ["Status", identity?.lifecycleState ?? identity?.status],
     ["Created at", formatDateTime(identity?.createdAt)],
     ["Updated at", formatDateTime(identity?.updatedAt)]
   ]} />;
@@ -552,18 +649,18 @@ function ValidationPanel({ state, onValidate }: { state: LoadState<SalesInvoiceP
         <h3 id="validation-title">Authoritative completeness validation</h3>
         <button type="button" onClick={onValidate} disabled={state.loading}>Validate configuration</button>
       </div>
-      {state.loading && <StateBlock title="Validating" message="Requesting authoritative profile completeness validation." />}
+      {state.loading && <StateBlock title="Validating" message="Requesting authoritative setup completeness validation." />}
       {state.error && <StateBlock title="Validation unavailable" message={safeErrorMessage(state.error)} tone="danger" />}
       {state.value && (
         <div className="validationResult" role="status" aria-label="Validation result">
           <p><strong>Configuration completeness:</strong> {state.value.isComplete ? "Complete" : "Incomplete"}</p>
-          <p><strong>Lifecycle:</strong> {state.value.lifecycleState}</p>
+          <p><strong>Status:</strong> {lifecycleDisplay(state.value.lifecycleState)}</p>
           <p><strong>Validated at:</strong> {formatDateTime(state.value.validatedAt)}</p>
           <p><strong>Template version:</strong> {state.value.templateVersionPosture}</p>
           <p><strong>Presentation version:</strong> {state.value.presentationVersionPosture}</p>
           <p><strong>Effective window:</strong> {state.value.effectiveWindowPosture}</p>
           <p><strong>Overlap:</strong> {state.value.overlapPosture}</p>
-          <p><strong>Fiscal Identity:</strong> {state.value.fiscalIdentityPosture}</p>
+          <p><strong>Registered Business:</strong> {state.value.fiscalIdentityPosture}</p>
           {state.value.correlationId && <p><strong>Support reference:</strong> {state.value.correlationId}</p>}
           <div className="findingGroups">
             {groupedCodes.length === 0 ? (
@@ -596,22 +693,22 @@ function ReadinessPanel({ state, effectiveAt, onEffectiveAtChange }: {
   return (
     <section className="subPanel" aria-labelledby="readiness-title">
       <div className="sectionHeader">
-        <h3 id="readiness-title">Effective readiness</h3>
+        <h3 id="readiness-title">Sales Invoice readiness</h3>
         <label className="inlineField" htmlFor="effective-at">Effective at
           <input id="effective-at" type="datetime-local" value={effectiveAt} onChange={(event) => onEffectiveAtChange(event.target.value)} />
         </label>
       </div>
-      {state.loading && <StateBlock title="Loading readiness" message="Loading authoritative effective readiness." />}
+      {state.loading && <StateBlock title="Loading readiness" message="Loading authoritative Sales Invoice readiness." />}
       {state.error && <StateBlock title="Readiness unavailable" message={safeErrorMessage(state.error)} tone="danger" />}
       {state.value && (
-        <div className="readinessGrid" role="status" aria-label="Effective readiness result">
+        <div className="readinessGrid" role="status" aria-label="Sales Invoice readiness result">
           <span className={`readinessBanner ${readinessTone(state.value.resolutionStatus)}`}>{readinessStatusText(state.value.resolutionStatus)}</span>
           <DetailList items={[
             ["Status", state.value.resolutionStatus],
-            ["Effective profile ID", state.value.effectiveProfileId],
-            ["Profile version", state.value.profileVersion],
-            ["Fiscal Identity ID", state.value.fiscalIdentityId],
-            ["Lifecycle", state.value.lifecycleState],
+            ["Sales Invoice Setup ID", state.value.effectiveProfileId],
+            ["Setup version", state.value.profileVersion],
+            ["Registered Business ID", state.value.fiscalIdentityId],
+            ["Status", lifecycleDisplay(state.value.lifecycleState)],
             ["Completeness", state.value.isComplete ? "Complete" : "Incomplete"],
             ["Enforcement required", state.value.enforcementRequired ? "Yes" : "No"],
             ["BIR validity", state.value.birAccreditationValidityPosture],
@@ -636,21 +733,21 @@ function UsagePanel({ state }: { state: LoadState<SalesInvoiceProfileUsageResult
   return (
     <section className="subPanel" aria-labelledby="usage-title">
       <div className="sectionHeader">
-        <h3 id="usage-title">Immutable usage</h3>
+        <h3 id="usage-title">Issuance history</h3>
         <span className="readOnlyBadge">Read-only</span>
       </div>
-      {state.loading && <StateBlock title="Loading usage" message="Loading immutable snapshot usage summary." />}
-      {state.error && <StateBlock title="Usage unavailable" message={safeErrorMessage(state.error)} tone="danger" />}
+      {state.loading && <StateBlock title="Loading issuance history" message="Loading recorded setup usage summary." />}
+      {state.error && <StateBlock title="Issuance history unavailable" message={safeErrorMessage(state.error)} tone="danger" />}
       {state.value && (
         <div>
           <DetailList items={[
-            ["Profile ID", state.value.salesInvoiceHeaderProfileId],
-            ["Profile version", state.value.profileVersion],
-            ["Fiscal Identity ID", state.value.fiscalIdentityId],
+            ["Sales Invoice Setup ID", state.value.salesInvoiceHeaderProfileId],
+            ["Setup version", state.value.profileVersion],
+            ["Registered Business ID", state.value.fiscalIdentityId],
             ["Fiscal-document count", state.value.fiscalDocumentCount.toString()],
-            ["First snapshot", formatDateTime(state.value.firstSnapshotAt)],
-            ["Latest snapshot", formatDateTime(state.value.latestSnapshotAt)],
-            ["Destructive mutation blocked", state.value.destructiveMutationBlocked ? "Yes" : "No"],
+            ["First recorded use", formatDateTime(state.value.firstSnapshotAt)],
+            ["Latest recorded use", formatDateTime(state.value.latestSnapshotAt)],
+            ["Historical-change protection", state.value.destructiveMutationBlocked ? "Enabled" : "Not required"],
             ["Support reference", state.value.correlationId]
           ]} />
           {state.value.safeFiscalDocumentIds.length > 0 && (
@@ -660,6 +757,74 @@ function UsagePanel({ state }: { state: LoadState<SalesInvoiceProfileUsageResult
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+function LifecycleConfirmationPanel({ action, profile, registeredBusinessName, pending, error, onConfirm, onCancel }: {
+  action: LifecycleAction;
+  profile: SalesInvoiceHeaderProfile;
+  registeredBusinessName?: string;
+  pending: boolean;
+  error?: ManagementPlatformUiError;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const isActivate = action === "activate";
+  const title = isActivate ? "Activate Sales Invoice Setup?" : "Retire Sales Invoice Setup?";
+  const confirmLabel = isActivate ? "Activate Sales Invoice Setup" : "Retire Sales Invoice Setup";
+  const explanation = isActivate
+    ? "Activating this setup makes it eligible for Sales Invoice issuance during its approved effective period. The server will perform the final validation and activation decision."
+    : "Retiring this setup prevents it from being selected for future Sales Invoice issuance after the authoritative retirement becomes effective. Historical Sales Invoices and their recorded setup details remain unchanged.";
+  const dialogRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
+
+  return (
+    <section
+      className="subPanel mutationPanel"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="lifecycle-dialog-title"
+      ref={dialogRef}
+      tabIndex={-1}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !pending) {
+          onCancel();
+        }
+      }}
+    >
+      <div className="sectionHeader">
+        <h3 id="lifecycle-dialog-title">{title}</h3>
+        <span className="statusPill compactPill">{isActivate ? "Activation" : "Retirement"}</span>
+      </div>
+      <p className="formHelp">{explanation}</p>
+      {!isActivate && (
+        <p className="formHelp">The setup is not deleted, issuance history remains available, and retirement cannot be reversed through this UI.</p>
+      )}
+      {error && (
+        error.mutationUncertain
+          ? <StateBlock title="Result uncertain" message={safeErrorMessage(error)} tone="warning" />
+          : <StateBlock title="Status change failed safely" message={safeErrorMessage(error)} tone="danger" />
+      )}
+      <DetailList items={[
+        ["Sales Invoice Setup ID", profile.salesInvoiceHeaderProfileId],
+        ["Setup version", profile.profileVersion],
+        ["Registered Business", registeredBusinessName ?? profile.fiscalIdentityId],
+        ["Site", profile.siteId],
+        ["Site POS Server", profile.sitePosServerId],
+        ["Effective from", formatDateTime(profile.effectiveFrom)],
+        ["Effective to", formatDateTime(profile.effectiveTo)],
+        ["BIR accreditation valid until", profile.birAccreditationValidUntil],
+        ["PTU number", profile.ptuNumber]
+      ]} />
+      <div className="formActions">
+        <button type="button" onClick={onConfirm} disabled={pending}>{pending ? "Sending..." : confirmLabel}</button>
+        <button type="button" className="secondaryButton" onClick={onCancel} disabled={pending}>Cancel</button>
+        {pending && <span role="status">{isActivate ? "Activating Sales Invoice Setup." : "Retiring Sales Invoice Setup."}</span>}
+      </div>
     </section>
   );
 }
@@ -706,15 +871,15 @@ function MutationFormPanel({
       )}
       {mutationState.error && (
         mutationState.error.mutationUncertain
-          ? <StateBlock title="Mutation result uncertain" message={safeErrorMessage(mutationState.error)} tone="warning" />
-          : <StateBlock title="Mutation failed safely" message={safeErrorMessage(mutationState.error)} tone="danger" />
+          ? <StateBlock title="Result uncertain" message={safeErrorMessage(mutationState.error)} tone="warning" />
+          : <StateBlock title="Changes failed safely" message={safeErrorMessage(mutationState.error)} tone="danger" />
       )}
-      {mutationState.success && <StateBlock title="Mutation accepted" message={mutationState.success} />}
+      {mutationState.success && <StateBlock title={mutationState.success} message="Authoritative Sales Invoice Configuration state has been refreshed." />}
       {isFiscal ? (
         <FiscalIdentityForm
           value={fiscalForm}
           pending={mutationState.pending}
-          submitLabel={activeForm === "fiscal-create" ? "Create Fiscal Identity" : "Save Fiscal Identity"}
+          submitLabel={activeForm === "fiscal-create" ? "Create Registered Business" : "Save Registered Business"}
           onChange={onFiscalFormChange}
           onSubmit={onSubmitFiscal}
           onCancel={onCancel}
@@ -723,7 +888,7 @@ function MutationFormPanel({
         <HeaderProfileForm
           value={{ ...profileForm, siteId: currentSite.siteId, sitePosServerId: currentSite.sitePosServerId ?? "" }}
           pending={mutationState.pending}
-          submitLabel={activeForm === "profile-create" ? "Create Draft Profile" : "Save Draft Changes"}
+          submitLabel={activeForm === "profile-create" ? "Create Draft Sales Invoice Setup" : "Save Draft Changes"}
           onChange={onProfileFormChange}
           onSubmit={onSubmitProfile}
           onCancel={onCancel}
@@ -743,7 +908,7 @@ function FiscalIdentityForm({ value, pending, submitLabel, onChange, onSubmit, o
 }) {
   return (
     <form className="managedForm" aria-label={submitLabel} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
-      <FormSection title="Fiscal Identity">
+      <FormSection title="Registered Business">
         <TextField id="registered-business-name" label="Registered business name" value={value.registeredBusinessName} onChange={(registeredBusinessName) => onChange({ ...value, registeredBusinessName })} required />
         <TextField id="registered-business-address" label="Registered business address" value={value.registeredBusinessAddress} onChange={(registeredBusinessAddress) => onChange({ ...value, registeredBusinessAddress })} required textarea />
         <TextField id="tin" label="TIN" value={value.tin} onChange={(tin) => onChange({ ...value, tin })} required />
@@ -764,11 +929,11 @@ function HeaderProfileForm({ value, pending, submitLabel, onChange, onSubmit, on
 }) {
   return (
     <form className="managedForm" aria-label={submitLabel} onSubmit={(event) => { event.preventDefault(); onSubmit(); }}>
-      <FormSection title="Fiscal Identity and scope">
-        <TextField id="profile-fiscal-identity" label="Fiscal Identity ID" value={value.fiscalIdentityId} onChange={(fiscalIdentityId) => onChange({ ...value, fiscalIdentityId })} required />
+      <FormSection title="Registered Business and scope">
+        <TextField id="profile-fiscal-identity" label="Registered Business ID" value={value.fiscalIdentityId} onChange={(fiscalIdentityId) => onChange({ ...value, fiscalIdentityId })} required />
         <TextField id="profile-site-id" label="Site ID" value={value.siteId} onChange={() => undefined} readOnly />
         <TextField id="profile-site-pos-server-id" label="Site POS Server ID" value={value.sitePosServerId} onChange={() => undefined} readOnly />
-        <TextField id="profile-version" label="Profile version" value={value.profileVersion} onChange={(profileVersion) => onChange({ ...value, profileVersion })} required />
+        <TextField id="profile-version" label="Setup version" value={value.profileVersion} onChange={(profileVersion) => onChange({ ...value, profileVersion })} required />
       </FormSection>
       <FormSection title="Supported template versions">
         <SelectField id="template-version" label="Template version" value={value.templateVersion} onChange={(templateVersion) => onChange({ ...value, templateVersion })} options={[controlledSalesInvoiceTemplateVersion]} />
@@ -874,8 +1039,8 @@ function DetailGroup({ title, items }: { title: string; items: Array<[string, st
 function DetailList({ items }: { items: Array<[string, string | undefined]> }) {
   return (
     <dl>
-      {items.map(([label, value]) => (
-        <div key={label}>
+      {items.map(([label, value], index) => (
+        <div key={`${label}-${index}`}>
           <dt>{label}</dt>
           <dd>{value || "Not returned"}</dd>
         </div>
@@ -885,7 +1050,7 @@ function DetailList({ items }: { items: Array<[string, string | undefined]> }) {
 }
 
 function StatusPill({ value }: { value: string }) {
-  return <span className="statusPill compactPill">{value}</span>;
+  return <span className="statusPill compactPill">{lifecycleDisplay(value)}</span>;
 }
 
 function StateBlock({ title, message, tone = "neutral" }: { title: string; message: string; tone?: "neutral" | "warning" | "danger" }) {
@@ -972,10 +1137,10 @@ function validateFiscalForm(form: FiscalIdentityMutationRequest): string[] {
 
 function validateProfileForm(form: SalesInvoiceHeaderProfileMutationRequest): string[] {
   return requiredErrors([
-    ["Fiscal Identity ID", form.fiscalIdentityId],
+    ["Registered Business ID", form.fiscalIdentityId],
     ["Site ID", form.siteId],
     ["Site POS Server ID", form.sitePosServerId],
-    ["Profile version", form.profileVersion],
+    ["Setup version", form.profileVersion],
     ["Template version", form.templateVersion],
     ["Presentation version", form.presentationVersion],
     ["POS serial number", form.posSerialNumber],
@@ -1000,13 +1165,13 @@ function requiredErrors(fields: Array<[string, string | undefined]>): string[] {
 function formTitle(form: ActiveForm): string {
   switch (form) {
     case "fiscal-create":
-      return "Create Fiscal Identity";
+      return "Create Registered Business";
     case "fiscal-edit":
-      return "Edit Fiscal Identity";
+      return "Edit Registered Business";
     case "profile-create":
-      return "Create Draft Header Profile";
+      return "Create Draft Sales Invoice Setup";
     case "profile-edit":
-      return "Edit Draft Header Profile";
+      return "Edit Draft Sales Invoice Setup";
   }
 }
 
@@ -1017,10 +1182,23 @@ function toSafeError(error: unknown): ManagementPlatformUiError {
   return {
     kind: "unknown",
     code: "SALES_INVOICE_PROFILE_READ_UI_ERROR",
-    message: "The profile information could not be loaded safely.",
+    message: "The Sales Invoice Setup information could not be loaded safely.",
     retryable: false,
     mutationUncertain: false
   };
+}
+
+function lifecycleDisplay(value?: string): string {
+  switch (value) {
+    case "DRAFT":
+      return "Draft";
+    case "APPROVED":
+      return "Active";
+    case "RETIRED":
+      return "Retired";
+    default:
+      return value ?? "Not returned";
+  }
 }
 
 function safeErrorMessage(error: ManagementPlatformUiError): string {
