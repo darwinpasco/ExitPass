@@ -2,15 +2,15 @@
   "contractId": "management-platform.sales-invoice-profile-manage-ui.v1",
   "featureRoute": "/management-platform/sales-invoice-profiles",
   "requiredPermission": "sales-invoice-profile.manage",
-  "scope": "Manage-only browser workflows for Fiscal Identity create/update and DRAFT Sales Invoice Header Profile create/edit.",
+  "scope": "Manage-only browser workflows for Registered Business create/update and Draft Sales Invoice Setup create/edit.",
   "authorityBoundary": {
     "browser": "Collects permitted administrative input and displays authoritative Central PMS responses.",
     "centralPms": "Authenticated browser-facing API boundary that derives actor identity and enforces Site/resource scope.",
-    "posServer": "Authoritative Fiscal Identity and Sales Invoice Header Profile persistence, validation, lifecycle, overlap, approval, retirement, readiness, and usage authority."
+    "posServer": "Authoritative Registered Business and Sales Invoice Setup persistence, validation, status, overlap, activation, retirement, readiness, and issuance-history authority."
   },
   "fiscalIdentityForms": {
-    "createAction": "Create Fiscal Identity",
-    "updateAction": "Save Fiscal Identity",
+    "createAction": "Create Registered Business",
+    "updateAction": "Save Registered Business",
     "fields": [
       "registeredBusinessName",
       "registeredBusinessAddress",
@@ -27,7 +27,7 @@
     ]
   },
   "draftHeaderProfileForms": {
-    "createAction": "Create Draft Profile",
+    "createAction": "Create Draft Sales Invoice Setup",
     "updateAction": "Save Draft Changes",
     "lifecycle": "DRAFT",
     "fields": [
@@ -89,11 +89,11 @@
     "400": "Review submitted fields.",
     "401": "Authentication is required or expired.",
     "403": "Insufficient Manage permission or Site scope.",
-    "404": "Fiscal Identity or Header Profile no longer exists.",
+    "404": "Registered Business or Sales Invoice Setup no longer exists.",
     "409": "Duplicate version, lifecycle conflict, overlap, immutability, or invalid state.",
     "422": "Profile validation failed.",
     "429": "Service is temporarily throttled.",
-    "502_503": "Profile administration is unavailable.",
+    "502_503": "Sales Invoice Configuration is unavailable.",
     "504": "Mutation result is uncertain. Refresh and verify before retrying.",
     "malformedResponse": "Safe integration-contract failure."
   },
@@ -129,7 +129,7 @@
       "POS Server API key",
       "server-side secret reference"
     ],
-    "browserStorage": "Fiscal Identity, Header Profile, statutory fields, credentials, and Site authorization are not stored in localStorage, sessionStorage, or IndexedDB."
+    "browserStorage": "Registered Business, Sales Invoice Setup, statutory fields, credentials, and Site authorization are not stored in localStorage, sessionStorage, or IndexedDB."
   },
   "playwrightE2eAutomation": {
     "framework": "Playwright",
@@ -145,11 +145,11 @@
     "automatedScenarioCoverage": [
       "read-only permission posture",
       "manage permission posture",
-      "Fiscal Identity create success and conflict",
-      "Fiscal Identity update success and immutability conflict",
-      "DRAFT Header Profile create success, conflict, and timeout uncertainty",
-      "DRAFT Header Profile edit success and conflict",
-      "APPROVED and RETIRED read-only posture",
+      "Registered Business create success and conflict",
+      "Registered Business update success and immutability conflict",
+      "Draft Sales Invoice Setup create success, conflict, and timeout uncertainty",
+      "Draft Sales Invoice Setup edit success and conflict",
+      "Active and Retired read-only posture",
       "forbidden, disabled, and unavailable manage postures",
       "cancel behavior",
       "unsaved Site-switch confirmation",
@@ -176,10 +176,10 @@
     "manualSmokeAfterAutomation": [
       "open the Manage scenario at 1366x768",
       "confirm branding and overall layout",
-      "open one Fiscal Identity form",
-      "open one Draft Profile form",
+      "open one Registered Business form",
+      "open one Draft Sales Invoice Setup form",
       "confirm no visual overlap",
-      "confirm no Approve or Retire controls"
+      "confirm no Activate or Retire controls"
     ]
   },
   "accessibility": [

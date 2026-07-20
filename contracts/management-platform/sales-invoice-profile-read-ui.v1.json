@@ -70,7 +70,7 @@
     "displaysCompletenessDistinctFromReadiness": true,
     "unknownCodesPreservedSafely": true,
     "groups": [
-      "Fiscal Identity",
+      "Registered Business",
       "Site and Site POS Server",
       "Sales Invoice header",
       "BIR accreditation",
@@ -82,7 +82,7 @@
   },
   "readinessStatuses": {
     "READY": "Ready for Sales Invoice issuance",
-    "NO_EFFECTIVE_PROFILE": "No effective Sales Invoice Header Profile",
+    "NO_EFFECTIVE_PROFILE": "No effective Sales Invoice Setup",
     "INCOMPLETE": "Profile configuration is incomplete",
     "EXPIRED": "BIR accreditation or effective profile is expired",
     "AMBIGUOUS": "Multiple effective profiles require correction",

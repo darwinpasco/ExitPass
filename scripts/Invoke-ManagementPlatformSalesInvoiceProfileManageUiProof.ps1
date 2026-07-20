@@ -58,13 +58,13 @@ $contractText = Get-Content -Raw -LiteralPath $contractPath
 
 $requiredSourceTokens = @(
     "sales-invoice-profile.manage",
-    "Create Fiscal Identity",
-    "Edit Fiscal Identity",
-    "Create Draft Profile",
-    "Edit Draft Profile",
+    "Create Registered Business",
+    "Edit Registered Business",
+    "Create Draft Sales Invoice Setup",
+    "Edit Draft Sales Invoice Setup",
     "Save Draft Changes",
-    "Mutation result uncertain",
-    "Discard unsaved Sales Invoice Profile form changes",
+    "Result uncertain",
+    "Discard unsaved Sales Invoice Setup changes",
     "digital-sales-invoice-json-v1",
     "digital-sales-invoice-presentation-json-v1",
     "/v1/management-platform/fiscal-identities",
@@ -116,13 +116,13 @@ if (-not $contractText.Contains('"requiredPermission": "sales-invoice-profile.ma
 }
 
 if (-not $readmeText.Contains("sales-invoice-profile.manage") -or
-    -not $readmeText.Contains("DRAFT Header Profile") -or
-    -not $readmeText.Contains("Mutation result uncertain")) {
+    -not $readmeText.Contains("Draft Sales Invoice Setup") -or
+    -not $readmeText.Contains("Result uncertain")) {
     throw "README does not document Manage workflows and uncertainty posture."
 }
 
 Write-Host "Proof passed: read-only user tests cover absence of mutation controls."
-Write-Host "Proof passed: Manage user tests cover Fiscal Identity create/update and DRAFT Header Profile create/edit."
+Write-Host "Proof passed: Manage user tests cover Registered Business create/update and Draft Sales Invoice Setup create/edit."
 Write-Host "Proof passed: focused tests cover actor-reference exclusion from mutation DTOs."
 Write-Host "Proof passed: terminal ID, approval, and retirement controls are absent."
 Write-Host "Proof passed: template and presentation versions remain controlled."
