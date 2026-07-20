@@ -83,3 +83,44 @@ Use these URLs with the local dev server:
 - `http://127.0.0.1:5176/management-platform/?mpScenario=not-found`
 
 When `mpScenario` is absent or unknown, the development build falls back to the authenticated scenario. Scenarios are never stored in browser storage, cookies, IndexedDB, or server configuration.
+
+## Sales Invoice Profile read-only module
+
+Route:
+
+```text
+/management-platform/sales-invoice-profiles
+```
+
+Required permission:
+
+```text
+sales-invoice-profile.read
+```
+
+The module is read-only. It supports Site-scoped Header Profile listing, profile detail, linked Fiscal Identity detail, authoritative completeness validation, effective readiness, and immutable usage visibility. It does not create or edit Fiscal Identities, create or edit Header Profiles, approve, retire, create new versions, issue fiscal documents, print receipts, authorize exits, or operate gates.
+
+The feature client uses only relative Central PMS routes under `/v1/management-platform`. Browser code must not call downstream administration routes directly and must not contain server-to-server credentials, downstream base URLs, or server-only headers.
+
+### Sales Invoice Profile development scenarios
+
+The development build supports `mpProfileScenario` URL query parameters only while `import.meta.env.DEV === true`. Production builds ignore these query parameters and do not expose a scenario selector.
+
+Use these URLs with the local dev server:
+
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=profiles`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=empty`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=incomplete`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=ready`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=no-effective-profile`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=expired`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=ambiguous`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=unsupported-version`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=retired`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=unknown-readiness`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=usage`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=disabled`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=forbidden`
+- `http://127.0.0.1:5176/management-platform/sales-invoice-profiles?mpScenario=authenticated&mpProfileScenario=unavailable`
+
+Scenarios are never stored in browser storage, cookies, IndexedDB, or server configuration. They use controlled in-memory browser adapters and contain only obvious development data.

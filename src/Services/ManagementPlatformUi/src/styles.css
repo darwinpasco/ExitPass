@@ -296,3 +296,270 @@ select:focus-visible {
 .developmentScenario strong {
   overflow-wrap: anywhere;
 }
+
+.salesProfilePage {
+  display: grid;
+  gap: 16px;
+}
+
+.developmentScenario.compact {
+  margin: 0;
+  width: 100%;
+}
+
+.siteSummary {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  padding: 12px 14px;
+}
+
+.salesProfileLayout {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(360px, 0.85fr) minmax(0, 1.15fr);
+}
+
+.detailStack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.subPanel {
+  background: #fff;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+}
+
+.sectionHeader {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.sectionHeader h3,
+.detailGroup h4 {
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.countBadge,
+.readOnlyBadge {
+  background: #eef2f4;
+  border: 1px solid #dfe5ea;
+  border-radius: 999px;
+  color: #344756;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 5px 9px;
+  white-space: nowrap;
+}
+
+.readOnlyBadge {
+  background: #e7f2f5;
+  border-color: #b9d7df;
+  color: #17465c;
+}
+
+.tableScroller {
+  overflow-x: auto;
+}
+
+.dataTable {
+  border-collapse: collapse;
+  min-width: 780px;
+  width: 100%;
+}
+
+.dataTable th,
+.dataTable td {
+  border-bottom: 1px solid #eef2f4;
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.dataTable th {
+  color: #61717e;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.dataTable small,
+.messageList,
+.detailGroup dd,
+.detailGroup dt {
+  overflow-wrap: anywhere;
+}
+
+.selectedRow {
+  background: #f0f7f9;
+}
+
+.textButton {
+  background: transparent;
+  border: 0;
+  color: #17465c;
+  min-height: 0;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+}
+
+.textButton:hover,
+.textButton:focus-visible {
+  background: transparent;
+  color: #0d3142;
+}
+
+.compactPill {
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.detailGrid,
+.readinessGrid,
+.validationResult {
+  display: grid;
+  gap: 14px;
+}
+
+.detailGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detailGroup {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.detailGroup dl,
+.readinessGrid dl,
+.usagePanel dl {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+
+.detailGroup dl div,
+.readinessGrid dl div,
+.usagePanel dl div {
+  display: grid;
+  gap: 4px;
+}
+
+.detailGroup dt,
+.readinessGrid dt {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.detailGroup dd,
+.readinessGrid dd {
+  margin: 0;
+}
+
+.inlineField {
+  display: grid;
+  gap: 4px;
+  min-width: 240px;
+}
+
+input[type="datetime-local"] {
+  border: 1px solid #c7d1d9;
+  border-radius: 6px;
+  color: #1b252f;
+  font: inherit;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+input[type="datetime-local"]:focus-visible {
+  outline: 3px solid #7ba6b6;
+  outline-offset: 2px;
+}
+
+.findingGroups {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.findingGroups section,
+.messageList {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.findingGroups h4 {
+  margin: 0 0 6px;
+}
+
+.messageList {
+  margin: 0;
+}
+
+.readinessBanner {
+  border-radius: 8px;
+  display: inline-flex;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.readinessBanner.ready {
+  background: #e4f4ed;
+  border: 1px solid #a8d9c4;
+  color: #1f6a4b;
+}
+
+.readinessBanner.warning {
+  background: #fff6df;
+  border: 1px solid #ecd289;
+  color: #654d12;
+}
+
+.stateMessage.embedded {
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.stateMessage.embedded h3 {
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .salesProfileLayout,
+  .detailGrid,
+  .findingGroups {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .sectionHeader,
+  .siteSummary {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .inlineField {
+    min-width: 0;
+  }
+}

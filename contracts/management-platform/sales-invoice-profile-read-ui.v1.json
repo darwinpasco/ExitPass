@@ -1,0 +1,169 @@
+﻿{
+  "contractId": "sales-invoice-profile-read-ui.v1",
+  "featureRoute": "/management-platform/sales-invoice-profiles",
+  "navigation": {
+    "label": "Sales Invoice Profiles",
+    "requiredPermission": "sales-invoice-profile.read",
+    "mutationControls": "none"
+  },
+  "authorityBoundary": {
+    "browserBackend": "Central PMS Management Platform API",
+    "fiscalAuthority": "POS Server via Central PMS",
+    "browserMustNotCallPosServerDirectly": true,
+    "browserMustNotPersistAuthoritativeProfileState": true
+  },
+  "allowedBrowserApiRoutes": [
+    "GET /v1/management-platform/sales-invoice-header-profiles",
+    "GET /v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}",
+    "POST /v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/validate",
+    "GET /v1/management-platform/sales-invoice-header-profiles/effective-readiness",
+    "GET /v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/usage",
+    "GET /v1/management-platform/fiscal-identities/{fiscalIdentityId}"
+  ],
+  "permissionRequirement": "sales-invoice-profile.read",
+  "siteScopedList": {
+    "usesCurrentSiteContext": true,
+    "requiredFilters": ["siteId", "sitePosServerId"],
+    "staleSiteDataClearedOnSwitch": true
+  },
+  "profileDetailFields": [
+    "salesInvoiceHeaderProfileId",
+    "fiscalIdentityId",
+    "siteId",
+    "sitePosServerId",
+    "profileVersion",
+    "templateVersion",
+    "presentationVersion",
+    "posSerialNumber",
+    "machineIdentificationNumber",
+    "parkingLocationDisplay",
+    "birAccreditationNumber",
+    "birAccreditationIssuedDate",
+    "birAccreditationValidUntil",
+    "ptuNumber",
+    "ptuIssuedDate",
+    "salesInvoiceLegalStatement",
+    "customerServiceFooter",
+    "effectiveFrom",
+    "effectiveTo",
+    "lifecycleState",
+    "approvedAt",
+    "approvedByRef",
+    "retiredAt",
+    "createdAt",
+    "updatedAt"
+  ],
+  "fiscalIdentityFields": [
+    "fiscalIdentityId",
+    "registeredBusinessName",
+    "registeredBusinessAddress",
+    "tin",
+    "taxpayerRegistrationPosture",
+    "lifecycleState",
+    "createdAt",
+    "updatedAt"
+  ],
+  "validationWorkflow": {
+    "action": "Validate configuration",
+    "route": "POST /v1/management-platform/sales-invoice-header-profiles/{salesInvoiceHeaderProfileId}/validate",
+    "nonMutating": true,
+    "displaysCompletenessDistinctFromReadiness": true,
+    "unknownCodesPreservedSafely": true,
+    "groups": [
+      "Fiscal Identity",
+      "Site and Site POS Server",
+      "Sales Invoice header",
+      "BIR accreditation",
+      "PTU",
+      "Effective dates",
+      "Template and presentation versions",
+      "Overlap and lifecycle"
+    ]
+  },
+  "readinessStatuses": {
+    "READY": "Ready for Sales Invoice issuance",
+    "NO_EFFECTIVE_PROFILE": "No effective Sales Invoice Header Profile",
+    "INCOMPLETE": "Profile configuration is incomplete",
+    "EXPIRED": "BIR accreditation or effective profile is expired",
+    "AMBIGUOUS": "Multiple effective profiles require correction",
+    "UNSUPPORTED_VERSION": "Template or presentation version is unsupported",
+    "RETIRED": "Profile is retired and unavailable for new issuance",
+    "unknownFutureValues": "neutral non-ready warning posture"
+  },
+  "usageVisibility": {
+    "fields": [
+      "salesInvoiceHeaderProfileId",
+      "profileVersion",
+      "fiscalIdentityId",
+      "firstSnapshotAt",
+      "latestSnapshotAt",
+      "fiscalDocumentCount",
+      "safeFiscalDocumentIds",
+      "destructiveMutationBlocked",
+      "correlationId"
+    ],
+    "fullReceiptPayloadsRendered": false,
+    "snapshotJsonRendered": false,
+    "readOnly": true
+  },
+  "errorPostures": [
+    "authentication-required",
+    "permission-denied",
+    "site-scope-denied",
+    "not-found",
+    "conflict",
+    "validation",
+    "throttled",
+    "integration-unavailable",
+    "timeout",
+    "malformed-response",
+    "feature-disabled"
+  ],
+  "developmentScenarios": {
+    "queryParameter": "mpProfileScenario",
+    "developmentOnly": true,
+    "values": [
+      "profiles",
+      "empty",
+      "incomplete",
+      "ready",
+      "no-effective-profile",
+      "expired",
+      "ambiguous",
+      "unsupported-version",
+      "retired",
+      "unknown-readiness",
+      "usage",
+      "disabled",
+      "forbidden",
+      "unavailable"
+    ],
+    "productionBehavior": "ignored"
+  },
+  "noMutationBoundary": {
+    "fiscalIdentityCreateOrUpdate": false,
+    "profileCreateOrEdit": false,
+    "approval": false,
+    "retirement": false,
+    "createNewVersion": false
+  },
+  "browserSecurity": {
+    "allowedRoutePrefix": "/v1/management-platform",
+    "forbidden": [
+      "directPosServerAdministrationRoutes",
+      "posServerHostnames",
+      "serverToServerAuthorizationHeaders",
+      "apiKeys",
+      "browserStorageForProfilesOrCredentials"
+    ]
+  },
+  "accessibilityExpectations": [
+    "keyboardReachableNavigation",
+    "accessibleTableHeaders",
+    "keyboardProfileSelection",
+    "semanticDetailHeadings",
+    "statusNotColorOnly",
+    "longIdentifierWrapping"
+  ],
+  "responsiveExpectations": ["1366x768", "approximately768PixelWidth", "stackedDetailSections", "controlledTableScrolling"]
+}

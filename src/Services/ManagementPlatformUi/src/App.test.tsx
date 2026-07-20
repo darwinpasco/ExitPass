@@ -104,14 +104,14 @@ describe("ManagementPlatformUi foundation shell", () => {
     expect(screen.getByText(/No authorized Site is available/i)).toBeInTheDocument();
   });
 
-  it("shows future Sales Invoice navigation only as a disabled placeholder unless read permission is present", () => {
+  it("shows Sales Invoice profile navigation only when read permission is present", () => {
     const { rerender } = render(<App authState={authState()} initialPath="/management-platform" />);
-    expect(screen.getByRole("button", { name: /Sales Invoice Profiles future module/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Sales Invoice Profiles/i })).not.toBeInTheDocument();
 
     rerender(<App authState={authState([managementPlatformOverviewPermission, futureSalesInvoiceProfilePermissions.read])} initialPath="/management-platform" />);
-    expect(screen.getByRole("button", { name: /Sales Invoice Profiles future module/i })).not.toBeDisabled();
-    expect(screen.queryByLabelText(/registered business name/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/BIR accreditation/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Sales Invoice Profiles read-only status/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Approve/i })).not.toBeInTheDocument();
   });
 
   it("exposes accessible error, feature-unavailable, and mutation-uncertain components", () => {
