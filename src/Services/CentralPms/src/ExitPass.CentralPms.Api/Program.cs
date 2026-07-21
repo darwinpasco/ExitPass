@@ -38,6 +38,7 @@ using ExitPass.CentralPms.Application.Reconciliation;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.WebPay;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
@@ -162,6 +163,7 @@ app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
 app.MapTerminalCashPaymentEndpoints();
+app.MapWebPayReceiptPresentationEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -685,6 +687,7 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ITerminalCashPaymentService, TerminalCashPaymentService>();
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
+    builder.Services.AddScoped<IWebPayReceiptPresentationService, WebPayReceiptPresentationService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();

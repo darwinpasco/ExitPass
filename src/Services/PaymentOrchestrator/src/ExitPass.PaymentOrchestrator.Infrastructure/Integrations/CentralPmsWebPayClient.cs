@@ -18,6 +18,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private readonly Uri _vendorParkingResolveUri;
     private readonly Uri _createPaymentAttemptUri;
     private readonly Uri _paymentAttemptsBaseUri;
+    private readonly Uri _webPayPaymentAttemptsBaseUri;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsWebPayClient"/> class.
@@ -46,6 +47,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         _vendorParkingResolveUri = new Uri(normalizedBaseUrl, "v1/vendor-parking/resolve");
         _createPaymentAttemptUri = new Uri(normalizedBaseUrl, "v1/public/payment-attempts");
         _paymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/internal/payment-attempts/");
+        _webPayPaymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/payment-attempts/");
     }
 
     /// <inheritdoc />
@@ -206,6 +208,57 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             false));
     }
 
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
+        Guid paymentAttemptId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri(_webPayPaymentAttemptsBaseUri, $"{paymentAttemptId:D}/receipt-presentation"));
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>.Failure(
+                ReadError((int)response.StatusCode, responseBody, "WEBPAY_RECEIPT_PRESENTATION_READ_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<WebPayReceiptPresentationResponse>(responseBody, JsonOptions);
+        if (payload is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_WEBPAY_RECEIPT_PRESENTATION_RESPONSE",
+                "Central PMS receipt presentation response could not be parsed.",
+                true));
+        }
+
+        return CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>.Success(new CentralPmsWebPayReceiptPresentation(
+            payload.PaymentAttemptId,
+            payload.PaymentConfirmationId,
+            payload.FiscalIssuanceReferenceId,
+            payload.FiscalIssuanceState,
+            payload.PosFiscalDocumentId,
+            payload.FiscalDocumentNumber,
+            payload.FiscalDocumentStatus,
+            payload.ReceiptAvailabilityState,
+            payload.PresentationVersion,
+            payload.TemplateVersion,
+            payload.ContentType,
+            payload.AuthoritativePresentation,
+            payload.VoidStatus,
+            payload.VoidReasonCode,
+            payload.VoidedAt,
+            payload.CreatedAt,
+            payload.UpdatedAt,
+            payload.CorrelationId));
+    }
+
     private CentralPmsWebPayError ReadError(int statusCode, string responseBody, string fallbackCode)
     {
         if (string.IsNullOrWhiteSpace(responseBody))
@@ -358,6 +411,26 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private sealed record FinalizePaymentAttemptResponse(
         Guid PaymentAttemptId,
         string AttemptStatus);
+
+    private sealed record WebPayReceiptPresentationResponse(
+        Guid PaymentAttemptId,
+        Guid PaymentConfirmationId,
+        Guid FiscalIssuanceReferenceId,
+        string FiscalIssuanceState,
+        Guid PosFiscalDocumentId,
+        string? FiscalDocumentNumber,
+        string? FiscalDocumentStatus,
+        string ReceiptAvailabilityState,
+        string? PresentationVersion,
+        string? TemplateVersion,
+        string? ContentType,
+        JsonElement AuthoritativePresentation,
+        string? VoidStatus,
+        string? VoidReasonCode,
+        DateTimeOffset? VoidedAt,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt,
+        Guid CorrelationId);
 
     private sealed record ErrorResponse(
         string? ErrorCode,

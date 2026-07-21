@@ -56,19 +56,29 @@ function stubWebPayFetch(options?: {
   intentPayload?: unknown;
   intentOk?: boolean;
   intentStatus?: number;
+  receiptPayload?: unknown;
+  receiptOk?: boolean;
+  receiptStatus?: number;
 }) {
   const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
     const isResolve = url.includes("/v1/webpay/parking-session");
+    const isReceipt = url.includes("/v1/webpay/payment-attempts/") && url.includes("/receipt-presentation");
     return {
       ok: isResolve
         ? options?.resolveOk ?? true
+        : isReceipt
+          ? options?.receiptOk ?? true
         : options?.intentOk ?? true,
       status: isResolve
         ? options?.resolveStatus ?? 200
+        : isReceipt
+          ? options?.receiptStatus ?? 200
         : options?.intentStatus ?? 200,
       json: async () => (
         isResolve
           ? options?.resolvePayload ?? successResponse
+          : isReceipt
+            ? options?.receiptPayload ?? salesInvoicePresentationResponse
           : options?.intentPayload ?? successResponse
       )
     };
@@ -76,6 +86,38 @@ function stubWebPayFetch(options?: {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+const salesInvoicePresentationResponse = {
+  paymentAttemptId: "44444444-4444-4444-4444-444444444444",
+  paymentConfirmationId: "11111111-1111-1111-1111-111111111111",
+  fiscalIssuanceReferenceId: "22222222-2222-2222-2222-222222222222",
+  fiscalIssuanceState: "FISCAL_ISSUANCE_RECORDED",
+  posFiscalDocumentId: "33333333-3333-3333-3333-333333333333",
+  fiscalDocumentNumber: "SI-20260523-000001",
+  fiscalDocumentStatus: "RECORDED",
+  receiptAvailabilityState: "AVAILABLE",
+  presentationVersion: "digital-sales-invoice-presentation-json-v1",
+  templateVersion: "digital-sales-invoice-json-v1",
+  contentType: "application/json",
+  authoritativePresentation: {
+    presentation: {
+      documentTitle: "Sales Invoice",
+      sections: [
+        {
+          key: "summary",
+          title: "Document Summary",
+          rows: [
+            { key: "number", label: "Sales Invoice Number", displayValue: "SI-20260523-000001" },
+            { key: "total", label: "Total Amount", displayValue: "PHP 125.00" }
+          ]
+        }
+      ]
+    }
+  },
+  createdAt: "2026-05-23T13:00:00+08:00",
+  updatedAt: "2026-05-23T13:01:00+08:00",
+  correlationId: "77777777-7777-7777-7777-777777777777"
+};
 
 beforeEach(() => {
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
@@ -932,23 +974,59 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
   });
 
-  it("WebPayReturnPage_ShowsConfirmedReceiptAfterBackendConfirms", async () => {
-    stubWebPayFetch({
+  it("WebPayReturnPage_WhenBackendConfirmsAndReceiptIsAvailable_DisplaysAuthoritativeSalesInvoice", async () => {
+    const fetchMock = stubWebPayFetch({
       resolvePayload: {
         ...successResponse,
         paymentStatus: "Paid",
         parkingStatus: "PaymentRequired"
       }
     });
-    window.history.pushState({}, "", "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-010");
+    window.history.pushState(
+      {},
+      "",
+      "/webpay/payment-return?ticketReference=WEBPAY-20260523-FRESH-010&paymentAttemptId=44444444-4444-4444-4444-444444444444&correlationId=77777777-7777-7777-7777-777777777777"
+    );
 
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: /payment confirmed/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /payment receipt/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^sales invoice$/i })).toBeInTheDocument();
     expect(screen.getByText("Amount Paid")).toBeInTheDocument();
     expect(screen.getAllByText("PHP 125.00").length).toBeGreaterThan(0);
     expect(screen.getByText("Payment Completed")).toBeInTheDocument();
+    expect(screen.getByText("Sales Invoice Number")).toBeInTheDocument();
+    expect(screen.getAllByText("SI-20260523-000001").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { name: /payment receipt/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/receipt-presentation"))).toBe(true);
+  });
+
+  it("WebPayReturnPage_WhenReceiptIsPending_DoesNotFabricateFallbackReceipt", async () => {
+    stubWebPayFetch({
+      resolvePayload: {
+        ...successResponse,
+        paymentStatus: "Paid"
+      },
+      receiptOk: false,
+      receiptStatus: 409,
+      receiptPayload: {
+        errorCode: "WEBPAY_RECEIPT_PRESENTATION_NOT_READY",
+        message: "Fiscal issuance is not recorded; Sales Invoice presentation is not available yet.",
+        retryable: false,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      }
+    });
+    window.history.pushState(
+      {},
+      "",
+      "/webpay/payment-return?ticketReference=WEBPAY-20260523-PENDING&paymentAttemptId=44444444-4444-4444-4444-444444444444"
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("Your payment is recorded. The Sales Invoice is still being prepared.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /payment receipt/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("SI-20260523-000001")).not.toBeInTheDocument();
   });
 
   it("WebPayReturnPage_WhenPaymentFailed_ShowsDeterministicFailure", async () => {

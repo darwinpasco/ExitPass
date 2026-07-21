@@ -1,4 +1,5 @@
 using ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
 
 namespace ExitPass.PaymentOrchestrator.Api.Endpoints;
@@ -108,8 +109,89 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapGet("/v1/webpay/payment-attempts/{paymentAttemptId:guid}/receipt-presentation", async (
+            Guid paymentAttemptId,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(centralPmsClient);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            var result = await centralPmsClient.GetReceiptPresentationAsync(
+                    paymentAttemptId,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result.Succeeded && result.Value is not null)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = result.Value.CorrelationId.ToString();
+                return Results.Ok(ToReceiptPresentationResponse(result.Value));
+            }
+
+            var error = result.Error ?? new CentralPmsWebPayError(
+                StatusCodes.Status502BadGateway,
+                "WEBPAY_RECEIPT_PRESENTATION_READ_FAILED",
+                "Sales Invoice presentation could not be retrieved.",
+                true,
+                correlationId);
+
+            if (error.CorrelationId.HasValue)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = error.CorrelationId.Value.ToString();
+            }
+            else
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+            }
+
+            return Results.Json(BuildErrorResponse(error, correlationId), statusCode: error.StatusCode);
+        })
+        .WithName("GetWebPayReceiptPresentation")
+        .Produces<WebPayReceiptPresentationResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         return app;
     }
+
+    private static Guid ReadOrCreateCorrelationId(HttpContext httpContext)
+    {
+        if (httpContext.Request.Headers.TryGetValue("X-Correlation-Id", out var headerValue) &&
+            Guid.TryParse(headerValue.ToString(), out var headerCorrelationId))
+        {
+            return headerCorrelationId;
+        }
+
+        return Guid.NewGuid();
+    }
+
+    private static WebPayReceiptPresentationResponse ToReceiptPresentationResponse(
+        CentralPmsWebPayReceiptPresentation result) =>
+        new(
+            result.PaymentAttemptId,
+            result.PaymentConfirmationId,
+            result.FiscalIssuanceReferenceId,
+            result.FiscalIssuanceState,
+            result.PosFiscalDocumentId,
+            result.FiscalDocumentNumber,
+            result.FiscalDocumentStatus,
+            result.ReceiptAvailabilityState,
+            result.PresentationVersion,
+            result.TemplateVersion,
+            result.ContentType,
+            result.AuthoritativePresentation,
+            result.VoidStatus,
+            result.VoidReasonCode,
+            result.VoidedAt,
+            result.CreatedAt,
+            result.UpdatedAt,
+            result.CorrelationId);
 
     private static object BuildErrorResponse(WebPayPaymentIntentError error)
     {
@@ -138,6 +220,18 @@ public static class WebPayPaymentIntentEndpoints
         AddIfNotBlank(response, "providerProduct", error.ProviderProduct);
 
         return response;
+    }
+
+    private static object BuildErrorResponse(CentralPmsWebPayError error, Guid fallbackCorrelationId)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["errorCode"] = error.ErrorCode,
+            ["message"] = error.Message,
+            ["retryable"] = error.Retryable,
+            ["correlationId"] = error.CorrelationId ?? fallbackCorrelationId,
+            ["paymentAttemptId"] = error.PaymentAttemptId
+        };
     }
 
     private static void AddIfNotBlank(Dictionary<string, object?> response, string key, string? value)

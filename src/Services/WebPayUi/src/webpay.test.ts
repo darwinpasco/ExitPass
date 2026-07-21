@@ -7,6 +7,8 @@ import {
   getResumeUrl,
   normalizeTicketReference,
   PayableBasisRefreshRequiredError,
+  ReceiptPresentationError,
+  retrieveReceiptPresentation,
   retrievePaymentStatus,
   resolveParkingSession,
   toFriendlyError
@@ -192,6 +194,71 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/parking-session");
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("POST");
     expect(result.paymentStatus).toBe("Paid");
+  });
+
+  it("WebPay_WhenRetrievingReceiptPresentation_UsesReadOnlyPaymentAttemptPresentationPath", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        paymentAttemptId: "44444444-4444-4444-4444-444444444444",
+        paymentConfirmationId: "11111111-1111-1111-1111-111111111111",
+        fiscalIssuanceReferenceId: "22222222-2222-2222-2222-222222222222",
+        fiscalIssuanceState: "FISCAL_ISSUANCE_RECORDED",
+        posFiscalDocumentId: "33333333-3333-3333-3333-333333333333",
+        fiscalDocumentNumber: "SI-20260523-000001",
+        receiptAvailabilityState: "AVAILABLE",
+        authoritativePresentation: {
+          presentation: {
+            documentTitle: "Sales Invoice",
+            sections: []
+          }
+        },
+        createdAt: "2026-05-23T13:00:00+08:00",
+        updatedAt: "2026-05-23T13:01:00+08:00",
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    const result = await retrieveReceiptPresentation(
+      "44444444-4444-4444-4444-444444444444",
+      "77777777-7777-7777-7777-777777777777",
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/webpay/payment-attempts/44444444-4444-4444-4444-444444444444/receipt-presentation"
+    );
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("GET");
+    expect(((fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>)["X-Correlation-Id"]).toBe(
+      "77777777-7777-7777-7777-777777777777"
+    );
+    expect(result.authoritativePresentation.presentation?.documentTitle).toBe("Sales Invoice");
+  });
+
+  it("WebPay_WhenReceiptPresentationIsPending_ThrowsRetryableSafeError", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: async () => ({
+        errorCode: "WEBPAY_RECEIPT_PRESENTATION_NOT_READY",
+        message: "Fiscal issuance is not recorded.",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      retrieveReceiptPresentation(
+        "44444444-4444-4444-4444-444444444444",
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+      name: "ReceiptPresentationError",
+      message: "Your payment is recorded. The Sales Invoice is still being prepared.",
+      retryable: true,
+      correlationId: "77777777-7777-7777-7777-777777777777"
+    } satisfies Partial<ReceiptPresentationError>);
   });
 
   it("WebPay_WhenActivePaymentAttemptConflictReturned_ThrowsActivePaymentAttemptError", async () => {

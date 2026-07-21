@@ -210,6 +210,86 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(DateTimeOffset.Parse("2026-05-18T13:15:00+08:00"), result.Value.FeeValidUntil);
     }
 
+    /// <summary>
+    /// Verifies WebPay receipt presentation is read through Central PMS by payment attempt.
+    /// </summary>
+    [Fact]
+    public async Task GetReceiptPresentationAsync_UsesWebPayReceiptPresentationReadbackPath()
+    {
+        var paymentAttemptId = Guid.Parse("66666666-6666-6666-6666-666666666666");
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new
+            {
+                paymentAttemptId,
+                paymentConfirmationId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                fiscalIssuanceReferenceId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                fiscalIssuanceState = "FISCAL_ISSUANCE_RECORDED",
+                posFiscalDocumentId = Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                fiscalDocumentNumber = "SI-20260523-000001",
+                fiscalDocumentStatus = "RECORDED",
+                receiptAvailabilityState = "AVAILABLE",
+                presentationVersion = "digital-sales-invoice-presentation-json-v1",
+                templateVersion = "digital-sales-invoice-json-v1",
+                contentType = "application/json",
+                authoritativePresentation = new
+                {
+                    presentation = new
+                    {
+                        documentTitle = "Sales Invoice"
+                    }
+                },
+                createdAt = "2026-05-23T13:00:00+08:00",
+                updatedAt = "2026-05-23T13:01:00+08:00",
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetReceiptPresentationAsync(
+            paymentAttemptId,
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(handler.LastRequest);
+        Assert.Equal($"/v1/webpay/payment-attempts/{paymentAttemptId:D}/receipt-presentation", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Get, handler.LastRequest.Method);
+        Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal("SI-20260523-000001", result.Value!.FiscalDocumentNumber);
+        Assert.Equal("Sales Invoice", result.Value.AuthoritativePresentation.GetProperty("presentation").GetProperty("documentTitle").GetString());
+    }
+
+    /// <summary>
+    /// Verifies Central PMS receipt readback errors remain safe and retryable when applicable.
+    /// </summary>
+    [Fact]
+    public async Task GetReceiptPresentationAsync_WhenCentralPmsReturnsPending_MapsSafeRetryableError()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Conflict)
+        {
+            Content = JsonContent(new
+            {
+                errorCode = "WEBPAY_RECEIPT_PRESENTATION_NOT_READY",
+                message = "Fiscal issuance is not recorded; Sales Invoice presentation is not available yet.",
+                retryable = true,
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetReceiptPresentationAsync(
+            Guid.Parse("66666666-6666-6666-6666-666666666666"),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("WEBPAY_RECEIPT_PRESENTATION_NOT_READY", result.Error.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+    }
+
     private static CentralPmsWebPayClient CreateClient(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()

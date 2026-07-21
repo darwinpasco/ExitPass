@@ -62,4 +62,16 @@ public interface ICentralPmsWebPayClient
         string idempotencyKey,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads the POS Server-owned Sales Invoice presentation linked to a WebPay payment attempt.
+    /// </summary>
+    /// <param name="paymentAttemptId">Canonical payment attempt identifier.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Authoritative presentation readback, or a deterministic Central PMS error.</returns>
+    Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
+        Guid paymentAttemptId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
 }
