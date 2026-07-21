@@ -38,7 +38,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "TERMINAL_CASH_TENDER_ID_REQUIRED",
                 "Terminal cash tender reference is required.",
-                Status400BadRequest);
+                Status400BadRequest,
+                retryable: false);
         }
 
         if (correlationId == Guid.Empty)
@@ -46,7 +47,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "CORRELATION_ID_REQUIRED",
                 "X-Correlation-Id header is required.",
-                Status400BadRequest);
+                Status400BadRequest,
+                retryable: false);
         }
 
         var cashPayment = await _terminalCashPayments.GetByTerminalCashTenderIdAsync(
@@ -58,7 +60,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "TERMINAL_CASH_PAYMENT_NOT_FOUND",
                 "Terminal cash payment was not found.",
-                Status404NotFound);
+                Status404NotFound,
+                retryable: false);
         }
 
         EnsureConfirmed(cashPayment);
@@ -72,7 +75,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "TERMINAL_CASH_FISCAL_ISSUANCE_NOT_FOUND",
                 "Fiscal issuance was not found for the terminal cash tender reference.",
-                Status404NotFound);
+                Status404NotFound,
+                retryable: true);
         }
 
         EnsureReferenceMatchesTerminalCashPayment(reference, cashPayment);
@@ -83,7 +87,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "POS_FISCAL_DOCUMENT_ID_MISSING",
                 "Recorded fiscal issuance does not have a POS Server fiscal document reference.",
-                Status409Conflict);
+                Status409Conflict,
+                retryable: true);
         }
 
         PosServerFiscalDocumentPresentationReadResult posPresentation;
@@ -99,8 +104,9 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
         {
             throw Rejected(
                 "POS_SERVER_RECEIPT_PRESENTATION_UNAVAILABLE",
-                "POS Server receipt presentation is unavailable.",
-                Status503ServiceUnavailable);
+                "POS Server receipt presentation is temporarily unavailable.",
+                Status503ServiceUnavailable,
+                retryable: true);
         }
 
         EnsurePosPresentationAvailable(reference, posPresentation);
@@ -109,6 +115,7 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             cashPayment.TerminalCashTenderId,
             reference.PaymentAttemptId,
             reference.PaymentConfirmationId,
+            cashPayment.CanonicalPaymentStatus,
             reference.FiscalIssuanceReferenceId,
             reference.FiscalIssuanceState,
             reference.PosServerFiscalDocumentId.Value,
@@ -117,6 +124,9 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             ReceiptAvailabilityState(posPresentation),
             posPresentation.PresentationVersion,
             posPresentation.TemplateVersion,
+            reference.SemanticRequestHashValue,
+            reference.SemanticRequestHashSourceVersion,
+            ToWireValue(reference.SemanticRequestHashStatus),
             posPresentation.ContentType,
             posPresentation.AuthoritativeResponse!.Value,
             posPresentation.VoidStatus,
@@ -134,7 +144,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "TERMINAL_CASH_PAYMENT_NOT_CONFIRMED",
                 "Terminal cash payment is not canonically confirmed.",
-                Status409Conflict);
+                Status409Conflict,
+                retryable: true);
         }
 
         if (cashPayment.PaymentAttemptId == Guid.Empty || cashPayment.PaymentConfirmationId == Guid.Empty)
@@ -142,7 +153,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "TERMINAL_CASH_PAYMENT_CONFIRMATION_MISSING",
                 "Terminal cash payment confirmation is missing.",
-                Status409Conflict);
+                Status409Conflict,
+                retryable: true);
         }
     }
 
@@ -157,7 +169,8 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "TERMINAL_CASH_RECEIPT_REFERENCE_CONFLICT",
                 "Terminal cash payment is linked to conflicting fiscal receipt references.",
-                Status409Conflict);
+                Status409Conflict,
+                retryable: false);
         }
     }
 
@@ -170,10 +183,17 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             return;
         }
 
+        var retryable = reference.FiscalIssuanceState is FiscalIssuanceIntegrationState.PendingFiscalIssuance
+            or FiscalIssuanceIntegrationState.FiscalIssuanceRequested
+            or FiscalIssuanceIntegrationState.FiscalIssuanceFailedService
+            or FiscalIssuanceIntegrationState.FiscalIssuanceUnknown
+            or FiscalIssuanceIntegrationState.FiscalIssuanceManualReview;
+
         throw Rejected(
             "TERMINAL_CASH_RECEIPT_PRESENTATION_NOT_READY",
             "Fiscal issuance is not recorded; receipt presentation is not available.",
-            Status409Conflict);
+            Status409Conflict,
+            retryable);
     }
 
     private static void EnsurePosPresentationAvailable(
@@ -194,21 +214,43 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
             throw Rejected(
                 "POS_FISCAL_DOCUMENT_PRESENTATION_INCONSISTENT",
                 "POS Server fiscal document presentation does not match the recorded fiscal reference.",
-                Status409Conflict);
+                Status409Conflict,
+                retryable: false);
         }
 
         if (posPresentation.HttpStatusCode == Status503ServiceUnavailable)
         {
             throw Rejected(
                 "POS_SERVER_RECEIPT_PRESENTATION_UNAVAILABLE",
-                "POS Server receipt presentation is unavailable.",
-                Status503ServiceUnavailable);
+                "POS Server receipt presentation is temporarily unavailable.",
+                Status503ServiceUnavailable,
+                retryable: true);
+        }
+
+        if (posPresentation.HttpStatusCode == Status400BadRequest ||
+            posPresentation.Code.Contains("unsupported", StringComparison.OrdinalIgnoreCase))
+        {
+            throw Rejected(
+                "POS_SERVER_RECEIPT_PRESENTATION_UNSUPPORTED",
+                "POS Server receipt presentation is unsupported for this fiscal document.",
+                Status409Conflict,
+                retryable: false);
+        }
+
+        if (posPresentation.Outcome == PosServerFiscalDocumentOutcome.InvalidResponse)
+        {
+            throw Rejected(
+                "POS_SERVER_RECEIPT_PRESENTATION_MALFORMED",
+                "POS Server receipt presentation response was malformed.",
+                Status409Conflict,
+                retryable: false);
         }
 
         throw Rejected(
             "POS_SERVER_RECEIPT_PRESENTATION_NOT_READY",
             "POS Server receipt presentation is not ready.",
-            Status409Conflict);
+            Status409Conflict,
+            retryable: true);
     }
 
     private static string ReceiptAvailabilityState(PosServerFiscalDocumentPresentationReadResult posPresentation) =>
@@ -219,6 +261,17 @@ public sealed class TerminalCashReceiptPresentationService : ITerminalCashReceip
     private static TerminalCashReceiptPresentationRejectedException Rejected(
         string errorCode,
         string message,
-        int httpStatusCode) =>
-        new(errorCode, message, httpStatusCode);
+        int httpStatusCode,
+        bool retryable) =>
+        new(errorCode, message, httpStatusCode, retryable);
+
+    private static string? ToWireValue(FiscalSemanticRequestHashSourceStatus? value) =>
+        value switch
+        {
+            FiscalSemanticRequestHashSourceStatus.Unavailable => "UNAVAILABLE",
+            FiscalSemanticRequestHashSourceStatus.Incomplete => "INCOMPLETE",
+            FiscalSemanticRequestHashSourceStatus.Available => "AVAILABLE",
+            null => null,
+            _ => value.ToString()
+        };
 }

@@ -286,7 +286,7 @@ public static class TerminalCashPaymentEndpoints
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             activity?.AddException(ex);
             return Results.Json(
-                BuildError(ex.ErrorCode, ex.Message, correlationId),
+                BuildError(ex.ErrorCode, ex.Message, correlationId, ex.Retryable),
                 statusCode: ex.HttpStatusCode);
         }
     }
@@ -418,6 +418,7 @@ public static class TerminalCashPaymentEndpoints
             result.TerminalCashTenderId,
             result.PaymentAttemptId,
             result.PaymentConfirmationId,
+            result.CanonicalPaymentStatus,
             result.FiscalIssuanceReferenceId,
             ToWireValue(result.FiscalIssuanceState),
             result.PosFiscalDocumentId,
@@ -426,6 +427,9 @@ public static class TerminalCashPaymentEndpoints
             result.ReceiptAvailabilityState,
             result.PresentationVersion,
             result.TemplateVersion,
+            result.SemanticRequestHash,
+            result.SemanticRequestHashVersion,
+            result.SemanticRequestHashStatus,
             result.ContentType,
             result.AuthoritativePresentation,
             result.VoidStatus,
@@ -466,12 +470,17 @@ public static class TerminalCashPaymentEndpoints
 
     private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId)
     {
+        return BuildError(errorCode, message, correlationId, retryable: false);
+    }
+
+    private static ErrorResponse BuildError(string errorCode, string message, Guid correlationId, bool retryable)
+    {
         return new ErrorResponse
         {
             ErrorCode = errorCode,
             Message = message,
             CorrelationId = correlationId,
-            Retryable = false
+            Retryable = retryable
         };
     }
 }

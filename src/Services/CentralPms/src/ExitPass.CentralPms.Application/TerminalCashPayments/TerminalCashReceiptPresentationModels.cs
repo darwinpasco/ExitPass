@@ -24,6 +24,7 @@ public sealed record TerminalCashReceiptPresentationResult(
     Guid TerminalCashTenderId,
     Guid PaymentAttemptId,
     Guid PaymentConfirmationId,
+    string CanonicalPaymentStatus,
     Guid FiscalIssuanceReferenceId,
     FiscalIssuanceIntegrationState FiscalIssuanceState,
     Guid PosFiscalDocumentId,
@@ -32,6 +33,9 @@ public sealed record TerminalCashReceiptPresentationResult(
     string ReceiptAvailabilityState,
     string? PresentationVersion,
     string? TemplateVersion,
+    string? SemanticRequestHash,
+    string? SemanticRequestHashVersion,
+    string? SemanticRequestHashStatus,
     string? ContentType,
     JsonElement AuthoritativePresentation,
     string? VoidStatus,
@@ -52,13 +56,15 @@ public sealed class TerminalCashReceiptPresentationRejectedException : Exception
     public TerminalCashReceiptPresentationRejectedException(
         string errorCode,
         string message,
-        int httpStatusCode)
+        int httpStatusCode,
+        bool retryable)
         : base(message)
     {
         ErrorCode = !string.IsNullOrWhiteSpace(errorCode)
             ? errorCode
             : throw new ArgumentException("Error code is required.", nameof(errorCode));
         HttpStatusCode = httpStatusCode;
+        Retryable = retryable;
     }
 
     /// <summary>
@@ -70,4 +76,9 @@ public sealed class TerminalCashReceiptPresentationRejectedException : Exception
     /// HTTP status code for the safe error response.
     /// </summary>
     public int HttpStatusCode { get; }
+
+    /// <summary>
+    /// Indicates whether the receipt read can be safely retried by the terminal.
+    /// </summary>
+    public bool Retryable { get; }
 }
