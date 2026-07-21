@@ -106,6 +106,11 @@ public sealed class ResolveVendorParkingResponse
     public Guid? StatutoryDiscountApplicationId { get; set; }
 
     /// <summary>
+    /// Canonical shared statutory-discount decision command linked to the effective payable basis, when applicable.
+    /// </summary>
+    public Guid? StatutoryDiscountDecisionCommandId { get; set; }
+
+    /// <summary>
     /// Original tariff snapshot superseded by the applied statutory discount snapshot, when applicable.
     /// </summary>
     public Guid? OriginalTariffSnapshotId { get; set; }
@@ -126,9 +131,34 @@ public sealed class ResolveVendorParkingResponse
     public string? PolicyResolutionBasis { get; set; }
 
     /// <summary>
+    /// Applied policy reference linked to the canonical statutory-discount decision, when applicable.
+    /// </summary>
+    public Guid? StatutoryDiscountPolicyReferenceId { get; set; }
+
+    /// <summary>
     /// Benefit type captured in the applied payable-basis computation policy context, when applicable.
     /// </summary>
     public string? BenefitType { get; set; }
+
+    /// <summary>
+    /// Entitlement type linked to the canonical statutory-discount decision, when applicable.
+    /// </summary>
+    public string? StatutoryDiscountEntitlementType { get; set; }
+
+    /// <summary>
+    /// Approved statutory discount amount in minor units, when applicable.
+    /// </summary>
+    public long? StatutoryDiscountAmountMinorUnits { get; set; }
+
+    /// <summary>
+    /// Final payable amount in minor units after statutory discount, when applicable.
+    /// </summary>
+    public long? StatutoryDiscountFinalPayableMinorUnits { get; set; }
+
+    /// <summary>
+    /// Canonical statutory-discount decision timestamp, when applicable.
+    /// </summary>
+    public DateTimeOffset? StatutoryDiscountDecisionTimestamp { get; set; }
 
     /// <summary>
     /// Provider-neutral vendor system identifier used for the lookup.

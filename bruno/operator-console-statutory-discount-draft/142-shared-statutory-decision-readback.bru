@@ -12,6 +12,7 @@ get {
 
 headers {
   X-Correlation-Id: {{sharedStatutoryDecisionCorrelationId}}
+  X-ExitPass-User-Id: {{userId_allowed}}
   X-ExitPass-Permissions: statutory-discounts.decision.read
 }
 
@@ -21,5 +22,7 @@ tests {
     expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("sharedStatutoryDecisionCommandId"));
     expect(res.body.requestReference).to.equal(bru.getEnvVar("sharedStatutoryDecisionRequestReference"));
     expect(res.body.sourceChannel).to.equal("OPERATOR_CONSOLE");
+    expect(res.body.commandStatus).to.equal("COMPLETED");
+    expect(res.body.clientResultStatus).to.equal("APPROVED");
   });
 }

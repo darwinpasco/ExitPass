@@ -7,7 +7,7 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 public sealed class FiscalSemanticRequestHashCalculatorTests
 {
     private const string ExpectedPosServerHash =
-        "6a490379e4275a57f0a0695ff9dbd1271c4480adaeeefb9b6bfbd11e4d1ed201";
+        "aa30eaa0de7acf8f12acefc2bcbb520cd1363594ef720aa8f28ca8ab0cf326e4";
 
     private readonly PosServerFiscalDocumentRequestMapper _mapper = new();
     private readonly FiscalSemanticRequestHashCalculator _sut = new();
@@ -71,6 +71,7 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
     [InlineData("tender")]
     [InlineData("tax")]
     [InlineData("total")]
+    [InlineData("statutoryDecision")]
     public void Calculate_WhenSemanticFiscalFactsChange_ReturnsDifferentHash(string mutation)
     {
         var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());
@@ -115,6 +116,19 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
                     baseline.Totals[0] with { AmountMinorUnits = 12499 }
                 ]
             },
+            "statutoryDecision" => baseline with
+            {
+                PayableBasis = baseline.PayableBasis with
+                {
+                    DiscountReferences =
+                    [
+                        baseline.PayableBasis.DiscountReferences[0] with
+                        {
+                            StatutoryDiscountDecisionCommandRef = "changed-statutory-decision-command-ref"
+                        }
+                    ]
+                }
+            },
             _ => throw new ArgumentOutOfRangeException(nameof(mutation), mutation, "Unknown mutation.")
         };
 
@@ -123,6 +137,25 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
 
         changedResult.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
         changedResult.HashValue.Should().NotBe(baselineResult.HashValue);
+    }
+
+    [Fact]
+    public void Calculate_WhenOnlyTransportCorrelationContextChanges_ReturnsSameHash()
+    {
+        var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());
+        var changed = baseline with
+        {
+            ReferenceContext = baseline.ReferenceContext
+                .Concat(new[] { new KeyValuePair<string, string>("correlation", "different-correlation-ref") })
+                .GroupBy(pair => pair.Key, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)
+        };
+
+        var baselineResult = _sut.Calculate(baseline);
+        var changedResult = _sut.Calculate(changed);
+
+        changedResult.HashValue.Should().NotBeNull();
+        changedResult.HashValue.Should().Be(baselineResult.HashValue);
     }
 
     [Fact]

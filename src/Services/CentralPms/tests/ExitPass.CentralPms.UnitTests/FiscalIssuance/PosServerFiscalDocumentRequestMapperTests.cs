@@ -68,6 +68,60 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
     }
 
     [Fact]
+    public void Map_WhenCanonicalStatutoryDecisionFactsArePresent_MapsSafeTypedFiscalReferenceFields()
+    {
+        var decisionId = Guid.Parse("abababab-abab-4bab-8bab-abababababab");
+        var policyId = Guid.Parse("bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc");
+        var originalSnapshotId = Guid.Parse("cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd");
+        var appliedSnapshotId = Guid.Parse("dededede-dede-4ede-8ede-dededededede");
+        var decidedAt = DateTimeOffset.Parse("2026-07-21T08:02:00Z");
+        var context = ValidContext() with
+        {
+            PayableBasis = ValidContext().PayableBasis with
+            {
+                DiscountReferences =
+                [
+                    new CentralPmsFiscalDiscountReferenceContext(
+                        DiscountValidationRef: "discount-validation-ref",
+                        Status: "approved",
+                        AppliesStatutoryDiscountTreatment: true,
+                        ReferenceContext: new Dictionary<string, string> { ["source"] = "discount-workflow" })
+                    {
+                        StatutoryDiscountDecisionCommandRef = decisionId.ToString("D"),
+                        EntitlementType = "pwd",
+                        AppliedPolicyReferenceRef = policyId.ToString("D"),
+                        OriginalTariffSnapshotRef = originalSnapshotId.ToString("D"),
+                        AppliedTariffSnapshotRef = appliedSnapshotId.ToString("D"),
+                        OriginalAmountMinorUnits = 12500,
+                        VatExclusiveBasisAmountMinorUnits = 11161,
+                        VatTreatment = "vat_exclusive",
+                        DiscountAmountMinorUnits = 2232,
+                        FinalPayableAmountMinorUnits = 8929,
+                        DecisionTimestamp = decidedAt,
+                        SourceChannel = "webpay"
+                    }
+                ]
+            }
+        };
+
+        var result = _sut.Map(context);
+
+        var discount = result.PayableBasis.DiscountReferences.Should().ContainSingle().Subject;
+        discount.StatutoryDiscountDecisionCommandRef.Should().Be(decisionId.ToString("D"));
+        discount.EntitlementType.Should().Be("PWD");
+        discount.AppliedPolicyReferenceRef.Should().Be(policyId.ToString("D"));
+        discount.OriginalTariffSnapshotRef.Should().Be(originalSnapshotId.ToString("D"));
+        discount.AppliedTariffSnapshotRef.Should().Be(appliedSnapshotId.ToString("D"));
+        discount.OriginalAmountMinorUnits.Should().Be(12500);
+        discount.VatExclusiveBasisAmountMinorUnits.Should().Be(11161);
+        discount.VatTreatment.Should().Be("VAT_EXCLUSIVE");
+        discount.DiscountAmountMinorUnits.Should().Be(2232);
+        discount.FinalPayableAmountMinorUnits.Should().Be(8929);
+        discount.DecisionTimestamp.Should().Be(decidedAt);
+        discount.SourceChannel.Should().Be("WEBPAY");
+    }
+
+    [Fact]
     public void Map_WhenPwdStatutoryDiscountApplied_MapsDiscountedPayableAndPrivilegeMetadata()
     {
         var validationId = Guid.Parse("10101010-1010-4010-8010-101010101010");

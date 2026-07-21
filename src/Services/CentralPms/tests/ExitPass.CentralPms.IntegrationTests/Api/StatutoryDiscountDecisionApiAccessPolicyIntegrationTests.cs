@@ -51,7 +51,7 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
     }
 
     [Fact]
-    public async Task Submit_WhenSourceChannelPermissionDoesNotMatchBody_ReturnsForbidden()
+    public async Task Submit_WhenBodySourceChannelDoesNotMatchAuthenticatedChannel_ReturnsForbidden()
     {
         using var factory = CreateFactory(new FakeFacadeService());
         using var client = factory.CreateClient();
@@ -61,7 +61,8 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
 
         response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-        body!.ErrorCode.Should().Be("CENTRAL_PMS_SOURCE_CHANNEL_FORBIDDEN");
+        body!.ErrorCode.Should().Be("CENTRAL_PMS_SOURCE_CHANNEL_MISMATCH");
+        body.ClientResultStatus.Should().Be("NON_RETRYABLE_FAILURE");
     }
 
     [Theory]
@@ -73,14 +74,57 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         var fake = new FakeFacadeService();
         using var factory = CreateFactory(fake);
         using var client = factory.CreateClient();
-        AddServiceHeaders(client, permission);
+        if (sourceChannel == "OPERATOR_CONSOLE")
+        {
+            AddUserHeaders(client, permission);
+        }
+        else
+        {
+            AddServiceHeaders(client, permission);
+        }
 
         using var response = await PostDecisionAsync(client, Request(sourceChannel: sourceChannel));
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var body = await response.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>();
         body!.SourceChannel.Should().Be(sourceChannel);
+        body.CommandStatus.Should().Be("COMPLETED");
+        body.ClientResultStatus.Should().Be("APPROVED");
+        body.RecoveryClassification.Should().Be("NONE");
+        body.Retryable.Should().BeFalse();
         fake.LastCommand!.SourceChannel.Should().Be(sourceChannel);
+        fake.LastCommand.ActorUserId.Should().Be(sourceChannel == "OPERATOR_CONSOLE" ? ActorUserId : ServiceIdentityId);
+    }
+
+    [Theory]
+    [InlineData("WEBPAY", "statutory-discounts.decision.submit.webpay")]
+    [InlineData("ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal")]
+    public async Task Submit_WhenNonOperatorChannelSendsOperatorOnlyFields_ReturnsBadRequest(string sourceChannel, string permission)
+    {
+        using var factory = CreateFactory(new FakeFacadeService());
+        using var client = factory.CreateClient();
+        AddServiceHeaders(client, permission);
+
+        using var response = await PostDecisionAsync(client, Request(sourceChannel: sourceChannel, includeOperatorOnlyFields: true));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body!.ErrorCode.Should().Be("STATUTORY_DISCOUNT_CHANNEL_FIELD_PROHIBITED");
+        body.ClientResultStatus.Should().Be("NON_RETRYABLE_FAILURE");
+    }
+
+    [Fact]
+    public async Task Submit_WhenActorDoesNotMatchAuthenticatedIdentity_ReturnsBadRequest()
+    {
+        using var factory = CreateFactory(new FakeFacadeService());
+        using var client = factory.CreateClient();
+        AddUserHeaders(client, "statutory-discounts.decision.submit.operator-console");
+
+        using var response = await PostDecisionAsync(client, Request(actorUserId: Guid.Parse("7d000000-0000-0000-0000-000000000099")));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body!.ErrorCode.Should().Be("STATUTORY_DISCOUNT_ACTOR_CONTEXT_MISMATCH");
     }
 
     [Fact]
@@ -100,6 +144,17 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         raw.Should().NotContain("raw");
         var body = await response.Content.ReadFromJsonAsync<StatutoryDiscountDecisionResponse>();
         body!.StatutoryDiscountDecisionCommandId.Should().Be(CommandId);
+    }
+
+    [Fact]
+    public void SharedDecisionContracts_DoNotExposeRawEvidenceOrFullStatutoryIdFields()
+    {
+        var propertyNames = typeof(StatutoryDiscountDecisionRequest)
+            .GetProperties()
+            .Concat(typeof(StatutoryDiscountDecisionResponse).GetProperties())
+            .Select(property => property.Name);
+
+        propertyNames.Should().NotContain(name => ContainsProhibitedIdentityOrEvidenceTerm(name));
     }
 
     [Fact]
@@ -235,8 +290,15 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
     private static StatutoryDiscountDecisionRequest Request(
         string sourceChannel = "OPERATOR_CONSOLE",
         string entitlementType = "SENIOR_CITIZEN",
-        string maskedIdReference = "SC-****-1234") =>
-        new(
+        string maskedIdReference = "SC-****-1234",
+        Guid? actorUserId = null,
+        bool includeOperatorOnlyFields = false)
+    {
+        var isOperator = string.Equals(sourceChannel, "OPERATOR_CONSOLE", StringComparison.Ordinal);
+        var includeOperatorFacts = isOperator || includeOperatorOnlyFields;
+        var requestActorId = actorUserId ?? (isOperator ? ActorUserId : Guid.Empty);
+
+        return new(
             RequestReference,
             sourceChannel,
             ParkingSessionId,
@@ -262,18 +324,36 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
                     ReferenceNumberMasked: "SC-****-1234",
                     VerificationStatus: "VERIFIED")
             ],
-            ActorUserId,
-            OperatorDeviceBindingId: Guid.Parse("7d000000-0000-0000-0000-000000000009"),
-            OperatorShiftId: Guid.Parse("7d000000-0000-0000-0000-00000000000a"),
+            requestActorId,
+            OperatorDeviceBindingId: includeOperatorFacts ? Guid.Parse("7d000000-0000-0000-0000-000000000009") : null,
+            OperatorShiftId: includeOperatorFacts ? Guid.Parse("7d000000-0000-0000-0000-00000000000a") : null,
             RequesterAttestation: true,
             AttestationNotes: "attested",
             ReasonCode: "CUSTOMER_REQUEST",
-            Decision: "APPROVE",
-            DecisionReasonCode: "ELIGIBLE",
-            ReviewerUserId: Guid.Parse("7d000000-0000-0000-0000-00000000000b"),
-            ReviewerAttestation: true,
-            ApplyPayableBasis: true,
-            OriginalTariffSnapshotId: Guid.Parse("7d000000-0000-0000-0000-00000000000c"));
+            Decision: includeOperatorFacts ? "APPROVE" : null,
+            DecisionReasonCode: includeOperatorFacts ? "ELIGIBLE" : null,
+            ReviewerUserId: includeOperatorFacts ? Guid.Parse("7d000000-0000-0000-0000-00000000000b") : null,
+            ReviewerAttestation: includeOperatorFacts,
+            ApplyPayableBasis: includeOperatorFacts,
+            OriginalTariffSnapshotId: includeOperatorFacts ? Guid.Parse("7d000000-0000-0000-0000-00000000000c") : null);
+    }
+
+    private static bool ContainsProhibitedIdentityOrEvidenceTerm(string propertyName)
+    {
+        string[] prohibitedTerms =
+        [
+            "Raw",
+            "Bytes",
+            "Base64",
+            "Image",
+            "Payload",
+            "FullId",
+            "FullStatutoryId",
+            "UnmaskedId"
+        ];
+
+        return prohibitedTerms.Any(term => propertyName.Contains(term, StringComparison.OrdinalIgnoreCase));
+    }
 
     private sealed class FakeFacadeService : IStatutoryDiscountDecisionFacadeService
     {

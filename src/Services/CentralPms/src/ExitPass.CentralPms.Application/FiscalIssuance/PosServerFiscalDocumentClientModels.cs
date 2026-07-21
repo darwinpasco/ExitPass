@@ -56,7 +56,32 @@ public sealed record CentralPmsFiscalDiscountReferenceContext(
     string DiscountValidationRef,
     string Status,
     bool AppliesStatutoryDiscountTreatment,
-    IReadOnlyDictionary<string, string> ReferenceContext);
+    IReadOnlyDictionary<string, string> ReferenceContext)
+{
+    public string? StatutoryDiscountDecisionCommandRef { get; init; }
+
+    public string? EntitlementType { get; init; }
+
+    public string? AppliedPolicyReferenceRef { get; init; }
+
+    public string? OriginalTariffSnapshotRef { get; init; }
+
+    public string? AppliedTariffSnapshotRef { get; init; }
+
+    public long? OriginalAmountMinorUnits { get; init; }
+
+    public long? VatExclusiveBasisAmountMinorUnits { get; init; }
+
+    public string? VatTreatment { get; init; }
+
+    public long? DiscountAmountMinorUnits { get; init; }
+
+    public long? FinalPayableAmountMinorUnits { get; init; }
+
+    public DateTimeOffset? DecisionTimestamp { get; init; }
+
+    public string? SourceChannel { get; init; }
+}
 
 public sealed record CentralPmsFiscalDocumentLineContext(
     int LineSequence,
@@ -146,7 +171,32 @@ public sealed record PosServerFiscalDiscountReferenceRequest(
     string DiscountValidationRef,
     string Status,
     bool AppliesStatutoryDiscountTreatment,
-    IReadOnlyDictionary<string, string> ReferenceContext);
+    IReadOnlyDictionary<string, string> ReferenceContext)
+{
+    public string? StatutoryDiscountDecisionCommandRef { get; init; }
+
+    public string? EntitlementType { get; init; }
+
+    public string? AppliedPolicyReferenceRef { get; init; }
+
+    public string? OriginalTariffSnapshotRef { get; init; }
+
+    public string? AppliedTariffSnapshotRef { get; init; }
+
+    public long? OriginalAmountMinorUnits { get; init; }
+
+    public long? VatExclusiveBasisAmountMinorUnits { get; init; }
+
+    public string? VatTreatment { get; init; }
+
+    public long? DiscountAmountMinorUnits { get; init; }
+
+    public long? FinalPayableAmountMinorUnits { get; init; }
+
+    public DateTimeOffset? DecisionTimestamp { get; init; }
+
+    public string? SourceChannel { get; init; }
+}
 
 public sealed record PosServerFiscalDocumentLineRequest(
     int LineSequence,

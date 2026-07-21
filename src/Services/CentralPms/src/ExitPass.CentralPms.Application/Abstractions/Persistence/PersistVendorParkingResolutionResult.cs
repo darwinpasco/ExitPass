@@ -75,6 +75,11 @@ public sealed class EffectivePayableBasisSummary
     public Guid? StatutoryDiscountApplicationId { get; init; }
 
     /// <summary>
+    /// Canonical shared statutory-discount decision command linked to the applied payable basis.
+    /// </summary>
+    public Guid? StatutoryDiscountDecisionCommandId { get; init; }
+
+    /// <summary>
     /// Original tariff snapshot superseded by the applied statutory discount snapshot.
     /// </summary>
     public Guid? OriginalTariffSnapshotId { get; init; }
@@ -95,7 +100,32 @@ public sealed class EffectivePayableBasisSummary
     public string? PolicyResolutionBasis { get; init; }
 
     /// <summary>
+    /// Applied policy reference captured on the canonical shared decision command.
+    /// </summary>
+    public Guid? AppliedPolicyReferenceId { get; init; }
+
+    /// <summary>
     /// Policy benefit type captured in the payable-basis computation policy context.
     /// </summary>
     public string? BenefitType { get; init; }
+
+    /// <summary>
+    /// Entitlement type captured on the canonical shared decision command.
+    /// </summary>
+    public string? EntitlementType { get; init; }
+
+    /// <summary>
+    /// Approved statutory discount amount in minor units.
+    /// </summary>
+    public long? StatutoryDiscountAmountMinorUnits { get; init; }
+
+    /// <summary>
+    /// Final payable amount in minor units after the statutory discount.
+    /// </summary>
+    public long? FinalPayableAmountMinorUnits { get; init; }
+
+    /// <summary>
+    /// Timestamp when the canonical shared decision was decided or completed.
+    /// </summary>
+    public DateTimeOffset? StatutoryDiscountDecisionTimestamp { get; init; }
 }

@@ -7,7 +7,7 @@ namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 public sealed class FiscalSemanticRequestHashParityProofServiceTests
 {
     private const string ExpectedPosServerHash =
-        "6a490379e4275a57f0a0695ff9dbd1271c4480adaeeefb9b6bfbd11e4d1ed201";
+        "aa30eaa0de7acf8f12acefc2bcbb520cd1363594ef720aa8f28ca8ab0cf326e4";
 
     private readonly PosServerFiscalDocumentRequestMapper _mapper = new();
     private readonly FiscalSemanticRequestHashCalculator _calculator = new();

@@ -67,11 +67,17 @@ public sealed class VendorParkingResolutionContractTests
             StatutoryDiscountApplied = true,
             StatutoryDiscountValidationId = Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"),
             StatutoryDiscountApplicationId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"),
+            StatutoryDiscountDecisionCommandId = Guid.Parse("edededed-eded-4ded-8ded-edededededed"),
             OriginalTariffSnapshotId = Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
             EffectiveTariffSnapshotId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             AppliedTariffSnapshotId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             PolicyResolutionBasis = "NATIONAL_LAW_FALLBACK",
+            StatutoryDiscountPolicyReferenceId = Guid.Parse("abababab-abab-4bab-8bab-abababababab"),
             BenefitType = "STATUTORY_DISCOUNT_VAT_EXEMPT",
+            StatutoryDiscountEntitlementType = "PWD",
+            StatutoryDiscountAmountMinorUnits = 2232,
+            StatutoryDiscountFinalPayableMinorUnits = 8929,
+            StatutoryDiscountDecisionTimestamp = new DateTimeOffset(2026, 5, 19, 8, 1, 0, TimeSpan.Zero),
             VendorSystemId = "FAKE-PMS",
             CorrelationId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
         };
@@ -100,11 +106,17 @@ public sealed class VendorParkingResolutionContractTests
         root.TryGetProperty("statutoryDiscountApplied", out _).Should().BeTrue();
         root.TryGetProperty("statutoryDiscountValidationId", out _).Should().BeTrue();
         root.TryGetProperty("statutoryDiscountApplicationId", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountDecisionCommandId", out _).Should().BeTrue();
         root.TryGetProperty("originalTariffSnapshotId", out _).Should().BeTrue();
         root.TryGetProperty("effectiveTariffSnapshotId", out _).Should().BeTrue();
         root.TryGetProperty("appliedTariffSnapshotId", out _).Should().BeTrue();
         root.TryGetProperty("policyResolutionBasis", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountPolicyReferenceId", out _).Should().BeTrue();
         root.TryGetProperty("benefitType", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountEntitlementType", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountAmountMinorUnits", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountFinalPayableMinorUnits", out _).Should().BeTrue();
+        root.TryGetProperty("statutoryDiscountDecisionTimestamp", out _).Should().BeTrue();
         root.TryGetProperty("vendorSystemId", out _).Should().BeTrue();
         root.TryGetProperty("correlationId", out _).Should().BeTrue();
     }

@@ -62,7 +62,21 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
                         DiscountValidationRef: discount.DiscountValidationRef.Trim(),
                         Status: discount.Status.Trim(),
                         AppliesStatutoryDiscountTreatment: discount.AppliesStatutoryDiscountTreatment,
-                        ReferenceContext: NormalizeDictionary(discount.ReferenceContext)))
+                        ReferenceContext: NormalizeDictionary(discount.ReferenceContext))
+                    {
+                        StatutoryDiscountDecisionCommandRef = TrimToNull(discount.StatutoryDiscountDecisionCommandRef),
+                        EntitlementType = TrimToNull(discount.EntitlementType)?.ToUpperInvariant(),
+                        AppliedPolicyReferenceRef = TrimToNull(discount.AppliedPolicyReferenceRef),
+                        OriginalTariffSnapshotRef = TrimToNull(discount.OriginalTariffSnapshotRef),
+                        AppliedTariffSnapshotRef = TrimToNull(discount.AppliedTariffSnapshotRef),
+                        OriginalAmountMinorUnits = discount.OriginalAmountMinorUnits,
+                        VatExclusiveBasisAmountMinorUnits = discount.VatExclusiveBasisAmountMinorUnits,
+                        VatTreatment = TrimToNull(discount.VatTreatment)?.ToUpperInvariant(),
+                        DiscountAmountMinorUnits = discount.DiscountAmountMinorUnits,
+                        FinalPayableAmountMinorUnits = discount.FinalPayableAmountMinorUnits,
+                        DecisionTimestamp = discount.DecisionTimestamp,
+                        SourceChannel = TrimToNull(discount.SourceChannel)?.ToUpperInvariant()
+                    })
                     .ToArray(),
                 ReferenceContext: NormalizeDictionary(context.PayableBasis.ReferenceContext)),
             SitePosServerId: context.SitePosServerId,
@@ -218,7 +232,18 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         {
             values.AddRange(context.PayableBasis.ReferenceContext.SelectMany(pair => new[] { pair.Key, pair.Value }));
             values.AddRange(context.PayableBasis.DiscountReferences.SelectMany(discount =>
-                new[] { discount.DiscountValidationRef, discount.Status }
+                new[]
+                {
+                    discount.DiscountValidationRef,
+                    discount.Status,
+                    discount.StatutoryDiscountDecisionCommandRef,
+                    discount.EntitlementType,
+                    discount.AppliedPolicyReferenceRef,
+                    discount.OriginalTariffSnapshotRef,
+                    discount.AppliedTariffSnapshotRef,
+                    discount.VatTreatment,
+                    discount.SourceChannel
+                }
                     .Concat(discount.ReferenceContext.SelectMany(pair => new[] { pair.Key, pair.Value }))));
         }
         values.AddRange(context.DocumentLines.SelectMany(line =>
