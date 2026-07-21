@@ -658,6 +658,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryDiscountDecisionFacadeRepository>(_ =>
         new PostgresStatutoryDiscountDecisionFacadeRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryDiscountDecisionFacadeService, StatutoryDiscountDecisionFacadeService>();
+    builder.Services.AddScoped<IStatutoryDiscountStagedCommandRepository>(_ =>
+        new PostgresStatutoryDiscountStagedCommandRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryDiscountStagedCommandService, StatutoryDiscountStagedCommandService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
         new OperatorConsoleProductionPolicyImportReviewQueueRepository(mainDatabaseConnectionString));
