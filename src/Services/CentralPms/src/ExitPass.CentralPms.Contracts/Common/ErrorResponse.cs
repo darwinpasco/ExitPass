@@ -38,6 +38,21 @@ public sealed class ErrorResponse
     public bool Retryable { get; set; }
 
     /// <summary>
+    /// Stable client-consumable outcome classification for endpoints that expose recoverable command workflows.
+    /// </summary>
+    public string? ClientResultStatus { get; set; }
+
+    /// <summary>
+    /// Stable recovery classification for callers that need deterministic retry or correction behavior.
+    /// </summary>
+    public string? RecoveryClassification { get; set; }
+
+    /// <summary>
+    /// Safe machine-readable recovery action for clients.
+    /// </summary>
+    public string? RecoveryAction { get; set; }
+
+    /// <summary>
     /// Optional structured error details.
     /// </summary>
     public Dictionary<string, object?>? Details { get; set; }

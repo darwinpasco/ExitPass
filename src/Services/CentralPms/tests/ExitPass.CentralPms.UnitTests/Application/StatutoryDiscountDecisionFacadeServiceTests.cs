@@ -183,6 +183,22 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenExistingProcessingUsesOriginalKey_ReturnsRecoverableResultWithoutReexecutingWorkflow()
+    {
+        var fixture = CreateFixture();
+        var command = Command();
+        fixture.Repository.SeedProcessing(command);
+
+        var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        result.StatutoryDiscountDecisionCommandId.Should().Be(CommandId);
+        result.DecisionStatus.Should().Be("PROCESSING");
+        result.ResultClassification.Should().Be("RECOVERABLE_USING_ORIGINAL_KEY");
+        await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task SubmitAsync_WhenConcurrentOperatorConsoleAndWebPayRequestsArrive_OnlyOneAppliesPayableBasis()
     {
         var fixture = CreateFixture();

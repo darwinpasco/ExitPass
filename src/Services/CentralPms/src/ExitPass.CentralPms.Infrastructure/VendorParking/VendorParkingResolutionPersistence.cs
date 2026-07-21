@@ -871,9 +871,15 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             SELECT
                 pba.statutory_discount_payable_basis_application_id,
                 applied_ts.statutory_discount_validation_id,
+                cmd.statutory_discount_decision_command_id,
                 original.tariff_snapshot_id AS original_tariff_snapshot_id,
                 applied_ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
                 sdv.policy_resolution_basis::text AS policy_resolution_basis,
+                cmd.applied_policy_reference_id,
+                cmd.entitlement_type::text AS entitlement_type,
+                cmd.statutory_discount_amount_minor_units,
+                cmd.net_payable_amount_minor_units,
+                COALESCE(cmd.decided_at, cmd.applied_at, cmd.created_at) AS statutory_discount_decision_timestamp,
                 'STATUTORY_DISCOUNT_VAT_EXEMPT' AS benefit_type
             FROM core.tariff_snapshots AS applied_ts
             INNER JOIN discounts.statutory_discount_validations AS sdv
@@ -886,6 +892,10 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 ON pba.applied_tariff_snapshot_id = applied_ts.tariff_snapshot_id
                AND pba.statutory_discount_validation_id = applied_ts.statutory_discount_validation_id
                AND pba.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+            LEFT JOIN discounts.statutory_discount_decision_commands AS cmd
+                ON cmd.statutory_discount_validation_id = applied_ts.statutory_discount_validation_id
+               AND cmd.parking_session_id = applied_ts.parking_session_id
+               AND cmd.decision_status <> 'PROCESSING'
             WHERE applied_ts.parking_session_id = @parking_session_id
               AND applied_ts.tariff_snapshot_id = @effective_tariff_snapshot_id
               AND applied_ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
@@ -911,6 +921,9 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             StatutoryDiscountApplicationId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_payable_basis_application_id"))
                 ? null
                 : reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
+            StatutoryDiscountDecisionCommandId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_decision_command_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("statutory_discount_decision_command_id")),
             StatutoryDiscountValidationId = reader.GetGuid(reader.GetOrdinal("statutory_discount_validation_id")),
             OriginalTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("original_tariff_snapshot_id"))
                 ? null
@@ -920,9 +933,24 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             PolicyResolutionBasis = reader.IsDBNull(reader.GetOrdinal("policy_resolution_basis"))
                 ? null
                 : reader.GetString(reader.GetOrdinal("policy_resolution_basis")),
+            AppliedPolicyReferenceId = reader.IsDBNull(reader.GetOrdinal("applied_policy_reference_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("applied_policy_reference_id")),
             BenefitType = reader.IsDBNull(reader.GetOrdinal("benefit_type"))
                 ? null
-                : reader.GetString(reader.GetOrdinal("benefit_type"))
+                : reader.GetString(reader.GetOrdinal("benefit_type")),
+            EntitlementType = reader.IsDBNull(reader.GetOrdinal("entitlement_type"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("entitlement_type")),
+            StatutoryDiscountAmountMinorUnits = reader.IsDBNull(reader.GetOrdinal("statutory_discount_amount_minor_units"))
+                ? null
+                : reader.GetInt64(reader.GetOrdinal("statutory_discount_amount_minor_units")),
+            FinalPayableAmountMinorUnits = reader.IsDBNull(reader.GetOrdinal("net_payable_amount_minor_units"))
+                ? null
+                : reader.GetInt64(reader.GetOrdinal("net_payable_amount_minor_units")),
+            StatutoryDiscountDecisionTimestamp = reader.IsDBNull(reader.GetOrdinal("statutory_discount_decision_timestamp"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("statutory_discount_decision_timestamp"))
         };
     }
 

@@ -86,6 +86,11 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 "A statutory-discount decision for this parking session and entitlement is already processing.");
         }
 
+        if (begin.Existing && begin.Record.DecisionStatus is "PROCESSING")
+        {
+            return (begin.Record with { ResultClassification = "RECOVERABLE_USING_ORIGINAL_KEY" }).ToResult();
+        }
+
         var draft = await _draftService.DraftAsync(ToDraftCommand(normalized), cancellationToken).ConfigureAwait(false);
         if (!draft.DraftAccepted || draft.DraftId is null)
         {

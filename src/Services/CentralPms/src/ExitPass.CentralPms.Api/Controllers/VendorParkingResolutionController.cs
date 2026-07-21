@@ -160,11 +160,17 @@ public sealed class VendorParkingResolutionController : ControllerBase
             StatutoryDiscountApplied = result.EffectivePayableBasis?.StatutoryDiscountApplied ?? false,
             StatutoryDiscountValidationId = result.EffectivePayableBasis?.StatutoryDiscountValidationId,
             StatutoryDiscountApplicationId = result.EffectivePayableBasis?.StatutoryDiscountApplicationId,
+            StatutoryDiscountDecisionCommandId = result.EffectivePayableBasis?.StatutoryDiscountDecisionCommandId,
             OriginalTariffSnapshotId = result.EffectivePayableBasis?.OriginalTariffSnapshotId,
             EffectiveTariffSnapshotId = result.EffectivePayableBasis?.EffectiveTariffSnapshotId ?? result.TariffSnapshot.TariffSnapshotId,
             AppliedTariffSnapshotId = result.EffectivePayableBasis?.AppliedTariffSnapshotId,
             PolicyResolutionBasis = result.EffectivePayableBasis?.PolicyResolutionBasis,
+            StatutoryDiscountPolicyReferenceId = result.EffectivePayableBasis?.AppliedPolicyReferenceId,
             BenefitType = result.EffectivePayableBasis?.BenefitType,
+            StatutoryDiscountEntitlementType = result.EffectivePayableBasis?.EntitlementType,
+            StatutoryDiscountAmountMinorUnits = result.EffectivePayableBasis?.StatutoryDiscountAmountMinorUnits,
+            StatutoryDiscountFinalPayableMinorUnits = result.EffectivePayableBasis?.FinalPayableAmountMinorUnits,
+            StatutoryDiscountDecisionTimestamp = result.EffectivePayableBasis?.StatutoryDiscountDecisionTimestamp,
             VendorSystemId = result.VendorSystemId ?? validRequest.VendorSystemId,
             CorrelationId = result.CorrelationId
         });

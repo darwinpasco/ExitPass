@@ -198,6 +198,13 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                     original.tariff_snapshot_id AS original_tariff_snapshot_id,
                     ts.tariff_snapshot_id AS applied_tariff_snapshot_id,
                     ts.statutory_discount_validation_id,
+                    cmd.statutory_discount_decision_command_id,
+                    cmd.applied_policy_reference_id,
+                    cmd.policy_resolution_basis::text AS command_policy_resolution_basis,
+                    cmd.entitlement_type::text AS entitlement_type,
+                    cmd.statutory_discount_amount_minor_units,
+                    cmd.net_payable_amount_minor_units,
+                    COALESCE(cmd.decided_at, cmd.applied_at, cmd.created_at) AS decision_timestamp,
                     ts.calculated_at,
                     ts.updated_at,
                     COUNT(*) OVER () AS applied_count
@@ -212,6 +219,10 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                   ON pba.applied_tariff_snapshot_id = ts.tariff_snapshot_id
                  AND pba.statutory_discount_validation_id = ts.statutory_discount_validation_id
                  AND pba.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
+                LEFT JOIN discounts.statutory_discount_decision_commands AS cmd
+                  ON cmd.statutory_discount_validation_id = ts.statutory_discount_validation_id
+                 AND cmd.parking_session_id = ts.parking_session_id
+                 AND cmd.decision_status <> 'PROCESSING'
                 WHERE ts.parking_session_id = @parking_session_id
                   AND ts.snapshot_status = 'ACTIVE'::core.tariff_snapshot_status_enum
                   AND ts.statutory_discount_validation_id IS NOT NULL
@@ -222,6 +233,14 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
                 app.parking_session_id,
                 app.original_tariff_snapshot_id,
                 app.applied_tariff_snapshot_id,
+                app.statutory_discount_validation_id,
+                app.statutory_discount_decision_command_id,
+                app.applied_policy_reference_id,
+                app.command_policy_resolution_basis,
+                app.entitlement_type,
+                app.statutory_discount_amount_minor_units,
+                app.net_payable_amount_minor_units,
+                app.decision_timestamp,
                 app.applied_count,
                 app.applied_tariff_snapshot_id IS NOT NULL AS applied_snapshot_valid,
                 CASE
@@ -264,12 +283,36 @@ public sealed class TariffSnapshotReadRepository : ITariffSnapshotReadRepository
             StatutoryDiscountApplicationId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_payable_basis_application_id"))
                 ? null
                 : reader.GetGuid(reader.GetOrdinal("statutory_discount_payable_basis_application_id")),
+            StatutoryDiscountDecisionCommandId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_decision_command_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("statutory_discount_decision_command_id")),
+            StatutoryDiscountValidationId = reader.IsDBNull(reader.GetOrdinal("statutory_discount_validation_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("statutory_discount_validation_id")),
             OriginalTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("original_tariff_snapshot_id"))
                 ? null
                 : reader.GetGuid(reader.GetOrdinal("original_tariff_snapshot_id")),
             AppliedTariffSnapshotId = reader.IsDBNull(reader.GetOrdinal("applied_tariff_snapshot_id"))
                 ? null
                 : reader.GetGuid(reader.GetOrdinal("applied_tariff_snapshot_id")),
+            StatutoryDiscountPolicyReferenceId = reader.IsDBNull(reader.GetOrdinal("applied_policy_reference_id"))
+                ? null
+                : reader.GetGuid(reader.GetOrdinal("applied_policy_reference_id")),
+            PolicyResolutionBasis = reader.IsDBNull(reader.GetOrdinal("command_policy_resolution_basis"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("command_policy_resolution_basis")),
+            EntitlementType = reader.IsDBNull(reader.GetOrdinal("entitlement_type"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("entitlement_type")),
+            StatutoryDiscountAmountMinorUnits = reader.IsDBNull(reader.GetOrdinal("statutory_discount_amount_minor_units"))
+                ? null
+                : reader.GetInt64(reader.GetOrdinal("statutory_discount_amount_minor_units")),
+            FinalPayableAmountMinorUnits = reader.IsDBNull(reader.GetOrdinal("net_payable_amount_minor_units"))
+                ? null
+                : reader.GetInt64(reader.GetOrdinal("net_payable_amount_minor_units")),
+            DecisionTimestamp = reader.IsDBNull(reader.GetOrdinal("decision_timestamp"))
+                ? null
+                : reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("decision_timestamp")),
             IsValid = invalidReasonCode is null && reader.GetBoolean(reader.GetOrdinal("applied_snapshot_valid")),
             InvalidReasonCode = invalidReasonCode
         };

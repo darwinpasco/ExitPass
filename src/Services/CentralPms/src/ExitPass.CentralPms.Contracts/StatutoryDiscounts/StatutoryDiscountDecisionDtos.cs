@@ -73,5 +73,11 @@ public sealed record StatutoryDiscountDecisionResponse(
     DateTimeOffset? AppliedAt,
     Guid? OriginalTariffSnapshotId,
     Guid? AppliedTariffSnapshotId,
+    string CommandStatus,
+    string ClientResultStatus,
     string ResultClassification,
-    string SemanticHashSourceVersion);
+    string SemanticHashSourceVersion,
+    bool Retryable,
+    string RecoveryClassification,
+    string? RecoveryAction,
+    string? SafeErrorCode);

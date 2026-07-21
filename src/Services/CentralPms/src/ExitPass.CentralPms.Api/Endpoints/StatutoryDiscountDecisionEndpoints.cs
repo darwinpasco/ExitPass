@@ -53,7 +53,7 @@ public static class StatutoryDiscountDecisionEndpoints
     {
         using var activity = ActivitySource.StartActivity("SubmitStatutoryDiscountDecision", ActivityKind.Server);
         activity?.SetTag("http.route", "POST /v1/statutory-discounts/decisions");
-        activity?.SetTag("source_channel", body?.SourceChannel);
+        activity?.SetTag("requested_source_channel", body?.SourceChannel);
         activity?.SetTag("parking_session_id", body?.ParkingSessionId);
 
         if (body is null)
@@ -67,7 +67,8 @@ public static class StatutoryDiscountDecisionEndpoints
             return Results.BadRequest(headerError);
         }
 
-        if (!StatutoryDiscountSourceChannels.IsSupported(body.SourceChannel))
+        var requestedSourceChannel = StatutoryDiscountSourceChannels.Normalize(body.SourceChannel);
+        if (!StatutoryDiscountSourceChannels.IsSupported(requestedSourceChannel))
         {
             activity?.SetStatus(ActivityStatusCode.Error, "Unsupported source channel.");
             return Results.BadRequest(BuildError(
@@ -76,21 +77,41 @@ public static class StatutoryDiscountDecisionEndpoints
                 correlationId));
         }
 
-        if (!HasSourceChannelPermission(request.HttpContext, rbacOptions.Value, body.SourceChannel, out var requiredPermission))
+        if (!TryResolveAuthenticatedSourceChannel(
+                request.HttpContext,
+                rbacOptions.Value,
+                out var effectiveSourceChannel,
+                out var actorId,
+                out var channelError))
         {
-            activity?.SetStatus(ActivityStatusCode.Error, "Source channel permission is missing.");
+            activity?.SetStatus(ActivityStatusCode.Error, "Source channel permission is missing or ambiguous.");
+            return Results.Json(
+                BuildError(channelError!.ErrorCode, channelError.Message, correlationId, channelError.Details),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        if (!string.Equals(requestedSourceChannel, effectiveSourceChannel, StringComparison.Ordinal))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Requested source channel does not match authenticated channel.");
             return Results.Json(
                 BuildError(
-                    "CENTRAL_PMS_SOURCE_CHANNEL_FORBIDDEN",
-                    $"The caller is not authorized to submit statutory-discount decisions for source channel {body.SourceChannel}.",
-                    correlationId,
-                    new Dictionary<string, object?> { ["requiredPermission"] = requiredPermission }),
+                    "CENTRAL_PMS_SOURCE_CHANNEL_MISMATCH",
+                    "The request source channel must match the authenticated channel identity.",
+                    correlationId),
                 statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        if (!ValidateChannelFieldMatrix(body, effectiveSourceChannel, actorId, out var matrixError))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Source-channel request field validation failed.");
+            return Results.BadRequest(BuildError(matrixError!.ErrorCode, matrixError.Message, correlationId, matrixError.Details));
         }
 
         try
         {
-            var result = await service.SubmitAsync(ToCommand(body, idempotencyKey!, correlationId), cancellationToken)
+            var result = await service.SubmitAsync(
+                    ToCommand(body, effectiveSourceChannel, actorId, idempotencyKey!, correlationId),
+                    cancellationToken)
                 .ConfigureAwait(false);
             var response = ToResponse(result);
 
@@ -166,11 +187,13 @@ public static class StatutoryDiscountDecisionEndpoints
 
     private static StatutoryDiscountDecisionCommand ToCommand(
         StatutoryDiscountDecisionRequest body,
+        string effectiveSourceChannel,
+        Guid actorId,
         string idempotencyKey,
         Guid correlationId) =>
         new(
             body.RequestReference,
-            body.SourceChannel,
+            effectiveSourceChannel,
             body.ParkingSessionId,
             body.SiteId,
             body.SiteGroupId,
@@ -193,7 +216,7 @@ public static class StatutoryDiscountDecisionEndpoints
                     evidence.ReferenceNumberMasked,
                     evidence.VerificationStatus))
                 .ToArray(),
-            body.ActorUserId,
+            actorId,
             body.OperatorDeviceBindingId,
             body.OperatorShiftId,
             body.RequesterAttestation,
@@ -235,8 +258,14 @@ public static class StatutoryDiscountDecisionEndpoints
             result.AppliedAt,
             result.OriginalTariffSnapshotId,
             result.AppliedTariffSnapshotId,
+            ResolveCommandStatus(result),
+            ResolveClientResultStatus(result),
             result.ResultClassification,
-            result.SemanticHashSourceVersion);
+            result.SemanticHashSourceVersion,
+            ResolveRetryable(result),
+            ResolveRecoveryClassification(result),
+            ResolveRecoveryAction(result),
+            result.ErrorCode);
 
     private static bool TryReadHeaders(
         HttpRequest request,
@@ -274,18 +303,64 @@ public static class StatutoryDiscountDecisionEndpoints
     private static bool IsConflict(string errorCode) =>
         errorCode is "IDEMPOTENCY_SEMANTIC_CONFLICT" or "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS";
 
-    private static bool HasSourceChannelPermission(
+    private static bool TryResolveAuthenticatedSourceChannel(
         HttpContext context,
         CentralPmsRbacOptions options,
-        string? sourceChannel,
-        out string requiredPermission)
+        out string sourceChannel,
+        out Guid actorId,
+        out ErrorResponse? error)
     {
-        requiredPermission = RequiredSourceChannelPermission(sourceChannel);
-        if (string.IsNullOrWhiteSpace(requiredPermission))
+        var permissions = ReadPermissions(context, options);
+        var channels = ChannelPermissions
+            .Where(pair => permissions.Contains(pair.Value))
+            .Select(pair => pair.Key)
+            .ToArray();
+
+        actorId = ResolveActorId(context);
+        if (actorId == Guid.Empty)
         {
+            sourceChannel = string.Empty;
+            error = new ErrorResponse
+            {
+                ErrorCode = "CENTRAL_PMS_AUTHENTICATED_ACTOR_REQUIRED",
+                Message = "Authenticated user or service identity is required for statutory-discount decision submission."
+            };
             return false;
         }
 
+        if (channels.Length == 0)
+        {
+            sourceChannel = string.Empty;
+            error = new ErrorResponse
+            {
+                ErrorCode = "CENTRAL_PMS_SOURCE_CHANNEL_FORBIDDEN",
+                Message = "The caller is not authorized to submit statutory-discount decisions for a supported source channel.",
+                Details = new Dictionary<string, object?>
+                {
+                    ["requiredPermissions"] = ChannelPermissions.Values.Order(StringComparer.Ordinal).ToArray()
+                }
+            };
+            return false;
+        }
+
+        if (channels.Length > 1)
+        {
+            sourceChannel = string.Empty;
+            error = new ErrorResponse
+            {
+                ErrorCode = "CENTRAL_PMS_SOURCE_CHANNEL_AMBIGUOUS",
+                Message = "The authenticated identity maps to multiple statutory-discount source channels."
+            };
+            return false;
+        }
+
+        sourceChannel = channels[0];
+        error = null;
+        return true;
+    }
+
+    private static IReadOnlySet<string> ReadPermissions(HttpContext context, CentralPmsRbacOptions options)
+    {
         var permissions = context.User.Claims
             .Where(claim => string.Equals(claim.Type, CentralPmsRbacPolicyCatalog.PermissionClaimType, StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(claim.Type, "permission", StringComparison.OrdinalIgnoreCase) ||
@@ -303,31 +378,192 @@ public static class StatutoryDiscountDecisionEndpoints
             }
         }
 
-        return permissions.Contains(requiredPermission) || permissions.Contains("reconciliation.manage");
+        return permissions;
     }
 
-    private static string RequiredSourceChannelPermission(string? sourceChannel) =>
-        string.IsNullOrWhiteSpace(sourceChannel)
-            ? string.Empty
-            : sourceChannel.Trim().ToUpperInvariant() switch
+    private static bool ValidateChannelFieldMatrix(
+        StatutoryDiscountDecisionRequest body,
+        string effectiveSourceChannel,
+        Guid actorId,
+        out ErrorResponse? error)
+    {
+        var operatorOnlyFieldsPresent =
+            body.OperatorDeviceBindingId is not null ||
+            body.OperatorShiftId is not null ||
+            body.ReviewerUserId is not null ||
+            body.ReviewerAttestation ||
+            !string.IsNullOrWhiteSpace(body.Decision) ||
+            !string.IsNullOrWhiteSpace(body.DecisionReasonCode) ||
+            body.ApplyPayableBasis;
+
+        if (body.ActorUserId != Guid.Empty && body.ActorUserId != actorId)
         {
-            "OPERATOR_CONSOLE" => "statutory-discounts.decision.submit.operator-console",
-            "WEBPAY" => "statutory-discounts.decision.submit.webpay",
-            "ASSISTED_PAYMENT_TERMINAL" => "statutory-discounts.decision.submit.assisted-payment-terminal",
-            _ => string.Empty
+            error = new ErrorResponse
+            {
+                ErrorCode = "STATUTORY_DISCOUNT_ACTOR_CONTEXT_MISMATCH",
+                Message = "Actor identity is server-derived and must match the authenticated identity when supplied."
+            };
+            return false;
+        }
+
+        if (effectiveSourceChannel is StatutoryDiscountSourceChannels.WebPay or StatutoryDiscountSourceChannels.AssistedPaymentTerminal &&
+            operatorOnlyFieldsPresent)
+        {
+            error = new ErrorResponse
+            {
+                ErrorCode = "STATUTORY_DISCOUNT_CHANNEL_FIELD_PROHIBITED",
+                Message = "Operator-only decision, reviewer, device, shift, and apply-payable-basis fields are prohibited for this source channel.",
+                Details = new Dictionary<string, object?>
+                {
+                    ["sourceChannel"] = effectiveSourceChannel
+                }
+            };
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static Guid ResolveActorId(HttpContext context)
+    {
+        var userId = ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.UserIdHeaderName].FirstOrDefault()) ??
+                     ResolveGuid(context.User.FindFirstValue(ClaimTypes.NameIdentifier)) ??
+                     ResolveGuid(context.User.FindFirstValue("sub")) ??
+                     ResolveGuid(context.User.FindFirstValue("user_id"));
+
+        if (userId is not null && userId != Guid.Empty)
+        {
+            return userId.Value;
+        }
+
+        return ResolveGuid(context.Request.Headers[CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName].FirstOrDefault()) ??
+               ResolveGuid(context.User.FindFirstValue("service_identity_id")) ??
+               ResolveGuid(context.User.FindFirstValue("client_id")) ??
+               Guid.Empty;
+    }
+
+    private static Guid? ResolveGuid(string? value) =>
+        Guid.TryParse(value, out var guid) ? guid : null;
+
+    private static readonly IReadOnlyDictionary<string, string> ChannelPermissions =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [StatutoryDiscountSourceChannels.OperatorConsole] = "statutory-discounts.decision.submit.operator-console",
+            [StatutoryDiscountSourceChannels.WebPay] = "statutory-discounts.decision.submit.webpay",
+            [StatutoryDiscountSourceChannels.AssistedPaymentTerminal] = "statutory-discounts.decision.submit.assisted-payment-terminal"
         };
+
+    private static string ResolveCommandStatus(StatutoryDiscountDecisionResult result) =>
+        string.Equals(result.DecisionStatus, "PROCESSING", StringComparison.Ordinal)
+            ? StatutoryDiscountDecisionCommandStatuses.Processing
+            : StatutoryDiscountDecisionCommandStatuses.Completed;
+
+    private static string ResolveClientResultStatus(StatutoryDiscountDecisionResult result)
+    {
+        if (string.Equals(result.ResultClassification, "IDEMPOTENT_REPLAY", StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionClientResultStatuses.IdempotentReplay;
+        }
+
+        if (string.Equals(result.ResultClassification, "RECOVERABLE_USING_ORIGINAL_KEY", StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionClientResultStatuses.RecoverableUsingOriginalKey;
+        }
+
+        return result.DecisionStatus switch
+        {
+            "APPLIED_PAYABLE_BASIS" or "APPROVED" => StatutoryDiscountDecisionClientResultStatuses.Approved,
+            "REJECTED" => StatutoryDiscountDecisionClientResultStatuses.RejectedOrNonApproved,
+            "PROCESSING" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
+            _ when !string.IsNullOrWhiteSpace(result.ErrorCode) => StatutoryDiscountDecisionClientResultStatuses.ValidationFailure,
+            _ => StatutoryDiscountDecisionClientResultStatuses.CreatedDurablyCompleted
+        };
+    }
+
+    private static bool ResolveRetryable(StatutoryDiscountDecisionResult result) =>
+        string.Equals(result.ResultClassification, "RECOVERABLE_USING_ORIGINAL_KEY", StringComparison.Ordinal);
+
+    private static string ResolveRecoveryClassification(StatutoryDiscountDecisionResult result)
+    {
+        if (string.Equals(result.ResultClassification, "IDEMPOTENT_REPLAY", StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult;
+        }
+
+        if (string.Equals(result.ResultClassification, "RECOVERABLE_USING_ORIGINAL_KEY", StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey;
+        }
+
+        return StatutoryDiscountDecisionRecoveryClassifications.None;
+    }
+
+    private static string? ResolveRecoveryAction(StatutoryDiscountDecisionResult result)
+    {
+        if (string.Equals(result.ResultClassification, "IDEMPOTENT_REPLAY", StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionRecoveryActions.ReadCanonicalDecision;
+        }
+
+        if (string.Equals(result.ResultClassification, "RECOVERABLE_USING_ORIGINAL_KEY", StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey;
+        }
+
+        return null;
+    }
 
     private static ErrorResponse BuildError(
         string errorCode,
         string message,
         Guid correlationId,
-        Dictionary<string, object?>? details = null) =>
-        new()
+        Dictionary<string, object?>? details = null)
+    {
+        var retryable = errorCode is "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" or "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE";
+        return new ErrorResponse
         {
             ErrorCode = errorCode,
             Message = message,
             CorrelationId = correlationId,
-            Retryable = false,
+            Retryable = retryable,
+            ClientResultStatus = ResolveClientResultStatus(errorCode),
+            RecoveryClassification = ResolveRecoveryClassification(errorCode),
+            RecoveryAction = ResolveRecoveryAction(errorCode),
             Details = details
+        };
+    }
+
+    private static string ResolveClientResultStatus(string errorCode) =>
+        errorCode switch
+        {
+            "IDEMPOTENCY_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionClientResultStatuses.SemanticConflict,
+            "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
+            "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionClientResultStatuses.NotFound,
+            "UNSAFE_IDENTIFIER_REJECTED" => StatutoryDiscountDecisionClientResultStatuses.UnsafeIdentityInput,
+            "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionClientResultStatuses.TemporarilyUnavailable,
+            "INVALID_REQUEST" or "UNSUPPORTED_SOURCE_CHANNEL" or "UNSUPPORTED_ENTITLEMENT_TYPE" =>
+                StatutoryDiscountDecisionClientResultStatuses.ValidationFailure,
+            _ => StatutoryDiscountDecisionClientResultStatuses.NonRetryableFailure
+        };
+
+    private static string ResolveRecoveryClassification(string errorCode) =>
+        errorCode switch
+        {
+            "IDEMPOTENCY_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryClassifications.CorrectRequestRequired,
+            "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
+            "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
+            "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
+            _ => StatutoryDiscountDecisionRecoveryClassifications.None
+        };
+
+    private static string? ResolveRecoveryAction(string errorCode) =>
+        errorCode switch
+        {
+            "IDEMPOTENCY_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryActions.SubmitCorrectedRequest,
+            "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
+            "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
+            "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
+            _ => null
         };
 }

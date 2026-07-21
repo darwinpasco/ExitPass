@@ -157,9 +157,21 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         {
             writer.WriteStartObject();
             writer.WriteBoolean("applies_statutory_discount_treatment", discount.AppliesStatutoryDiscountTreatment);
+            WriteString(writer, "applied_policy_reference_ref", discount.AppliedPolicyReferenceRef);
+            WriteString(writer, "applied_tariff_snapshot_ref", discount.AppliedTariffSnapshotRef);
+            WriteNullableNumber(writer, "discount_amount_minor_units", discount.DiscountAmountMinorUnits);
             WriteString(writer, "discount_validation_ref", discount.DiscountValidationRef);
+            WriteString(writer, "entitlement_type", discount.EntitlementType);
+            WriteNullableNumber(writer, "final_payable_amount_minor_units", discount.FinalPayableAmountMinorUnits);
+            WriteNullableNumber(writer, "original_amount_minor_units", discount.OriginalAmountMinorUnits);
+            WriteString(writer, "original_tariff_snapshot_ref", discount.OriginalTariffSnapshotRef);
             WriteDictionary(writer, "reference_context", discount.ReferenceContext);
+            WriteString(writer, "source_channel", discount.SourceChannel);
             WriteString(writer, "status", NormalizeDiscountStatus(discount.Status));
+            WriteString(writer, "statutory_discount_decision_command_ref", discount.StatutoryDiscountDecisionCommandRef);
+            WriteNullableNumber(writer, "vat_exclusive_basis_amount_minor_units", discount.VatExclusiveBasisAmountMinorUnits);
+            WriteString(writer, "vat_treatment", discount.VatTreatment);
+            WriteString(writer, "decision_timestamp", discount.DecisionTimestamp);
             writer.WriteEndObject();
         }
 
@@ -288,7 +300,9 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
     {
         writer.WritePropertyName(propertyName);
         writer.WriteStartObject();
-        foreach (var pair in dictionary.OrderBy(pair => Normalize(pair.Key), StringComparer.Ordinal))
+        foreach (var pair in dictionary
+                     .Where(pair => !IsTransportOnlyDictionaryKey(pair.Key))
+                     .OrderBy(pair => Normalize(pair.Key), StringComparer.Ordinal))
         {
             WriteString(writer, Normalize(pair.Key), pair.Value);
         }
@@ -329,10 +343,32 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         writer.WriteString(propertyName, value.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
     }
 
+    private static void WriteString(Utf8JsonWriter writer, string propertyName, DateTimeOffset? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteString(propertyName, value.Value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture));
+    }
+
     private static void WriteNumber(Utf8JsonWriter writer, string propertyName, decimal value) =>
         writer.WriteNumber(propertyName, value);
 
     private static void WriteNullableNumber(Utf8JsonWriter writer, string propertyName, int? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteNumber(propertyName, value.Value);
+    }
+
+    private static void WriteNullableNumber(Utf8JsonWriter writer, string propertyName, long? value)
     {
         if (value is null)
         {
@@ -367,6 +403,12 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
 
     private static string NormalizeCurrency(string? value) =>
         Normalize(value).ToUpperInvariant();
+
+    private static bool IsTransportOnlyDictionaryKey(string? key)
+    {
+        var normalized = Normalize(key).Replace("-", "_", StringComparison.Ordinal).ToUpperInvariant();
+        return normalized is "CORRELATION" or "CORRELATION_ID" or "CORRELATIONID" or "X_CORRELATION_ID";
+    }
 
     private static string NormalizeDiscountStatus(string? value)
     {
