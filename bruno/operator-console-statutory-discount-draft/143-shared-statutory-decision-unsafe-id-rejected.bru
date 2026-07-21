@@ -1,0 +1,56 @@
+meta {
+  name: 143 Shared statutory decision unsafe ID rejected
+  type: http
+  seq: 143
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: manual-shared-statutory-decision-unsafe-id
+  X-Correlation-Id: {{sharedStatutoryDecisionCorrelationId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
+}
+
+body:json {
+  {
+    "requestReference": "77000000-0000-0000-0000-000000000703",
+    "sourceChannel": "WEBPAY",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "{{ticketReference_allowed}}",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "SC-123456789",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "requesterAttestation": true,
+    "attestationNotes": "Unsafe identifier rejection proof",
+    "reasonCode": "MANUAL_SHARED_STATUTORY_DECISION",
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": false,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("rejects full statutory ID-like values", function () {
+    expect(res.status).to.equal(400);
+    expect(res.body.errorCode).to.equal("UNSAFE_IDENTIFIER_REJECTED");
+  });
+}

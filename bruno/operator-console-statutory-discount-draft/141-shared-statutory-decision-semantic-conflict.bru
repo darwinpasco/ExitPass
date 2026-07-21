@@ -1,0 +1,56 @@
+meta {
+  name: 141 Shared statutory decision semantic conflict
+  type: http
+  seq: 141
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{sharedStatutoryDecisionIdempotencyKey}}
+  X-Correlation-Id: {{sharedStatutoryDecisionCorrelationId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.operator-console
+}
+
+body:json {
+  {
+    "requestReference": "{{sharedStatutoryDecisionRequestReference}}",
+    "sourceChannel": "OPERATOR_CONSOLE",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "{{ticketReference_allowed}}",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "SC-****-9999",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "requesterAttestation": true,
+    "attestationNotes": "Shared facade Bruno conflict",
+    "reasonCode": "MANUAL_SHARED_STATUTORY_DECISION",
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": false,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("returns deterministic semantic conflict", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode).to.equal("IDEMPOTENCY_SEMANTIC_CONFLICT");
+  });
+}

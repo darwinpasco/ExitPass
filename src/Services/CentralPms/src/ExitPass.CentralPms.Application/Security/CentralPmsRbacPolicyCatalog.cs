@@ -140,6 +140,19 @@ public static class CentralPmsRbacPolicyCatalog
                 "statutory-discounts.audit.read",
                 "reconciliation.manage"
             ],
+            ["CentralPmsStatutoryDiscountDecisionSubmit"] =
+            [
+                "statutory-discounts.decision.submit.operator-console",
+                "statutory-discounts.decision.submit.webpay",
+                "statutory-discounts.decision.submit.assisted-payment-terminal",
+                "reconciliation.manage"
+            ],
+            ["CentralPmsStatutoryDiscountDecisionRead"] =
+            [
+                "statutory-discounts.decision.read",
+                "statutory-discounts.draft.view",
+                "reconciliation.manage"
+            ],
 
             ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
             ["OperatorConsolePolicyImportReviewViewer"] =
