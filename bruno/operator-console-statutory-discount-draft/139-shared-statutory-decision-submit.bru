@@ -1,0 +1,61 @@
+meta {
+  name: 139 Shared statutory decision submit
+  type: http
+  seq: 139
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{sharedStatutoryDecisionIdempotencyKey}}
+  X-Correlation-Id: {{sharedStatutoryDecisionCorrelationId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.operator-console
+}
+
+body:json {
+  {
+    "requestReference": "{{sharedStatutoryDecisionRequestReference}}",
+    "sourceChannel": "OPERATOR_CONSOLE",
+    "parkingSessionId": "{{parkingSessionId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "{{ticketReference_allowed}}",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "{{seniorMaskedIdReference}}",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "requesterAttestation": true,
+    "attestationNotes": "Shared facade Bruno submit",
+    "reasonCode": "MANUAL_SHARED_STATUTORY_DECISION",
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": false,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("returns canonical statutory discount decision command", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    expect(res.body.requestReference).to.equal(bru.getEnvVar("sharedStatutoryDecisionRequestReference"));
+    expect(res.body.sourceChannel).to.equal("OPERATOR_CONSOLE");
+    expect(res.body.entitlementType).to.equal("SENIOR_CITIZEN");
+    expect(res.body.semanticHashSourceVersion).to.equal("statutory-discount-decision:sha256:v1");
+    bru.setEnvVar("sharedStatutoryDecisionCommandId", res.body.statutoryDiscountDecisionCommandId);
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: 142 Shared statutory decision readback
+  type: http
+  seq: 142
+}
+
+get {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions/{{sharedStatutoryDecisionCommandId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-Correlation-Id: {{sharedStatutoryDecisionCorrelationId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.read
+}
+
+tests {
+  test("returns canonical readback", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("sharedStatutoryDecisionCommandId"));
+    expect(res.body.requestReference).to.equal(bru.getEnvVar("sharedStatutoryDecisionRequestReference"));
+    expect(res.body.sourceChannel).to.equal("OPERATOR_CONSOLE");
+  });
+}

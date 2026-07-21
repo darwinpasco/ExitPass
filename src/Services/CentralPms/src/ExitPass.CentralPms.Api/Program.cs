@@ -36,6 +36,7 @@ using ExitPass.CentralPms.Application.PaymentAttempts;
 using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Application.Reconciliation;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Application.WebPay;
@@ -55,6 +56,7 @@ using ExitPass.CentralPms.Infrastructure.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.Operations;
 using ExitPass.CentralPms.Infrastructure.Reconciliation;
 using ExitPass.CentralPms.Infrastructure.Security;
+using ExitPass.CentralPms.Infrastructure.StatutoryDiscounts;
 using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
@@ -159,6 +161,7 @@ app.MapVendorPaymentAcknowledgmentOpsEndpoints();
 app.MapVendorSessionProjectionHealthEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
+app.MapStatutoryDiscountDecisionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
@@ -652,6 +655,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionReadRepository>(_ =>
         new OperatorConsoleStatutoryDiscountPolicyResolutionReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleStatutoryDiscountPolicyResolutionService, OperatorConsoleStatutoryDiscountPolicyResolutionService>();
+    builder.Services.AddScoped<IStatutoryDiscountDecisionFacadeRepository>(_ =>
+        new PostgresStatutoryDiscountDecisionFacadeRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryDiscountDecisionFacadeService, StatutoryDiscountDecisionFacadeService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
         new OperatorConsoleProductionPolicyImportReviewQueueRepository(mainDatabaseConnectionString));
