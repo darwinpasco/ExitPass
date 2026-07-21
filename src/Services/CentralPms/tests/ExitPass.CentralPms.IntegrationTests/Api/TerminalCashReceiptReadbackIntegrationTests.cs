@@ -44,6 +44,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
         Assert.Equal(TerminalCashTenderId, result.TerminalCashTenderId);
         Assert.Equal(PaymentAttemptId, result.PaymentAttemptId);
         Assert.Equal(PaymentConfirmationId, result.PaymentConfirmationId);
+        Assert.Equal("CONFIRMED", result.CanonicalPaymentStatus);
         Assert.Equal(FiscalIssuanceReferenceId, result.FiscalIssuanceReferenceId);
         Assert.Equal(PosFiscalDocumentId, result.PosFiscalDocumentId);
     }
@@ -73,6 +74,16 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
         var result = await CreateService().GetByTerminalCashTenderIdAsync(TerminalCashTenderId, CorrelationId, CancellationToken.None);
 
         Assert.Equal("digital-sales-invoice-json-v1", result.TemplateVersion);
+    }
+
+    [Fact]
+    public async Task TerminalCashReceiptReadback_SemanticRequestHashIsPreservedFromDurableFiscalReference()
+    {
+        var result = await CreateService().GetByTerminalCashTenderIdAsync(TerminalCashTenderId, CorrelationId, CancellationToken.None);
+
+        Assert.Equal("sha256:test", result.SemanticRequestHash);
+        Assert.Equal(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion, result.SemanticRequestHashVersion);
+        Assert.Equal("AVAILABLE", result.SemanticRequestHashStatus);
     }
 
     [Fact]
@@ -110,6 +121,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         Assert.Equal(404, ex.HttpStatusCode);
         Assert.Equal("TERMINAL_CASH_PAYMENT_NOT_FOUND", ex.ErrorCode);
+        Assert.False(ex.Retryable);
     }
 
     [Fact]
@@ -120,6 +132,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         Assert.Equal(409, ex.HttpStatusCode);
         Assert.Equal("TERMINAL_CASH_PAYMENT_NOT_CONFIRMED", ex.ErrorCode);
+        Assert.True(ex.Retryable);
     }
 
     [Fact]
@@ -130,6 +143,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         Assert.Equal(404, ex.HttpStatusCode);
         Assert.Equal("TERMINAL_CASH_FISCAL_ISSUANCE_NOT_FOUND", ex.ErrorCode);
+        Assert.True(ex.Retryable);
     }
 
     [Fact]
@@ -146,6 +160,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
             () => CreateService(reference: reference, posClient: posClient).GetByTerminalCashTenderIdAsync(TerminalCashTenderId, CorrelationId, CancellationToken.None));
 
         Assert.Equal("TERMINAL_CASH_RECEIPT_PRESENTATION_NOT_READY", ex.ErrorCode);
+        Assert.True(ex.Retryable);
         Assert.Equal(0, posClient.PresentationReadCount);
     }
 
@@ -157,6 +172,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
                 .GetByTerminalCashTenderIdAsync(TerminalCashTenderId, CorrelationId, CancellationToken.None));
 
         Assert.Equal("POS_FISCAL_DOCUMENT_ID_MISSING", ex.ErrorCode);
+        Assert.True(ex.Retryable);
     }
 
     [Fact]
@@ -168,6 +184,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         Assert.Equal(503, ex.HttpStatusCode);
         Assert.Equal("POS_SERVER_RECEIPT_PRESENTATION_UNAVAILABLE", ex.ErrorCode);
+        Assert.True(ex.Retryable);
     }
 
     [Fact]
@@ -179,6 +196,31 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         Assert.Equal(409, ex.HttpStatusCode);
         Assert.Equal("POS_FISCAL_DOCUMENT_PRESENTATION_INCONSISTENT", ex.ErrorCode);
+        Assert.False(ex.Retryable);
+    }
+
+    [Fact]
+    public async Task TerminalCashReceiptReadback_MalformedPosPresentationReturnsTerminalSafeContractError()
+    {
+        var ex = await Assert.ThrowsAsync<TerminalCashReceiptPresentationRejectedException>(
+            () => CreateService(posClient: new FakePosServerPresentationClient(FakePosPresentationMode.Malformed))
+                .GetByTerminalCashTenderIdAsync(TerminalCashTenderId, CorrelationId, CancellationToken.None));
+
+        Assert.Equal(409, ex.HttpStatusCode);
+        Assert.Equal("POS_SERVER_RECEIPT_PRESENTATION_MALFORMED", ex.ErrorCode);
+        Assert.False(ex.Retryable);
+    }
+
+    [Fact]
+    public async Task TerminalCashReceiptReadback_UnsupportedPosPresentationRemainsDistinguishable()
+    {
+        var ex = await Assert.ThrowsAsync<TerminalCashReceiptPresentationRejectedException>(
+            () => CreateService(posClient: new FakePosServerPresentationClient(FakePosPresentationMode.Unsupported))
+                .GetByTerminalCashTenderIdAsync(TerminalCashTenderId, CorrelationId, CancellationToken.None));
+
+        Assert.Equal(409, ex.HttpStatusCode);
+        Assert.Equal("POS_SERVER_RECEIPT_PRESENTATION_UNSUPPORTED", ex.ErrorCode);
+        Assert.False(ex.Retryable);
     }
 
     [Fact]
@@ -292,7 +334,11 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<TerminalCashReceiptPresentationResponse>();
         Assert.Equal(TerminalCashTenderId, body!.TerminalCashTenderId);
+        Assert.Equal("CONFIRMED", body.CanonicalPaymentStatus);
         Assert.Equal("FISCAL_ISSUANCE_RECORDED", body.FiscalIssuanceState);
+        Assert.Equal("sha256:test", body.SemanticRequestHash);
+        Assert.Equal(FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion, body.SemanticRequestHashVersion);
+        Assert.Equal("AVAILABLE", body.SemanticRequestHashStatus);
         Assert.Equal("presented", body.AuthoritativePresentation.GetProperty("code").GetString());
         Assert.Equal(1, service.ReadCount);
     }
@@ -304,7 +350,8 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
             new TerminalCashReceiptPresentationRejectedException(
                 "TERMINAL_CASH_RECEIPT_PRESENTATION_NOT_READY",
                 "Fiscal issuance is not recorded; receipt presentation is not available.",
-                409)));
+                409,
+                retryable: true)));
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(
             HttpMethod.Get,
@@ -317,6 +364,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
         var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
         Assert.Equal("TERMINAL_CASH_RECEIPT_PRESENTATION_NOT_READY", error!.ErrorCode);
         Assert.Equal(CorrelationId, error.CorrelationId);
+        Assert.True(error.Retryable);
     }
 
     private static ITerminalCashReceiptPresentationService CreateService(
@@ -502,7 +550,9 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
         Presented,
         Unavailable,
         NotFound,
-        Voided
+        Voided,
+        Malformed,
+        Unsupported
     }
 
     private sealed class FakePosServerPresentationClient : IPosServerFiscalDocumentClient
@@ -541,6 +591,8 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
                 FakePosPresentationMode.Unavailable => Task.FromResult(PresentationFailure(503, "persistence_read_failed")),
                 FakePosPresentationMode.NotFound => Task.FromResult(PresentationFailure(404, "fiscal_document_not_found")),
                 FakePosPresentationMode.Voided => Task.FromResult(PresentationSuccess("voided")),
+                FakePosPresentationMode.Malformed => Task.FromResult(PresentationFailure(200, "invalid_json_response", PosServerFiscalDocumentOutcome.InvalidResponse)),
+                FakePosPresentationMode.Unsupported => Task.FromResult(PresentationFailure(400, "unsupported_presentation")),
                 _ => Task.FromResult(PresentationSuccess())
             };
         }
@@ -581,9 +633,12 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
                 AuthoritativeResponse: authoritative);
         }
 
-        private static PosServerFiscalDocumentPresentationReadResult PresentationFailure(int status, string code) =>
+        private static PosServerFiscalDocumentPresentationReadResult PresentationFailure(
+            int status,
+            string code,
+            PosServerFiscalDocumentOutcome outcome = PosServerFiscalDocumentOutcome.FailedService) =>
             new(
-                PosServerFiscalDocumentOutcome.FailedService,
+                outcome,
                 Succeeded: false,
                 HttpStatusCode: status,
                 Code: code,
@@ -679,6 +734,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
                 terminalCashTenderId,
                 PaymentAttemptId,
                 PaymentConfirmationId,
+                "CONFIRMED",
                 FiscalIssuanceReferenceId,
                 FiscalIssuanceIntegrationState.FiscalIssuanceRecorded,
                 PosFiscalDocumentId,
@@ -687,6 +743,9 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
                 "AVAILABLE",
                 "digital-sales-invoice-presentation-json-v1",
                 "digital-sales-invoice-json-v1",
+                "sha256:test",
+                FiscalSemanticRequestHashCalculator.CurrentHashSourceVersion,
+                "AVAILABLE",
                 "application/json",
                 FakePosServerPresentationClient.AuthoritativePresentation(),
                 VoidStatus: null,
