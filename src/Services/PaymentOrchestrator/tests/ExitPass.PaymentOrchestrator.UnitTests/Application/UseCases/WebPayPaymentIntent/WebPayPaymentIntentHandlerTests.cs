@@ -967,6 +967,14 @@ public sealed class WebPayPaymentIntentHandlerTests
             return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(paymentAttemptId, finalAttemptStatus, string.Empty, false)));
         }
+
+        public Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
+            Guid paymentAttemptId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
     }
 
     private sealed class FakeProviderSessionRepository : IProviderSessionRepository

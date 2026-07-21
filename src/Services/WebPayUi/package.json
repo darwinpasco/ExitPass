@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "typecheck": "tsc -b",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:browser-smoke": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-WebPayAuthoritativeSalesInvoiceBrowserSmoke.ps1",
+    "test:browser-smoke:headed": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-WebPayAuthoritativeSalesInvoiceBrowserSmoke.ps1 -Headed",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -15,6 +18,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.6.0",

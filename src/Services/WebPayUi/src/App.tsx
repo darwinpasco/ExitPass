@@ -3,11 +3,13 @@ import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
+  ReceiptPresentationError,
   createPaymentIntent,
   extractPaymentIntentContext,
   formatAmount,
   getResumeUrl,
   normalizeTicketReference,
+  retrieveReceiptPresentation,
   retrievePaymentStatus,
   resolveParkingSession
 } from "./webpay";
@@ -17,7 +19,8 @@ import type {
   ParkingSessionSummary,
   PaymentIntentRequest,
   PaymentIntentResponse,
-  PaymentMethod
+  PaymentMethod,
+  WebPayReceiptPresentationResponse
 } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
@@ -537,7 +540,13 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   const [status, setStatus] = useState<"checking" | "loaded" | "error">("checking");
   const [summary, setSummary] = useState<ParkingSessionResolveResponse | null>(null);
   const [error, setError] = useState("");
+  const [receiptStatus, setReceiptStatus] = useState<"idle" | "checking" | "available" | "pending" | "error">("idle");
+  const [receipt, setReceipt] = useState<WebPayReceiptPresentationResponse | null>(null);
+  const [receiptMessage, setReceiptMessage] = useState("");
+  const [receiptCorrelationId, setReceiptCorrelationId] = useState("");
   const ticketReference = getQueryParam("ticketReference");
+  const paymentAttemptId = getQueryParam("paymentAttemptId");
+  const returnCorrelationId = getQueryParam("correlationId");
   const isCancelled = mode === "cancelled";
   const paymentStatusKind = classifyPaymentStatus(summary?.paymentStatus, isCancelled);
   const isPaid = paymentStatusKind === "confirmed";
@@ -551,6 +560,10 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
 
     setStatus("checking");
     setError("");
+    setReceipt(null);
+    setReceiptStatus("idle");
+    setReceiptMessage("");
+    setReceiptCorrelationId("");
 
     try {
       const response = await retrievePaymentStatus({ ticketReference });
@@ -566,6 +579,66 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
   useEffect(() => {
     void refreshStatus();
   }, [ticketReference]);
+
+  useEffect(() => {
+    if (!isPaid || !paymentAttemptId) {
+      setReceipt(null);
+      setReceiptStatus("idle");
+      setReceiptMessage("");
+      setReceiptCorrelationId("");
+      return;
+    }
+
+    let isStale = false;
+
+    async function loadReceipt() {
+      setReceiptStatus("checking");
+      setReceipt(null);
+      setReceiptMessage("");
+      setReceiptCorrelationId("");
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const response = await retrieveReceiptPresentation(paymentAttemptId!, returnCorrelationId ?? undefined);
+          if (isStale) {
+            return;
+          }
+
+          setReceipt(response);
+          setReceiptStatus("available");
+          setReceiptCorrelationId(response.correlationId);
+          return;
+        } catch (apiError) {
+          if (isStale) {
+            return;
+          }
+
+          if (apiError instanceof ReceiptPresentationError) {
+            setReceiptStatus(apiError.retryable ? "pending" : "error");
+            setReceiptMessage(apiError.message);
+            setReceiptCorrelationId(apiError.correlationId ?? returnCorrelationId ?? "");
+
+            if (!apiError.retryable || attempt === 3) {
+              return;
+            }
+          } else {
+            setReceiptStatus("error");
+            setReceiptMessage("Sales Invoice retrieval is temporarily unavailable. Please try again shortly.");
+            setReceiptCorrelationId(returnCorrelationId ?? "");
+            return;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, 750));
+        }
+      }
+    }
+
+    void loadReceipt();
+
+    return () => {
+      isStale = true;
+    };
+  }, [isPaid, paymentAttemptId, returnCorrelationId]);
 
   return (
     <main className="app-shell">
@@ -593,6 +666,39 @@ function WebPayReturnPage({ mode }: { mode: ReturnPageMode }) {
         {status === "loaded" && summary && (
           <>
             <PaymentStatusPanel summary={summary} statusKind={paymentStatusKind} />
+            {isPaid && (
+              <SalesInvoicePresentationPanel
+                receipt={receipt}
+                status={receiptStatus}
+                message={receiptMessage}
+                correlationId={receiptCorrelationId}
+                onRefresh={() => {
+                  if (paymentAttemptId) {
+                    setReceiptStatus("checking");
+                    void retrieveReceiptPresentation(paymentAttemptId, returnCorrelationId ?? undefined)
+                      .then((response) => {
+                        setReceipt(response);
+                        setReceiptStatus("available");
+                        setReceiptMessage("");
+                        setReceiptCorrelationId(response.correlationId);
+                      })
+                      .catch((apiError) => {
+                        if (apiError instanceof ReceiptPresentationError) {
+                          setReceiptStatus(apiError.retryable ? "pending" : "error");
+                          setReceiptMessage(apiError.message);
+                          setReceiptCorrelationId(apiError.correlationId ?? returnCorrelationId ?? "");
+                          return;
+                        }
+
+                        setReceiptStatus("error");
+                        setReceiptMessage("Sales Invoice retrieval is temporarily unavailable. Please try again shortly.");
+                        setReceiptCorrelationId(returnCorrelationId ?? "");
+                      });
+                  }
+                }}
+                canRefresh={Boolean(paymentAttemptId)}
+              />
+            )}
             <ParkingSessionSummaryPanel result={summary} />
           </>
         )}
@@ -696,12 +802,12 @@ function PaymentStatusPanel({
           <img src="/assets/illustrations/payment-success.svg" alt="" aria-hidden="true" />
           <div>
             <h2>Payment confirmed</h2>
-            <p>Receipt confirmation for {displayValue(summary.ticketReference ?? summary.plateNumber)}.</p>
+            <p>Payment is recorded for {displayValue(summary.ticketReference ?? summary.plateNumber)}.</p>
           </div>
         </div>
-        <section className="receipt-panel" aria-labelledby="receipt-heading">
-          <p className="eyebrow">Receipt confirmation</p>
-          <h2 id="receipt-heading">Payment receipt</h2>
+        <section className="payment-confirmation-panel" aria-labelledby="payment-confirmation-heading">
+          <p className="eyebrow">Payment confirmation</p>
+          <h2 id="payment-confirmation-heading">Payment recorded</h2>
           <dl>
             <div>
               <dt>Amount Paid</dt>
@@ -739,6 +845,102 @@ function PaymentStatusPanel({
         <p>{copy.body}</p>
       </div>
     </div>
+  );
+}
+
+function SalesInvoicePresentationPanel({
+  receipt,
+  status,
+  message,
+  correlationId,
+  onRefresh,
+  canRefresh
+}: {
+  receipt: WebPayReceiptPresentationResponse | null;
+  status: "idle" | "checking" | "available" | "pending" | "error";
+  message: string;
+  correlationId: string;
+  onRefresh: () => void;
+  canRefresh: boolean;
+}) {
+  const presentation = receipt?.authoritativePresentation?.presentation ?? null;
+  const sections = presentation?.sections?.filter((section) => (section.rows?.length ?? 0) > 0) ?? [];
+
+  return (
+    <section className="sales-invoice-panel" aria-labelledby="sales-invoice-heading">
+      <p className="eyebrow">Sales Invoice</p>
+      <h2 id="sales-invoice-heading">{presentation?.documentTitle ?? "Sales Invoice"}</h2>
+      <p className="invoice-source">
+        This presentation is retrieved from the POS Server-owned fiscal document record through Central PMS.
+      </p>
+
+      {status === "checking" && <p role="status">Retrieving Sales Invoice</p>}
+
+      {status === "pending" && (
+        <div className="invoice-status is-pending" role="status">
+          <strong>Fiscal document recorded status is pending</strong>
+          <span>{message || "The Sales Invoice is still being prepared."}</span>
+          {correlationId && <small>Support reference: {correlationId}</small>}
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="invoice-status is-error" role="alert">
+          <strong>Sales Invoice unavailable</strong>
+          <span>{message || "Sales Invoice retrieval is temporarily unavailable. Please try again shortly."}</span>
+          {correlationId && <small>Support reference: {correlationId}</small>}
+        </div>
+      )}
+
+      {status === "available" && receipt && (
+        <>
+          <dl className="invoice-metadata">
+            <div>
+              <dt>Fiscal Document Number</dt>
+              <dd>{displayValue(receipt.fiscalDocumentNumber)}</dd>
+            </div>
+            <div>
+              <dt>Fiscal Document Status</dt>
+              <dd>{displayValue(receipt.fiscalDocumentStatus)}</dd>
+            </div>
+            <div>
+              <dt>Presentation Version</dt>
+              <dd>{displayValue(receipt.presentationVersion)}</dd>
+            </div>
+            <div>
+              <dt>Recorded At</dt>
+              <dd>{formatDateTime(receipt.updatedAt)}</dd>
+            </div>
+          </dl>
+
+          {sections.length > 0 ? (
+            <div className="invoice-sections">
+              {sections.map((section, index) => (
+                <section className="invoice-section" key={section.key ?? section.name ?? section.title ?? index}>
+                  <h3>{section.title ?? section.name ?? `Section ${index + 1}`}</h3>
+                  <dl>
+                    {section.rows?.map((row, rowIndex) => (
+                      <div key={row.key ?? row.label ?? rowIndex}>
+                        <dt>{row.label ?? row.key ?? `Line ${rowIndex + 1}`}</dt>
+                        <dd>{displayValue(row.displayValue ?? row.value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p className="invoice-status">The Sales Invoice presentation was retrieved, but no display sections were supplied.</p>
+          )}
+        </>
+      )}
+
+      {canRefresh && status !== "checking" && (
+        <button type="button" className="secondary-button" onClick={onRefresh}>
+          Retrieve Sales Invoice
+        </button>
+      )}
+    </section>
   );
 }
 
@@ -1116,7 +1318,11 @@ function formatAdjustment(amountMinorUnits?: number | null, currency?: string | 
   return `-${formatCurrencyAmount(amount, currency)}`;
 }
 
-function displayValue(value?: string | null): string {
+function displayValue(value?: string | number | null): string {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value.toString() : "Not available";
+  }
+
   return value?.trim() || "Not available";
 }
 

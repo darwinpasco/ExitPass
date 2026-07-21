@@ -137,6 +137,60 @@ export type ParkingSessionResolveResponse = {
   exitBy?: string | null;
 };
 
+export type SalesInvoicePresentationRow = {
+  key?: string | null;
+  label?: string | null;
+  displayValue?: string | number | null;
+  value?: string | number | null;
+  posture?: string | null;
+};
+
+export type SalesInvoicePresentationSection = {
+  key?: string | null;
+  name?: string | null;
+  title?: string | null;
+  rows?: SalesInvoicePresentationRow[] | null;
+};
+
+export type SalesInvoicePresentationDocument = {
+  documentTitle?: string | null;
+  renderFormat?: string | null;
+  presentationVersion?: string | null;
+  templateVersion?: string | null;
+  sections?: SalesInvoicePresentationSection[] | null;
+};
+
+export type SalesInvoiceAuthoritativePresentation = {
+  presentation?: SalesInvoicePresentationDocument | null;
+  presentationVersion?: string | null;
+  templateVersion?: string | null;
+  contentType?: string | null;
+  fiscalDocumentId?: string | null;
+  fiscalDocumentNumber?: string | null;
+  [key: string]: unknown;
+};
+
+export type WebPayReceiptPresentationResponse = {
+  paymentAttemptId: string;
+  paymentConfirmationId: string;
+  fiscalIssuanceReferenceId: string;
+  fiscalIssuanceState: string;
+  posFiscalDocumentId: string;
+  fiscalDocumentNumber?: string | null;
+  fiscalDocumentStatus?: string | null;
+  receiptAvailabilityState: string;
+  presentationVersion?: string | null;
+  templateVersion?: string | null;
+  contentType?: string | null;
+  authoritativePresentation: SalesInvoiceAuthoritativePresentation;
+  voidStatus?: string | null;
+  voidReasonCode?: string | null;
+  voidedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  correlationId: string;
+};
+
 export type ApiError = {
   errorCode?: string;
   message?: string;

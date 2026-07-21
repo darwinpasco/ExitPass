@@ -5,11 +5,13 @@ import type {
   ParkingSessionResolveResponse,
   PaymentIntentRequest,
   PaymentIntentResponse,
+  WebPayReceiptPresentationResponse,
   WebPayHandoff
 } from "./types";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
+const receiptPresentationPathPrefix = "/v1/webpay/payment-attempts";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 const refreshRequiredErrorCode = "PAYABLE_BASIS_REFRESH_REQUIRED";
 
@@ -243,6 +245,41 @@ export async function retrievePaymentStatus(
   return resolveParkingSession(request, fetchImpl);
 }
 
+export async function retrieveReceiptPresentation(
+  paymentAttemptId: string,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<WebPayReceiptPresentationResponse> {
+  const normalizedPaymentAttemptId = paymentAttemptId.trim();
+  if (!normalizedPaymentAttemptId) {
+    throw new Error("Payment reference is missing.");
+  }
+
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+  const response = await fetchImpl(
+    `${getApiBaseUrl()}${receiptPresentationPathPrefix}/${encodeURIComponent(normalizedPaymentAttemptId)}/receipt-presentation`,
+    {
+      method: "GET",
+      headers: {
+        "X-Correlation-Id": requestCorrelationId
+      }
+    }
+  );
+
+  const payload = (await response.json().catch(() => ({}))) as WebPayReceiptPresentationResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new ReceiptPresentationError(
+      error.errorCode,
+      toReceiptPresentationMessage(error.errorCode, error.message),
+      Boolean(error.retryable),
+      error.correlationId
+    );
+  }
+
+  return payload as WebPayReceiptPresentationResponse;
+}
+
 export async function createPaymentIntent(
   request: PaymentIntentRequest,
   fetchImpl: typeof fetch = fetch,
@@ -344,6 +381,40 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
       return "Payment has already been initiated for this payable amount.";
     default:
       return message?.trim() || "Payment intent creation failed. Please try again.";
+  }
+}
+
+export class ReceiptPresentationError extends Error {
+  public readonly errorCode?: string;
+  public readonly retryable: boolean;
+  public readonly correlationId?: string;
+
+  public constructor(errorCode: string | undefined, message: string, retryable: boolean, correlationId?: string) {
+    super(message);
+    this.name = "ReceiptPresentationError";
+    this.errorCode = errorCode;
+    this.retryable = retryable;
+    this.correlationId = correlationId;
+  }
+}
+
+export function toReceiptPresentationMessage(errorCode?: string, message?: string): string {
+  switch ((errorCode ?? "").toUpperCase()) {
+    case "WEBPAY_FISCAL_ISSUANCE_NOT_FOUND":
+    case "WEBPAY_RECEIPT_PRESENTATION_NOT_READY":
+    case "POS_SERVER_RECEIPT_PRESENTATION_NOT_READY":
+    case "POS_FISCAL_DOCUMENT_ID_MISSING":
+      return "Your payment is recorded. The Sales Invoice is still being prepared.";
+    case "POS_SERVER_RECEIPT_PRESENTATION_UNAVAILABLE":
+    case "WEBPAY_RECEIPT_PRESENTATION_READ_FAILED":
+      return "Sales Invoice retrieval is temporarily unavailable. Please try again shortly.";
+    case "POS_FISCAL_DOCUMENT_PRESENTATION_INCONSISTENT":
+      return "Sales Invoice retrieval needs support review.";
+    case "INVALID_REQUEST":
+    case "PAYMENT_ATTEMPT_ID_REQUIRED":
+      return "Payment reference is missing. Please check your payment confirmation link.";
+    default:
+      return message?.trim() || "Sales Invoice retrieval is temporarily unavailable. Please try again shortly.";
   }
 }
 

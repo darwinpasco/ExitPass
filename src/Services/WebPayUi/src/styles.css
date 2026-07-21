@@ -424,7 +424,8 @@ input {
   gap: 10px;
 }
 
-.receipt-panel,
+.payment-confirmation-panel,
+.sales-invoice-panel,
 .exit-instruction-panel {
   display: grid;
   gap: 10px;
@@ -434,27 +435,32 @@ input {
   background: #ffffff;
 }
 
-.receipt-panel h2,
+.payment-confirmation-panel h2,
+.sales-invoice-panel h2,
 .exit-instruction-panel h2,
-.receipt-panel p,
+.payment-confirmation-panel p,
+.sales-invoice-panel p,
 .exit-instruction-panel p {
   margin: 0;
 }
 
-.receipt-panel h2,
+.payment-confirmation-panel h2,
+.sales-invoice-panel h2,
 .exit-instruction-panel h2 {
   color: #0b1f3a;
   font-size: 20px;
   line-height: 1.2;
 }
 
-.receipt-panel dl {
+.payment-confirmation-panel dl,
+.sales-invoice-panel dl {
   display: grid;
   gap: 8px;
   margin: 0;
 }
 
-.receipt-panel dl div {
+.payment-confirmation-panel dl div,
+.sales-invoice-panel dl div {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -462,16 +468,96 @@ input {
   padding-bottom: 8px;
 }
 
-.receipt-panel dt {
+.payment-confirmation-panel dt,
+.sales-invoice-panel dt {
   color: #667085;
 }
 
-.receipt-panel dd {
+.payment-confirmation-panel dd,
+.sales-invoice-panel dd {
   margin: 0;
   color: #101828;
   font-weight: 700;
   text-align: right;
   overflow-wrap: anywhere;
+}
+
+.sales-invoice-panel {
+  border-color: #abefc6;
+  background: #f6fef9;
+}
+
+.invoice-source {
+  color: #344054;
+  line-height: 1.45;
+}
+
+.invoice-metadata {
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.invoice-sections {
+  display: grid;
+  gap: 10px;
+}
+
+.invoice-section {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.invoice-section h3 {
+  margin: 0;
+  color: #0b1f3a;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.invoice-status {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 10px;
+  color: #344054;
+  background: #ffffff;
+}
+
+.invoice-status.is-pending {
+  border-color: #fedf89;
+  background: #fffbeb;
+}
+
+.invoice-status.is-error {
+  border-color: #fecdca;
+  background: #fff1f3;
+}
+
+.invoice-status small {
+  overflow-wrap: anywhere;
+}
+
+.secondary-button {
+  min-height: 44px;
+  border: 1px solid #13a76b;
+  border-radius: 999px;
+  padding: 10px 16px;
+  color: #027a48;
+  font-weight: 800;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.secondary-button:focus-visible {
+  outline: 3px solid rgba(19, 167, 107, 0.28);
+  outline-offset: 2px;
 }
 
 .exit-instruction-panel {
