@@ -194,12 +194,14 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceRepository
             }
 
             var captureStatus = reader.GetString(reader.GetOrdinal("evidence_capture_status"));
+            var storageReference = GetNullableString(reader, "evidence_storage_ref");
             items.Add(new OperatorConsoleStatutoryDiscountEvidenceMetadataResult(
                 reader.GetGuid(reader.GetOrdinal("discount_evidence_reference_id")),
                 draftId,
                 reader.GetString(reader.GetOrdinal("evidence_type")),
-                CaptureMethodFromStorageReference(GetNullableString(reader, "evidence_storage_ref")),
-                GetNullableString(reader, "evidence_storage_ref"),
+                CaptureMethodFromStorageReference(storageReference),
+                storageReference,
+                MaskedReferenceFromStorageReference(storageReference),
                 GetNullableGuid(reader, "captured_by_user_id"),
                 reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("captured_at")),
                 reader.GetString(reader.GetOrdinal("redaction_status")),
@@ -475,6 +477,17 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceRepository
         }
 
         return "OPERATOR_CONFIRMED";
+    }
+
+    private static string? MaskedReferenceFromStorageReference(string? storageReference)
+    {
+        if (storageReference?.StartsWith("manual-reference:", StringComparison.OrdinalIgnoreCase) != true)
+        {
+            return null;
+        }
+
+        var value = storageReference["manual-reference:".Length..].Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static string? GetNullableString(NpgsqlDataReader reader, string columnName)

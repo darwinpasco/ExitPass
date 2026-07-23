@@ -61,8 +61,14 @@ public sealed record OperatorConsoleStatutoryDiscountDraftResult(
 public sealed record OperatorConsoleStatutoryDiscountDraftPersistenceCommand(
     Guid ParkingSessionId,
     string EntitlementType,
+    string IdDocumentType,
+    string IssuingAuthority,
+    DateOnly? ExpiryDate,
+    string MaskedIdReference,
     bool EvidenceRequired,
     string? ReasonCode,
+    bool OperatorAttestation,
+    string? AttestationNotes,
     Guid RequestedByUserId,
     Guid CorrelationId,
     OperatorConsoleResolvedStatutoryDiscountPolicy Policy);

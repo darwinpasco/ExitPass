@@ -15,7 +15,8 @@ public sealed record OperatorConsoleStatutoryDiscountDecisionCommand(
     string? DecisionNotes,
     bool ReviewerAttestation,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    bool CanonicalDecisionAlreadyHandled = false);
 
 /// <summary>
 /// Result for an access-gated Operator Console statutory discount validation decision.
@@ -39,7 +40,8 @@ public sealed record OperatorConsoleStatutoryDiscountDecisionResult(
     bool DecisionChanged,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? StatutoryDiscountDecisionCommandId = null);
 
 /// <summary>
 /// Persistence command for a statutory discount validation decision state transition.
@@ -70,6 +72,51 @@ public sealed record OperatorConsoleStatutoryDiscountDecisionPersistenceResult(
     bool DecisionChanged,
     string? IneligibilityReason,
     string? ErrorCode);
+
+/// <summary>
+/// Safe stored facts used to construct the canonical staged decision-v2 command for a legacy Operator Console draft.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountDecisionCanonicalFacts(
+    Guid DraftId,
+    Guid ParkingSessionId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string? TicketReference,
+    string? PlateNumber,
+    string EntitlementType,
+    string? ValidationStatus,
+    Guid? StatutoryDiscountDecisionCommandId,
+    string? IdDocumentType,
+    string? IssuingAuthority,
+    DateOnly? ExpiryDate,
+    string? MaskedIdReference,
+    bool? RequesterAttestation,
+    string? AttestationNotes,
+    bool EvidenceRequired,
+    bool EvidenceCaptured,
+    Guid? RequestedByUserId,
+    string? ReasonCode,
+    Guid? AppliedPolicyReferenceId,
+    string? PolicyResolutionBasis,
+    bool LocalOrdinanceApplied,
+    Guid? OriginalTariffSnapshotId,
+    long? OriginalAmountMinorUnits,
+    long? VatExclusiveAmountMinorUnits,
+    long? VatAmountMinorUnits,
+    long? StatutoryDiscountAmountMinorUnits,
+    long? FinalPayableAmountMinorUnits,
+    string? CurrencyCode,
+    IReadOnlyList<OperatorConsoleStatutoryDiscountDecisionEvidenceFact> EvidenceReferences);
+
+/// <summary>
+/// Safe evidence metadata included in canonical decision-v2 semantics.
+/// </summary>
+public sealed record OperatorConsoleStatutoryDiscountDecisionEvidenceFact(
+    string EvidenceType,
+    string CaptureMethod,
+    string? StorageReference,
+    string? ReferenceNumberMasked,
+    string? VerificationStatus);
 
 /// <summary>
 /// Raised when a statutory discount validation already has a conflicting terminal decision.

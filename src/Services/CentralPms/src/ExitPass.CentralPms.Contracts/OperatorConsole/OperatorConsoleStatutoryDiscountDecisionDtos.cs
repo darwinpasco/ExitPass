@@ -38,4 +38,5 @@ public sealed record OperatorConsoleStatutoryDiscountDecisionResponse(
     bool DecisionChanged,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? StatutoryDiscountDecisionCommandId = null);
