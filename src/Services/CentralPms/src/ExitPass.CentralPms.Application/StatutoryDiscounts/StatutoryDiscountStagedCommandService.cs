@@ -217,6 +217,11 @@ public sealed class StatutoryDiscountStagedCommandService : IStatutoryDiscountSt
         CancellationToken cancellationToken) =>
         _repository.GetApplicationAsync(statutoryDiscountPayableBasisApplicationCommandId, cancellationToken);
 
+    public Task<StatutoryDiscountPayableBasisApplicationV1Record?> GetApplicationByDecisionAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        CancellationToken cancellationToken) =>
+        _repository.GetApplicationByDecisionAsync(statutoryDiscountDecisionCommandId, cancellationToken);
+
     public async Task<StatutoryDiscountPayableBasisApplicationV1Record> MarkApplicationProcessingAsync(
         Guid statutoryDiscountPayableBasisApplicationCommandId,
         Guid correlationId,

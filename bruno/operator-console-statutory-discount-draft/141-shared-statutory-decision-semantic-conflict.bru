@@ -52,7 +52,7 @@ body:json {
 tests {
   test("returns deterministic semantic conflict", function () {
     expect(res.status).to.equal(409);
-    expect(res.body.errorCode).to.equal("IDEMPOTENCY_SEMANTIC_CONFLICT");
+    expect(["IDEMPOTENCY_SEMANTIC_CONFLICT", "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT"]).to.include(res.body.errorCode);
     expect(res.body.clientResultStatus).to.equal("SEMANTIC_CONFLICT");
     expect(res.body.retryable).to.equal(false);
   });

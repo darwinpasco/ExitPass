@@ -59,7 +59,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: sourceChannel, applyPayableBasis: false), CancellationToken.None);
 
         result.SourceChannel.Should().Be(sourceChannel);
-        fixture.Repository.LastBeginCommand!.Command.SourceChannel.Should().Be(sourceChannel);
+        fixture.Repository.LastDecisionCommand!.SourceChannel.Should().Be(sourceChannel);
         await fixture.DraftService.Received(1).DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
     }
 
@@ -141,7 +141,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var action = () => fixture.Sut.SubmitAsync(command with { EntitlementType = "PWD" }, CancellationToken.None);
 
         await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
-            .Where(ex => ex.ErrorCode == "IDEMPOTENCY_SEMANTIC_CONFLICT");
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT");
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             CancellationToken.None);
 
         await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
-            .Where(ex => ex.ErrorCode == "IDEMPOTENCY_SEMANTIC_CONFLICT");
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT");
     }
 
     [Fact]
@@ -192,10 +192,11 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
 
         result.StatutoryDiscountDecisionCommandId.Should().Be(CommandId);
-        result.DecisionStatus.Should().Be("PROCESSING");
-        result.ResultClassification.Should().Be("RECOVERABLE_USING_ORIGINAL_KEY");
-        await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
-        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+        result.DecisionStatus.Should().Be("APPLIED_PAYABLE_BASIS");
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.Completed);
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        await fixture.DraftService.Received(1).DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -216,8 +217,11 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             fixture.Sut.SubmitAsync(webPayCommand, CancellationToken.None));
 
         results.Select(result => result.StatutoryDiscountDecisionCommandId).Distinct().Should().ContainSingle();
-        results.Should().Contain(result => result.ResultClassification == "ACCEPTED");
-        results.Should().Contain(result => result.ResultClassification == "IDEMPOTENT_REPLAY");
+        results.Should().Contain(result => result.ResultClassification == StatutoryDiscountOneShotResultClassifications.DecisionAndApplicationCompleted);
+        results.Should().Contain(result =>
+            result.ResultClassification == StatutoryDiscountOneShotResultClassifications.IdempotentReplay ||
+            (result.ResultClassification == StatutoryDiscountOneShotResultClassifications.DecisionCompletedApplicationProcessing &&
+             !result.OneShotComplete));
         await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
@@ -255,6 +259,66 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenApplyPayableBasisFalse_CompletesDecisionWithoutApplication()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Sut.SubmitAsync(Command(applyPayableBasis: false), CancellationToken.None);
+
+        result.DecisionStatus.Should().Be("APPROVED");
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.Completed);
+        result.ApplicationRequested.Should().BeFalse();
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        result.StatutoryDiscountPayableBasisApplicationCommandId.Should().BeNull();
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenDecisionOnlyReplayLaterRequestsApplication_CreatesOnlyMissingApplicationStage()
+    {
+        var fixture = CreateFixture();
+        var command = Command(applyPayableBasis: false);
+        var decisionOnly = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        var applied = await fixture.Sut.SubmitAsync(
+            command with
+            {
+                ApplyPayableBasis = true,
+                RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000208"),
+                IdempotencyKey = "statutory-discount-idempotency-key-apply-later"
+            },
+            CancellationToken.None);
+
+        applied.StatutoryDiscountDecisionCommandId.Should().Be(decisionOnly.StatutoryDiscountDecisionCommandId);
+        applied.DecisionStatus.Should().Be("APPLIED_PAYABLE_BASIS");
+        applied.ApplicationRequested.Should().BeTrue();
+        applied.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        await fixture.DraftService.Received(1).DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenDecisionIsRejected_DoesNotCreateApplication()
+    {
+        var fixture = CreateFixture();
+        fixture.DecisionService.DecideAsync(Arg.Any<OperatorConsoleStatutoryDiscountDecisionCommand>(), Arg.Any<CancellationToken>())
+            .Returns(RejectedDecisionResult());
+
+        var result = await fixture.Sut.SubmitAsync(
+            Command(applyPayableBasis: false) with
+            {
+                Decision = "REJECT",
+                DecisionReasonCode = "INELIGIBLE"
+            },
+            CancellationToken.None);
+
+        result.DecisionStatus.Should().Be("REJECTED");
+        result.ApplicationRequested.Should().BeFalse();
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task GetAsync_WhenReferenceExists_ReturnsCanonicalReadback()
     {
         var fixture = CreateFixture();
@@ -266,6 +330,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         readback!.StatutoryDiscountDecisionCommandId.Should().Be(CommandId);
         readback.StatutoryDiscountValidationId.Should().Be(ValidationId);
         readback.SourceChannel.Should().Be("OPERATOR_CONSOLE");
+        readback.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        readback.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
     }
 
     [Fact]
@@ -341,7 +407,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
     private static TestFixture CreateFixture()
     {
-        var repository = new InMemoryRepository();
+        var repository = new InMemoryStagedCommandService();
+        var historicalRepository = Substitute.For<IStatutoryDiscountDecisionFacadeRepository>();
         var draftService = Substitute.For<IOperatorConsoleStatutoryDiscountDraftService>();
         draftService.DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>())
             .Returns(DraftResult());
@@ -367,12 +434,12 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         var sut = new StatutoryDiscountDecisionFacadeService(
             repository,
+            historicalRepository,
             draftService,
             evidenceService,
             decisionService,
             applyService,
-            readService,
-            clock);
+            readService);
 
         return new TestFixture(repository, draftService, evidenceService, decisionService, applyService, sut);
     }
@@ -487,6 +554,28 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             null,
             CorrelationId);
 
+    private static OperatorConsoleStatutoryDiscountDecisionResult RejectedDecisionResult() =>
+        new(
+            Guid.Parse("6d000000-0000-0000-0000-000000000041"),
+            true,
+            "ALLOWED",
+            [],
+            true,
+            true,
+            true,
+            ValidationId,
+            ParkingSessionId,
+            "SENIOR_CITIZEN",
+            "REQUESTED",
+            "REJECTED",
+            "REJECT",
+            "INELIGIBLE",
+            false,
+            true,
+            null,
+            null,
+            CorrelationId);
+
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisResult ApplyResult() =>
         new(
             Guid.Parse("6d000000-0000-0000-0000-000000000050"),
@@ -573,36 +662,70 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             []);
 
     private sealed record TestFixture(
-        InMemoryRepository Repository,
+        InMemoryStagedCommandService Repository,
         IOperatorConsoleStatutoryDiscountDraftService DraftService,
         IOperatorConsoleStatutoryDiscountEvidenceService EvidenceService,
         IOperatorConsoleStatutoryDiscountDecisionService DecisionService,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService ApplyService,
         StatutoryDiscountDecisionFacadeService Sut);
 
-    private sealed class InMemoryRepository : IStatutoryDiscountDecisionFacadeRepository
+    private sealed class InMemoryStagedCommandService : IStatutoryDiscountStagedCommandService
     {
-        private StatutoryDiscountDecisionCommandRecord? _record;
+        private StatutoryDiscountDecisionV2Record? _decision;
+        private StatutoryDiscountPayableBasisApplicationV1Record? _application;
         private readonly SemaphoreSlim _lock = new(1, 1);
 
-        public StatutoryDiscountDecisionRepositoryCommand? LastBeginCommand { get; private set; }
+        public StatutoryDiscountDecisionV2Command? LastDecisionCommand { get; private set; }
 
         public TimeSpan DelayInsideLock { get; set; }
 
-        public async Task<T> ExecuteWithCommandLockAsync<T>(
-            StatutoryDiscountDecisionRepositoryCommand command,
-            Func<CancellationToken, Task<T>> operation,
+        public async Task<StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record>> CreateOrResolveDecisionAsync(
+            StatutoryDiscountDecisionV2Command command,
             CancellationToken cancellationToken)
         {
             await _lock.WaitAsync(cancellationToken);
             try
             {
+                LastDecisionCommand = command;
                 if (DelayInsideLock > TimeSpan.Zero)
                 {
                     await Task.Delay(DelayInsideLock, cancellationToken);
                 }
 
-                return await operation(cancellationToken);
+                var hash = StatutoryDiscountDecisionV2SemanticHash.Compute(command);
+                var businessIdentity = StatutoryDiscountDecisionV2SemanticHash.BuildBusinessIdentity(command);
+                if (_decision is not null)
+                {
+                    var conflict = _decision.SemanticHashSourceVersion != StatutoryDiscountDecisionV2SemanticHash.SourceVersion ||
+                        _decision.SemanticRequestHash != hash;
+                    var recoverable = _decision.IdempotencyKey == command.IdempotencyKey &&
+                        _decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Received
+                            or StatutoryDiscountDecisionV2CommandStates.Processing;
+                    return new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record>(
+                        conflict
+                            ? StatutoryDiscountDecisionClientResultStatuses.SemanticConflict
+                            : recoverable
+                                ? StatutoryDiscountDecisionClientResultStatuses.RecoverableUsingOriginalKey
+                                : StatutoryDiscountDecisionClientResultStatuses.IdempotentReplay,
+                        Existing: true,
+                        SemanticConflict: conflict,
+                        Retryable: recoverable,
+                        recoverable
+                            ? StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey
+                            : StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult,
+                        _decision,
+                        conflict ? "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT" : null);
+                }
+
+                _decision = CreateDecisionRecord(command, businessIdentity, hash);
+                return new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record>(
+                    StatutoryDiscountDecisionClientResultStatuses.CreatedDurablyCompleted,
+                    Existing: false,
+                    SemanticConflict: false,
+                    Retryable: false,
+                    StatutoryDiscountDecisionRecoveryClassifications.None,
+                    _decision,
+                    SafeErrorCode: null);
             }
             finally
             {
@@ -612,84 +735,384 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         public void SeedProcessing(StatutoryDiscountDecisionCommand command)
         {
-            var normalized = command with
+            var decisionCommand = ToDecisionV2(command, DeriveTestStageKey(command.IdempotencyKey));
+            _decision = CreateDecisionRecord(
+                decisionCommand,
+                StatutoryDiscountDecisionV2SemanticHash.BuildBusinessIdentity(decisionCommand),
+                StatutoryDiscountDecisionV2SemanticHash.Compute(decisionCommand)) with
             {
-                SourceChannel = StatutoryDiscountSourceChannels.Normalize(command.SourceChannel),
-                EntitlementType = command.EntitlementType.Trim().ToUpperInvariant()
+                CommandStatus = StatutoryDiscountDecisionV2CommandStates.Processing,
+                ProcessingStartedAt = Now
             };
-            _record = CreateRecord(new StatutoryDiscountDecisionRepositoryCommand(
-                normalized,
-                StatutoryDiscountDecisionSemanticHash.BuildIdempotencyScope(normalized),
-                StatutoryDiscountDecisionSemanticHash.Compute(normalized),
-                StatutoryDiscountDecisionSemanticHash.SourceVersion,
-                Now));
         }
 
-        public Task<StatutoryDiscountDecisionBeginResult> BeginAsync(
-            StatutoryDiscountDecisionRepositoryCommand command,
-            CancellationToken cancellationToken)
-        {
-            LastBeginCommand = command;
-            if (_record is not null)
-            {
-                var conflict = !string.Equals(_record.SemanticRequestHash, command.SemanticRequestHash, StringComparison.Ordinal);
-                return Task.FromResult(new StatutoryDiscountDecisionBeginResult(Existing: true, conflict, _record));
-            }
-
-            _record = CreateRecord(command);
-
-            return Task.FromResult(new StatutoryDiscountDecisionBeginResult(Existing: false, SemanticConflict: false, _record));
-        }
-
-        public Task<StatutoryDiscountDecisionCommandRecord> CompleteAsync(
-            StatutoryDiscountDecisionCommandRecord record,
-            CancellationToken cancellationToken)
-        {
-            _record = record;
-            return Task.FromResult(record);
-        }
-
-        public Task<StatutoryDiscountDecisionCommandRecord?> GetAsync(
+        public Task<StatutoryDiscountDecisionV2Record?> GetDecisionAsync(
             Guid statutoryDiscountDecisionCommandId,
-            Guid correlationId,
             CancellationToken cancellationToken) =>
-            Task.FromResult(_record?.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId
-                ? _record with { CorrelationId = correlationId }
+            Task.FromResult(_decision?.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId
+                ? _decision
                 : null);
 
-        private static StatutoryDiscountDecisionCommandRecord CreateRecord(
-            StatutoryDiscountDecisionRepositoryCommand command) =>
+        public Task<StatutoryDiscountDecisionV2Record> MarkDecisionProcessingAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _decision = _decision! with
+            {
+                CommandStatus = StatutoryDiscountDecisionV2CommandStates.Processing,
+                Retryable = true,
+                RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey,
+                CorrelationId = correlationId,
+                ProcessingStartedAt = _decision.ProcessingStartedAt ?? Now
+            };
+            return Task.FromResult(_decision);
+        }
+
+        public Task<StatutoryDiscountDecisionV2Record> CompleteDecisionApprovedAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid? statutoryDiscountValidationId,
+            Guid? originalTariffSnapshotId,
+            Guid? appliedPolicyReferenceId,
+            Guid? fallbackPolicyReferenceId,
+            string? policyResolutionBasis,
+            bool localOrdinanceApplied,
+            StatutoryDiscountDecisionV2TariffFacts? tariffFacts,
+            string? reasonCode,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _decision = _decision! with
+            {
+                CommandStatus = StatutoryDiscountDecisionV2CommandStates.Completed,
+                DecisionResultStatus = StatutoryDiscountDecisionV2ResultStates.Approved,
+                ResultClassification = StatutoryDiscountDecisionClientResultStatuses.Approved,
+                Retryable = false,
+                RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult,
+                StatutoryDiscountValidationId = statutoryDiscountValidationId,
+                OriginalTariffSnapshotId = originalTariffSnapshotId,
+                AppliedPolicyReferenceId = appliedPolicyReferenceId,
+                PolicyResolutionBasis = policyResolutionBasis,
+                LocalOrdinanceApplied = localOrdinanceApplied,
+                GrossAmountMinorUnits = tariffFacts?.GrossAmountMinorUnits,
+                VatExclusiveAmountMinorUnits = tariffFacts?.VatExclusiveAmountMinorUnits,
+                VatAmountMinorUnits = tariffFacts?.VatAmountMinorUnits,
+                StatutoryDiscountAmountMinorUnits = tariffFacts?.StatutoryDiscountAmountMinorUnits,
+                NetPayableAmountMinorUnits = tariffFacts?.NetPayableAmountMinorUnits,
+                Currency = tariffFacts?.Currency,
+                ReasonCode = reasonCode,
+                CorrelationId = correlationId,
+                DecidedAt = Now,
+                CompletedAt = Now
+            };
+            return Task.FromResult(_decision);
+        }
+
+        public Task<StatutoryDiscountDecisionV2Record> CompleteDecisionRejectedAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            string? reasonCode,
+            string? safeErrorCode,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _decision = _decision! with
+            {
+                CommandStatus = StatutoryDiscountDecisionV2CommandStates.Completed,
+                DecisionResultStatus = StatutoryDiscountDecisionV2ResultStates.Rejected,
+                ResultClassification = StatutoryDiscountDecisionClientResultStatuses.RejectedOrNonApproved,
+                Retryable = false,
+                RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult,
+                SafeErrorCode = safeErrorCode,
+                ReasonCode = reasonCode,
+                CorrelationId = correlationId,
+                DecidedAt = Now,
+                CompletedAt = Now
+            };
+            return Task.FromResult(_decision);
+        }
+
+        public Task<StatutoryDiscountDecisionV2Record> RecordDecisionFailureAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            bool retryable,
+            string safeErrorCode,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _decision = _decision! with
+            {
+                CommandStatus = retryable
+                    ? StatutoryDiscountDecisionV2CommandStates.FailedRetryable
+                    : StatutoryDiscountDecisionV2CommandStates.FailedNonRetryable,
+                Retryable = retryable,
+                SafeErrorCode = safeErrorCode,
+                CorrelationId = correlationId,
+                FailedAt = Now
+            };
+            return Task.FromResult(_decision);
+        }
+
+        public async Task<StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>> CreateOrResolveApplicationAsync(
+            StatutoryDiscountPayableBasisApplicationV1Command command,
+            CancellationToken cancellationToken)
+        {
+            await _lock.WaitAsync(cancellationToken);
+            try
+            {
+                var hash = StatutoryDiscountPayableBasisApplicationV1SemanticHash.Compute(command);
+                if (_application is not null)
+                {
+                    var conflict = _application.SemanticRequestHash != hash;
+                    var recoverable = _application.IdempotencyKey == command.IdempotencyKey &&
+                        _application.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Received
+                            or StatutoryDiscountPayableBasisApplicationV1CommandStates.Processing;
+                    return new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>(
+                        conflict
+                            ? StatutoryDiscountPayableBasisApplicationV1ResultClassifications.SemanticConflict
+                            : recoverable
+                                ? StatutoryDiscountPayableBasisApplicationV1ResultClassifications.InProgress
+                                : StatutoryDiscountPayableBasisApplicationV1ResultClassifications.IdempotentReplay,
+                        Existing: true,
+                        SemanticConflict: conflict,
+                        Retryable: recoverable,
+                        recoverable
+                            ? StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey
+                            : StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult,
+                        _application,
+                        conflict ? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT" : null);
+                }
+
+                _application = CreateApplicationRecord(command, hash);
+                return new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>(
+                    StatutoryDiscountPayableBasisApplicationV1ResultClassifications.InProgress,
+                    Existing: false,
+                    SemanticConflict: false,
+                    Retryable: false,
+                    StatutoryDiscountDecisionRecoveryClassifications.None,
+                    _application,
+                    SafeErrorCode: null);
+            }
+            finally
+            {
+                _lock.Release();
+            }
+        }
+
+        public Task<StatutoryDiscountPayableBasisApplicationV1Record?> GetApplicationAsync(
+            Guid statutoryDiscountPayableBasisApplicationCommandId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_application?.StatutoryDiscountPayableBasisApplicationCommandId == statutoryDiscountPayableBasisApplicationCommandId
+                ? _application
+                : null);
+
+        public Task<StatutoryDiscountPayableBasisApplicationV1Record?> GetApplicationByDecisionAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_application?.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId
+                ? _application
+                : null);
+
+        public Task<StatutoryDiscountPayableBasisApplicationV1Record> MarkApplicationProcessingAsync(
+            Guid statutoryDiscountPayableBasisApplicationCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _application = _application! with
+            {
+                CommandStatus = StatutoryDiscountPayableBasisApplicationV1CommandStates.Processing,
+                ResultClassification = StatutoryDiscountPayableBasisApplicationV1ResultClassifications.InProgress,
+                Retryable = true,
+                RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey,
+                CorrelationId = correlationId,
+                ProcessingStartedAt = _application.ProcessingStartedAt ?? Now
+            };
+            return Task.FromResult(_application);
+        }
+
+        public Task<StatutoryDiscountPayableBasisApplicationV1Record> CompleteApplicationAppliedAsync(
+            Guid statutoryDiscountPayableBasisApplicationCommandId,
+            Guid? statutoryDiscountPayableBasisApplicationId,
+            Guid? appliedTariffSnapshotId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _application = _application! with
+            {
+                CommandStatus = StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied,
+                ResultClassification = StatutoryDiscountPayableBasisApplicationV1ResultClassifications.Applied,
+                Retryable = false,
+                RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult,
+                StatutoryDiscountPayableBasisApplicationId = statutoryDiscountPayableBasisApplicationId,
+                AppliedTariffSnapshotId = appliedTariffSnapshotId,
+                CorrelationId = correlationId,
+                AppliedAt = Now,
+                CompletedAt = Now
+            };
+            return Task.FromResult(_application);
+        }
+
+        public Task<StatutoryDiscountPayableBasisApplicationV1Record> RecordApplicationFailureAsync(
+            Guid statutoryDiscountPayableBasisApplicationCommandId,
+            bool retryable,
+            string safeErrorCode,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _application = _application! with
+            {
+                CommandStatus = retryable
+                    ? StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedRetryable
+                    : StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedNonRetryable,
+                ResultClassification = retryable
+                    ? StatutoryDiscountPayableBasisApplicationV1ResultClassifications.RetryableFailure
+                    : StatutoryDiscountPayableBasisApplicationV1ResultClassifications.NonRetryableFailure,
+                Retryable = retryable,
+                SafeErrorCode = safeErrorCode,
+                CorrelationId = correlationId,
+                FailedAt = Now
+            };
+            return Task.FromResult(_application);
+        }
+
+        private static StatutoryDiscountDecisionV2Record CreateDecisionRecord(
+            StatutoryDiscountDecisionV2Command command,
+            string businessIdentity,
+            string semanticHash) =>
             new(
                 CommandId,
-                command.Command.RequestReference,
-                command.Command.ParkingSessionId,
-                command.Command.SourceChannel,
-                command.Command.EntitlementType,
-                command.Command.IdempotencyKey,
-                "PROCESSING",
+                command.RequestReference,
+                command.ParkingSessionId,
+                command.SourceChannel,
+                command.EntitlementType.Trim().ToUpperInvariant(),
+                businessIdentity,
+                businessIdentity,
+                command.IdempotencyKey,
+                StatutoryDiscountDecisionV2SemanticHash.SourceVersion,
+                semanticHash,
+                StatutoryDiscountDecisionV2CommandStates.Received,
+                StatutoryDiscountDecisionV2ResultStates.NotDecided,
                 "ACCEPTED",
-                command.IdempotencyScope,
-                command.SemanticHashSourceVersion,
-                command.SemanticRequestHash,
-                null,
-                null,
-                command.Command.OriginalTariffSnapshotId,
-                null,
-                null,
-                null,
-                null,
-                false,
-                null,
-                null,
-                null,
-                null,
-                command.Command.EvidenceCaptureRequested,
-                false,
-                null,
-                null,
-                command.Command.CorrelationId,
-                command.RequestedAt,
-                null,
-                null);
+                Retryable: false,
+                StatutoryDiscountDecisionRecoveryClassifications.None,
+                SafeErrorCode: null,
+                StatutoryDiscountValidationId: null,
+                command.OriginalTariffSnapshotId,
+                AppliedPolicyReferenceId: null,
+                FallbackPolicyReferenceId: null,
+                PolicyResolutionBasis: null,
+                LocalOrdinanceApplied: false,
+                GrossAmountMinorUnits: null,
+                VatExclusiveAmountMinorUnits: null,
+                VatAmountMinorUnits: null,
+                StatutoryDiscountAmountMinorUnits: null,
+                NetPayableAmountMinorUnits: null,
+                Currency: null,
+                EvidenceRequired: command.EvidenceReferences.Count > 0,
+                EvidenceRecorded: false,
+                ReasonCode: null,
+                command.CorrelationId,
+                Now,
+                ProcessingStartedAt: null,
+                DecidedAt: null,
+                CompletedAt: null,
+                FailedAt: null,
+                Now);
+
+        private static StatutoryDiscountPayableBasisApplicationV1Record CreateApplicationRecord(
+            StatutoryDiscountPayableBasisApplicationV1Command command,
+            string semanticHash) =>
+            new(
+                Guid.Parse("6d000000-0000-0000-0000-000000000060"),
+                command.RequestReference,
+                command.StatutoryDiscountDecisionCommandId,
+                command.ParkingSessionId,
+                command.EntitlementType,
+                StatutoryDiscountPayableBasisApplicationV1SemanticHash.BuildBusinessIdentity(command),
+                StatutoryDiscountPayableBasisApplicationV1SemanticHash.BuildIdempotencyScope(command),
+                command.IdempotencyKey,
+                StatutoryDiscountPayableBasisApplicationV1SemanticHash.SourceVersion,
+                semanticHash,
+                StatutoryDiscountPayableBasisApplicationV1CommandStates.Received,
+                StatutoryDiscountPayableBasisApplicationV1ResultClassifications.InProgress,
+                Retryable: false,
+                StatutoryDiscountDecisionRecoveryClassifications.None,
+                SafeErrorCode: null,
+                command.StatutoryDiscountValidationId,
+                StatutoryDiscountPayableBasisApplicationId: null,
+                command.OriginalTariffSnapshotId,
+                command.TargetTariffSnapshotId,
+                command.AppliedTariffSnapshotId,
+                command.AppliedPolicyReferenceId,
+                command.PolicyResolutionBasis,
+                command.ApprovedDiscountAmountMinorUnits,
+                command.ApprovedVatExclusiveAmountMinorUnits,
+                command.ApprovedVatAmountMinorUnits,
+                command.ApprovedFinalPayableAmountMinorUnits,
+                command.Currency,
+                command.SourceChannel,
+                command.CorrelationId,
+                Now,
+                ProcessingStartedAt: null,
+                AppliedAt: null,
+                CompletedAt: null,
+                FailedAt: null,
+                Now);
+
+        private static StatutoryDiscountDecisionV2Command ToDecisionV2(
+            StatutoryDiscountDecisionCommand command,
+            string stageIdempotencyKey) =>
+            new(
+                command.RequestReference,
+                command.SourceChannel,
+                command.ParkingSessionId,
+                command.SiteId,
+                command.SiteGroupId,
+                command.TicketReference,
+                command.PlateNumber,
+                command.EntitlementType,
+                new StatutoryDiscountDecisionV2BeneficiaryMetadata(null, command.EntitlementType, null, 1),
+                new StatutoryDiscountDecisionV2IdentityMetadata(
+                    command.IdDocumentType,
+                    command.IssuingAuthority,
+                    command.ExpiryDate,
+                    command.MaskedIdReference,
+                    null),
+                command.EvidenceReferences.Select(evidence => new StatutoryDiscountDecisionV2EvidenceReference(
+                        evidence.EvidenceType,
+                        evidence.CaptureMethod,
+                        evidence.StorageReference,
+                        evidence.ReferenceNumberMasked,
+                        evidence.VerificationStatus,
+                        null,
+                        null))
+                    .ToArray(),
+                new StatutoryDiscountDecisionV2AttestationFacts(
+                    command.RequesterAttestation,
+                    null,
+                    command.ReasonCode,
+                    command.ReviewerAttestation),
+                command.ActorUserId,
+                command.ReviewerUserId,
+                command.OperatorDeviceBindingId,
+                command.OperatorShiftId,
+                new StatutoryDiscountDecisionV2DecisionFacts(
+                    command.Decision ?? StatutoryDiscountDecisionV2ResultStates.NotDecided,
+                    command.DecisionReasonCode,
+                    null),
+                PolicyResolutionReferenceId: null,
+                AppliedPolicyReferenceId: null,
+                FallbackPolicyReferenceId: null,
+                PolicyResolutionBasis: null,
+                LocalOrdinanceApplied: false,
+                command.OriginalTariffSnapshotId,
+                OriginalTariffFacts: null,
+                stageIdempotencyKey,
+                command.CorrelationId);
+
+        private static string DeriveTestStageKey(string idempotencyKey)
+        {
+            var source = $"statutory-discount-one-shot:decision-v2:{ParkingSessionId:N}:{idempotencyKey.Trim()}";
+            var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(source));
+            return $"decision-v2:sha256:{Convert.ToHexString(hash).ToLowerInvariant()}";
+        }
     }
 }

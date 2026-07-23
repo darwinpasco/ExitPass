@@ -53,6 +53,10 @@ public interface IStatutoryDiscountStagedCommandService
         Guid statutoryDiscountPayableBasisApplicationCommandId,
         CancellationToken cancellationToken);
 
+    Task<StatutoryDiscountPayableBasisApplicationV1Record?> GetApplicationByDecisionAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        CancellationToken cancellationToken);
+
     Task<StatutoryDiscountPayableBasisApplicationV1Record> MarkApplicationProcessingAsync(
         Guid statutoryDiscountPayableBasisApplicationCommandId,
         Guid correlationId,
