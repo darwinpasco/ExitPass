@@ -389,6 +389,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionServiceTests
             PolicySnapshot: null,
             TariffSnapshotId,
             PayableBasisApplicationId: null,
+            StatutoryDiscountPayableBasisApplicationCommandId: null,
             PayableBasisApplicationStatus: null,
             AppliedTariffSnapshotId: null,
             OriginalAmountMinorUnits: 10000,

@@ -1061,6 +1061,13 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                 WHERE parking_session_id = @parking_session_id
             );
 
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_commands
+            WHERE parking_session_id = @parking_session_id
+              AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD');
+
             DELETE FROM discounts.statutory_discount_payable_basis_applications
             WHERE parking_session_id = @parking_session_id;
 

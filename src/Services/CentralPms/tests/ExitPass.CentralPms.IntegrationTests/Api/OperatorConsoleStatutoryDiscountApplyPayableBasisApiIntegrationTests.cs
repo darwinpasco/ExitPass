@@ -102,19 +102,23 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         var draft = await CreateDraftAsync(client);
         var decision = await ApproveDraftAsync(client, draft.DraftId!.Value);
         decision.CurrentValidationStatus.Should().Be("APPROVED");
+        decision.StatutoryDiscountDecisionCommandId.Should().NotBeNull();
 
         var applyRequest = ApplyRequest(originalTariffSnapshotId: null);
         using var applyResponse = await client.PostAsJsonAsync(
             ApplyEndpoint(draft.DraftId.Value),
             applyRequest);
+        var applyResponseBody = await applyResponse.Content.ReadAsStringAsync();
 
-        applyResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        applyResponse.StatusCode.Should().Be(HttpStatusCode.OK, applyResponseBody);
         var applied = await applyResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>();
         applied.Should().NotBeNull();
         applied!.AccessAllowed.Should().BeTrue();
         applied.ApplicationAccepted.Should().BeTrue();
         applied.ApplicationPersisted.Should().BeTrue();
         applied.PayableBasisApplicationId.Should().NotBeNull();
+        applied.StatutoryDiscountDecisionCommandId.Should().Be(decision.StatutoryDiscountDecisionCommandId);
+        applied.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
         applied.ApplicationStatus.Should().Be("APPLIED");
         applied.AlreadyApplied.Should().BeFalse();
         applied.StatutoryDiscountValidationId.Should().Be(draft.DraftId.Value);
@@ -149,7 +153,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         application.VatAmountMinorUnits.Should().Be(1339);
         application.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
         application.FinalPayableAmountMinorUnits.Should().Be(8929);
-        application.IdempotencyKey.Should().Be(applyRequest.IdempotencyKey);
+        application.IdempotencyKey.Should().StartWith("operator-console-payable-basis-application-v1:sha256:");
+        var applicationCommand = await ReadApplicationCommandAsync(decision.StatutoryDiscountDecisionCommandId!.Value);
+        applicationCommand.ApplicationCommandId.Should().Be(applied.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+        applicationCommand.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId!.Value);
+        applicationCommand.CommandStatus.Should().Be("APPLIED");
+        applicationCommand.ResultClassification.Should().Be("APPLIED");
+        applicationCommand.IdempotencyKey.Should().StartWith("operator-console-payable-basis-application-v1:sha256:");
+        applicationCommand.SourceChannel.Should().Be("OPERATOR_CONSOLE");
         application.AppliedByUserId.Should().Be(FixtureUserId);
         var computationBasis = await ReadApplicationComputationBasisAsync(draft.DraftId.Value);
         computationBasis.GetProperty("policyContext").GetProperty("policyCode").GetString()
@@ -181,11 +192,14 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         replay.ApplicationPersisted.Should().BeTrue();
         replay.AlreadyApplied.Should().BeTrue();
         replay.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId);
+        replay.StatutoryDiscountDecisionCommandId.Should().Be(decision.StatutoryDiscountDecisionCommandId);
+        replay.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(applied.StatutoryDiscountPayableBasisApplicationCommandId);
         replay.AppliedTariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
         replay.ApplicationStatus.Should().Be("APPLIED");
         replay.PolicySnapshotUsed.Should().BeTrue();
         replay.PolicyCode.Should().Be(applied.PolicyCode);
         (await CountApplicationsAsync(draft.DraftId.Value)).Should().Be(1);
+        (await CountApplicationCommandsForDecisionAsync(decision.StatutoryDiscountDecisionCommandId.Value)).Should().Be(1);
         (await CountAppliedTariffSnapshotsAsync(draft.DraftId.Value)).Should().Be(1);
 
         var afterBoundaryCount = await CountPaymentBoundaryRecordsAsync(FixtureParkingSessionId);
@@ -242,6 +256,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await InsertParkingSessionAsync();
         await InsertBaseTariffSnapshotAsync();
         await InsertApprovedValidationAsync(MissingPolicyContextValidationId, policyId: null);
+        await InsertApprovedCanonicalDecisionCommandAsync(MissingPolicyContextValidationId, policyId: null);
 
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -279,6 +294,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             EvaluatedOnlyPolicyContextValidationId,
             NoEvidencePolicyId,
             includeAppliedPolicyReference: false);
+        await InsertApprovedCanonicalDecisionCommandAsync(EvaluatedOnlyPolicyContextValidationId, NoEvidencePolicyId);
 
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -316,6 +332,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await InsertApprovedValidationAsync(
             PaymentAttemptGuardrailValidationId,
             NoEvidencePolicyId);
+        await InsertApprovedCanonicalDecisionCommandAsync(PaymentAttemptGuardrailValidationId, NoEvidencePolicyId);
         await InsertPaymentAttemptAsync();
 
         using var factory = new CustomWebApplicationFactory();
@@ -357,6 +374,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await InsertParkingSessionAsync();
         await InsertBaseTariffSnapshotAsync(statutoryDiscountAmount: 5.00m, netAmount: 120.00m);
         await InsertApprovedValidationAsync(AlreadyDiscountedGuardrailValidationId, NoEvidencePolicyId);
+        await InsertApprovedCanonicalDecisionCommandAsync(AlreadyDiscountedGuardrailValidationId, NoEvidencePolicyId);
 
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -390,6 +408,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await InsertParkingSessionAsync();
         await InsertBaseTariffSnapshotAsync(couponDiscountAmount: 5.00m, netAmount: 120.00m);
         await InsertApprovedValidationAsync(CouponStackingGuardrailValidationId, NoEvidencePolicyId);
+        await InsertApprovedCanonicalDecisionCommandAsync(CouponStackingGuardrailValidationId, NoEvidencePolicyId);
 
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -424,6 +443,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await InsertParkingSessionAsync();
         await InsertBaseTariffSnapshotAsync(expiresAt: DateTimeOffset.UtcNow.AddMinutes(-5));
         await InsertApprovedValidationAsync(ExpiredTariffGuardrailValidationId, NoEvidencePolicyId);
+        await InsertApprovedCanonicalDecisionCommandAsync(ExpiredTariffGuardrailValidationId, NoEvidencePolicyId);
 
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -457,6 +477,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         await InsertParkingSessionAsync();
         await InsertBaseTariffSnapshotAsync(snapshotStatus: "SUPERSEDED");
         await InsertApprovedValidationAsync(StaleTariffGuardrailValidationId, NoEvidencePolicyId);
+        await InsertApprovedCanonicalDecisionCommandAsync(StaleTariffGuardrailValidationId, NoEvidencePolicyId);
 
         using var factory = new CustomWebApplicationFactory();
         using var client = factory.CreateClient();
@@ -888,6 +909,13 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             DELETE FROM core.payment_attempts
             WHERE parking_session_id = @parking_session_id;
 
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_commands
+            WHERE parking_session_id = @parking_session_id
+              AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD');
+
             DELETE FROM discounts.discount_evidence_references
             WHERE statutory_discount_validation_id IN (
                 SELECT statutory_discount_validation_id
@@ -1057,6 +1085,20 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
+    private static async Task<int> CountApplicationCommandsForDecisionAsync(Guid statutoryDiscountDecisionCommandId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_decision_command_id", NpgsqlDbType.Uuid).Value = statutoryDiscountDecisionCommandId;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
     private static async Task<int> CountAppliedTariffSnapshotsAsync(Guid validationId)
     {
         const string sql = """
@@ -1136,6 +1178,53 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             reader.IsDBNull(12) ? null : reader.GetGuid(12));
     }
 
+    private static async Task<ApplicationCommandRow> ReadApplicationCommandAsync(Guid statutoryDiscountDecisionCommandId)
+    {
+        const string sql = """
+            SELECT
+                statutory_discount_payable_basis_application_command_id,
+                statutory_discount_decision_command_id,
+                statutory_discount_payable_basis_application_id,
+                business_identity,
+                semantic_hash_source_version,
+                semantic_request_hash,
+                idempotency_scope,
+                idempotency_key,
+                source_channel,
+                command_status::text,
+                result_classification::text,
+                retryable,
+                safe_error_code
+            FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_decision_command_id", NpgsqlDbType.Uuid).Value = statutoryDiscountDecisionCommandId;
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            throw new InvalidOperationException("Expected statutory discount payable-basis application command fixture row was not found.");
+        }
+
+        return new ApplicationCommandRow(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.IsDBNull(2) ? null : reader.GetGuid(2),
+            reader.GetString(3),
+            reader.GetString(4),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.GetString(7),
+            reader.GetString(8),
+            reader.GetString(9),
+            reader.GetString(10),
+            reader.GetBoolean(11),
+            reader.IsDBNull(12) ? null : reader.GetString(12));
+    }
+
     private static async Task InsertApprovedValidationAsync(
         Guid validationId,
         Guid? policyId,
@@ -1200,6 +1289,77 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = policyId.HasValue ? policyId.Value : DBNull.Value;
         command.Parameters.Add("applied_policy_id", NpgsqlDbType.Uuid).Value =
             includeAppliedPolicyReference && policyId.HasValue ? policyId.Value : DBNull.Value;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task InsertApprovedCanonicalDecisionCommandAsync(Guid validationId, Guid? policyId)
+    {
+        const string sql = """
+            INSERT INTO discounts.statutory_discount_decision_commands (
+                request_reference,
+                parking_session_id,
+                source_channel,
+                entitlement_type,
+                idempotency_scope,
+                idempotency_key,
+                semantic_request_hash,
+                semantic_hash_source_version,
+                statutory_discount_validation_id,
+                original_tariff_snapshot_id,
+                decision_status,
+                result_classification,
+                policy_resolution_basis,
+                applied_policy_reference_id,
+                local_ordinance_applied,
+                evidence_required,
+                evidence_recorded,
+                reason_code,
+                original_correlation_id,
+                decided_at,
+                completed_at,
+                updated_at,
+                business_identity,
+                command_status,
+                decision_result_status,
+                retryable,
+                recovery_classification
+            )
+            SELECT
+                gen_random_uuid(),
+                sdv.parking_session_id,
+                'OPERATOR_CONSOLE',
+                sdv.entitlement_type::text,
+                'statutory-discount-decision:' || sdv.parking_session_id::text || ':' || sdv.entitlement_type::text,
+                'operator-console-apply-fixture-decision-' || replace(sdv.statutory_discount_validation_id::text, '-', ''),
+                'sha256:' || encode(sha256(convert_to('operator-console-apply-fixture-decision:' || sdv.statutory_discount_validation_id::text, 'UTF8')), 'hex'),
+                'statutory-discount-decision:sha256:v2',
+                sdv.statutory_discount_validation_id,
+                sdv.tariff_snapshot_id,
+                'APPROVED',
+                'ACCEPTED',
+                sdv.policy_resolution_basis::text,
+                @policy_id,
+                sdv.local_ordinance_applied,
+                sdv.evidence_required,
+                sdv.evidence_captured,
+                sdv.decision_reason_code,
+                sdv.correlation_id,
+                now(),
+                now(),
+                now(),
+                'statutory-discount-decision:' || sdv.parking_session_id::text || ':' || sdv.entitlement_type::text,
+                'COMPLETED',
+                'APPROVED',
+                false,
+                'READ_CANONICAL_RESULT'
+            FROM discounts.statutory_discount_validations AS sdv
+            WHERE sdv.statutory_discount_validation_id = @validation_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        command.Parameters.Add("policy_id", NpgsqlDbType.Uuid).Value = policyId.HasValue ? policyId.Value : DBNull.Value;
         await command.ExecuteNonQueryAsync();
     }
 
@@ -1268,6 +1428,21 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
         long FinalPayableAmountMinorUnits,
         string? IdempotencyKey,
         Guid? AppliedByUserId);
+
+    private sealed record ApplicationCommandRow(
+        Guid ApplicationCommandId,
+        Guid DecisionCommandId,
+        Guid? PayableBasisApplicationId,
+        string BusinessIdentity,
+        string SemanticHashSourceVersion,
+        string SemanticHashValue,
+        string IdempotencyScope,
+        string IdempotencyKey,
+        string SourceChannel,
+        string CommandStatus,
+        string ResultClassification,
+        bool Retryable,
+        string? SafeErrorCode);
 
     private static async Task<NpgsqlConnection> OpenConnectionAsync()
     {

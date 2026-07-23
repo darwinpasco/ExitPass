@@ -209,6 +209,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 )::text AS resolved_policy_snapshot_json,
                 COALESCE(latest_application.original_tariff_snapshot_id, sdv.tariff_snapshot_id, active_tariff.tariff_snapshot_id) AS original_tariff_snapshot_id,
                 latest_application.payable_basis_application_id,
+                latest_application.payable_basis_application_command_id,
                 latest_application.application_status::text,
                 latest_application.applied_tariff_snapshot_id,
                 latest_application.vat_amount_minor_units,
@@ -254,6 +255,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 SELECT
                     app.original_tariff_snapshot_id,
                     app.statutory_discount_payable_basis_application_id AS payable_basis_application_id,
+                    app_command.statutory_discount_payable_basis_application_command_id AS payable_basis_application_command_id,
                     app.application_status::text AS application_status,
                     app.applied_tariff_snapshot_id,
                     app.vat_amount_minor_units,
@@ -262,6 +264,13 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                     app.final_payable_amount_minor_units,
                     app.currency_code
                 FROM discounts.statutory_discount_payable_basis_applications AS app
+                LEFT JOIN LATERAL (
+                    SELECT statutory_discount_payable_basis_application_command_id
+                    FROM discounts.statutory_discount_payable_basis_application_commands AS cmd
+                    WHERE cmd.statutory_discount_payable_basis_application_id = app.statutory_discount_payable_basis_application_id
+                    ORDER BY cmd.completed_at DESC NULLS LAST, cmd.updated_at DESC, cmd.statutory_discount_payable_basis_application_command_id DESC
+                    LIMIT 1
+                ) AS app_command ON TRUE
                 WHERE app.statutory_discount_validation_id = sdv.statutory_discount_validation_id
                   AND app.application_status = 'APPLIED'::discounts.statutory_discount_payable_application_status_enum
                 ORDER BY app.applied_at DESC NULLS LAST, app.updated_at DESC, app.statutory_discount_payable_basis_application_id DESC
@@ -576,6 +585,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             GetNullableJson(reader, "resolved_policy_snapshot_json"),
             GetNullableGuid(reader, "original_tariff_snapshot_id"),
             GetNullableGuid(reader, "payable_basis_application_id"),
+            GetNullableGuid(reader, "payable_basis_application_command_id"),
             applicationStatus,
             GetNullableGuid(reader, "applied_tariff_snapshot_id"),
             GetNullableLong(reader, "original_amount_minor_units"),

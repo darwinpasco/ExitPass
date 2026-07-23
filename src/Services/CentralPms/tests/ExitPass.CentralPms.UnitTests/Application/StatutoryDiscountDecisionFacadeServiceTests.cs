@@ -657,6 +657,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             null,
             OriginalTariffSnapshotId,
             PayableBasisApplicationId,
+            null,
             "APPLIED",
             AppliedTariffSnapshotId,
             12500,

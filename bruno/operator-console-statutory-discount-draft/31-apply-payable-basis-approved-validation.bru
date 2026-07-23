@@ -36,6 +36,8 @@ tests {
     expect(res.body.applicationAccepted).to.equal(true);
     expect(res.body.applicationPersisted).to.equal(true);
     expect(res.body.payableBasisApplicationId).to.not.equal(null);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("applyDecisionCommandId"));
+    expect(res.body.statutoryDiscountPayableBasisApplicationCommandId).to.not.equal(null);
     expect(res.body.statutoryDiscountValidationId).to.equal(bru.getEnvVar("applyValidationId"));
     expect(res.body.parkingSessionId).to.equal(bru.getEnvVar("parkingSessionId_allowed"));
     expect(res.body.originalTariffSnapshotId).to.equal(bru.getEnvVar("originalTariffSnapshotId_allowed"));
@@ -49,5 +51,6 @@ tests {
     expect(res.body.finalPayableAmountMinorUnits).to.equal(8929);
     expect(res.body.currencyCode).to.equal("PHP");
     bru.setEnvVar("applyPayableBasisApplicationId", res.body.payableBasisApplicationId);
+    bru.setEnvVar("applyPayableBasisApplicationCommandId", res.body.statutoryDiscountPayableBasisApplicationCommandId);
   });
 }

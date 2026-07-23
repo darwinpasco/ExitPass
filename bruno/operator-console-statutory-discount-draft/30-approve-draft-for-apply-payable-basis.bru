@@ -40,6 +40,8 @@ tests {
     expect(res.body.decisionPersisted).to.equal(true);
     expect(res.body.currentValidationStatus).to.equal("APPROVED");
     expect(res.body.draftId).to.equal(bru.getEnvVar("applyDraftId"));
+    expect(res.body.statutoryDiscountDecisionCommandId).to.not.equal(null);
     bru.setEnvVar("applyValidationId", res.body.draftId);
+    bru.setEnvVar("applyDecisionCommandId", res.body.statutoryDiscountDecisionCommandId);
   });
 }

@@ -47,4 +47,6 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisResponse(
     bool PolicySnapshotUsed,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? StatutoryDiscountDecisionCommandId = null,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null);

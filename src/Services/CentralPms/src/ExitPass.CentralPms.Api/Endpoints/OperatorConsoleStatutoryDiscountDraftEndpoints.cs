@@ -582,7 +582,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.FinalPayableAmountMinorUnits,
             result.CurrencyCode,
             result.Activity,
-            result.StatutoryDiscountDecisionCommandId);
+            result.StatutoryDiscountDecisionCommandId,
+            result.StatutoryDiscountPayableBasisApplicationCommandId);
 
     private static OperatorConsoleStatutoryDiscountAuditReportResponse ToContract(
         OperatorConsoleStatutoryDiscountAuditReportResult result) =>
@@ -1070,7 +1071,9 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.PolicySnapshotUsed,
             result.IneligibilityReason,
             result.ErrorCode,
-            result.CorrelationId);
+            result.CorrelationId,
+            result.StatutoryDiscountDecisionCommandId,
+            result.StatutoryDiscountPayableBasisApplicationCommandId);
 
     private static async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAccessAsync(
         OperatorConsoleIdentityContext identity,

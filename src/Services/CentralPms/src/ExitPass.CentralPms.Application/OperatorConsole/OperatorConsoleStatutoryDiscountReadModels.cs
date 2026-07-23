@@ -105,6 +105,7 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResult(
     JsonElement? PolicySnapshot,
     Guid? OriginalTariffSnapshotId,
     Guid? PayableBasisApplicationId,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId,
     string? PayableBasisApplicationStatus,
     Guid? AppliedTariffSnapshotId,
     long? OriginalAmountMinorUnits,

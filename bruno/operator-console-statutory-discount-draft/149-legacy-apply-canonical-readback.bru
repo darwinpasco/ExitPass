@@ -1,0 +1,29 @@
+meta {
+  name: 149 Legacy apply canonical readback
+  type: http
+  seq: 149
+}
+
+get {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions/{{applyDecisionCommandId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-Correlation-Id: {{$guid}}
+  X-ExitPass-User-Id: {{userId_allowed}}
+  X-ExitPass-Permissions: statutory-discounts.decision.read
+}
+
+tests {
+  test("canonical readback exposes legacy apply application state", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("applyDecisionCommandId"));
+    expect(res.body.decisionCommandStatus).to.equal("COMPLETED");
+    expect(res.body.decisionResultStatus).to.equal("APPROVED");
+    expect(res.body.applicationCommandStatus).to.equal("APPLIED");
+    expect(res.body.statutoryDiscountPayableBasisApplicationCommandId).to.equal(bru.getEnvVar("applyPayableBasisApplicationCommandId"));
+    expect(res.body.oneShotComplete).to.equal(true);
+  });
+}
