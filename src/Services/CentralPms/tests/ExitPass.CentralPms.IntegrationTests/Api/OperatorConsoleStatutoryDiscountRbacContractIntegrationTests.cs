@@ -711,6 +711,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 PolicySnapshot: JsonSerializer.SerializeToElement(new { nationalLawReference = "RA 9994" }),
                 OriginalTariffSnapshotId,
                 PayableBasisApplicationId: null,
+                StatutoryDiscountPayableBasisApplicationCommandId: null,
                 PayableBasisApplicationStatus: null,
                 AppliedTariffSnapshotId: null,
                 OriginalAmountMinorUnits: 12500,

@@ -48,7 +48,9 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisResult(
     bool PolicySnapshotUsed,
     string? IneligibilityReason,
     string? ErrorCode,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    Guid? StatutoryDiscountDecisionCommandId = null,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null);
 
 /// <summary>
 /// Persistence command for applying statutory discount payable basis.
@@ -88,4 +90,5 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenc
     string? OrdinanceReference,
     bool PolicySnapshotUsed,
     string? IneligibilityReason,
-    string? ErrorCode);
+    string? ErrorCode,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId = null);

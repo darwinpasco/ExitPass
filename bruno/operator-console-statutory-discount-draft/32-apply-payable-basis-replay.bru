@@ -34,6 +34,8 @@ tests {
     expect(res.body.applicationAccepted).to.equal(true);
     expect(res.body.applicationPersisted).to.equal(true);
     expect(res.body.payableBasisApplicationId).to.equal(bru.getEnvVar("applyPayableBasisApplicationId"));
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("applyDecisionCommandId"));
+    expect(res.body.statutoryDiscountPayableBasisApplicationCommandId).to.equal(bru.getEnvVar("applyPayableBasisApplicationCommandId"));
     expect(res.body.applicationStatus).to.equal("APPLIED");
     expect(res.body.alreadyApplied).to.equal(true);
     expect(res.body.appliedTariffSnapshotId).to.not.equal(null);

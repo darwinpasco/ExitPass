@@ -35,17 +35,6 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                 )
             );
 
-            DELETE FROM discounts.statutory_discount_payable_basis_applications
-            WHERE statutory_discount_validation_id IN (
-                SELECT statutory_discount_validation_id
-                FROM discounts.statutory_discount_validations
-                WHERE requested_by_user_id IN (
-                    '77000000-0000-0000-0000-000000000010',
-                    '77000000-0000-0000-0000-000000000011',
-                    '77000000-0000-0000-0000-000000000012'
-                )
-            );
-
             DO $$
             BEGIN
                 IF to_regclass('discounts.statutory_discount_payable_basis_application_commands') IS NOT NULL THEN
@@ -76,6 +65,17 @@ internal static class OperatorConsoleStatutoryDiscountLockedSchemaFixture
                        );
                 END IF;
             END $$;
+
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE statutory_discount_validation_id IN (
+                SELECT statutory_discount_validation_id
+                FROM discounts.statutory_discount_validations
+                WHERE requested_by_user_id IN (
+                    '77000000-0000-0000-0000-000000000010',
+                    '77000000-0000-0000-0000-000000000011',
+                    '77000000-0000-0000-0000-000000000012'
+                )
+            );
 
             DELETE FROM discounts.statutory_discount_validations
             WHERE requested_by_user_id IN (

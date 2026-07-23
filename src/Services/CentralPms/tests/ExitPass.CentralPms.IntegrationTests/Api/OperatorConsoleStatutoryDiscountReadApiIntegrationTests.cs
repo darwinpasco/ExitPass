@@ -368,6 +368,7 @@ public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
             JsonSerializer.SerializeToElement(new { nationalLawReference = "RA 9994" }),
             OriginalTariffSnapshotId: null,
             PayableBasisApplicationId: null,
+            StatutoryDiscountPayableBasisApplicationCommandId: null,
             PayableBasisApplicationStatus: null,
             AppliedTariffSnapshotId: null,
             OriginalAmountMinorUnits: 18000,
