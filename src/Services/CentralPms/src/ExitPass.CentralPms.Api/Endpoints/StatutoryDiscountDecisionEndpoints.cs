@@ -258,14 +258,29 @@ public static class StatutoryDiscountDecisionEndpoints
             result.AppliedAt,
             result.OriginalTariffSnapshotId,
             result.AppliedTariffSnapshotId,
-            ResolveCommandStatus(result),
+            result.DecisionCommandStatus,
             ResolveClientResultStatus(result),
             result.ResultClassification,
             result.SemanticHashSourceVersion,
-            ResolveRetryable(result),
+            result.DecisionRetryable || result.ApplicationRetryable,
             ResolveRecoveryClassification(result),
             ResolveRecoveryAction(result),
-            result.ErrorCode);
+            result.ErrorCode,
+            result.DecisionCommandStatus,
+            result.DecisionResultStatus,
+            result.DecisionRetryable,
+            result.DecisionRecoveryClassification,
+            result.DecisionRecoveryAction,
+            result.StatutoryDiscountPayableBasisApplicationCommandId,
+            result.ApplicationRequested,
+            result.ApplicationCommandStatus,
+            result.ApplicationResultClassification,
+            result.ApplicationSemanticHashSourceVersion,
+            result.ApplicationRetryable,
+            result.ApplicationRecoveryClassification,
+            result.ApplicationRecoveryAction,
+            result.OverallResultClassification,
+            result.OneShotComplete);
 
     private static bool TryReadHeaders(
         HttpRequest request,
@@ -301,7 +316,11 @@ public static class StatutoryDiscountDecisionEndpoints
     }
 
     private static bool IsConflict(string errorCode) =>
-        errorCode is "IDEMPOTENCY_SEMANTIC_CONFLICT" or "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS";
+        errorCode is "IDEMPOTENCY_SEMANTIC_CONFLICT"
+            or "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT"
+            or "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT"
+            or "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS"
+            or "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS";
 
     private static bool TryResolveAuthenticatedSourceChannel(
         HttpContext context,
@@ -454,11 +473,6 @@ public static class StatutoryDiscountDecisionEndpoints
             [StatutoryDiscountSourceChannels.AssistedPaymentTerminal] = "statutory-discounts.decision.submit.assisted-payment-terminal"
         };
 
-    private static string ResolveCommandStatus(StatutoryDiscountDecisionResult result) =>
-        string.Equals(result.DecisionStatus, "PROCESSING", StringComparison.Ordinal)
-            ? StatutoryDiscountDecisionCommandStatuses.Processing
-            : StatutoryDiscountDecisionCommandStatuses.Completed;
-
     private static string ResolveClientResultStatus(StatutoryDiscountDecisionResult result)
     {
         if (string.Equals(result.ResultClassification, "IDEMPOTENT_REPLAY", StringComparison.Ordinal))
@@ -471,6 +485,11 @@ public static class StatutoryDiscountDecisionEndpoints
             return StatutoryDiscountDecisionClientResultStatuses.RecoverableUsingOriginalKey;
         }
 
+        if (!result.OneShotComplete)
+        {
+            return StatutoryDiscountDecisionClientResultStatuses.InProgress;
+        }
+
         return result.DecisionStatus switch
         {
             "APPLIED_PAYABLE_BASIS" or "APPROVED" => StatutoryDiscountDecisionClientResultStatuses.Approved,
@@ -481,11 +500,18 @@ public static class StatutoryDiscountDecisionEndpoints
         };
     }
 
-    private static bool ResolveRetryable(StatutoryDiscountDecisionResult result) =>
-        string.Equals(result.ResultClassification, "RECOVERABLE_USING_ORIGINAL_KEY", StringComparison.Ordinal);
-
     private static string ResolveRecoveryClassification(StatutoryDiscountDecisionResult result)
     {
+        if (result.ApplicationRetryable)
+        {
+            return result.ApplicationRecoveryClassification;
+        }
+
+        if (result.DecisionRetryable)
+        {
+            return result.DecisionRecoveryClassification;
+        }
+
         if (string.Equals(result.ResultClassification, "IDEMPOTENT_REPLAY", StringComparison.Ordinal))
         {
             return StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult;
@@ -501,6 +527,16 @@ public static class StatutoryDiscountDecisionEndpoints
 
     private static string? ResolveRecoveryAction(StatutoryDiscountDecisionResult result)
     {
+        if (result.ApplicationRetryable)
+        {
+            return result.ApplicationRecoveryAction;
+        }
+
+        if (result.DecisionRetryable)
+        {
+            return result.DecisionRecoveryAction;
+        }
+
         if (string.Equals(result.ResultClassification, "IDEMPOTENT_REPLAY", StringComparison.Ordinal))
         {
             return StatutoryDiscountDecisionRecoveryActions.ReadCanonicalDecision;
@@ -538,7 +574,10 @@ public static class StatutoryDiscountDecisionEndpoints
         errorCode switch
         {
             "IDEMPOTENCY_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionClientResultStatuses.SemanticConflict,
+            "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionClientResultStatuses.SemanticConflict,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionClientResultStatuses.SemanticConflict,
             "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionClientResultStatuses.NotFound,
             "UNSAFE_IDENTIFIER_REJECTED" => StatutoryDiscountDecisionClientResultStatuses.UnsafeIdentityInput,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionClientResultStatuses.TemporarilyUnavailable,
@@ -551,7 +590,10 @@ public static class StatutoryDiscountDecisionEndpoints
         errorCode switch
         {
             "IDEMPOTENCY_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryClassifications.CorrectRequestRequired,
+            "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryClassifications.CorrectRequestRequired,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryClassifications.CorrectRequestRequired,
             "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
             _ => StatutoryDiscountDecisionRecoveryClassifications.None
@@ -561,7 +603,10 @@ public static class StatutoryDiscountDecisionEndpoints
         errorCode switch
         {
             "IDEMPOTENCY_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryActions.SubmitCorrectedRequest,
+            "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryActions.SubmitCorrectedRequest,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryActions.SubmitCorrectedRequest,
             "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
             _ => null

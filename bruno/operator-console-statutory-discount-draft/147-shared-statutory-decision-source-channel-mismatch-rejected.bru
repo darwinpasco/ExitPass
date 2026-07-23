@@ -1,7 +1,7 @@
 meta {
-  name: 140 Shared statutory decision replay
+  name: 147 Shared statutory decision source-channel mismatch rejected
   type: http
-  seq: 140
+  seq: 147
 }
 
 post {
@@ -12,7 +12,7 @@ post {
 
 headers {
   Content-Type: application/json
-  Idempotency-Key: {{sharedStatutoryDecisionIdempotencyKey}}
+  Idempotency-Key: manual-shared-statutory-decision-channel-mismatch
   X-Correlation-Id: {{sharedStatutoryDecisionCorrelationId}}
   X-ExitPass-User-Id: {{userId_allowed}}
   X-ExitPass-Permissions: statutory-discounts.decision.submit.operator-console
@@ -20,8 +20,8 @@ headers {
 
 body:json {
   {
-    "requestReference": "{{sharedStatutoryDecisionRequestReference}}",
-    "sourceChannel": "OPERATOR_CONSOLE",
+    "requestReference": "77000000-0000-0000-0000-000000000705",
+    "sourceChannel": "WEBPAY",
     "parkingSessionId": "{{parkingSessionId_allowed}}",
     "siteId": "{{siteId_allowed}}",
     "siteGroupId": "{{siteGroupId_allowed}}",
@@ -38,7 +38,7 @@ body:json {
     "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
     "operatorShiftId": "{{operatorShiftId_allowed}}",
     "requesterAttestation": true,
-    "attestationNotes": "Shared facade Bruno submit",
+    "attestationNotes": "Shared facade Bruno mismatch",
     "reasonCode": "MANUAL_SHARED_STATUTORY_DECISION",
     "decision": null,
     "decisionReasonCode": null,
@@ -50,14 +50,9 @@ body:json {
 }
 
 tests {
-  test("returns idempotent replay", function () {
-    expect(res.status).to.equal(200);
-    expect(res.body.resultClassification).to.equal("IDEMPOTENT_REPLAY");
-    expect(res.body.clientResultStatus).to.equal("IDEMPOTENT_REPLAY");
-    expect(res.body.recoveryClassification).to.equal("READ_CANONICAL_RESULT");
-    expect(res.body.semanticHashSourceVersion).to.equal("statutory-discount-decision:sha256:v2");
-    expect(res.body.applicationRequested).to.equal(false);
-    expect(res.body.applicationCommandStatus).to.equal("NOT_REQUESTED");
-    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("sharedStatutoryDecisionCommandId"));
+  test("rejects request-body source channel impersonation", function () {
+    expect(res.status).to.equal(403);
+    expect(res.body.errorCode).to.equal("SOURCE_CHANNEL_MISMATCH");
+    expect(res.body.clientResultStatus).to.equal("VALIDATION_FAILURE");
   });
 }
