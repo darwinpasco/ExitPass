@@ -107,6 +107,7 @@ public sealed record OperatorConsoleStatutoryDiscountEvidenceMetadataResult(
     string EvidenceType,
     string CaptureMethod,
     string? StorageReference,
+    string? ReferenceNumberMasked,
     Guid? CapturedByUserId,
     DateTimeOffset CapturedAt,
     string RedactionStatus,

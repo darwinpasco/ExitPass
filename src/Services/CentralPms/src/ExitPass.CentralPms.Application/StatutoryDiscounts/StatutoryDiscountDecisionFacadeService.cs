@@ -521,7 +521,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             DecisionNotes: null,
             command.ReviewerAttestation,
             $"{command.IdempotencyKey}:decision",
-            command.CorrelationId);
+            command.CorrelationId,
+            CanonicalDecisionAlreadyHandled: true);
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisCommand ToApplyCommand(
         StatutoryDiscountDecisionCommand command,

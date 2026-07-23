@@ -191,11 +191,15 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         approved.PreviousValidationStatus.Should().Be("REQUESTED");
         approved.CurrentValidationStatus.Should().Be("APPROVED");
         approved.DecisionChanged.Should().BeTrue();
+        approved.StatutoryDiscountDecisionCommandId.Should().NotBeNull();
 
         var approvedRow = await ReadDraftStatusAsync(draft.DraftId.Value);
         approvedRow.Should().Be("APPROVED");
         var approvedReviewer = await ReadValidatedByUserIdAsync(draft.DraftId.Value);
         approvedReviewer.Should().Be(FixtureReviewerUserId);
+        var canonicalDecisionId = await ReadCanonicalDecisionCommandIdForValidationAsync(draft.DraftId.Value);
+        canonicalDecisionId.Should().Be(approved.StatutoryDiscountDecisionCommandId);
+        (await CountApplicationCommandsForDecisionAsync(canonicalDecisionId!.Value)).Should().Be(0);
 
         using var replayResponse = await client.PostAsJsonAsync(DecisionEndpoint(draft.DraftId.Value), approve);
         replayResponse.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -203,6 +207,7 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         replay.Should().NotBeNull();
         replay!.AlreadyDecided.Should().BeTrue();
         replay.DecisionChanged.Should().BeFalse();
+        replay.StatutoryDiscountDecisionCommandId.Should().Be(canonicalDecisionId);
 
         using var conflictResponse = await client.PostAsJsonAsync(DecisionEndpoint(draft.DraftId.Value), DecisionRequest("REJECT", "OPPOSITE_DECISION", useFixtureAccessContext: true, useFixtureReviewer: true));
         conflictResponse.StatusCode.Should().Be(HttpStatusCode.Conflict);
@@ -227,6 +232,8 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         rejected!.DecisionAccepted.Should().BeTrue();
         rejected.CurrentValidationStatus.Should().Be("REJECTED");
         rejected.DecisionReasonCode.Should().Be("ID_NOT_VALID");
+        rejected.StatutoryDiscountDecisionCommandId.Should().NotBeNull();
+        (await CountApplicationCommandsForDecisionAsync(rejected.StatutoryDiscountDecisionCommandId!.Value)).Should().Be(0);
 
         var afterBoundaryCount = await CountPaymentBoundaryRecordsAsync(FixtureParkingSessionId);
         afterBoundaryCount.Should().Be(beforeBoundaryCount);
@@ -451,9 +458,27 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
 
     private static async Task SeedManualFixtureAsync()
     {
+        await ApplyCanonicalDecisionConvergencePatchesAsync();
         await ClearPayableBasisApplyStateAsync();
         await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
         await InsertNoEvidenceLocalPolicyAsync();
+    }
+
+    private static async Task ApplyCanonicalDecisionConvergencePatchesAsync()
+    {
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql");
+    }
+
+    private static async Task ExecuteSqlFileAsync(params string[] pathParts)
+    {
+        var sql = ReadRepoFile(pathParts);
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task InsertNoEvidenceLocalPolicyAsync()
@@ -519,6 +544,13 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
             BEGIN;
             SET CONSTRAINTS ALL DEFERRED;
 
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_commands
+            WHERE parking_session_id = @parking_session_id
+              AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD');
+
             UPDATE discounts.statutory_discount_validations
                SET tariff_snapshot_id = NULL
              WHERE parking_session_id = @parking_session_id;
@@ -546,6 +578,13 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
     private static async Task ResetFixtureDecisionDraftsAsync()
     {
         const string sql = """
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_commands
+            WHERE parking_session_id = @parking_session_id
+              AND entitlement_type IN ('SENIOR_CITIZEN', 'PWD');
+
             DELETE FROM discounts.discount_evidence_references
             WHERE statutory_discount_validation_id IN (
                 SELECT statutory_discount_validation_id
@@ -604,6 +643,38 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
         command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = draftId;
         var value = await command.ExecuteScalarAsync();
         return value is DBNull or null ? null : (Guid)value;
+    }
+
+    private static async Task<Guid?> ReadCanonicalDecisionCommandIdForValidationAsync(Guid validationId)
+    {
+        const string sql = """
+            SELECT statutory_discount_decision_command_id
+            FROM discounts.statutory_discount_decision_commands
+            WHERE statutory_discount_validation_id = @statutory_discount_validation_id
+              AND semantic_hash_source_version = 'statutory-discount-decision:sha256:v2'
+            ORDER BY completed_at DESC NULLS LAST, created_at DESC
+            LIMIT 1;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_validation_id", NpgsqlDbType.Uuid).Value = validationId;
+        var value = await command.ExecuteScalarAsync();
+        return value is DBNull or null ? null : (Guid)value;
+    }
+
+    private static async Task<int> CountApplicationCommandsForDecisionAsync(Guid statutoryDiscountDecisionCommandId)
+    {
+        const string sql = """
+            SELECT COUNT(*)
+            FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
+            """;
+
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("statutory_discount_decision_command_id", NpgsqlDbType.Uuid).Value = statutoryDiscountDecisionCommandId;
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
     private static async Task<int> CountApplicationsForValidationAsync(Guid validationId)

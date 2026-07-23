@@ -581,7 +581,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.PayableAmountMinorUnits,
             result.FinalPayableAmountMinorUnits,
             result.CurrencyCode,
-            result.Activity);
+            result.Activity,
+            result.StatutoryDiscountDecisionCommandId);
 
     private static OperatorConsoleStatutoryDiscountAuditReportResponse ToContract(
         OperatorConsoleStatutoryDiscountAuditReportResult result) =>
@@ -770,7 +771,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.DecisionChanged,
             result.IneligibilityReason,
             result.ErrorCode,
-            result.CorrelationId);
+            result.CorrelationId,
+            result.StatutoryDiscountDecisionCommandId);
 
     private static async Task<IResult> CaptureEvidenceAsync(
         Guid draftId,
@@ -948,11 +950,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.Items.Select(item => new OperatorConsoleStatutoryDiscountEvidenceItem(
                 item.EvidenceId,
                 item.DraftId,
-                item.EvidenceType,
-                item.CaptureMethod,
-                item.StorageReference,
-                item.CapturedByUserId,
-                item.CapturedAt,
+                    item.EvidenceType,
+                    item.CaptureMethod,
+                    item.StorageReference,
+                    item.CapturedByUserId,
+                    item.CapturedAt,
                 item.RedactionStatus,
                 item.VerificationStatus,
                 item.CorrelationId)).ToArray(),

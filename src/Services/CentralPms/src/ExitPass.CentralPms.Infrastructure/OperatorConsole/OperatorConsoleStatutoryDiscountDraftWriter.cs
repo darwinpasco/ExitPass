@@ -215,12 +215,18 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             INSERT INTO discounts.statutory_discount_validations (
                 parking_session_id,
                 entitlement_type,
+                id_document_type,
+                issuing_authority,
+                id_expiry_date,
+                masked_id_reference,
                 policy_resolution_basis,
                 validation_channel,
                 validation_status,
                 evidence_required,
                 evidence_captured,
                 decision_reason_code,
+                requester_attestation,
+                attestation_notes,
                 evaluated_policy_reference_id,
                 applied_policy_reference_id,
                 requested_at,
@@ -231,12 +237,18 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
             VALUES (
                 @parking_session_id,
                 @entitlement_type::discounts.statutory_entitlement_type_enum,
+                @id_document_type,
+                @issuing_authority,
+                @id_expiry_date,
+                @masked_id_reference,
                 @policy_resolution_basis::discounts.policy_resolution_basis_enum,
                 'OPERATOR_ASSISTED'::discounts.statutory_discount_validations_channel_enum,
                 'REQUESTED'::discounts.statutory_discount_validations_status_enum,
                 @evidence_required,
                 false,
                 @decision_reason_code,
+                @requester_attestation,
+                @attestation_notes,
                 @policy_reference_id,
                 NULL,
                 now(),
@@ -250,9 +262,15 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
         await using var npgsqlCommand = new NpgsqlCommand(sql, connection, transaction);
         npgsqlCommand.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = command.ParkingSessionId;
         npgsqlCommand.Parameters.Add("entitlement_type", NpgsqlDbType.Text).Value = command.EntitlementType;
+        npgsqlCommand.Parameters.Add("id_document_type", NpgsqlDbType.Varchar).Value = command.IdDocumentType;
+        npgsqlCommand.Parameters.Add("issuing_authority", NpgsqlDbType.Varchar).Value = command.IssuingAuthority;
+        npgsqlCommand.Parameters.Add("id_expiry_date", NpgsqlDbType.Date).Value = DbValue(command.ExpiryDate);
+        npgsqlCommand.Parameters.Add("masked_id_reference", NpgsqlDbType.Varchar).Value = command.MaskedIdReference;
         npgsqlCommand.Parameters.Add("policy_resolution_basis", NpgsqlDbType.Text).Value = command.Policy.PolicyResolutionBasis;
         npgsqlCommand.Parameters.Add("evidence_required", NpgsqlDbType.Boolean).Value = command.EvidenceRequired;
         npgsqlCommand.Parameters.Add("decision_reason_code", NpgsqlDbType.Varchar).Value = DbValue(command.ReasonCode);
+        npgsqlCommand.Parameters.Add("requester_attestation", NpgsqlDbType.Boolean).Value = command.OperatorAttestation;
+        npgsqlCommand.Parameters.Add("attestation_notes", NpgsqlDbType.Varchar).Value = DbValue(command.AttestationNotes);
         npgsqlCommand.Parameters.Add("policy_reference_id", NpgsqlDbType.Uuid).Value = policyReferenceId;
         npgsqlCommand.Parameters.Add("requested_by_user_id", NpgsqlDbType.Uuid).Value = command.RequestedByUserId;
         npgsqlCommand.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = command.CorrelationId;
@@ -504,6 +522,8 @@ public sealed class OperatorConsoleStatutoryDiscountDraftWriter : IOperatorConso
     private static object DbValue(string? value) => string.IsNullOrWhiteSpace(value) ? DBNull.Value : value;
 
     private static object DbValue(Guid? value) => value.HasValue ? value.Value : DBNull.Value;
+
+    private static object DbValue(DateOnly? value) => value.HasValue ? value.Value : DBNull.Value;
 
     private static OperatorConsoleResolvedStatutoryDiscountPolicy? ReadPolicy(
         NpgsqlDataReader reader,

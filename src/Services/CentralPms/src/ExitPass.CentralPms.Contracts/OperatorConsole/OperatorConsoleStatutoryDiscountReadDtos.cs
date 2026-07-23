@@ -89,7 +89,8 @@ public sealed record OperatorConsoleStatutoryDiscountDraftDetailResponse(
     long? PayableAmountMinorUnits,
     long? FinalPayableAmountMinorUnits,
     string? CurrencyCode,
-    IReadOnlyList<string> Activity);
+    IReadOnlyList<string> Activity,
+    Guid? StatutoryDiscountDecisionCommandId = null);
 
 /// <summary>
 /// Read-only audit/reporting response for Operator Console statutory discount validation.

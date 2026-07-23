@@ -229,6 +229,7 @@ public sealed class OperatorConsoleStatutoryDiscountEvidenceServiceTests
             "SENIOR_CITIZEN_ID",
             "OPERATOR_CONFIRMED",
             "operator-confirmed",
+            ReferenceNumberMasked: null,
             UserId,
             DateTimeOffset.Parse("2026-06-03T10:00:00+08:00"),
             "NOT_REDACTED",

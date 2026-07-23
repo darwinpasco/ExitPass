@@ -156,6 +156,13 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                 ps.site_group_id,
                 sdv.entitlement_type::text,
                 sdv.validation_status::text,
+                decision_command.statutory_discount_decision_command_id,
+                sdv.id_document_type,
+                sdv.issuing_authority,
+                sdv.id_expiry_date,
+                sdv.masked_id_reference,
+                sdv.requester_attestation,
+                sdv.attestation_notes,
                 sdv.evidence_required,
                 sdv.evidence_captured,
                 sdv.evidence_captured AS evidence_required_satisfied,
@@ -227,6 +234,14 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
                     sdv.applied_policy_reference_id,
                     sdv.evaluated_policy_reference_id,
                     sdv.fallback_policy_reference_id)
+            LEFT JOIN LATERAL (
+                SELECT statutory_discount_decision_command_id
+                FROM discounts.statutory_discount_decision_commands
+                WHERE statutory_discount_validation_id = sdv.statutory_discount_validation_id
+                  AND semantic_hash_source_version = 'statutory-discount-decision:sha256:v2'
+                ORDER BY completed_at DESC NULLS LAST, created_at DESC, statutory_discount_decision_command_id DESC
+                LIMIT 1
+            ) AS decision_command ON TRUE
             LEFT JOIN LATERAL (
                 SELECT tariff_snapshot_id, gross_amount, net_amount, currency_code
                 FROM core.tariff_snapshots
@@ -523,6 +538,13 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
             reader.GetGuid("site_group_id"),
             GetNullableString(reader, "entitlement_type"),
             status,
+            GetNullableGuid(reader, "statutory_discount_decision_command_id"),
+            GetNullableString(reader, "id_document_type"),
+            GetNullableString(reader, "issuing_authority"),
+            GetNullableDateOnly(reader, "id_expiry_date"),
+            GetNullableString(reader, "masked_id_reference"),
+            GetNullableBool(reader, "requester_attestation"),
+            GetNullableString(reader, "attestation_notes"),
             evidenceRequired,
             evidenceCaptured,
             evidenceRequiredSatisfied,
@@ -629,6 +651,23 @@ public sealed class OperatorConsoleStatutoryDiscountReadRepository : IOperatorCo
     {
         var ordinal = reader.GetOrdinal(columnName);
         return reader.IsDBNull(ordinal) ? null : reader.GetInt64(ordinal);
+    }
+
+    private static bool? GetNullableBool(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        return reader.IsDBNull(ordinal) ? null : reader.GetBoolean(ordinal);
+    }
+
+    private static DateOnly? GetNullableDateOnly(NpgsqlDataReader reader, string columnName)
+    {
+        var ordinal = reader.GetOrdinal(columnName);
+        if (reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetFieldValue<DateOnly>(ordinal);
     }
 
     private static DateTimeOffset? GetNullableDateTimeOffset(NpgsqlDataReader reader, string columnName)

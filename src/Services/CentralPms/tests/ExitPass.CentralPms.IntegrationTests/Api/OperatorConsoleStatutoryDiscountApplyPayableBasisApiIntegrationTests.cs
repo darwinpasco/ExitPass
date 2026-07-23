@@ -611,9 +611,27 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
 
     private static async Task SeedManualFixtureAsync()
     {
+        await ApplyCanonicalDecisionConvergencePatchesAsync();
         await ClearPayableBasisApplyStateAsync();
         await OperatorConsoleStatutoryDiscountLockedSchemaFixture.SeedAsync(OpenConnectionAsync);
         await InsertNoEvidenceNationalFallbackPolicyAsync();
+    }
+
+    private static async Task ApplyCanonicalDecisionConvergencePatchesAsync()
+    {
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql");
+        await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql");
+    }
+
+    private static async Task ExecuteSqlFileAsync(params string[] pathParts)
+    {
+        var sql = ReadRepoFile(pathParts);
+        await using var connection = await OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task InsertNoEvidenceNationalFallbackPolicyAsync()
@@ -765,6 +783,12 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisApiIntegrat
             SET CONSTRAINTS ALL DEFERRED;
 
             DELETE FROM core.payment_attempts
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_commands
             WHERE parking_session_id = @parking_session_id;
 
             DELETE FROM discounts.discount_evidence_references
