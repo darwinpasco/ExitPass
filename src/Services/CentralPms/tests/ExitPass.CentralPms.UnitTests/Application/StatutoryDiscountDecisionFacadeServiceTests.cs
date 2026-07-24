@@ -60,7 +60,18 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         result.SourceChannel.Should().Be(sourceChannel);
         fixture.Repository.LastDecisionCommand!.SourceChannel.Should().Be(sourceChannel);
-        await fixture.DraftService.Received(1).DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        if (sourceChannel == "OPERATOR_CONSOLE")
+        {
+            result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.Completed);
+            await fixture.DraftService.Received(1).DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        }
+        else
+        {
+            result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+            result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+            result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+            await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        }
     }
 
     [Fact]
@@ -78,18 +89,19 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenSameIdempotencyKeyChangesSourceChannel_ReplaysOriginalResult()
+    public async Task SubmitAsync_WhenServiceChannelChangesSourceChannel_ReplaysPendingReviewResult()
     {
         var fixture = CreateFixture();
-        var command = Command();
+        var command = Command(sourceChannel: "WEBPAY", applyPayableBasis: false);
         var first = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
 
-        var second = await fixture.Sut.SubmitAsync(command with { SourceChannel = "WEBPAY" }, CancellationToken.None);
+        var second = await fixture.Sut.SubmitAsync(command with { SourceChannel = "ASSISTED_PAYMENT_TERMINAL" }, CancellationToken.None);
 
         second.StatutoryDiscountDecisionCommandId.Should().Be(first.StatutoryDiscountDecisionCommandId);
-        second.SourceChannel.Should().Be("OPERATOR_CONSOLE");
-        second.ResultClassification.Should().Be("IDEMPOTENT_REPLAY");
-        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+        second.SourceChannel.Should().Be("WEBPAY");
+        second.ResultClassification.Should().Be(StatutoryDiscountOneShotResultClassifications.AwaitingReview);
+        second.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -110,10 +122,10 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenSameBusinessRequestUsesDifferentKeyAndChannel_ReplaysOriginalResult()
+    public async Task SubmitAsync_WhenServiceChannelUsesDifferentKeyAndChannel_ReplaysPendingReviewResult()
     {
         var fixture = CreateFixture();
-        var command = Command();
+        var command = Command(sourceChannel: "WEBPAY", applyPayableBasis: false);
         var first = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
 
         var second = await fixture.Sut.SubmitAsync(
@@ -126,9 +138,11 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             CancellationToken.None);
 
         second.StatutoryDiscountDecisionCommandId.Should().Be(first.StatutoryDiscountDecisionCommandId);
-        second.SourceChannel.Should().Be("OPERATOR_CONSOLE");
-        second.ResultClassification.Should().Be("IDEMPOTENT_REPLAY");
-        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+        second.SourceChannel.Should().Be("WEBPAY");
+        second.ResultClassification.Should().Be(StatutoryDiscountOneShotResultClassifications.AwaitingReview);
+        second.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -200,37 +214,33 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenConcurrentOperatorConsoleAndWebPayRequestsArrive_OnlyOneAppliesPayableBasis()
+    public async Task SubmitAsync_WhenConcurrentWebPayRequestsArrive_CreatesOnePendingReviewDecision()
     {
         var fixture = CreateFixture();
         fixture.Repository.DelayInsideLock = TimeSpan.FromMilliseconds(25);
-        var operatorCommand = Command();
-        var webPayCommand = operatorCommand with
+        var command = Command(sourceChannel: "WEBPAY", applyPayableBasis: false);
+        var replay = command with
         {
-            SourceChannel = "WEBPAY",
             RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000204"),
             IdempotencyKey = "statutory-discount-idempotency-key-webpay"
         };
 
         var results = await Task.WhenAll(
-            fixture.Sut.SubmitAsync(operatorCommand, CancellationToken.None),
-            fixture.Sut.SubmitAsync(webPayCommand, CancellationToken.None));
+            fixture.Sut.SubmitAsync(command, CancellationToken.None),
+            fixture.Sut.SubmitAsync(replay, CancellationToken.None));
 
         results.Select(result => result.StatutoryDiscountDecisionCommandId).Distinct().Should().ContainSingle();
-        results.Should().Contain(result => result.ResultClassification == StatutoryDiscountOneShotResultClassifications.DecisionAndApplicationCompleted);
-        results.Should().Contain(result =>
-            result.ResultClassification == StatutoryDiscountOneShotResultClassifications.IdempotentReplay ||
-            (result.ResultClassification == StatutoryDiscountOneShotResultClassifications.DecisionCompletedApplicationProcessing &&
-             !result.OneShotComplete));
-        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+        results.Should().OnlyContain(result => result.DecisionCommandStatus == StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenConcurrentWebPayAndAptRequestsArrive_OnlyOneAppliesPayableBasis()
+    public async Task SubmitAsync_WhenConcurrentWebPayAndAptPendingReviewRequestsArrive_CreatesOneDecision()
     {
         var fixture = CreateFixture();
         fixture.Repository.DelayInsideLock = TimeSpan.FromMilliseconds(25);
-        var webPayCommand = Command(sourceChannel: "WEBPAY");
+        var webPayCommand = Command(sourceChannel: "WEBPAY", applyPayableBasis: false);
         var aptCommand = webPayCommand with
         {
             SourceChannel = "ASSISTED_PAYMENT_TERMINAL",
@@ -243,7 +253,9 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             fixture.Sut.SubmitAsync(aptCommand, CancellationToken.None));
 
         results.Select(result => result.StatutoryDiscountDecisionCommandId).Distinct().Should().ContainSingle();
-        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+        results.Should().OnlyContain(result => result.DecisionCommandStatus == StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -332,6 +344,76 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         readback.SourceChannel.Should().Be("OPERATOR_CONSOLE");
         readback.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
         readback.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenWebPaySubmitsPermittedFacts_CreatesAwaitingReviewDecisionOnly()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: false), CancellationToken.None);
+
+        result.StatutoryDiscountDecisionCommandId.Should().Be(CommandId);
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        result.DecisionStatus.Should().Be("AWAITING_REVIEW");
+        result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+        result.DecisionRetryable.Should().BeFalse();
+        result.DecisionRecoveryClassification.Should().Be(StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview);
+        result.DecisionRecoveryAction.Should().Be(StatutoryDiscountDecisionRecoveryActions.WaitForReview);
+        result.ApplicationRequested.Should().BeFalse();
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        result.OneShotComplete.Should().BeFalse();
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        fixture.Repository.LastDecisionCommand!.ActorUserId.Should().Be(Guid.Empty);
+        await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.DecisionService.DidNotReceive().DecideAsync(Arg.Any<OperatorConsoleStatutoryDiscountDecisionCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenAptSubmitsPermittedFacts_CreatesAwaitingReviewDecisionOnly()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: "ASSISTED_PAYMENT_TERMINAL", applyPayableBasis: false), CancellationToken.None);
+
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenServiceChannelRequestsApplyPayableBasis_DoesNotBypassPendingReview()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+        result.ApplicationRequested.Should().BeFalse();
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenPendingReviewReferenceExists_ReturnsAwaitingReviewReadback()
+    {
+        var fixture = CreateFixture();
+        var submitted = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: false), CancellationToken.None);
+
+        var readback = await fixture.Sut.GetAsync(submitted.StatutoryDiscountDecisionCommandId, CorrelationId, CancellationToken.None);
+
+        readback.Should().NotBeNull();
+        readback!.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        readback.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+        readback.ApplicationRequested.Should().BeFalse();
+        readback.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        readback.OneShotComplete.Should().BeFalse();
     }
 
     [Fact]
@@ -449,8 +531,11 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         string entitlementType = "SENIOR_CITIZEN",
         bool applyPayableBasis = true,
         string maskedIdReference = "SC-****-1234",
-        Guid? correlationId = null) =>
-        new(
+        Guid? correlationId = null)
+    {
+        var operatorConsole = string.Equals(sourceChannel, "OPERATOR_CONSOLE", StringComparison.Ordinal);
+
+        return new(
             RequestReference,
             sourceChannel,
             ParkingSessionId,
@@ -474,19 +559,20 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
                 "SC-****-1234",
                 "VERIFIED")],
             ActorUserId,
-            DeviceBindingId,
-            ShiftId,
+            operatorConsole ? DeviceBindingId : null,
+            operatorConsole ? ShiftId : null,
             true,
             "attested",
             "CUSTOMER_REQUEST",
-            "APPROVE",
-            "ELIGIBLE",
-            ReviewerUserId,
-            true,
+            operatorConsole ? "APPROVE" : null,
+            operatorConsole ? "ELIGIBLE" : null,
+            operatorConsole ? ReviewerUserId : null,
+            operatorConsole,
             applyPayableBasis,
             OriginalTariffSnapshotId,
             "statutory-discount-idempotency-key",
             correlationId ?? CorrelationId);
+    }
 
     private static OperatorConsoleStatutoryDiscountDraftResult DraftResult() =>
         new(
@@ -685,6 +771,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         public StatutoryDiscountDecisionV2Command? LastDecisionCommand { get; private set; }
 
+        public int ApplicationCount => _application is null ? 0 : 1;
+
         public TimeSpan DelayInsideLock { get; set; }
 
         public async Task<StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record>> CreateOrResolveDecisionAsync(
@@ -773,6 +861,23 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
                 RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey,
                 CorrelationId = correlationId,
                 ProcessingStartedAt = _decision.ProcessingStartedAt ?? Now
+            };
+            return Task.FromResult(_decision);
+        }
+
+        public Task<StatutoryDiscountDecisionV2Record> MarkDecisionAwaitingReviewAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _decision = _decision! with
+            {
+                CommandStatus = StatutoryDiscountDecisionV2CommandStates.AwaitingReview,
+                DecisionResultStatus = StatutoryDiscountDecisionV2ResultStates.NotDecided,
+                ResultClassification = StatutoryDiscountOneShotResultClassifications.AwaitingReview,
+                Retryable = false,
+                RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview,
+                CorrelationId = correlationId
             };
             return Task.FromResult(_decision);
         }

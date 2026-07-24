@@ -27,6 +27,7 @@ public static class StatutoryDiscountSourceChannels
 public static class StatutoryDiscountDecisionCommandStatuses
 {
     public const string Processing = "PROCESSING";
+    public const string AwaitingReview = "AWAITING_REVIEW";
     public const string Completed = "COMPLETED";
     public const string FailedRetryable = "FAILED_RETRYABLE";
     public const string FailedNonRetryable = "FAILED_NON_RETRYABLE";
@@ -38,6 +39,7 @@ public static class StatutoryDiscountDecisionCommandStatuses
 public static class StatutoryDiscountOneShotResultClassifications
 {
     public const string Accepted = "ACCEPTED";
+    public const string AwaitingReview = "AWAITING_REVIEW";
     public const string DecisionOnlyCompleted = "DECISION_ONLY_COMPLETED";
     public const string DecisionAndApplicationCompleted = "DECISION_AND_APPLICATION_COMPLETED";
     public const string DecisionCompletedApplicationProcessing = "DECISION_COMPLETED_APPLICATION_PROCESSING";
@@ -66,6 +68,7 @@ public static class StatutoryDiscountApplicationStageStatuses
 public static class StatutoryDiscountDecisionClientResultStatuses
 {
     public const string CreatedDurablyCompleted = "CREATED_DURABLY_COMPLETED";
+    public const string AwaitingReview = "AWAITING_REVIEW";
     public const string IdempotentReplay = "IDEMPOTENT_REPLAY";
     public const string SemanticConflict = "SEMANTIC_CONFLICT";
     public const string InProgress = "IN_PROGRESS";
@@ -86,6 +89,7 @@ public static class StatutoryDiscountDecisionClientResultStatuses
 public static class StatutoryDiscountDecisionRecoveryClassifications
 {
     public const string None = "NONE";
+    public const string AwaitingReview = "AWAITING_REVIEW";
     public const string ReadCanonicalResult = "READ_CANONICAL_RESULT";
     public const string RetryOriginalIdempotencyKey = "RETRY_ORIGINAL_IDEMPOTENCY_KEY";
     public const string WaitThenRetryOriginalIdempotencyKey = "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY";
@@ -99,6 +103,8 @@ public static class StatutoryDiscountDecisionRecoveryClassifications
 public static class StatutoryDiscountDecisionRecoveryActions
 {
     public const string ReadCanonicalDecision = "READ_CANONICAL_DECISION";
+    public const string WaitForReview = "WAIT_FOR_REVIEW";
+    public const string PollReadback = "POLL_READBACK";
     public const string RetrySameRequestWithOriginalKey = "RETRY_SAME_REQUEST_WITH_ORIGINAL_IDEMPOTENCY_KEY";
     public const string SubmitCorrectedRequest = "SUBMIT_CORRECTED_REQUEST";
     public const string WaitAndRetry = "WAIT_AND_RETRY";
@@ -355,6 +361,7 @@ internal static class StatutoryDiscountDecisionMappings
             StatutoryDiscountDecisionV2ResultStates.Approved when applicationApplied => "APPLIED_PAYABLE_BASIS",
             StatutoryDiscountDecisionV2ResultStates.Approved => "APPROVED",
             StatutoryDiscountDecisionV2ResultStates.Rejected => "REJECTED",
+            _ when decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.AwaitingReview => "AWAITING_REVIEW",
             _ when decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Processing
                 or StatutoryDiscountDecisionV2CommandStates.Received => "PROCESSING",
             _ => decision.DecisionResultStatus
@@ -362,6 +369,7 @@ internal static class StatutoryDiscountDecisionMappings
 
         var commandStatus = decision.CommandStatus switch
         {
+            StatutoryDiscountDecisionV2CommandStates.AwaitingReview => StatutoryDiscountDecisionCommandStatuses.AwaitingReview,
             StatutoryDiscountDecisionV2CommandStates.Completed => StatutoryDiscountDecisionCommandStatuses.Completed,
             StatutoryDiscountDecisionV2CommandStates.FailedRetryable => StatutoryDiscountDecisionCommandStatuses.FailedRetryable,
             StatutoryDiscountDecisionV2CommandStates.FailedNonRetryable => StatutoryDiscountDecisionCommandStatuses.FailedNonRetryable,
@@ -506,6 +514,8 @@ internal static class StatutoryDiscountDecisionMappings
         {
             StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult =>
                 StatutoryDiscountDecisionRecoveryActions.ReadCanonicalDecision,
+            StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview =>
+                StatutoryDiscountDecisionRecoveryActions.WaitForReview,
             StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey =>
                 StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey,
             StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey =>
@@ -522,6 +532,8 @@ internal static class StatutoryDiscountDecisionMappings
         {
             StatutoryDiscountDecisionRecoveryClassifications.ReadCanonicalResult =>
                 StatutoryDiscountDecisionRecoveryActions.ReadCanonicalDecision,
+            StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview =>
+                StatutoryDiscountDecisionRecoveryActions.PollReadback,
             StatutoryDiscountDecisionRecoveryClassifications.RetryOriginalIdempotencyKey =>
                 StatutoryDiscountDecisionRecoveryActions.RetrySameRequestWithOriginalKey,
             StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey =>

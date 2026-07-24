@@ -565,6 +565,12 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionServiceTests
             return Task.FromResult(_decision);
         }
 
+        public Task<StatutoryDiscountDecisionV2Record> MarkDecisionAwaitingReviewAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_decision!);
+
         public Task<StatutoryDiscountDecisionV2Record> CompleteDecisionApprovedAsync(
             Guid statutoryDiscountDecisionCommandId,
             Guid? statutoryDiscountValidationId,

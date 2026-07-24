@@ -1,0 +1,62 @@
+meta {
+  name: 152 Shared statutory decision APT pending review
+  type: http
+  seq: 152
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: manual-shared-statutory-apt-pending-review
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000752
+  X-ExitPass-Service-Identity-Id: 7d000000-0000-0000-0000-000000000007
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.assisted-payment-terminal
+}
+
+body:json {
+  {
+    "requestReference": "77000000-0000-0000-0000-000000000752",
+    "sourceChannel": "ASSISTED_PAYMENT_TERMINAL",
+    "parkingSessionId": "77000000-0000-0000-0000-000000000752",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "APT-PENDING-REVIEW-001",
+    "plateNumber": null,
+    "entitlementType": "PWD",
+    "idDocumentType": "PWD_ID",
+    "issuingAuthority": "PDAO",
+    "expiryDate": null,
+    "maskedIdReference": "{{pwdMaskedIdReference}}",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": null,
+    "operatorDeviceBindingId": null,
+    "operatorShiftId": null,
+    "requesterAttestation": true,
+    "attestationNotes": "APT pending review intake",
+    "reasonCode": null,
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": false,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("creates APT awaiting-review canonical decision without application", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.not.equal("00000000-0000-0000-0000-000000000000");
+    expect(res.body.sourceChannel).to.equal("ASSISTED_PAYMENT_TERMINAL");
+    expect(res.body.decisionCommandStatus).to.equal("AWAITING_REVIEW");
+    expect(res.body.decisionResultStatus).to.equal("NOT_DECIDED");
+    expect(res.body.applicationCommandStatus).to.equal("NOT_REQUESTED");
+    bru.setEnvVar("sharedStatutoryAptPendingDecisionCommandId", res.body.statutoryDiscountDecisionCommandId);
+  });
+}

@@ -11,6 +11,7 @@ public static class StatutoryDiscountDecisionV2CommandStates
 {
     public const string Received = "RECEIVED";
     public const string Processing = "PROCESSING";
+    public const string AwaitingReview = "AWAITING_REVIEW";
     public const string Completed = "COMPLETED";
     public const string FailedRetryable = "FAILED_RETRYABLE";
     public const string FailedNonRetryable = "FAILED_NON_RETRYABLE";
