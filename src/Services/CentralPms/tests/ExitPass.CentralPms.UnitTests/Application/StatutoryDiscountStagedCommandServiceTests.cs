@@ -125,6 +125,24 @@ public sealed class StatutoryDiscountStagedCommandServiceTests
     }
 
     [Fact]
+    public async Task MarkDecisionAwaitingReviewAsync_PersistsPendingReviewPosture()
+    {
+        var fixture = new Fixture();
+        var created = await fixture.Sut.CreateOrResolveDecisionAsync(DecisionCommand(decision: StatutoryDiscountDecisionV2ResultStates.NotDecided), CancellationToken.None);
+
+        var awaitingReview = await fixture.Sut.MarkDecisionAwaitingReviewAsync(
+            created.Record!.StatutoryDiscountDecisionCommandId,
+            CorrelationId,
+            CancellationToken.None);
+
+        awaitingReview.CommandStatus.Should().Be(StatutoryDiscountDecisionV2CommandStates.AwaitingReview);
+        awaitingReview.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+        awaitingReview.ResultClassification.Should().Be(StatutoryDiscountOneShotResultClassifications.AwaitingReview);
+        awaitingReview.Retryable.Should().BeFalse();
+        awaitingReview.RecoveryClassification.Should().Be(StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview);
+    }
+
+    [Fact]
     public async Task CompleteDecisionRejectedAsync_PersistsRejectedResult()
     {
         var fixture = new Fixture();

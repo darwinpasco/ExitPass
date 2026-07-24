@@ -1,0 +1,63 @@
+meta {
+  name: 160 Shared statutory decision apply true awaits review
+  type: http
+  seq: 160
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: manual-shared-statutory-webpay-apply-awaits-review
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000760
+  X-ExitPass-Service-Identity-Id: {{sharedStatutoryDecisionWebPayServiceIdentityId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
+}
+
+body:json {
+  {
+    "requestReference": "77000000-0000-0000-0000-000000000760",
+    "sourceChannel": "WEBPAY",
+    "parkingSessionId": "77000000-0000-0000-0000-000000000760",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "WEBPAY-PENDING-REVIEW-APPLY",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "{{seniorMaskedIdReference}}",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": null,
+    "operatorDeviceBindingId": null,
+    "operatorShiftId": null,
+    "requesterAttestation": true,
+    "attestationNotes": "Apply true cannot bypass review",
+    "reasonCode": null,
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": true,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("apply true cannot create application before review", function () {
+    expect([200, 201]).to.include(res.status);
+    expect(res.body.decisionCommandStatus).to.equal("AWAITING_REVIEW");
+    expect(res.body.decisionResultStatus).to.equal("NOT_DECIDED");
+    expect(res.body.applicationRequested).to.equal(false);
+    expect(res.body.applicationCommandStatus).to.equal("NOT_REQUESTED");
+    expect(res.body.statutoryDiscountPayableBasisApplicationCommandId).to.equal(null);
+    expect(res.body.oneShotComplete).to.equal(false);
+    expect(res.body.retryable).to.equal(false);
+  });
+}

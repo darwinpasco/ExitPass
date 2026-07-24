@@ -61,6 +61,27 @@ public sealed class StatutoryDiscountStagedCommandService : IStatutoryDiscountSt
         }, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<StatutoryDiscountDecisionV2Record> MarkDecisionAwaitingReviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var record = await RequireDecisionAsync(statutoryDiscountDecisionCommandId, cancellationToken)
+            .ConfigureAwait(false);
+
+        return await _repository.UpdateDecisionAsync(record with
+        {
+            CommandStatus = StatutoryDiscountDecisionV2CommandStates.AwaitingReview,
+            DecisionResultStatus = StatutoryDiscountDecisionV2ResultStates.NotDecided,
+            ResultClassification = StatutoryDiscountOneShotResultClassifications.AwaitingReview,
+            Retryable = false,
+            RecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview,
+            SafeErrorCode = null,
+            CorrelationId = correlationId,
+            UpdatedAt = DateTimeOffset.UtcNow
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<StatutoryDiscountDecisionV2Record> CompleteDecisionApprovedAsync(
         Guid statutoryDiscountDecisionCommandId,
         Guid? statutoryDiscountValidationId,

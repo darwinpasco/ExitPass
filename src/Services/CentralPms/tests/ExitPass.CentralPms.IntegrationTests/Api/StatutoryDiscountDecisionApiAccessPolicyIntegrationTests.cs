@@ -113,6 +113,43 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         body.ClientResultStatus.Should().Be("NON_RETRYABLE_FAILURE");
     }
 
+    [Theory]
+    [InlineData("WEBPAY", "statutory-discounts.decision.submit.webpay")]
+    [InlineData("ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal")]
+    public async Task Submit_WhenServiceChannelRequestsApplyWithoutOperatorOnlyFacts_ReachesFacade(string sourceChannel, string permission)
+    {
+        var fake = new FakeFacadeService();
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        AddServiceHeaders(client, permission);
+
+        using var response = await PostDecisionAsync(client, Request(sourceChannel: sourceChannel, applyPayableBasis: true));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        fake.LastCommand!.SourceChannel.Should().Be(sourceChannel);
+        fake.LastCommand.ApplyPayableBasis.Should().BeTrue();
+        fake.LastCommand.Decision.Should().BeNull();
+        fake.LastCommand.ReviewerUserId.Should().BeNull();
+        fake.LastCommand.OperatorDeviceBindingId.Should().BeNull();
+        fake.LastCommand.OperatorShiftId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Submit_WhenAuthenticatedIdentityMapsToMultipleSourceChannels_ReturnsForbidden()
+    {
+        using var factory = CreateFactory(new FakeFacadeService());
+        using var client = factory.CreateClient();
+        AddServiceHeaders(
+            client,
+            "statutory-discounts.decision.submit.webpay statutory-discounts.decision.submit.assisted-payment-terminal");
+
+        using var response = await PostDecisionAsync(client, Request(sourceChannel: "WEBPAY"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body!.ErrorCode.Should().Be("CENTRAL_PMS_SOURCE_CHANNEL_AMBIGUOUS");
+    }
+
     [Fact]
     public async Task Submit_WhenActorDoesNotMatchAuthenticatedIdentity_ReturnsBadRequest()
     {
@@ -292,7 +329,8 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         string entitlementType = "SENIOR_CITIZEN",
         string maskedIdReference = "SC-****-1234",
         Guid? actorUserId = null,
-        bool includeOperatorOnlyFields = false)
+        bool includeOperatorOnlyFields = false,
+        bool? applyPayableBasis = null)
     {
         var isOperator = string.Equals(sourceChannel, "OPERATOR_CONSOLE", StringComparison.Ordinal);
         var includeOperatorFacts = isOperator || includeOperatorOnlyFields;
@@ -334,7 +372,7 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
             DecisionReasonCode: includeOperatorFacts ? "ELIGIBLE" : null,
             ReviewerUserId: includeOperatorFacts ? Guid.Parse("7d000000-0000-0000-0000-00000000000b") : null,
             ReviewerAttestation: includeOperatorFacts,
-            ApplyPayableBasis: includeOperatorFacts,
+            ApplyPayableBasis: applyPayableBasis ?? includeOperatorFacts,
             OriginalTariffSnapshotId: includeOperatorFacts ? Guid.Parse("7d000000-0000-0000-0000-00000000000c") : null);
     }
 

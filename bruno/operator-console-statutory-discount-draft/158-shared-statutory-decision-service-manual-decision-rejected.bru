@@ -1,0 +1,58 @@
+meta {
+  name: 158 Shared statutory decision service manual decision rejected
+  type: http
+  seq: 158
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: manual-shared-statutory-service-decision-rejected
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000758
+  X-ExitPass-Service-Identity-Id: {{sharedStatutoryDecisionWebPayServiceIdentityId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
+}
+
+body:json {
+  {
+    "requestReference": "77000000-0000-0000-0000-000000000758",
+    "sourceChannel": "WEBPAY",
+    "parkingSessionId": "77000000-0000-0000-0000-000000000758",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "WEBPAY-PENDING-REVIEW-DECISION",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "{{seniorMaskedIdReference}}",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": null,
+    "operatorDeviceBindingId": null,
+    "operatorShiftId": null,
+    "requesterAttestation": true,
+    "attestationNotes": "Manual decision rejection",
+    "reasonCode": null,
+    "decision": "APPROVE",
+    "decisionReasonCode": "APPROVED_BY_REVIEWER",
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": false,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("service channel manual decision fields are rejected", function () {
+    expect(res.status).to.equal(400);
+    expect(res.body.errorCode).to.equal("CENTRAL_PMS_OPERATOR_FIELDS_NOT_ALLOWED_FOR_CHANNEL");
+    expect(res.body.clientResultStatus).to.equal("VALIDATION_FAILURE");
+  });
+}

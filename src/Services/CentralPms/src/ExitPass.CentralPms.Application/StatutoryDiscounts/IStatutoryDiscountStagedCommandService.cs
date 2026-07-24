@@ -18,6 +18,11 @@ public interface IStatutoryDiscountStagedCommandService
         Guid correlationId,
         CancellationToken cancellationToken);
 
+    Task<StatutoryDiscountDecisionV2Record> MarkDecisionAwaitingReviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
     Task<StatutoryDiscountDecisionV2Record> CompleteDecisionApprovedAsync(
         Guid statutoryDiscountDecisionCommandId,
         Guid? statutoryDiscountValidationId,

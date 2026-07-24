@@ -1,0 +1,61 @@
+meta {
+  name: 151 Shared statutory decision WebPay pending review replay
+  type: http
+  seq: 151
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: manual-shared-statutory-webpay-pending-review
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000751
+  X-ExitPass-Service-Identity-Id: {{sharedStatutoryDecisionWebPayServiceIdentityId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
+}
+
+body:json {
+  {
+    "requestReference": "77000000-0000-0000-0000-000000000751",
+    "sourceChannel": "WEBPAY",
+    "parkingSessionId": "77000000-0000-0000-0000-000000000750",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "WEBPAY-PENDING-REVIEW-001",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "{{seniorMaskedIdReference}}",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": null,
+    "operatorDeviceBindingId": null,
+    "operatorShiftId": null,
+    "requesterAttestation": true,
+    "attestationNotes": "WebPay pending review intake",
+    "reasonCode": null,
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": false,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("replays the same awaiting-review decision", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("sharedStatutoryWebPayPendingDecisionCommandId"));
+    expect(res.body.commandStatus).to.equal("AWAITING_REVIEW");
+    expect(res.body.clientResultStatus).to.equal("AWAITING_REVIEW");
+    expect(res.body.applicationCommandStatus).to.equal("NOT_REQUESTED");
+    expect(res.body.oneShotComplete).to.equal(false);
+  });
+}

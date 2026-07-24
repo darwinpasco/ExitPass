@@ -148,6 +148,43 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     }
 
     [Fact]
+    public async Task DecisionV2_WhenMarkedAwaitingReview_PersistsPendingReviewState()
+    {
+        await EnsurePatchAppliedAndValidatedAsync();
+        var context = PaymentTestContext.Create(nameof(DecisionV2_WhenMarkedAwaitingReview_PersistsPendingReviewState));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged pending-review decision data.");
+
+        try
+        {
+            var service = CreateService();
+            var created = await service.CreateOrResolveDecisionAsync(
+                DecisionCommand(context, decision: StatutoryDiscountDecisionV2ResultStates.NotDecided),
+                CancellationToken.None);
+
+            var awaitingReview = await service.MarkDecisionAwaitingReviewAsync(
+                created.Record!.StatutoryDiscountDecisionCommandId,
+                context.CorrelationId,
+                CancellationToken.None);
+            var readback = await service.GetDecisionAsync(
+                awaitingReview.StatutoryDiscountDecisionCommandId,
+                CancellationToken.None);
+
+            readback.Should().NotBeNull();
+            readback!.CommandStatus.Should().Be(StatutoryDiscountDecisionV2CommandStates.AwaitingReview);
+            readback.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
+            readback.ResultClassification.Should().Be(StatutoryDiscountOneShotResultClassifications.AwaitingReview);
+            readback.Retryable.Should().BeFalse();
+            readback.RecoveryClassification.Should().Be(StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview);
+            (await ApplicationRowCountAsync(awaitingReview.StatutoryDiscountDecisionCommandId)).Should().Be(0);
+        }
+        finally
+        {
+            await CleanupCommandRowsAsync(context.ParkingSessionId);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task ApplicationV1_ForApprovedDecision_ReplaysAndConflictsWithoutDuplicateApplicationCommand()
     {
         await EnsurePatchAppliedAndValidatedAsync();
@@ -406,7 +443,9 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
             await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
+            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
+            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
         }
         finally
         {

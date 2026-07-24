@@ -412,8 +412,7 @@ public static class StatutoryDiscountDecisionEndpoints
             body.ReviewerUserId is not null ||
             body.ReviewerAttestation ||
             !string.IsNullOrWhiteSpace(body.Decision) ||
-            !string.IsNullOrWhiteSpace(body.DecisionReasonCode) ||
-            body.ApplyPayableBasis;
+            !string.IsNullOrWhiteSpace(body.DecisionReasonCode);
 
         if (body.ActorUserId != Guid.Empty && body.ActorUserId != actorId)
         {
@@ -485,6 +484,12 @@ public static class StatutoryDiscountDecisionEndpoints
             return StatutoryDiscountDecisionClientResultStatuses.RecoverableUsingOriginalKey;
         }
 
+        if (string.Equals(result.DecisionCommandStatus, StatutoryDiscountDecisionCommandStatuses.AwaitingReview, StringComparison.Ordinal) ||
+            string.Equals(result.ResultClassification, StatutoryDiscountOneShotResultClassifications.AwaitingReview, StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionClientResultStatuses.AwaitingReview;
+        }
+
         if (!result.OneShotComplete)
         {
             return StatutoryDiscountDecisionClientResultStatuses.InProgress;
@@ -495,6 +500,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "APPLIED_PAYABLE_BASIS" or "APPROVED" => StatutoryDiscountDecisionClientResultStatuses.Approved,
             "REJECTED" => StatutoryDiscountDecisionClientResultStatuses.RejectedOrNonApproved,
             "PROCESSING" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
+            "AWAITING_REVIEW" => StatutoryDiscountDecisionClientResultStatuses.AwaitingReview,
             _ when !string.IsNullOrWhiteSpace(result.ErrorCode) => StatutoryDiscountDecisionClientResultStatuses.ValidationFailure,
             _ => StatutoryDiscountDecisionClientResultStatuses.CreatedDurablyCompleted
         };
@@ -508,6 +514,11 @@ public static class StatutoryDiscountDecisionEndpoints
         }
 
         if (result.DecisionRetryable)
+        {
+            return result.DecisionRecoveryClassification;
+        }
+
+        if (string.Equals(result.DecisionRecoveryClassification, StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview, StringComparison.Ordinal))
         {
             return result.DecisionRecoveryClassification;
         }
@@ -533,6 +544,11 @@ public static class StatutoryDiscountDecisionEndpoints
         }
 
         if (result.DecisionRetryable)
+        {
+            return result.DecisionRecoveryAction;
+        }
+
+        if (string.Equals(result.DecisionRecoveryClassification, StatutoryDiscountDecisionRecoveryClassifications.AwaitingReview, StringComparison.Ordinal))
         {
             return result.DecisionRecoveryAction;
         }

@@ -98,7 +98,7 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
                SET command_status = @command_status,
                    decision_result_status = @decision_result_status,
                    result_classification = CASE
-                       WHEN @result_classification IN ('ACCEPTED', 'IDEMPOTENT_REPLAY') THEN @result_classification
+                       WHEN @result_classification IN ('ACCEPTED', 'IDEMPOTENT_REPLAY', 'AWAITING_REVIEW') THEN @result_classification
                        ELSE result_classification
                    END,
                    retryable = @retryable,
