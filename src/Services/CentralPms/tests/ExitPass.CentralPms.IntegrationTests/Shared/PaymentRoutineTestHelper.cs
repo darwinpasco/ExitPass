@@ -38,7 +38,8 @@ public static class PaymentRoutineTestHelper
         string connectionString,
         PaymentTestContext context,
         string idempotencyKey,
-        string requestedBy)
+        string requestedBy,
+        Guid? tariffSnapshotId = null)
     {
         const string sql = """
             SELECT
@@ -67,7 +68,7 @@ public static class PaymentRoutineTestHelper
         };
 
         command.Parameters.AddWithValue("p_parking_session_id", context.ParkingSessionId);
-        command.Parameters.AddWithValue("p_tariff_snapshot_id", context.TariffSnapshotId);
+        command.Parameters.AddWithValue("p_tariff_snapshot_id", tariffSnapshotId ?? context.TariffSnapshotId);
         command.Parameters.AddWithValue("p_payment_provider_code", "GCASH");
         command.Parameters.AddWithValue("p_idempotency_key", idempotencyKey);
         command.Parameters.AddWithValue("p_requested_by", requestedBy);

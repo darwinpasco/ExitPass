@@ -41,7 +41,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
         {
             using var factory = CreateFactory(AllowedResult(webPay.Context.SiteId, webPay.Context.SiteGroupId));
             using var client = factory.CreateClient();
-            AddOperatorHeaders(client, webPay.Context.SiteId, webPay.Context.SiteGroupId);
+            AddOperatorHeaders(client, webPay.Context.SiteId, webPay.Context.SiteGroupId, webPay.Context.RequestedByUserId);
 
             var webPayQueue = await GetQueueAsync(
                 client,
@@ -54,7 +54,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
 
             using var aptFactory = CreateFactory(AllowedResult(apt.Context.SiteId, apt.Context.SiteGroupId));
             using var aptClient = aptFactory.CreateClient();
-            AddOperatorHeaders(aptClient, apt.Context.SiteId, apt.Context.SiteGroupId);
+            AddOperatorHeaders(aptClient, apt.Context.SiteId, apt.Context.SiteGroupId, apt.Context.RequestedByUserId);
             var aptQueue = await GetQueueAsync(aptClient, "sourceChannel=ASSISTED_PAYMENT_TERMINAL");
             aptQueue.Items.Should().ContainSingle(item =>
                 item.StatutoryDiscountDecisionCommandId == apt.Decision.StatutoryDiscountDecisionCommandId &&
@@ -93,7 +93,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
         {
             using var factory = CreateFactory(AllowedResult(seeded.Context.SiteId, seeded.Context.SiteGroupId));
             using var client = factory.CreateClient();
-            AddOperatorHeaders(client, seeded.Context.SiteId, seeded.Context.SiteGroupId);
+            AddOperatorHeaders(client, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
 
             using var response = await client.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
@@ -143,8 +143,8 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             using var factory = CreateFactory(AllowedResult(seeded.Context.SiteId, seeded.Context.SiteGroupId));
             using var firstClient = factory.CreateClient();
             using var secondClient = factory.CreateClient();
-            AddOperatorHeaders(firstClient, seeded.Context.SiteId, seeded.Context.SiteGroupId);
-            AddOperatorHeaders(secondClient, seeded.Context.SiteId, seeded.Context.SiteGroupId);
+            AddOperatorHeaders(firstClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
+            AddOperatorHeaders(secondClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
 
             var first = firstClient.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
@@ -212,7 +212,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
 
             using var factory = CreateFactory(AllowedResult(seeded.Context.SiteId, seeded.Context.SiteGroupId));
             using var client = factory.CreateClient();
-            AddOperatorHeaders(client, seeded.Context.SiteId, seeded.Context.SiteGroupId);
+            AddOperatorHeaders(client, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
 
             using var response = await client.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
@@ -227,7 +227,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
 
             var detail = await GetDetailAsync(client, seeded.Decision.StatutoryDiscountDecisionCommandId);
             detail.ReviewStatus.Should().Be(StatutoryDiscountServiceChannelReviewStatuses.Approved);
-            detail.ReviewerUserId.Should().Be(ReviewerUserId);
+            detail.ReviewerUserId.Should().Be(seeded.Context.RequestedByUserId);
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(seeded.Decision.StatutoryDiscountDecisionCommandId)).Should().Be(0);
         }
         finally
@@ -251,12 +251,12 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
 
             using var deniedFactory = CreateFactory(DeniedResult(seeded.Context.SiteId, seeded.Context.SiteGroupId, "MISSING_REVIEWER_PERMISSION"));
             using var deniedClient = deniedFactory.CreateClient();
-            AddOperatorHeaders(deniedClient, seeded.Context.SiteId, seeded.Context.SiteGroupId);
+            AddOperatorHeaders(deniedClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
             (await deniedClient.GetAsync(QueueEndpoint)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
             using var wrongSiteFactory = CreateFactory(AllowedResult(OtherSiteId, OtherSiteGroupId));
             using var wrongSiteClient = wrongSiteFactory.CreateClient();
-            AddOperatorHeaders(wrongSiteClient, OtherSiteId, OtherSiteGroupId);
+            AddOperatorHeaders(wrongSiteClient, OtherSiteId, OtherSiteGroupId, seeded.Context.RequestedByUserId);
             (await wrongSiteClient.GetAsync(DetailEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId))).StatusCode.Should().Be(HttpStatusCode.NotFound);
 
             using var serviceClient = allowedFactory.CreateClient();
@@ -265,7 +265,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             (await serviceClient.GetAsync($"{QueueEndpoint}?sourceChannel=WEBPAY")).StatusCode.Should().Be(HttpStatusCode.BadRequest);
 
             using var missingShiftClient = deniedFactory.CreateClient();
-            AddOperatorHeaders(missingShiftClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, shiftId: Guid.Empty);
+            AddOperatorHeaders(missingShiftClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId, shiftId: Guid.Empty);
             using var missingShiftResponse = await missingShiftClient.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
                 DecisionRequest(seeded.Context, "APPROVE") with { OperatorShiftId = null });
@@ -275,7 +275,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             missingShift.DecisionAccepted.Should().BeFalse();
 
             using var invalidDeviceClient = deniedFactory.CreateClient();
-            AddOperatorHeaders(invalidDeviceClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, deviceBindingId: Guid.Empty);
+            AddOperatorHeaders(invalidDeviceClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId, deviceBindingId: Guid.Empty);
             using var invalidDeviceResponse = await invalidDeviceClient.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
                 DecisionRequest(seeded.Context, "APPROVE") with { OperatorDeviceBindingId = null });
@@ -328,7 +328,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
         string decision,
         string idempotencyKey = "service-channel-review-decision-key") =>
         new(
-            ReviewerUserId,
+            context.RequestedByUserId,
             ReviewerDeviceBindingId,
             context.SiteId,
             context.SiteGroupId,
@@ -344,10 +344,11 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
         HttpClient client,
         Guid siteId,
         Guid siteGroupId,
+        Guid reviewerUserId,
         Guid? deviceBindingId = null,
         Guid? shiftId = null)
     {
-        client.DefaultRequestHeaders.Add("X-Operator-User-Id", ReviewerUserId.ToString());
+        client.DefaultRequestHeaders.Add("X-Operator-User-Id", reviewerUserId.ToString());
         if (deviceBindingId.GetValueOrDefault(ReviewerDeviceBindingId) != Guid.Empty)
         {
             client.DefaultRequestHeaders.Add("X-Operator-Device-Binding-Id", deviceBindingId.GetValueOrDefault(ReviewerDeviceBindingId).ToString());

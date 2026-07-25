@@ -1,7 +1,7 @@
 meta {
-  name: 160 Shared statutory decision apply true missing decision rejected
+  name: 178 Shared statutory decision service application prohibited fields
   type: http
-  seq: 160
+  seq: 178
 }
 
 post {
@@ -12,20 +12,20 @@ post {
 
 headers {
   Content-Type: application/json
-  Idempotency-Key: manual-shared-statutory-webpay-apply-awaits-review
-  X-Correlation-Id: 77000000-0000-0000-0000-000000000760
+  Idempotency-Key: manual-shared-statutory-service-application-prohibited-fields
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000778
   X-ExitPass-Service-Identity-Id: {{sharedStatutoryDecisionWebPayServiceIdentityId}}
   X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
 }
 
 body:json {
   {
-    "requestReference": "77000000-0000-0000-0000-000000000760",
+    "requestReference": "77000000-0000-0000-0000-000000000778",
     "sourceChannel": "WEBPAY",
-    "parkingSessionId": "77000000-0000-0000-0000-000000000760",
+    "parkingSessionId": "77000000-0000-0000-0000-000000000750",
     "siteId": "{{siteId_allowed}}",
     "siteGroupId": "{{siteGroupId_allowed}}",
-    "ticketReference": "WEBPAY-PENDING-REVIEW-APPLY",
+    "ticketReference": "WEBPAY-PENDING-REVIEW-001",
     "plateNumber": null,
     "entitlementType": "SENIOR_CITIZEN",
     "idDocumentType": "SENIOR_CITIZEN_ID",
@@ -35,25 +35,23 @@ body:json {
     "evidenceCaptureRequested": false,
     "evidenceReferences": [],
     "actorUserId": null,
-    "operatorDeviceBindingId": null,
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
     "operatorShiftId": null,
     "requesterAttestation": true,
-    "attestationNotes": "Apply true cannot bypass review",
+    "attestationNotes": "Reviewer/device fields remain prohibited",
     "reasonCode": null,
-    "decision": null,
-    "decisionReasonCode": null,
-    "reviewerUserId": null,
-    "reviewerAttestation": false,
+    "decision": "APPROVE",
+    "decisionReasonCode": "ELIGIBLE",
+    "reviewerUserId": "{{userId_allowed}}",
+    "reviewerAttestation": true,
     "applyPayableBasis": true,
     "originalTariffSnapshotId": null
   }
 }
 
 tests {
-  test("apply true cannot create a decision when no canonical decision exists", function () {
-    expect(res.status).to.equal(404);
-    expect(res.body.errorCode).to.equal("STATUTORY_DISCOUNT_DECISION_NOT_FOUND");
-    expect(res.body.clientResultStatus).to.equal("NOT_FOUND");
-    expect(res.body.retryable).to.equal(false);
+  test("service-channel application intent cannot submit operator-only facts", function () {
+    expect(res.status).to.equal(400);
+    expect(res.body.errorCode).to.equal("STATUTORY_DISCOUNT_CHANNEL_FIELD_PROHIBITED");
   });
 }

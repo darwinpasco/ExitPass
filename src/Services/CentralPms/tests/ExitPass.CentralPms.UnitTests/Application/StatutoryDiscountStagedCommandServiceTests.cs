@@ -615,6 +615,11 @@ public sealed class StatutoryDiscountStagedCommandServiceTests
         public Task<StatutoryDiscountDecisionV2Record?> GetDecisionAsync(Guid statutoryDiscountDecisionCommandId, CancellationToken cancellationToken) =>
             Task.FromResult(_decisions.GetValueOrDefault(statutoryDiscountDecisionCommandId));
 
+        public Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(string businessIdentity, CancellationToken cancellationToken) =>
+            Task.FromResult(_decisions.Values.FirstOrDefault(record =>
+                string.Equals(record.BusinessIdentity, businessIdentity, StringComparison.Ordinal) ||
+                string.Equals(record.IdempotencyScope, businessIdentity, StringComparison.Ordinal)));
+
         public Task<StatutoryDiscountDecisionV2Record> UpdateDecisionAsync(StatutoryDiscountDecisionV2Record record, CancellationToken cancellationToken)
         {
             _decisions[record.StatutoryDiscountDecisionCommandId] = record;

@@ -97,6 +97,7 @@ public sealed record StatutoryDiscountServiceChannelReviewQueueItem(
 /// </summary>
 public sealed record StatutoryDiscountServiceChannelReviewDetail(
     Guid StatutoryDiscountDecisionCommandId,
+    Guid? StatutoryDiscountValidationId,
     Guid RequestReference,
     Guid ParkingSessionId,
     string SourceChannel,
@@ -132,6 +133,24 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
     Guid CorrelationId);
+
+/// <summary>
+/// Durable statutory validation linkage created from a reviewed service-channel decision.
+/// </summary>
+public sealed record StatutoryDiscountServiceChannelValidationLinkage(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid StatutoryDiscountValidationId,
+    Guid ParkingSessionId,
+    string EntitlementType,
+    Guid OriginalTariffSnapshotId,
+    Guid? AppliedPolicyReferenceId,
+    Guid? FallbackPolicyReferenceId,
+    string PolicyResolutionBasis,
+    bool LocalOrdinanceApplied,
+    long GrossAmountMinorUnits,
+    string Currency,
+    string BenefitType,
+    string DiscountBaseScope);
 
 /// <summary>
 /// Command for completing a service-channel-originated canonical decision from Operator Console.

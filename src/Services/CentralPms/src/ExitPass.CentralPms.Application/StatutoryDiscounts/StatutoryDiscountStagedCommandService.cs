@@ -42,6 +42,18 @@ public sealed class StatutoryDiscountStagedCommandService : IStatutoryDiscountSt
         CancellationToken cancellationToken) =>
         _repository.GetDecisionAsync(statutoryDiscountDecisionCommandId, cancellationToken);
 
+    public Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(
+        string businessIdentity,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(businessIdentity))
+        {
+            throw new ArgumentException("Decision business identity is required.", nameof(businessIdentity));
+        }
+
+        return _repository.GetDecisionByBusinessIdentityAsync(businessIdentity, cancellationToken);
+    }
+
     public async Task<StatutoryDiscountDecisionV2Record> MarkDecisionProcessingAsync(
         Guid statutoryDiscountDecisionCommandId,
         Guid correlationId,
