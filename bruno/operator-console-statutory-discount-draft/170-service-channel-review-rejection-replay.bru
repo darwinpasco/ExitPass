@@ -1,0 +1,40 @@
+meta {
+  name: 170 Service-channel review rejection replay
+  type: http
+  seq: 170
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/reviews/{{sharedStatutoryAptPendingDecisionCommandId}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "decision": "REJECT",
+    "decisionReasonCode": "ID_NOT_VALID",
+    "decisionNotes": "Service-channel pending review rejection replay",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-service-channel-apt-review-reject",
+    "correlationId": "77000000-0000-0000-0000-000000000770"
+  }
+}
+
+tests {
+  test("rejection replay returns durable canonical result", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.decisionAccepted).to.equal(true);
+    expect(res.body.alreadyDecided).to.equal(true);
+    expect(res.body.currentValidationStatus).to.equal("REJECTED");
+  });
+}

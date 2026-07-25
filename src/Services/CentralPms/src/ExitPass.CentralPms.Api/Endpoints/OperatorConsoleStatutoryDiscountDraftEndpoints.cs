@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using OpenTelemetry.Trace;
@@ -34,6 +35,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
     private static readonly ActivitySource ApplyPayableBasisActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis");
     private static readonly ActivitySource EvidenceActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountEvidence");
+    private static readonly ActivitySource ServiceChannelReviewActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleServiceChannelStatutoryDiscountReview");
 
     /// <summary>
     /// Maps Operator Console statutory discount draft endpoints.
@@ -74,6 +76,39 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithMetadata(new ReconciliationPolicyMetadata(AuditReadPolicy))
             .WithSummary("List Operator Console statutory discount audit/reporting rows")
             .WithDescription("Returns a read-only statutory discount/access audit report using safe masked fields only. This endpoint does not return raw evidence, raw ID numbers, payment authority, gate authority, coupon authority, or reconciliation mutation.");
+
+        group.MapGet("/statutory-discounts/reviews/pending", ListServiceChannelReviewsAsync)
+            .WithName("ListOperatorConsoleServiceChannelStatutoryDiscountReviews")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithSummary("List service-channel statutory discount decisions awaiting Operator Console review")
+            .WithDescription("Returns safe service-channel statutory-discount decisions that are awaiting Operator Console review. This endpoint does not approve, reject, apply payable basis, create payments, issue fiscal documents, issue exit authorization, or command gates.");
+
+        group.MapGet("/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}", GetServiceChannelReviewAsync)
+            .WithName("GetOperatorConsoleServiceChannelStatutoryDiscountReview")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithSummary("Get service-channel statutory discount review detail")
+            .WithDescription("Returns safe submitted facts and evidence references for one service-channel statutory-discount decision awaiting Operator Console review. It does not return raw evidence, raw statutory IDs, payment authority, fiscal authority, exit authorization, or gate state.");
+
+        group.MapPost("/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}/decision", DecideServiceChannelReviewAsync)
+            .WithName("DecideOperatorConsoleServiceChannelStatutoryDiscountReview")
+            .WithTags("OperatorConsole")
+            .Accepts<OperatorConsoleStatutoryDiscountDecisionRequest>("application/json")
+            .Produces<OperatorConsoleStatutoryDiscountDecisionResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithSummary("Approve or reject a service-channel statutory discount decision")
+            .WithDescription("Completes the same canonical decision-v2 created by WebPay or Assisted Payment Terminal pending-review intake. This endpoint does not create application-v1, apply payable basis, mutate payments, issue fiscal documents, issue exit authorization, or command gates.");
 
         group.MapPost("/statutory-discounts/draft", DraftAsync)
             .WithName("DraftOperatorConsoleStatutoryDiscount")
@@ -622,6 +657,298 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.Limit,
             result.Offset,
             result.CorrelationId);
+
+    private static async Task<IResult> ListServiceChannelReviewsAsync(
+        string? sourceChannel,
+        string? entitlementType,
+        Guid? siteId,
+        Guid? siteGroupId,
+        Guid? parkingSessionId,
+        DateTimeOffset? submittedFrom,
+        DateTimeOffset? submittedTo,
+        int? page,
+        int? pageSize,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleServiceChannelStatutoryDiscountReviewService service,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = ServiceChannelReviewActivitySource.StartActivity("HTTP ListOperatorConsoleServiceChannelStatutoryDiscountReviews", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
+
+            var result = await service.ListAsync(
+                    new StatutoryDiscountServiceChannelReviewQueueQuery(
+                        siteId,
+                        siteGroupId,
+                        sourceChannel,
+                        entitlementType,
+                        parkingSessionId,
+                        submittedFrom,
+                        submittedTo,
+                        page.GetValueOrDefault(1),
+                        pageSize.GetValueOrDefault(25),
+                        effectiveCorrelationId),
+                    ToReviewAccessContext(identity, $"operator-console-service-channel-review-list-{effectiveCorrelationId:N}"),
+                    httpRequest.HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.Json(
+                BuildError("OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_ACCESS_DENIED", "Operator Console service-channel statutory discount review access was denied.", effectiveCorrelationId),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console service-channel statutory discount review list failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_LIST_FAILED",
+                    "The service-channel statutory discount review list could not be loaded.",
+                    effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static async Task<IResult> GetServiceChannelReviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IOperatorConsoleServiceChannelStatutoryDiscountReviewService service,
+        ILoggerFactory loggerFactory)
+    {
+        var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
+        using var activity = ServiceChannelReviewActivitySource.StartActivity("HTTP GetOperatorConsoleServiceChannelStatutoryDiscountReview", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
+
+            var result = await service.GetAsync(
+                    statutoryDiscountDecisionCommandId,
+                    ToReviewAccessContext(identity, $"operator-console-service-channel-review-detail-{statutoryDiscountDecisionCommandId:N}"),
+                    httpRequest.HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            return result is null
+                ? Results.NotFound(BuildError("STATUTORY_DISCOUNT_SERVICE_CHANNEL_REVIEW_NOT_FOUND", "The service-channel statutory discount review was not found.", effectiveCorrelationId))
+                : Results.Ok(ToContract(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.Json(
+                BuildError("OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_ACCESS_DENIED", "Operator Console service-channel statutory discount review access was denied.", effectiveCorrelationId),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console service-channel statutory discount review detail failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_DETAIL_FAILED",
+                    "The service-channel statutory discount review detail could not be loaded.",
+                    effectiveCorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static async Task<IResult> DecideServiceChannelReviewAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        OperatorConsoleStatutoryDiscountDecisionRequest request,
+        HttpRequest httpRequest,
+        IOperatorConsoleServiceChannelStatutoryDiscountReviewService service,
+        ILoggerFactory loggerFactory)
+    {
+        using var activity = ServiceChannelReviewActivitySource.StartActivity("HTTP DecideOperatorConsoleServiceChannelStatutoryDiscountReview", ActivityKind.Server);
+        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+
+        try
+        {
+            var identity = OperatorConsoleIdentityContext.Resolve(
+                httpRequest,
+                request.UserId,
+                request.OperatorDeviceBindingId,
+                request.OperatorShiftId,
+                request.SiteId,
+                request.SiteGroupId,
+                request.CorrelationId);
+
+            var result = await service.DecideAsync(
+                    new StatutoryDiscountServiceChannelReviewDecisionCommand(
+                        statutoryDiscountDecisionCommandId,
+                        identity.UserId,
+                        identity.OperatorDeviceBindingId,
+                        identity.SiteId,
+                        identity.SiteGroupId,
+                        identity.OperatorShiftId,
+                        request.Decision,
+                        request.DecisionReasonCode,
+                        request.DecisionNotes,
+                        request.ReviewerAttestation,
+                        request.IdempotencyKey,
+                        identity.CorrelationId),
+                    httpRequest.HttpContext.RequestAborted)
+                .ConfigureAwait(false);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            var response = ToContract(result);
+            return result.ErrorCode == "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED"
+                ? Results.Conflict(BuildError(result.ErrorCode, "The statutory discount decision already has a conflicting terminal review result.", result.CorrelationId))
+                : Results.Ok(response);
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_DECISION_REQUEST", ex.Message, request.CorrelationId));
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            logger.LogError(ex, "Operator Console service-channel statutory discount review decision failed.");
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_DECISION_FAILED",
+                    "The service-channel statutory discount review decision could not be completed.",
+                    request.CorrelationId),
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    private static OperatorConsoleReviewAccessContext ToReviewAccessContext(
+        OperatorConsoleIdentityContext identity,
+        string idempotencyKey) =>
+        new(
+            identity.UserId,
+            identity.OperatorDeviceBindingId,
+            identity.OperatorShiftId,
+            identity.SiteId,
+            identity.SiteGroupId,
+            identity.CorrelationId,
+            idempotencyKey);
+
+    private static OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse ToContract(
+        StatutoryDiscountServiceChannelReviewQueueResult result) =>
+        new(
+            result.Items.Select(item => new OperatorConsoleServiceChannelStatutoryDiscountReviewQueueItem(
+                item.StatutoryDiscountDecisionCommandId,
+                item.ParkingSessionId,
+                item.SourceChannel,
+                item.SiteId,
+                item.SiteGroupId,
+                item.TicketReference,
+                item.PlateNumber,
+                item.EntitlementType,
+                item.CommandStatus,
+                item.DecisionResultStatus,
+                item.ReviewStatus,
+                item.EvidenceRequired,
+                item.EvidenceRecorded,
+                item.OriginalTariffSnapshotId,
+                item.SubmittedAt,
+                item.CorrelationId)).ToArray(),
+            result.Page,
+            result.PageSize,
+            result.HasMore,
+            result.CorrelationId);
+
+    private static OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse ToContract(
+        StatutoryDiscountServiceChannelReviewDetail result) =>
+        new(
+            result.StatutoryDiscountDecisionCommandId,
+            result.RequestReference,
+            result.ParkingSessionId,
+            result.SourceChannel,
+            result.SiteId,
+            result.SiteGroupId,
+            result.TicketReference,
+            result.PlateNumber,
+            result.EntitlementType,
+            result.CommandStatus,
+            result.DecisionResultStatus,
+            result.ReviewStatus,
+            result.IdDocumentType,
+            result.IssuingAuthority,
+            result.ExpiryDate,
+            result.MaskedIdReference,
+            result.EvidenceReferences.Select(evidence => new OperatorConsoleServiceChannelStatutoryDiscountReviewEvidenceReference(
+                    evidence.EvidenceType,
+                    evidence.CaptureMethod,
+                    evidence.StorageReference,
+                    evidence.ReferenceNumberMasked,
+                    evidence.VerificationStatus))
+                .ToArray(),
+            result.RequesterAttestation,
+            result.AttestationNotes,
+            result.ReasonCode,
+            result.EvidenceRequired,
+            result.EvidenceRecorded,
+            result.OriginalTariffSnapshotId,
+            result.OriginalAmountMinorUnits,
+            result.VatExclusiveAmountMinorUnits,
+            result.VatAmountMinorUnits,
+            result.StatutoryDiscountAmountMinorUnits,
+            result.FinalPayableAmountMinorUnits,
+            result.Currency,
+            result.ReviewerUserId,
+            result.ReviewerAccessEvaluationId,
+            result.ReviewerDecision,
+            result.ReviewerReasonCode,
+            result.SubmittedAt,
+            result.ReviewedAt,
+            result.CorrelationId);
+
+    private static OperatorConsoleStatutoryDiscountDecisionResponse ToContract(
+        StatutoryDiscountServiceChannelReviewDecisionResult result) =>
+        new(
+            result.AccessEvaluationId,
+            result.AccessAllowed,
+            result.AccessDecision,
+            result.AccessDenialReasons,
+            result.AccessPersisted,
+            result.DecisionAccepted,
+            result.DecisionPersisted,
+            DraftId: null,
+            result.ParkingSessionId == Guid.Empty ? null : result.ParkingSessionId,
+            result.EntitlementType,
+            result.PreviousDecisionResultStatus,
+            result.CurrentDecisionResultStatus,
+            result.Decision,
+            result.DecisionReasonCode,
+            result.AlreadyDecided,
+            result.DecisionChanged,
+            result.IneligibilityReason,
+            result.ErrorCode,
+            result.CorrelationId,
+            result.StatutoryDiscountDecisionCommandId);
 
     private static async Task<IResult> DecideAsync(
         Guid draftId,

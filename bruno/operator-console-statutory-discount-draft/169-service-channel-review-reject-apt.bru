@@ -1,0 +1,42 @@
+meta {
+  name: 169 Service-channel review reject APT
+  type: http
+  seq: 169
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/reviews/{{sharedStatutoryAptPendingDecisionCommandId}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "decision": "REJECT",
+    "decisionReasonCode": "ID_NOT_VALID",
+    "decisionNotes": "Service-channel pending review rejected",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-service-channel-apt-review-reject",
+    "correlationId": "77000000-0000-0000-0000-000000000769"
+  }
+}
+
+tests {
+  test("rejects same canonical APT-originated decision", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.accessAllowed).to.equal(true);
+    expect(res.body.decisionAccepted).to.equal(true);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("sharedStatutoryAptPendingDecisionCommandId"));
+    expect(res.body.currentValidationStatus).to.equal("REJECTED");
+    expect(res.body.decision).to.equal("REJECT");
+  });
+}

@@ -256,6 +256,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleServiceChannelStatutoryDiscountReview")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountPolicyResolution")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImport")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
@@ -661,6 +662,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandRepository>(_ =>
         new PostgresStatutoryDiscountStagedCommandRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandService, StatutoryDiscountStagedCommandService>();
+    builder.Services.AddScoped<IStatutoryDiscountServiceChannelReviewRepository>(_ =>
+        new PostgresStatutoryDiscountServiceChannelReviewRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleServiceChannelStatutoryDiscountReviewService, OperatorConsoleServiceChannelStatutoryDiscountReviewService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
         new OperatorConsoleProductionPolicyImportReviewQueueRepository(mainDatabaseConnectionString));

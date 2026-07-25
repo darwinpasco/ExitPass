@@ -126,19 +126,29 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
                    failed_at = @failed_at,
                    updated_at = now()
              WHERE statutory_discount_decision_command_id = @statutory_discount_decision_command_id
+               AND (
+                   @command_status <> 'COMPLETED'
+                   OR command_status <> 'COMPLETED'
+                   OR decision_result_status = @decision_result_status
+               )
              RETURNING *;
             """;
 
         await using var dbCommand = new NpgsqlCommand(sql, connection) { CommandTimeout = 30 };
         AddDecisionUpdateParameters(dbCommand, record);
-        await using var reader = await dbCommand.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
-            .ConfigureAwait(false);
-        if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        await using (var reader = await dbCommand.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken)
+            .ConfigureAwait(false))
         {
-            throw NotFound("STATUTORY_DISCOUNT_DECISION_NOT_FOUND", "Statutory discount decision command was not found.");
+            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                return ReadDecision(reader);
+            }
         }
 
-        return ReadDecision(reader);
+        var existing = await ReadDecisionByIdAsync(connection, null, record.StatutoryDiscountDecisionCommandId, cancellationToken)
+            .ConfigureAwait(false);
+        return existing
+            ?? throw NotFound("STATUTORY_DISCOUNT_DECISION_NOT_FOUND", "Statutory discount decision command was not found.");
     }
 
     public Task<T> ExecuteWithApplicationLockAsync<T>(

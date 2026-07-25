@@ -1,0 +1,32 @@
+meta {
+  name: 164 Service-channel review detail WebPay
+  type: http
+  seq: 164
+}
+
+get {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/reviews/{{sharedStatutoryWebPayPendingDecisionCommandId}}
+  body: none
+  auth: none
+}
+
+headers {
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000764
+  X-ExitPass-User-Id: {{userId_allowed}}
+  X-ExitPass-Operator-Device-Binding-Id: {{operatorDeviceBindingId_allowed}}
+  X-ExitPass-Operator-Shift-Id: {{operatorShiftId_allowed}}
+  X-ExitPass-Site-Id: {{siteId_allowed}}
+  X-ExitPass-Site-Group-Id: {{siteGroupId_allowed}}
+  X-ExitPass-Permissions: operator-console.statutory-discounts.decision
+}
+
+tests {
+  test("review detail exposes safe service-channel facts only", function () {
+    expect(res.status).to.equal(200);
+    expect(res.body.statutoryDiscountDecisionCommandId).to.equal(bru.getEnvVar("sharedStatutoryWebPayPendingDecisionCommandId"));
+    expect(res.body.sourceChannel).to.equal("WEBPAY");
+    expect(res.body.maskedIdReference).to.equal(bru.getEnvVar("seniorMaskedIdReference"));
+    expect(JSON.stringify(res.body).toLowerCase()).to.not.include("base64");
+    expect(JSON.stringify(res.body).toLowerCase()).to.not.include("raw");
+  });
+}
