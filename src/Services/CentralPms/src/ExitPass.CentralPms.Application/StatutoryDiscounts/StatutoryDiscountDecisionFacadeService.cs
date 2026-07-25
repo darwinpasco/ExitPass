@@ -22,6 +22,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IOperatorConsoleStatutoryDiscountDecisionService _decisionService;
     private readonly IOperatorConsoleStatutoryDiscountApplyPayableBasisService _applyService;
     private readonly IOperatorConsoleStatutoryDiscountReadService _readService;
+    private readonly IStatutoryDiscountServiceChannelReviewRepository _serviceChannelReviewRepository;
 
     public StatutoryDiscountDecisionFacadeService(
         IStatutoryDiscountStagedCommandService stagedCommandService,
@@ -30,7 +31,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IOperatorConsoleStatutoryDiscountEvidenceService evidenceService,
         IOperatorConsoleStatutoryDiscountDecisionService decisionService,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService applyService,
-        IOperatorConsoleStatutoryDiscountReadService readService)
+        IOperatorConsoleStatutoryDiscountReadService readService,
+        IStatutoryDiscountServiceChannelReviewRepository serviceChannelReviewRepository)
     {
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _historicalRepository = historicalRepository ?? throw new ArgumentNullException(nameof(historicalRepository));
@@ -39,6 +41,7 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _decisionService = decisionService ?? throw new ArgumentNullException(nameof(decisionService));
         _applyService = applyService ?? throw new ArgumentNullException(nameof(applyService));
         _readService = readService ?? throw new ArgumentNullException(nameof(readService));
+        _serviceChannelReviewRepository = serviceChannelReviewRepository ?? throw new ArgumentNullException(nameof(serviceChannelReviewRepository));
     }
 
     public async Task<StatutoryDiscountDecisionResult> SubmitAsync(
@@ -57,6 +60,14 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         var decision = pendingReviewIntake
             ? await ResolvePendingReviewDecisionStageAsync(normalized, decisionStart, cancellationToken).ConfigureAwait(false)
             : await ResolveDecisionStageAsync(normalized, decisionStart, cancellationToken).ConfigureAwait(false);
+
+        if (pendingReviewIntake && decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.AwaitingReview)
+        {
+            await _serviceChannelReviewRepository.UpsertIntakeAsync(
+                    ToServiceChannelReviewIntake(normalized, decision),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
 
         StatutoryDiscountPayableBasisApplicationV1Record? application = null;
         var applicationResultClassification = StatutoryDiscountApplicationStageStatuses.NotRequested;
@@ -472,6 +483,37 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             stageIdempotencyKey,
             command.CorrelationId);
     }
+
+    private static StatutoryDiscountServiceChannelReviewIntakeCommand ToServiceChannelReviewIntake(
+        StatutoryDiscountDecisionCommand command,
+        StatutoryDiscountDecisionV2Record decision) =>
+        new(
+            decision.StatutoryDiscountDecisionCommandId,
+            decision.RequestReference,
+            decision.ParkingSessionId,
+            decision.SourceChannel,
+            command.SiteId,
+            command.SiteGroupId,
+            command.TicketReference,
+            command.PlateNumber,
+            decision.EntitlementType,
+            command.IdDocumentType,
+            command.IssuingAuthority,
+            command.ExpiryDate,
+            command.MaskedIdReference,
+            command.EvidenceReferences.Select(evidence => new StatutoryDiscountServiceChannelReviewEvidenceFact(
+                    evidence.EvidenceType,
+                    evidence.CaptureMethod,
+                    evidence.StorageReference,
+                    evidence.ReferenceNumberMasked,
+                    evidence.VerificationStatus))
+                .ToArray(),
+            command.RequesterAttestation,
+            command.AttestationNotes,
+            command.ReasonCode,
+            command.OriginalTariffSnapshotId,
+            command.CorrelationId,
+            decision.CreatedAt);
 
     private static StatutoryDiscountPayableBasisApplicationV1Command ToApplicationV1Command(
         StatutoryDiscountDecisionCommand command,

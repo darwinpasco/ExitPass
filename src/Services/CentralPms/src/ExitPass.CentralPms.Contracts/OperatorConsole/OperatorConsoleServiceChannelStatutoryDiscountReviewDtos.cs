@@ -1,0 +1,71 @@
+namespace ExitPass.CentralPms.Contracts.OperatorConsole;
+
+public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse(
+    IReadOnlyList<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueItem> Items,
+    int Page,
+    int PageSize,
+    bool HasMore,
+    Guid CorrelationId);
+
+public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueItem(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid ParkingSessionId,
+    string SourceChannel,
+    Guid? SiteId,
+    Guid? SiteGroupId,
+    string? TicketReference,
+    string? PlateNumber,
+    string EntitlementType,
+    string CommandStatus,
+    string DecisionResultStatus,
+    string ReviewStatus,
+    bool EvidenceRequired,
+    bool EvidenceRecorded,
+    Guid? OriginalTariffSnapshotId,
+    DateTimeOffset SubmittedAt,
+    Guid CorrelationId);
+
+public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid RequestReference,
+    Guid ParkingSessionId,
+    string SourceChannel,
+    Guid? SiteId,
+    Guid? SiteGroupId,
+    string? TicketReference,
+    string? PlateNumber,
+    string EntitlementType,
+    string CommandStatus,
+    string DecisionResultStatus,
+    string ReviewStatus,
+    string? IdDocumentType,
+    string? IssuingAuthority,
+    DateOnly? ExpiryDate,
+    string? MaskedIdReference,
+    IReadOnlyList<OperatorConsoleServiceChannelStatutoryDiscountReviewEvidenceReference> EvidenceReferences,
+    bool RequesterAttestation,
+    string? AttestationNotes,
+    string? ReasonCode,
+    bool EvidenceRequired,
+    bool EvidenceRecorded,
+    Guid? OriginalTariffSnapshotId,
+    long? OriginalAmountMinorUnits,
+    long? VatExclusiveAmountMinorUnits,
+    long? VatAmountMinorUnits,
+    long? StatutoryDiscountAmountMinorUnits,
+    long? FinalPayableAmountMinorUnits,
+    string? Currency,
+    Guid? ReviewerUserId,
+    Guid? ReviewerAccessEvaluationId,
+    string? ReviewerDecision,
+    string? ReviewerReasonCode,
+    DateTimeOffset SubmittedAt,
+    DateTimeOffset? ReviewedAt,
+    Guid CorrelationId);
+
+public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewEvidenceReference(
+    string EvidenceType,
+    string CaptureMethod,
+    string? StorageReference,
+    string? ReferenceNumberMasked,
+    string? VerificationStatus);

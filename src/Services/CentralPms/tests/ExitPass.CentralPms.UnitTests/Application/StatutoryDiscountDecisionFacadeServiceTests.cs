@@ -105,6 +105,24 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenServiceChannelPendingReviewCreated_RecordsSafeReviewLinkage()
+    {
+        var fixture = CreateFixture();
+        var command = Command(sourceChannel: "WEBPAY", applyPayableBasis: false);
+
+        var result = await fixture.Sut.SubmitAsync(command, CancellationToken.None);
+
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.AwaitingReview);
+        await fixture.ServiceChannelReviewRepository.Received(1).UpsertIntakeAsync(
+            Arg.Is<StatutoryDiscountServiceChannelReviewIntakeCommand>(record =>
+                record.StatutoryDiscountDecisionCommandId == result.StatutoryDiscountDecisionCommandId &&
+                record.SourceChannel == "WEBPAY" &&
+                record.MaskedIdReference == "SC-****-1234" &&
+                record.EvidenceReferences.Count == 1),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task SubmitAsync_WhenSameIdempotencyKeyChangesRequestReference_ReplaysOriginalResult()
     {
         var fixture = CreateFixture();
@@ -513,6 +531,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         var clock = Substitute.For<ISystemClock>();
         clock.UtcNow.Returns(Now);
+        var serviceChannelReviewRepository = Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
 
         var sut = new StatutoryDiscountDecisionFacadeService(
             repository,
@@ -521,9 +540,10 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             evidenceService,
             decisionService,
             applyService,
-            readService);
+            readService,
+            serviceChannelReviewRepository);
 
-        return new TestFixture(repository, draftService, evidenceService, decisionService, applyService, sut);
+        return new TestFixture(repository, draftService, evidenceService, decisionService, applyService, serviceChannelReviewRepository, sut);
     }
 
     private static StatutoryDiscountDecisionCommand Command(
@@ -761,6 +781,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         IOperatorConsoleStatutoryDiscountEvidenceService EvidenceService,
         IOperatorConsoleStatutoryDiscountDecisionService DecisionService,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService ApplyService,
+        IStatutoryDiscountServiceChannelReviewRepository ServiceChannelReviewRepository,
         StatutoryDiscountDecisionFacadeService Sut);
 
     private sealed class InMemoryStagedCommandService : IStatutoryDiscountStagedCommandService

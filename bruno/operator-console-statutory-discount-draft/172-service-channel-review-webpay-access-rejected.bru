@@ -1,0 +1,23 @@
+meta {
+  name: 172 Service-channel review WebPay access rejected
+  type: http
+  seq: 172
+}
+
+get {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/reviews/pending?page=1&pageSize=25
+  body: none
+  auth: none
+}
+
+headers {
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000772
+  X-ExitPass-Service-Identity-Id: {{sharedStatutoryDecisionWebPayServiceIdentityId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
+}
+
+tests {
+  test("WebPay identity cannot access Operator Console review operations", function () {
+    expect([400, 401, 403]).to.include(res.status);
+  });
+}

@@ -1,0 +1,38 @@
+meta {
+  name: 167 Service-channel review approve reject conflict
+  type: http
+  seq: 167
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/ops/operator-console/statutory-discounts/reviews/{{sharedStatutoryWebPayPendingDecisionCommandId}}/decision
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "userId": "{{userId_allowed}}",
+    "operatorDeviceBindingId": "{{operatorDeviceBindingId_allowed}}",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "operatorShiftId": "{{operatorShiftId_allowed}}",
+    "decision": "REJECT",
+    "decisionReasonCode": "ID_NOT_VALID",
+    "decisionNotes": "Opposite terminal decision conflict",
+    "reviewerAttestation": true,
+    "idempotencyKey": "manual-service-channel-webpay-review-reject-after-approve",
+    "correlationId": "77000000-0000-0000-0000-000000000767"
+  }
+}
+
+tests {
+  test("opposite terminal review decision conflicts", function () {
+    expect(res.status).to.equal(409);
+    expect(res.body.errorCode || res.body.code).to.equal("STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED");
+  });
+}
