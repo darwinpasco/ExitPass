@@ -34,9 +34,11 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelOperatorConsoleReviewLinkage_v1.3.sql");
+            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelPostApprovalApplicationIntent_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
             await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelOperatorConsoleReviewLinkage_v1.3.sql");
+            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelPostApprovalApplicationIntent_v1.3.sql");
 
             await using (var unlockCommand = new NpgsqlCommand("SELECT pg_advisory_unlock(hashtext('statutory_discount_review_linkage_test_schema'));", lockConnection))
             {
@@ -55,7 +57,8 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         Guid? siteId = null,
         Guid? siteGroupId = null,
         string entitlementType = "SENIOR_CITIZEN",
-        bool seedPaymentContext = true)
+        bool seedPaymentContext = true,
+        Guid? reviewerUserId = null)
     {
         await EnsureSchemaAsync();
         var context = PaymentTestContext.Create(scenarioName);
@@ -71,6 +74,12 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         if (seedPaymentContext)
         {
             await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, $"Seed {scenarioName}.");
+            await SeedReviewerUserAsync(context, context.RequestedByUserId);
+        }
+
+        if (reviewerUserId.HasValue && reviewerUserId.Value != context.RequestedByUserId)
+        {
+            await SeedReviewerUserAsync(context, reviewerUserId.Value);
         }
 
         var staged = CreateStagedService();
@@ -87,6 +96,15 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         var detail = await repository.GetAsync(awaiting.StatutoryDiscountDecisionCommandId, context.CorrelationId, CancellationToken.None);
 
         return new SeededServiceChannelReview(context, awaiting, detail!);
+    }
+
+    public static async Task<PaymentTestContext> SeedPaymentContextAsync(string scenarioName)
+    {
+        await EnsureSchemaAsync();
+        var context = PaymentTestContext.Create(scenarioName);
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, $"Seed {scenarioName}.");
+        await SeedReviewerUserAsync(context, context.RequestedByUserId);
+        return context;
     }
 
     public static IStatutoryDiscountStagedCommandService CreateStagedService() =>
@@ -174,9 +192,61 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
 
             DELETE FROM discounts.statutory_discount_decision_commands
             WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_payable_basis_applications
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.discount_evidence_references
+            WHERE statutory_discount_validation_id IN (
+                SELECT statutory_discount_validation_id
+                FROM discounts.statutory_discount_validations
+                WHERE parking_session_id = @parking_session_id
+            );
+
+            UPDATE discounts.statutory_discount_validations
+            SET
+                tariff_snapshot_id = NULL,
+                updated_at = NOW()
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.payment_attempts
+            WHERE parking_session_id = @parking_session_id;
+
+            UPDATE core.tariff_snapshots
+            SET
+                superseded_by_tariff_snapshot_id = NULL,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM core.tariff_snapshots
+            WHERE parking_session_id = @parking_session_id
+              AND statutory_discount_validation_id IN (
+                  SELECT statutory_discount_validation_id
+                  FROM discounts.statutory_discount_validations
+                  WHERE parking_session_id = @parking_session_id
+              );
+
+            UPDATE core.tariff_snapshots
+            SET
+                snapshot_status = CASE
+                    WHEN snapshot_status = 'SUPERSEDED' THEN 'ACTIVE'
+                    ELSE snapshot_status
+                END,
+                statutory_discount_validation_id = NULL,
+                updated_at = NOW(),
+                row_version = row_version + 1
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_validations
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM identity.users
+            WHERE user_id = @requested_by_user_id;
             """,
             connection);
         command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
+        command.Parameters.AddWithValue("requested_by_user_id", context.RequestedByUserId);
         await command.ExecuteNonQueryAsync();
 
         await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
@@ -208,6 +278,64 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             WHERE parking_session_id = @id;
             """,
             parkingSessionId);
+
+    public static async Task<int> AppliedTariffSnapshotRowCountAsync(Guid parkingSessionId) =>
+        await CountAsync(
+            """
+            SELECT COUNT(*)::int
+            FROM core.tariff_snapshots
+            WHERE parking_session_id = @id
+              AND statutory_discount_validation_id IS NOT NULL;
+            """,
+            parkingSessionId);
+
+    public static async Task<int> PaymentBoundaryRowCountAsync(Guid parkingSessionId) =>
+        await CountAsync(
+            """
+            SELECT
+                (
+                    SELECT COUNT(*)::int
+                    FROM core.payment_attempts
+                    WHERE parking_session_id = @id
+                )
+                +
+                (
+                    SELECT COUNT(*)::int
+                    FROM core.payment_confirmations AS pc
+                    INNER JOIN core.payment_attempts AS pa
+                        ON pa.payment_attempt_id = pc.payment_attempt_id
+                    WHERE pa.parking_session_id = @id
+                )
+                +
+                (
+                    SELECT COUNT(*)::int
+                    FROM core.exit_authorizations
+                    WHERE parking_session_id = @id
+                )
+                +
+                (
+                    SELECT COUNT(*)::int
+                    FROM core.fiscal_issuance_references
+                    WHERE parking_session_id = @id
+                );
+            """,
+            parkingSessionId);
+
+    public static async Task<Guid?> ValidationIdForDecisionAsync(Guid statutoryDiscountDecisionCommandId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT statutory_discount_validation_id
+            FROM discounts.statutory_discount_decision_commands
+            WHERE statutory_discount_decision_command_id = @id;
+            """,
+            connection);
+        command.Parameters.Add("id", NpgsqlDbType.Uuid).Value = statutoryDiscountDecisionCommandId;
+        var value = await command.ExecuteScalarAsync();
+        return value is DBNull or null ? null : (Guid)value;
+    }
 
     public static async Task<int> ReviewRowCountAsync(Guid decisionCommandId) =>
         await CountAsync(
@@ -265,6 +393,64 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("id", NpgsqlDbType.Uuid).Value = id;
         return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    private static async Task SeedReviewerUserAsync(PaymentTestContext context, Guid reviewerUserId)
+    {
+        const string sql = """
+            INSERT INTO identity.users (
+                user_id,
+                username,
+                email,
+                email_normalized,
+                display_name,
+                user_type,
+                user_status,
+                effective_from,
+                created_at,
+                created_by_service_identity_id,
+                updated_at,
+                updated_by_service_identity_id,
+                row_version
+            )
+            VALUES (
+                @user_id,
+                @username,
+                @email,
+                @email_normalized,
+                @display_name,
+                'SITE_OPERATOR'::identity.user_type_enum,
+                'ACTIVE'::identity.user_status_enum,
+                NOW() - INTERVAL '1 minute',
+                NOW(),
+                @service_identity_id,
+                NOW(),
+                @service_identity_id,
+                1
+            )
+            ON CONFLICT (user_id) DO UPDATE
+            SET
+                username = EXCLUDED.username,
+                email = EXCLUDED.email,
+                email_normalized = EXCLUDED.email_normalized,
+                display_name = EXCLUDED.display_name,
+                user_type = EXCLUDED.user_type,
+                user_status = EXCLUDED.user_status,
+                updated_at = NOW(),
+                updated_by_service_identity_id = EXCLUDED.updated_by_service_identity_id,
+                row_version = identity.users.row_version + 1;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = reviewerUserId;
+        command.Parameters.AddWithValue("username", $"stat-disc-reviewer-{reviewerUserId:N}");
+        command.Parameters.AddWithValue("email", $"stat-disc-reviewer-{reviewerUserId:N}@example.test");
+        command.Parameters.AddWithValue("email_normalized", $"STAT-DISC-REVIEWER-{reviewerUserId:N}@EXAMPLE.TEST");
+        command.Parameters.AddWithValue("display_name", $"Statutory discount reviewer {context.SiteCode}");
+        command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = context.RequestedByUserId;
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task ExecuteSqlFileAsync(params string[] pathParts)

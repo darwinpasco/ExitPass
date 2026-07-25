@@ -884,6 +884,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         StatutoryDiscountServiceChannelReviewDetail result) =>
         new(
             result.StatutoryDiscountDecisionCommandId,
+            result.StatutoryDiscountValidationId,
             result.RequestReference,
             result.ParkingSessionId,
             result.SourceChannel,

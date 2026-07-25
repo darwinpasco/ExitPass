@@ -69,6 +69,13 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             .Returns(ReviewDetail());
         fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
             .Returns(AwaitingDecision());
+        fixture.Repository.EnsureApprovedValidationLinkageAsync(
+                CommandId,
+                UserId,
+                "ELIGIBLE",
+                CorrelationId,
+                Arg.Any<CancellationToken>())
+            .Returns(ValidationLinkage());
         fixture.Staged.CompleteDecisionApprovedAsync(
                 CommandId,
                 Arg.Any<Guid?>(),
@@ -281,8 +288,8 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             StatutoryDiscountDecisionV2CommandStates.AwaitingReview,
             StatutoryDiscountDecisionV2ResultStates.NotDecided,
             StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
-            EvidenceRequired: true,
-            EvidenceRecorded: true,
+            true,
+            true,
             TariffSnapshotId,
             Now,
             CorrelationId);
@@ -291,6 +298,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
         string reviewStatus = StatutoryDiscountServiceChannelReviewStatuses.PendingReview) =>
         new(
             CommandId,
+            null,
             RequestReference,
             ParkingSessionId,
             StatutoryDiscountSourceChannels.WebPay,
@@ -312,11 +320,11 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 "evidence-ref-001",
                 "SC-****-1234",
                 "SUBMITTED")],
-            RequesterAttestation: true,
+            true,
             "attested",
             "CUSTOMER_REQUEST",
-            EvidenceRequired: true,
-            EvidenceRecorded: true,
+            true,
+            true,
             TariffSnapshotId,
             12500,
             11161,
@@ -324,17 +332,17 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             2232,
             8929,
             "PHP",
-            ReviewerUserId: reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview ? null : UserId,
-            ReviewerAccessEvaluationId: reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview ? null : EvaluationId,
-            ReviewerDecision: reviewStatus switch
+            reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview ? null : UserId,
+            reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview ? null : EvaluationId,
+            reviewStatus switch
             {
                 StatutoryDiscountServiceChannelReviewStatuses.Approved => "APPROVE",
                 StatutoryDiscountServiceChannelReviewStatuses.Rejected => "REJECT",
                 _ => null
             },
-            ReviewerReasonCode: reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.Rejected ? "DOCUMENT_INVALID" : null,
-            SubmittedAt: Now,
-            ReviewedAt: null,
+            reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.Rejected ? "DOCUMENT_INVALID" : null,
+            Now,
+            null,
             CorrelationId);
 
     private static StatutoryDiscountDecisionV2Record AwaitingDecision() =>
@@ -346,6 +354,22 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             CompletedAt = null,
             DecidedAt = null
         };
+
+    private static StatutoryDiscountServiceChannelValidationLinkage ValidationLinkage() =>
+        new(
+            CommandId,
+            Guid.Parse("8a000000-0000-0000-0000-00000000000c"),
+            ParkingSessionId,
+            "SENIOR_CITIZEN",
+            TariffSnapshotId,
+            AppliedPolicyReferenceId: null,
+            FallbackPolicyReferenceId: null,
+            "NATIONAL_LAW_FALLBACK",
+            LocalOrdinanceApplied: false,
+            12500,
+            "PHP",
+            "STATUTORY_DISCOUNT_VAT_EXEMPT",
+            "VAT_EXCLUSIVE");
 
     private static StatutoryDiscountDecisionV2Record CompletedDecision(string result) =>
         new(

@@ -130,6 +130,12 @@ public static class StatutoryDiscountDecisionEndpoints
             activity?.AddException(ex);
             return Results.Conflict(BuildError(ex.ErrorCode, ex.Message, correlationId));
         }
+        catch (StatutoryDiscountDecisionRejectedException ex) when (ex.IsNotFound)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.NotFound(BuildError(ex.ErrorCode, ex.Message, correlationId));
+        }
         catch (StatutoryDiscountDecisionRejectedException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
@@ -430,7 +436,7 @@ public static class StatutoryDiscountDecisionEndpoints
             error = new ErrorResponse
             {
                 ErrorCode = "STATUTORY_DISCOUNT_CHANNEL_FIELD_PROHIBITED",
-                Message = "Operator-only decision, reviewer, device, shift, and apply-payable-basis fields are prohibited for this source channel.",
+                Message = "Operator-only decision, reviewer, device, and shift fields are prohibited for this source channel.",
                 Details = new Dictionary<string, object?>
                 {
                     ["sourceChannel"] = effectiveSourceChannel
@@ -595,6 +601,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionClientResultStatuses.InProgress,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionClientResultStatuses.NotFound,
+            "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED" => StatutoryDiscountDecisionClientResultStatuses.RejectedOrNonApproved,
             "UNSAFE_IDENTIFIER_REJECTED" => StatutoryDiscountDecisionClientResultStatuses.UnsafeIdentityInput,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionClientResultStatuses.TemporarilyUnavailable,
             "INVALID_REQUEST" or "UNSUPPORTED_SOURCE_CHANNEL" or "UNSUPPORTED_ENTITLEMENT_TYPE" =>
@@ -612,6 +619,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
+            "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED" => StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
             _ => StatutoryDiscountDecisionRecoveryClassifications.None
         };
 
@@ -625,6 +633,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
+            "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED" => StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
             _ => null
         };
 }

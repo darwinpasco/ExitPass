@@ -135,6 +135,51 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
     }
 
     [Fact]
+    public async Task Submit_WhenServiceChannelApplicationIntentDecisionMissing_ReturnsNotFound()
+    {
+        using var factory = CreateFactory(new FakeFacadeService
+        {
+            SubmitException = new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                "An approved statutory-discount decision must exist before payable-basis application can be requested.",
+                isNotFound: true)
+        });
+        using var client = factory.CreateClient();
+        AddServiceHeaders(client, "statutory-discounts.decision.submit.webpay");
+
+        using var response = await PostDecisionAsync(client, Request(sourceChannel: "WEBPAY", applyPayableBasis: true));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body!.ErrorCode.Should().Be("STATUTORY_DISCOUNT_DECISION_NOT_FOUND");
+        body.ClientResultStatus.Should().Be(StatutoryDiscountDecisionClientResultStatuses.NotFound);
+        body.Retryable.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Submit_WhenServiceChannelApplicationIntentDecisionRejected_ReturnsNonRetryableNotApproved()
+    {
+        using var factory = CreateFactory(new FakeFacadeService
+        {
+            SubmitException = new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED",
+                "Payable-basis application requires an approved statutory-discount decision.")
+        });
+        using var client = factory.CreateClient();
+        AddServiceHeaders(client, "statutory-discounts.decision.submit.webpay");
+
+        using var response = await PostDecisionAsync(client, Request(sourceChannel: "WEBPAY", applyPayableBasis: true));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+        body!.ErrorCode.Should().Be("STATUTORY_DISCOUNT_DECISION_NOT_APPROVED");
+        body.ClientResultStatus.Should().Be(StatutoryDiscountDecisionClientResultStatuses.RejectedOrNonApproved);
+        body.RecoveryClassification.Should().Be(StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable);
+        body.RecoveryAction.Should().Be(StatutoryDiscountDecisionRecoveryActions.DoNotRetry);
+        body.Retryable.Should().BeFalse();
+    }
+
+    [Fact]
     public async Task Submit_WhenAuthenticatedIdentityMapsToMultipleSourceChannels_ReturnsForbidden()
     {
         using var factory = CreateFactory(new FakeFacadeService());
@@ -399,11 +444,18 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
 
         public bool ReturnNullReadback { get; init; }
 
+        public StatutoryDiscountDecisionRejectedException? SubmitException { get; init; }
+
         public Task<StatutoryDiscountDecisionResult> SubmitAsync(
             StatutoryDiscountDecisionCommand command,
             CancellationToken cancellationToken)
         {
             LastCommand = command;
+            if (SubmitException is not null)
+            {
+                throw SubmitException;
+            }
+
             if (command.EntitlementType == "SOLO_PARENT")
             {
                 throw new StatutoryDiscountDecisionRejectedException(

@@ -137,7 +137,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
                 cancellationToken)
             .ConfigureAwait(false);
         OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult persistedApplication;
-        if (existingCanonicalApplication is not null)
+        if (existingCanonicalApplication?.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied
+            or StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedNonRetryable)
         {
             persistedApplication = ResolveExistingApplication(detail, existingCanonicalApplication);
         }
@@ -147,6 +148,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
                     command,
                     detail,
                     decision,
+                    existingCanonicalApplication,
                     stageKey,
                     cancellationToken)
                 .ConfigureAwait(false);
@@ -192,6 +194,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         OperatorConsoleStatutoryDiscountApplyPayableBasisCommand command,
         OperatorConsoleStatutoryDiscountDraftDetailResult detail,
         StatutoryDiscountDecisionV2Record decision,
+        StatutoryDiscountPayableBasisApplicationV1Record? existingApplication,
         string stageKey,
         CancellationToken cancellationToken)
     {
@@ -218,46 +221,56 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             return persisted;
         }
 
-        var applicationStart = await _stagedCommandService.CreateOrResolveApplicationAsync(
-                ToApplicationV1Command(command, detail, decision, persisted, stageKey),
-                cancellationToken)
-            .ConfigureAwait(false);
-        if (applicationStart.SemanticConflict)
+        StatutoryDiscountPayableBasisApplicationV1Record application;
+        if (existingApplication is null)
         {
-            return persisted with
+            var applicationStart = await _stagedCommandService.CreateOrResolveApplicationAsync(
+                    ToApplicationV1Command(command, detail, decision, persisted, stageKey),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (applicationStart.SemanticConflict)
             {
-                ApplicationAccepted = false,
-                ApplicationPersisted = false,
-                IneligibilityReason = "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT",
-                ErrorCode = "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT",
-                StatutoryDiscountPayableBasisApplicationCommandId =
-                    applicationStart.Record?.StatutoryDiscountPayableBasisApplicationCommandId
-            };
+                return persisted with
+                {
+                    ApplicationAccepted = false,
+                    ApplicationPersisted = false,
+                    IneligibilityReason = "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT",
+                    ErrorCode = "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT",
+                    StatutoryDiscountPayableBasisApplicationCommandId =
+                        applicationStart.Record?.StatutoryDiscountPayableBasisApplicationCommandId
+                };
+            }
+
+            if (applicationStart.Record is null)
+            {
+                return persisted with
+                {
+                    ApplicationAccepted = false,
+                    ApplicationPersisted = false,
+                    IneligibilityReason = applicationStart.SafeErrorCode ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_AVAILABLE",
+                    ErrorCode = applicationStart.SafeErrorCode ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_AVAILABLE"
+                };
+            }
+
+            application = applicationStart.Record;
+        }
+        else
+        {
+            application = existingApplication;
         }
 
-        if (applicationStart.Record is null)
-        {
-            return persisted with
-            {
-                ApplicationAccepted = false,
-                ApplicationPersisted = false,
-                IneligibilityReason = applicationStart.SafeErrorCode ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_AVAILABLE",
-                ErrorCode = applicationStart.SafeErrorCode ?? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_AVAILABLE"
-            };
-        }
-
-        if (applicationStart.Record.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied)
+        if (application.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied)
         {
             return persisted with
             {
                 AlreadyApplied = true,
                 StatutoryDiscountPayableBasisApplicationCommandId =
-                    applicationStart.Record.StatutoryDiscountPayableBasisApplicationCommandId
+                    application.StatutoryDiscountPayableBasisApplicationCommandId
             };
         }
 
         var processing = await _stagedCommandService.MarkApplicationProcessingAsync(
-                applicationStart.Record.StatutoryDiscountPayableBasisApplicationCommandId,
+                application.StatutoryDiscountPayableBasisApplicationCommandId,
                 command.CorrelationId,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -280,7 +293,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
         catch
         {
             await _stagedCommandService.RecordApplicationFailureAsync(
-                    applicationStart.Record.StatutoryDiscountPayableBasisApplicationCommandId,
+                    application.StatutoryDiscountPayableBasisApplicationCommandId,
                     retryable: true,
                     "OPERATOR_CONSOLE_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
                     command.CorrelationId,
@@ -495,7 +508,7 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisService
             decision.StatutoryDiscountValidationId ?? detail.DraftId,
             persisted.OriginalTariffSnapshotId ?? command.OriginalTariffSnapshotId ?? decision.OriginalTariffSnapshotId ?? detail.OriginalTariffSnapshotId,
             TargetTariffSnapshotId: null,
-            persisted.AppliedTariffSnapshotId,
+            AppliedTariffSnapshotId: null,
             decision.AppliedPolicyReferenceId ?? persisted.StatutoryDiscountPolicyId ?? detail.StatutoryDiscountPolicyId,
             decision.PolicyResolutionBasis ?? persisted.PolicyResolutionBasis ?? detail.PolicyResolutionBasis,
             persisted.StatutoryDiscountAmountMinorUnits.Value,

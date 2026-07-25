@@ -90,6 +90,34 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     }
 
     [Fact]
+    public async Task DecisionV2_WhenReadByBusinessIdentity_ReturnsExistingWithoutCreatingCommand()
+    {
+        await EnsurePatchAppliedAndValidatedAsync();
+        var context = PaymentTestContext.Create(nameof(DecisionV2_WhenReadByBusinessIdentity_ReturnsExistingWithoutCreatingCommand));
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged decision business-identity readback data.");
+
+        try
+        {
+            var service = CreateService();
+            var command = DecisionCommand(context);
+            var created = await service.CreateOrResolveDecisionAsync(command, CancellationToken.None);
+            var businessIdentity = StatutoryDiscountDecisionV2SemanticHash.BuildBusinessIdentity(command);
+
+            var read = await service.GetDecisionByBusinessIdentityAsync(businessIdentity, CancellationToken.None);
+
+            read.Should().NotBeNull();
+            read!.StatutoryDiscountDecisionCommandId.Should().Be(created.Record!.StatutoryDiscountDecisionCommandId);
+            read.SemanticRequestHash.Should().Be(StatutoryDiscountDecisionV2SemanticHash.Compute(command));
+            (await DecisionRowCountAsync(context.ParkingSessionId)).Should().Be(1);
+        }
+        finally
+        {
+            await CleanupCommandRowsAsync(context.ParkingSessionId);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
+
+    [Fact]
     public async Task DecisionV2_WhenMaterialFactsChange_ReturnsDeterministicConflict()
     {
         await EnsurePatchAppliedAndValidatedAsync();

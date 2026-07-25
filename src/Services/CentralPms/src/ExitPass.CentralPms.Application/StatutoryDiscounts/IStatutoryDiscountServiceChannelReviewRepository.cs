@@ -18,6 +18,17 @@ public interface IStatutoryDiscountServiceChannelReviewRepository
         Guid correlationId,
         CancellationToken cancellationToken);
 
+    Task<StatutoryDiscountServiceChannelValidationLinkage?> EnsureApprovedValidationLinkageAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid reviewerUserId,
+        string? decisionReasonCode,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    Task<Guid?> GetValidationReviewerUserIdAsync(
+        Guid statutoryDiscountValidationId,
+        CancellationToken cancellationToken);
+
     Task<StatutoryDiscountServiceChannelReviewDetail> RecordReviewCompletionAsync(
         Guid statutoryDiscountDecisionCommandId,
         Guid reviewerUserId,

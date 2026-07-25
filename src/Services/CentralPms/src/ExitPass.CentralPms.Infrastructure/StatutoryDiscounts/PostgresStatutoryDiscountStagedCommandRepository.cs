@@ -42,7 +42,7 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
         {
             var existing = await ReadDecisionByIdempotencyAsync(connection, transaction, command, cancellationToken)
                 .ConfigureAwait(false);
-            existing ??= await ReadDecisionByBusinessIdentityAsync(connection, transaction, command.BusinessIdentity, cancellationToken)
+            existing ??= await ReadDecisionByBusinessIdentityAsync(connection, transaction, command.BusinessIdentity, forUpdate: true, cancellationToken)
                 .ConfigureAwait(false);
             existing ??= await ReadDecisionByRequestReferenceAsync(connection, transaction, command.Command.RequestReference, cancellationToken)
                 .ConfigureAwait(false);
@@ -81,6 +81,21 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
         return await ReadDecisionByIdAsync(connection, null, statutoryDiscountDecisionCommandId, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(
+        string businessIdentity,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(businessIdentity))
+        {
+            throw new ArgumentException("Decision business identity is required.", nameof(businessIdentity));
+        }
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        return await ReadDecisionByBusinessIdentityAsync(connection, null, businessIdentity, forUpdate: false, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -366,17 +381,21 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
 
     private static async Task<StatutoryDiscountDecisionV2Record?> ReadDecisionByBusinessIdentityAsync(
         NpgsqlConnection connection,
-        NpgsqlTransaction transaction,
+        NpgsqlTransaction? transaction,
         string businessIdentity,
+        bool forUpdate,
         CancellationToken cancellationToken)
     {
-        const string sql = """
+        var sql = """
             SELECT *
             FROM discounts.statutory_discount_decision_commands
             WHERE business_identity = @business_identity
                OR idempotency_scope = @business_identity
-            FOR UPDATE;
             """;
+        if (forUpdate)
+        {
+            sql += " FOR UPDATE";
+        }
 
         await using var dbCommand = new NpgsqlCommand(sql, connection, transaction) { CommandTimeout = 30 };
         dbCommand.Parameters.Add("business_identity", NpgsqlDbType.Varchar).Value = businessIdentity;

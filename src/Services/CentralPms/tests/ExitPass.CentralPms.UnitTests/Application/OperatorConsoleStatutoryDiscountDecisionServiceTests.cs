@@ -552,6 +552,14 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult(_decision?.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId ? _decision : null);
 
+        public Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(
+            string businessIdentity,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(string.Equals(_decision?.BusinessIdentity, businessIdentity, StringComparison.Ordinal)
+                || string.Equals(_decision?.IdempotencyScope, businessIdentity, StringComparison.Ordinal)
+                    ? _decision
+                    : null);
+
         public Task<StatutoryDiscountDecisionV2Record> MarkDecisionProcessingAsync(
             Guid statutoryDiscountDecisionCommandId,
             Guid correlationId,

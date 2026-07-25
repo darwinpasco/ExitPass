@@ -404,9 +404,10 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
-    public async Task SubmitAsync_WhenServiceChannelRequestsApplyPayableBasis_DoesNotBypassPendingReview()
+    public async Task SubmitAsync_WhenServiceChannelRequestsApplyPayableBasisWhileAwaitingReview_DoesNotBypassPendingReview()
     {
         var fixture = CreateFixture();
+        await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: false), CancellationToken.None);
 
         var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
 
@@ -414,6 +415,146 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.NotDecided);
         result.ApplicationRequested.Should().BeFalse();
         result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.NotRequested);
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenServiceChannelRequestsApplyPayableBasisWithoutDecision_ReturnsNotFound()
+    {
+        var fixture = CreateFixture();
+
+        var action = () => fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" && ex.IsNotFound);
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenApprovedWebPayDecisionRequestsApplicationIntent_AppliesPayableBasis()
+    {
+        var fixture = CreateFixture();
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
+
+        var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+
+        result.DecisionCommandStatus.Should().Be(StatutoryDiscountDecisionCommandStatuses.Completed);
+        result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.Approved);
+        result.ApplicationRequested.Should().BeTrue();
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        result.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
+        result.AppliedTariffSnapshotId.Should().Be(AppliedTariffSnapshotId);
+        result.NetPayableAmountMinorUnits.Should().Be(8929);
+        await fixture.DraftService.DidNotReceive().DraftAsync(Arg.Any<OperatorConsoleStatutoryDiscountDraftCommand>(), Arg.Any<CancellationToken>());
+        await fixture.DecisionService.DidNotReceive().DecideAsync(Arg.Any<OperatorConsoleStatutoryDiscountDecisionCommand>(), Arg.Any<CancellationToken>());
+        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenApprovedAptDecisionRequestsApplicationIntent_AppliesPayableBasis()
+    {
+        var fixture = CreateFixture();
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "ASSISTED_PAYMENT_TERMINAL");
+
+        var result = await fixture.Sut.SubmitAsync(Command(sourceChannel: "ASSISTED_PAYMENT_TERMINAL", applyPayableBasis: true), CancellationToken.None);
+
+        result.DecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.Approved);
+        result.ApplicationRequested.Should().BeTrue();
+        result.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        fixture.Repository.ApplicationCount.Should().Be(1);
+        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenRejectedServiceChannelDecisionRequestsApplicationIntent_DoesNotCreateApplication()
+    {
+        var fixture = CreateFixture();
+        await CreateRejectedServiceChannelDecisionAsync(fixture, "WEBPAY");
+
+        var action = () => fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED");
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenServiceChannelApplicationIntentCrossesChannels_ReplaysApplication()
+    {
+        var fixture = CreateFixture();
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
+        var first = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+
+        var replay = await fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "ASSISTED_PAYMENT_TERMINAL", applyPayableBasis: true) with
+            {
+                RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000209"),
+                IdempotencyKey = "statutory-discount-idempotency-key-apt-apply"
+            },
+            CancellationToken.None);
+
+        replay.StatutoryDiscountDecisionCommandId.Should().Be(first.StatutoryDiscountDecisionCommandId);
+        replay.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(first.StatutoryDiscountPayableBasisApplicationCommandId);
+        replay.ApplicationCommandStatus.Should().Be(StatutoryDiscountApplicationStageStatuses.Applied);
+        fixture.Repository.ApplicationCount.Should().Be(1);
+        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenConcurrentWebPayAndAptApplicationIntentArrives_CreatesOneApplication()
+    {
+        var fixture = CreateFixture();
+        fixture.Repository.DelayInsideLock = TimeSpan.FromMilliseconds(25);
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
+        var webPay = Command(sourceChannel: "WEBPAY", applyPayableBasis: true);
+        var apt = webPay with
+        {
+            SourceChannel = "ASSISTED_PAYMENT_TERMINAL",
+            RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000210"),
+            IdempotencyKey = "statutory-discount-idempotency-key-apt-application"
+        };
+
+        var results = await Task.WhenAll(
+            fixture.Sut.SubmitAsync(webPay, CancellationToken.None),
+            fixture.Sut.SubmitAsync(apt, CancellationToken.None));
+
+        results.Select(result => result.StatutoryDiscountPayableBasisApplicationCommandId).Distinct().Should().ContainSingle();
+        var allowedStatuses = new[]
+        {
+            StatutoryDiscountApplicationStageStatuses.Applied,
+            StatutoryDiscountPayableBasisApplicationV1CommandStates.Received,
+            StatutoryDiscountPayableBasisApplicationV1CommandStates.Processing
+        };
+        results.Should().OnlyContain(result => allowedStatuses.Contains(result.ApplicationCommandStatus));
+        fixture.Repository.ApplicationCount.Should().Be(1);
+        await fixture.ApplyService.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenApprovedDecisionLacksPayableBasisFacts_DoesNotApply()
+    {
+        var fixture = CreateFixture();
+        var pending = await fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: false), CancellationToken.None);
+        await fixture.Repository.CompleteDecisionApprovedAsync(
+            pending.StatutoryDiscountDecisionCommandId,
+            ValidationId,
+            OriginalTariffSnapshotId,
+            PolicyId,
+            fallbackPolicyReferenceId: null,
+            "NATIONAL_LAW_FALLBACK",
+            localOrdinanceApplied: false,
+            tariffFacts: null,
+            "ELIGIBLE",
+            CorrelationId,
+            CancellationToken.None);
+
+        var action = () => fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: true), CancellationToken.None);
+
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE");
         fixture.Repository.ApplicationCount.Should().Be(0);
         await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
     }
@@ -505,6 +646,34 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             .Should().NotBe(StatutoryDiscountDecisionSemanticHash.Compute(second));
     }
 
+    private static async Task CreateApprovedServiceChannelDecisionAsync(TestFixture fixture, string sourceChannel)
+    {
+        var pending = await fixture.Sut.SubmitAsync(Command(sourceChannel: sourceChannel, applyPayableBasis: false), CancellationToken.None);
+        await fixture.Repository.CompleteDecisionApprovedAsync(
+            pending.StatutoryDiscountDecisionCommandId,
+            ValidationId,
+            OriginalTariffSnapshotId,
+            PolicyId,
+            fallbackPolicyReferenceId: null,
+            "NATIONAL_LAW_FALLBACK",
+            localOrdinanceApplied: false,
+            new StatutoryDiscountDecisionV2TariffFacts(12500, 11161, 1339, 2232, 8929, "PHP"),
+            "ELIGIBLE",
+            CorrelationId,
+            CancellationToken.None);
+    }
+
+    private static async Task CreateRejectedServiceChannelDecisionAsync(TestFixture fixture, string sourceChannel)
+    {
+        var pending = await fixture.Sut.SubmitAsync(Command(sourceChannel: sourceChannel, applyPayableBasis: false), CancellationToken.None);
+        await fixture.Repository.CompleteDecisionRejectedAsync(
+            pending.StatutoryDiscountDecisionCommandId,
+            "INELIGIBLE",
+            "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED",
+            CorrelationId,
+            CancellationToken.None);
+    }
+
     private static TestFixture CreateFixture()
     {
         var repository = new InMemoryStagedCommandService();
@@ -532,6 +701,8 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var clock = Substitute.For<ISystemClock>();
         clock.UtcNow.Returns(Now);
         var serviceChannelReviewRepository = Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
+        serviceChannelReviewRepository.GetValidationReviewerUserIdAsync(ValidationId, Arg.Any<CancellationToken>())
+            .Returns(ReviewerUserId);
 
         var sut = new StatutoryDiscountDecisionFacadeService(
             repository,
@@ -869,6 +1040,14 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             Task.FromResult(_decision?.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId
                 ? _decision
                 : null);
+
+        public Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(
+            string businessIdentity,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(string.Equals(_decision?.BusinessIdentity, businessIdentity, StringComparison.Ordinal)
+                || string.Equals(_decision?.IdempotencyScope, businessIdentity, StringComparison.Ordinal)
+                    ? _decision
+                    : null);
 
         public Task<StatutoryDiscountDecisionV2Record> MarkDecisionProcessingAsync(
             Guid statutoryDiscountDecisionCommandId,

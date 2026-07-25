@@ -13,6 +13,10 @@ public interface IStatutoryDiscountStagedCommandService
         Guid statutoryDiscountDecisionCommandId,
         CancellationToken cancellationToken);
 
+    Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(
+        string businessIdentity,
+        CancellationToken cancellationToken);
+
     Task<StatutoryDiscountDecisionV2Record> MarkDecisionProcessingAsync(
         Guid statutoryDiscountDecisionCommandId,
         Guid correlationId,
@@ -98,6 +102,10 @@ public interface IStatutoryDiscountStagedCommandRepository
 
     Task<StatutoryDiscountDecisionV2Record?> GetDecisionAsync(
         Guid statutoryDiscountDecisionCommandId,
+        CancellationToken cancellationToken);
+
+    Task<StatutoryDiscountDecisionV2Record?> GetDecisionByBusinessIdentityAsync(
+        string businessIdentity,
         CancellationToken cancellationToken);
 
     Task<StatutoryDiscountDecisionV2Record> UpdateDecisionAsync(

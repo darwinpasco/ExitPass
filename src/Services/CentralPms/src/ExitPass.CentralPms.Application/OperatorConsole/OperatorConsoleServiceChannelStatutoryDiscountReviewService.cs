@@ -158,22 +158,36 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             return NotAccepted(command, access, requestedDecision, "STATUTORY_DISCOUNT_DECISION_NOT_AWAITING_REVIEW", detail);
         }
 
+        var validationLinkage = requestedDecision == "APPROVE"
+            ? await _reviewRepository.EnsureApprovedValidationLinkageAsync(
+                    command.StatutoryDiscountDecisionCommandId,
+                    command.UserId,
+                    NormalizeOptional(command.DecisionReasonCode),
+                    command.CorrelationId,
+                    cancellationToken)
+                .ConfigureAwait(false)
+            : null;
+
+        if (requestedDecision == "APPROVE" && validationLinkage is null)
+        {
+            return NotAccepted(
+                command,
+                access,
+                requestedDecision,
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE",
+                detail);
+        }
+
         var completed = requestedDecision == "APPROVE"
             ? await _stagedCommandService.CompleteDecisionApprovedAsync(
                     command.StatutoryDiscountDecisionCommandId,
-                    statutoryDiscountValidationId: null,
-                    canonical.OriginalTariffSnapshotId,
-                    canonical.AppliedPolicyReferenceId,
-                    canonical.FallbackPolicyReferenceId,
-                    canonical.PolicyResolutionBasis,
-                    canonical.LocalOrdinanceApplied,
-                    new StatutoryDiscountDecisionV2TariffFacts(
-                        canonical.GrossAmountMinorUnits,
-                        canonical.VatExclusiveAmountMinorUnits,
-                        canonical.VatAmountMinorUnits,
-                        canonical.StatutoryDiscountAmountMinorUnits,
-                        canonical.NetPayableAmountMinorUnits,
-                        canonical.Currency),
+                    validationLinkage!.StatutoryDiscountValidationId,
+                    validationLinkage.OriginalTariffSnapshotId,
+                    validationLinkage.AppliedPolicyReferenceId,
+                    validationLinkage.FallbackPolicyReferenceId,
+                    validationLinkage.PolicyResolutionBasis,
+                    validationLinkage.LocalOrdinanceApplied,
+                    ToTariffFacts(validationLinkage),
                     NormalizeOptional(command.DecisionReasonCode),
                     command.CorrelationId,
                     cancellationToken)
@@ -413,6 +427,30 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
+    private static StatutoryDiscountDecisionV2TariffFacts ToTariffFacts(
+        StatutoryDiscountServiceChannelValidationLinkage linkage)
+    {
+        var computation = OperatorConsoleStatutoryDiscountComputationContract.Compute(
+            new OperatorConsoleStatutoryDiscountComputationRequest(
+                linkage.GrossAmountMinorUnits,
+                linkage.EntitlementType,
+                linkage.BenefitType,
+                linkage.DiscountBaseScope));
+
+        if (!computation.Accepted)
+        {
+            throw new InvalidOperationException("Reviewed service-channel statutory-discount payable-basis facts are not computable.");
+        }
+
+        return new StatutoryDiscountDecisionV2TariffFacts(
+            computation.GrossAmountMinorUnits,
+            computation.VatExclusiveAmountMinorUnits,
+            computation.VatAmountMinorUnits,
+            computation.StatutoryDiscountAmountMinorUnits,
+            computation.FinalPayableAmountMinorUnits,
+            linkage.Currency);
+    }
 
     private static void ValidateGuid(Guid value, string parameterName)
     {

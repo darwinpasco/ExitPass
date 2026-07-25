@@ -1,0 +1,65 @@
+meta {
+  name: 176 Shared statutory decision WebPay post approval application intent
+  type: http
+  seq: 176
+}
+
+post {
+  url: {{centralPmsBaseUrl}}/v1/statutory-discounts/decisions
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: manual-shared-statutory-webpay-post-approval-application
+  X-Correlation-Id: 77000000-0000-0000-0000-000000000776
+  X-ExitPass-Service-Identity-Id: {{sharedStatutoryDecisionWebPayServiceIdentityId}}
+  X-ExitPass-Permissions: statutory-discounts.decision.submit.webpay
+}
+
+body:json {
+  {
+    "requestReference": "77000000-0000-0000-0000-000000000776",
+    "sourceChannel": "WEBPAY",
+    "parkingSessionId": "77000000-0000-0000-0000-000000000750",
+    "siteId": "{{siteId_allowed}}",
+    "siteGroupId": "{{siteGroupId_allowed}}",
+    "ticketReference": "WEBPAY-PENDING-REVIEW-001",
+    "plateNumber": null,
+    "entitlementType": "SENIOR_CITIZEN",
+    "idDocumentType": "SENIOR_CITIZEN_ID",
+    "issuingAuthority": "OSCA",
+    "expiryDate": null,
+    "maskedIdReference": "{{seniorMaskedIdReference}}",
+    "evidenceCaptureRequested": false,
+    "evidenceReferences": [],
+    "actorUserId": null,
+    "operatorDeviceBindingId": null,
+    "operatorShiftId": null,
+    "requesterAttestation": true,
+    "attestationNotes": "WebPay post approval application intent",
+    "reasonCode": null,
+    "decision": null,
+    "decisionReasonCode": null,
+    "reviewerUserId": null,
+    "reviewerAttestation": false,
+    "applyPayableBasis": true,
+    "originalTariffSnapshotId": null
+  }
+}
+
+tests {
+  test("post approval application intent is routed to canonical application prerequisites", function () {
+    expect([200, 201, 400]).to.include(res.status);
+    if (res.status === 400) {
+      expect(["STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE", "STATUTORY_DISCOUNT_VALIDATION_REFERENCE_REQUIRED"]).to.include(res.body.errorCode);
+      expect(res.body.retryable).to.equal(false);
+    } else {
+      expect(res.body.decisionCommandStatus).to.equal("COMPLETED");
+      expect(res.body.decisionResultStatus).to.equal("APPROVED");
+      expect(res.body.applicationRequested).to.equal(true);
+      expect(res.body.statutoryDiscountPayableBasisApplicationCommandId).to.not.equal(null);
+    }
+  });
+}

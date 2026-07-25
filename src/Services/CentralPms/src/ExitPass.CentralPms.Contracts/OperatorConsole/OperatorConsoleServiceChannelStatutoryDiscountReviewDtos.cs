@@ -27,6 +27,7 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueIt
 
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse(
     Guid StatutoryDiscountDecisionCommandId,
+    Guid? StatutoryDiscountValidationId,
     Guid RequestReference,
     Guid ParkingSessionId,
     string SourceChannel,
