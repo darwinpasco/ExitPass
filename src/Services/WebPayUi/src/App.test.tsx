@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -65,11 +65,18 @@ function stubWebPayFetch(options?: {
   statutoryReadPayload?: unknown;
   statutoryReadOk?: boolean;
   statutoryReadStatus?: number;
+  statutoryApplyPayload?: unknown;
+  statutoryApplyOk?: boolean;
+  statutoryApplyStatus?: number;
 }) {
   const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
     const isResolve = url.includes("/v1/webpay/parking-session");
     const isReceipt = url.includes("/v1/webpay/payment-attempts/") && url.includes("/receipt-presentation");
     const isStatutorySubmit = url.endsWith("/v1/webpay/statutory-discounts/decisions") && _init?.method === "POST";
+    const isStatutoryApply =
+      url.includes("/v1/webpay/statutory-discounts/decisions/") &&
+      url.endsWith("/apply-payable-basis") &&
+      _init?.method === "POST";
     const isStatutoryRead = url.includes("/v1/webpay/statutory-discounts/decisions/") && _init?.method === "GET";
     return {
       ok: isResolve
@@ -78,6 +85,8 @@ function stubWebPayFetch(options?: {
           ? options?.receiptOk ?? true
         : isStatutorySubmit
           ? options?.statutorySubmitOk ?? true
+        : isStatutoryApply
+          ? options?.statutoryApplyOk ?? true
         : isStatutoryRead
           ? options?.statutoryReadOk ?? true
         : options?.intentOk ?? true,
@@ -87,6 +96,8 @@ function stubWebPayFetch(options?: {
           ? options?.receiptStatus ?? 200
         : isStatutorySubmit
           ? options?.statutorySubmitStatus ?? 200
+        : isStatutoryApply
+          ? options?.statutoryApplyStatus ?? 200
         : isStatutoryRead
           ? options?.statutoryReadStatus ?? 200
         : options?.intentStatus ?? 200,
@@ -97,6 +108,8 @@ function stubWebPayFetch(options?: {
             ? options?.receiptPayload ?? salesInvoicePresentationResponse
           : isStatutorySubmit
             ? options?.statutorySubmitPayload ?? statutoryDecisionResponse()
+          : isStatutoryApply
+            ? options?.statutoryApplyPayload ?? statutoryDecisionResponse()
           : isStatutoryRead
             ? options?.statutoryReadPayload ?? statutoryDecisionResponse()
           : options?.intentPayload ?? successResponse
@@ -425,7 +438,7 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/statutory-discounts/decisions"))).toHaveLength(0);
   });
 
-  it("WebPay_WhenPollingReadbackReturnsApplicationRequired_DoesNotCallApplicationIntentOrPaymentIntent", async () => {
+  it("WebPay_WhenPollingReadbackReturnsApplicationRequired_ShowsApplicationActionWithoutPostingAutomatically", async () => {
     const fetchMock = stubWebPayFetch({
       statutoryReadPayload: statutoryDecisionResponse({
         decisionCommandStatus: "COMPLETED",
@@ -442,10 +455,196 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /entitlement approved/i })).toBeInTheDocument();
     expect(screen.getAllByText(/Discount application is pending/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /apply approved discount/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
     const paths = fetchMock.mock.calls.map((call) => String(call[0]));
     expect(paths.some((path) => path.includes("/apply-payable-basis"))).toBe(false);
     expect(paths.filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+  });
+
+  it("WebPay_WhenApplicationActionClicked_SubmitsOnceAndStartsReadbackPollingWithoutPaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        payableBasisReadinessStatus: "DECISION_APPROVED_APPLICATION_NOT_REQUESTED",
+        payableBasisReadinessAction: "SUBMIT_APPLICATION_INTENT",
+        overallResultClassification: "COMPLETED"
+      }),
+      statutoryApplyPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "PROCESSING",
+        applicationResultClassification: "PROCESSING",
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "POLL_READBACK"
+      }),
+      statutoryReadPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "PROCESSING",
+        applicationResultClassification: "PROCESSING",
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "POLL_READBACK"
+      })
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    const applyButton = await screen.findByRole("button", { name: /apply approved discount/i });
+    await userEvent.dblClick(applyButton);
+
+    expect(await screen.findByRole("heading", { name: /discount application processing/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    const paths = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(paths.filter((path) => path.includes("/apply-payable-basis"))).toHaveLength(1);
+    expect(paths.filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+    expect(paths.filter((path) => path.includes("/v1/webpay/statutory-discounts/decisions/") && !path.includes("/apply-payable-basis")).length).toBeGreaterThan(0);
+  });
+
+  it("WebPay_WhenApplicationActionClicked_UsesStableApplicationKeyAndSafeRequestShape", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        payableBasisReadinessStatus: "DECISION_APPROVED_APPLICATION_NOT_REQUESTED",
+        payableBasisReadinessAction: "SUBMIT_APPLICATION_INTENT",
+        overallResultClassification: "COMPLETED"
+      }),
+      statutoryApplyPayload: statutoryDecisionResponse({
+        retryable: true,
+        safeErrorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY",
+        recoveryAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY"
+      })
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    await userEvent.click(await screen.findByRole("button", { name: /apply approved discount/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /retry discount application/i }));
+
+    const applyCalls = fetchMock.mock.calls.filter((call) => String(call[0]).includes("/apply-payable-basis"));
+    expect(applyCalls).toHaveLength(2);
+    const firstHeaders = applyCalls[0][1]?.headers as Record<string, string>;
+    const secondHeaders = applyCalls[1][1]?.headers as Record<string, string>;
+    expect(firstHeaders["Idempotency-Key"]).toBe(`webpay-statutory-discount-application:${statutoryDecisionCommandId}`);
+    expect(secondHeaders["Idempotency-Key"]).toBe(firstHeaders["Idempotency-Key"]);
+    const applyBody = JSON.parse((applyCalls[0][1] as RequestInit).body as string);
+    expect(applyBody.entitlementType).toBe("SENIOR_CITIZEN");
+    expect(applyBody).not.toHaveProperty("sourceChannel");
+    expect(applyBody).not.toHaveProperty("reviewerUserId");
+    expect(applyBody).not.toHaveProperty("reviewerAttestation");
+    expect(applyBody).not.toHaveProperty("operatorDeviceBindingId");
+    expect(applyBody).not.toHaveProperty("operatorShiftId");
+    expect(applyBody).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
+    expect(applyBody).not.toHaveProperty("vatAmountMinorUnits");
+    expect(applyBody).not.toHaveProperty("finalPayableAmountMinorUnits");
+    expect(applyBody).not.toHaveProperty("appliedTariffSnapshotId");
+  });
+
+  it("WebPay_WhenApplicationReadbackBecomesApplied_DisplaysAuthoritativeAmountsUnchanged", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        payableBasisReadinessStatus: "DECISION_APPROVED_APPLICATION_NOT_REQUESTED",
+        payableBasisReadinessAction: "SUBMIT_APPLICATION_INTENT",
+        overallResultClassification: "COMPLETED"
+      }),
+      statutoryApplyPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "PROCESSING",
+        applicationResultClassification: "PROCESSING",
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "POLL_READBACK"
+      }),
+      statutoryReadPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        originalAmountMinorUnits: 12500,
+        vatExclusiveBasisAmountMinorUnits: 8929,
+        vatAmountMinorUnits: 1071,
+        vatTreatment: "VAT_EXEMPT_WITH_DISCOUNT",
+        statutoryDiscountAmountMinorUnits: 2500,
+        finalPayableAmountMinorUnits: 10000,
+        currency: "PHP"
+      })
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    await userEvent.click(await screen.findByRole("button", { name: /apply approved discount/i }));
+
+    expect(await screen.findByRole("heading", { name: /statutory discount applied/i })).toBeInTheDocument();
+    expect(screen.getByText("PHP 89.29")).toBeInTheDocument();
+    expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
+    expect(screen.getByText("-PHP 25.00")).toBeInTheDocument();
+    expect(screen.getByText("PHP 100.00")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+  });
+
+  it("WebPay_WhenApplicationConflictOrTerminalReturned_StopsSafelyAndKeepsPaymentDisabled", async () => {
+    const cases = [
+      {
+        payload: statutoryDecisionResponse({
+          safeErrorCode: "STATUTORY_DISCOUNT_APPLICATION_SEMANTIC_CONFLICT",
+          payableBasisReadinessStatus: "APPLICATION_SEMANTIC_CONFLICT",
+          payableBasisReadinessAction: "DO_NOT_RETRY",
+          overallResultClassification: "TERMINAL_FAILURE"
+        }),
+        heading: /statutory discount conflict/i
+      },
+      {
+        payload: statutoryDecisionResponse({
+          safeErrorCode: "STATUTORY_DISCOUNT_APPLICATION_FAILED",
+          payableBasisReadinessStatus: "FAILED",
+          payableBasisReadinessAction: "DO_NOT_RETRY",
+          overallResultClassification: "TERMINAL_FAILURE"
+        }),
+        heading: /statutory discount unavailable/i
+      }
+    ];
+
+    for (const currentCase of cases) {
+      const fetchMock = stubWebPayFetch({
+        statutorySubmitPayload: statutoryDecisionResponse({
+          decisionCommandStatus: "COMPLETED",
+          decisionResultStatus: "APPROVED",
+          payableBasisReadinessStatus: "DECISION_APPROVED_APPLICATION_NOT_REQUESTED",
+          payableBasisReadinessAction: "SUBMIT_APPLICATION_INTENT",
+          overallResultClassification: "COMPLETED"
+        }),
+        statutoryApplyPayload: currentCase.payload
+      });
+
+      render(<App />);
+      await submitBasicStatutoryRequest();
+      await userEvent.click(await screen.findByRole("button", { name: /apply approved discount/i }));
+
+      expect(await screen.findByRole("heading", { name: currentCase.heading })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+      expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/apply-payable-basis"))).toHaveLength(1);
+      expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+      cleanup();
+      vi.unstubAllGlobals();
+    }
   });
 
   it.each([
@@ -468,7 +667,7 @@ describe("ExitPass WebPay UI", () => {
         payableBasisReadinessAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY",
         safeErrorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE"
       }),
-      /status temporarily unavailable|discount application processing/i
+      /discount application temporarily unavailable/i
     ],
     [
       "terminal",

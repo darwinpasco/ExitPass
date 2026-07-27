@@ -4,8 +4,10 @@ import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
   ReceiptPresentationError,
+  applyStatutoryDiscountPayableBasis,
   createPaymentIntent,
   createRequestReference,
+  createStatutoryApplicationIdempotencyKey,
   createStatutoryDecisionIdempotencyKey,
   extractPaymentIntentContext,
   formatAmount,
@@ -74,8 +76,10 @@ type StatutoryDiscountUiState = {
   decision: WebPayStatutoryDiscountDecisionResponse | null;
   requestReference: string;
   idempotencyKey: string;
+  applicationIdempotencyKey: string;
   correlationId: string;
   isSubmitting: boolean;
+  isApplying: boolean;
   isPolling: boolean;
   message: string;
   error: string;
@@ -95,8 +99,10 @@ const emptyStatutoryDiscountUiState: StatutoryDiscountUiState = {
   decision: null,
   requestReference: "",
   idempotencyKey: "",
+  applicationIdempotencyKey: "",
   correlationId: "",
   isSubmitting: false,
+  isApplying: false,
   isPolling: false,
   message: "",
   error: ""
@@ -122,6 +128,7 @@ export function App() {
   const [statutoryDiscountForm, setStatutoryDiscountForm] = useState<StatutoryDiscountFormState>(defaultStatutoryDiscountForm);
   const [statutoryDiscountState, setStatutoryDiscountState] = useState<StatutoryDiscountUiState>(emptyStatutoryDiscountUiState);
   const statutoryPollGeneration = useRef(0);
+  const statutoryApplicationInFlight = useRef(false);
 
   const returnPageMode = getReturnPageMode(window.location.pathname);
   if (returnPageMode) {
@@ -306,6 +313,30 @@ export function App() {
     await handleResolveParkingSession();
   }
 
+  function buildCurrentStatutoryDiscountRequest(requestReference: string) {
+    if (!resolvedSession) {
+      throw new Error("Resolve your parking session before requesting a statutory discount.");
+    }
+
+    return {
+      requestReference,
+      parkingSessionId: resolvedSession.parkingSessionId,
+      siteId: resolvedSession.siteId,
+      siteGroupId: resolvedSession.siteGroupId,
+      ticketReference: resolvedSession.ticketReference ?? ticketReference,
+      plateNumber: resolvedSession.plateNumber ?? plateNumber,
+      entitlementType: statutoryDiscountForm.entitlementType,
+      idDocumentType: statutoryDiscountForm.idDocumentType,
+      issuingAuthority: statutoryDiscountForm.issuingAuthority,
+      expiryDate: statutoryDiscountForm.expiryDate || null,
+      maskedIdReference: statutoryDiscountForm.maskedIdReference,
+      evidenceCaptureRequested: false,
+      requesterAttestation: statutoryDiscountForm.requesterAttestation,
+      attestationNotes: statutoryDiscountForm.attestationNotes || null,
+      originalTariffSnapshotId: resolvedSession.tariffSnapshotId
+    };
+  }
+
   async function handleSubmitStatutoryDiscount() {
     if (!resolvedSession || statutoryDiscountState.isSubmitting) {
       return;
@@ -321,6 +352,7 @@ export function App() {
       ...current,
       requestReference,
       idempotencyKey,
+      applicationIdempotencyKey: "",
       correlationId,
       isSubmitting: true,
       error: "",
@@ -330,23 +362,7 @@ export function App() {
 
     try {
       const decision = await submitStatutoryDiscountDecision(
-        {
-          requestReference,
-          parkingSessionId: resolvedSession.parkingSessionId,
-          siteId: resolvedSession.siteId,
-          siteGroupId: resolvedSession.siteGroupId,
-          ticketReference: resolvedSession.ticketReference ?? ticketReference,
-          plateNumber: resolvedSession.plateNumber ?? plateNumber,
-          entitlementType: statutoryDiscountForm.entitlementType,
-          idDocumentType: statutoryDiscountForm.idDocumentType,
-          issuingAuthority: statutoryDiscountForm.issuingAuthority,
-          expiryDate: statutoryDiscountForm.expiryDate || null,
-          maskedIdReference: statutoryDiscountForm.maskedIdReference,
-          evidenceCaptureRequested: false,
-          requesterAttestation: statutoryDiscountForm.requesterAttestation,
-          attestationNotes: statutoryDiscountForm.attestationNotes || null,
-          originalTariffSnapshotId: resolvedSession.tariffSnapshotId
-        },
+        buildCurrentStatutoryDiscountRequest(requestReference),
         idempotencyKey,
         correlationId
       );
@@ -368,6 +384,69 @@ export function App() {
         error: apiError instanceof Error ? apiError.message : "Statutory discount request could not be submitted.",
         message: ""
       }));
+    }
+  }
+
+  async function handleApplyStatutoryDiscount() {
+    const decision = statutoryDiscountState.decision;
+    if (
+      !resolvedSession ||
+      !decision ||
+      statutoryApplicationInFlight.current ||
+      statutoryDiscountState.isApplying ||
+      statutoryDiscountState.isSubmitting
+    ) {
+      return;
+    }
+
+    if (!canSubmitApplicationIntent(decision) && !canRetryApplicationIntent(decision)) {
+      return;
+    }
+
+    const requestReference = statutoryDiscountState.requestReference || decision.requestReference || createRequestReference();
+    const applicationIdempotencyKey =
+      statutoryDiscountState.applicationIdempotencyKey ||
+      createStatutoryApplicationIdempotencyKey(decision.statutoryDiscountDecisionCommandId);
+    const correlationId = statutoryDiscountState.correlationId || decision.correlationId || createRequestReference();
+
+    setStatutoryDiscountState((current) => ({
+      ...current,
+      requestReference,
+      applicationIdempotencyKey,
+      correlationId,
+      isApplying: true,
+      error: "",
+      message: "Applying approved statutory discount..."
+    }));
+    setError("");
+    statutoryApplicationInFlight.current = true;
+
+    try {
+      const appliedDecision = await applyStatutoryDiscountPayableBasis(
+        decision.statutoryDiscountDecisionCommandId,
+        buildCurrentStatutoryDiscountRequest(requestReference),
+        applicationIdempotencyKey,
+        correlationId
+      );
+
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        decision: appliedDecision,
+        isApplying: false,
+        isPolling: shouldPollStatutoryDecision(appliedDecision),
+        message: getStatutoryDiscountStatusCopy(appliedDecision).body,
+        error: ""
+      }));
+    } catch (apiError) {
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        isApplying: false,
+        isPolling: false,
+        error: apiError instanceof Error ? apiError.message : "Approved statutory discount could not be applied.",
+        message: ""
+      }));
+    } finally {
+      statutoryApplicationInFlight.current = false;
     }
   }
 
@@ -580,6 +659,7 @@ export function App() {
             }}
             onFormChange={setStatutoryDiscountForm}
             onSubmit={() => void handleSubmitStatutoryDiscount()}
+            onApply={() => void handleApplyStatutoryDiscount()}
             onRefresh={() => void handleRefreshStatutoryDecision()}
           />
         )}
@@ -789,6 +869,7 @@ function StatutoryDiscountRequestPanel({
   onCancel,
   onFormChange,
   onSubmit,
+  onApply,
   onRefresh
 }: {
   session: ParkingSessionResolveResponse;
@@ -799,10 +880,13 @@ function StatutoryDiscountRequestPanel({
   onCancel: () => void;
   onFormChange: (form: StatutoryDiscountFormState) => void;
   onSubmit: () => void;
+  onApply: () => void;
   onRefresh: () => void;
 }) {
   const decision = state.decision;
   const copy = decision ? getStatutoryDiscountStatusCopy(decision) : null;
+  const showApplyAction = Boolean(decision && canSubmitApplicationIntent(decision));
+  const showApplicationRetryAction = Boolean(decision && canRetryApplicationIntent(decision));
 
   return (
     <section className="statutory-discount-panel" aria-labelledby="statutory-discount-heading">
@@ -827,7 +911,7 @@ function StatutoryDiscountRequestPanel({
 
       {showForm && (
         <div className="statutory-form">
-          <fieldset disabled={state.isSubmitting}>
+          <fieldset disabled={state.isSubmitting || state.isApplying}>
             <legend>Entitlement details for review</legend>
 
             <label className="field">
@@ -919,7 +1003,7 @@ function StatutoryDiscountRequestPanel({
             <button type="button" className="primary-button" onClick={onSubmit} disabled={state.isSubmitting}>
               Submit for review
             </button>
-            <button type="button" className="ghost-button" onClick={onCancel} disabled={state.isSubmitting}>
+            <button type="button" className="ghost-button" onClick={onCancel} disabled={state.isSubmitting || state.isApplying}>
               Cancel
             </button>
           </div>
@@ -981,15 +1065,28 @@ function StatutoryDiscountRequestPanel({
           )}
 
           {state.isPolling && <p role="status">Refreshing statutory discount status...</p>}
+          {state.isApplying && <p role="status">Applying approved statutory discount...</p>}
           {state.message && <p className="statutory-copy">{state.message}</p>}
           {state.error && <div className="form-error" role="alert">{state.error}</div>}
-          {!state.isPolling && !isTerminalStatutoryDecision(decision) && (
-            <button type="button" className="secondary-button" onClick={onRefresh}>
-              Refresh status
-            </button>
-          )}
+          <div className="statutory-actions">
+            {showApplyAction && (
+              <button type="button" className="primary-button" onClick={onApply} disabled={state.isApplying || state.isPolling}>
+                {state.isApplying ? "Applying approved discount..." : "Apply approved discount"}
+              </button>
+            )}
+            {showApplicationRetryAction && (
+              <button type="button" className="primary-button" onClick={onApply} disabled={state.isApplying || state.isPolling}>
+                {state.isApplying ? "Retrying discount application..." : "Retry discount application"}
+              </button>
+            )}
+            {!state.isPolling && !state.isApplying && !isTerminalStatutoryDecision(decision) && (
+              <button type="button" className="secondary-button" onClick={onRefresh}>
+                Refresh status
+              </button>
+            )}
+          </div>
           <p className="statutory-copy">
-            Payment is disabled while this statutory discount workflow is active in this pending-review slice.
+            Payment remains unavailable while this statutory discount workflow is active.
           </p>
         </div>
       )}
@@ -1557,21 +1654,49 @@ function checkActivePaymentStatus(activePaymentAttempt: ActivePaymentAttemptStat
 function shouldPollStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
   const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
   const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
+  const applicationStatus = decision.applicationCommandStatus.toUpperCase();
   return !decision.payableBasisReady &&
-    readinessAction === "POLL_READBACK" &&
+    (readinessAction === "POLL_READBACK" || ((readinessStatus === "APPLICATION_PROCESSING" || applicationStatus === "PROCESSING") && readinessAction !== "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY")) &&
     readinessStatus !== "DECISION_REJECTED" &&
-    readinessStatus !== "TERMINAL_FAILURE";
+    readinessStatus !== "TERMINAL_FAILURE" &&
+    !readinessStatus.includes("CONFLICT");
 }
 
 function isTerminalStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
   const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
   const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
   const decisionResult = decision.decisionResultStatus?.toUpperCase() ?? "";
+  const safeErrorCode = decision.safeErrorCode?.toUpperCase() ?? "";
   return decision.payableBasisReady ||
     readinessStatus === "DECISION_REJECTED" ||
     readinessAction === "DO_NOT_RETRY" ||
     decisionResult === "REJECTED" ||
+    safeErrorCode.includes("SEMANTIC_CONFLICT") ||
+    readinessStatus.includes("CONFLICT") ||
     decision.overallResultClassification.toUpperCase().includes("TERMINAL");
+}
+
+function canSubmitApplicationIntent(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
+  const decisionCommandStatus = decision.decisionCommandStatus.toUpperCase();
+  const decisionResult = decision.decisionResultStatus?.toUpperCase() ?? "";
+  const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
+  const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
+  return !decision.payableBasisReady &&
+    decisionCommandStatus === "COMPLETED" &&
+    decisionResult === "APPROVED" &&
+    readinessStatus === "DECISION_APPROVED_APPLICATION_NOT_REQUESTED" &&
+    readinessAction === "SUBMIT_APPLICATION_INTENT";
+}
+
+function canRetryApplicationIntent(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
+  const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
+  const recoveryAction = decision.recoveryAction?.toUpperCase() ?? "";
+  const safeErrorCode = decision.safeErrorCode?.toUpperCase() ?? "";
+  return !decision.payableBasisReady &&
+    decision.retryable &&
+    !isTerminalStatutoryDecision(decision) &&
+    (readinessAction === "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY" || recoveryAction === "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY") &&
+    safeErrorCode === "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE";
 }
 
 function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
@@ -1609,6 +1734,22 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
       heading: "Entitlement approved",
       body: "Discount application is pending and payment is not ready yet.",
       tone: "warning"
+    };
+  }
+
+  if (decision.retryable && readinessAction === "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY") {
+    return {
+      heading: "Discount application temporarily unavailable",
+      body: "Central PMS could not apply the approved discount yet. Retry the same application request after a short wait.",
+      tone: "warning"
+    };
+  }
+
+  if (readinessStatus.includes("CONFLICT") || (decision.safeErrorCode?.toUpperCase() ?? "").includes("SEMANTIC_CONFLICT")) {
+    return {
+      heading: "Statutory discount conflict",
+      body: "The approved discount could not be applied because the application request no longer matches the canonical decision.",
+      tone: "error"
     };
   }
 

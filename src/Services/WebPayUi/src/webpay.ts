@@ -140,6 +140,15 @@ export function createStatutoryDecisionIdempotencyKey(parkingSessionId: string, 
   return `webpay-statutory-discount-decision:${normalizedSessionId}:${entitlementType}:${createCorrelationId()}`;
 }
 
+export function createStatutoryApplicationIdempotencyKey(statutoryDiscountDecisionCommandId: string): string {
+  const normalizedDecisionId = statutoryDiscountDecisionCommandId.trim();
+  if (!normalizedDecisionId) {
+    throw new Error("Statutory discount request reference is required before applying the approved discount.");
+  }
+
+  return `webpay-statutory-discount-application:${normalizedDecisionId}`;
+}
+
 function withCorrelationId<TRequest extends object>(request: TRequest): TRequest & { correlationId: string } {
   const existing = (request as { correlationId?: unknown }).correlationId;
   const correlationId = typeof existing === "string" && existing.trim() ? existing.trim() : createCorrelationId();
@@ -498,6 +507,42 @@ export async function retrieveStatutoryDiscountDecision(
       headers: {
         "X-Correlation-Id": requestCorrelationId
       },
+      signal
+    }
+  );
+
+  return readStatutoryDiscountDecisionResponse(response);
+}
+
+export async function applyStatutoryDiscountPayableBasis(
+  statutoryDiscountDecisionCommandId: string,
+  request: WebPayStatutoryDiscountDecisionRequest,
+  idempotencyKey: string,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<WebPayStatutoryDiscountDecisionResponse> {
+  const normalizedDecisionId = statutoryDiscountDecisionCommandId.trim();
+  if (!normalizedDecisionId) {
+    throw new Error("Statutory discount request reference is missing.");
+  }
+
+  const normalizedIdempotencyKey = idempotencyKey.trim();
+  if (!normalizedIdempotencyKey) {
+    throw new Error("A request key is required to apply the approved statutory discount safely.");
+  }
+
+  const body = buildStatutoryDiscountDecisionBody(request);
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+  const response = await fetchImpl(
+    `${getApiBaseUrl()}${statutoryDiscountDecisionPath}/${encodeURIComponent(normalizedDecisionId)}/apply-payable-basis`,
+    {
+      method: "POST",
+      headers: {
+        ...jsonHeaders(requestCorrelationId),
+        "Idempotency-Key": normalizedIdempotencyKey
+      },
+      body: JSON.stringify(body),
       signal
     }
   );
