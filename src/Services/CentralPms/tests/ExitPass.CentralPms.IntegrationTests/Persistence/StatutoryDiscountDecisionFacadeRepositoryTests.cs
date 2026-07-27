@@ -17,7 +17,7 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
     [Fact]
     public async Task Patch_AppliesAndValidatesDecisionFacadeObjects()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
 
         (await TableExistsAsync("discounts.statutory_discount_decision_commands")).Should().BeTrue();
         (await IndexExistsAsync("discounts", "ux_statutory_discount_decision_commands__business_identity")).Should().BeTrue();
@@ -26,7 +26,7 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
     [Fact]
     public async Task BeginAsync_WhenSameBusinessRequestReplaysAcrossChannel_ReturnsExistingWithoutDuplicateInsert()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(BeginAsync_WhenSameBusinessRequestReplaysAcrossChannel_ReturnsExistingWithoutDuplicateInsert));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed statutory decision facade repository test data.");
 
@@ -62,7 +62,7 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
     [Fact]
     public async Task BeginAsync_WhenSameBusinessIdentityChangesMaterialFacts_ReturnsSemanticConflict()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(BeginAsync_WhenSameBusinessIdentityChangesMaterialFacts_ReturnsSemanticConflict));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed statutory decision facade repository conflict test data.");
 
@@ -95,7 +95,7 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
     [Fact]
     public async Task BeginAsync_WhenSameRequestReferenceTargetsDifferentBusinessIdentity_ReturnsConflictRecord()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var firstContext = PaymentTestContext.Create(nameof(BeginAsync_WhenSameRequestReferenceTargetsDifferentBusinessIdentity_ReturnsConflictRecord) + "A");
         var secondContext = PaymentTestContext.Create(nameof(BeginAsync_WhenSameRequestReferenceTargetsDifferentBusinessIdentity_ReturnsConflictRecord) + "B");
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, firstContext, "Seed first statutory decision facade request reference test data.");
@@ -133,7 +133,7 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
     [Fact]
     public async Task GetAsync_WhenReferenceMissing_ReturnsNull()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var repository = new PostgresStatutoryDiscountDecisionFacadeRepository(ConnectionString);
 
         var result = await repository.GetAsync(Guid.NewGuid(), Guid.NewGuid(), CancellationToken.None);
@@ -197,28 +197,17 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
             DateTimeOffset.UtcNow);
     }
 
-    private static async Task EnsurePatchAppliedAndValidatedAsync()
+    private static async Task EnsureCanonicalSchemaPresentAsync()
     {
         await PatchLock.WaitAsync();
         try
         {
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountDecisionFacade_v1.3.sql");
+            await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(ConnectionString);
         }
         finally
         {
             PatchLock.Release();
         }
-    }
-
-    private static async Task ExecuteSqlFileAsync(params string[] pathParts)
-    {
-        var path = ResolveRepoPath(pathParts);
-        var sql = await File.ReadAllTextAsync(path);
-        await using var connection = new NpgsqlConnection(ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 60 };
-        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<bool> TableExistsAsync(string regclass)
@@ -278,19 +267,4 @@ public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static string ResolveRepoPath(params string[] pathParts)
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !Directory.Exists(Path.Combine(current.FullName, ".git")))
-        {
-            current = current.Parent;
-        }
-
-        if (current is null)
-        {
-            throw new InvalidOperationException("Repository root could not be resolved.");
-        }
-
-        return Path.Combine(new[] { current.FullName }.Concat(pathParts).ToArray());
-    }
 }

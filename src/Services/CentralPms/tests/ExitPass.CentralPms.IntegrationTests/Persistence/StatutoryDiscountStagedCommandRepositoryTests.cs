@@ -17,7 +17,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task Patch_AppliesAndValidatesStagedCommandObjects()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
 
         (await TableExistsAsync("discounts.statutory_discount_decision_commands")).Should().BeTrue();
         (await TableExistsAsync("discounts.statutory_discount_payable_basis_application_commands")).Should().BeTrue();
@@ -27,7 +27,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task DecisionV1AndDecisionV2Records_CanCoexistAndRemainReadable()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var v1Context = PaymentTestContext.Create(nameof(DecisionV1AndDecisionV2Records_CanCoexistAndRemainReadable) + "V1");
         var v2Context = PaymentTestContext.Create(nameof(DecisionV1AndDecisionV2Records_CanCoexistAndRemainReadable) + "V2");
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, v1Context, "Seed decision-v1 coexistence data.");
@@ -64,7 +64,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task DecisionV2_WhenSameBusinessRequestReplays_ReturnsExistingWithoutDuplicateInsert()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(DecisionV2_WhenSameBusinessRequestReplays_ReturnsExistingWithoutDuplicateInsert));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged decision replay data.");
 
@@ -92,7 +92,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task DecisionV2_WhenReadByBusinessIdentity_ReturnsExistingWithoutCreatingCommand()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(DecisionV2_WhenReadByBusinessIdentity_ReturnsExistingWithoutCreatingCommand));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged decision business-identity readback data.");
 
@@ -120,7 +120,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task DecisionV2_WhenMaterialFactsChange_ReturnsDeterministicConflict()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(DecisionV2_WhenMaterialFactsChange_ReturnsDeterministicConflict));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged decision conflict data.");
 
@@ -150,7 +150,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task DecisionV2_WhenConcurrentSameBusinessCommandsRun_CreatesOneCommand()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(DecisionV2_WhenConcurrentSameBusinessCommandsRun_CreatesOneCommand));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged decision concurrency data.");
 
@@ -178,7 +178,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task DecisionV2_WhenMarkedAwaitingReview_PersistsPendingReviewState()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(DecisionV2_WhenMarkedAwaitingReview_PersistsPendingReviewState));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged pending-review decision data.");
 
@@ -215,7 +215,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task ApplicationV1_ForApprovedDecision_ReplaysAndConflictsWithoutDuplicateApplicationCommand()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(ApplicationV1_ForApprovedDecision_ReplaysAndConflictsWithoutDuplicateApplicationCommand));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged application replay data.");
 
@@ -254,7 +254,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task ApplicationV1_WhenDecisionRejectedOrMissing_ReturnsSafeResultWithoutInsert()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(ApplicationV1_WhenDecisionRejectedOrMissing_ReturnsSafeResultWithoutInsert));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged application rejected data.");
 
@@ -290,7 +290,7 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
     [Fact]
     public async Task ApplicationV1_WhenConcurrentSameDecisionCommandsRun_CreatesOneCommand()
     {
-        await EnsurePatchAppliedAndValidatedAsync();
+        await EnsureCanonicalSchemaPresentAsync();
         var context = PaymentTestContext.Create(nameof(ApplicationV1_WhenConcurrentSameDecisionCommandsRun_CreatesOneCommand));
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed staged application concurrency data.");
 
@@ -463,31 +463,17 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
             "verification-ref-001",
             DateTimeOffset.Parse("2026-07-21T01:00:00Z"));
 
-    private static async Task EnsurePatchAppliedAndValidatedAsync()
+    private static async Task EnsureCanonicalSchemaPresentAsync()
     {
         await PatchLock.WaitAsync();
         try
         {
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
+            await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(ConnectionString);
         }
         finally
         {
             PatchLock.Release();
         }
-    }
-
-    private static async Task ExecuteSqlFileAsync(params string[] pathParts)
-    {
-        var sql = await File.ReadAllTextAsync(ResolveRepoPath(pathParts));
-        await using var connection = new NpgsqlConnection(ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 60 };
-        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task<bool> TableExistsAsync(string regclass)
@@ -589,19 +575,4 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static string ResolveRepoPath(params string[] pathParts)
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !Directory.Exists(Path.Combine(current.FullName, ".git")))
-        {
-            current = current.Parent;
-        }
-
-        if (current is null)
-        {
-            throw new InvalidOperationException("Repository root could not be resolved.");
-        }
-
-        return Path.Combine(new[] { current.FullName }.Concat(pathParts).ToArray());
-    }
 }
