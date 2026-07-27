@@ -24,6 +24,9 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 {
     private const string Route = "/v1/webpay/payment-intents";
     private const string ResolveRoute = "/v1/webpay/parking-session";
+    private const string StatutoryDecisionRoute = "/v1/webpay/statutory-discounts/decisions";
+    private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+    private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
 
     private readonly PaymentOrchestratorWebApplicationFactory _factory;
 
@@ -372,6 +375,123 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.DoesNotContain("rawResponse", body, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Verifies the WebPay statutory-discount submit endpoint accepts only browser-safe facts and forwards idempotency.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenRequestIsValid_ReturnsBrowserSafeReadback()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        using var client = CreateClient(state);
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(StatutoryDecisionRequest())
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-decision:webpay:test");
+        request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountDecisionResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(StatutoryDecisionCommandId, body!.StatutoryDiscountDecisionCommandId);
+        Assert.Equal("SENIOR_CITIZEN", body.EntitlementType);
+        Assert.Equal("READY", body.PayableBasisReadinessStatus);
+        Assert.Equal("statutory-decision:webpay:test", state.CapturedStatutorySubmitIdempotencyKey);
+        Assert.Equal("SENIOR_CITIZEN", state.CapturedStatutorySubmitRequest!.EntitlementType);
+    }
+
+    /// <summary>
+    /// Verifies the WebPay statutory-discount submit endpoint rejects missing idempotency.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenIdempotencyKeyMissing_ReturnsBadRequest()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(StatutoryDecisionRoute, StatutoryDecisionRequest());
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(state.CapturedStatutorySubmitRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("IDEMPOTENCY_KEY_REQUIRED", body);
+    }
+
+    /// <summary>
+    /// Verifies durable statutory-discount readback is exposed without mutation.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountReadback_WhenDecisionExists_ReturnsDurableState()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        using var client = CreateClient(state);
+
+        using var response = await client.GetAsync($"{StatutoryDecisionRoute}/{StatutoryDecisionCommandId:D}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountDecisionResponse>();
+        Assert.NotNull(body);
+        Assert.Equal(StatutoryApplicationCommandId, body!.StatutoryDiscountPayableBasisApplicationCommandId);
+        Assert.True(body.PayableBasisReady);
+        Assert.Equal(1, state.GetStatutoryDiscountDecisionCallCount);
+        Assert.Equal(0, state.ApplyStatutoryDiscountPayableBasisCallCount);
+    }
+
+    /// <summary>
+    /// Verifies post-approval application intent reuses the canonical decision route through the Payment Orchestrator.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountApplyPayableBasis_WhenRequestMatchesReadback_SubmitsApplicationIntent()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        using var client = CreateClient(state);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"{StatutoryDecisionRoute}/{StatutoryDecisionCommandId:D}/apply-payable-basis")
+        {
+            Content = JsonContent.Create(StatutoryDecisionRequest())
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-application:webpay:test");
+        request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(1, state.GetStatutoryDiscountDecisionCallCount);
+        Assert.Equal(1, state.ApplyStatutoryDiscountPayableBasisCallCount);
+        Assert.Equal("statutory-application:webpay:test", state.CapturedStatutoryApplyIdempotencyKey);
+        Assert.Equal(StatutoryDecisionCommandId, state.CapturedStatutoryReadbackId);
+    }
+
+    /// <summary>
+    /// Verifies statutory pending-review readback blocks payment attempt creation through the endpoint.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenStatutoryDecisionAwaitsReview_ReturnsConflictWithoutProviderSideEffects()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+                StatutoryDecision(payableBasisReady: false, decisionCommandStatus: "AWAITING_REVIEW", decisionResultStatus: "NOT_DECIDED", applicationCommandStatus: "NOT_REQUESTED", readinessStatus: "AWAITING_REVIEW"))
+        };
+        using var client = CreateClient(state);
+        var request = DefaultRequest("QRPH");
+        request.StatutoryDiscountDecisionCommandId = StatutoryDecisionCommandId;
+        request.TariffSnapshotId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+        request.ExpectedAmountMinorUnits = 10000;
+        request.ExpectedCurrency = "PHP";
+
+        using var response = await client.PostAsJsonAsync(Route, request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.False(state.CreatePaymentAttemptWasCalled);
+        Assert.Null(state.CapturedInitiateRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("STATUTORY_DISCOUNT_AWAITING_REVIEW", body);
+    }
+
     private HttpClient CreateClient(WebPayEndpointState state)
     {
         return _factory.WithWebHostBuilder(builder =>
@@ -401,6 +521,105 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             PaymentMethod = paymentMethod,
             CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333")
         };
+    }
+
+    private static WebPayStatutoryDiscountDecisionRequest StatutoryDecisionRequest()
+    {
+        return new WebPayStatutoryDiscountDecisionRequest
+        {
+            RequestReference = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ParkingSessionId = Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            SiteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            SiteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            TicketReference = "WEBPAY-REQ-001",
+            PlateNumber = "ABC1234",
+            EntitlementType = "SENIOR_CITIZEN",
+            IdDocumentType = "OSCA",
+            IssuingAuthority = "QUEZON_CITY",
+            ExpiryDate = DateOnly.Parse("2030-12-31"),
+            MaskedIdReference = "SC-****-0001",
+            EvidenceCaptureRequested = true,
+            EvidenceReferences = new[]
+            {
+                new WebPayStatutoryDiscountEvidenceReference
+                {
+                    EvidenceType = "CARD_REFERENCE",
+                    CaptureMethod = "CUSTOMER_UPLOAD_REFERENCE",
+                    ReferenceNumberMasked = "SC-****-0001",
+                    StorageReference = "evidence:webpay:001",
+                    VerificationStatus = "PENDING_REVIEW"
+                }
+            },
+            RequesterAttestation = true,
+            AttestationNotes = "Customer attests eligibility for review.",
+            OriginalTariffSnapshotId = Guid.Parse("55555555-5555-5555-5555-555555555555")
+        };
+    }
+
+    private static CentralPmsStatutoryDiscountDecision StatutoryDecision(
+        bool payableBasisReady = true,
+        string decisionCommandStatus = "COMPLETED",
+        string? decisionResultStatus = "APPROVED",
+        string applicationCommandStatus = "APPLIED",
+        string readinessStatus = "READY")
+    {
+        return new CentralPmsStatutoryDiscountDecision(
+            StatutoryDecisionCommandId,
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            "WEBPAY",
+            "SENIOR_CITIZEN",
+            decisionResultStatus ?? "NOT_DECIDED",
+            "STATUTORY",
+            null,
+            null,
+            false,
+            12500,
+            11161,
+            1339,
+            "VAT_EXEMPT_SENIOR_CITIZEN",
+            2500,
+            10000,
+            "PHP",
+            true,
+            true,
+            null,
+            null,
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            DateTimeOffset.Parse("2026-05-16T12:00:00Z"),
+            decisionResultStatus == "APPROVED" ? DateTimeOffset.Parse("2026-05-16T12:05:00Z") : null,
+            applicationCommandStatus == "APPLIED" ? DateTimeOffset.Parse("2026-05-16T12:10:00Z") : null,
+            Guid.Parse("55555555-5555-5555-5555-555555555555"),
+            Guid.Parse("55555555-5555-5555-5555-555555555555"),
+            decisionCommandStatus,
+            decisionResultStatus ?? "NOT_DECIDED",
+            payableBasisReady ? "APPLIED" : "PENDING",
+            "statutory-discount-decision:sha256:v2",
+            !payableBasisReady,
+            payableBasisReady ? "NONE" : "RETRYABLE",
+            payableBasisReady ? null : "POLL_READBACK",
+            null,
+            decisionCommandStatus,
+            decisionResultStatus,
+            !payableBasisReady,
+            payableBasisReady ? "NONE" : "RETRYABLE",
+            payableBasisReady ? null : "POLL_READBACK",
+            StatutoryApplicationCommandId,
+            applicationCommandStatus != "NOT_REQUESTED",
+            applicationCommandStatus,
+            applicationCommandStatus == "APPLIED" ? "APPLIED" : applicationCommandStatus,
+            "statutory-discount-payable-basis-application:sha256:v1",
+            !payableBasisReady,
+            payableBasisReady ? "NONE" : "RETRYABLE",
+            payableBasisReady ? null : "POLL_READBACK",
+            payableBasisReady ? "APPLIED" : "PENDING",
+            payableBasisReady,
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            payableBasisReady,
+            readinessStatus,
+            payableBasisReady ? null : "POLL_READBACK");
     }
 
     private sealed class WebPayEndpointState :
@@ -444,6 +663,9 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
 
+        public CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision> StatutoryDecisionResult { get; set; } =
+            CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(StatutoryDecision());
+
         private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
 
         public bool ResolveVendorParkingWasCalled { get; private set; }
@@ -453,6 +675,20 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public int CreatePaymentAttemptCallCount { get; private set; }
 
         public int FinalizePaymentAttemptCallCount { get; private set; }
+
+        public int GetStatutoryDiscountDecisionCallCount { get; private set; }
+
+        public int ApplyStatutoryDiscountPayableBasisCallCount { get; private set; }
+
+        public Guid? CapturedStatutoryReadbackId { get; private set; }
+
+        public string? CapturedStatutorySubmitIdempotencyKey { get; private set; }
+
+        public string? CapturedStatutoryApplyIdempotencyKey { get; private set; }
+
+        public CentralPmsStatutoryDiscountDecisionRequest? CapturedStatutorySubmitRequest { get; private set; }
+
+        public CentralPmsStatutoryDiscountDecisionRequest? CapturedStatutoryApplyRequest { get; private set; }
 
         public string? FinalAttemptStatus { get; private set; }
 
@@ -524,6 +760,47 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
             return Task.FromResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt>.Success(
                 new CentralPmsPaymentAttempt(paymentAttemptId, finalAttemptStatus, string.Empty, false)));
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
+            Guid paymentAttemptId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SubmitStatutoryDiscountDecisionAsync(
+            CentralPmsStatutoryDiscountDecisionRequest request,
+            string idempotencyKey,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            CapturedStatutorySubmitRequest = request;
+            CapturedStatutorySubmitIdempotencyKey = idempotencyKey;
+            return Task.FromResult(StatutoryDecisionResult);
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            GetStatutoryDiscountDecisionCallCount++;
+            CapturedStatutoryReadbackId = statutoryDiscountDecisionCommandId;
+            return Task.FromResult(StatutoryDecisionResult);
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> ApplyStatutoryDiscountPayableBasisAsync(
+            CentralPmsStatutoryDiscountDecisionRequest request,
+            string idempotencyKey,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            ApplyStatutoryDiscountPayableBasisCallCount++;
+            CapturedStatutoryApplyRequest = request;
+            CapturedStatutoryApplyIdempotencyKey = idempotencyKey;
+            return Task.FromResult(StatutoryDecisionResult);
         }
 
         public Task<ResolvePaymentProviderRouteResponse> ResolveAsync(

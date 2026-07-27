@@ -19,6 +19,8 @@ public sealed class WebPayPaymentIntentHandler
     private const string RequestedBy = "webpay-api";
     private const string PendingProviderStatus = "PENDING_PROVIDER";
     private const string ActivePaymentAttemptExists = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
+    private const string ApprovedDecisionResult = "APPROVED";
+    private const string AppliedApplicationStatus = "APPLIED";
 
     private readonly ICentralPmsWebPayClient _centralPmsClient;
     private readonly IPaymentProviderRoutingPolicyResolver _routingPolicyResolver;
@@ -100,13 +102,29 @@ public sealed class WebPayPaymentIntentHandler
             return WebPayPaymentIntentResult.Failure(MapCentralPmsError(parking.Error, correlationId));
         }
 
-        var payableBasisError = ValidatePayableBasis(request, parking.Value, correlationId);
-        if (payableBasisError is not null)
+        if (!request.StatutoryDiscountDecisionCommandId.HasValue)
         {
-            return WebPayPaymentIntentResult.Failure(payableBasisError);
+            var payableBasisError = ValidatePayableBasis(request, parking.Value, correlationId);
+            if (payableBasisError is not null)
+            {
+                return WebPayPaymentIntentResult.Failure(payableBasisError);
+            }
         }
 
-        var payableBasis = ResolvePayableBasisForAttempt(request, parking.Value);
+        var statutoryReadiness = await ValidateStatutoryPaymentReadinessAsync(
+            request,
+            parking.Value,
+            correlationId,
+            cancellationToken);
+        if (statutoryReadiness.Error is not null)
+        {
+            return WebPayPaymentIntentResult.Failure(statutoryReadiness.Error);
+        }
+
+        var payableBasis = ResolvePayableBasisForAttempt(
+            request,
+            parking.Value,
+            statutoryReadiness.Decision);
 
         var route = await _routingPolicyResolver.ResolveAsync(
             new ResolvePaymentProviderRouteRequest(
@@ -114,7 +132,7 @@ public sealed class WebPayPaymentIntentHandler
                 request.SiteGroupId,
                 paymentMethod,
                 payableBasis.NetPayableMinorUnits,
-                parking.Value.Currency,
+                payableBasis.Currency,
                 request.PreferredProviderCode,
                 correlationId),
             cancellationToken);
@@ -402,6 +420,12 @@ public sealed class WebPayPaymentIntentHandler
             errors.Add("vendorSystemId is required.");
         }
 
+        if (request.StatutoryDiscountPayableBasisApplicationCommandId.HasValue &&
+            !request.StatutoryDiscountDecisionCommandId.HasValue)
+        {
+            errors.Add("statutoryDiscountDecisionCommandId is required when statutoryDiscountPayableBasisApplicationCommandId is supplied.");
+        }
+
         if (errors.Count > 0)
         {
             return new WebPayPaymentIntentError(
@@ -498,17 +522,292 @@ public sealed class WebPayPaymentIntentHandler
         return null;
     }
 
+    private async Task<StatutoryReadinessValidation> ValidateStatutoryPaymentReadinessAsync(
+        WebPayPaymentIntentRequest request,
+        CentralPmsResolvedParking parking,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (!request.StatutoryDiscountDecisionCommandId.HasValue)
+        {
+            return StatutoryReadinessValidation.Success(null);
+        }
+
+        var readback = await _centralPmsClient.GetStatutoryDiscountDecisionAsync(
+            request.StatutoryDiscountDecisionCommandId.Value,
+            correlationId,
+            cancellationToken);
+
+        if (!readback.Succeeded || readback.Value is null)
+        {
+            return StatutoryReadinessValidation.Failure(MapStatutoryReadbackError(readback.Error, parking, correlationId));
+        }
+
+        var decision = readback.Value;
+        if (decision.ParkingSessionId != parking.ParkingSessionId)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_PARKING_SESSION_MISMATCH",
+                "The statutory-discount decision does not belong to the resolved parking session.",
+                correlationId,
+                parking,
+                retryable: false));
+        }
+
+        if (request.StatutoryDiscountPayableBasisApplicationCommandId.HasValue &&
+            decision.StatutoryDiscountPayableBasisApplicationCommandId.HasValue &&
+            request.StatutoryDiscountPayableBasisApplicationCommandId.Value != decision.StatutoryDiscountPayableBasisApplicationCommandId.Value)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_APPLICATION_COMMAND_MISMATCH",
+                "The statutory-discount payable-basis application does not match Central PMS readback.",
+                correlationId,
+                parking,
+                retryable: false));
+        }
+
+        if (!string.Equals(decision.DecisionResultStatus, ApprovedDecisionResult, StringComparison.OrdinalIgnoreCase))
+        {
+            return StatutoryReadinessValidation.Failure(MapNonApprovedDecision(decision, parking, correlationId));
+        }
+
+        if (!string.Equals(decision.ApplicationCommandStatus, AppliedApplicationStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return StatutoryReadinessValidation.Failure(MapNonAppliedApplication(decision, parking, correlationId));
+        }
+
+        if (!decision.PayableBasisReady)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE",
+                "The statutory-discount payable basis is not ready for payment.",
+                correlationId,
+                parking,
+                decision.ApplicationRetryable || decision.Retryable || decision.DecisionRetryable));
+        }
+
+        if (!decision.AppliedTariffSnapshotId.HasValue)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_APPLIED_TARIFF_SNAPSHOT_MISSING",
+                "Central PMS has not returned an applied statutory-discount tariff snapshot.",
+                correlationId,
+                parking,
+                retryable: true));
+        }
+
+        if (!decision.NetPayableAmountMinorUnits.HasValue)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_FINAL_PAYABLE_AMOUNT_MISSING",
+                "Central PMS has not returned the approved final payable amount.",
+                correlationId,
+                parking,
+                retryable: true));
+        }
+
+        if (string.IsNullOrWhiteSpace(decision.Currency))
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_CURRENCY_MISSING",
+                "Central PMS has not returned the approved payable currency.",
+                correlationId,
+                parking,
+                retryable: true));
+        }
+
+        if (request.TariffSnapshotId.HasValue &&
+            request.TariffSnapshotId.Value != decision.AppliedTariffSnapshotId.Value)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_APPLIED_SNAPSHOT_MISMATCH",
+                "The selected tariff snapshot no longer matches the approved statutory-discount payable basis.",
+                correlationId,
+                parking,
+                retryable: false));
+        }
+
+        if (request.ExpectedAmountMinorUnits.HasValue &&
+            request.ExpectedAmountMinorUnits.Value != decision.NetPayableAmountMinorUnits.Value)
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_FINAL_PAYABLE_AMOUNT_MISMATCH",
+                "The selected payable amount no longer matches the approved statutory-discount payable basis.",
+                correlationId,
+                parking,
+                retryable: false));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ExpectedCurrency) &&
+            !string.Equals(request.ExpectedCurrency.Trim(), decision.Currency.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return StatutoryReadinessValidation.Failure(BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_CURRENCY_MISMATCH",
+                "The selected currency no longer matches the approved statutory-discount payable basis.",
+                correlationId,
+                parking,
+                retryable: false));
+        }
+
+        return StatutoryReadinessValidation.Success(decision);
+    }
+
+    private static WebPayPaymentIntentError MapNonApprovedDecision(
+        CentralPmsStatutoryDiscountDecision decision,
+        CentralPmsResolvedParking parking,
+        Guid correlationId)
+    {
+        if (string.Equals(decision.DecisionResultStatus, "REJECTED", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(decision.PayableBasisReadinessStatus, "DECISION_REJECTED", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_DECISION_REJECTED",
+                "The statutory-discount request was not approved.",
+                correlationId,
+                parking,
+                retryable: false);
+        }
+
+        if (string.Equals(decision.DecisionCommandStatus, "AWAITING_REVIEW", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(decision.PayableBasisReadinessStatus, "AWAITING_REVIEW", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_AWAITING_REVIEW",
+                "The statutory-discount request is awaiting review.",
+                correlationId,
+                parking,
+                retryable: true);
+        }
+
+        return BuildStatutoryPaymentBlockedError(
+            "STATUTORY_DISCOUNT_TERMINAL_FAILURE",
+            "The statutory-discount request is not approved for payment.",
+            correlationId,
+            parking,
+            decision.Retryable || decision.DecisionRetryable);
+    }
+
+    private static WebPayPaymentIntentError MapNonAppliedApplication(
+        CentralPmsStatutoryDiscountDecision decision,
+        CentralPmsResolvedParking parking,
+        Guid correlationId)
+    {
+        var readiness = decision.PayableBasisReadinessStatus;
+        if (string.Equals(readiness, "DECISION_APPROVED_APPLICATION_NOT_REQUESTED", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_APPLICATION_INTENT_REQUIRED",
+                "The statutory-discount request is approved and still needs payable-basis application before payment.",
+                correlationId,
+                parking,
+                retryable: false);
+        }
+
+        if (string.Equals(readiness, "APPLICATION_PROCESSING", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(decision.ApplicationCommandStatus, "PROCESSING", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(decision.ApplicationCommandStatus, "RECEIVED", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_APPLICATION_PROCESSING",
+                "The statutory-discount payable basis is still being applied.",
+                correlationId,
+                parking,
+                retryable: true);
+        }
+
+        if (string.Equals(readiness, "REQUIRED_FACTS_UNAVAILABLE", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE",
+                "The statutory-discount payable basis is missing required authoritative facts.",
+                correlationId,
+                parking,
+                retryable: false);
+        }
+
+        if (decision.ApplicationRetryable ||
+            string.Equals(decision.SafeErrorCode, "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(readiness, "RETRYABLE_FAILURE", StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_TEMPORARILY_UNAVAILABLE",
+                "The statutory-discount payable basis is temporarily unavailable. Retry using the original request.",
+                correlationId,
+                parking,
+                retryable: true);
+        }
+
+        return BuildStatutoryPaymentBlockedError(
+            "STATUTORY_DISCOUNT_TERMINAL_FAILURE",
+            "The statutory-discount payable basis is not available for payment.",
+            correlationId,
+            parking,
+            retryable: false);
+    }
+
+    private static WebPayPaymentIntentError MapStatutoryReadbackError(
+        CentralPmsWebPayError? error,
+        CentralPmsResolvedParking parking,
+        Guid correlationId)
+    {
+        if (error is not null &&
+            error.Retryable &&
+            string.Equals(
+                error.ErrorCode,
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return BuildStatutoryPaymentBlockedError(
+                "STATUTORY_DISCOUNT_TEMPORARILY_UNAVAILABLE",
+                "The statutory-discount payable basis is temporarily unavailable. Retry using the original request.",
+                error.CorrelationId ?? correlationId,
+                parking,
+                retryable: true);
+        }
+
+        return MapCentralPmsError(error, correlationId);
+    }
+
+    private static WebPayPaymentIntentError BuildStatutoryPaymentBlockedError(
+        string errorCode,
+        string message,
+        Guid correlationId,
+        CentralPmsResolvedParking parking,
+        bool retryable)
+    {
+        return new WebPayPaymentIntentError(
+            409,
+            errorCode,
+            message,
+            retryable,
+            correlationId,
+            parking.ParkingSessionId,
+            PaymentMethod: null,
+            AmountMinorUnits: parking.NetPayableMinorUnits,
+            Currency: parking.Currency,
+            SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
+            TicketReference: BlankToNull(parking.TicketReference),
+            PlateNumber: BlankToNull(parking.PlateNumber));
+    }
+
     private static CentralPmsResolvedParking ResolvePayableBasisForAttempt(
         WebPayPaymentIntentRequest request,
-        CentralPmsResolvedParking parking)
+        CentralPmsResolvedParking parking,
+        CentralPmsStatutoryDiscountDecision? statutoryDecision = null)
     {
-        var tariffSnapshotId = request.TariffSnapshotId.GetValueOrDefault(parking.TariffSnapshotId);
-        var amountMinorUnits = request.ExpectedAmountMinorUnits.GetValueOrDefault(parking.NetPayableMinorUnits);
+        var tariffSnapshotId = statutoryDecision?.AppliedTariffSnapshotId ??
+            request.TariffSnapshotId.GetValueOrDefault(parking.TariffSnapshotId);
+        var amountMinorUnits = statutoryDecision?.NetPayableAmountMinorUnits ??
+            request.ExpectedAmountMinorUnits.GetValueOrDefault(parking.NetPayableMinorUnits);
+        var currency = string.IsNullOrWhiteSpace(statutoryDecision?.Currency)
+            ? parking.Currency
+            : statutoryDecision.Currency!;
 
         return parking with
         {
             TariffSnapshotId = tariffSnapshotId,
-            NetPayableMinorUnits = amountMinorUnits
+            NetPayableMinorUnits = amountMinorUnits,
+            Currency = currency
         };
     }
 
@@ -979,6 +1278,17 @@ public sealed class WebPayPaymentIntentHandler
         {
             return new PaymentAttemptResolution(null, null, error);
         }
+    }
+
+    private sealed record StatutoryReadinessValidation(
+        CentralPmsStatutoryDiscountDecision? Decision,
+        WebPayPaymentIntentError? Error)
+    {
+        public static StatutoryReadinessValidation Success(CentralPmsStatutoryDiscountDecision? decision) =>
+            new(decision, null);
+
+        public static StatutoryReadinessValidation Failure(WebPayPaymentIntentError error) =>
+            new(null, error);
     }
 
     private sealed record ReturnUrlLogParts(string Host, string Path, string Query);

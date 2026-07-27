@@ -74,4 +74,44 @@ public interface ICentralPmsWebPayClient
         Guid paymentAttemptId,
         Guid correlationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates or reuses a Central PMS statutory-discount decision for WebPay.
+    /// </summary>
+    /// <param name="request">Server-normalized WebPay statutory-discount request.</param>
+    /// <param name="idempotencyKey">Original decision idempotency key.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Durable statutory-discount decision readback, or a deterministic Central PMS error.</returns>
+    Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SubmitStatutoryDiscountDecisionAsync(
+        CentralPmsStatutoryDiscountDecisionRequest request,
+        string idempotencyKey,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reads a durable Central PMS statutory-discount decision.
+    /// </summary>
+    /// <param name="statutoryDiscountDecisionCommandId">Canonical decision command identifier.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Durable statutory-discount decision readback, or a deterministic Central PMS error.</returns>
+    Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Requests Central PMS to create or reuse the payable-basis application for an approved WebPay decision.
+    /// </summary>
+    /// <param name="request">Server-normalized WebPay statutory-discount request matching the canonical decision.</param>
+    /// <param name="idempotencyKey">Original application-intent idempotency key.</param>
+    /// <param name="correlationId">End-to-end correlation identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Durable statutory-discount decision/application readback, or a deterministic Central PMS error.</returns>
+    Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> ApplyStatutoryDiscountPayableBasisAsync(
+        CentralPmsStatutoryDiscountDecisionRequest request,
+        string idempotencyKey,
+        Guid correlationId,
+        CancellationToken cancellationToken);
 }

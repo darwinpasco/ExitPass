@@ -535,6 +535,218 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies payment is blocked until the statutory decision has completed Operator Console review.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenStatutoryDecisionAwaitsReview_BlocksPaymentSideEffects()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+            StatutoryDecision(
+                decisionCommandStatus: "AWAITING_REVIEW",
+                decisionResultStatus: "NOT_DECIDED",
+                applicationCommandStatus: "NOT_REQUESTED",
+                payableBasisReady: false,
+                readinessStatus: "AWAITING_REVIEW",
+                readinessAction: "POLL_READBACK"));
+
+        var request = DefaultStatutoryPaymentRequest("QRPH");
+        var result = await fixture.Sut.HandleAsync(request, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("STATUTORY_DISCOUNT_AWAITING_REVIEW", result.Error!.ErrorCode);
+        Assert.Equal(1, fixture.CentralPms.GetStatutoryDiscountDecisionCallCount);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies rejected statutory decisions never create a payment attempt.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenStatutoryDecisionRejected_BlocksPaymentSideEffects()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+            StatutoryDecision(
+                decisionResultStatus: "REJECTED",
+                applicationCommandStatus: "NOT_REQUESTED",
+                payableBasisReady: false,
+                readinessStatus: "DECISION_REJECTED",
+                readinessAction: "DO_NOT_RETRY"));
+
+        var result = await fixture.Sut.HandleAsync(DefaultStatutoryPaymentRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("STATUTORY_DISCOUNT_DECISION_REJECTED", result.Error!.ErrorCode);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies approved-but-unapplied decisions require the explicit application-intent path before payment.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenApplicationIntentRequired_BlocksPaymentSideEffects()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+            StatutoryDecision(
+                applicationCommandStatus: "NOT_REQUESTED",
+                payableBasisReady: false,
+                readinessStatus: "DECISION_APPROVED_APPLICATION_NOT_REQUESTED",
+                readinessAction: "SUBMIT_APPLICATION_INTENT"));
+
+        var result = await fixture.Sut.HandleAsync(DefaultStatutoryPaymentRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("STATUTORY_DISCOUNT_APPLICATION_INTENT_REQUIRED", result.Error!.ErrorCode);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies in-flight application processing remains pending and does not start a payment.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenApplicationProcessing_BlocksPaymentSideEffects()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+            StatutoryDecision(
+                applicationCommandStatus: "PROCESSING",
+                payableBasisReady: false,
+                readinessStatus: "APPLICATION_PROCESSING",
+                readinessAction: "POLL_READBACK",
+                retryable: true));
+
+        var result = await fixture.Sut.HandleAsync(DefaultStatutoryPaymentRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("STATUTORY_DISCOUNT_APPLICATION_PROCESSING", result.Error!.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies retryable Central PMS statutory readback failures block payment and do not call the provider.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenStatutoryReadbackTemporarilyUnavailable_BlocksPaymentSideEffects()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+            new CentralPmsWebPayError(
+                503,
+                "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+                "Statutory-discount readback is temporarily unavailable.",
+                true,
+                CorrelationId));
+
+        var result = await fixture.Sut.HandleAsync(DefaultStatutoryPaymentRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("STATUTORY_DISCOUNT_TEMPORARILY_UNAVAILABLE", result.Error!.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies authoritative statutory payable-basis facts must match the requested payment.
+    /// </summary>
+    [Theory]
+    [InlineData("snapshot")]
+    [InlineData("amount")]
+    [InlineData("currency")]
+    [InlineData("session")]
+    public async Task WebPayPaymentIntent_WhenStatutoryAppliedFactsMismatch_BlocksPaymentSideEffects(string mismatch)
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var request = DefaultStatutoryPaymentRequest("QRPH");
+
+        if (mismatch == "snapshot")
+        {
+            request.TariffSnapshotId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        }
+        else if (mismatch == "amount")
+        {
+            request.ExpectedAmountMinorUnits = 9900;
+        }
+        else if (mismatch == "currency")
+        {
+            request.ExpectedCurrency = "USD";
+        }
+        else
+        {
+            fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+                StatutoryDecision(parkingSessionId: Guid.Parse("88888888-8888-8888-8888-888888888888")));
+        }
+
+        var result = await fixture.Sut.HandleAsync(request, CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("MISMATCH", result.Error!.ErrorCode, StringComparison.OrdinalIgnoreCase);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies missing applied statutory payable-basis facts block payment.
+    /// </summary>
+    [Theory]
+    [InlineData("snapshot")]
+    [InlineData("amount")]
+    [InlineData("currency")]
+    public async Task WebPayPaymentIntent_WhenAppliedStatutoryFactsAreMissing_BlocksPaymentSideEffects(string missing)
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+            StatutoryDecision(
+                appliedTariffSnapshotId: TariffSnapshotId,
+                finalAmount: missing == "amount" ? null : 10000,
+                currency: missing == "currency" ? null : "PHP",
+                omitAppliedTariffSnapshot: missing == "snapshot"));
+
+        var result = await fixture.Sut.HandleAsync(DefaultStatutoryPaymentRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains("_MISSING", result.Error!.ErrorCode, StringComparison.OrdinalIgnoreCase);
+        Assert.False(fixture.CreatePaymentAttemptWasCalled);
+        Assert.Null(fixture.CapturedInitiateRequest);
+    }
+
+    /// <summary>
+    /// Verifies payment is allowed only after Central PMS marks the statutory payable basis ready.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenStatutoryPayableBasisReady_UsesAppliedSnapshotAmountAndCurrency()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        var appliedTariffSnapshotId = Guid.Parse("77777777-7777-7777-7777-777777777777");
+        fixture.CentralPms.StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(
+            StatutoryDecision(
+                appliedTariffSnapshotId: appliedTariffSnapshotId,
+                finalAmount: 9500,
+                currency: "PHP"));
+        var request = DefaultStatutoryPaymentRequest("QRPH");
+        request.TariffSnapshotId = appliedTariffSnapshotId;
+        request.ExpectedAmountMinorUnits = 9500;
+        request.ExpectedCurrency = "PHP";
+
+        var result = await fixture.Sut.HandleAsync(request, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(appliedTariffSnapshotId, result.Response!.TariffSnapshotId);
+        Assert.Equal(9500, result.Response.AmountMinorUnits);
+        Assert.Equal("PHP", result.Response.Currency);
+        Assert.Equal(appliedTariffSnapshotId, fixture.CentralPms.CapturedTariffSnapshotIds.Single());
+        Assert.Equal(1, fixture.CentralPms.CreatePaymentAttemptCallCount);
+        Assert.Equal(1, fixture.Handoff.InitiateCallCount);
+    }
+
+    /// <summary>
     /// Verifies safe Central PMS parking summary fields are passed through to WebPay.
     /// </summary>
     [Fact]
@@ -813,6 +1025,90 @@ public sealed class WebPayPaymentIntentHandlerTests
         };
     }
 
+    private static WebPayPaymentIntentRequest DefaultStatutoryPaymentRequest(string paymentMethod)
+    {
+        var request = DefaultRequest(paymentMethod);
+        request.TariffSnapshotId = TariffSnapshotId;
+        request.ExpectedAmountMinorUnits = 10000;
+        request.ExpectedCurrency = "PHP";
+        request.StatutoryDiscountDecisionCommandId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+        request.StatutoryDiscountPayableBasisApplicationCommandId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        return request;
+    }
+
+    private static CentralPmsStatutoryDiscountDecision StatutoryDecision(
+        Guid? parkingSessionId = null,
+        Guid? appliedTariffSnapshotId = null,
+        long? finalAmount = 10000,
+        string? currency = "PHP",
+        string decisionCommandStatus = "COMPLETED",
+        string? decisionResultStatus = "APPROVED",
+        string applicationCommandStatus = "APPLIED",
+        bool payableBasisReady = true,
+        string readinessStatus = "READY",
+        string? readinessAction = null,
+        bool retryable = false,
+        bool omitAppliedTariffSnapshot = false)
+    {
+        return new CentralPmsStatutoryDiscountDecision(
+            Guid.Parse("99999999-9999-9999-9999-999999999999"),
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            parkingSessionId ?? ParkingSessionId,
+            "WEBPAY",
+            "SENIOR_CITIZEN",
+            decisionResultStatus ?? "NOT_DECIDED",
+            "STATUTORY",
+            null,
+            null,
+            false,
+            12500,
+            11161,
+            1339,
+            "VAT_EXEMPT_SENIOR_CITIZEN",
+            finalAmount.HasValue ? 2500 : null,
+            finalAmount,
+            currency,
+            true,
+            true,
+            null,
+            null,
+            CorrelationId,
+            DateTimeOffset.Parse("2026-05-16T12:00:00Z"),
+            decisionResultStatus == "APPROVED" ? DateTimeOffset.Parse("2026-05-16T12:05:00Z") : null,
+            applicationCommandStatus == "APPLIED" ? DateTimeOffset.Parse("2026-05-16T12:10:00Z") : null,
+            TariffSnapshotId,
+            omitAppliedTariffSnapshot ? null : appliedTariffSnapshotId ?? TariffSnapshotId,
+            decisionCommandStatus,
+            decisionResultStatus ?? "NOT_DECIDED",
+            payableBasisReady ? "APPLIED" : "PENDING",
+            "statutory-discount-decision:sha256:v2",
+            retryable,
+            retryable ? "RETRYABLE" : "NONE",
+            retryable ? "POLL_READBACK" : null,
+            null,
+            decisionCommandStatus,
+            decisionResultStatus,
+            retryable,
+            retryable ? "RETRYABLE" : "NONE",
+            retryable ? "POLL_READBACK" : null,
+            Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            applicationCommandStatus != "NOT_REQUESTED",
+            applicationCommandStatus,
+            applicationCommandStatus == "APPLIED" ? "APPLIED" : applicationCommandStatus,
+            "statutory-discount-payable-basis-application:sha256:v1",
+            retryable,
+            retryable ? "RETRYABLE" : "NONE",
+            retryable ? "POLL_READBACK" : null,
+            payableBasisReady ? "APPLIED" : "PENDING",
+            payableBasisReady,
+            SiteId,
+            SiteGroupId,
+            payableBasisReady,
+            readinessStatus,
+            readinessAction);
+    }
+
     private static string SerializePublicResponse(object response)
     {
         return System.Text.Json.JsonSerializer.Serialize(response);
@@ -872,6 +1168,9 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public CentralPmsWebPayResult<CentralPmsPaymentAttempt>? CreateAttemptResult { get; set; }
 
+        public CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision> StatutoryDecisionResult { get; set; } =
+            CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(StatutoryDecision());
+
         private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
         private readonly Queue<CentralPmsWebPayResult<CentralPmsResolvedParking>> _resolveResults = new();
         private readonly List<Guid> _capturedTariffSnapshotIds = new();
@@ -885,6 +1184,8 @@ public sealed class WebPayPaymentIntentHandlerTests
         public int CreatePaymentAttemptCallCount { get; private set; }
 
         public int FinalizePaymentAttemptCallCount { get; private set; }
+
+        public int GetStatutoryDiscountDecisionCallCount { get; private set; }
 
         public Guid? FinalizedPaymentAttemptId { get; private set; }
 
@@ -970,6 +1271,33 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public Task<CentralPmsWebPayResult<CentralPmsWebPayReceiptPresentation>> GetReceiptPresentationAsync(
             Guid paymentAttemptId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SubmitStatutoryDiscountDecisionAsync(
+            CentralPmsStatutoryDiscountDecisionRequest request,
+            string idempotencyKey,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            GetStatutoryDiscountDecisionCallCount++;
+            return Task.FromResult(StatutoryDecisionResult);
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> ApplyStatutoryDiscountPayableBasisAsync(
+            CentralPmsStatutoryDiscountDecisionRequest request,
+            string idempotencyKey,
             Guid correlationId,
             CancellationToken cancellationToken)
         {

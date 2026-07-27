@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -11,7 +12,10 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 /// </summary>
 public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
 
     private readonly HttpClient _httpClient;
     private readonly ILogger<CentralPmsWebPayClient> _logger;
@@ -19,6 +23,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private readonly Uri _createPaymentAttemptUri;
     private readonly Uri _paymentAttemptsBaseUri;
     private readonly Uri _webPayPaymentAttemptsBaseUri;
+    private readonly Uri _statutoryDiscountDecisionsUri;
+    private readonly Uri _statutoryDiscountDecisionsBaseUri;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsWebPayClient"/> class.
@@ -48,6 +54,8 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         _createPaymentAttemptUri = new Uri(normalizedBaseUrl, "v1/public/payment-attempts");
         _paymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/internal/payment-attempts/");
         _webPayPaymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/payment-attempts/");
+        _statutoryDiscountDecisionsUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions");
+        _statutoryDiscountDecisionsBaseUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/");
     }
 
     /// <inheritdoc />
@@ -259,6 +267,147 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             payload.CorrelationId));
     }
 
+    /// <inheritdoc />
+    public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SubmitStatutoryDiscountDecisionAsync(
+        CentralPmsStatutoryDiscountDecisionRequest request,
+        string idempotencyKey,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        return SendStatutoryDiscountDecisionAsync(
+            request,
+            idempotencyKey,
+            correlationId,
+            applyPayableBasis: false,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get,
+            new Uri(_statutoryDiscountDecisionsBaseUri, statutoryDiscountDecisionCommandId.ToString("D")));
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                ReadError((int)response.StatusCode, responseBody, "STATUTORY_DISCOUNT_DECISION_READ_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<StatutoryDiscountDecisionResponse>(responseBody, JsonOptions);
+        if (payload is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_STATUTORY_DISCOUNT_READBACK_RESPONSE",
+                "Central PMS statutory-discount response could not be parsed.",
+                true,
+                correlationId));
+        }
+
+        return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(ToStatutoryDecision(payload));
+    }
+
+    /// <inheritdoc />
+    public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> ApplyStatutoryDiscountPayableBasisAsync(
+        CentralPmsStatutoryDiscountDecisionRequest request,
+        string idempotencyKey,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        return SendStatutoryDiscountDecisionAsync(
+            request,
+            idempotencyKey,
+            correlationId,
+            applyPayableBasis: true,
+            cancellationToken);
+    }
+
+    private async Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SendStatutoryDiscountDecisionAsync(
+        CentralPmsStatutoryDiscountDecisionRequest request,
+        string idempotencyKey,
+        Guid correlationId,
+        bool applyPayableBasis,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var body = new StatutoryDiscountDecisionRequest(
+            request.RequestReference,
+            SourceChannel: "WEBPAY",
+            request.ParkingSessionId,
+            request.SiteId,
+            request.SiteGroupId,
+            request.TicketReference,
+            request.PlateNumber,
+            request.EntitlementType,
+            request.IdDocumentType,
+            request.IssuingAuthority,
+            request.ExpiryDate,
+            request.MaskedIdReference,
+            request.EvidenceCaptureRequested,
+            request.EvidenceReferences?.Select(static evidence => new StatutoryDiscountEvidenceReferenceRequest(
+                evidence.EvidenceType,
+                evidence.CaptureMethod,
+                evidence.FileName,
+                evidence.ContentType,
+                evidence.SizeBytes,
+                evidence.StorageReference,
+                evidence.ReferenceNumberMasked,
+                evidence.VerificationStatus)).ToArray(),
+            ActorUserId: null,
+            OperatorDeviceBindingId: null,
+            OperatorShiftId: null,
+            request.RequesterAttestation,
+            request.AttestationNotes,
+            request.ReasonCode,
+            Decision: null,
+            DecisionReasonCode: null,
+            ReviewerUserId: null,
+            ReviewerAttestation: null,
+            applyPayableBasis,
+            request.OriginalTariffSnapshotId);
+
+        using var message = new HttpRequestMessage(HttpMethod.Post, _statutoryDiscountDecisionsUri)
+        {
+            Content = JsonContent.Create(body, options: JsonOptions)
+        };
+        message.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        message.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        using var response = await _httpClient.SendAsync(message, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                ReadError((int)response.StatusCode, responseBody, applyPayableBasis
+                    ? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_FAILED"
+                    : "STATUTORY_DISCOUNT_DECISION_SUBMIT_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<StatutoryDiscountDecisionResponse>(responseBody, JsonOptions);
+        if (payload is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_STATUTORY_DISCOUNT_DECISION_RESPONSE",
+                "Central PMS statutory-discount response could not be parsed.",
+                true,
+                correlationId));
+        }
+
+        return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(ToStatutoryDecision(payload));
+    }
+
     private CentralPmsWebPayError ReadError(int statusCode, string responseBody, string fallbackCode)
     {
         if (string.IsNullOrWhiteSpace(responseBody))
@@ -289,7 +438,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             return new CentralPmsWebPayError(
                 statusCode,
                 fallbackCode,
-                string.IsNullOrWhiteSpace(message) ? responseBody : message,
+                string.IsNullOrWhiteSpace(message) ? "Central PMS request failed." : message,
                 statusCode >= 500);
         }
         catch (JsonException ex)
@@ -315,7 +464,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     {
         if (root.ValueKind != JsonValueKind.Object)
         {
-            return root.GetRawText();
+            return null;
         }
 
         foreach (var propertyName in new[] { "message", "detail", "title", "error" })
@@ -327,8 +476,67 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             }
         }
 
-        return root.GetRawText();
+        return null;
     }
+
+    private static CentralPmsStatutoryDiscountDecision ToStatutoryDecision(StatutoryDiscountDecisionResponse payload) =>
+        new(
+            payload.StatutoryDiscountDecisionCommandId,
+            payload.RequestReference,
+            payload.StatutoryDiscountValidationId,
+            payload.ParkingSessionId,
+            payload.SourceChannel,
+            payload.EntitlementType,
+            payload.DecisionStatus,
+            payload.PolicyResolutionBasis,
+            payload.AppliedPolicyReferenceId,
+            payload.FallbackPolicyReferenceId,
+            payload.LocalOrdinanceApplied,
+            payload.GrossAmountMinorUnits,
+            payload.VatExclusiveBasisAmountMinorUnits,
+            payload.VatAmountMinorUnits,
+            payload.VatTreatment,
+            payload.StatutoryDiscountAmountMinorUnits,
+            payload.NetPayableAmountMinorUnits,
+            payload.Currency,
+            payload.EvidenceRequired,
+            payload.EvidenceRecorded,
+            payload.ReasonCode,
+            payload.ErrorCode,
+            payload.CorrelationId,
+            payload.CreatedAt,
+            payload.DecidedAt,
+            payload.AppliedAt,
+            payload.OriginalTariffSnapshotId,
+            payload.AppliedTariffSnapshotId,
+            payload.CommandStatus,
+            payload.ClientResultStatus,
+            payload.ResultClassification,
+            payload.SemanticHashSourceVersion,
+            payload.Retryable,
+            payload.RecoveryClassification,
+            payload.RecoveryAction,
+            payload.SafeErrorCode,
+            payload.DecisionCommandStatus,
+            payload.DecisionResultStatus,
+            payload.DecisionRetryable,
+            payload.DecisionRecoveryClassification,
+            payload.DecisionRecoveryAction,
+            payload.StatutoryDiscountPayableBasisApplicationCommandId,
+            payload.ApplicationRequested,
+            payload.ApplicationCommandStatus,
+            payload.ApplicationResultClassification,
+            payload.ApplicationSemanticHashSourceVersion,
+            payload.ApplicationRetryable,
+            payload.ApplicationRecoveryClassification,
+            payload.ApplicationRecoveryAction,
+            payload.OverallResultClassification,
+            payload.OneShotComplete,
+            payload.SiteId,
+            payload.SiteGroupId,
+            payload.PayableBasisReady,
+            payload.PayableBasisReadinessStatus,
+            payload.PayableBasisReadinessAction);
 
     private static Guid? ExtractPaymentAttemptId(JsonElement? details)
     {
@@ -431,6 +639,102 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         Guid CorrelationId);
+
+    private sealed record StatutoryDiscountDecisionRequest(
+        Guid RequestReference,
+        string SourceChannel,
+        Guid ParkingSessionId,
+        Guid? SiteId,
+        Guid? SiteGroupId,
+        string? TicketReference,
+        string? PlateNumber,
+        string EntitlementType,
+        string IdDocumentType,
+        string IssuingAuthority,
+        DateOnly? ExpiryDate,
+        string MaskedIdReference,
+        bool EvidenceCaptureRequested,
+        IReadOnlyList<StatutoryDiscountEvidenceReferenceRequest>? EvidenceReferences,
+        Guid? ActorUserId,
+        Guid? OperatorDeviceBindingId,
+        Guid? OperatorShiftId,
+        bool RequesterAttestation,
+        string? AttestationNotes,
+        string? ReasonCode,
+        string? Decision,
+        string? DecisionReasonCode,
+        Guid? ReviewerUserId,
+        bool? ReviewerAttestation,
+        bool ApplyPayableBasis,
+        Guid? OriginalTariffSnapshotId);
+
+    private sealed record StatutoryDiscountEvidenceReferenceRequest(
+        string EvidenceType,
+        string CaptureMethod,
+        string? FileName,
+        string? ContentType,
+        long? SizeBytes,
+        string? StorageReference,
+        string? ReferenceNumberMasked,
+        string? VerificationStatus);
+
+    private sealed record StatutoryDiscountDecisionResponse(
+        Guid StatutoryDiscountDecisionCommandId,
+        Guid RequestReference,
+        Guid? StatutoryDiscountValidationId,
+        Guid ParkingSessionId,
+        string SourceChannel,
+        string EntitlementType,
+        string DecisionStatus,
+        string? PolicyResolutionBasis,
+        Guid? AppliedPolicyReferenceId,
+        Guid? FallbackPolicyReferenceId,
+        bool LocalOrdinanceApplied,
+        long? GrossAmountMinorUnits,
+        long? StatutoryDiscountAmountMinorUnits,
+        long? NetPayableAmountMinorUnits,
+        string? Currency,
+        bool EvidenceRequired,
+        bool EvidenceRecorded,
+        string? ReasonCode,
+        string? ErrorCode,
+        Guid CorrelationId,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset? DecidedAt,
+        DateTimeOffset? AppliedAt,
+        Guid? OriginalTariffSnapshotId,
+        Guid? AppliedTariffSnapshotId,
+        string CommandStatus,
+        string ClientResultStatus,
+        string ResultClassification,
+        string SemanticHashSourceVersion,
+        bool Retryable,
+        string RecoveryClassification,
+        string? RecoveryAction,
+        string? SafeErrorCode,
+        string DecisionCommandStatus = "COMPLETED",
+        string? DecisionResultStatus = null,
+        bool DecisionRetryable = false,
+        string DecisionRecoveryClassification = "NONE",
+        string? DecisionRecoveryAction = null,
+        Guid? StatutoryDiscountPayableBasisApplicationCommandId = null,
+        bool ApplicationRequested = false,
+        string ApplicationCommandStatus = "NOT_REQUESTED",
+        string ApplicationResultClassification = "NOT_REQUESTED",
+        string? ApplicationSemanticHashSourceVersion = null,
+        bool ApplicationRetryable = false,
+        string ApplicationRecoveryClassification = "NONE",
+        string? ApplicationRecoveryAction = null,
+        string OverallResultClassification = "ACCEPTED",
+        bool OneShotComplete = true,
+        Guid? SiteId = null,
+        Guid? SiteGroupId = null,
+        long? VatExclusiveBasisAmountMinorUnits = null,
+        long? VatAmountMinorUnits = null,
+        string? VatTreatment = null,
+        bool PayableBasisReady = false,
+        string PayableBasisReadinessStatus = "NOT_READY",
+        string? PayableBasisReadinessAction = null);
 
     private sealed record ErrorResponse(
         string? ErrorCode,

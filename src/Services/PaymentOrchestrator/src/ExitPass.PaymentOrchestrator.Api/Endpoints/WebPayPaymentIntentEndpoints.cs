@@ -109,6 +109,153 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapPost("/v1/webpay/statutory-discounts/decisions", async (
+            WebPayStatutoryDiscountDecisionRequest request,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(centralPmsClient);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            if (!TryReadIdempotencyKey(httpContext, correlationId, out var idempotencyKey, out var idempotencyError))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(idempotencyError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (!TryBuildCentralPmsStatutoryRequest(request, correlationId, out var centralPmsRequest, out var validationError))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(validationError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var result = await centralPmsClient.SubmitStatutoryDiscountDecisionAsync(
+                    centralPmsRequest,
+                    idempotencyKey,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return ToStatutoryDecisionResult(result, httpContext, correlationId);
+        })
+        .WithName("SubmitWebPayStatutoryDiscountDecision")
+        .Produces<WebPayStatutoryDiscountDecisionResponse>(StatusCodes.Status200OK)
+        .Produces<WebPayStatutoryDiscountDecisionResponse>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status422UnprocessableEntity)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapGet("/v1/webpay/statutory-discounts/decisions/{statutoryDiscountDecisionCommandId:guid}", async (
+            Guid statutoryDiscountDecisionCommandId,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(centralPmsClient);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            var result = await centralPmsClient.GetStatutoryDiscountDecisionAsync(
+                    statutoryDiscountDecisionCommandId,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return ToStatutoryDecisionResult(result, httpContext, correlationId);
+        })
+        .WithName("GetWebPayStatutoryDiscountDecision")
+        .Produces<WebPayStatutoryDiscountDecisionResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
+        app.MapPost("/v1/webpay/statutory-discounts/decisions/{statutoryDiscountDecisionCommandId:guid}/apply-payable-basis", async (
+            Guid statutoryDiscountDecisionCommandId,
+            WebPayStatutoryDiscountDecisionRequest request,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(centralPmsClient);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            if (!TryReadIdempotencyKey(httpContext, correlationId, out var idempotencyKey, out var idempotencyError))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(idempotencyError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            if (!TryBuildCentralPmsStatutoryRequest(request, correlationId, out var centralPmsRequest, out var validationError))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(validationError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var readback = await centralPmsClient.GetStatutoryDiscountDecisionAsync(
+                    statutoryDiscountDecisionCommandId,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!readback.Succeeded || readback.Value is null)
+            {
+                return ToStatutoryDecisionResult(readback, httpContext, correlationId);
+            }
+
+            if (readback.Value.ParkingSessionId != centralPmsRequest.ParkingSessionId ||
+                !string.Equals(readback.Value.EntitlementType, centralPmsRequest.EntitlementType, StringComparison.OrdinalIgnoreCase))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(
+                    BuildStatutoryErrorResponse(
+                        "STATUTORY_DISCOUNT_DECISION_REQUEST_MISMATCH",
+                        "The application request does not match the canonical statutory-discount decision.",
+                        retryable: false,
+                        correlationId),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            var result = await centralPmsClient.ApplyStatutoryDiscountPayableBasisAsync(
+                    centralPmsRequest,
+                    idempotencyKey,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            if (result.Succeeded &&
+                result.Value is not null &&
+                result.Value.StatutoryDiscountDecisionCommandId != statutoryDiscountDecisionCommandId)
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(
+                    BuildStatutoryErrorResponse(
+                        "STATUTORY_DISCOUNT_DECISION_COMMAND_MISMATCH",
+                        "Central PMS returned a different statutory-discount decision.",
+                        retryable: false,
+                        correlationId),
+                    statusCode: StatusCodes.Status409Conflict);
+            }
+
+            return ToStatutoryDecisionResult(result, httpContext, correlationId);
+        })
+        .WithName("ApplyWebPayStatutoryDiscountPayableBasis")
+        .Produces<WebPayStatutoryDiscountDecisionResponse>(StatusCodes.Status200OK)
+        .Produces<WebPayStatutoryDiscountDecisionResponse>(StatusCodes.Status201Created)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status404NotFound)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status422UnprocessableEntity)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         app.MapGet("/v1/webpay/payment-attempts/{paymentAttemptId:guid}/receipt-presentation", async (
             Guid paymentAttemptId,
             ICentralPmsWebPayClient centralPmsClient,
@@ -170,6 +317,218 @@ public static class WebPayPaymentIntentEndpoints
 
         return Guid.NewGuid();
     }
+
+    private static bool TryReadIdempotencyKey(
+        HttpContext httpContext,
+        Guid correlationId,
+        out string idempotencyKey,
+        out object error)
+    {
+        idempotencyKey = httpContext.Request.Headers["Idempotency-Key"].FirstOrDefault()?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(idempotencyKey) &&
+            idempotencyKey.Length <= 128 &&
+            !idempotencyKey.Contains('\r') &&
+            !idempotencyKey.Contains('\n'))
+        {
+            error = new { };
+            return true;
+        }
+
+        error = BuildStatutoryErrorResponse(
+            "WEBPAY_STATUTORY_DISCOUNT_IDEMPOTENCY_KEY_REQUIRED",
+            "A valid Idempotency-Key header is required.",
+            retryable: false,
+            correlationId);
+        return false;
+    }
+
+    private static bool TryBuildCentralPmsStatutoryRequest(
+        WebPayStatutoryDiscountDecisionRequest request,
+        Guid correlationId,
+        out CentralPmsStatutoryDiscountDecisionRequest centralPmsRequest,
+        out object error)
+    {
+        var errors = new List<string>();
+        if (request.RequestReference == Guid.Empty)
+        {
+            errors.Add("requestReference is required.");
+        }
+
+        if (request.ParkingSessionId == Guid.Empty)
+        {
+            errors.Add("parkingSessionId is required.");
+        }
+
+        var entitlementType = Normalize(request.EntitlementType);
+        if (entitlementType is not "SENIOR_CITIZEN" and not "PWD")
+        {
+            errors.Add("entitlementType must be SENIOR_CITIZEN or PWD.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.IdDocumentType))
+        {
+            errors.Add("idDocumentType is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.IssuingAuthority))
+        {
+            errors.Add("issuingAuthority is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.MaskedIdReference))
+        {
+            errors.Add("maskedIdReference is required.");
+        }
+        else if (!request.MaskedIdReference.Contains('*'))
+        {
+            errors.Add("maskedIdReference must be masked.");
+        }
+
+        if (!request.RequesterAttestation)
+        {
+            errors.Add("requesterAttestation is required.");
+        }
+
+        if (request.EvidenceReferences is not null)
+        {
+            foreach (var evidence in request.EvidenceReferences)
+            {
+                if (string.IsNullOrWhiteSpace(evidence.EvidenceType) ||
+                    string.IsNullOrWhiteSpace(evidence.CaptureMethod))
+                {
+                    errors.Add("evidenceReferences require evidenceType and captureMethod.");
+                    break;
+                }
+
+                if (!string.IsNullOrWhiteSpace(evidence.ReferenceNumberMasked) &&
+                    !evidence.ReferenceNumberMasked.Contains('*'))
+                {
+                    errors.Add("evidenceReferences referenceNumberMasked must be masked.");
+                    break;
+                }
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            centralPmsRequest = null!;
+            error = BuildStatutoryErrorResponse(
+                "WEBPAY_STATUTORY_DISCOUNT_REQUEST_INVALID",
+                $"The statutory-discount request is invalid. errors={string.Join(" ", errors)}",
+                retryable: false,
+                correlationId);
+            return false;
+        }
+
+        centralPmsRequest = new CentralPmsStatutoryDiscountDecisionRequest(
+            request.RequestReference,
+            request.ParkingSessionId,
+            request.SiteId,
+            request.SiteGroupId,
+            BlankToNull(request.TicketReference),
+            BlankToNull(request.PlateNumber),
+            entitlementType,
+            request.IdDocumentType!.Trim(),
+            request.IssuingAuthority!.Trim(),
+            request.ExpiryDate,
+            request.MaskedIdReference!.Trim(),
+            request.EvidenceCaptureRequested,
+            request.EvidenceReferences?.Select(static evidence => new CentralPmsStatutoryDiscountEvidenceReference(
+                evidence.EvidenceType!.Trim(),
+                evidence.CaptureMethod!.Trim(),
+                BlankToNull(evidence.FileName),
+                BlankToNull(evidence.ContentType),
+                evidence.SizeBytes,
+                BlankToNull(evidence.StorageReference),
+                BlankToNull(evidence.ReferenceNumberMasked),
+                BlankToNull(evidence.VerificationStatus))).ToArray(),
+            request.RequesterAttestation,
+            BlankToNull(request.AttestationNotes),
+            BlankToNull(request.ReasonCode),
+            request.OriginalTariffSnapshotId);
+        error = new { };
+        return true;
+    }
+
+    private static IResult ToStatutoryDecisionResult(
+        CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision> result,
+        HttpContext httpContext,
+        Guid fallbackCorrelationId)
+    {
+        if (result.Succeeded && result.Value is not null)
+        {
+            httpContext.Response.Headers["X-Correlation-Id"] = result.Value.CorrelationId.ToString();
+            return Results.Ok(ToStatutoryDiscountResponse(result.Value));
+        }
+
+        var error = result.Error ?? new CentralPmsWebPayError(
+            StatusCodes.Status502BadGateway,
+            "WEBPAY_STATUTORY_DISCOUNT_READBACK_FAILED",
+            "Statutory discount state could not be resolved.",
+            true,
+            fallbackCorrelationId);
+        httpContext.Response.Headers["X-Correlation-Id"] = (error.CorrelationId ?? fallbackCorrelationId).ToString();
+        return Results.Json(
+            BuildStatutoryErrorResponse(
+                error.ErrorCode,
+                error.Message,
+                error.Retryable,
+                error.CorrelationId ?? fallbackCorrelationId),
+            statusCode: error.StatusCode);
+    }
+
+    private static WebPayStatutoryDiscountDecisionResponse ToStatutoryDiscountResponse(
+        CentralPmsStatutoryDiscountDecision decision) =>
+        new()
+        {
+            StatutoryDiscountDecisionCommandId = decision.StatutoryDiscountDecisionCommandId,
+            RequestReference = decision.RequestReference,
+            StatutoryDiscountPayableBasisApplicationCommandId = decision.StatutoryDiscountPayableBasisApplicationCommandId,
+            StatutoryDiscountValidationId = decision.StatutoryDiscountValidationId,
+            ParkingSessionId = decision.ParkingSessionId,
+            SiteId = decision.SiteId,
+            SiteGroupId = decision.SiteGroupId,
+            EntitlementType = decision.EntitlementType,
+            DecisionCommandStatus = decision.DecisionCommandStatus,
+            DecisionResultStatus = decision.DecisionResultStatus,
+            ApplicationCommandStatus = decision.ApplicationCommandStatus,
+            ApplicationResultClassification = decision.ApplicationResultClassification,
+            PayableBasisReady = decision.PayableBasisReady,
+            PayableBasisReadinessStatus = decision.PayableBasisReadinessStatus,
+            PayableBasisReadinessAction = decision.PayableBasisReadinessAction,
+            OriginalTariffSnapshotId = decision.OriginalTariffSnapshotId,
+            AppliedTariffSnapshotId = decision.AppliedTariffSnapshotId,
+            OriginalAmountMinorUnits = decision.GrossAmountMinorUnits,
+            VatExclusiveBasisAmountMinorUnits = decision.VatExclusiveBasisAmountMinorUnits,
+            VatAmountMinorUnits = decision.VatAmountMinorUnits,
+            VatTreatment = decision.VatTreatment,
+            StatutoryDiscountAmountMinorUnits = decision.StatutoryDiscountAmountMinorUnits,
+            FinalPayableAmountMinorUnits = decision.NetPayableAmountMinorUnits,
+            Currency = decision.Currency,
+            Retryable = decision.Retryable || decision.ApplicationRetryable || decision.DecisionRetryable,
+            RecoveryClassification = decision.RecoveryClassification,
+            RecoveryAction = decision.RecoveryAction ?? decision.ApplicationRecoveryAction ?? decision.DecisionRecoveryAction,
+            SafeErrorCode = decision.SafeErrorCode ?? decision.ErrorCode,
+            OverallResultClassification = decision.OverallResultClassification,
+            OneShotComplete = decision.OneShotComplete,
+            CorrelationId = decision.CorrelationId,
+            CreatedAt = decision.CreatedAt,
+            DecidedAt = decision.DecidedAt,
+            AppliedAt = decision.AppliedAt
+        };
+
+    private static object BuildStatutoryErrorResponse(
+        string errorCode,
+        string message,
+        bool retryable,
+        Guid correlationId) =>
+        new Dictionary<string, object?>
+        {
+            ["errorCode"] = errorCode,
+            ["message"] = message,
+            ["retryable"] = retryable,
+            ["correlationId"] = correlationId == Guid.Empty ? null : correlationId
+        };
 
     private static WebPayReceiptPresentationResponse ToReceiptPresentationResponse(
         CentralPmsWebPayReceiptPresentation result) =>
@@ -241,4 +600,10 @@ public static class WebPayPaymentIntentEndpoints
             response[key] = value;
         }
     }
+
+    private static string Normalize(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToUpperInvariant();
+
+    private static string? BlankToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

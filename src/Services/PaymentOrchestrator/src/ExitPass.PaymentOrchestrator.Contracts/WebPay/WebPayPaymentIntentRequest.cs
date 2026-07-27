@@ -51,6 +51,21 @@ public sealed class WebPayPaymentIntentRequest
     public long? ExpectedAmountMinorUnits { get; set; }
 
     /// <summary>
+    /// Optional final payable currency expected by WebPay after backend-approved payable-basis modifiers.
+    /// </summary>
+    public string? ExpectedCurrency { get; set; }
+
+    /// <summary>
+    /// Optional canonical statutory-discount decision command that must be payment-ready before payment starts.
+    /// </summary>
+    public Guid? StatutoryDiscountDecisionCommandId { get; set; }
+
+    /// <summary>
+    /// Optional canonical payable-basis application command expected by WebPay after statutory approval.
+    /// </summary>
+    public Guid? StatutoryDiscountPayableBasisApplicationCommandId { get; set; }
+
+    /// <summary>
     /// End-to-end correlation identifier.
     /// </summary>
     public Guid? CorrelationId { get; set; }
