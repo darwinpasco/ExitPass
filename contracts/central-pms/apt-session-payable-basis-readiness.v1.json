@@ -1,0 +1,158 @@
+{
+  "contractId": "central-pms.apt-session-payable-basis-readiness.v1",
+  "owner": "ExitPass.CentralPms",
+  "consumer": "ExitPass.AssistedPaymentTerminal",
+  "purpose": "APT-facing facade for authoritative parking-session resolution, payable basis, terminal-cash eligibility, fiscal readiness, and immediate pre-CASH_RECEIVED revalidation.",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v1/terminal-cash-payments/payable-basis/resolve",
+      "operation": "resolve",
+      "description": "Resolves a ticket or plate reference through shared Central PMS vendor parking resolution and returns APT-safe cash-acceptance readiness."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/terminal-cash-payments/payable-basis/revalidate",
+      "operation": "revalidate",
+      "description": "Immediately revalidates the displayed authoritative payable basis before the desktop crosses CASH_RECEIVED."
+    }
+  ],
+  "authorization": {
+    "policy": "TerminalCashPayableBasisRead",
+    "permission": "terminal-cash.payable-basis.read",
+    "siteScopeHeader": "X-Site-Id",
+    "allowAnonymous": false
+  },
+  "requestFields": {
+    "resolve": [
+      "siteGroupId",
+      "siteId",
+      "sitePosServerId",
+      "terminalId",
+      "vendorSystemId",
+      "referenceType",
+      "ticketReference",
+      "plateNumber",
+      "correlationId"
+    ],
+    "revalidate": [
+      "parkingSessionId",
+      "tariffSnapshotId",
+      "siteGroupId",
+      "siteId",
+      "sitePosServerId",
+      "terminalId",
+      "vendorSystemId",
+      "ticketReference",
+      "plateNumber",
+      "expectedAmountMinorUnits",
+      "expectedCurrency",
+      "correlationId"
+    ]
+  },
+  "responseFields": [
+    "operation",
+    "revalidationOutcome",
+    "parkingSessionId",
+    "tariffSnapshotId",
+    "siteGroupId",
+    "siteId",
+    "sitePosServerId",
+    "terminalId",
+    "siteGroupName",
+    "siteName",
+    "ticketReference",
+    "plateNumber",
+    "entryTimestamp",
+    "parkingStatus",
+    "paymentStatus",
+    "authoritativeAmountMinorUnits",
+    "currency",
+    "tariffCalculatedAt",
+    "tariffValidUntil",
+    "feeValidUntil",
+    "vendorSystemId",
+    "readinessDimensions",
+    "sessionReadiness",
+    "tariffReadiness",
+    "paymentEligibility",
+    "terminalCashAvailability",
+    "fiscalReadiness",
+    "salesInvoiceConfigurationReadiness",
+    "cashAcceptanceReadiness",
+    "readyForCashAcceptance",
+    "blockingReasonCodes",
+    "retryable",
+    "safeUserFacingClassification",
+    "correlationId"
+  ],
+  "readinessDimensions": [
+    "sessionReadiness",
+    "tariffReadiness",
+    "paymentEligibility",
+    "terminalCashAvailability",
+    "salesInvoiceConfigurationReadiness",
+    "fiscalReadiness"
+  ],
+  "revalidationOutcomes": [
+    "PASSED_UNCHANGED",
+    "AMOUNT_CHANGED",
+    "TARIFF_EXPIRED",
+    "SESSION_NOT_PAYABLE",
+    "SESSION_ALREADY_PAID",
+    "TERMINAL_CASH_UNAVAILABLE",
+    "FISCAL_READINESS_FAILED",
+    "REVALIDATION_FAILED"
+  ],
+  "safeErrorCodes": [
+    "INVALID_REQUEST",
+    "SESSION_NOT_FOUND",
+    "VENDOR_SESSION_AMBIGUOUS",
+    "VENDOR_PMS_UNAVAILABLE",
+    "MALFORMED_VENDOR_RESPONSE",
+    "SESSION_NOT_PAYABLE",
+    "PAYMENT_ALREADY_FINAL",
+    "STALE_TARIFF",
+    "PAYABLE_BASIS_MISMATCH",
+    "UNSUPPORTED_CURRENCY",
+    "CASH_PAYMENT_RAIL_NOT_CONFIGURED",
+    "SITE_POS_SERVER_NOT_CONFIGURED",
+    "SALES_INVOICE_CONFIGURATION_NOT_READY",
+    "FISCAL_PATH_UNAVAILABLE",
+    "FORBIDDEN_SITE",
+    "AMOUNT_CHANGED",
+    "REVALIDATION_REFERENCE_UNAVAILABLE"
+  ],
+  "sharedRuntimeReuse": {
+    "vendorParkingResolution": "IResolveVendorParkingUseCase",
+    "vendorPmsClient": "IVendorPmsParkingResolutionClient",
+    "terminalCashEligibility": "ITerminalCashPayableBasisEligibilityReader",
+    "salesInvoiceReadiness": "ISalesInvoiceProfileAdministrationService"
+  },
+  "authorityBoundaries": {
+    "centralPmsOwnsReadyForCashAcceptance": true,
+    "posServerOwnsSalesInvoiceFiscalContent": true,
+    "aptOwnsCashierUiAndCashCustody": true,
+    "noDirectHikCentralAccess": true,
+    "noAptTariffCalculation": true
+  },
+  "sideEffects": {
+    "submitTerminalCashPayment": false,
+    "createPaymentFinality": false,
+    "requestFiscalIssuance": false,
+    "retrieveReceiptPresentation": false,
+    "issueExitAuthorization": false,
+    "mutateExitAuthorization": false,
+    "createGateCommand": false,
+    "openGate": false
+  },
+  "repeatability": {
+    "resolve": "Safe to repeat. It reuses the shared vendor parking resolution runtime and existing tariff snapshot semantics.",
+    "revalidate": "Safe to repeat. It returns the current authoritative payable basis and does not cross CASH_RECEIVED or submit payment."
+  },
+  "correlation": {
+    "requestField": "correlationId",
+    "responseField": "correlationId",
+    "responseHeader": "X-Correlation-Id"
+  }
+}
