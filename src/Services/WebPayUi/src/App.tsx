@@ -1,17 +1,21 @@
-import { FormEvent, KeyboardEvent, useEffect, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
   ReceiptPresentationError,
   createPaymentIntent,
+  createRequestReference,
+  createStatutoryDecisionIdempotencyKey,
   extractPaymentIntentContext,
   formatAmount,
   getResumeUrl,
   normalizeTicketReference,
   retrieveReceiptPresentation,
   retrievePaymentStatus,
-  resolveParkingSession
+  retrieveStatutoryDiscountDecision,
+  resolveParkingSession,
+  submitStatutoryDiscountDecision
 } from "./webpay";
 import type {
   ActivePaymentAttemptState,
@@ -20,7 +24,9 @@ import type {
   PaymentIntentRequest,
   PaymentIntentResponse,
   PaymentMethod,
-  WebPayReceiptPresentationResponse
+  StatutoryDiscountEntitlementType,
+  WebPayReceiptPresentationResponse,
+  WebPayStatutoryDiscountDecisionResponse
 } from "./types";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
@@ -54,6 +60,47 @@ type EntryMode = "ticket" | "plate";
 type WebPayStage = "INPUT" | "SESSION_RESOLVED" | "HANDOFF_READY" | "ACTIVE_ATTEMPT" | "ERROR";
 type ReturnPageMode = "success" | "cancelled";
 type PaymentStatusKind = "pending" | "confirmed" | "failed" | "expired" | "cancelled";
+type StatutoryDiscountFormState = {
+  entitlementType: StatutoryDiscountEntitlementType;
+  idDocumentType: string;
+  issuingAuthority: string;
+  expiryDate: string;
+  maskedIdReference: string;
+  requesterAttestation: boolean;
+  attestationNotes: string;
+};
+
+type StatutoryDiscountUiState = {
+  decision: WebPayStatutoryDiscountDecisionResponse | null;
+  requestReference: string;
+  idempotencyKey: string;
+  correlationId: string;
+  isSubmitting: boolean;
+  isPolling: boolean;
+  message: string;
+  error: string;
+};
+
+const defaultStatutoryDiscountForm: StatutoryDiscountFormState = {
+  entitlementType: "SENIOR_CITIZEN",
+  idDocumentType: "",
+  issuingAuthority: "",
+  expiryDate: "",
+  maskedIdReference: "",
+  requesterAttestation: false,
+  attestationNotes: ""
+};
+
+const emptyStatutoryDiscountUiState: StatutoryDiscountUiState = {
+  decision: null,
+  requestReference: "",
+  idempotencyKey: "",
+  correlationId: "",
+  isSubmitting: false,
+  isPolling: false,
+  message: "",
+  error: ""
+};
 
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
@@ -71,6 +118,10 @@ export function App() {
   const [isResolving, setIsResolving] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [stage, setStage] = useState<WebPayStage>("INPUT");
+  const [showStatutoryDiscountForm, setShowStatutoryDiscountForm] = useState(false);
+  const [statutoryDiscountForm, setStatutoryDiscountForm] = useState<StatutoryDiscountFormState>(defaultStatutoryDiscountForm);
+  const [statutoryDiscountState, setStatutoryDiscountState] = useState<StatutoryDiscountUiState>(emptyStatutoryDiscountUiState);
+  const statutoryPollGeneration = useRef(0);
 
   const returnPageMode = getReturnPageMode(window.location.pathname);
   if (returnPageMode) {
@@ -89,6 +140,9 @@ export function App() {
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
+    setShowStatutoryDiscountForm(false);
+    setStatutoryDiscountForm(defaultStatutoryDiscountForm);
+    setStatutoryDiscountState(emptyStatutoryDiscountUiState);
     setStage("INPUT");
   }
 
@@ -99,6 +153,9 @@ export function App() {
     setResult(null);
     setResolvedSession(null);
     setActivePaymentAttempt(null);
+    setShowStatutoryDiscountForm(false);
+    setStatutoryDiscountForm(defaultStatutoryDiscountForm);
+    setStatutoryDiscountState(emptyStatutoryDiscountUiState);
     setStage("INPUT");
   }
 
@@ -231,6 +288,11 @@ export function App() {
       return;
     }
 
+    if (statutoryDiscountState.decision) {
+      setError(getStatutoryDiscountPaymentBlockMessage(statutoryDiscountState.decision));
+      return;
+    }
+
     if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
       await handleResolveParkingSession();
       return;
@@ -244,11 +306,169 @@ export function App() {
     await handleResolveParkingSession();
   }
 
+  async function handleSubmitStatutoryDiscount() {
+    if (!resolvedSession || statutoryDiscountState.isSubmitting) {
+      return;
+    }
+
+    const requestReference = statutoryDiscountState.requestReference || createRequestReference();
+    const idempotencyKey =
+      statutoryDiscountState.idempotencyKey ||
+      createStatutoryDecisionIdempotencyKey(resolvedSession.parkingSessionId, statutoryDiscountForm.entitlementType);
+    const correlationId = statutoryDiscountState.correlationId || createRequestReference();
+
+    setStatutoryDiscountState((current) => ({
+      ...current,
+      requestReference,
+      idempotencyKey,
+      correlationId,
+      isSubmitting: true,
+      error: "",
+      message: "Submitting statutory discount request..."
+    }));
+    setError("");
+
+    try {
+      const decision = await submitStatutoryDiscountDecision(
+        {
+          requestReference,
+          parkingSessionId: resolvedSession.parkingSessionId,
+          siteId: resolvedSession.siteId,
+          siteGroupId: resolvedSession.siteGroupId,
+          ticketReference: resolvedSession.ticketReference ?? ticketReference,
+          plateNumber: resolvedSession.plateNumber ?? plateNumber,
+          entitlementType: statutoryDiscountForm.entitlementType,
+          idDocumentType: statutoryDiscountForm.idDocumentType,
+          issuingAuthority: statutoryDiscountForm.issuingAuthority,
+          expiryDate: statutoryDiscountForm.expiryDate || null,
+          maskedIdReference: statutoryDiscountForm.maskedIdReference,
+          evidenceCaptureRequested: false,
+          requesterAttestation: statutoryDiscountForm.requesterAttestation,
+          attestationNotes: statutoryDiscountForm.attestationNotes || null,
+          originalTariffSnapshotId: resolvedSession.tariffSnapshotId
+        },
+        idempotencyKey,
+        correlationId
+      );
+
+      setShowStatutoryDiscountForm(false);
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        decision,
+        isSubmitting: false,
+        isPolling: shouldPollStatutoryDecision(decision),
+        message: getStatutoryDiscountStatusCopy(decision).body,
+        error: ""
+      }));
+    } catch (apiError) {
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        isSubmitting: false,
+        isPolling: false,
+        error: apiError instanceof Error ? apiError.message : "Statutory discount request could not be submitted.",
+        message: ""
+      }));
+    }
+  }
+
+  async function handleRefreshStatutoryDecision() {
+    const decisionId = statutoryDiscountState.decision?.statutoryDiscountDecisionCommandId;
+    if (!decisionId || statutoryDiscountState.isPolling) {
+      return;
+    }
+
+    setStatutoryDiscountState((current) => ({ ...current, isPolling: true, error: "", message: "Refreshing statutory discount status..." }));
+    try {
+      const decision = await retrieveStatutoryDiscountDecision(decisionId, statutoryDiscountState.correlationId || undefined);
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        decision,
+        isPolling: false,
+        message: getStatutoryDiscountStatusCopy(decision).body,
+        error: ""
+      }));
+    } catch (apiError) {
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        isPolling: false,
+        error: apiError instanceof Error ? apiError.message : "Statutory discount status is temporarily unavailable.",
+        message: ""
+      }));
+    }
+  }
+
+  useEffect(() => {
+    const decision = statutoryDiscountState.decision;
+    if (!decision || !statutoryDiscountState.isPolling || !shouldPollStatutoryDecision(decision)) {
+      return;
+    }
+
+    const generation = statutoryPollGeneration.current + 1;
+    statutoryPollGeneration.current = generation;
+    const controller = new AbortController();
+    let cancelled = false;
+
+    async function pollDecision() {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, attempt === 1 ? 0 : 800));
+        if (cancelled || controller.signal.aborted || statutoryPollGeneration.current !== generation) {
+          return;
+        }
+
+        try {
+          const readback = await retrieveStatutoryDiscountDecision(
+            decision!.statutoryDiscountDecisionCommandId,
+            statutoryDiscountState.correlationId || undefined,
+            fetch,
+            controller.signal
+          );
+          if (cancelled || statutoryPollGeneration.current !== generation) {
+            return;
+          }
+
+          const keepPolling = shouldPollStatutoryDecision(readback) && attempt < 3;
+          setStatutoryDiscountState((current) => ({
+            ...current,
+            decision: readback,
+            isPolling: keepPolling,
+            message: getStatutoryDiscountStatusCopy(readback).body,
+            error: ""
+          }));
+
+          if (!keepPolling) {
+            return;
+          }
+        } catch (apiError) {
+          if (cancelled || controller.signal.aborted || statutoryPollGeneration.current !== generation) {
+            return;
+          }
+
+          setStatutoryDiscountState((current) => ({
+            ...current,
+            isPolling: false,
+            error: apiError instanceof Error ? apiError.message : "Statutory discount status is temporarily unavailable.",
+            message: ""
+          }));
+          return;
+        }
+      }
+    }
+
+    void pollDecision();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [statutoryDiscountState.decision?.statutoryDiscountDecisionCommandId, statutoryDiscountState.isPolling, statutoryDiscountState.correlationId]);
+
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
   const summary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
   const isPaymentComplete = isPaidStatus(summary?.paymentStatus);
   const isPayablePending = isStatutoryValidationPending(summary);
+  const isActiveStatutoryWorkflow = Boolean(statutoryDiscountState.decision);
+  const statutoryDiscountPaymentBlocked = isActiveStatutoryWorkflow || isPayablePending;
 
   return (
     <main className="app-shell">
@@ -339,6 +559,28 @@ export function App() {
         {summary && (
           <PayableBasisPanel
             session={summary}
+          />
+        )}
+
+        {summary && stage === "SESSION_RESOLVED" && !isPaymentComplete && !isPayablePending && (
+          <StatutoryDiscountRequestPanel
+            session={summary}
+            form={statutoryDiscountForm}
+            state={statutoryDiscountState}
+            showForm={showStatutoryDiscountForm}
+            onShowForm={() => {
+              setShowStatutoryDiscountForm(true);
+              setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+              setError("");
+            }}
+            onCancel={() => {
+              setShowStatutoryDiscountForm(false);
+              setStatutoryDiscountForm(defaultStatutoryDiscountForm);
+              setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+            }}
+            onFormChange={setStatutoryDiscountForm}
+            onSubmit={() => void handleSubmitStatutoryDiscount()}
+            onRefresh={() => void handleRefreshStatutoryDecision()}
           />
         )}
 
@@ -453,12 +695,14 @@ export function App() {
           </section>
         )}
 
-        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || isPayablePending}>
+        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
             : isSubmitting
               ? "Creating payment..."
+              : isActiveStatutoryWorkflow
+                ? "Statutory discount pending"
               : isPayablePending
                 ? "Discount review pending"
               : isPaymentComplete
@@ -533,6 +777,223 @@ export function App() {
         </section>
       )}
     </main>
+  );
+}
+
+function StatutoryDiscountRequestPanel({
+  session,
+  form,
+  state,
+  showForm,
+  onShowForm,
+  onCancel,
+  onFormChange,
+  onSubmit,
+  onRefresh
+}: {
+  session: ParkingSessionResolveResponse;
+  form: StatutoryDiscountFormState;
+  state: StatutoryDiscountUiState;
+  showForm: boolean;
+  onShowForm: () => void;
+  onCancel: () => void;
+  onFormChange: (form: StatutoryDiscountFormState) => void;
+  onSubmit: () => void;
+  onRefresh: () => void;
+}) {
+  const decision = state.decision;
+  const copy = decision ? getStatutoryDiscountStatusCopy(decision) : null;
+
+  return (
+    <section className="statutory-discount-panel" aria-labelledby="statutory-discount-heading">
+      <div className="session-summary-header">
+        <div>
+          <p className="eyebrow">Statutory discount</p>
+          <h2 id="statutory-discount-heading">Senior Citizen or PWD request</h2>
+        </div>
+        {!decision && !showForm && (
+          <button type="button" className="secondary-button" onClick={onShowForm}>
+            Request statutory discount
+          </button>
+        )}
+      </div>
+
+      {!decision && !showForm && (
+        <p className="statutory-copy">
+          Submit safe entitlement details for review. Payment remains unavailable until review and payable-basis application
+          are complete; WebPay does not approve the entitlement.
+        </p>
+      )}
+
+      {showForm && (
+        <div className="statutory-form">
+          <fieldset disabled={state.isSubmitting}>
+            <legend>Entitlement details for review</legend>
+
+            <label className="field">
+              <span>Entitlement type</span>
+              <select
+                value={form.entitlementType}
+                onChange={(event) => onFormChange({ ...form, entitlementType: event.target.value as StatutoryDiscountEntitlementType })}
+              >
+                <option value="SENIOR_CITIZEN">Senior Citizen</option>
+                <option value="PWD">PWD</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span>ID document type</span>
+              <input
+                name="idDocumentType"
+                value={form.idDocumentType}
+                onChange={(event) => onFormChange({ ...form, idDocumentType: event.target.value })}
+                placeholder="OSCA, PWD ID, or equivalent"
+                autoComplete="off"
+              />
+            </label>
+
+            <label className="field">
+              <span>Issuing authority</span>
+              <input
+                name="issuingAuthority"
+                value={form.issuingAuthority}
+                onChange={(event) => onFormChange({ ...form, issuingAuthority: event.target.value })}
+                placeholder="City, municipality, or issuing office"
+                autoComplete="off"
+              />
+            </label>
+
+            <label className="field">
+              <span>Expiry date</span>
+              <input
+                name="expiryDate"
+                type="date"
+                value={form.expiryDate}
+                onChange={(event) => onFormChange({ ...form, expiryDate: event.target.value })}
+              />
+            </label>
+
+            <label className="field">
+              <span>Masked ID reference</span>
+              <input
+                name="maskedIdReference"
+                value={form.maskedIdReference}
+                onChange={(event) => onFormChange({ ...form, maskedIdReference: event.target.value })}
+                placeholder="SC-****-1234"
+                autoComplete="off"
+              />
+              <small>Do not enter the full ID number. Use a masked reference with asterisks.</small>
+            </label>
+
+            <label className="checkbox-field">
+              <input
+                name="requesterAttestation"
+                type="checkbox"
+                checked={form.requesterAttestation}
+                onChange={(event) => onFormChange({ ...form, requesterAttestation: event.target.checked })}
+              />
+              <span>I confirm these entitlement details are correct and require review.</span>
+            </label>
+
+            <label className="field">
+              <span>Optional note for review</span>
+              <textarea
+                name="attestationNotes"
+                value={form.attestationNotes}
+                onChange={(event) => onFormChange({ ...form, attestationNotes: event.target.value })}
+                maxLength={240}
+                placeholder="Short safe note only. Do not enter a full ID number."
+              />
+            </label>
+          </fieldset>
+
+          <p className="statutory-copy">
+            Evidence upload is not available in WebPay yet. If evidence is needed, the parking site operator will review
+            the request using approved tools.
+          </p>
+
+          {state.isSubmitting && <p role="status">Submitting statutory discount request...</p>}
+          {state.error && <div className="form-error" role="alert">{state.error}</div>}
+
+          <div className="statutory-actions">
+            <button type="button" className="primary-button" onClick={onSubmit} disabled={state.isSubmitting}>
+              Submit for review
+            </button>
+            <button type="button" className="ghost-button" onClick={onCancel} disabled={state.isSubmitting}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {decision && copy && (
+        <div className={`statutory-status is-${copy.tone}`} aria-live="polite">
+          <div>
+            <h3>{copy.heading}</h3>
+            <p>{copy.body}</p>
+          </div>
+          <dl>
+            <div>
+              <dt>Request reference</dt>
+              <dd>{decision.requestReference}</dd>
+            </div>
+            <div>
+              <dt>Decision status</dt>
+              <dd>{displayValue(decision.decisionResultStatus ?? decision.decisionCommandStatus)}</dd>
+            </div>
+            <div>
+              <dt>Payable-basis status</dt>
+              <dd>{displayValue(decision.payableBasisReadinessStatus)}</dd>
+            </div>
+            <div>
+              <dt>Support reference</dt>
+              <dd>{displayValue(decision.correlationId)}</dd>
+            </div>
+          </dl>
+
+          {decision.payableBasisReady && (
+            <dl className="payable-breakdown">
+              <div>
+                <dt>Original Amount</dt>
+                <dd>{formatCurrencyAmount(decision.originalAmountMinorUnits, decision.currency)}</dd>
+              </div>
+              <div>
+                <dt>VAT-exclusive Amount</dt>
+                <dd>{formatCurrencyAmount(decision.vatExclusiveBasisAmountMinorUnits, decision.currency)}</dd>
+              </div>
+              <div>
+                <dt>VAT Amount</dt>
+                <dd>{formatCurrencyAmount(decision.vatAmountMinorUnits, decision.currency)}</dd>
+              </div>
+              <div>
+                <dt>VAT Treatment</dt>
+                <dd>{displayValue(decision.vatTreatment)}</dd>
+              </div>
+              <div>
+                <dt>Statutory Discount</dt>
+                <dd>{formatAdjustment(decision.statutoryDiscountAmountMinorUnits, decision.currency)}</dd>
+              </div>
+              <div>
+                <dt>Final Payable Amount</dt>
+                <dd>{formatCurrencyAmount(decision.finalPayableAmountMinorUnits, decision.currency)}</dd>
+              </div>
+            </dl>
+          )}
+
+          {state.isPolling && <p role="status">Refreshing statutory discount status...</p>}
+          {state.message && <p className="statutory-copy">{state.message}</p>}
+          {state.error && <div className="form-error" role="alert">{state.error}</div>}
+          {!state.isPolling && !isTerminalStatutoryDecision(decision) && (
+            <button type="button" className="secondary-button" onClick={onRefresh}>
+              Refresh status
+            </button>
+          )}
+          <p className="statutory-copy">
+            Payment is disabled while this statutory discount workflow is active in this pending-review slice.
+          </p>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1091,6 +1552,95 @@ function checkActivePaymentStatus(activePaymentAttempt: ActivePaymentAttemptStat
   }
 
   return false;
+}
+
+function shouldPollStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
+  const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
+  const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
+  return !decision.payableBasisReady &&
+    readinessAction === "POLL_READBACK" &&
+    readinessStatus !== "DECISION_REJECTED" &&
+    readinessStatus !== "TERMINAL_FAILURE";
+}
+
+function isTerminalStatutoryDecision(decision: WebPayStatutoryDiscountDecisionResponse): boolean {
+  const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
+  const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
+  const decisionResult = decision.decisionResultStatus?.toUpperCase() ?? "";
+  return decision.payableBasisReady ||
+    readinessStatus === "DECISION_REJECTED" ||
+    readinessAction === "DO_NOT_RETRY" ||
+    decisionResult === "REJECTED" ||
+    decision.overallResultClassification.toUpperCase().includes("TERMINAL");
+}
+
+function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
+  if (decision.payableBasisReady) {
+    return "The statutory discount payable basis is ready. Discounted payment is not available until the next WebPay integration step.";
+  }
+
+  return getStatutoryDiscountStatusCopy(decision).body;
+}
+
+function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisionResponse): { heading: string; body: string; tone: "pending" | "success" | "warning" | "error" } {
+  const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
+  const readinessAction = decision.payableBasisReadinessAction?.toUpperCase() ?? "";
+  const decisionStatus = decision.decisionResultStatus?.toUpperCase() ?? "";
+  const applicationStatus = decision.applicationCommandStatus.toUpperCase();
+
+  if (decision.payableBasisReady && decision.appliedTariffSnapshotId && decision.finalPayableAmountMinorUnits !== null && decision.finalPayableAmountMinorUnits !== undefined && decision.currency) {
+    return {
+      heading: "Statutory discount applied",
+      body: "Central PMS returned the approved payable basis. Payment linkage will be completed in the next WebPay slice.",
+      tone: "success"
+    };
+  }
+
+  if (readinessStatus === "DECISION_REJECTED" || decisionStatus === "REJECTED") {
+    return {
+      heading: "Entitlement not approved",
+      body: "The statutory discount request was not approved. No discounted payable amount is available.",
+      tone: "error"
+    };
+  }
+
+  if (readinessStatus === "DECISION_APPROVED_APPLICATION_NOT_REQUESTED" || readinessAction === "SUBMIT_APPLICATION_INTENT") {
+    return {
+      heading: "Entitlement approved",
+      body: "Discount application is pending and payment is not ready yet.",
+      tone: "warning"
+    };
+  }
+
+  if (readinessStatus === "APPLICATION_PROCESSING" || applicationStatus === "PROCESSING") {
+    return {
+      heading: "Discount application processing",
+      body: "The approved statutory discount is still being applied by Central PMS.",
+      tone: "pending"
+    };
+  }
+
+  if (readinessAction === "DO_NOT_RETRY" || decision.overallResultClassification.toUpperCase().includes("TERMINAL")) {
+    return {
+      heading: "Statutory discount unavailable",
+      body: "Statutory discount processing could not be completed. Please ask for assistance.",
+      tone: "error"
+    };
+  }
+
+  if (decision.retryable || readinessAction.includes("RETRY")) {
+    return {
+      heading: "Status temporarily unavailable",
+      body: "Statutory discount status is temporarily unavailable. Refresh status shortly.",
+      tone: "warning"
+    };
+  }
+
+  return {
+    heading: "Awaiting review",
+    body: "Your statutory discount request requires Operator Console review. Payment remains unavailable until review and payable-basis application are complete.",
+    tone: "pending"
+  };
 }
 
 function isStatutoryValidationPending(session?: ParkingSessionResolveResponse | null): boolean {

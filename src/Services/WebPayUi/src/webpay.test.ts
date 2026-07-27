@@ -2,15 +2,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPaymentIntentBody,
   buildParkingSessionResolveBody,
+  buildStatutoryDiscountDecisionBody,
   createPaymentIntent,
   extractPaymentIntentContext,
   getResumeUrl,
   normalizeTicketReference,
   PayableBasisRefreshRequiredError,
   ReceiptPresentationError,
+  StatutoryDiscountDecisionError,
   retrieveReceiptPresentation,
   retrievePaymentStatus,
+  retrieveStatutoryDiscountDecision,
   resolveParkingSession,
+  submitStatutoryDiscountDecision,
+  toStatutoryDiscountMessage,
   toFriendlyError
 } from "./webpay";
 
@@ -80,6 +85,112 @@ describe("WebPay QR and payment intent helpers", () => {
 
     expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
     expect(body.expectedAmountMinorUnits).toBe(7500);
+  });
+
+  it("WebPay_WhenStatutoryDecisionSubmitted_UsesWebPayProxyRouteWithIdempotencyAndCorrelation", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => statutoryDecisionResponse({ payableBasisReadinessStatus: "AWAITING_REVIEW" })
+    });
+
+    await submitStatutoryDiscountDecision(
+      statutoryDecisionRequest(),
+      "statutory-decision:webpay:test",
+      "77777777-7777-7777-7777-777777777777",
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/statutory-discounts/decisions");
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.method).toBe("POST");
+    const headers = request.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBe("statutory-decision:webpay:test");
+    expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
+    const body = JSON.parse(request.body as string);
+    expect(body.entitlementType).toBe("SENIOR_CITIZEN");
+    expect(body.maskedIdReference).toBe("SC-****-1234");
+    expect(body.evidenceCaptureRequested).toBe(false);
+    expect(body).not.toHaveProperty("sourceChannel");
+    expect(body).not.toHaveProperty("reviewerUserId");
+    expect(body).not.toHaveProperty("reviewerAttestation");
+    expect(body).not.toHaveProperty("operatorDeviceBindingId");
+    expect(body).not.toHaveProperty("operatorShiftId");
+    expect(body).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
+    expect(body).not.toHaveProperty("vatAmountMinorUnits");
+    expect(body).not.toHaveProperty("finalPayableAmountMinorUnits");
+    expect(body).not.toHaveProperty("appliedTariffSnapshotId");
+  });
+
+  it("WebPay_WhenStatutoryDecisionReadbackRequested_UsesGetOnlyWebPayProxyRoute", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => statutoryDecisionResponse({ payableBasisReadinessStatus: "AWAITING_REVIEW" })
+    });
+
+    const result = await retrieveStatutoryDiscountDecision(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "77777777-7777-7777-7777-777777777777",
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/statutory-discounts/decisions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("GET");
+    expect(result.payableBasisReadinessStatus).toBe("AWAITING_REVIEW");
+  });
+
+  it("WebPay_WhenStatutoryRequestIsBuilt_RejectsUnsafeFullIdAndUnsupportedFields", () => {
+    expect(() =>
+      buildStatutoryDiscountDecisionBody({
+        ...statutoryDecisionRequest(),
+        maskedIdReference: "123456789012"
+      })
+    ).toThrow(/masked ID reference/i);
+
+    const body = buildStatutoryDiscountDecisionBody({
+      ...statutoryDecisionRequest(),
+      entitlementType: "PWD",
+      attestationNotes: " Needs review "
+    });
+
+    expect(body.entitlementType).toBe("PWD");
+    expect(body.attestationNotes).toBe("Needs review");
+    expect(JSON.stringify(body)).not.toContain("sourceChannel");
+    expect(JSON.stringify(body)).not.toContain("reviewer");
+  });
+
+  it.each([
+    ["AWAITING_REVIEW", "Your statutory discount request is awaiting review."],
+    ["DECISION_APPROVED_APPLICATION_NOT_REQUESTED", "Entitlement was approved. Discount application is pending and payment is not ready yet."],
+    ["DECISION_REJECTED", "The statutory discount request was not approved."],
+    ["STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE", "temporarily unavailable"],
+    ["TERMINAL_FAILURE", "could not be completed"]
+  ])("WebPay_WhenStatutoryErrorIs%s_MapsSafeMessage", (code, expected) => {
+    expect(toStatutoryDiscountMessage(code)).toContain(expected);
+  });
+
+  it("WebPay_WhenStatutoryReadbackFails_DoesNotExposeRawDownstreamBody", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        errorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+        message: "http://central-pms.internal stack trace raw body",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      retrieveStatutoryDiscountDecision(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+      name: "StatutoryDiscountDecisionError",
+      message: "Statutory discount status is temporarily unavailable. Refresh status shortly.",
+      retryable: true
+    } satisfies Partial<StatutoryDiscountDecisionError>);
   });
 
   it("WebPay_WhenCorrelationIdIsProvided_PreservesItInPaymentIntentBodyAndHeader", async () => {
@@ -424,3 +535,62 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(toFriendlyError("PAYABLE_BASIS_LOCKED")).toContain("payment has already started");
   });
 });
+
+function statutoryDecisionRequest() {
+  return {
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    parkingSessionId: "55555555-5555-4555-8555-555555555555",
+    siteId: "22222222-2222-4222-8222-222222222222",
+    siteGroupId: "11111111-1111-4111-8111-111111111111",
+    ticketReference: "TICKET-STAT-001",
+    plateNumber: "ABC1234",
+    entitlementType: "SENIOR_CITIZEN" as const,
+    idDocumentType: "OSCA",
+    issuingAuthority: "QUEZON_CITY",
+    expiryDate: "2030-12-31",
+    maskedIdReference: "SC-****-1234",
+    evidenceCaptureRequested: false,
+    requesterAttestation: true,
+    originalTariffSnapshotId: "66666666-6666-4666-8666-666666666666"
+  };
+}
+
+function statutoryDecisionResponse(overrides?: Record<string, unknown>) {
+  return {
+    statutoryDiscountDecisionCommandId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    statutoryDiscountPayableBasisApplicationCommandId: null,
+    statutoryDiscountValidationId: null,
+    parkingSessionId: "55555555-5555-4555-8555-555555555555",
+    siteId: "22222222-2222-4222-8222-222222222222",
+    siteGroupId: "11111111-1111-4111-8111-111111111111",
+    entitlementType: "SENIOR_CITIZEN",
+    decisionCommandStatus: "AWAITING_REVIEW",
+    decisionResultStatus: "NOT_DECIDED",
+    applicationCommandStatus: "NOT_REQUESTED",
+    applicationResultClassification: "NOT_REQUESTED",
+    payableBasisReady: false,
+    payableBasisReadinessStatus: "AWAITING_REVIEW",
+    payableBasisReadinessAction: "POLL_READBACK",
+    originalTariffSnapshotId: "66666666-6666-4666-8666-666666666666",
+    appliedTariffSnapshotId: null,
+    originalAmountMinorUnits: null,
+    vatExclusiveBasisAmountMinorUnits: null,
+    vatAmountMinorUnits: null,
+    vatTreatment: null,
+    statutoryDiscountAmountMinorUnits: null,
+    finalPayableAmountMinorUnits: null,
+    currency: null,
+    retryable: false,
+    recoveryClassification: "PENDING",
+    recoveryAction: "POLL_READBACK",
+    safeErrorCode: null,
+    overallResultClassification: "PENDING",
+    oneShotComplete: false,
+    correlationId: "77777777-7777-7777-7777-777777777777",
+    createdAt: "2026-07-27T10:00:00+08:00",
+    decidedAt: null,
+    appliedAt: null,
+    ...overrides
+  };
+}

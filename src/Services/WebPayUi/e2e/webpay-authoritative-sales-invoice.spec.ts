@@ -12,6 +12,7 @@ const ids = {
 type FixtureState = {
   requestLog: Array<{ method: string; path: string; headers: Record<string, string | undefined>; body: unknown }>;
   receiptAttempts: Record<string, number>;
+  statutoryReadAttempts: Record<string, number>;
 };
 
 const consoleMessagesByTest = new Map<string, string[]>();
@@ -35,6 +36,8 @@ test.afterEach(async ({}, testInfo) => {
   expect(serialized).not.toContain("Authorization");
   expect(serialized).not.toContain("AppSecret");
   expect(serialized).not.toContain("api key");
+  expect(serialized).not.toContain("SC-****-1234");
+  expect(serialized).not.toContain("PWD-****-5678");
 });
 
 test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
@@ -161,6 +164,114 @@ test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
   });
 });
 
+test.describe("WebPay statutory discount pending-review browser smoke", () => {
+  test("no-discount path remains available and uses the payment-intent route only after payment action", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-NO-DISCOUNT");
+    await expect(page.getByRole("button", { name: /request statutory discount/i })).toBeVisible();
+    await page.getByRole("button", { name: /continue to payment/i }).click();
+    await expect(page.getByRole("alert")).toContainText(/could not start payment|Payment intent creation failed|Browser smoke must not submit payment/i);
+
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.path === "/v1/webpay/payment-intents")).toHaveLength(1);
+    expect(state.requestLog.some((request) => request.path.includes("/statutory-discounts"))).toBe(false);
+    await expectApiBoundary(apiRequests);
+  });
+
+  test("Senior Citizen request enters pending review, disables payment, and polls with GET", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-SC", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    await expect(page.getByText(/requires Operator Console review/i).first()).toBeVisible();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(1);
+    expect(state.requestLog.filter((request) => request.method === "GET" && request.path.includes("/statutory-discounts/decisions/")).length).toBeGreaterThan(0);
+    expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+    await expectNoUnsafeStatutoryRequestFields();
+    await expectApiBoundary(apiRequests);
+  });
+
+  test("PWD request enters pending review without raw identity or reviewer fields", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-PWD", "PWD", "PWD-****-5678");
+
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    const state = await getFixtureState();
+    const statutoryPost = state.requestLog.find((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions");
+    expect(JSON.stringify(statutoryPost?.body)).toContain("PWD");
+    expect(JSON.stringify(statutoryPost?.body)).not.toContain("sourceChannel");
+    expect(JSON.stringify(statutorialPostSafeBody(statutoryPost?.body))).not.toContain("reviewer");
+    expect(JSON.stringify(statutoryPost?.body)).not.toContain("123456789012");
+  });
+
+  test("polling transitions from pending to approved application-required without application intent", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APP-REQ", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByRole("heading", { name: /entitlement approved/i })).toBeVisible();
+    await expect(page.getByText(/Discount application is pending/i).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+  });
+
+  test("rejection, retryable, and terminal states remain safe and do not create payment", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-REJECTED", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /entitlement not approved/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    await expect(page.getByText(/reviewer|stack trace|internal exception/i)).toHaveCount(0);
+
+    await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
+    await submitStatutoryRequest(page, "WEBPAY-STAT-RETRYABLE", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /discount application processing|status temporarily unavailable/i })).toBeVisible();
+    await expect(page.getByText(/still being applied|Refresh status shortly/i).first()).toBeVisible();
+
+    await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
+    await submitStatutoryRequest(page, "WEBPAY-STAT-TERMINAL", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /statutory discount unavailable/i })).toBeVisible();
+    await expect(page.getByText(/could not be completed/i).first()).toBeVisible();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+    expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
+  });
+
+  test("ready readback displays authoritative amounts and still does not submit application intent", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-READY", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByRole("heading", { name: /statutory discount applied/i })).toBeVisible();
+    await expect(page.getByText("PHP 129.00").first()).toBeVisible();
+    await expect(page.getByText("PHP 92.14")).toBeVisible();
+    await expect(page.getByText("PHP 11.06")).toBeVisible();
+    await expect(page.getByText("-PHP 25.80")).toBeVisible();
+    await expect(page.getByText("PHP 103.20")).toBeVisible();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+  });
+
+  test("unsafe full ID is blocked before statutory API call", async ({ page }) => {
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-UNSAFE-ID");
+    await page.getByRole("button", { name: /request statutory discount/i }).click();
+    await page.getByLabel(/ID document type/i).fill("OSCA");
+    await page.getByLabel(/Issuing authority/i).fill("Quezon City");
+    await page.getByLabel(/Masked ID reference/i).fill("123456789012");
+    await page.getByLabel(/I confirm these entitlement details/i).check();
+    await page.getByRole("button", { name: /submit for review/i }).click();
+
+    await expect(page.getByRole("alert")).toContainText(/masked ID reference/i);
+    const state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/statutory-discounts/decisions"))).toBe(false);
+  });
+});
+
 async function openReturnPage(page: Page, ticketReference: string, paymentAttemptId: string) {
   const query = new URLSearchParams({
     ticketReference,
@@ -169,6 +280,24 @@ async function openReturnPage(page: Page, ticketReference: string, paymentAttemp
     result: "success"
   });
   await page.goto(`/webpay/payment-return?${query.toString()}`);
+}
+
+async function resolveTicketOnStartPage(page: Page, ticketReference: string) {
+  await page.goto("/");
+  await page.getByLabel(/ticket reference/i).fill(ticketReference);
+  await page.getByRole("button", { name: /^continue$/i }).click();
+  await expect(page.getByText("Parking Session Summary")).toBeVisible();
+}
+
+async function submitStatutoryRequest(page: Page, ticketReference: string, entitlementLabel: string, maskedIdReference: string) {
+  await resolveTicketOnStartPage(page, ticketReference);
+  await page.getByRole("button", { name: /request statutory discount/i }).click();
+  await page.getByLabel(/Entitlement type/i).selectOption({ label: entitlementLabel });
+  await page.getByLabel(/ID document type/i).fill(entitlementLabel === "PWD" ? "PWD ID" : "OSCA");
+  await page.getByLabel(/Issuing authority/i).fill("Quezon City");
+  await page.getByLabel(/Masked ID reference/i).fill(maskedIdReference);
+  await page.getByLabel(/I confirm these entitlement details/i).check();
+  await page.getByRole("button", { name: /submit for review/i }).click();
 }
 
 function collectApiRequests(page: Page): Request[] {
@@ -212,6 +341,27 @@ async function expectNoDuplicatePaymentOrFiscalSubmission() {
       request.path.toLowerCase().includes("fiscal-documents")
   );
   expect(mutatingPaymentOrFiscalRequests).toHaveLength(0);
+}
+
+async function expectNoUnsafeStatutoryRequestFields() {
+  const state = await getFixtureState();
+  const statutoryPost = state.requestLog.find((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions");
+  expect(statutoryPost).toBeTruthy();
+  const serializedBody = JSON.stringify(statutorialPostSafeBody(statutoryPost?.body));
+  expect(serializedBody).not.toContain("sourceChannel");
+  expect(serializedBody).not.toContain("reviewerUserId");
+  expect(serializedBody).not.toContain("reviewerAttestation");
+  expect(serializedBody).not.toContain("operatorDeviceBindingId");
+  expect(serializedBody).not.toContain("operatorShiftId");
+  expect(serializedBody).not.toContain("statutoryDiscountAmountMinorUnits");
+  expect(serializedBody).not.toContain("vatAmountMinorUnits");
+  expect(serializedBody).not.toContain("finalPayableAmountMinorUnits");
+  expect(serializedBody).not.toContain("appliedTariffSnapshotId");
+  expect(serializedBody).not.toContain("123456789012");
+}
+
+function statutorialPostSafeBody(body: unknown): unknown {
+  return body ?? {};
 }
 
 async function expectBrowserStorageSafe(page: Page) {

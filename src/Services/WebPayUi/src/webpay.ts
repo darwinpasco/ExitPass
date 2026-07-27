@@ -5,13 +5,17 @@ import type {
   ParkingSessionResolveResponse,
   PaymentIntentRequest,
   PaymentIntentResponse,
+  StatutoryDiscountEntitlementType,
   WebPayReceiptPresentationResponse,
-  WebPayHandoff
+  WebPayHandoff,
+  WebPayStatutoryDiscountDecisionRequest,
+  WebPayStatutoryDiscountDecisionResponse
 } from "./types";
 
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
 const receiptPresentationPathPrefix = "/v1/webpay/payment-attempts";
+const statutoryDiscountDecisionPath = "/v1/webpay/statutory-discounts/decisions";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 const refreshRequiredErrorCode = "PAYABLE_BASIS_REFRESH_REQUIRED";
 
@@ -33,6 +37,20 @@ export class PayableBasisRefreshRequiredError extends Error {
     super(message);
     this.name = "PayableBasisRefreshRequiredError";
     this.errorCode = errorCode;
+    this.correlationId = correlationId;
+  }
+}
+
+export class StatutoryDiscountDecisionError extends Error {
+  public readonly errorCode?: string;
+  public readonly retryable: boolean;
+  public readonly correlationId?: string;
+
+  public constructor(errorCode: string | undefined, message: string, retryable: boolean, correlationId?: string) {
+    super(message);
+    this.name = "StatutoryDiscountDecisionError";
+    this.errorCode = errorCode;
+    this.retryable = retryable;
     this.correlationId = correlationId;
   }
 }
@@ -109,6 +127,19 @@ export function createCorrelationId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `webpay-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+export function createRequestReference(): string {
+  return createCorrelationId();
+}
+
+export function createStatutoryDecisionIdempotencyKey(parkingSessionId: string, entitlementType: StatutoryDiscountEntitlementType): string {
+  const normalizedSessionId = parkingSessionId.trim();
+  if (!normalizedSessionId) {
+    throw new Error("Parking session is required before requesting a statutory discount.");
+  }
+
+  return `webpay-statutory-discount-decision:${normalizedSessionId}:${entitlementType}:${createCorrelationId()}`;
+}
+
 function withCorrelationId<TRequest extends object>(request: TRequest): TRequest & { correlationId: string } {
   const existing = (request as { correlationId?: unknown }).correlationId;
   const correlationId = typeof existing === "string" && existing.trim() ? existing.trim() : createCorrelationId();
@@ -181,6 +212,18 @@ export function buildPaymentIntentBody(
 
   if (Number.isFinite(request.expectedAmountMinorUnits)) {
     body.expectedAmountMinorUnits = request.expectedAmountMinorUnits;
+  }
+
+  if (request.expectedCurrency?.trim()) {
+    body.expectedCurrency = request.expectedCurrency.trim().toUpperCase();
+  }
+
+  if (request.statutoryDiscountDecisionCommandId?.trim()) {
+    body.statutoryDiscountDecisionCommandId = request.statutoryDiscountDecisionCommandId.trim();
+  }
+
+  if (request.statutoryDiscountPayableBasisApplicationCommandId?.trim()) {
+    body.statutoryDiscountPayableBasisApplicationCommandId = request.statutoryDiscountPayableBasisApplicationCommandId.trim();
   }
 
   if (request.correlationId?.trim()) {
@@ -336,6 +379,132 @@ export async function createPaymentIntent(
   return payload as PaymentIntentResponse;
 }
 
+export function buildStatutoryDiscountDecisionBody(
+  request: WebPayStatutoryDiscountDecisionRequest
+): WebPayStatutoryDiscountDecisionRequest {
+  const entitlementType = request.entitlementType;
+  if (entitlementType !== "SENIOR_CITIZEN" && entitlementType !== "PWD") {
+    throw new Error("Choose Senior Citizen or PWD.");
+  }
+
+  if (!request.parkingSessionId?.trim()) {
+    throw new Error("Resolve your parking session before requesting a statutory discount.");
+  }
+
+  const idDocumentType = request.idDocumentType.trim();
+  if (!idDocumentType) {
+    throw new Error("Enter the document type shown on your entitlement ID.");
+  }
+
+  const issuingAuthority = request.issuingAuthority.trim();
+  if (!issuingAuthority) {
+    throw new Error("Enter the issuing authority shown on your entitlement ID.");
+  }
+
+  const maskedIdReference = request.maskedIdReference.trim();
+  if (!maskedIdReference || !isMaskedIdReference(maskedIdReference)) {
+    throw new Error("Enter a masked ID reference, such as SC-****-1234. Do not enter the full ID number.");
+  }
+
+  if (!request.requesterAttestation) {
+    throw new Error("Confirm that the entitlement details you entered are correct.");
+  }
+
+  const body: WebPayStatutoryDiscountDecisionRequest = {
+    requestReference: request.requestReference.trim() || createRequestReference(),
+    parkingSessionId: request.parkingSessionId.trim(),
+    entitlementType,
+    idDocumentType,
+    issuingAuthority,
+    maskedIdReference,
+    evidenceCaptureRequested: false,
+    requesterAttestation: true
+  };
+
+  if (request.siteId?.trim()) {
+    body.siteId = request.siteId.trim();
+  }
+
+  if (request.siteGroupId?.trim()) {
+    body.siteGroupId = request.siteGroupId.trim();
+  }
+
+  if (request.ticketReference?.trim()) {
+    body.ticketReference = request.ticketReference.trim();
+  }
+
+  if (request.plateNumber?.trim()) {
+    body.plateNumber = request.plateNumber.trim().toUpperCase();
+  }
+
+  if (request.expiryDate?.trim()) {
+    body.expiryDate = request.expiryDate.trim();
+  }
+
+  if (request.attestationNotes?.trim()) {
+    body.attestationNotes = request.attestationNotes.trim();
+  }
+
+  if (request.originalTariffSnapshotId?.trim()) {
+    body.originalTariffSnapshotId = request.originalTariffSnapshotId.trim();
+  }
+
+  return body;
+}
+
+export async function submitStatutoryDiscountDecision(
+  request: WebPayStatutoryDiscountDecisionRequest,
+  idempotencyKey: string,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<WebPayStatutoryDiscountDecisionResponse> {
+  const body = buildStatutoryDiscountDecisionBody(request);
+  const normalizedIdempotencyKey = idempotencyKey.trim();
+  if (!normalizedIdempotencyKey) {
+    throw new Error("A request key is required to submit the statutory discount request safely.");
+  }
+
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+  const response = await fetchImpl(`${getApiBaseUrl()}${statutoryDiscountDecisionPath}`, {
+    method: "POST",
+    headers: {
+      ...jsonHeaders(requestCorrelationId),
+      "Idempotency-Key": normalizedIdempotencyKey
+    },
+    body: JSON.stringify(body),
+    signal
+  });
+
+  return readStatutoryDiscountDecisionResponse(response);
+}
+
+export async function retrieveStatutoryDiscountDecision(
+  statutoryDiscountDecisionCommandId: string,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<WebPayStatutoryDiscountDecisionResponse> {
+  const normalizedDecisionId = statutoryDiscountDecisionCommandId.trim();
+  if (!normalizedDecisionId) {
+    throw new Error("Statutory discount request reference is missing.");
+  }
+
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+  const response = await fetchImpl(
+    `${getApiBaseUrl()}${statutoryDiscountDecisionPath}/${encodeURIComponent(normalizedDecisionId)}`,
+    {
+      method: "GET",
+      headers: {
+        "X-Correlation-Id": requestCorrelationId
+      },
+      signal
+    }
+  );
+
+  return readStatutoryDiscountDecisionResponse(response);
+}
+
 export function toFriendlyError(errorCode?: string, message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "INVALID_TICKET":
@@ -384,6 +553,41 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
   }
 }
 
+export function toStatutoryDiscountMessage(errorCode?: string, message?: string): string {
+  switch ((errorCode ?? "").toUpperCase()) {
+    case "IDEMPOTENCY_KEY_REQUIRED":
+    case "WEBPAY_STATUTORY_DISCOUNT_REQUEST_INVALID":
+    case "VALIDATION_FAILED":
+      return "Review the entitlement request fields and try again.";
+    case "STATUTORY_DISCOUNT_AWAITING_REVIEW":
+    case "AWAITING_REVIEW":
+      return "Your statutory discount request is awaiting review.";
+    case "STATUTORY_DISCOUNT_REJECTED":
+    case "DECISION_REJECTED":
+    case "REJECTED":
+      return "The statutory discount request was not approved.";
+    case "STATUTORY_DISCOUNT_APPLICATION_REQUIRED":
+    case "DECISION_APPROVED_APPLICATION_NOT_REQUESTED":
+      return "Entitlement was approved. Discount application is pending and payment is not ready yet.";
+    case "STATUTORY_DISCOUNT_APPLICATION_PROCESSING":
+    case "APPLICATION_PROCESSING":
+      return "The approved statutory discount is still being applied.";
+    case "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE":
+      return "Statutory discount status is temporarily unavailable. Refresh status shortly.";
+    case "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE":
+      return "Statutory discount payable basis is missing required authoritative facts.";
+    case "STATUTORY_DISCOUNT_TERMINAL_FAILURE":
+    case "TERMINAL_FAILURE":
+    case "FAILED":
+      return "Statutory discount processing could not be completed. Please ask for assistance.";
+    case "STATUTORY_DISCOUNT_DECISION_NOT_FOUND":
+    case "NOT_FOUND":
+      return "The statutory discount request could not be found.";
+    default:
+      return message?.trim() || "Statutory discount status is unavailable. Please try again shortly.";
+  }
+}
+
 export class ReceiptPresentationError extends Error {
   public readonly errorCode?: string;
   public readonly retryable: boolean;
@@ -420,6 +624,31 @@ export function toReceiptPresentationMessage(errorCode?: string, message?: strin
 
 function isPayableBasisRefreshRequired(error: ApiError): boolean {
   return (error.errorCode ?? "").toUpperCase() === refreshRequiredErrorCode;
+}
+
+function isMaskedIdReference(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed.includes("*")) {
+    return false;
+  }
+
+  const digits = trimmed.replace(/\D/g, "");
+  return digits.length <= 6 && /^[A-Za-z0-9* -]{4,40}$/.test(trimmed);
+}
+
+async function readStatutoryDiscountDecisionResponse(response: Response): Promise<WebPayStatutoryDiscountDecisionResponse> {
+  const payload = (await response.json().catch(() => ({}))) as WebPayStatutoryDiscountDecisionResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new StatutoryDiscountDecisionError(
+      error.errorCode,
+      toStatutoryDiscountMessage(error.errorCode, error.message),
+      Boolean(error.retryable),
+      error.correlationId
+    );
+  }
+
+  return payload as WebPayStatutoryDiscountDecisionResponse;
 }
 
 export function formatAmount(amountMinorUnits: number, currency: string): string {
