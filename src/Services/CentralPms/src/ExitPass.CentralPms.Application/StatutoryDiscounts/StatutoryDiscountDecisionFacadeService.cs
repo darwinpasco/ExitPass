@@ -417,13 +417,10 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         CancellationToken cancellationToken)
     {
         var record = start.Record!;
-        if (start.Existing &&
-            !start.Retryable &&
-            (record.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Received
-                or StatutoryDiscountPayableBasisApplicationV1CommandStates.Processing))
-        {
-            return record;
-        }
+        record = await _stagedCommandService.GetApplicationAsync(
+                record.StatutoryDiscountPayableBasisApplicationCommandId,
+                cancellationToken)
+            .ConfigureAwait(false) ?? record;
 
         if (record.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied
             or StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedNonRetryable)
@@ -718,7 +715,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             command.OperatorShiftId,
             command.OriginalTariffSnapshotId,
             $"{applicationStageIdempotencyKey}:apply",
-            command.CorrelationId);
+            command.CorrelationId,
+            AllowProcessingApplicationCompletion: true);
     }
 
     private static StatutoryDiscountDecisionV2TariffFacts? ToTariffFacts(

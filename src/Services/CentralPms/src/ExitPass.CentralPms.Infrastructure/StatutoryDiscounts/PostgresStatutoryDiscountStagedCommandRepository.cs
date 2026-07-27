@@ -172,7 +172,20 @@ public sealed class PostgresStatutoryDiscountStagedCommandRepository : IStatutor
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        return ExecuteWithLockAsync(command.IdempotencyScope, operation, cancellationToken);
+        return ExecuteWithApplicationLockAsync(command.IdempotencyScope, operation, cancellationToken);
+    }
+
+    public Task<T> ExecuteWithApplicationLockAsync<T>(
+        string idempotencyScope,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(idempotencyScope))
+        {
+            throw new ArgumentException("Application idempotency scope is required.", nameof(idempotencyScope));
+        }
+
+        return ExecuteWithLockAsync(idempotencyScope, operation, cancellationToken);
     }
 
     public async Task<StatutoryDiscountPayableBasisApplicationV1BeginResult> BeginApplicationAsync(

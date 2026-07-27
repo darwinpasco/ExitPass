@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using FluentAssertions;
+using Npgsql;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.Application;
@@ -305,6 +306,44 @@ public sealed class StatutoryDiscountStagedCommandServiceTests
     }
 
     [Fact]
+    public async Task CreateOrResolveApplicationAsync_WhenDeadlockLeavesNoDurableApplication_ReturnsRetryableSafeFailure()
+    {
+        var fixture = new Fixture();
+        var approved = await CreateApprovedDecisionAsync(fixture);
+        fixture.Repository.ThrowApplicationDeadlockBeforeOperation = true;
+
+        var result = await fixture.Sut.CreateOrResolveApplicationAsync(
+            ApplicationCommand(approved.StatutoryDiscountDecisionCommandId),
+            CancellationToken.None);
+
+        result.Record.Should().BeNull();
+        result.Retryable.Should().BeTrue();
+        result.ResultClassification.Should().Be(StatutoryDiscountPayableBasisApplicationV1ResultClassifications.RetryableFailure);
+        result.RecoveryClassification.Should().Be(StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey);
+        result.SafeErrorCode.Should().Be("STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE");
+        fixture.Repository.ApplicationCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateOrResolveApplicationAsync_WhenDeadlockWinnerCommittedApplication_ReconcilesDurableApplication()
+    {
+        var fixture = new Fixture();
+        var approved = await CreateApprovedDecisionAsync(fixture);
+        fixture.Repository.ThrowApplicationDeadlockBeforeOperation = true;
+        fixture.Repository.CreateApplicationBeforeDeadlock = true;
+
+        var result = await fixture.Sut.CreateOrResolveApplicationAsync(
+            ApplicationCommand(approved.StatutoryDiscountDecisionCommandId),
+            CancellationToken.None);
+
+        result.Record.Should().NotBeNull();
+        result.Existing.Should().BeTrue();
+        result.SemanticConflict.Should().BeFalse();
+        result.Record!.StatutoryDiscountDecisionCommandId.Should().Be(approved.StatutoryDiscountDecisionCommandId);
+        fixture.Repository.ApplicationCount.Should().Be(1);
+    }
+
+    [Fact]
     public void DecisionV2SemanticHash_IsDeterministicAndExcludesTransportFacts()
     {
         var first = DecisionCommand();
@@ -550,6 +589,10 @@ public sealed class StatutoryDiscountStagedCommandServiceTests
 
         public int ApplicationCount => _applications.Count;
 
+        public bool ThrowApplicationDeadlockBeforeOperation { get; set; }
+
+        public bool CreateApplicationBeforeDeadlock { get; set; }
+
         public void SeedDecision(StatutoryDiscountDecisionV2Record record) =>
             _decisions[record.StatutoryDiscountDecisionCommandId] = record;
 
@@ -634,6 +677,21 @@ public sealed class StatutoryDiscountStagedCommandServiceTests
             await _lock.WaitAsync(cancellationToken);
             try
             {
+                if (ThrowApplicationDeadlockBeforeOperation)
+                {
+                    ThrowApplicationDeadlockBeforeOperation = false;
+                    if (CreateApplicationBeforeDeadlock)
+                    {
+                        await BeginApplicationAsync(command, cancellationToken);
+                    }
+
+                    throw new PostgresException(
+                        "deadlock detected",
+                        "ERROR",
+                        "ERROR",
+                        "40P01");
+                }
+
                 return await operation(cancellationToken);
             }
             finally
@@ -641,6 +699,12 @@ public sealed class StatutoryDiscountStagedCommandServiceTests
                 _lock.Release();
             }
         }
+
+        public Task<T> ExecuteWithApplicationLockAsync<T>(
+            string idempotencyScope,
+            Func<CancellationToken, Task<T>> operation,
+            CancellationToken cancellationToken) =>
+            operation(cancellationToken);
 
         public Task<StatutoryDiscountPayableBasisApplicationV1BeginResult> BeginApplicationAsync(
             StatutoryDiscountPayableBasisApplicationV1RepositoryCommand command,

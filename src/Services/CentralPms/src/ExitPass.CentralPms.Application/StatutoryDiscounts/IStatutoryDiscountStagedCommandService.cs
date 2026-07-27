@@ -66,6 +66,11 @@ public interface IStatutoryDiscountStagedCommandService
         Guid statutoryDiscountDecisionCommandId,
         CancellationToken cancellationToken);
 
+    Task<T> ExecuteWithApplicationLockAsync<T>(
+        StatutoryDiscountPayableBasisApplicationV1Record application,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken);
+
     Task<StatutoryDiscountPayableBasisApplicationV1Record> MarkApplicationProcessingAsync(
         Guid statutoryDiscountPayableBasisApplicationCommandId,
         Guid correlationId,
@@ -114,6 +119,11 @@ public interface IStatutoryDiscountStagedCommandRepository
 
     Task<T> ExecuteWithApplicationLockAsync<T>(
         StatutoryDiscountPayableBasisApplicationV1RepositoryCommand command,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken);
+
+    Task<T> ExecuteWithApplicationLockAsync<T>(
+        string idempotencyScope,
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken);
 

@@ -1,3 +1,5 @@
+using Npgsql;
+
 namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 
 /// <summary>
@@ -235,14 +237,22 @@ public sealed class StatutoryDiscountStagedCommandService : IStatutoryDiscountSt
             StatutoryDiscountPayableBasisApplicationV1SemanticHash.SourceVersion,
             DateTimeOffset.UtcNow);
 
-        return await _repository.ExecuteWithApplicationLockAsync(
-            repositoryCommand,
-            async token =>
-            {
-                var begin = await _repository.BeginApplicationAsync(repositoryCommand, token).ConfigureAwait(false);
-                return ToApplicationStartResult(begin, command.IdempotencyKey);
-            },
-            cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await _repository.ExecuteWithApplicationLockAsync(
+                repositoryCommand,
+                async token =>
+                {
+                    var begin = await _repository.BeginApplicationAsync(repositoryCommand, token).ConfigureAwait(false);
+                    return ToApplicationStartResult(begin, command.IdempotencyKey);
+                },
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (PostgresException ex) when (ex.SqlState == "40P01")
+        {
+            return await ReconcileApplicationAfterDeadlockAsync(repositoryCommand, command.IdempotencyKey, cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 
     public Task<StatutoryDiscountPayableBasisApplicationV1Record?> GetApplicationAsync(
@@ -254,6 +264,16 @@ public sealed class StatutoryDiscountStagedCommandService : IStatutoryDiscountSt
         Guid statutoryDiscountDecisionCommandId,
         CancellationToken cancellationToken) =>
         _repository.GetApplicationByDecisionAsync(statutoryDiscountDecisionCommandId, cancellationToken);
+
+    public Task<T> ExecuteWithApplicationLockAsync<T>(
+        StatutoryDiscountPayableBasisApplicationV1Record application,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(application);
+        ArgumentNullException.ThrowIfNull(operation);
+        return _repository.ExecuteWithApplicationLockAsync(application.IdempotencyScope, operation, cancellationToken);
+    }
 
     public async Task<StatutoryDiscountPayableBasisApplicationV1Record> MarkApplicationProcessingAsync(
         Guid statutoryDiscountPayableBasisApplicationCommandId,
@@ -464,6 +484,43 @@ public sealed class StatutoryDiscountStagedCommandService : IStatutoryDiscountSt
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_NOT_FOUND",
             "Statutory discount payable-basis application command was not found.",
             isNotFound: true);
+    }
+
+    private async Task<StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>>
+        ReconcileApplicationAfterDeadlockAsync(
+            StatutoryDiscountPayableBasisApplicationV1RepositoryCommand repositoryCommand,
+            string idempotencyKey,
+            CancellationToken cancellationToken)
+    {
+        var existing = await _repository.GetApplicationByDecisionAsync(
+                repositoryCommand.Command.StatutoryDiscountDecisionCommandId,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        if (existing is not null)
+        {
+            var semanticConflict =
+                !string.Equals(existing.SemanticHashSourceVersion, repositoryCommand.SemanticHashSourceVersion, StringComparison.Ordinal) ||
+                !string.Equals(existing.SemanticRequestHash, repositoryCommand.SemanticRequestHash, StringComparison.Ordinal);
+            var recoverableWithOriginalKey = IsProcessing(existing.CommandStatus) &&
+                string.Equals(existing.IdempotencyKey, repositoryCommand.Command.IdempotencyKey, StringComparison.Ordinal);
+            var begin = new StatutoryDiscountPayableBasisApplicationV1BeginResult(
+                Existing: true,
+                semanticConflict,
+                recoverableWithOriginalKey,
+                existing);
+
+            return ToApplicationStartResult(begin, idempotencyKey);
+        }
+
+        return new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>(
+            StatutoryDiscountPayableBasisApplicationV1ResultClassifications.RetryableFailure,
+            Existing: false,
+            SemanticConflict: false,
+            Retryable: true,
+            StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
+            Record: null,
+            SafeErrorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE");
     }
 
     private static void ValidateDecisionCommand(StatutoryDiscountDecisionV2Command command)
