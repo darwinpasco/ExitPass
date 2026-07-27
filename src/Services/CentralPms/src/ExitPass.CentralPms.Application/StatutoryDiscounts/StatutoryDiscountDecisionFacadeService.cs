@@ -116,7 +116,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         }
 
         var overall = ResolveOverallClassification(decisionStart, decision, application, applicationResultClassification, applicationRequested);
-        return decision.ToFacadeResult(application, applicationRequested, overall, normalized.CorrelationId);
+        var result = decision.ToFacadeResult(application, applicationRequested, overall, normalized.CorrelationId);
+        return await EnrichChannelSafeReadbackAsync(result, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<StatutoryDiscountDecisionResult?> GetAsync(
@@ -151,12 +152,26 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             var overall = decision.SemanticHashSourceVersion == StatutoryDiscountDecisionSemanticHash.SourceVersion
                 ? StatutoryDiscountOneShotResultClassifications.HistoricalV1Replay
                 : ResolveReadbackOverallClassification(decision, application, applicationRequested);
-            return decision.ToFacadeResult(application, applicationRequested, overall, correlationId);
+            var result = decision.ToFacadeResult(application, applicationRequested, overall, correlationId);
+            return await EnrichChannelSafeReadbackAsync(result, cancellationToken).ConfigureAwait(false);
         }
 
         var historical = await _historicalRepository.GetAsync(statutoryDiscountDecisionCommandId, correlationId, cancellationToken)
             .ConfigureAwait(false);
         return historical?.ToResult();
+    }
+
+    private async Task<StatutoryDiscountDecisionResult> EnrichChannelSafeReadbackAsync(
+        StatutoryDiscountDecisionResult result,
+        CancellationToken cancellationToken)
+    {
+        var review = await _serviceChannelReviewRepository.GetAsync(
+                result.StatutoryDiscountDecisionCommandId,
+                result.CorrelationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return result.WithChannelSafeReviewFacts(review);
     }
 
     private async Task<StatutoryDiscountDecisionV2Record> ResolveDecisionStageAsync(

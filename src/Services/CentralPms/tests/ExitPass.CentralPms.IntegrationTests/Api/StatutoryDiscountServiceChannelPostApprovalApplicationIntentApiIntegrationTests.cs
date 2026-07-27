@@ -82,8 +82,18 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             application.ApplicationCommandStatus.Should().Be(StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied);
             application.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
             application.AppliedTariffSnapshotId.Should().NotBeNull();
+            application.SiteId.Should().Be(context.SiteId);
+            application.SiteGroupId.Should().Be(context.SiteGroupId);
+            application.GrossAmountMinorUnits.Should().BeGreaterThan(0);
+            application.VatExclusiveBasisAmountMinorUnits.Should().BeGreaterThan(0);
+            application.VatAmountMinorUnits.Should().BeGreaterThan(0);
+            application.StatutoryDiscountAmountMinorUnits.Should().BeGreaterThan(0);
             application.FinalPayableAmountMinorUnits().Should().BeGreaterThan(0);
             application.Currency.Should().Be("PHP");
+            application.VatTreatment.Should().Be("VAT_EXCLUSIVE");
+            application.PayableBasisReady.Should().BeTrue();
+            application.PayableBasisReadinessStatus.Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady);
+            application.PayableBasisReadinessAction.Should().BeNull();
 
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
@@ -104,6 +114,17 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             readback.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(application.StatutoryDiscountPayableBasisApplicationCommandId);
             readback.ApplicationCommandStatus.Should().Be(StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied);
             readback.AppliedTariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId);
+            readback.SiteId.Should().Be(application.SiteId);
+            readback.SiteGroupId.Should().Be(application.SiteGroupId);
+            readback.GrossAmountMinorUnits.Should().Be(application.GrossAmountMinorUnits);
+            readback.VatExclusiveBasisAmountMinorUnits.Should().Be(application.VatExclusiveBasisAmountMinorUnits);
+            readback.VatAmountMinorUnits.Should().Be(application.VatAmountMinorUnits);
+            readback.StatutoryDiscountAmountMinorUnits.Should().Be(application.StatutoryDiscountAmountMinorUnits);
+            readback.NetPayableAmountMinorUnits.Should().Be(application.NetPayableAmountMinorUnits);
+            readback.Currency.Should().Be(application.Currency);
+            readback.VatTreatment.Should().Be(application.VatTreatment);
+            readback.PayableBasisReady.Should().BeTrue();
+            readback.PayableBasisReadinessStatus.Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady);
 
             var paymentAttempt = await PaymentRoutineTestHelper.CreateAttemptAsync(
                 StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,

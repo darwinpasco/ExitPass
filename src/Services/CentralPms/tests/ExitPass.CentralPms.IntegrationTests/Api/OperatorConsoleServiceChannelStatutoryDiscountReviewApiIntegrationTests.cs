@@ -70,6 +70,13 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             detail.EvidenceReferences.Should().ContainSingle();
             detail.EvidenceReferences[0].ReferenceNumberMasked.Should().Be("SC-****-1234");
             detail.EvidenceReferences[0].StorageReference.Should().Be("evidence-ref-001");
+
+            var pendingShared = await GetSharedReadbackAsync(client, webPay.Decision.StatutoryDiscountDecisionCommandId);
+            pendingShared.SiteId.Should().Be(webPay.Context.SiteId);
+            pendingShared.SiteGroupId.Should().Be(webPay.Context.SiteGroupId);
+            pendingShared.PayableBasisReady.Should().BeFalse();
+            pendingShared.PayableBasisReadinessStatus.Should().Be(StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview);
+            pendingShared.PayableBasisReadinessAction.Should().Be(StatutoryDiscountDecisionRecoveryActions.PollReadback);
         }
         finally
         {
@@ -115,6 +122,15 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             shared.ApplicationRequested.Should().BeFalse();
             shared.ApplicationCommandStatus.Should().Be("NOT_REQUESTED");
             shared.StatutoryDiscountPayableBasisApplicationCommandId.Should().BeNull();
+            shared.SiteId.Should().Be(seeded.Context.SiteId);
+            shared.SiteGroupId.Should().Be(seeded.Context.SiteGroupId);
+            shared.PayableBasisReady.Should().BeFalse();
+            shared.PayableBasisReadinessStatus.Should().Be(expectedResult == "APPROVED"
+                ? StatutoryDiscountPayableBasisReadinessStatuses.DecisionApprovedApplicationNotRequested
+                : StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected);
+            shared.PayableBasisReadinessAction.Should().Be(expectedResult == "APPROVED"
+                ? "SUBMIT_APPLICATION_INTENT"
+                : StatutoryDiscountDecisionRecoveryActions.DoNotRetry);
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(seeded.Decision.StatutoryDiscountDecisionCommandId)).Should().Be(0);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(seeded.Context.ParkingSessionId)).Should().Be(0);
         }

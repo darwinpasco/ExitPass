@@ -286,7 +286,15 @@ public static class StatutoryDiscountDecisionEndpoints
             result.ApplicationRecoveryClassification,
             result.ApplicationRecoveryAction,
             result.OverallResultClassification,
-            result.OneShotComplete);
+            result.OneShotComplete,
+            result.SiteId,
+            result.SiteGroupId,
+            result.VatExclusiveBasisAmountMinorUnits,
+            result.VatAmountMinorUnits,
+            result.VatTreatment,
+            result.PayableBasisReady,
+            result.PayableBasisReadinessStatus,
+            result.PayableBasisReadinessAction);
 
     private static bool TryReadHeaders(
         HttpRequest request,
