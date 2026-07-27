@@ -12,7 +12,8 @@ public sealed record OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
     Guid? OperatorShiftId,
     Guid? OriginalTariffSnapshotId,
     string IdempotencyKey,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    bool AllowProcessingApplicationCompletion = false);
 
 /// <summary>
 /// Result for an access-gated statutory discount payable-basis application.

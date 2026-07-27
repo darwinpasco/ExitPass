@@ -679,6 +679,12 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult<StatutoryDiscountPayableBasisApplicationV1Record?>(null);
 
+        public Task<T> ExecuteWithApplicationLockAsync<T>(
+            StatutoryDiscountPayableBasisApplicationV1Record application,
+            Func<CancellationToken, Task<T>> operation,
+            CancellationToken cancellationToken) =>
+            operation(cancellationToken);
+
         public Task<StatutoryDiscountPayableBasisApplicationV1Record> MarkApplicationProcessingAsync(
             Guid statutoryDiscountPayableBasisApplicationCommandId,
             Guid correlationId,

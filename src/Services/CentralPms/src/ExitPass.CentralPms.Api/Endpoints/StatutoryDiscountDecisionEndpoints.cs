@@ -578,7 +578,9 @@ public static class StatutoryDiscountDecisionEndpoints
         Guid correlationId,
         Dictionary<string, object?>? details = null)
     {
-        var retryable = errorCode is "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" or "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE";
+        var retryable = errorCode is "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS"
+            or "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE"
+            or "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE";
         return new ErrorResponse
         {
             ErrorCode = errorCode,
@@ -603,6 +605,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionClientResultStatuses.NotFound,
             "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED" => StatutoryDiscountDecisionClientResultStatuses.RejectedOrNonApproved,
             "UNSAFE_IDENTIFIER_REJECTED" => StatutoryDiscountDecisionClientResultStatuses.UnsafeIdentityInput,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionClientResultStatuses.TemporarilyUnavailable,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionClientResultStatuses.TemporarilyUnavailable,
             "INVALID_REQUEST" or "UNSUPPORTED_SOURCE_CHANNEL" or "UNSUPPORTED_ENTITLEMENT_TYPE" =>
                 StatutoryDiscountDecisionClientResultStatuses.ValidationFailure,
@@ -617,6 +620,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryClassifications.CorrectRequestRequired,
             "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryClassifications.WaitThenRetryOriginalIdempotencyKey,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
             "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED" => StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
@@ -631,6 +635,7 @@ public static class StatutoryDiscountDecisionEndpoints
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT" => StatutoryDiscountDecisionRecoveryActions.SubmitCorrectedRequest,
             "STATUTORY_DISCOUNT_DECISION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
+            "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE" => StatutoryDiscountDecisionRecoveryActions.WaitAndRetry,
             "STATUTORY_DISCOUNT_DECISION_NOT_FOUND" => StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
             "STATUTORY_DISCOUNT_DECISION_NOT_APPROVED" => StatutoryDiscountDecisionRecoveryActions.DoNotRetry,

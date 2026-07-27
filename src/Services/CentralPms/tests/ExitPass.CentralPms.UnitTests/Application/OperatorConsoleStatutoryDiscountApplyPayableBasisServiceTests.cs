@@ -195,7 +195,37 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
         result.ApplicationAccepted.Should().BeFalse();
         result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT");
         result.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(ApplicationCommandId);
-        await writer.Received(1).ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceCommand>(), Arg.Any<CancellationToken>());
+        await writer.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_WhenCanonicalApplicationInProgress_ReturnsSafeInProgressWithoutWriter()
+    {
+        var writer = Substitute.For<IOperatorConsoleStatutoryDiscountApplyPayableBasisWriter>();
+        var staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
+        staged.GetDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
+            .Returns(ApprovedDecision());
+        staged.GetApplicationByDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
+            .Returns(ApplicationRecord() with
+            {
+                CommandStatus = StatutoryDiscountPayableBasisApplicationV1CommandStates.Processing,
+                SafeErrorCode = "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS"
+            });
+        staged.GetApplicationAsync(ApplicationCommandId, Arg.Any<CancellationToken>())
+            .Returns(ApplicationRecord() with
+            {
+                CommandStatus = StatutoryDiscountPayableBasisApplicationV1CommandStates.Processing,
+                SafeErrorCode = "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS"
+            });
+
+        var sut = CreateSut(AccessResult(allowed: true, []), writer, staged: staged);
+
+        var result = await sut.ApplyAsync(Command(), CancellationToken.None);
+
+        result.ApplicationAccepted.Should().BeFalse();
+        result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_IN_PROGRESS");
+        result.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(ApplicationCommandId);
+        await writer.DidNotReceiveWithAnyArgs().ApplyAsync(default!, default);
     }
 
     /// <summary>
@@ -239,6 +269,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
             staged.GetDecisionAsync(DecisionCommandId, Arg.Any<CancellationToken>())
                 .Returns(ApprovedDecision());
+            staged.GetApplicationAsync(ApplicationCommandId, Arg.Any<CancellationToken>())
+                .Returns(ApplicationRecord());
             staged.CreateOrResolveApplicationAsync(Arg.Any<StatutoryDiscountPayableBasisApplicationV1Command>(), Arg.Any<CancellationToken>())
                 .Returns(new StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>(
                     StatutoryDiscountPayableBasisApplicationV1ResultClassifications.InProgress,
@@ -254,6 +286,8 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
                 .Returns(AppliedApplicationRecord());
         }
 
+        ConfigureApplicationLock(staged);
+
         return new OperatorConsoleStatutoryDiscountApplyPayableBasisService(
             accessService,
             accessWriter,
@@ -261,6 +295,15 @@ public sealed class OperatorConsoleStatutoryDiscountApplyPayableBasisServiceTest
             readService,
             staged);
     }
+
+    private static void ConfigureApplicationLock(IStatutoryDiscountStagedCommandService staged) =>
+        staged.ExecuteWithApplicationLockAsync(
+                Arg.Any<StatutoryDiscountPayableBasisApplicationV1Record>(),
+                Arg.Any<Func<CancellationToken, Task<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult>>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(call =>
+                call.ArgAt<Func<CancellationToken, Task<OperatorConsoleStatutoryDiscountApplyPayableBasisPersistenceResult>>>(1)(
+                    call.ArgAt<CancellationToken>(2)));
 
     private static OperatorConsoleStatutoryDiscountApplyPayableBasisCommand Command(Guid? validationId = null) =>
         new(

@@ -360,13 +360,24 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 expectedStatus: null);
             var operatorApply = ApplyWithOperatorConsoleAsync(operatorClient, context, validationId, expectedStatus: null);
 
-            await Task.WhenAll(serviceApply, aptApply, operatorApply);
+            var serviceResult = await serviceApply;
+            var aptResult = await aptApply;
+            var operatorResult = await operatorApply;
+
+            var readback = await GetSharedReadbackAsync(webPayClient, intake.StatutoryDiscountDecisionCommandId);
+            readback.ApplicationCommandStatus.Should().Be(
+                StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied,
+                "concurrent service-channel and Operator Console application intent must converge instead of leaving status {0}; service result {1}, APT result {2}, operator accepted {3} error {4}",
+                readback.ApplicationCommandStatus,
+                serviceResult.ApplicationCommandStatus,
+                aptResult.ApplicationCommandStatus,
+                operatorResult.ApplicationAccepted,
+                operatorResult.ErrorCode);
 
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.AppliedTariffSnapshotRowCountAsync(context.ParkingSessionId)).Should().Be(1);
 
-            var readback = await GetSharedReadbackAsync(webPayClient, intake.StatutoryDiscountDecisionCommandId);
             readback.ApplicationCommandStatus.Should().Be(StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied);
             readback.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
         }
