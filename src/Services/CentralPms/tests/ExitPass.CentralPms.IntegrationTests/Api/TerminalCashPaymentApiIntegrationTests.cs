@@ -13,6 +13,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// <summary>
 /// Focused API tests for terminal cash-payment command acceptance and durable readback.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class TerminalCashPaymentApiIntegrationTests
 {
     private const string Route = "/v1/terminal-cash-payments";

@@ -1,10 +1,12 @@
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
 {
     [Fact]

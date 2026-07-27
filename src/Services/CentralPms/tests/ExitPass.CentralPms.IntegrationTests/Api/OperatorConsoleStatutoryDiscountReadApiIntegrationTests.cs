@@ -16,6 +16,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// <summary>
 /// Verifies Operator Console statutory discount read endpoints.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class OperatorConsoleStatutoryDiscountReadApiIntegrationTests
 {
     private const string QueueEndpoint = "/v1/ops/operator-console/statutory-discounts/drafts";

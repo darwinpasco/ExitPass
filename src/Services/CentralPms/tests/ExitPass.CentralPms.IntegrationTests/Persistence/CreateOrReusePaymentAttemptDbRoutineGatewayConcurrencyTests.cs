@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Npgsql;
@@ -23,6 +24,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 /// - Concurrent competing idempotency keys must deterministically reject after one create.
 /// - Concurrent matching idempotency keys must resolve to one created attempt and one idempotent reuse.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayConcurrencyTests
 {
     /// <summary>
