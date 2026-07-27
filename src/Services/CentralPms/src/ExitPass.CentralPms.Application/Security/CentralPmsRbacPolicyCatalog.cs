@@ -92,6 +92,10 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "sales-invoice-profile.approve"
             ],
+            ["TerminalCashPayableBasisRead"] =
+            [
+                "terminal-cash.payable-basis.read"
+            ],
 
             ["OperatorConsoleStatutoryDiscountSessionLookup"] =
             [

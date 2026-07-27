@@ -165,6 +165,7 @@ app.MapStatutoryDiscountDecisionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
+app.MapAptPayableBasisEndpoints();
 app.MapTerminalCashPaymentEndpoints();
 app.MapWebPayReceiptPresentationEndpoints();
 
@@ -698,6 +699,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ITerminalCashPaymentRepository>(_ =>
         new TerminalCashPaymentRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashPaymentService, TerminalCashPaymentService>();
+    builder.Services.AddScoped<ITerminalCashPayableBasisEligibilityReader>(_ =>
+        new TerminalCashPayableBasisEligibilityReader(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IAptPayableBasisReadinessService, AptPayableBasisReadinessService>();
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
     builder.Services.AddScoped<IWebPayReceiptPresentationService, WebPayReceiptPresentationService>();
