@@ -9,6 +9,9 @@ export type PaymentIntentRequest = {
   vendorSystemId?: string;
   tariffSnapshotId?: string;
   expectedAmountMinorUnits?: number;
+  expectedCurrency?: string;
+  statutoryDiscountDecisionCommandId?: string;
+  statutoryDiscountPayableBasisApplicationCommandId?: string;
   correlationId?: string;
 };
 
@@ -211,6 +214,63 @@ export type ApiError = {
   siteName?: string | null;
   ticketReference?: string | null;
   plateNumber?: string | null;
+};
+
+export type StatutoryDiscountEntitlementType = "SENIOR_CITIZEN" | "PWD";
+
+export type WebPayStatutoryDiscountDecisionRequest = {
+  requestReference: string;
+  parkingSessionId: string;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  entitlementType: StatutoryDiscountEntitlementType;
+  idDocumentType: string;
+  issuingAuthority: string;
+  expiryDate?: string | null;
+  maskedIdReference: string;
+  evidenceCaptureRequested: boolean;
+  requesterAttestation: boolean;
+  attestationNotes?: string | null;
+  originalTariffSnapshotId?: string | null;
+};
+
+export type WebPayStatutoryDiscountDecisionResponse = {
+  statutoryDiscountDecisionCommandId: string;
+  requestReference: string;
+  statutoryDiscountPayableBasisApplicationCommandId?: string | null;
+  statutoryDiscountValidationId?: string | null;
+  parkingSessionId: string;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  entitlementType: string;
+  decisionCommandStatus: string;
+  decisionResultStatus?: string | null;
+  applicationCommandStatus: string;
+  applicationResultClassification: string;
+  payableBasisReady: boolean;
+  payableBasisReadinessStatus: string;
+  payableBasisReadinessAction?: string | null;
+  originalTariffSnapshotId?: string | null;
+  appliedTariffSnapshotId?: string | null;
+  originalAmountMinorUnits?: number | null;
+  vatExclusiveBasisAmountMinorUnits?: number | null;
+  vatAmountMinorUnits?: number | null;
+  vatTreatment?: string | null;
+  statutoryDiscountAmountMinorUnits?: number | null;
+  finalPayableAmountMinorUnits?: number | null;
+  currency?: string | null;
+  retryable: boolean;
+  recoveryClassification: string;
+  recoveryAction?: string | null;
+  safeErrorCode?: string | null;
+  overallResultClassification: string;
+  oneShotComplete: boolean;
+  correlationId: string;
+  createdAt: string;
+  decidedAt?: string | null;
+  appliedAt?: string | null;
 };
 
 export type ActivePaymentAttemptState = {

@@ -16,7 +16,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -285,7 +287,8 @@ input {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   min-height: 50px;
   width: 100%;
   border: 1px solid #d0d5dd;
@@ -294,6 +297,18 @@ input {
   color: #101828;
   background: #ffffff;
   font: inherit;
+}
+
+.field textarea {
+  min-height: 92px;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.field small {
+  color: #667085;
+  font-weight: 500;
+  line-height: 1.35;
 }
 
 .method-section {
@@ -558,6 +573,122 @@ input {
 .secondary-button:focus-visible {
   outline: 3px solid rgba(19, 167, 107, 0.28);
   outline-offset: 2px;
+}
+
+.statutory-discount-panel {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 16px;
+  padding: 12px;
+  border: 1px solid #b2ddff;
+  border-radius: 8px;
+  background: #f5fbff;
+}
+
+.statutory-discount-panel h2,
+.statutory-discount-panel h3,
+.statutory-copy {
+  margin: 0;
+}
+
+.statutory-copy {
+  color: #344054;
+  line-height: 1.45;
+}
+
+.statutory-form {
+  display: grid;
+  gap: 12px;
+}
+
+.statutory-form fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.statutory-form legend {
+  margin-bottom: 6px;
+  color: #0b1f3a;
+  font-weight: 800;
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #344054;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.checkbox-field input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+}
+
+.statutory-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.statutory-status {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.statutory-status.is-pending {
+  border-color: #fedf89;
+  background: #fffbeb;
+}
+
+.statutory-status.is-success {
+  border-color: #abefc6;
+  background: #f0fdf4;
+}
+
+.statutory-status.is-warning {
+  border-color: #b2ddff;
+  background: #eff8ff;
+}
+
+.statutory-status.is-error {
+  border-color: #fecdca;
+  background: #fff4f2;
+}
+
+.statutory-status dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.statutory-status dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(16, 24, 40, 0.08);
+  padding-bottom: 8px;
+}
+
+.statutory-status dt {
+  color: #667085;
+}
+
+.statutory-status dd {
+  margin: 0;
+  color: #101828;
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .exit-instruction-panel {
