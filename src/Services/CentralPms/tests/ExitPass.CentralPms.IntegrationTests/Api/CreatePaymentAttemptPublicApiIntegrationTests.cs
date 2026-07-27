@@ -23,6 +23,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// - API shape matches the currently published public contract
 /// - Required request headers are present at the HTTP boundary
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class CreatePaymentAttemptPublicApiIntegrationTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;

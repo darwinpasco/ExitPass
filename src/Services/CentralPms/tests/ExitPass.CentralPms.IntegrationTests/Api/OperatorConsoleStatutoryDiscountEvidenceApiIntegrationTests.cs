@@ -14,6 +14,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// <summary>
 /// Verifies Operator Console statutory discount evidence metadata endpoints.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class OperatorConsoleStatutoryDiscountEvidenceApiIntegrationTests
 {
     private static readonly Guid DraftId = Guid.Parse("67000000-0000-0000-0000-000000000001");

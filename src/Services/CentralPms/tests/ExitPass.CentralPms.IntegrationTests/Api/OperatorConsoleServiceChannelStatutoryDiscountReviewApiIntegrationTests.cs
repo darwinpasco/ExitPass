@@ -14,6 +14,7 @@ using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
 
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiIntegrationTests
 {
     private const string QueueEndpoint = "/v1/ops/operator-console/statutory-discounts/reviews/pending";

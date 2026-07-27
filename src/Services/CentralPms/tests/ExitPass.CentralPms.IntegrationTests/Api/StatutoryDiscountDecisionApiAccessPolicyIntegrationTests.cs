@@ -14,6 +14,7 @@ using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
 
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
 {
     private static readonly Guid CommandId = Guid.Parse("7d000000-0000-0000-0000-000000000001");

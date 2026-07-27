@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Infrastructure.Persistence.Routines;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Xunit;
@@ -22,6 +23,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 /// - Same idempotency key reuses the authoritative payment attempt.
 /// - Different idempotency key is rejected while an active attempt exists for the same session.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class CreateOrReusePaymentAttemptDbRoutineGatewayTests
 {
     /// <summary>

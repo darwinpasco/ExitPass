@@ -17,6 +17,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// <summary>
 /// Verifies least-privilege RBAC contracts for Operator Console statutory discount endpoints.
 /// </summary>
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
 {
     private const string SessionLookupEndpoint = "/v1/ops/operator-console/sessions/lookup";

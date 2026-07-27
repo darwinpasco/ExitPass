@@ -44,14 +44,24 @@ public static class CentralPmsIntegrationTestConfiguration
     public const string MainDatabaseConfigEnvVar = "ConnectionStrings__MainDatabase";
 
     /// <summary>
+    /// Ordered Central PMS database connection string environment variables used by integration tests.
+    /// </summary>
+    public static readonly IReadOnlyList<string> DatabaseConnectionStringEnvVars =
+    [
+        MainDbConnectionStringEnvVar,
+        IntegrationDbConnectionStringEnvVar,
+        TestDbConnectionStringEnvVar,
+        MainDatabaseConfigEnvVar
+    ];
+
+    /// <summary>
     /// Returns the effective Central PMS integration-test database connection string.
     /// </summary>
     public static string GetDatabaseConnectionString()
     {
-        return Environment.GetEnvironmentVariable(MainDbConnectionStringEnvVar)
-            ?? Environment.GetEnvironmentVariable(IntegrationDbConnectionStringEnvVar)
-            ?? Environment.GetEnvironmentVariable(TestDbConnectionStringEnvVar)
-            ?? Environment.GetEnvironmentVariable(MainDatabaseConfigEnvVar)
+        return DatabaseConnectionStringEnvVars
+            .Select(Environment.GetEnvironmentVariable)
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
             ?? PreferredLocalDockerConnectionString;
     }
 

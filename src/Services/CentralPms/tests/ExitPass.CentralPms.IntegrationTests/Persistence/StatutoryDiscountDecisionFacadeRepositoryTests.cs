@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Infrastructure.StatutoryDiscounts;
+using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Npgsql;
@@ -7,6 +8,7 @@ using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class StatutoryDiscountDecisionFacadeRepositoryTests
 {
     private static readonly SemaphoreSlim PatchLock = new(1, 1);

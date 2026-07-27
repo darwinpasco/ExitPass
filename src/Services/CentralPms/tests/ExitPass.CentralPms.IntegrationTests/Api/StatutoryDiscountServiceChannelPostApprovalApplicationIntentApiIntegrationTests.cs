@@ -390,7 +390,9 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         }
         else
         {
-            response.StatusCode.Should().BeOneOf(HttpStatusCode.Created, HttpStatusCode.OK, HttpStatusCode.Conflict);
+            response.StatusCode.Should().BeOneOf(
+                [HttpStatusCode.Created, HttpStatusCode.OK, HttpStatusCode.Conflict],
+                await response.Content.ReadAsStringAsync());
         }
 
         if (response.StatusCode == HttpStatusCode.Conflict)

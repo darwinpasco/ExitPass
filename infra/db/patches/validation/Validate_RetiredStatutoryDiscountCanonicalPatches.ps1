@@ -11,6 +11,7 @@ $repoRoot = Resolve-Path (Join-Path $patchRoot "..\..\..")
 $canonicalGeneratedSql = Join-Path $CanonicalDbRepo "build\generated\exitpass-full-object.generated.sql"
 $canonicalValidationSql = Join-Path $CanonicalDbRepo "scripts\validation\Validate-V13CentralPmsAlignment.sql"
 $retirementManifest = Join-Path $patchRoot "ExitPass_AppLocal_Db_Patch_Retirement_Manifest_v1.0.md"
+$statutoryFixture = Join-Path $repoRoot "src\Services\CentralPms\tests\ExitPass.CentralPms.IntegrationTests\Shared\StatutoryDiscountCanonicalDatabaseFixture.cs"
 
 $retiredPatches = @(
     "ExitPass_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql",
@@ -85,6 +86,10 @@ if ($fixtureReferences.Count -gt 0) {
     throw "Active statutory test fixtures still reference promoted retired patches: $($fixtureReferences -join '; ')"
 }
 
+if (-not (Test-Path $statutoryFixture -PathType Leaf)) {
+    throw "Statutory canonical disposable database fixture not found: $statutoryFixture"
+}
+
 if (-not (Test-Path $canonicalGeneratedSql -PathType Leaf)) {
     throw "Canonical generated SQL not found: $canonicalGeneratedSql"
 }
@@ -100,6 +105,7 @@ if (-not (Test-Path $retirementManifest -PathType Leaf)) {
 $canonicalSql = Get-Content -Path $canonicalGeneratedSql -Raw
 $canonicalValidation = Get-Content -Path $canonicalValidationSql -Raw
 $manifest = Get-Content -Path $retirementManifest -Raw
+$fixture = Get-Content -Path $statutoryFixture -Raw
 
 $requiredCanonicalSqlPatterns = @(
     'CREATE TABLE "discounts"."statutory_discount_decision_commands"',
@@ -144,8 +150,35 @@ if ($missingManifestEntries.Count -gt 0) {
     throw "Retirement manifest is missing statutory retirement mapping entries: $($missingManifestEntries -join ', ')"
 }
 
+$requiredFixturePatterns = @(
+    "exitpass-full-object.generated.sql",
+    "Validate-V13CentralPmsAlignment.sql",
+    "EXITPASS_STATUTORY_CANONICAL_DB_REPO",
+    "EXITPASS_STATUTORY_DB_FIXTURE_ADMIN_CONNECTION",
+    "exitpass_statutory_fixture_",
+    "exitpass_v12_dev",
+    "CreateDatabaseAsync",
+    "DropDatabaseAsync",
+    "StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync"
+)
+
+$missingFixturePatterns = $requiredFixturePatterns | Where-Object {
+    $fixture -notlike "*$_*"
+}
+if ($missingFixturePatterns.Count -gt 0) {
+    throw "Statutory canonical disposable fixture is missing required canonical setup or protection patterns: $($missingFixturePatterns -join ', ')"
+}
+
+$retiredFixtureExecutionReferences = $retiredPatches | Where-Object {
+    $fixture -like "*$_*"
+}
+if ($retiredFixtureExecutionReferences.Count -gt 0) {
+    throw "Statutory canonical disposable fixture still references retired statutory patches: $($retiredFixtureExecutionReferences -join ', ')"
+}
+
 Write-Host "Retired statutory discount canonical patch validation passed."
 Write-Host "Active top-level patch inventory excludes: $($retiredPatches -join ', ')"
 Write-Host "Retired historical patch files are retained under: $retiredRoot"
 Write-Host "Retired validation files are retained under: $retiredValidationRoot"
 Write-Host "Canonical authority verified: $canonicalGeneratedSql"
+Write-Host "Canonical disposable fixture verified: $statutoryFixture"
