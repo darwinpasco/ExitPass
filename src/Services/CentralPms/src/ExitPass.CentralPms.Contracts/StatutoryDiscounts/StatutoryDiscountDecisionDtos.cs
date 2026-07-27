@@ -47,6 +47,14 @@ public sealed record StatutoryDiscountEvidenceReferenceRequest(
 /// <summary>
 /// Canonical Central PMS statutory-discount result and readback response.
 /// </summary>
+/// <param name="SiteId">Durable site identifier linked to the reviewed service-channel decision, when available.</param>
+/// <param name="SiteGroupId">Durable site-group identifier linked to the reviewed service-channel decision, when available.</param>
+/// <param name="VatExclusiveBasisAmountMinorUnits">Authoritative VAT-exclusive statutory-discount basis in minor units, when available.</param>
+/// <param name="VatAmountMinorUnits">Authoritative VAT amount in minor units, when available.</param>
+/// <param name="VatTreatment">Authoritative VAT treatment classification for the statutory-discount basis, when available.</param>
+/// <param name="PayableBasisReady">Indicates whether the statutory-discount payable basis is durably applied and ready for payment-readiness checks.</param>
+/// <param name="PayableBasisReadinessStatus">Channel-safe payable-basis readiness status derived from durable decision and application state.</param>
+/// <param name="PayableBasisReadinessAction">Channel-safe next action for the current payable-basis readiness status, when applicable.</param>
 public sealed record StatutoryDiscountDecisionResponse(
     Guid StatutoryDiscountDecisionCommandId,
     Guid RequestReference,
@@ -95,4 +103,12 @@ public sealed record StatutoryDiscountDecisionResponse(
     string ApplicationRecoveryClassification = "NONE",
     string? ApplicationRecoveryAction = null,
     string OverallResultClassification = "ACCEPTED",
-    bool OneShotComplete = true);
+    bool OneShotComplete = true,
+    Guid? SiteId = null,
+    Guid? SiteGroupId = null,
+    long? VatExclusiveBasisAmountMinorUnits = null,
+    long? VatAmountMinorUnits = null,
+    string? VatTreatment = null,
+    bool PayableBasisReady = false,
+    string PayableBasisReadinessStatus = "NOT_READY",
+    string? PayableBasisReadinessAction = null);

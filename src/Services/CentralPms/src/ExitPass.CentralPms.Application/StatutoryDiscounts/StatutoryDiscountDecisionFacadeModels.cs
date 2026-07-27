@@ -63,6 +63,22 @@ public static class StatutoryDiscountApplicationStageStatuses
 }
 
 /// <summary>
+/// Stable channel-safe payable-basis readiness values for shared statutory-discount readback.
+/// </summary>
+public static class StatutoryDiscountPayableBasisReadinessStatuses
+{
+    public const string NotReady = "NOT_READY";
+    public const string AwaitingReview = "AWAITING_REVIEW";
+    public const string DecisionApprovedApplicationNotRequested = "DECISION_APPROVED_APPLICATION_NOT_REQUESTED";
+    public const string ApplicationProcessing = "APPLICATION_PROCESSING";
+    public const string PayableBasisReady = "PAYABLE_BASIS_READY";
+    public const string RetryableFailure = "RETRYABLE_FAILURE";
+    public const string TerminalFailure = "TERMINAL_FAILURE";
+    public const string DecisionRejected = "DECISION_REJECTED";
+    public const string RequiredFactsUnavailable = "REQUIRED_FACTS_UNAVAILABLE";
+}
+
+/// <summary>
 /// Stable client-result vocabulary for shared statutory-discount decision clients.
 /// </summary>
 public static class StatutoryDiscountDecisionClientResultStatuses
@@ -256,7 +272,15 @@ public sealed record StatutoryDiscountDecisionResult(
     string ApplicationRecoveryClassification = StatutoryDiscountDecisionRecoveryClassifications.None,
     string? ApplicationRecoveryAction = null,
     string OverallResultClassification = StatutoryDiscountOneShotResultClassifications.Accepted,
-    bool OneShotComplete = true);
+    bool OneShotComplete = true,
+    Guid? SiteId = null,
+    Guid? SiteGroupId = null,
+    long? VatExclusiveBasisAmountMinorUnits = null,
+    long? VatAmountMinorUnits = null,
+    string? VatTreatment = null,
+    bool PayableBasisReady = false,
+    string PayableBasisReadinessStatus = StatutoryDiscountPayableBasisReadinessStatuses.NotReady,
+    string? PayableBasisReadinessAction = null);
 
 /// <summary>
 /// Controlled rejection from the shared statutory-discount facade.
@@ -356,6 +380,14 @@ internal static class StatutoryDiscountDecisionMappings
         Guid correlationId)
     {
         var applicationApplied = application?.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied;
+        var vatExclusiveBasisAmountMinorUnits =
+            application?.ApprovedVatExclusiveAmountMinorUnits ?? decision.VatExclusiveAmountMinorUnits;
+        var vatAmountMinorUnits = application?.ApprovedVatAmountMinorUnits ?? decision.VatAmountMinorUnits;
+        var discountAmountMinorUnits =
+            application?.ApprovedDiscountAmountMinorUnits ?? decision.StatutoryDiscountAmountMinorUnits;
+        var finalPayableAmountMinorUnits =
+            application?.ApprovedFinalPayableAmountMinorUnits ?? decision.NetPayableAmountMinorUnits;
+        var currency = application?.Currency ?? decision.Currency;
         var decisionStatus = decision.DecisionResultStatus switch
         {
             StatutoryDiscountDecisionV2ResultStates.Approved when applicationApplied => "APPLIED_PAYABLE_BASIS",
@@ -389,9 +421,9 @@ internal static class StatutoryDiscountDecisionMappings
             decision.FallbackPolicyReferenceId,
             decision.LocalOrdinanceApplied,
             decision.GrossAmountMinorUnits,
-            decision.StatutoryDiscountAmountMinorUnits,
-            decision.NetPayableAmountMinorUnits,
-            decision.Currency,
+            discountAmountMinorUnits,
+            finalPayableAmountMinorUnits,
+            currency,
             decision.EvidenceRequired,
             decision.EvidenceRecorded,
             decision.ReasonCode,
@@ -418,7 +450,44 @@ internal static class StatutoryDiscountDecisionMappings
             application?.RecoveryClassification ?? StatutoryDiscountDecisionRecoveryClassifications.None,
             ResolveApplicationRecoveryAction(application),
             overallResultClassification,
-            IsOneShotComplete(decision, application, applicationRequested));
+            IsOneShotComplete(decision, application, applicationRequested),
+            SiteId: null,
+            SiteGroupId: null,
+            VatExclusiveBasisAmountMinorUnits: vatExclusiveBasisAmountMinorUnits,
+            VatAmountMinorUnits: vatAmountMinorUnits,
+            VatTreatment: ResolveVatTreatment(vatExclusiveBasisAmountMinorUnits, vatAmountMinorUnits),
+            PayableBasisReady: ResolvePayableBasisReady(decision, application, applicationRequested, finalPayableAmountMinorUnits, currency),
+            PayableBasisReadinessStatus:
+                ResolvePayableBasisReadinessStatus(decision, application, applicationRequested, finalPayableAmountMinorUnits, currency),
+            PayableBasisReadinessAction: ResolvePayableBasisReadinessAction(decision, application, applicationRequested));
+    }
+
+    public static StatutoryDiscountDecisionResult WithChannelSafeReviewFacts(
+        this StatutoryDiscountDecisionResult result,
+        StatutoryDiscountServiceChannelReviewDetail? review)
+    {
+        if (review is null)
+        {
+            return result;
+        }
+
+        var enriched = result with
+        {
+            SiteId = review.SiteId ?? result.SiteId,
+            SiteGroupId = review.SiteGroupId ?? result.SiteGroupId,
+            VatExclusiveBasisAmountMinorUnits =
+                result.VatExclusiveBasisAmountMinorUnits ?? review.VatExclusiveAmountMinorUnits,
+            VatAmountMinorUnits = result.VatAmountMinorUnits ?? review.VatAmountMinorUnits
+        };
+
+        return enriched with
+        {
+            VatTreatment = enriched.VatTreatment ??
+                ResolveVatTreatment(enriched.VatExclusiveBasisAmountMinorUnits, enriched.VatAmountMinorUnits),
+            PayableBasisReady = ResolvePayableBasisReady(enriched),
+            PayableBasisReadinessStatus = ResolvePayableBasisReadinessStatus(enriched),
+            PayableBasisReadinessAction = ResolvePayableBasisReadinessAction(enriched)
+        };
     }
 
     public static StatutoryDiscountDecisionResult ToResult(this StatutoryDiscountDecisionCommandRecord record) =>
@@ -585,6 +654,167 @@ internal static class StatutoryDiscountDecisionMappings
 
         return application?.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied
             or StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedNonRetryable;
+    }
+
+    private static string? ResolveVatTreatment(long? vatExclusiveBasisAmountMinorUnits, long? vatAmountMinorUnits) =>
+        vatExclusiveBasisAmountMinorUnits.HasValue || vatAmountMinorUnits.HasValue
+            ? "VAT_EXCLUSIVE"
+            : null;
+
+    private static bool ResolvePayableBasisReady(
+        StatutoryDiscountDecisionV2Record decision,
+        StatutoryDiscountPayableBasisApplicationV1Record? application,
+        bool applicationRequested,
+        long? finalPayableAmountMinorUnits,
+        string? currency) =>
+        decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Completed &&
+        decision.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Approved &&
+        applicationRequested &&
+        application?.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied &&
+        application.AppliedTariffSnapshotId.HasValue &&
+        finalPayableAmountMinorUnits.HasValue &&
+        !string.IsNullOrWhiteSpace(currency);
+
+    private static bool ResolvePayableBasisReady(StatutoryDiscountDecisionResult result) =>
+        string.Equals(result.DecisionCommandStatus, StatutoryDiscountDecisionCommandStatuses.Completed, StringComparison.Ordinal) &&
+        string.Equals(result.DecisionResultStatus, StatutoryDiscountDecisionV2ResultStates.Approved, StringComparison.Ordinal) &&
+        result.ApplicationRequested &&
+        string.Equals(result.ApplicationCommandStatus, StatutoryDiscountApplicationStageStatuses.Applied, StringComparison.Ordinal) &&
+        result.AppliedTariffSnapshotId.HasValue &&
+        result.NetPayableAmountMinorUnits.HasValue &&
+        !string.IsNullOrWhiteSpace(result.Currency);
+
+    private static string ResolvePayableBasisReadinessStatus(
+        StatutoryDiscountDecisionV2Record decision,
+        StatutoryDiscountPayableBasisApplicationV1Record? application,
+        bool applicationRequested,
+        long? finalPayableAmountMinorUnits,
+        string? currency)
+    {
+        if (decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.AwaitingReview)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview;
+        }
+
+        if (decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.FailedRetryable)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.RetryableFailure;
+        }
+
+        if (decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.FailedNonRetryable)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.TerminalFailure;
+        }
+
+        if (decision.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Rejected)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected;
+        }
+
+        if (decision.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Approved && !applicationRequested)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.DecisionApprovedApplicationNotRequested;
+        }
+
+        if (application is null)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.NotReady;
+        }
+
+        if (application.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied)
+        {
+            return application.AppliedTariffSnapshotId.HasValue &&
+                finalPayableAmountMinorUnits.HasValue &&
+                !string.IsNullOrWhiteSpace(currency)
+                    ? StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady
+                    : StatutoryDiscountPayableBasisReadinessStatuses.RequiredFactsUnavailable;
+        }
+
+        if (application.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedRetryable)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.RetryableFailure;
+        }
+
+        if (application.CommandStatus is StatutoryDiscountPayableBasisApplicationV1CommandStates.FailedNonRetryable)
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.TerminalFailure;
+        }
+
+        return StatutoryDiscountPayableBasisReadinessStatuses.ApplicationProcessing;
+    }
+
+    private static string ResolvePayableBasisReadinessStatus(StatutoryDiscountDecisionResult result)
+    {
+        if (ResolvePayableBasisReady(result))
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady;
+        }
+
+        if (string.Equals(result.DecisionCommandStatus, StatutoryDiscountDecisionCommandStatuses.AwaitingReview, StringComparison.Ordinal))
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview;
+        }
+
+        if (string.Equals(result.DecisionResultStatus, StatutoryDiscountDecisionV2ResultStates.Rejected, StringComparison.Ordinal))
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected;
+        }
+
+        if (string.Equals(result.ApplicationCommandStatus, StatutoryDiscountApplicationStageStatuses.Applied, StringComparison.Ordinal))
+        {
+            return StatutoryDiscountPayableBasisReadinessStatuses.RequiredFactsUnavailable;
+        }
+
+        return result.PayableBasisReadinessStatus;
+    }
+
+    private static string? ResolvePayableBasisReadinessAction(
+        StatutoryDiscountDecisionV2Record decision,
+        StatutoryDiscountPayableBasisApplicationV1Record? application,
+        bool applicationRequested)
+    {
+        if (decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.AwaitingReview)
+        {
+            return StatutoryDiscountDecisionRecoveryActions.PollReadback;
+        }
+
+        if (decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.FailedRetryable)
+        {
+            return ResolveDecisionRecoveryAction(decision);
+        }
+
+        if (decision.CommandStatus is StatutoryDiscountDecisionV2CommandStates.FailedNonRetryable ||
+            decision.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Rejected)
+        {
+            return StatutoryDiscountDecisionRecoveryActions.DoNotRetry;
+        }
+
+        if (decision.DecisionResultStatus is StatutoryDiscountDecisionV2ResultStates.Approved && !applicationRequested)
+        {
+            return "SUBMIT_APPLICATION_INTENT";
+        }
+
+        return ResolveApplicationRecoveryAction(application);
+    }
+
+    private static string? ResolvePayableBasisReadinessAction(StatutoryDiscountDecisionResult result)
+    {
+        if (ResolvePayableBasisReady(result))
+        {
+            return null;
+        }
+
+        if (string.Equals(result.DecisionCommandStatus, StatutoryDiscountDecisionCommandStatuses.AwaitingReview, StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionRecoveryActions.PollReadback;
+        }
+
+        if (string.Equals(result.DecisionResultStatus, StatutoryDiscountDecisionV2ResultStates.Rejected, StringComparison.Ordinal))
+        {
+            return StatutoryDiscountDecisionRecoveryActions.DoNotRetry;
+        }
+
+        return result.PayableBasisReadinessAction;
     }
 
     private static string ResolveLegacyCommandStatus(StatutoryDiscountDecisionCommandRecord record) =>
