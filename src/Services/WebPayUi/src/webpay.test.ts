@@ -3,7 +3,9 @@ import {
   buildPaymentIntentBody,
   buildParkingSessionResolveBody,
   buildStatutoryDiscountDecisionBody,
+  applyStatutoryDiscountPayableBasis,
   createPaymentIntent,
+  createStatutoryApplicationIdempotencyKey,
   extractPaymentIntentContext,
   getResumeUrl,
   normalizeTicketReference,
@@ -136,6 +138,189 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/statutory-discounts/decisions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe("GET");
     expect(result.payableBasisReadinessStatus).toBe("AWAITING_REVIEW");
+  });
+
+  it("WebPay_WhenApplicationIntentKeyCreated_UsesCanonicalDecisionIdentifier", () => {
+    expect(createStatutoryApplicationIdempotencyKey(" aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa ")).toBe(
+      "webpay-statutory-discount-application:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    );
+
+    expect(() => createStatutoryApplicationIdempotencyKey(" ")).toThrow(/request reference/i);
+  });
+
+  it("WebPay_WhenApprovedDiscountApplied_UsesWebPayProxyRouteWithOriginalKeyAndSafeRequest", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () =>
+        statutoryDecisionResponse({
+          decisionCommandStatus: "COMPLETED",
+          decisionResultStatus: "APPROVED",
+          applicationCommandStatus: "PROCESSING",
+          applicationResultClassification: "PROCESSING",
+          payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+          payableBasisReadinessAction: "POLL_READBACK"
+        })
+    });
+
+    const result = await applyStatutoryDiscountPayableBasis(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      statutoryDecisionRequest(),
+      "statutory-application:webpay:original",
+      "77777777-7777-7777-7777-777777777777",
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/v1/webpay/statutory-discounts/decisions/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/apply-payable-basis"
+    );
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.method).toBe("POST");
+    const headers = request.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toBe("statutory-application:webpay:original");
+    expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
+    const body = JSON.parse(request.body as string);
+    expect(body.entitlementType).toBe("SENIOR_CITIZEN");
+    expect(body.requestReference).toBe("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(body).not.toHaveProperty("sourceChannel");
+    expect(body).not.toHaveProperty("reviewerUserId");
+    expect(body).not.toHaveProperty("reviewerDecision");
+    expect(body).not.toHaveProperty("reviewerAttestation");
+    expect(body).not.toHaveProperty("operatorDeviceBindingId");
+    expect(body).not.toHaveProperty("operatorShiftId");
+    expect(body).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
+    expect(body).not.toHaveProperty("vatAmountMinorUnits");
+    expect(body).not.toHaveProperty("finalPayableAmountMinorUnits");
+    expect(body).not.toHaveProperty("appliedTariffSnapshotId");
+    expect(result.applicationCommandStatus).toBe("PROCESSING");
+  });
+
+  it("WebPay_WhenApplicationIntentInputIsMissing_RejectsBeforeApiCall", async () => {
+    const fetchMock = vi.fn();
+
+    await expect(
+      applyStatutoryDiscountPayableBasis(
+        " ",
+        statutoryDecisionRequest(),
+        "statutory-application:webpay:original",
+        undefined,
+        fetchMock as never
+      )
+    ).rejects.toThrow(/request reference/i);
+    await expect(
+      applyStatutoryDiscountPayableBasis(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        statutoryDecisionRequest(),
+        " ",
+        undefined,
+        fetchMock as never
+      )
+    ).rejects.toThrow(/request key/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "processing",
+      statutoryDecisionResponse({
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "PROCESSING",
+        applicationResultClassification: "PROCESSING",
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "POLL_READBACK"
+      }),
+      "APPLICATION_PROCESSING"
+    ],
+    [
+      "applied",
+      statutoryDecisionResponse({
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        finalPayableAmountMinorUnits: 10000,
+        currency: "PHP"
+      }),
+      "READY"
+    ],
+    [
+      "retryable",
+      statutoryDecisionResponse({
+        retryable: true,
+        safeErrorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY",
+        recoveryAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY"
+      }),
+      "APPLICATION_PROCESSING"
+    ],
+    [
+      "semantic conflict",
+      statutoryDecisionResponse({
+        safeErrorCode: "STATUTORY_DISCOUNT_APPLICATION_SEMANTIC_CONFLICT",
+        payableBasisReadinessStatus: "APPLICATION_SEMANTIC_CONFLICT",
+        payableBasisReadinessAction: "DO_NOT_RETRY",
+        overallResultClassification: "TERMINAL_FAILURE"
+      }),
+      "APPLICATION_SEMANTIC_CONFLICT"
+    ],
+    [
+      "terminal",
+      statutoryDecisionResponse({
+        safeErrorCode: "STATUTORY_DISCOUNT_APPLICATION_FAILED",
+        payableBasisReadinessStatus: "FAILED",
+        payableBasisReadinessAction: "DO_NOT_RETRY",
+        overallResultClassification: "TERMINAL_FAILURE"
+      }),
+      "FAILED"
+    ]
+  ])("WebPay_WhenApplicationIntentReturns%s_MapsSafeResponse", async (_caseName, payload, expectedStatus) => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => payload
+    });
+
+    const result = await applyStatutoryDiscountPayableBasis(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      statutoryDecisionRequest(),
+      "statutory-application:webpay:original",
+      undefined,
+      fetchMock as never
+    );
+
+    expect(result.payableBasisReadinessStatus).toBe(expectedStatus);
+  });
+
+  it("WebPay_WhenApplicationIntentFails_DoesNotExposeRawDownstreamBody", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        errorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+        message: "http://central-pms.internal stack trace raw body",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      applyStatutoryDiscountPayableBasis(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        statutoryDecisionRequest(),
+        "statutory-application:webpay:original",
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+      name: "StatutoryDiscountDecisionError",
+      message: "Statutory discount status is temporarily unavailable. Refresh status shortly.",
+      retryable: true
+    } satisfies Partial<StatutoryDiscountDecisionError>);
   });
 
   it("WebPay_WhenStatutoryRequestIsBuilt_RejectsUnsafeFullIdAndUnsupportedFields", () => {

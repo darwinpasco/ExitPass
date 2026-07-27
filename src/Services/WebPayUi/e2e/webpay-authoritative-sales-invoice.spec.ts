@@ -13,6 +13,7 @@ type FixtureState = {
   requestLog: Array<{ method: string; path: string; headers: Record<string, string | undefined>; body: unknown }>;
   receiptAttempts: Record<string, number>;
   statutoryReadAttempts: Record<string, number>;
+  statutoryApplyAttempts: Record<string, number>;
 };
 
 const consoleMessagesByTest = new Map<string, string[]>();
@@ -214,6 +215,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
 
     await expect(page.getByRole("heading", { name: /entitlement approved/i })).toBeVisible();
     await expect(page.getByText(/Discount application is pending/i).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /apply approved discount/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
 
     const state = await getFixtureState();
@@ -229,8 +231,8 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
 
     await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
     await submitStatutoryRequest(page, "WEBPAY-STAT-RETRYABLE", "Senior Citizen", "SC-****-1234");
-    await expect(page.getByRole("heading", { name: /discount application processing|status temporarily unavailable/i })).toBeVisible();
-    await expect(page.getByText(/still being applied|Refresh status shortly/i).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: /discount application temporarily unavailable/i })).toBeVisible();
+    await expect(page.getByText(/Retry the same application request/i).first()).toBeVisible();
 
     await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
     await submitStatutoryRequest(page, "WEBPAY-STAT-TERMINAL", "Senior Citizen", "SC-****-1234");
@@ -269,6 +271,99 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await expect(page.getByRole("alert")).toContainText(/masked ID reference/i);
     const state = await getFixtureState();
     expect(state.requestLog.some((request) => request.path.includes("/statutory-discounts/decisions"))).toBe(false);
+  });
+});
+
+test.describe("WebPay statutory discount application-intent browser smoke", () => {
+  test("approved decision displays application action without posting until clicked", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-PROCESSING", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByRole("heading", { name: /entitlement approved/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /apply approved discount/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    let state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
+
+    await page.getByRole("button", { name: /apply approved discount/i }).click();
+
+    await expect(page.getByRole("heading", { name: /discount application processing/i })).toBeVisible();
+    state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"))).toHaveLength(1);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/payment-intents"))).toHaveLength(0);
+    expect((state.statutoryApplyAttempts["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"] ?? 0)).toBe(1);
+    await expectApiBoundary(apiRequests);
+  });
+
+  test("application polling reaches applied readback and displays authoritative amounts", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-READY", "Senior Citizen", "SC-****-1234");
+    await page.getByRole("button", { name: /apply approved discount/i }).click();
+
+    await expect(page.getByRole("heading", { name: /statutory discount applied/i })).toBeVisible();
+    await expect(page.getByText("PHP 129.00").first()).toBeVisible();
+    await expect(page.getByText("PHP 92.14")).toBeVisible();
+    await expect(page.getByText("PHP 11.06")).toBeVisible();
+    await expect(page.getByText("-PHP 25.80")).toBeVisible();
+    await expect(page.getByText("PHP 103.20")).toBeVisible();
+    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"))).toHaveLength(1);
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+  });
+
+  test("temporary application unavailability retries deliberately with the original application key", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-RETRYABLE", "Senior Citizen", "SC-****-1234");
+    await page.getByRole("button", { name: /apply approved discount/i }).click();
+
+    await expect(page.getByRole("heading", { name: /discount application temporarily unavailable/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /retry discount application/i })).toBeVisible();
+
+    let state = await getFixtureState();
+    const firstApply = state.requestLog.find((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"));
+    const originalKey = firstApply?.headers["idempotency-key"] ?? firstApply?.headers["Idempotency-Key"];
+    await page.getByRole("button", { name: /retry discount application/i }).click();
+
+    await expect(page.getByRole("heading", { name: /statutory discount applied/i })).toBeVisible();
+    state = await getFixtureState();
+    const applyRequests = state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"));
+    expect(applyRequests).toHaveLength(2);
+    const retryKey = applyRequests[1].headers["idempotency-key"] ?? applyRequests[1].headers["Idempotency-Key"];
+    expect(retryKey).toBe(originalKey);
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+  });
+
+  test("semantic conflict and terminal application outcomes stop safely", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-CONFLICT", "Senior Citizen", "SC-****-1234");
+    await page.getByRole("button", { name: /apply approved discount/i }).click();
+    await expect(page.getByRole("heading", { name: /statutory discount conflict/i })).toBeVisible();
+    await expect(page.getByText(/canonical decision/i).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+
+    await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-TERMINAL", "Senior Citizen", "SC-****-1234");
+    await page.getByRole("button", { name: /apply approved discount/i }).click();
+    await expect(page.getByRole("heading", { name: /statutory discount unavailable/i })).toBeVisible();
+    await expect(page.getByText(/could not be completed/i).first()).toBeVisible();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
+  });
+
+  test("pending and rejected decisions never expose application intent action", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-SC", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /apply approved discount/i })).toHaveCount(0);
+
+    await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
+    await submitStatutoryRequest(page, "WEBPAY-STAT-REJECTED", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /entitlement not approved/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /apply approved discount/i })).toHaveCount(0);
+
+    const state = await getFixtureState();
+    expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
+    expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
   });
 });
 

@@ -17,6 +17,7 @@ const paymentAttemptIds = {
 let requestLog = [];
 let receiptAttempts = {};
 let statutoryReadAttempts = {};
+let statutoryApplyAttempts = {};
 let statutoryScenarioByDecisionId = {};
 const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -33,6 +34,7 @@ function resetState() {
   requestLog = [];
   receiptAttempts = {};
   statutoryReadAttempts = {};
+  statutoryApplyAttempts = {};
   statutoryScenarioByDecisionId = {};
 }
 
@@ -64,6 +66,7 @@ function recordRequest(request, body) {
     path: new URL(request.url, `http://${request.headers.host}`).pathname,
     headers: {
       "x-correlation-id": request.headers["x-correlation-id"],
+      "idempotency-key": request.headers["idempotency-key"],
       "x-posserver-admin-key": request.headers["x-posserver-admin-key"],
       "x-posserver-admin-permission": request.headers["x-posserver-admin-permission"]
     },
@@ -171,6 +174,26 @@ function statutoryScenarioForTicket(ticketReference, entitlementType) {
     return "application-required";
   }
 
+  if (ticketReference === "WEBPAY-STAT-APPLY-PROCESSING") {
+    return "apply-processing";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-APPLY-READY") {
+    return "apply-ready";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-APPLY-RETRYABLE") {
+    return "apply-retryable";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-APPLY-CONFLICT") {
+    return "apply-conflict";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-APPLY-TERMINAL") {
+    return "apply-terminal";
+  }
+
   if (ticketReference === "WEBPAY-STAT-REJECTED") {
     return "rejected";
   }
@@ -244,6 +267,75 @@ function buildStatutoryDecisionResponse(body, correlationId, scenario) {
     };
   }
 
+  if (scenario === "apply-processing") {
+    return {
+      ...base,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionCommandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      applicationCommandStatus: "PROCESSING",
+      applicationResultClassification: "PROCESSING",
+      payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+      payableBasisReadinessAction: "POLL_READBACK",
+      overallResultClassification: "PENDING",
+      decidedAt: "2026-07-27T10:05:00+08:00"
+    };
+  }
+
+  if (scenario === "apply-retryable") {
+    return {
+      ...base,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionCommandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      applicationCommandStatus: "PROCESSING",
+      applicationResultClassification: "PROCESSING",
+      retryable: true,
+      payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+      payableBasisReadinessAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY",
+      safeErrorCode: "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE",
+      recoveryClassification: "TEMPORARILY_UNAVAILABLE",
+      recoveryAction: "WAIT_THEN_RETRY_ORIGINAL_IDEMPOTENCY_KEY",
+      decidedAt: "2026-07-27T10:05:00+08:00"
+    };
+  }
+
+  if (scenario === "apply-conflict") {
+    return {
+      ...base,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionCommandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      applicationCommandStatus: "FAILED",
+      applicationResultClassification: "SEMANTIC_CONFLICT",
+      payableBasisReadinessStatus: "APPLICATION_SEMANTIC_CONFLICT",
+      payableBasisReadinessAction: "DO_NOT_RETRY",
+      safeErrorCode: "STATUTORY_DISCOUNT_APPLICATION_SEMANTIC_CONFLICT",
+      recoveryClassification: "TERMINAL",
+      recoveryAction: "DO_NOT_RETRY",
+      overallResultClassification: "TERMINAL_FAILURE",
+      decidedAt: "2026-07-27T10:05:00+08:00"
+    };
+  }
+
+  if (scenario === "apply-terminal") {
+    return {
+      ...base,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionCommandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      applicationCommandStatus: "FAILED",
+      applicationResultClassification: "FAILED",
+      payableBasisReadinessStatus: "FAILED",
+      payableBasisReadinessAction: "DO_NOT_RETRY",
+      safeErrorCode: "STATUTORY_DISCOUNT_APPLICATION_FAILED",
+      recoveryClassification: "TERMINAL",
+      recoveryAction: "DO_NOT_RETRY",
+      overallResultClassification: "TERMINAL_FAILURE",
+      decidedAt: "2026-07-27T10:05:00+08:00"
+    };
+  }
+
   if (scenario === "rejected") {
     return {
       ...base,
@@ -279,7 +371,7 @@ function buildStatutoryDecisionResponse(body, correlationId, scenario) {
     };
   }
 
-  if (scenario === "ready") {
+  if (scenario === "ready" || scenario === "apply-ready") {
     return {
       ...base,
       statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -345,7 +437,39 @@ async function handleApi(request, response, url) {
     const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
     const scenario = statutoryScenarioForTicket(body.ticketReference, body.entitlementType);
     statutoryScenarioByDecisionId[statutoryDecisionCommandId] = { scenario, body };
-    writeJson(response, 200, buildStatutoryDecisionResponse(body, correlationId, scenario === "application-required" ? "pending" : scenario));
+    const initialScenario = scenario.startsWith("apply-") || scenario === "application-required" ? "pending" : scenario;
+    writeJson(response, 200, buildStatutoryDecisionResponse(body, correlationId, initialScenario));
+    return;
+  }
+
+  const statutoryApplyMatch = url.pathname.match(/^\/v1\/webpay\/statutory-discounts\/decisions\/([^/]+)\/apply-payable-basis$/);
+  if (request.method === "POST" && statutoryApplyMatch) {
+    const decisionId = decodeURIComponent(statutoryApplyMatch[1]);
+    const body = await readJson(request);
+    const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
+    recordRequest(request, body);
+    statutoryApplyAttempts[decisionId] = (statutoryApplyAttempts[decisionId] ?? 0) + 1;
+    const stored = statutoryScenarioByDecisionId[decisionId] ?? { scenario: "application-required", body };
+    const attempt = statutoryApplyAttempts[decisionId];
+
+    if (stored.scenario === "apply-ready") {
+      statutoryScenarioByDecisionId[decisionId] = { ...stored, scenario: "apply-ready" };
+      writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, "apply-processing"));
+      return;
+    }
+
+    if (stored.scenario === "apply-retryable" && attempt === 1) {
+      writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, "apply-retryable"));
+      return;
+    }
+
+    if (stored.scenario === "apply-retryable" && attempt > 1) {
+      statutoryScenarioByDecisionId[decisionId] = { ...stored, scenario: "apply-ready" };
+      writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, "apply-processing"));
+      return;
+    }
+
+    writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, stored.scenario));
     return;
   }
 
@@ -364,7 +488,14 @@ async function handleApi(request, response, url) {
         originalTariffSnapshotId: "30000000-0000-4000-8000-000000000001"
       }
     };
-    writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, stored.scenario));
+    const applyAttempted = (statutoryApplyAttempts[decisionId] ?? 0) > 0;
+    const scenario =
+      stored.scenario === "apply-ready" && applyAttempted
+        ? "ready"
+        : stored.scenario.startsWith("apply-") && !applyAttempted
+          ? "application-required"
+          : stored.scenario;
+    writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, scenario));
     return;
   }
 
@@ -454,7 +585,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/__fixture/state") {
-      writeJson(response, 200, { requestLog, receiptAttempts, paymentAttemptIds, statutoryReadAttempts });
+      writeJson(response, 200, { requestLog, receiptAttempts, paymentAttemptIds, statutoryReadAttempts, statutoryApplyAttempts });
       return;
     }
 
