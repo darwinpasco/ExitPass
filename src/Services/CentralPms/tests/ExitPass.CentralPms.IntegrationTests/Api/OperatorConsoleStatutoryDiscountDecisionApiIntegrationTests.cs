@@ -466,19 +466,8 @@ public sealed class OperatorConsoleStatutoryDiscountDecisionApiIntegrationTests
 
     private static async Task ApplyCanonicalDecisionConvergencePatchesAsync()
     {
-        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql");
-        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
-        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
-        await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql");
-        await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_OperatorConsoleStatutoryDiscountDecisionConvergence_v1.3.sql");
-    }
-
-    private static async Task ExecuteSqlFileAsync(params string[] pathParts)
-    {
-        var sql = ReadRepoFile(pathParts);
-        await using var connection = await OpenConnectionAsync();
-        await using var command = new NpgsqlCommand(sql, connection);
-        await command.ExecuteNonQueryAsync();
+        await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(
+            CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
     }
 
     private static async Task InsertNoEvidenceLocalPolicyAsync()

@@ -22,28 +22,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await PatchLock.WaitAsync();
         try
         {
-            await using var lockConnection = new NpgsqlConnection(ConnectionString);
-            await lockConnection.OpenAsync();
-            await using (var lockCommand = new NpgsqlCommand("SELECT pg_advisory_lock(hashtext('statutory_discount_review_linkage_test_schema'));", lockConnection))
-            {
-                await lockCommand.ExecuteNonQueryAsync();
-            }
-
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountPayableBasisApplicationSchema_v1.2.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountDecisionFacade_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelOperatorConsoleReviewLinkage_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "ExitPass_StatutoryDiscountServiceChannelPostApprovalApplicationIntent_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountStagedCanonicalCommands_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelPendingReviewIntake_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelOperatorConsoleReviewLinkage_v1.3.sql");
-            await ExecuteSqlFileAsync("infra", "db", "patches", "validation", "Validate_StatutoryDiscountServiceChannelPostApprovalApplicationIntent_v1.3.sql");
-
-            await using (var unlockCommand = new NpgsqlCommand("SELECT pg_advisory_unlock(hashtext('statutory_discount_review_linkage_test_schema'));", lockConnection))
-            {
-                await unlockCommand.ExecuteNonQueryAsync();
-            }
+            await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(ConnectionString);
         }
         finally
         {
@@ -453,28 +432,4 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task ExecuteSqlFileAsync(params string[] pathParts)
-    {
-        var sql = await File.ReadAllTextAsync(ResolveRepoPath(pathParts));
-        await using var connection = new NpgsqlConnection(ConnectionString);
-        await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(sql, connection) { CommandTimeout = 60 };
-        await command.ExecuteNonQueryAsync();
-    }
-
-    private static string ResolveRepoPath(params string[] pathParts)
-    {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null && !Directory.Exists(Path.Combine(current.FullName, ".git")))
-        {
-            current = current.Parent;
-        }
-
-        if (current is null)
-        {
-            throw new InvalidOperationException("Repository root could not be resolved.");
-        }
-
-        return Path.Combine(new[] { current.FullName }.Concat(pathParts).ToArray());
-    }
 }
