@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,6 +17,8 @@ public sealed class CentralPmsWebPayClientTests
     private static readonly Guid ParkingSessionId = Guid.Parse("44444444-4444-4444-4444-444444444444");
     private static readonly Guid TariffSnapshotId = Guid.Parse("55555555-5555-5555-5555-555555555555");
     private static readonly Guid CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+    private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("99999999-9999-9999-9999-999999999999");
+    private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
 
     /// <summary>
     /// Verifies Central PMS payment attempt creation receives both provider rail and payment method.
@@ -290,6 +293,124 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(CorrelationId, result.Error.CorrelationId);
     }
 
+    /// <summary>
+    /// Verifies WebPay statutory-discount submit calls the shared Central PMS decision route with server-controlled WEBPAY identity.
+    /// </summary>
+    [Fact]
+    public async Task SubmitStatutoryDiscountDecisionAsync_UsesSharedDecisionRouteAndServerControlledWebPayIdentity()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Accepted)
+        {
+            Content = JsonContent(StatutoryDecisionResponse())
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.SubmitStatutoryDiscountDecisionAsync(
+            StatutoryDecisionRequest(),
+            "statutory-decision:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(handler.LastRequest);
+        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+        Assert.Equal("/v1/statutory-discounts/decisions", handler.LastRequest.RequestUri!.AbsolutePath);
+        Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal("statutory-decision:test", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
+
+        using var document = JsonDocument.Parse(handler.LastRequestBody!);
+        var root = document.RootElement;
+        Assert.Equal("WEBPAY", root.GetProperty("sourceChannel").GetString());
+        Assert.False(root.GetProperty("applyPayableBasis").GetBoolean());
+        Assert.Equal("SENIOR_CITIZEN", root.GetProperty("entitlementType").GetString());
+        Assert.Equal("WEBPAY-REQ-001", root.GetProperty("ticketReference").GetString());
+        Assert.Equal("SC-****-0001", root.GetProperty("maskedIdReference").GetString());
+        Assert.Equal(TariffSnapshotId, root.GetProperty("originalTariffSnapshotId").GetGuid());
+        Assert.False(root.TryGetProperty("reviewerUserId", out _));
+        Assert.False(root.TryGetProperty("reviewerAttestation", out _));
+        Assert.False(root.TryGetProperty("operatorShiftId", out _));
+        Assert.False(root.TryGetProperty("operatorDeviceBindingId", out _));
+        Assert.False(root.TryGetProperty("actorUserId", out _));
+    }
+
+    /// <summary>
+    /// Verifies durable statutory-discount readback uses the shared Central PMS GET route.
+    /// </summary>
+    [Fact]
+    public async Task GetStatutoryDiscountDecisionAsync_UsesSharedReadbackRoute()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryDecisionResponse())
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetStatutoryDiscountDecisionAsync(
+            StatutoryDecisionCommandId,
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(handler.LastRequest);
+        Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
+        Assert.Equal($"/v1/statutory-discounts/decisions/{StatutoryDecisionCommandId:D}", handler.LastRequest.RequestUri!.AbsolutePath);
+        Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal(StatutoryApplicationCommandId, result.Value!.StatutoryDiscountPayableBasisApplicationCommandId);
+        Assert.True(result.Value.PayableBasisReady);
+    }
+
+    /// <summary>
+    /// Verifies application intent reuses the shared Central PMS POST route with applyPayableBasis set server-side.
+    /// </summary>
+    [Fact]
+    public async Task ApplyStatutoryDiscountPayableBasisAsync_PostsApplicationIntentOnce()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Accepted)
+        {
+            Content = JsonContent(StatutoryDecisionResponse())
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.ApplyStatutoryDiscountPayableBasisAsync(
+            StatutoryDecisionRequest(),
+            "statutory-application:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+        Assert.Equal("/v1/statutory-discounts/decisions", handler.LastRequest.RequestUri!.AbsolutePath);
+        Assert.Equal("statutory-application:test", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
+        using var document = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.True(document.RootElement.GetProperty("applyPayableBasis").GetBoolean());
+        Assert.Equal("WEBPAY", document.RootElement.GetProperty("sourceChannel").GetString());
+    }
+
+    /// <summary>
+    /// Verifies opaque downstream JSON bodies are not reflected to WebPay callers.
+    /// </summary>
+    [Fact]
+    public async Task GetStatutoryDiscountDecisionAsync_WhenErrorIsOpaque_DoesNotExposeRawDownstreamBody()
+    {
+        const string downstreamBody = "{\"internalException\":\"database timeout for reviewer notes\",\"rawEvidence\":\"secret\"}";
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent(downstreamBody, Encoding.UTF8, "application/json")
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetStatutoryDiscountDecisionAsync(
+            StatutoryDecisionCommandId,
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("STATUTORY_DISCOUNT_DECISION_READ_FAILED", result.Error!.ErrorCode);
+        Assert.Equal("Central PMS request failed.", result.Error.Message);
+        Assert.DoesNotContain("database timeout", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret", result.Error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static CentralPmsWebPayClient CreateClient(HttpMessageHandler handler)
     {
         var configuration = new ConfigurationBuilder()
@@ -308,6 +429,89 @@ public sealed class CentralPmsWebPayClientTests
     private static StringContent JsonContent(object value)
     {
         return new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json");
+    }
+
+    private static CentralPmsStatutoryDiscountDecisionRequest StatutoryDecisionRequest()
+    {
+        return new CentralPmsStatutoryDiscountDecisionRequest(
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ParkingSessionId,
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "WEBPAY-REQ-001",
+            "ABC1234",
+            "SENIOR_CITIZEN",
+            "OSCA",
+            "QUEZON_CITY",
+            DateOnly.Parse("2030-12-31"),
+            "SC-****-0001",
+            true,
+            new[]
+            {
+                new CentralPmsStatutoryDiscountEvidenceReference(
+                    "CARD_REFERENCE",
+                    "CUSTOMER_UPLOAD_REFERENCE",
+                    "masked-card.txt",
+                    "text/plain",
+                    128,
+                    "evidence:webpay:001",
+                    "SC-****-0001",
+                    "PENDING_REVIEW")
+            },
+            true,
+            "Customer attests eligibility for review.",
+            null,
+            TariffSnapshotId);
+    }
+
+    private static object StatutoryDecisionResponse()
+    {
+        return new
+        {
+            statutoryDiscountDecisionCommandId = StatutoryDecisionCommandId,
+            requestReference = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            statutoryDiscountValidationId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            parkingSessionId = ParkingSessionId,
+            sourceChannel = "WEBPAY",
+            entitlementType = "SENIOR_CITIZEN",
+            decisionStatus = "APPROVED",
+            policyResolutionBasis = "STATUTORY",
+            localOrdinanceApplied = false,
+            grossAmountMinorUnits = 12500,
+            vatExclusiveBasisAmountMinorUnits = 11161,
+            vatAmountMinorUnits = 1339,
+            vatTreatment = "VAT_EXEMPT_SENIOR_CITIZEN",
+            statutoryDiscountAmountMinorUnits = 2500,
+            netPayableAmountMinorUnits = 10000,
+            currency = "PHP",
+            evidenceRequired = true,
+            evidenceRecorded = true,
+            correlationId = CorrelationId,
+            createdAt = "2026-05-16T12:00:00Z",
+            decidedAt = "2026-05-16T12:05:00Z",
+            appliedAt = "2026-05-16T12:10:00Z",
+            originalTariffSnapshotId = TariffSnapshotId,
+            appliedTariffSnapshotId = TariffSnapshotId,
+            commandStatus = "COMPLETED",
+            clientResultStatus = "APPROVED",
+            resultClassification = "APPLIED",
+            semanticHashSourceVersion = "statutory-discount-decision:sha256:v2",
+            retryable = false,
+            recoveryClassification = "NONE",
+            decisionCommandStatus = "COMPLETED",
+            decisionResultStatus = "APPROVED",
+            statutoryDiscountPayableBasisApplicationCommandId = StatutoryApplicationCommandId,
+            applicationRequested = true,
+            applicationCommandStatus = "APPLIED",
+            applicationResultClassification = "APPLIED",
+            applicationSemanticHashSourceVersion = "statutory-discount-payable-basis-application:sha256:v1",
+            overallResultClassification = "APPLIED",
+            oneShotComplete = true,
+            siteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            siteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            payableBasisReady = true,
+            payableBasisReadinessStatus = "READY"
+        };
     }
 
     private sealed class CapturingHttpMessageHandler : HttpMessageHandler
