@@ -19,6 +19,15 @@ import {
   resolveParkingSession,
   submitStatutoryDiscountDecision
 } from "./webpay";
+import {
+  clearStatutoryRecoveryRecord,
+  createStatutoryRecoveryRecord,
+  hasKnownInFlightStatutoryRecoveryStage,
+  loadStatutoryRecoveryRecord,
+  saveStatutoryRecoveryRecord,
+  subscribeStatutoryRecoveryRecord,
+  updateStatutoryRecoveryRecord
+} from "./statutoryRecovery";
 import type {
   ActivePaymentAttemptState,
   ParkingSessionResolveResponse,
@@ -30,6 +39,7 @@ import type {
   WebPayReceiptPresentationResponse,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
+import type { StatutoryRecoveryStage, WebPayStatutoryRecoveryRecord } from "./statutoryRecovery";
 
 const paymentMethods: Array<{ code: PaymentMethod; label: string; image: string; helper: string }> = [
   {
@@ -135,8 +145,15 @@ export function App() {
   const [showStatutoryDiscountForm, setShowStatutoryDiscountForm] = useState(false);
   const [statutoryDiscountForm, setStatutoryDiscountForm] = useState<StatutoryDiscountFormState>(defaultStatutoryDiscountForm);
   const [statutoryDiscountState, setStatutoryDiscountState] = useState<StatutoryDiscountUiState>(emptyStatutoryDiscountUiState);
+  const [initialRecoveryLoad] = useState(() => loadStatutoryRecoveryRecord());
+  const [statutoryRecoveryRecord, setStatutoryRecoveryRecord] = useState<WebPayStatutoryRecoveryRecord | null>(initialRecoveryLoad.record);
+  const [statutoryRecoveryMessage, setStatutoryRecoveryMessage] = useState(() => getInitialRecoveryMessage(initialRecoveryLoad));
+  const [isRestoringStatutoryRecovery, setIsRestoringStatutoryRecovery] = useState(false);
+  const [statutoryRecoveryRefreshNonce, setStatutoryRecoveryRefreshNonce] = useState(0);
   const statutoryPollGeneration = useRef(0);
   const statutoryApplicationInFlight = useRef(false);
+  const paymentIntentInFlight = useRef(false);
+  const skipNextStatutoryRecoveryRestore = useRef(false);
 
   const returnPageMode = getReturnPageMode(window.location.pathname);
   if (returnPageMode) {
@@ -158,6 +175,7 @@ export function App() {
     setShowStatutoryDiscountForm(false);
     setStatutoryDiscountForm(defaultStatutoryDiscountForm);
     setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+    clearStatutoryRecovery();
     setStage("INPUT");
   }
 
@@ -172,6 +190,73 @@ export function App() {
     setStatutoryDiscountForm(defaultStatutoryDiscountForm);
     setStatutoryDiscountState(emptyStatutoryDiscountUiState);
     setStage("INPUT");
+  }
+
+  function saveStatutoryRecovery(next: WebPayStatutoryRecoveryRecord) {
+    const result = saveStatutoryRecoveryRecord(next);
+    skipNextStatutoryRecoveryRestore.current = true;
+    setStatutoryRecoveryRecord(result.record);
+    if (result.unavailable) {
+      setStatutoryRecoveryMessage("Durable statutory discount recovery is unavailable in this browser. This page remains safe, but refresh recovery may not work.");
+    } else if (result.record.stage === "PAYMENT_HANDOFF") {
+      setStatutoryRecoveryMessage(getCrossTabRecoveryMessage(result.record));
+    }
+
+    return result.record;
+  }
+
+  function updateCurrentStatutoryRecovery(
+    patch: Partial<Omit<WebPayStatutoryRecoveryRecord, "schemaVersion" | "createdAt" | "expiresAt">>,
+    fallback?: Pick<WebPayStatutoryRecoveryRecord, "parkingSessionId" | "entitlementType" | "stage"> &
+      Partial<Omit<WebPayStatutoryRecoveryRecord, "schemaVersion" | "parkingSessionId" | "entitlementType" | "stage" | "createdAt" | "updatedAt" | "expiresAt">>
+  ) {
+    if (!statutoryRecoveryRecord && !fallback) {
+      return null;
+    }
+
+    const next = statutoryRecoveryRecord
+      ? updateStatutoryRecoveryRecord(statutoryRecoveryRecord, patch)
+      : createStatutoryRecoveryRecord({
+          ...fallback!,
+          ...patch,
+          parkingSessionId: fallback!.parkingSessionId,
+          entitlementType: fallback!.entitlementType,
+          stage: patch.stage ?? fallback!.stage
+        });
+
+    return saveStatutoryRecovery(next);
+  }
+
+  function updateRecoveryFromDecision(
+    decision: WebPayStatutoryDiscountDecisionResponse,
+    fallback?: Pick<WebPayStatutoryRecoveryRecord, "parkingSessionId" | "entitlementType" | "stage"> &
+      Partial<Omit<WebPayStatutoryRecoveryRecord, "schemaVersion" | "parkingSessionId" | "entitlementType" | "stage" | "createdAt" | "updatedAt" | "expiresAt">>
+  ) {
+    return updateCurrentStatutoryRecovery(
+      {
+        parkingSessionId: decision.parkingSessionId,
+        entitlementType: normalizeEntitlementType(decision.entitlementType, fallback?.entitlementType),
+        statutoryDiscountDecisionCommandId: decision.statutoryDiscountDecisionCommandId,
+        statutoryDiscountPayableBasisApplicationCommandId: decision.statutoryDiscountPayableBasisApplicationCommandId ?? undefined,
+        requestReference: decision.requestReference,
+        correlationId: decision.correlationId,
+        stage: getStatutoryRecoveryStageFromDecision(decision)
+      },
+      fallback
+        ? {
+            ...fallback,
+            parkingSessionId: decision.parkingSessionId,
+            entitlementType: normalizeEntitlementType(decision.entitlementType, fallback.entitlementType),
+            stage: getStatutoryRecoveryStageFromDecision(decision)
+          }
+        : undefined
+    );
+  }
+
+  function clearStatutoryRecovery() {
+    clearStatutoryRecoveryRecord();
+    setStatutoryRecoveryRecord(null);
+    setStatutoryRecoveryMessage("");
   }
 
   function currentLookup() {
@@ -240,9 +325,33 @@ export function App() {
     setResult(null);
     setActivePaymentAttempt(null);
     setIsSubmitting(true);
+    paymentIntentInFlight.current = true;
+    let paymentIntentCorrelationId: string | undefined;
 
     try {
       const appliedStatutoryBasis = getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
+      paymentIntentCorrelationId =
+        statutoryRecoveryRecord?.paymentIntentCorrelationId ||
+        (appliedStatutoryBasis ? createRequestReference() : undefined);
+      if (appliedStatutoryBasis && paymentIntentCorrelationId) {
+        updateCurrentStatutoryRecovery(
+          {
+            paymentIntentCorrelationId,
+            stage: "PAYMENT_SUBMITTING"
+          },
+          {
+            parkingSessionId: resolvedSession.parkingSessionId,
+            entitlementType: normalizeEntitlementType(statutoryDiscountState.decision?.entitlementType, "SENIOR_CITIZEN"),
+            statutoryDiscountDecisionCommandId: appliedStatutoryBasis.statutoryDiscountDecisionCommandId,
+            statutoryDiscountPayableBasisApplicationCommandId: appliedStatutoryBasis.statutoryDiscountPayableBasisApplicationCommandId,
+            paymentIntentCorrelationId,
+            requestReference: statutoryDiscountState.requestReference,
+            correlationId: statutoryDiscountState.correlationId,
+            stage: "PAYMENT_SUBMITTING"
+          }
+        );
+      }
+
       const response = await createPaymentIntent({
         ticketReference: hasTicket ? (resolvedSession.ticketReference ?? ticketReference.trim()) : undefined,
         plateNumber: hasPlate ? (resolvedSession.plateNumber ?? plateNumber.trim()) : undefined,
@@ -254,22 +363,43 @@ export function App() {
         expectedAmountMinorUnits: appliedStatutoryBasis?.amountMinorUnits ?? resolvedSession.amountMinorUnits,
         expectedCurrency: appliedStatutoryBasis?.currency ?? resolvedSession.currency,
         statutoryDiscountDecisionCommandId: appliedStatutoryBasis?.statutoryDiscountDecisionCommandId,
-        statutoryDiscountPayableBasisApplicationCommandId: appliedStatutoryBasis?.statutoryDiscountPayableBasisApplicationCommandId
+        statutoryDiscountPayableBasisApplicationCommandId: appliedStatutoryBasis?.statutoryDiscountPayableBasisApplicationCommandId,
+        correlationId: paymentIntentCorrelationId
       }, fetch, {});
       setResult(response);
       setResolvedSession(toParkingSessionResolveResponse(response));
       setStage("HANDOFF_READY");
+      if (appliedStatutoryBasis) {
+        updateCurrentStatutoryRecovery({
+          paymentAttemptId: response.paymentAttemptId,
+          paymentIntentCorrelationId,
+          correlationId: response.correlationId,
+          stage: "PAYMENT_HANDOFF"
+        });
+      }
     } catch (apiError) {
       if (apiError instanceof ActivePaymentAttemptError) {
         setActivePaymentAttempt(apiError.activePaymentAttempt);
         setStage("ACTIVE_ATTEMPT");
+        if (apiError.activePaymentAttempt.paymentAttemptId) {
+          updateCurrentStatutoryRecovery({
+            paymentAttemptId: apiError.activePaymentAttempt.paymentAttemptId,
+            paymentIntentCorrelationId,
+            correlationId: apiError.activePaymentAttempt.correlationId ?? statutoryRecoveryRecord?.correlationId,
+            stage: "PAYMENT_HANDOFF"
+          });
+        }
       } else {
         setPayableBasisRefreshRequired(apiError instanceof PayableBasisRefreshRequiredError);
         setError(apiError instanceof Error ? apiError.message : "Payment intent creation failed. Please try again.");
         setStage("ERROR");
+        if (statutoryDiscountState.decision && getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision)) {
+          updateCurrentStatutoryRecovery({ stage: "PAYABLE_READY" });
+        }
       }
     } finally {
       setIsSubmitting(false);
+      paymentIntentInFlight.current = false;
     }
   }
 
@@ -298,7 +428,7 @@ export function App() {
       return;
     }
 
-    if (isResolving || isSubmitting) {
+    if (isResolving || isSubmitting || paymentIntentInFlight.current) {
       return;
     }
 
@@ -307,13 +437,19 @@ export function App() {
       return;
     }
 
+    if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
+      await handleResolveParkingSession();
+      return;
+    }
+
     if (statutoryDiscountState.decision && !getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision)) {
       setError(getStatutoryDiscountPaymentBlockMessage(statutoryDiscountState.decision));
       return;
     }
 
-    if (stage !== "SESSION_RESOLVED" || !resolvedSession) {
-      await handleResolveParkingSession();
+    const activeRecoveryRecord = statutoryRecoveryRecord;
+    if (hasKnownInFlightStatutoryRecoveryStage(activeRecoveryRecord) && activeRecoveryRecord) {
+      setError(getCrossTabRecoveryMessage(activeRecoveryRecord));
       return;
     }
 
@@ -370,6 +506,15 @@ export function App() {
       error: "",
       message: "Submitting statutory discount request..."
     }));
+    const submittingRecord = createStatutoryRecoveryRecord({
+      parkingSessionId: resolvedSession.parkingSessionId,
+      entitlementType: statutoryDiscountForm.entitlementType,
+      decisionIdempotencyKey: idempotencyKey,
+      requestReference,
+      correlationId,
+      stage: "DECISION_SUBMITTING"
+    });
+    saveStatutoryRecovery(submittingRecord);
     setError("");
 
     try {
@@ -388,6 +533,12 @@ export function App() {
         message: getStatutoryDiscountStatusCopy(decision).body,
         error: ""
       }));
+      updateRecoveryFromDecision(decision, {
+        ...submittingRecord,
+        parkingSessionId: decision.parkingSessionId,
+        entitlementType: normalizeEntitlementType(decision.entitlementType, statutoryDiscountForm.entitlementType),
+        stage: getStatutoryRecoveryStageFromDecision(decision)
+      });
     } catch (apiError) {
       setStatutoryDiscountState((current) => ({
         ...current,
@@ -432,6 +583,23 @@ export function App() {
     }));
     setError("");
     statutoryApplicationInFlight.current = true;
+    updateCurrentStatutoryRecovery(
+      {
+        applicationIdempotencyKey,
+        requestReference,
+        correlationId,
+        stage: "APPLICATION_SUBMITTING"
+      },
+      {
+        parkingSessionId: decision.parkingSessionId,
+        entitlementType: normalizeEntitlementType(decision.entitlementType, "SENIOR_CITIZEN"),
+        statutoryDiscountDecisionCommandId: decision.statutoryDiscountDecisionCommandId,
+        applicationIdempotencyKey,
+        requestReference,
+        correlationId,
+        stage: "APPLICATION_SUBMITTING"
+      }
+    );
 
     try {
       const appliedDecision = await applyStatutoryDiscountPayableBasis(
@@ -449,6 +617,15 @@ export function App() {
         message: getStatutoryDiscountStatusCopy(appliedDecision).body,
         error: ""
       }));
+      updateRecoveryFromDecision(appliedDecision, {
+        parkingSessionId: appliedDecision.parkingSessionId,
+        entitlementType: normalizeEntitlementType(appliedDecision.entitlementType, normalizeEntitlementType(decision.entitlementType, "SENIOR_CITIZEN")),
+        statutoryDiscountDecisionCommandId: appliedDecision.statutoryDiscountDecisionCommandId,
+        applicationIdempotencyKey,
+        requestReference,
+        correlationId,
+        stage: getStatutoryRecoveryStageFromDecision(appliedDecision)
+      });
     } catch (apiError) {
       setStatutoryDiscountState((current) => ({
         ...current,
@@ -457,6 +634,7 @@ export function App() {
         error: apiError instanceof Error ? apiError.message : "Approved statutory discount could not be applied.",
         message: ""
       }));
+      updateCurrentStatutoryRecovery({ stage: getStatutoryRecoveryStageFromDecision(decision), applicationIdempotencyKey });
     } finally {
       statutoryApplicationInFlight.current = false;
     }
@@ -478,6 +656,7 @@ export function App() {
         message: getStatutoryDiscountStatusCopy(decision).body,
         error: ""
       }));
+      updateRecoveryFromDecision(decision);
     } catch (apiError) {
       setStatutoryDiscountState((current) => ({
         ...current,
@@ -525,6 +704,7 @@ export function App() {
             message: getStatutoryDiscountStatusCopy(readback).body,
             error: ""
           }));
+          updateRecoveryFromDecision(readback);
 
           if (!keepPolling) {
             return;
@@ -553,6 +733,129 @@ export function App() {
     };
   }, [statutoryDiscountState.decision?.statutoryDiscountDecisionCommandId, statutoryDiscountState.isPolling, statutoryDiscountState.correlationId]);
 
+  useEffect(() => {
+    return subscribeStatutoryRecoveryRecord((record) => {
+      setStatutoryRecoveryRecord(record);
+      if (!record) {
+        setStatutoryRecoveryMessage("Browser recovery metadata was cleared in another tab. Any Central PMS statutory request remains authoritative.");
+        return;
+      }
+
+      setStatutoryRecoveryMessage(getCrossTabRecoveryMessage(record));
+      if (record.statutoryDiscountDecisionCommandId) {
+        setStatutoryRecoveryRefreshNonce((current) => current + 1);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    const record = statutoryRecoveryRecord;
+    if (!record) {
+      return;
+    }
+
+    if (skipNextStatutoryRecoveryRestore.current) {
+      skipNextStatutoryRecoveryRestore.current = false;
+      return;
+    }
+
+    if (hasKnownInFlightStatutoryRecoveryStage(record)) {
+      setStatutoryRecoveryMessage(getCrossTabRecoveryMessage(record));
+      setIsRestoringStatutoryRecovery(false);
+      return;
+    }
+
+    if (!record.statutoryDiscountDecisionCommandId) {
+      setStatutoryRecoveryMessage(
+        "A previous statutory discount submission did not return a server reference. This browser preserved the original request key for the current page, but restart recovery requires a returned request reference."
+      );
+      return;
+    }
+
+    if (resolvedSession && resolvedSession.parkingSessionId !== record.parkingSessionId) {
+      clearStatutoryRecoveryRecord();
+      setStatutoryRecoveryRecord(null);
+      setStatutoryRecoveryMessage("A saved statutory discount recovery record did not match this parking session and was cleared.");
+      return;
+    }
+
+    const recoveryRecord = record;
+    const controller = new AbortController();
+    let cancelled = false;
+    setIsRestoringStatutoryRecovery(true);
+    setStatutoryRecoveryMessage("Restoring an existing statutory discount request from Central PMS...");
+
+    async function restore() {
+      try {
+        const decision = await retrieveStatutoryDiscountDecision(
+          recoveryRecord.statutoryDiscountDecisionCommandId!,
+          recoveryRecord.correlationId,
+          fetch,
+          controller.signal
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setStatutoryDiscountState((current) => ({
+          ...current,
+          decision,
+          requestReference: current.requestReference || recoveryRecord.requestReference || decision.requestReference,
+          idempotencyKey: current.idempotencyKey || recoveryRecord.decisionIdempotencyKey || "",
+          applicationIdempotencyKey:
+            current.applicationIdempotencyKey ||
+            recoveryRecord.applicationIdempotencyKey ||
+            (decision.statutoryDiscountPayableBasisApplicationCommandId
+              ? createStatutoryApplicationIdempotencyKey(decision.statutoryDiscountDecisionCommandId)
+              : ""),
+          correlationId: current.correlationId || recoveryRecord.correlationId || decision.correlationId,
+          isSubmitting: false,
+          isApplying: false,
+          isPolling: shouldPollStatutoryDecision(decision),
+          message: getStatutoryDiscountStatusCopy(decision).body,
+          error: ""
+        }));
+        updateRecoveryFromDecision(decision, {
+          ...recoveryRecord,
+          parkingSessionId: decision.parkingSessionId,
+          entitlementType: normalizeEntitlementType(decision.entitlementType, recoveryRecord.entitlementType),
+          stage: getStatutoryRecoveryStageFromDecision(decision)
+        });
+        setStatutoryRecoveryMessage(
+          resolvedSession
+            ? "Existing statutory discount request restored from authoritative Central PMS readback."
+            : "Existing statutory discount request restored. Resolve the parking session again to continue payment."
+        );
+      } catch (apiError) {
+        if (cancelled) {
+          return;
+        }
+
+        setStatutoryRecoveryMessage(
+          apiError instanceof Error
+            ? `Saved statutory discount recovery could not be refreshed: ${apiError.message}`
+            : "Saved statutory discount recovery could not be refreshed."
+        );
+      } finally {
+        if (!cancelled) {
+          setIsRestoringStatutoryRecovery(false);
+        }
+      }
+    }
+
+    void restore();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [
+    statutoryRecoveryRecord?.statutoryDiscountDecisionCommandId,
+    statutoryRecoveryRefreshNonce,
+    resolvedSession?.parkingSessionId
+  ]);
+
   const handoff = result?.handoff;
   const activeResumeUrl = getResumeUrl(activePaymentAttempt?.handoff);
   const summary = resolvedSession ?? (result ? toParkingSessionResolveResponse(result) : null);
@@ -560,7 +863,11 @@ export function App() {
   const isPayablePending = isStatutoryValidationPending(summary);
   const isActiveStatutoryWorkflow = Boolean(statutoryDiscountState.decision);
   const appliedStatutoryBasis = getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
-  const statutoryDiscountPaymentBlocked = isPayablePending || (isActiveStatutoryWorkflow && !appliedStatutoryBasis);
+  const statutoryDiscountPaymentBlocked =
+    stage === "SESSION_RESOLVED" &&
+    (isPayablePending || (isActiveStatutoryWorkflow && !appliedStatutoryBasis));
+  const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
+  const statutoryRecoveryPaymentBlocked = stage === "SESSION_RESOLVED" && statutoryRecoveryMutationInFlight;
 
   return (
     <main className="app-shell">
@@ -578,6 +885,32 @@ export function App() {
       </section>
 
       <QrScanner onDecoded={handleQrDecoded} />
+
+      {statutoryRecoveryMessage && (
+        <section className="statutory-recovery-panel" aria-live="polite" aria-labelledby="statutory-recovery-heading">
+          <div>
+            <p className="eyebrow">Statutory discount recovery</p>
+            <h2 id="statutory-recovery-heading">
+              {isRestoringStatutoryRecovery ? "Restoring request" : "Saved request status"}
+            </h2>
+            <p>{statutoryRecoveryMessage}</p>
+            {statutoryRecoveryRecord?.paymentAttemptId && (
+              <p>Payment attempt reference: {statutoryRecoveryRecord.paymentAttemptId}</p>
+            )}
+          </div>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => {
+              clearStatutoryRecovery();
+              setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+              setStatutoryRecoveryMessage("Browser recovery metadata was cleared. This does not cancel any Central PMS statutory discount request.");
+            }}
+          >
+            Clear browser recovery
+          </button>
+        </section>
+      )}
 
       <form className="payment-form" onSubmit={handleSubmit}>
         <div className="entry-tabs" role="tablist" aria-label="Parking lookup type">
@@ -663,12 +996,16 @@ export function App() {
             onShowForm={() => {
               setShowStatutoryDiscountForm(true);
               setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+              clearStatutoryRecoveryRecord();
+              setStatutoryRecoveryRecord(null);
+              setStatutoryRecoveryMessage("");
               setError("");
             }}
             onCancel={() => {
               setShowStatutoryDiscountForm(false);
               setStatutoryDiscountForm(defaultStatutoryDiscountForm);
               setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+              clearStatutoryRecovery();
             }}
             onFormChange={setStatutoryDiscountForm}
             onSubmit={() => void handleSubmitStatutoryDiscount()}
@@ -788,13 +1125,13 @@ export function App() {
           </section>
         )}
 
-        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked}>
+        <button type="submit" className="submit-button" disabled={isSubmitting || isResolving || isPaymentComplete || statutoryDiscountPaymentBlocked || statutoryRecoveryPaymentBlocked}>
           <img src="/assets/icons/payment.svg" alt="" aria-hidden="true" />
           {isResolving
             ? "Resolving..."
             : isSubmitting
               ? "Creating payment..."
-              : isActiveStatutoryWorkflow && !appliedStatutoryBasis
+              : stage === "SESSION_RESOLVED" && isActiveStatutoryWorkflow && !appliedStatutoryBasis
                 ? "Statutory discount pending"
               : isPayablePending
                 ? "Discount review pending"
@@ -1753,6 +2090,65 @@ function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDi
   return getAppliedStatutoryPaymentBasis(decision)
     ? "Payment is available using the Central PMS-approved statutory payable basis."
     : "Payment remains unavailable while this statutory discount workflow is active.";
+}
+
+function getStatutoryRecoveryStageFromDecision(decision: WebPayStatutoryDiscountDecisionResponse): StatutoryRecoveryStage {
+  if (getAppliedStatutoryPaymentBasis(decision)) {
+    return "PAYABLE_READY";
+  }
+
+  if (isTerminalStatutoryDecision(decision)) {
+    return "TERMINAL";
+  }
+
+  if (canSubmitApplicationIntent(decision)) {
+    return "APPLICATION_AVAILABLE";
+  }
+
+  const readinessStatus = decision.payableBasisReadinessStatus.toUpperCase();
+  const applicationStatus = decision.applicationCommandStatus.toUpperCase();
+  if (readinessStatus === "APPLICATION_PROCESSING" || applicationStatus === "PROCESSING") {
+    return "APPLICATION_PROCESSING";
+  }
+
+  return "DECISION_PENDING";
+}
+
+function normalizeEntitlementType(value: string | null | undefined, fallback: StatutoryDiscountEntitlementType = "SENIOR_CITIZEN"): StatutoryDiscountEntitlementType {
+  return value === "PWD" || value === "SENIOR_CITIZEN" ? value : fallback;
+}
+
+function getInitialRecoveryMessage(load: { record: WebPayStatutoryRecoveryRecord | null; cleared: boolean; unavailable: boolean; reason?: string }): string {
+  if (load.unavailable) {
+    return "Durable statutory discount recovery is unavailable in this browser. This page remains safe, but refresh recovery may not work.";
+  }
+
+  if (load.cleared) {
+    return "An expired or invalid statutory discount recovery record was cleared. Browser metadata is not authoritative.";
+  }
+
+  if (load.record) {
+    return getCrossTabRecoveryMessage(load.record);
+  }
+
+  return "";
+}
+
+function getCrossTabRecoveryMessage(record: WebPayStatutoryRecoveryRecord): string {
+  switch (record.stage) {
+    case "DECISION_SUBMITTING":
+      return "Another page may be submitting this statutory discount request. Wait for the server reference or refresh status before trying again.";
+    case "APPLICATION_SUBMITTING":
+      return "Another page may be applying the approved statutory discount. Refresh status before trying again.";
+    case "PAYMENT_SUBMITTING":
+      return "Another page may be starting payment for this applied statutory payable basis. Wait before trying again.";
+    case "PAYMENT_HANDOFF":
+      return "Payment was already started for this statutory discount workflow. Use the existing payment attempt or payment-return link.";
+    case "PAYABLE_READY":
+      return "A statutory discount workflow is ready for payment, but this page will refresh authoritative status before enabling payment.";
+    default:
+      return "A statutory discount workflow was found in browser recovery. Current status will be restored from Central PMS.";
+  }
 }
 
 function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
