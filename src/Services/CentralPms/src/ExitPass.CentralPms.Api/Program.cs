@@ -702,6 +702,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ITerminalCashPayableBasisEligibilityReader>(_ =>
         new TerminalCashPayableBasisEligibilityReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<IAptPayableBasisReadinessService, AptPayableBasisReadinessService>();
+    builder.Services.AddScoped<ITerminalCashStatutoryFiscalLinkageReader>(_ =>
+        new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
     builder.Services.AddScoped<IWebPayReceiptPresentationService, WebPayReceiptPresentationService>();
