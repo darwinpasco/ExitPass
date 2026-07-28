@@ -20,6 +20,7 @@ let statutoryReadAttempts = {};
 let statutoryApplyAttempts = {};
 let paymentIntentAttempts = {};
 let statutoryScenarioByDecisionId = {};
+let ambiguousDecisionAttempts = {};
 const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
 const contentTypes = {
@@ -38,6 +39,7 @@ function resetState() {
   statutoryApplyAttempts = {};
   paymentIntentAttempts = {};
   statutoryScenarioByDecisionId = {};
+  ambiguousDecisionAttempts = {};
 }
 
 function writeJson(response, statusCode, body) {
@@ -216,6 +218,14 @@ function statutoryScenarioForTicket(ticketReference, entitlementType) {
     return "applied-payment-ready";
   }
 
+  if (ticketReference === "WEBPAY-STAT-AMBIGUOUS-DECISION") {
+    return "ambiguous-decision";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-AMBIGUOUS-PAYMENT") {
+    return "applied-payment-ready";
+  }
+
   if (ticketReference === "WEBPAY-STAT-MISSING-SNAPSHOT") {
     return "missing-applied-snapshot";
   }
@@ -285,7 +295,7 @@ function buildStatutoryDecisionResponse(body, correlationId, scenario) {
     };
   }
 
-  if (scenario === "apply-processing") {
+  if (scenario === "apply-processing" || scenario === "application-processing") {
     return {
       ...base,
       statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
@@ -531,6 +541,25 @@ async function handleApi(request, response, url) {
       return;
     }
 
+    if (ticketReference === "WEBPAY-STAT-AMBIGUOUS-PAYMENT") {
+      paymentIntentAttempts[ticketReference] = (paymentIntentAttempts[ticketReference] ?? 0) + 1;
+      writeJson(response, 409, {
+        errorCode: "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
+        message: "A payment is already in progress. Continue with the existing payment attempt.",
+        retryable: false,
+        paymentAttemptId: "10000000-0000-4000-8000-000000000011",
+        status: "PENDING_PROVIDER",
+        handoff: {
+          type: "Redirect",
+          handoffUrl: "https://payments.test/existing-handoff",
+          qrCodeUrl: null,
+          expiresAt: "2026-07-27T10:20:00+08:00"
+        },
+        correlationId: body.correlationId
+      });
+      return;
+    }
+
     writeJson(response, 409, errorResponse("UNEXPECTED_BROWSER_SMOKE_PAYMENT_SUBMISSION", "Browser smoke must not submit payment.", false, body.correlationId));
     return;
   }
@@ -541,6 +570,16 @@ async function handleApi(request, response, url) {
     const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
     const scenario = statutoryScenarioForTicket(body.ticketReference, body.entitlementType);
     statutoryScenarioByDecisionId[statutoryDecisionCommandId] = { scenario, body };
+
+    if (scenario === "ambiguous-decision") {
+      const idempotencyKey = typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : "missing";
+      ambiguousDecisionAttempts[idempotencyKey] = (ambiguousDecisionAttempts[idempotencyKey] ?? 0) + 1;
+      if (ambiguousDecisionAttempts[idempotencyKey] === 1) {
+        writeJson(response, 503, errorResponse("STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE", "Statutory discount decision readback is temporarily unavailable.", true, correlationId));
+        return;
+      }
+    }
+
     const initialScenario = scenario.startsWith("apply-") || scenario === "application-required" ? "pending" : scenario;
     writeJson(response, 200, buildStatutoryDecisionResponse(body, correlationId, initialScenario));
     return;
@@ -688,6 +727,27 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/__fixture/statutory-scenario") {
+      const body = await readJson(request).catch(() => ({}));
+      const decisionId = typeof body.decisionId === "string" ? body.decisionId : statutoryDecisionCommandId;
+      const scenario = typeof body.scenario === "string" ? body.scenario : "pending";
+      const ticketReference = typeof body.ticketReference === "string" ? body.ticketReference : "WEBPAY-STAT-RECOVERY";
+      statutoryScenarioByDecisionId[decisionId] = {
+        scenario,
+        body: {
+          requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          parkingSessionId: "20000000-0000-4000-8000-000000000001",
+          siteId: "50000000-0000-4000-8000-000000000001",
+          siteGroupId: "40000000-0000-4000-8000-000000000001",
+          entitlementType: "SENIOR_CITIZEN",
+          originalTariffSnapshotId: "30000000-0000-4000-8000-000000000001",
+          ticketReference
+        }
+      };
+      writeJson(response, 200, { ok: true, decisionId, scenario });
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/__fixture/state") {
       writeJson(response, 200, {
         requestLog,
@@ -695,7 +755,8 @@ const server = createServer(async (request, response) => {
         paymentAttemptIds,
         statutoryReadAttempts,
         statutoryApplyAttempts,
-        paymentIntentAttempts
+        paymentIntentAttempts,
+        ambiguousDecisionAttempts
       });
       return;
     }

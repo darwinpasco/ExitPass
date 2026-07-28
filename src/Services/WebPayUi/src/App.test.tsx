@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { createStatutoryRecoveryRecord, statutoryRecoveryStorageKey } from "./statutoryRecovery";
 
 vi.mock("@zxing/browser", () => ({
   BrowserQRCodeReader: vi.fn().mockImplementation(() => ({
@@ -198,11 +199,13 @@ beforeEach(() => {
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID", "HIKCENTRAL");
+  localStorage.clear();
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  localStorage.clear();
   window.history.pushState({}, "", "/");
 });
 
@@ -771,6 +774,8 @@ describe("ExitPass WebPay UI", () => {
     expect(body.tariffSnapshotId).not.toBe(successResponse.tariffSnapshotId);
     expect(body.expectedAmountMinorUnits).toBe(4000);
     expect(body.expectedCurrency).toBe("PHP");
+    const persistedRecovery = JSON.parse(localStorage.getItem(statutoryRecoveryStorageKey) ?? "{}") as Record<string, unknown>;
+    expect(body.correlationId).toBe(persistedRecovery.paymentIntentCorrelationId);
     expect(body.statutoryDiscountDecisionCommandId).toBe(statutoryDecisionCommandId);
     expect(body.statutoryDiscountPayableBasisApplicationCommandId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     expect(body).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
@@ -778,6 +783,165 @@ describe("ExitPass WebPay UI", () => {
     expect(body).not.toHaveProperty("vatExclusiveBasisAmountMinorUnits");
     expect(body).not.toHaveProperty("sourceChannel");
     expect(await screen.findByRole("link", { name: /continue to payment/i })).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenRecoveryHasDecisionCommandId_ResumesWithGetReadbackAndDoesNotRepeatDecisionPost", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryReadPayload: statutoryDecisionResponse({
+        decisionCommandStatus: "AWAITING_REVIEW",
+        decisionResultStatus: "NOT_DECIDED"
+      })
+    });
+    const recovery = createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      statutoryDiscountDecisionCommandId: statutoryDecisionCommandId,
+      decisionIdempotencyKey: "webpay-statutory-discount-decision:original",
+      applicationIdempotencyKey: "webpay-statutory-discount-application:original",
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      correlationId: "77777777-7777-7777-7777-777777777777",
+      stage: "DECISION_PENDING"
+    });
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(recovery));
+
+    render(<App />);
+
+    expect(await screen.findByText(/Existing statutory discount request restored/i)).toBeInTheDocument();
+    const paths = fetchMock.mock.calls.map((call) => `${(call[1] as RequestInit | undefined)?.method ?? "GET"} ${String(call[0])}`);
+    expect(paths.some((path) => path.includes(`GET /v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`))).toBe(true);
+    expect(paths.filter((path) => path === "POST /v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+  });
+
+  it("WebPay_WhenRecoveredApplicationProcessing_UsesGetReadbackAndDoesNotRepeatApplicationPost", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryReadPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "PROCESSING",
+        applicationResultClassification: "PROCESSING",
+        payableBasisReady: false,
+        payableBasisReadinessStatus: "APPLICATION_PROCESSING",
+        payableBasisReadinessAction: "POLL_READBACK"
+      })
+    });
+    const recovery = createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      statutoryDiscountDecisionCommandId: statutoryDecisionCommandId,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionIdempotencyKey: "webpay-statutory-discount-decision:original",
+      applicationIdempotencyKey: "webpay-statutory-discount-application:original",
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      correlationId: "77777777-7777-7777-7777-777777777777",
+      stage: "APPLICATION_PROCESSING"
+    });
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(recovery));
+
+    render(<App />);
+
+    expect(await screen.findByText(/Existing statutory discount request restored/i)).toBeInTheDocument();
+    const calls = fetchMock.mock.calls.map((call) => ({ url: String(call[0]), method: (call[1] as RequestInit | undefined)?.method ?? "GET" }));
+    expect(calls.some((call) => call.method === "GET" && call.url.includes("/v1/webpay/statutory-discounts/decisions/"))).toBe(true);
+    expect(calls.some((call) => call.method === "POST" && call.url.includes("/apply-payable-basis"))).toBe(false);
+  });
+
+  it("WebPay_WhenPersistedReadyStageExists_RequiresFreshReadbackBeforePaymentEnablement", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryReadPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        finalPayableAmountMinorUnits: 4000,
+        currency: "PHP"
+      }),
+      intentPayload: {
+        ...successResponse,
+        tariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        amountMinorUnits: 4000,
+        currency: "PHP"
+      }
+    });
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      statutoryDiscountDecisionCommandId: statutoryDecisionCommandId,
+      decisionIdempotencyKey: "webpay-statutory-discount-decision:original",
+      applicationIdempotencyKey: "webpay-statutory-discount-application:original",
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      correlationId: "77777777-7777-7777-7777-777777777777",
+      stage: "PAYABLE_READY"
+    })));
+
+    window.history.pushState({}, "", "/?ticketReference=TICKET-001");
+    render(<App />);
+
+    expect(await screen.findByText(/Existing statutory discount request restored/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^continue$/i }));
+    expect((await screen.findAllByText("125.00")).length).toBeGreaterThan(0);
+    await continueToPayment();
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(1)
+    );
+    const paymentCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/v1/webpay/payment-intents"));
+    const body = JSON.parse((paymentCall?.[1] as RequestInit).body as string);
+    expect(body.tariffSnapshotId).toBe("99999999-9999-4999-8999-999999999999");
+    expect(body.expectedAmountMinorUnits).toBe(4000);
+  });
+
+  it("WebPay_WhenRecoveryRecordIsMalformed_ClearsMetadataAndDoesNotEnableStatutoryPayment", async () => {
+    const fetchMock = stubWebPayFetch();
+    localStorage.setItem(statutoryRecoveryStorageKey, "{broken");
+
+    render(<App />);
+
+    expect(screen.getByText(/invalid statutory discount recovery record was cleared/i)).toBeInTheDocument();
+    expect(localStorage.getItem(statutoryRecoveryStorageKey)).toBeNull();
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/statutory-discounts/decisions/"))).toBe(false);
+  });
+
+  it("WebPay_WhenAnotherTabRecordedPaymentSubmitting_DisablesPaymentAndCreatesNoPaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch();
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      decisionIdempotencyKey: "webpay-statutory-discount-decision:original",
+      paymentIntentCorrelationId: "99999999-9999-4999-8999-999999999999",
+      stage: "PAYMENT_SUBMITTING"
+    })));
+
+    render(<App />);
+
+    await resolveTicket();
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
+    expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+  });
+
+  it("WebPay_WhenClearRecoveryClicked_RemovesOnlyBrowserMetadata", async () => {
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      statutoryDiscountDecisionCommandId: statutoryDecisionCommandId,
+      decisionIdempotencyKey: "webpay-statutory-discount-decision:original",
+      stage: "DECISION_PENDING"
+    })));
+    stubWebPayFetch();
+
+    render(<App />);
+
+    await screen.findByRole("button", { name: /clear browser recovery/i });
+    await userEvent.click(screen.getByRole("button", { name: /clear browser recovery/i }));
+
+    expect(localStorage.getItem(statutoryRecoveryStorageKey)).toBeNull();
+    expect(screen.getByText(/does not cancel any Central PMS statutory discount request/i)).toBeInTheDocument();
   });
 
   it("WebPay_WhenStatutoryReadyPaymentClickedRapidly_SubmitsOnePaymentIntent", async () => {

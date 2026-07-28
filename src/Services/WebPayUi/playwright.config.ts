@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const webPayBrowserSmokePort = Number(process.env.WEBPAY_BROWSER_SMOKE_PORT ?? 5196);
+const webPayBrowserSmokeArtifactRoot = process.env.WEBPAY_BROWSER_SMOKE_ARTIFACT_ROOT ?? "../../../.local/webpay-browser-smoke";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -11,8 +12,8 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  reporter: [["list"], ["html", { open: "never", outputFolder: "../../../.local/webpay-browser-smoke/playwright-report" }]],
-  outputDir: "../../../.local/webpay-browser-smoke/test-results",
+  reporter: [["list"], ["html", { open: "never", outputFolder: `${webPayBrowserSmokeArtifactRoot}/playwright-report` }]],
+  outputDir: `${webPayBrowserSmokeArtifactRoot}/test-results`,
   use: {
     ...devices["Desktop Chrome"],
     baseURL: `http://127.0.0.1:${webPayBrowserSmokePort}`,

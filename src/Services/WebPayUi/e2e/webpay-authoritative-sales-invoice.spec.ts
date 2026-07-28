@@ -8,6 +8,10 @@ const ids = {
   terminalFailure: "10000000-0000-4000-8000-000000000004",
   refreshPending: "10000000-0000-4000-8000-000000000005"
 };
+const statutoryRecoveryStorageKey = "exitpass:webpay:statutory-discount-recovery:v1";
+const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const statutoryDiscountDecisionCommandId = statutoryDecisionCommandId;
+const statutoryDiscountPayableBasisApplicationCommandId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
 type FixtureState = {
   requestLog: Array<{ method: string; path: string; headers: Record<string, string | undefined>; body: unknown }>;
@@ -15,6 +19,7 @@ type FixtureState = {
   statutoryReadAttempts: Record<string, number>;
   statutoryApplyAttempts: Record<string, number>;
   paymentIntentAttempts: Record<string, number>;
+  ambiguousDecisionAttempts: Record<string, number>;
 };
 
 const consoleMessagesByTest = new Map<string, string[]>();
@@ -442,6 +447,245 @@ test.describe("WebPay statutory discount application-intent browser smoke", () =
   });
 });
 
+test.describe("WebPay statutory discount browser recovery smoke", () => {
+  test("refresh during awaiting review restores by GET readback and does not repeat decision POST", async ({ page }) => {
+    await seedStatutoryScenario("pending", "WEBPAY-STAT-RECOVERY-PENDING");
+    await seedRecoveryRecord(page, "DECISION_PENDING", {
+      statutoryDiscountDecisionCommandId
+    });
+
+    await page.goto("/?ticketReference=WEBPAY-STAT-RECOVERY-PENDING");
+
+    await expect(page.getByText(/Existing statutory discount request restored/i)).toBeVisible();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "GET" && request.path.includes("/statutory-discounts/decisions/"))).not.toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+  });
+
+  test("refresh after approval restores application-required state without repeating decision POST", async ({ page }) => {
+    await seedStatutoryScenario("application-required", "WEBPAY-STAT-RECOVERY-APPROVED");
+    await seedRecoveryRecord(page, "APPLICATION_AVAILABLE", {
+      statutoryDiscountDecisionCommandId
+    });
+
+    await page.goto("/?ticketReference=WEBPAY-STAT-RECOVERY-APPROVED");
+
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("heading", { name: /entitlement approved/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /apply approved discount/i })).toBeVisible();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"))).toHaveLength(0);
+  });
+
+  test("refresh during application processing restores by GET and does not repeat application POST", async ({ page }) => {
+    await seedStatutoryScenario("application-processing", "WEBPAY-STAT-RECOVERY-PROCESSING");
+    await seedRecoveryRecord(page, "APPLICATION_PROCESSING", {
+      statutoryDiscountDecisionCommandId,
+      statutoryDiscountPayableBasisApplicationCommandId,
+      applicationIdempotencyKey: "webpay-statutory-discount-application:browser-smoke"
+    });
+
+    await page.goto("/?ticketReference=WEBPAY-STAT-RECOVERY-PROCESSING");
+
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("heading", { name: /discount application processing/i })).toBeVisible();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "GET" && request.path.includes("/statutory-discounts/decisions/"))).not.toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"))).toHaveLength(0);
+  });
+
+  test("refresh after applied readback requires fresh GET before enabling payment", async ({ page }) => {
+    await seedStatutoryScenario("applied-payment-ready", "WEBPAY-STAT-APPLIED-PAYMENT");
+    await seedRecoveryRecord(page, "PAYABLE_READY", {
+      statutoryDiscountDecisionCommandId,
+      statutoryDiscountPayableBasisApplicationCommandId,
+      applicationIdempotencyKey: "webpay-statutory-discount-application:browser-smoke"
+    });
+
+    await page.goto("/?ticketReference=WEBPAY-STAT-APPLIED-PAYMENT");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("heading", { name: /statutory discount applied/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "GET" && request.path.includes("/statutory-discounts/decisions/"))).not.toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/payment-intents"))).toHaveLength(0);
+  });
+
+  test("browser page restart restores safe decision reference without repeating POST", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-RECOVERY-RESTART", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+
+    const restartedPage = await page.context().newPage();
+    await restartedPage.goto("/?ticketReference=WEBPAY-STAT-RECOVERY-RESTART");
+
+    await expect(restartedPage.getByText(/statutory discount workflow was found|Existing statutory discount request restored/i)).toBeVisible();
+    await restartedPage.getByRole("button", { name: /^continue$/i }).click();
+    await expect(restartedPage.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(1);
+    await restartedPage.close();
+  });
+
+  test("malformed and expired recovery records fail closed", async ({ page }) => {
+    await page.addInitScript((key) => localStorage.setItem(key, "{broken"), statutoryRecoveryStorageKey);
+    await page.goto("/");
+    await expect(page.getByText(/invalid statutory discount recovery record was cleared/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /^continue$/i })).toBeEnabled();
+
+    const expiredPage = await page.context().newPage();
+    await seedRecoveryRecord(expiredPage, "PAYABLE_READY", {
+      statutoryDiscountDecisionCommandId,
+      expiresAt: "2026-01-01T00:00:00.000Z"
+    });
+    await expiredPage.goto("/");
+    expect(await readStatutoryRecoveryStorage(expiredPage)).toBeNull();
+    await expect(expiredPage.getByRole("button", { name: /^continue$/i })).toBeEnabled();
+    await expiredPage.close();
+  });
+
+  test("storage unavailable continues safely in memory", async ({ page }) => {
+    await page.addInitScript(() => {
+      const blocked = () => {
+        throw new DOMException("Browser storage blocked", "SecurityError");
+      };
+      Storage.prototype.getItem = blocked;
+      Storage.prototype.setItem = blocked;
+      Storage.prototype.removeItem = blocked;
+    });
+
+    await submitStatutoryRequest(page, "WEBPAY-STAT-STORAGE-UNAVAILABLE", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByText(/Durable statutory discount recovery is unavailable/i)).toBeVisible();
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(1);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/payment-intents"))).toHaveLength(0);
+  });
+
+  test("ambiguous decision response retries with original decision key", async ({ page }) => {
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-AMBIGUOUS-DECISION");
+    await page.getByRole("button", { name: /request statutory discount/i }).click();
+    await page.getByLabel(/ID document type/i).fill("OSCA");
+    await page.getByLabel(/Issuing authority/i).fill("Quezon City");
+    await page.getByLabel(/Masked ID reference/i).fill("SC-****-1234");
+    await page.getByLabel(/I confirm these entitlement details/i).check();
+    await page.getByRole("button", { name: /submit for review/i }).click();
+    await expect(page.getByRole("alert")).toContainText(/temporarily unavailable/i);
+
+    let state = await getFixtureState();
+    const firstPost = state.requestLog.find((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions");
+    const originalKey = firstPost?.headers["idempotency-key"];
+
+    await page.getByRole("button", { name: /submit for review/i }).click();
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+
+    state = await getFixtureState();
+    const decisionPosts = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions");
+    expect(decisionPosts).toHaveLength(2);
+    expect(decisionPosts[1].headers["idempotency-key"]).toBe(originalKey);
+    expect(state.ambiguousDecisionAttempts[originalKey ?? ""]).toBe(2);
+  });
+
+  test("ambiguous application recovery retries with original key and no payment intent", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLY-RETRYABLE", "Senior Citizen", "SC-****-1234");
+    await page.getByRole("button", { name: /apply approved discount/i }).click();
+    await expect(page.getByRole("heading", { name: /discount application temporarily unavailable/i })).toBeVisible();
+
+    let state = await getFixtureState();
+    const firstApply = state.requestLog.find((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"));
+    const originalKey = firstApply?.headers["idempotency-key"];
+
+    await page.getByRole("button", { name: /retry discount application/i }).click();
+    await expect(page.getByRole("heading", { name: /statutory discount applied/i })).toBeVisible();
+
+    state = await getFixtureState();
+    const applyPosts = state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"));
+    expect(applyPosts).toHaveLength(2);
+    expect(applyPosts[1].headers["idempotency-key"]).toBe(originalKey);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/payment-intents"))).toHaveLength(0);
+  });
+
+  test("ambiguous payment handoff preserves one payment key and does not create a second provider handoff", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-AMBIGUOUS-PAYMENT", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+    await page.getByRole("button", { name: /continue to payment/i }).dblclick();
+
+    await expect(page.getByRole("heading", { name: /Payment already started/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /continue existing payment/i })).toHaveAttribute("href", "https://payments.test/existing-handoff");
+
+    const state = await getFixtureState();
+    const paymentPosts = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents");
+    expect(paymentPosts).toHaveLength(1);
+    const storage = await readStatutoryRecoveryStorage(page);
+    expect(storage).toContain("10000000-0000-4000-8000-000000000011");
+    expect(storage).toContain("paymentIntentCorrelationId");
+  });
+
+  test("two tabs observe recovery updates and stale tab cannot submit payment without refresh", async ({ page }) => {
+    await seedStatutoryScenario("applied-payment-ready", "WEBPAY-STAT-APPLIED-PAYMENT");
+    await page.goto("/");
+    const record = buildRecoveryRecord("PAYABLE_READY", {
+      statutoryDiscountDecisionCommandId,
+      statutoryDiscountPayableBasisApplicationCommandId,
+      applicationIdempotencyKey: "webpay-statutory-discount-application:browser-smoke",
+      paymentIntentCorrelationId: "webpay-payment-intent-browser-smoke"
+    });
+    await page.evaluate(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), {
+      key: statutoryRecoveryStorageKey,
+      value: record
+    });
+
+    const secondPage = await page.context().newPage();
+    await secondPage.goto("/?ticketReference=WEBPAY-STAT-APPLIED-PAYMENT");
+    await expect(secondPage.getByText(/statutory discount workflow is ready for payment/i)).toBeVisible();
+
+    await secondPage.evaluate(({ key, value }) => {
+      localStorage.setItem(key, JSON.stringify({ ...value, stage: "PAYMENT_SUBMITTING", updatedAt: new Date().toISOString() }));
+    }, {
+      key: statutoryRecoveryStorageKey,
+      value: record
+    });
+
+    await secondPage.reload();
+    await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
+    await secondPage.getByRole("button", { name: /^continue$/i }).click();
+    await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    await secondPage.close();
+  });
+
+  test("payment attempt handoff metadata is preserved and terminal cleanup clears browser-only recovery", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLIED-PAYMENT", "Senior Citizen", "SC-****-1234");
+    await page.getByRole("button", { name: /continue to payment/i }).click();
+    await expect(page.getByRole("link", { name: /continue to payment/i })).toBeVisible();
+
+    let storage = await readStatutoryRecoveryStorage(page);
+    expect(storage).toContain("10000000-0000-4000-8000-000000000010");
+    expect(storage).toContain("PAYMENT_HANDOFF");
+
+    await page.getByRole("button", { name: /clear browser recovery/i }).click();
+    storage = await readStatutoryRecoveryStorage(page);
+    expect(storage).toBeNull();
+    await expect(page.getByText(/Browser recovery metadata was cleared/i)).toBeVisible();
+  });
+
+  test("no-discount path and authoritative Sales Invoice presentation remain unchanged", async ({ page }) => {
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-NO-DISCOUNT-RECOVERY");
+    await expect(page.getByRole("button", { name: /request statutory discount/i })).toBeVisible();
+    expect(await readStatutoryRecoveryStorage(page)).toBeNull();
+
+    await openReturnPage(page, "WEBPAY-ONLY-PAYMENT-MARKER", ids.available);
+    await expect(page.getByRole("heading", { name: /^sales invoice$/i })).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
+    expect(await readStatutoryRecoveryStorage(page)).toBeNull();
+  });
+});
+
 async function openReturnPage(page: Page, ticketReference: string, paymentAttemptId: string) {
   const query = new URLSearchParams({
     ticketReference,
@@ -450,6 +694,58 @@ async function openReturnPage(page: Page, ticketReference: string, paymentAttemp
     result: "success"
   });
   await page.goto(`/webpay/payment-return?${query.toString()}`);
+}
+
+type StatutoryRecoveryStage =
+  | "DECISION_SUBMITTING"
+  | "DECISION_PENDING"
+  | "APPLICATION_AVAILABLE"
+  | "APPLICATION_SUBMITTING"
+  | "APPLICATION_PROCESSING"
+  | "PAYABLE_READY"
+  | "PAYMENT_SUBMITTING"
+  | "PAYMENT_HANDOFF"
+  | "TERMINAL";
+
+function buildRecoveryRecord(stage: StatutoryRecoveryStage, overrides: Record<string, unknown> = {}) {
+  const now = new Date();
+  return {
+    schemaVersion: 1,
+    parkingSessionId: "20000000-0000-4000-8000-000000000001",
+    entitlementType: "SENIOR_CITIZEN",
+    decisionIdempotencyKey: "webpay-statutory-discount-decision:browser-smoke",
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    correlationId: "77777777-7777-4777-8777-777777777777",
+    stage,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString(),
+    ...overrides
+  };
+}
+
+async function seedRecoveryRecord(page: Page, stage: StatutoryRecoveryStage, overrides: Record<string, unknown> = {}) {
+  const record = buildRecoveryRecord(stage, overrides);
+  await page.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), {
+    key: statutoryRecoveryStorageKey,
+    value: record
+  });
+}
+
+async function seedStatutoryScenario(scenario: string, ticketReference: string) {
+  await fetch(`${baseFixtureUrl}/__fixture/statutory-scenario`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      decisionId: statutoryDecisionCommandId,
+      scenario,
+      ticketReference
+    })
+  });
+}
+
+async function readStatutoryRecoveryStorage(page: Page): Promise<string | null> {
+  return page.evaluate((key) => localStorage.getItem(key), statutoryRecoveryStorageKey);
 }
 
 async function resolveTicketOnStartPage(page: Page, ticketReference: string) {

@@ -244,6 +244,32 @@ textarea {
   line-height: 1.45;
 }
 
+.statutory-recovery-panel {
+  display: grid;
+  gap: 12px;
+  margin: 12px 14px;
+  padding: 12px;
+  border: 1px solid #b2ddff;
+  border-radius: 8px;
+  background: #f5fbff;
+}
+
+.statutory-recovery-panel h2,
+.statutory-recovery-panel p {
+  margin: 0;
+}
+
+.statutory-recovery-panel h2 {
+  color: #0b1f3a;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.statutory-recovery-panel p {
+  color: #344054;
+  line-height: 1.45;
+}
+
 .status-button {
   width: 100%;
 }
