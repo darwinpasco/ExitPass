@@ -63,5 +63,6 @@ public static class AptPayableBasisRevalidationOutcomes
     public const string SessionAlreadyPaid = "SESSION_ALREADY_PAID";
     public const string TerminalCashUnavailable = "TERMINAL_CASH_UNAVAILABLE";
     public const string FiscalReadinessFailed = "FISCAL_READINESS_FAILED";
+    public const string StatutoryDiscountBlocked = "STATUTORY_DISCOUNT_BLOCKED";
     public const string RevalidationFailed = "REVALIDATION_FAILED";
 }

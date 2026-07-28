@@ -337,6 +337,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
             ReferenceType: referenceType,
             TicketReference: ticketReference,
             PlateNumber: plateNumber,
+            StatutoryDiscountDecisionCommandId: null,
             CorrelationId: correlationId);
 
     private static AptPayableBasisRevalidateRequest RevalidateRequest(
@@ -357,6 +358,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
             PlateNumber: original.PlateNumber,
             ExpectedAmountMinorUnits: expectedAmount,
             ExpectedCurrency: expectedCurrency,
+            StatutoryDiscountDecisionCommandId: null,
             CorrelationId: correlationId);
 
     private static void AddSiteHeader(HttpClient client, string siteId) =>

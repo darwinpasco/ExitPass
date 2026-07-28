@@ -12,6 +12,7 @@ public sealed record AptPayableBasisResolveRequest(
     string ReferenceType,
     string? TicketReference,
     string? PlateNumber,
+    Guid? StatutoryDiscountDecisionCommandId,
     Guid CorrelationId);
 
 /// <summary>
@@ -29,6 +30,7 @@ public sealed record AptPayableBasisRevalidateRequest(
     string? PlateNumber,
     long ExpectedAmountMinorUnits,
     string ExpectedCurrency,
+    Guid? StatutoryDiscountDecisionCommandId,
     Guid CorrelationId);
 
 /// <summary>
@@ -63,6 +65,7 @@ public sealed record AptPayableBasisReadinessResponse(
     string TerminalCashAvailability,
     string FiscalReadiness,
     string SalesInvoiceConfigurationReadiness,
+    AptStatutoryDiscountReadinessDto? StatutoryDiscountReadiness,
     string CashAcceptanceReadiness,
     bool ReadyForCashAcceptance,
     IReadOnlyList<string> BlockingReasonCodes,
@@ -79,4 +82,38 @@ public sealed record AptReadinessDimensionDto(
     bool Ready,
     string? BlockingReasonCode,
     bool Retryable,
+    string Message);
+
+/// <summary>
+/// APT-safe statutory-discount readiness dimension derived from canonical Central PMS readback.
+/// </summary>
+public sealed record AptStatutoryDiscountReadinessDto(
+    bool Applicable,
+    bool Ready,
+    Guid? StatutoryDiscountDecisionCommandId,
+    Guid? StatutoryDiscountValidationId,
+    Guid? StatutoryDiscountPayableBasisApplicationCommandId,
+    string? EntitlementType,
+    string? DecisionStatus,
+    string? DecisionResultStatus,
+    string? DecisionCommandStatus,
+    string? ApplicationCommandStatus,
+    string? ApplicationResultClassification,
+    bool PayableBasisReady,
+    string PayableBasisReadinessStatus,
+    string? PayableBasisReadinessAction,
+    Guid? OriginalTariffSnapshotId,
+    Guid? AppliedTariffSnapshotId,
+    long? OriginalAmountMinorUnits,
+    long? VatExclusiveBasisAmountMinorUnits,
+    long? VatAmountMinorUnits,
+    string? VatTreatment,
+    long? StatutoryDiscountAmountMinorUnits,
+    long? FinalPayableAmountMinorUnits,
+    string? Currency,
+    bool Retryable,
+    string? RecoveryClassification,
+    string? RecoveryAction,
+    string? SafeErrorCode,
+    string? BlockingReasonCode,
     string Message);
