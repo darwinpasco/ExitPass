@@ -14,6 +14,7 @@ type FixtureState = {
   receiptAttempts: Record<string, number>;
   statutoryReadAttempts: Record<string, number>;
   statutoryApplyAttempts: Record<string, number>;
+  paymentIntentAttempts: Record<string, number>;
 };
 
 const consoleMessagesByTest = new Map<string, string[]>();
@@ -274,6 +275,80 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
   });
 });
 
+test.describe("WebPay statutory discount applied payment browser smoke", () => {
+  test("applied statutory state enables payment using the authoritative applied basis", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLIED-PAYMENT", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByRole("heading", { name: /statutory discount applied/i })).toBeVisible();
+    await expect(page.getByText("PHP 50.00")).toBeVisible();
+    await expect(page.getByText("-PHP 10.00")).toBeVisible();
+    await expect(page.getByText("PHP 40.00")).toBeVisible();
+    await expect(page.getByText(/Payment is available using the Central PMS-approved statutory payable basis/i)).toBeVisible();
+
+    await page.getByRole("button", { name: /continue to payment/i }).click();
+
+    await expect(page.getByRole("link", { name: /continue to payment/i })).toHaveAttribute("href", "https://payments.test/handoff");
+    const state = await getFixtureState();
+    const paymentRequests = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents");
+    expect(paymentRequests).toHaveLength(1);
+    const body = paymentRequests[0].body as Record<string, unknown>;
+    expect(body.tariffSnapshotId).toBe("99999999-9999-4999-8999-999999999999");
+    expect(body.tariffSnapshotId).not.toBe("30000000-0000-4000-8000-000000000001");
+    expect(body.expectedAmountMinorUnits).toBe(4000);
+    expect(body.expectedCurrency).toBe("PHP");
+    expect(body.statutoryDiscountDecisionCommandId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(body.statutoryDiscountPayableBasisApplicationCommandId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    expect(JSON.stringify(body)).not.toContain("statutoryDiscountAmountMinorUnits");
+    expect(JSON.stringify(body)).not.toContain("vatAmountMinorUnits");
+    expect(JSON.stringify(body)).not.toContain("reviewer");
+    await expectApiBoundary(apiRequests);
+  });
+
+  test("rapid payment clicks for applied statutory state create one payment intent", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-APPLIED-DUPLICATE", "Senior Citizen", "SC-****-1234");
+
+    await expect(page.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+    await page.getByRole("button", { name: /continue to payment/i }).dblclick();
+
+    await expect(page.getByRole("link", { name: /continue to payment/i })).toBeVisible();
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(1);
+    expect(state.paymentIntentAttempts["WEBPAY-STAT-APPLIED-DUPLICATE"]).toBe(1);
+  });
+
+  for (const scenario of [
+    { name: "pending review", ticketReference: "WEBPAY-STAT-PENDING-SC", heading: /awaiting review/i },
+    { name: "application processing", ticketReference: "WEBPAY-STAT-APPLY-PROCESSING", heading: /entitlement approved/i },
+    { name: "rejected", ticketReference: "WEBPAY-STAT-REJECTED", heading: /entitlement not approved/i },
+    { name: "retryable", ticketReference: "WEBPAY-STAT-APPLY-RETRYABLE", heading: /entitlement approved/i },
+    { name: "terminal", ticketReference: "WEBPAY-STAT-TERMINAL", heading: /statutory discount unavailable/i },
+    { name: "missing applied snapshot", ticketReference: "WEBPAY-STAT-MISSING-SNAPSHOT", heading: /payment basis incomplete/i },
+    { name: "missing final amount", ticketReference: "WEBPAY-STAT-MISSING-AMOUNT", heading: /payment basis incomplete/i },
+    { name: "missing currency", ticketReference: "WEBPAY-STAT-MISSING-CURRENCY", heading: /payment basis incomplete/i }
+  ]) {
+    test(`${scenario.name} cannot submit statutory payment`, async ({ page }) => {
+      await submitStatutoryRequest(page, scenario.ticketReference, "Senior Citizen", "SC-****-1234");
+
+      await expect(page.getByRole("heading", { name: scenario.heading })).toBeVisible();
+      const pendingButton = page.getByRole("button", { name: /statutory discount pending/i });
+      await expect(pendingButton).toBeDisabled();
+      const state = await getFixtureState();
+      expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    });
+  }
+
+  test("payment return still displays authoritative Sales Invoice presentation", async ({ page }) => {
+    await openReturnPage(page, "WEBPAY-ONLY-PAYMENT-MARKER", ids.available);
+
+    await expect(page.getByRole("heading", { name: /^sales invoice$/i })).toBeVisible();
+    await expect(page.getByText("POS SERVER AUTHORITATIVE PRESENTATION")).toBeVisible();
+    await expect(page.getByText("SI-WEBPAY-BROWSER-SMOKE-0001").first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: /payment receipt/i })).toHaveCount(0);
+  });
+});
+
 test.describe("WebPay statutory discount application-intent browser smoke", () => {
   test("approved decision displays application action without posting until clicked", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
@@ -306,7 +381,7 @@ test.describe("WebPay statutory discount application-intent browser smoke", () =
     await expect(page.getByText("PHP 11.06")).toBeVisible();
     await expect(page.getByText("-PHP 25.80")).toBeVisible();
     await expect(page.getByText("PHP 103.20")).toBeVisible();
-    await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    await expect(page.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
 
     const state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.method === "POST" && request.path.includes("/apply-payable-basis"))).toHaveLength(1);

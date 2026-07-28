@@ -85,6 +85,14 @@ type StatutoryDiscountUiState = {
   error: string;
 };
 
+type AppliedStatutoryPaymentBasis = {
+  tariffSnapshotId: string;
+  amountMinorUnits: number;
+  currency: string;
+  statutoryDiscountDecisionCommandId: string;
+  statutoryDiscountPayableBasisApplicationCommandId: string;
+};
+
 const defaultStatutoryDiscountForm: StatutoryDiscountFormState = {
   entitlementType: "SENIOR_CITIZEN",
   idDocumentType: "",
@@ -234,6 +242,7 @@ export function App() {
     setIsSubmitting(true);
 
     try {
+      const appliedStatutoryBasis = getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
       const response = await createPaymentIntent({
         ticketReference: hasTicket ? (resolvedSession.ticketReference ?? ticketReference.trim()) : undefined,
         plateNumber: hasPlate ? (resolvedSession.plateNumber ?? plateNumber.trim()) : undefined,
@@ -241,8 +250,11 @@ export function App() {
         siteGroupId: resolvedSession.siteGroupId ?? scannedContext.siteGroupId,
         siteId: resolvedSession.siteId ?? scannedContext.siteId,
         vendorSystemId: resolvedSession.vendorSystemId ?? scannedContext.vendorSystemId,
-        tariffSnapshotId: resolvedSession.tariffSnapshotId,
-        expectedAmountMinorUnits: resolvedSession.amountMinorUnits
+        tariffSnapshotId: appliedStatutoryBasis?.tariffSnapshotId ?? resolvedSession.tariffSnapshotId,
+        expectedAmountMinorUnits: appliedStatutoryBasis?.amountMinorUnits ?? resolvedSession.amountMinorUnits,
+        expectedCurrency: appliedStatutoryBasis?.currency ?? resolvedSession.currency,
+        statutoryDiscountDecisionCommandId: appliedStatutoryBasis?.statutoryDiscountDecisionCommandId,
+        statutoryDiscountPayableBasisApplicationCommandId: appliedStatutoryBasis?.statutoryDiscountPayableBasisApplicationCommandId
       }, fetch, {});
       setResult(response);
       setResolvedSession(toParkingSessionResolveResponse(response));
@@ -295,7 +307,7 @@ export function App() {
       return;
     }
 
-    if (statutoryDiscountState.decision) {
+    if (statutoryDiscountState.decision && !getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision)) {
       setError(getStatutoryDiscountPaymentBlockMessage(statutoryDiscountState.decision));
       return;
     }
@@ -547,7 +559,8 @@ export function App() {
   const isPaymentComplete = isPaidStatus(summary?.paymentStatus);
   const isPayablePending = isStatutoryValidationPending(summary);
   const isActiveStatutoryWorkflow = Boolean(statutoryDiscountState.decision);
-  const statutoryDiscountPaymentBlocked = isActiveStatutoryWorkflow || isPayablePending;
+  const appliedStatutoryBasis = getAppliedStatutoryPaymentBasis(statutoryDiscountState.decision);
+  const statutoryDiscountPaymentBlocked = isPayablePending || (isActiveStatutoryWorkflow && !appliedStatutoryBasis);
 
   return (
     <main className="app-shell">
@@ -781,7 +794,7 @@ export function App() {
             ? "Resolving..."
             : isSubmitting
               ? "Creating payment..."
-              : isActiveStatutoryWorkflow
+              : isActiveStatutoryWorkflow && !appliedStatutoryBasis
                 ? "Statutory discount pending"
               : isPayablePending
                 ? "Discount review pending"
@@ -1035,7 +1048,7 @@ function StatutoryDiscountRequestPanel({
             </div>
           </dl>
 
-          {decision.payableBasisReady && (
+          {getAppliedStatutoryPaymentBasis(decision) && (
             <dl className="payable-breakdown">
               <div>
                 <dt>Original Amount</dt>
@@ -1086,7 +1099,7 @@ function StatutoryDiscountRequestPanel({
             )}
           </div>
           <p className="statutory-copy">
-            Payment remains unavailable while this statutory discount workflow is active.
+            {getStatutoryDiscountPaymentAvailabilityCopy(decision)}
           </p>
         </div>
       )}
@@ -1699,9 +1712,54 @@ function canRetryApplicationIntent(decision: WebPayStatutoryDiscountDecisionResp
     safeErrorCode === "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE";
 }
 
+function getAppliedStatutoryPaymentBasis(
+  decision?: WebPayStatutoryDiscountDecisionResponse | null
+): AppliedStatutoryPaymentBasis | null {
+  if (!decision) {
+    return null;
+  }
+
+  const decisionResult = decision.decisionResultStatus?.toUpperCase() ?? "";
+  const applicationStatus = decision.applicationCommandStatus.toUpperCase();
+  const appliedTariffSnapshotId = decision.appliedTariffSnapshotId?.trim();
+  const currency = decision.currency?.trim();
+  const applicationCommandId = decision.statutoryDiscountPayableBasisApplicationCommandId?.trim();
+
+  if (
+    decisionResult !== "APPROVED" ||
+    applicationStatus !== "APPLIED" ||
+    !decision.payableBasisReady ||
+    !appliedTariffSnapshotId ||
+    decision.finalPayableAmountMinorUnits === null ||
+    decision.finalPayableAmountMinorUnits === undefined ||
+    !Number.isFinite(decision.finalPayableAmountMinorUnits) ||
+    !currency ||
+    !applicationCommandId ||
+    !decision.statutoryDiscountDecisionCommandId.trim()
+  ) {
+    return null;
+  }
+
+  return {
+    tariffSnapshotId: appliedTariffSnapshotId,
+    amountMinorUnits: decision.finalPayableAmountMinorUnits,
+    currency: currency.toUpperCase(),
+    statutoryDiscountDecisionCommandId: decision.statutoryDiscountDecisionCommandId.trim(),
+    statutoryDiscountPayableBasisApplicationCommandId: applicationCommandId
+  };
+}
+
+function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDiscountDecisionResponse): string {
+  return getAppliedStatutoryPaymentBasis(decision)
+    ? "Payment is available using the Central PMS-approved statutory payable basis."
+    : "Payment remains unavailable while this statutory discount workflow is active.";
+}
+
 function getStatutoryDiscountPaymentBlockMessage(decision: WebPayStatutoryDiscountDecisionResponse): string {
   if (decision.payableBasisReady) {
-    return "The statutory discount payable basis is ready. Discounted payment is not available until the next WebPay integration step.";
+    return getAppliedStatutoryPaymentBasis(decision)
+      ? "Payment is available using the approved statutory payable basis."
+      : "The statutory discount payable basis is missing required authoritative payment facts.";
   }
 
   return getStatutoryDiscountStatusCopy(decision).body;
@@ -1716,8 +1774,16 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
   if (decision.payableBasisReady && decision.appliedTariffSnapshotId && decision.finalPayableAmountMinorUnits !== null && decision.finalPayableAmountMinorUnits !== undefined && decision.currency) {
     return {
       heading: "Statutory discount applied",
-      body: "Central PMS returned the approved payable basis. Payment linkage will be completed in the next WebPay slice.",
+      body: "Central PMS returned the approved payable basis. Continue only when you are ready to start payment.",
       tone: "success"
+    };
+  }
+
+  if (decision.payableBasisReady) {
+    return {
+      heading: "Payment basis incomplete",
+      body: "Central PMS has not returned all required payment facts for the approved statutory discount. Refresh status before payment.",
+      tone: "warning"
     };
   }
 
