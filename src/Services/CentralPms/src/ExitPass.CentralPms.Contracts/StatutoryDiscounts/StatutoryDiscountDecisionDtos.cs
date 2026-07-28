@@ -29,7 +29,64 @@ public sealed record StatutoryDiscountDecisionRequest(
     Guid? ReviewerUserId,
     bool ReviewerAttestation,
     bool ApplyPayableBasis,
-    Guid? OriginalTariffSnapshotId);
+    Guid? OriginalTariffSnapshotId,
+    bool? BeneficiaryResidencySatisfied = null);
+
+/// <summary>
+/// Channel-safe statutory parking local-ordinance availability request.
+/// </summary>
+public sealed record StatutoryDiscountParkingAvailabilityRequestDto(
+    Guid RequestReference,
+    Guid ParkingSessionId,
+    string? RequestedEntitlementType,
+    bool? BeneficiaryResidencySatisfied);
+
+/// <summary>
+/// Channel-safe statutory parking local-ordinance availability response.
+/// </summary>
+public sealed record StatutoryDiscountParkingAvailabilityResponse(
+    Guid RequestReference,
+    Guid ParkingSessionId,
+    Guid? SiteId,
+    Guid? SiteGroupId,
+    Guid? JurisdictionId,
+    string? JurisdictionCode,
+    string? JurisdictionDisplayName,
+    string AvailabilityStatus,
+    bool StatutoryParkingBenefitAvailable,
+    IReadOnlyList<string> CoveredEntitlementTypes,
+    string? RequestedEntitlementType,
+    Guid? PolicyVersionId,
+    string? PolicyCode,
+    string? PolicyVersion,
+    string? OrdinanceNumber,
+    string? OrdinanceTitle,
+    string? PolicyDisplayName,
+    string? VerificationStatus,
+    string? PublicationStatus,
+    DateTimeOffset? EffectiveFrom,
+    DateTimeOffset? EffectiveTo,
+    string? ResidencyRequirement,
+    IReadOnlyList<StatutoryDiscountPolicyEvidenceRequirementDto> RequiredEvidenceTypes,
+    string? ParkingServiceApplicability,
+    string? BenefitEffectClassification,
+    string? BenefitEffectSupportStatus,
+    bool? OfficialSourceAvailable,
+    bool? OrdinanceTextAvailable,
+    bool? OrdinanceNumberAvailable,
+    string? SafeReasonCode,
+    bool Retryable,
+    string RemediationAction,
+    Guid CorrelationId);
+
+/// <summary>
+/// Safe evidence requirement metadata for an available statutory parking policy.
+/// </summary>
+public sealed record StatutoryDiscountPolicyEvidenceRequirementDto(
+    string EvidenceType,
+    string RequirementStatus,
+    string SafeRequirementLabel,
+    string? SafeRequirementNotes);
 
 /// <summary>
 /// Metadata-only evidence reference accepted by the shared statutory-discount facade.

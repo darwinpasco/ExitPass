@@ -443,9 +443,10 @@ public sealed class StatutoryDiscountStagedCommandRepositoryTests
             ReviewerUserId: context.RequestedByUserId,
             ReviewerAttestation: true,
             ApplyPayableBasis: true,
-            context.TariffSnapshotId,
-            "facade-key",
-            context.CorrelationId);
+            OriginalTariffSnapshotId: context.TariffSnapshotId,
+            BeneficiaryResidencySatisfied: true,
+            IdempotencyKey: "facade-key",
+            CorrelationId: context.CorrelationId);
 
         return new StatutoryDiscountDecisionRepositoryCommand(
             command,

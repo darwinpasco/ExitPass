@@ -16,17 +16,20 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
     private readonly IOperatorConsoleAccessEvaluationWriter _accessEvaluationWriter;
     private readonly IStatutoryDiscountServiceChannelReviewRepository _reviewRepository;
     private readonly IStatutoryDiscountStagedCommandService _stagedCommandService;
+    private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
 
     public OperatorConsoleServiceChannelStatutoryDiscountReviewService(
         IOperatorConsoleAccessEvaluationService accessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter accessEvaluationWriter,
         IStatutoryDiscountServiceChannelReviewRepository reviewRepository,
-        IStatutoryDiscountStagedCommandService stagedCommandService)
+        IStatutoryDiscountStagedCommandService stagedCommandService,
+        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository)
     {
         _accessEvaluationService = accessEvaluationService ?? throw new ArgumentNullException(nameof(accessEvaluationService));
         _accessEvaluationWriter = accessEvaluationWriter ?? throw new ArgumentNullException(nameof(accessEvaluationWriter));
         _reviewRepository = reviewRepository ?? throw new ArgumentNullException(nameof(reviewRepository));
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
+        _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
     }
 
     public async Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(
@@ -156,6 +159,18 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             canonical.DecisionResultStatus is not StatutoryDiscountDecisionV2ResultStates.NotDecided)
         {
             return NotAccepted(command, access, requestedDecision, "STATUTORY_DISCOUNT_DECISION_NOT_AWAITING_REVIEW", detail);
+        }
+
+        if (requestedDecision == "APPROVE")
+        {
+            var policyAuthority = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+                    command.StatutoryDiscountDecisionCommandId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (policyAuthority is null)
+            {
+                return NotAccepted(command, access, requestedDecision, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED", detail);
+            }
         }
 
         var validationLinkage = requestedDecision == "APPROVE"

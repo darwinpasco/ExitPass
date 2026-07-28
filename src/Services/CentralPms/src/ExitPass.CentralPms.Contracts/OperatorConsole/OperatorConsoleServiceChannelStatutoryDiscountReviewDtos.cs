@@ -1,3 +1,5 @@
+using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+
 namespace ExitPass.CentralPms.Contracts.OperatorConsole;
 
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse(
@@ -56,6 +58,7 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailR
     long? StatutoryDiscountAmountMinorUnits,
     long? FinalPayableAmountMinorUnits,
     string? Currency,
+    OperatorConsoleServiceChannelStatutoryDiscountReviewPolicyAuthority? GoverningPolicy,
     Guid? ReviewerUserId,
     Guid? ReviewerAccessEvaluationId,
     string? ReviewerDecision,
@@ -63,6 +66,29 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailR
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
     Guid CorrelationId);
+
+public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewPolicyAuthority(
+    Guid StatutoryDiscountPolicyVersionId,
+    Guid JurisdictionId,
+    string JurisdictionCode,
+    string JurisdictionDisplayName,
+    string PolicyCode,
+    string PolicyVersion,
+    string? OrdinanceNumber,
+    string? OrdinanceTitle,
+    string SourceVerificationStatus,
+    string TransactionPublicationStatus,
+    string DetailedRuleVerificationStatus,
+    string ParkingServiceApplicability,
+    string BenefitType,
+    string BeneficiaryResidencyScope,
+    bool? OfficialSourceAvailable,
+    bool? OrdinanceTextAvailable,
+    bool? OrdinanceNumberAvailable,
+    DateTimeOffset? EffectiveFrom,
+    DateTimeOffset? EffectiveTo,
+    IReadOnlyList<StatutoryDiscountPolicyEvidenceRequirementDto> RequiredEvidenceTypes,
+    string LegalApprovabilityReason);
 
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewEvidenceReference(
     string EvidenceType,

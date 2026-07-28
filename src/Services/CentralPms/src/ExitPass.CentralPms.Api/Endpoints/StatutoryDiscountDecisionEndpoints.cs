@@ -41,7 +41,59 @@ public static class StatutoryDiscountDecisionEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound);
 
+        group.MapPost("/availability", ResolveAvailabilityAsync)
+            .WithName("ResolveStatutoryParkingDiscountAvailability")
+            .WithMetadata(new ReconciliationPolicyMetadata(ReadPolicy))
+            .Produces<StatutoryDiscountParkingAvailabilityResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest);
+
         return app;
+    }
+
+    private static async Task<IResult> ResolveAvailabilityAsync(
+        HttpRequest request,
+        StatutoryDiscountParkingAvailabilityRequestDto? body,
+        IStatutoryDiscountDecisionFacadeService service,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity("ResolveStatutoryParkingDiscountAvailability", ActivityKind.Server);
+        activity?.SetTag("http.route", "POST /v1/statutory-discounts/decisions/availability");
+        activity?.SetTag("parking_session_id", body?.ParkingSessionId);
+        activity?.SetTag("requested_entitlement_type", body?.RequestedEntitlementType);
+
+        if (body is null)
+        {
+            return Results.BadRequest(BuildError("INVALID_REQUEST", "Request body is required.", Guid.Empty));
+        }
+
+        if (!TryReadCorrelationId(request, out var correlationId, out var headerError))
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, headerError!.Message);
+            return Results.BadRequest(headerError);
+        }
+
+        try
+        {
+            var result = await service.ResolveAvailabilityAsync(
+                    new StatutoryDiscountParkingAvailabilityRequest(
+                        body.RequestReference,
+                        body.ParkingSessionId,
+                        body.RequestedEntitlementType,
+                        body.BeneficiaryResidencySatisfied,
+                        correlationId),
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            activity?.SetStatus(ActivityStatusCode.Ok);
+            activity?.SetTag("availability_status", result.AvailabilityStatus);
+            return Results.Ok(ToAvailabilityResponse(result));
+        }
+        catch (ArgumentException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
+            return Results.BadRequest(BuildError("INVALID_REQUEST", ex.Message, correlationId));
+        }
     }
 
     private static async Task<IResult> SubmitAsync(
@@ -234,6 +286,7 @@ public static class StatutoryDiscountDecisionEndpoints
             body.ReviewerAttestation,
             body.ApplyPayableBasis,
             body.OriginalTariffSnapshotId,
+            body.BeneficiaryResidencySatisfied,
             idempotencyKey,
             correlationId);
 
@@ -295,6 +348,48 @@ public static class StatutoryDiscountDecisionEndpoints
             result.PayableBasisReady,
             result.PayableBasisReadinessStatus,
             result.PayableBasisReadinessAction);
+
+    private static StatutoryDiscountParkingAvailabilityResponse ToAvailabilityResponse(
+        StatutoryDiscountParkingAvailabilityResult result) =>
+        new(
+            result.RequestReference,
+            result.ParkingSessionId,
+            result.SiteId,
+            result.SiteGroupId,
+            result.JurisdictionId,
+            result.JurisdictionCode,
+            result.JurisdictionDisplayName,
+            result.AvailabilityStatus,
+            result.StatutoryParkingBenefitAvailable,
+            result.CoveredEntitlementTypes,
+            result.RequestedEntitlementType,
+            result.PolicyVersionId,
+            result.PolicyCode,
+            result.PolicyVersion,
+            result.OrdinanceNumber,
+            result.OrdinanceTitle,
+            result.PolicyDisplayName,
+            result.VerificationStatus,
+            result.PublicationStatus,
+            result.EffectiveFrom,
+            result.EffectiveTo,
+            result.ResidencyRequirement,
+            result.RequiredEvidenceTypes.Select(requirement => new StatutoryDiscountPolicyEvidenceRequirementDto(
+                    requirement.EvidenceType,
+                    requirement.RequirementStatus,
+                    requirement.SafeRequirementLabel,
+                    requirement.SafeRequirementNotes))
+                .ToArray(),
+            result.ParkingServiceApplicability,
+            result.BenefitEffectClassification,
+            result.BenefitEffectSupportStatus,
+            result.OfficialSourceAvailable,
+            result.OrdinanceTextAvailable,
+            result.OrdinanceNumberAvailable,
+            result.SafeReasonCode,
+            result.Retryable,
+            result.RemediationAction,
+            result.CorrelationId);
 
     private static bool TryReadHeaders(
         HttpRequest request,

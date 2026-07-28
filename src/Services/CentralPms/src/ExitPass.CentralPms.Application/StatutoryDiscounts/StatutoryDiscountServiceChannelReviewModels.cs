@@ -126,6 +126,7 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
     long? StatutoryDiscountAmountMinorUnits,
     long? FinalPayableAmountMinorUnits,
     string? Currency,
+    StatutoryDiscountServiceChannelReviewPolicyAuthority? GoverningPolicy,
     Guid? ReviewerUserId,
     Guid? ReviewerAccessEvaluationId,
     string? ReviewerDecision,
@@ -133,6 +134,29 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
     Guid CorrelationId);
+
+public sealed record StatutoryDiscountServiceChannelReviewPolicyAuthority(
+    Guid StatutoryDiscountPolicyVersionId,
+    Guid JurisdictionId,
+    string JurisdictionCode,
+    string JurisdictionDisplayName,
+    string PolicyCode,
+    string PolicyVersion,
+    string? OrdinanceNumber,
+    string? OrdinanceTitle,
+    string SourceVerificationStatus,
+    string TransactionPublicationStatus,
+    string DetailedRuleVerificationStatus,
+    string ParkingServiceApplicability,
+    string BenefitType,
+    string BeneficiaryResidencyScope,
+    bool? OfficialSourceAvailable,
+    bool? OrdinanceTextAvailable,
+    bool? OrdinanceNumberAvailable,
+    DateTimeOffset? EffectiveFrom,
+    DateTimeOffset? EffectiveTo,
+    IReadOnlyList<StatutoryDiscountPolicyEvidenceRequirement> RequiredEvidenceTypes,
+    string LegalApprovabilityReason);
 
 /// <summary>
 /// Durable statutory validation linkage created from a reviewed service-channel decision.

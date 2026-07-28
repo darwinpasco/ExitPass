@@ -5,6 +5,10 @@ namespace ExitPass.CentralPms.Application.StatutoryDiscounts;
 /// </summary>
 public interface IStatutoryDiscountDecisionFacadeService
 {
+    Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
+        StatutoryDiscountParkingAvailabilityRequest request,
+        CancellationToken cancellationToken);
+
     Task<StatutoryDiscountDecisionResult> SubmitAsync(
         StatutoryDiscountDecisionCommand command,
         CancellationToken cancellationToken);

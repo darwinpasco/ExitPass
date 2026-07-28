@@ -665,6 +665,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandService, StatutoryDiscountStagedCommandService>();
     builder.Services.AddScoped<IStatutoryDiscountServiceChannelReviewRepository>(_ =>
         new PostgresStatutoryDiscountServiceChannelReviewRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryDiscountParkingEligibilityRepository>(_ =>
+        new PostgresStatutoryDiscountParkingEligibilityRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryDiscountParkingEligibilityResolver, StatutoryDiscountParkingEligibilityResolver>();
     builder.Services.AddScoped<IOperatorConsoleServiceChannelStatutoryDiscountReviewService, OperatorConsoleServiceChannelStatutoryDiscountReviewService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
