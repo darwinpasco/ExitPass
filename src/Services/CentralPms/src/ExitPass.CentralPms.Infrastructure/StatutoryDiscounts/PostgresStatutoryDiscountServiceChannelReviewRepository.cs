@@ -190,10 +190,46 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 d.statutory_discount_amount_minor_units,
                 d.net_payable_amount_minor_units,
                 d.currency_code,
-                COALESCE(d.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS effective_original_tariff_snapshot_id
+                COALESCE(d.original_tariff_snapshot_id, r.original_tariff_snapshot_id) AS effective_original_tariff_snapshot_id,
+                dpa.statutory_discount_policy_version_id AS governing_policy_version_id,
+                dpa.jurisdiction_id AS governing_jurisdiction_id,
+                dpa.jurisdiction_code AS governing_jurisdiction_code,
+                dpa.jurisdiction_display_name AS governing_jurisdiction_display_name,
+                dpa.policy_code AS governing_policy_code,
+                dpa.policy_version AS governing_policy_version,
+                dpa.ordinance_number AS governing_ordinance_number,
+                dpa.ordinance_title AS governing_ordinance_title,
+                dpa.source_verification_status::text AS governing_source_verification_status,
+                dpa.transaction_publication_status::text AS governing_transaction_publication_status,
+                dpa.detailed_rule_verification_status::text AS governing_detailed_rule_verification_status,
+                dpa.parking_service_applicability::text AS governing_parking_service_applicability,
+                dpa.benefit_type::text AS governing_benefit_type,
+                dpa.beneficiary_residency_scope::text AS governing_beneficiary_residency_scope,
+                dpa.official_source_available AS governing_official_source_available,
+                dpa.ordinance_text_available AS governing_ordinance_text_available,
+                dpa.ordinance_number_available AS governing_ordinance_number_available,
+                dpa.transaction_use_effective_from AS governing_effective_from,
+                dpa.transaction_use_effective_to AS governing_effective_to,
+                COALESCE(evidence.requirements_json, '[]') AS governing_evidence_requirements
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_decision_commands AS d
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            LEFT JOIN discounts.statutory_discount_decision_policy_authorities AS dpa
+              ON dpa.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
+            LEFT JOIN LATERAL (
+                SELECT jsonb_agg(
+                    jsonb_build_object(
+                        'evidenceType', req.evidence_type::text,
+                        'requirementStatus', req.requirement_status::text,
+                        'safeRequirementLabel', req.safe_requirement_label,
+                        'safeRequirementNotes', req.safe_requirement_notes
+                    )
+                    ORDER BY req.evidence_type::text
+                )::text AS requirements_json
+                FROM discounts.statutory_discount_policy_version_evidence_requirements AS req
+                WHERE req.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
+                  AND req.requirement_status IN ('REQUIRED', 'OPTIONAL')
+            ) AS evidence ON TRUE
             WHERE r.statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
             """;
 
@@ -498,6 +534,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             GetNullableInt64(reader, "statutory_discount_amount_minor_units"),
             GetNullableInt64(reader, "net_payable_amount_minor_units"),
             GetNullableString(reader, "currency_code")?.Trim(),
+            ReadGoverningPolicy(reader),
             GetNullableGuid(reader, "reviewer_user_id"),
             GetNullableGuid(reader, "reviewer_access_evaluation_id"),
             GetNullableString(reader, "reviewer_decision"),
@@ -913,6 +950,44 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             reader.GetString(reader.GetOrdinal("discount_base_scope")));
     }
 
+    private static StatutoryDiscountServiceChannelReviewPolicyAuthority? ReadGoverningPolicy(NpgsqlDataReader reader)
+    {
+        var policyVersionId = GetNullableGuid(reader, "governing_policy_version_id");
+        if (policyVersionId is null)
+        {
+            return null;
+        }
+
+        var requirementsJson = GetNullableString(reader, "governing_evidence_requirements") ?? "[]";
+        var requirements = JsonSerializer.Deserialize<IReadOnlyList<StatutoryDiscountPolicyEvidenceRequirement>>(
+                requirementsJson,
+                JsonOptions)
+            ?? [];
+
+        return new StatutoryDiscountServiceChannelReviewPolicyAuthority(
+            policyVersionId.Value,
+            GetNullableGuid(reader, "governing_jurisdiction_id") ?? Guid.Empty,
+            GetNullableString(reader, "governing_jurisdiction_code") ?? string.Empty,
+            GetNullableString(reader, "governing_jurisdiction_display_name") ?? string.Empty,
+            GetNullableString(reader, "governing_policy_code") ?? string.Empty,
+            GetNullableString(reader, "governing_policy_version") ?? string.Empty,
+            GetNullableString(reader, "governing_ordinance_number"),
+            GetNullableString(reader, "governing_ordinance_title"),
+            GetNullableString(reader, "governing_source_verification_status") ?? string.Empty,
+            GetNullableString(reader, "governing_transaction_publication_status") ?? string.Empty,
+            GetNullableString(reader, "governing_detailed_rule_verification_status") ?? string.Empty,
+            GetNullableString(reader, "governing_parking_service_applicability") ?? string.Empty,
+            GetNullableString(reader, "governing_benefit_type") ?? string.Empty,
+            GetNullableString(reader, "governing_beneficiary_residency_scope") ?? string.Empty,
+            GetNullableBool(reader, "governing_official_source_available"),
+            GetNullableBool(reader, "governing_ordinance_text_available"),
+            GetNullableBool(reader, "governing_ordinance_number_available"),
+            GetNullableDateTimeOffset(reader, "governing_effective_from"),
+            GetNullableDateTimeOffset(reader, "governing_effective_to"),
+            requirements,
+            "FROZEN_LOCAL_ORDINANCE_POLICY_AUTHORITY");
+    }
+
     private static IReadOnlyList<StatutoryDiscountServiceChannelReviewEvidenceFact> ReadEvidence(NpgsqlDataReader reader)
     {
         var json = reader.GetString(reader.GetOrdinal("evidence_references"));
@@ -960,6 +1035,12 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     {
         var ordinal = reader.GetOrdinal(name);
         return reader.IsDBNull(ordinal) ? null : reader.GetFieldValue<DateTimeOffset>(ordinal);
+    }
+
+    private static bool? GetNullableBool(NpgsqlDataReader reader, string name)
+    {
+        var ordinal = reader.GetOrdinal(name);
+        return reader.IsDBNull(ordinal) ? null : reader.GetBoolean(ordinal);
     }
 
     private static string ToDatabaseEvidenceType(string evidenceType) =>

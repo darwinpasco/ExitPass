@@ -23,6 +23,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
     private readonly IOperatorConsoleStatutoryDiscountApplyPayableBasisService _applyService;
     private readonly IOperatorConsoleStatutoryDiscountReadService _readService;
     private readonly IStatutoryDiscountServiceChannelReviewRepository _serviceChannelReviewRepository;
+    private readonly IStatutoryDiscountParkingEligibilityResolver _parkingEligibilityResolver;
+    private readonly IStatutoryDiscountParkingEligibilityRepository _parkingEligibilityRepository;
 
     public StatutoryDiscountDecisionFacadeService(
         IStatutoryDiscountStagedCommandService stagedCommandService,
@@ -32,7 +34,9 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         IOperatorConsoleStatutoryDiscountDecisionService decisionService,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService applyService,
         IOperatorConsoleStatutoryDiscountReadService readService,
-        IStatutoryDiscountServiceChannelReviewRepository serviceChannelReviewRepository)
+        IStatutoryDiscountServiceChannelReviewRepository serviceChannelReviewRepository,
+        IStatutoryDiscountParkingEligibilityResolver parkingEligibilityResolver,
+        IStatutoryDiscountParkingEligibilityRepository parkingEligibilityRepository)
     {
         _stagedCommandService = stagedCommandService ?? throw new ArgumentNullException(nameof(stagedCommandService));
         _historicalRepository = historicalRepository ?? throw new ArgumentNullException(nameof(historicalRepository));
@@ -42,7 +46,14 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         _applyService = applyService ?? throw new ArgumentNullException(nameof(applyService));
         _readService = readService ?? throw new ArgumentNullException(nameof(readService));
         _serviceChannelReviewRepository = serviceChannelReviewRepository ?? throw new ArgumentNullException(nameof(serviceChannelReviewRepository));
+        _parkingEligibilityResolver = parkingEligibilityResolver ?? throw new ArgumentNullException(nameof(parkingEligibilityResolver));
+        _parkingEligibilityRepository = parkingEligibilityRepository ?? throw new ArgumentNullException(nameof(parkingEligibilityRepository));
     }
+
+    public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
+        StatutoryDiscountParkingAvailabilityRequest request,
+        CancellationToken cancellationToken) =>
+        _parkingEligibilityResolver.ResolveAsync(request, cancellationToken);
 
     public async Task<StatutoryDiscountDecisionResult> SubmitAsync(
         StatutoryDiscountDecisionCommand command,
@@ -56,6 +67,22 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         var serviceChannelDecisionOmitted = string.IsNullOrWhiteSpace(normalized.Decision);
         var serviceChannelApplicationIntent = serviceChannel && serviceChannelDecisionOmitted && normalized.ApplyPayableBasis;
         var pendingReviewIntake = serviceChannel && serviceChannelDecisionOmitted && !normalized.ApplyPayableBasis;
+        StatutoryDiscountParkingAvailabilityResult? availability = null;
+
+        if (!serviceChannelApplicationIntent)
+        {
+            availability = await _parkingEligibilityResolver.ResolveAsync(ToAvailabilityRequest(normalized), cancellationToken)
+                .ConfigureAwait(false);
+            EnsureAvailableForDecisionCreation(availability);
+            decisionCommand = decisionCommand with
+            {
+                PolicyResolutionReferenceId = availability.PolicyVersionId,
+                AppliedPolicyReferenceId = availability.PolicyVersionId,
+                FallbackPolicyReferenceId = null,
+                PolicyResolutionBasis = "LOCAL_ORDINANCE_APPLIED",
+                LocalOrdinanceApplied = true
+            };
+        }
 
         StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record> decisionStart;
         StatutoryDiscountDecisionV2Record decision;
@@ -69,6 +96,8 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         {
             decisionStart = await _stagedCommandService.CreateOrResolveDecisionAsync(decisionCommand, cancellationToken)
                 .ConfigureAwait(false);
+            await EnsureDecisionPolicyAuthorityAsync(decisionStart, decisionCommand, availability, cancellationToken)
+                .ConfigureAwait(false);
             decision = pendingReviewIntake
                 ? await ResolvePendingReviewDecisionStageAsync(normalized, decisionStart, cancellationToken).ConfigureAwait(false)
                 : await ResolveDecisionStageAsync(normalized, decisionStart, cancellationToken).ConfigureAwait(false);
@@ -80,6 +109,14 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     ToServiceChannelReviewIntake(normalized, decision),
                     cancellationToken)
                 .ConfigureAwait(false);
+            if (availability is not null)
+            {
+                await _parkingEligibilityRepository.BindDecisionPolicyAuthorityAsync(
+                        decision.StatutoryDiscountDecisionCommandId,
+                        availability,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
         }
 
         StatutoryDiscountPayableBasisApplicationV1Record? application = null;
@@ -107,6 +144,9 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                     "STATUTORY_DISCOUNT_VALIDATION_REFERENCE_REQUIRED",
                     "Approved statutory-discount validation linkage is required before payable-basis application can be requested.");
             }
+
+            await RequireDecisionPolicyAuthorityAsync(decision.StatutoryDiscountDecisionCommandId, cancellationToken)
+                .ConfigureAwait(false);
 
             var applicationStart = await CreateOrResolveApplicationStageAsync(normalized, decision, cancellationToken)
                 .ConfigureAwait(false);
@@ -172,6 +212,85 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
             .ConfigureAwait(false);
 
         return result.WithChannelSafeReviewFacts(review);
+    }
+
+    private static StatutoryDiscountParkingAvailabilityRequest ToAvailabilityRequest(
+        StatutoryDiscountDecisionCommand command) =>
+        new(
+            command.RequestReference,
+            command.ParkingSessionId,
+            command.EntitlementType,
+            command.BeneficiaryResidencySatisfied,
+            command.CorrelationId);
+
+    private static void EnsureAvailableForDecisionCreation(StatutoryDiscountParkingAvailabilityResult availability)
+    {
+        if (availability.IsAvailable)
+        {
+            return;
+        }
+
+        throw new StatutoryDiscountDecisionRejectedException(
+            availability.SafeReasonCode ?? "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_UNAVAILABLE",
+            $"Statutory parking benefit is unavailable: {availability.AvailabilityStatus}.");
+    }
+
+    private async Task EnsureDecisionPolicyAuthorityAsync(
+        StagedStatutoryDiscountCommandStartResult<StatutoryDiscountDecisionV2Record> start,
+        StatutoryDiscountDecisionV2Command command,
+        StatutoryDiscountParkingAvailabilityResult? availability,
+        CancellationToken cancellationToken)
+    {
+        if (availability is null || start.Record is null)
+        {
+            return;
+        }
+
+        if (start.Existing)
+        {
+            var existing = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+                    start.Record.StatutoryDiscountDecisionCommandId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is null)
+            {
+                throw new StatutoryDiscountDecisionRejectedException(
+                    "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED",
+                    "Existing statutory-discount decision lacks frozen local-ordinance policy authority.");
+            }
+
+            if (availability.PolicyVersionId.HasValue &&
+                existing.StatutoryDiscountPolicyVersionId != availability.PolicyVersionId.Value)
+            {
+                throw new StatutoryDiscountDecisionRejectedException(
+                    "STATUTORY_DISCOUNT_POLICY_AUTHORITY_SEMANTIC_CONFLICT",
+                    "Existing statutory-discount decision is bound to a different local-ordinance policy authority.");
+            }
+
+            return;
+        }
+
+        await _parkingEligibilityRepository.BindDecisionPolicyAuthorityAsync(
+                start.Record.StatutoryDiscountDecisionCommandId,
+                availability,
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task RequireDecisionPolicyAuthorityAsync(
+        Guid statutoryDiscountDecisionCommandId,
+        CancellationToken cancellationToken)
+    {
+        var authority = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+                statutoryDiscountDecisionCommandId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (authority is null)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED",
+                "Frozen local-ordinance policy authority is required before payable-basis application can be requested.");
+        }
     }
 
     private async Task<StatutoryDiscountDecisionV2Record> ResolveDecisionStageAsync(
@@ -364,7 +483,6 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
         CancellationToken cancellationToken)
     {
         var businessIdentity = StatutoryDiscountDecisionV2SemanticHash.BuildBusinessIdentity(decisionCommand);
-        var expectedSemanticHash = StatutoryDiscountDecisionV2SemanticHash.Compute(decisionCommand);
         var decision = await _stagedCommandService.GetDecisionByBusinessIdentityAsync(businessIdentity, cancellationToken)
             .ConfigureAwait(false);
 
@@ -375,6 +493,20 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
                 "An approved statutory-discount decision must exist before payable-basis application can be requested.",
                 isNotFound: true);
         }
+
+        var authority = await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(
+                decision.StatutoryDiscountDecisionCommandId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (authority is null)
+        {
+            throw new StatutoryDiscountDecisionRejectedException(
+                "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED",
+                "Frozen local-ordinance policy authority is required before payable-basis application can be requested.");
+        }
+
+        var comparisonCommand = BindFrozenPolicyAuthority(decisionCommand, authority);
+        var expectedSemanticHash = StatutoryDiscountDecisionV2SemanticHash.Compute(comparisonCommand);
 
         if (!string.Equals(decision.SemanticHashSourceVersion, StatutoryDiscountDecisionV2SemanticHash.SourceVersion, StringComparison.Ordinal) ||
             !string.Equals(decision.SemanticRequestHash, expectedSemanticHash, StringComparison.Ordinal))
@@ -395,6 +527,17 @@ public sealed class StatutoryDiscountDecisionFacadeService : IStatutoryDiscountD
 
         return decision;
     }
+
+    private static StatutoryDiscountDecisionV2Command BindFrozenPolicyAuthority(
+        StatutoryDiscountDecisionV2Command command,
+        StatutoryDiscountDecisionPolicyAuthority authority) =>
+        command with
+        {
+            PolicyResolutionReferenceId = authority.StatutoryDiscountPolicyVersionId,
+            AppliedPolicyReferenceId = authority.StatutoryDiscountPolicyVersionId,
+            PolicyResolutionBasis = "LOCAL_ORDINANCE_APPLIED",
+            LocalOrdinanceApplied = true
+        };
 
     private async Task<StagedStatutoryDiscountCommandStartResult<StatutoryDiscountPayableBasisApplicationV1Record>> CreateOrResolveApplicationStageAsync(
         StatutoryDiscountDecisionCommand normalized,

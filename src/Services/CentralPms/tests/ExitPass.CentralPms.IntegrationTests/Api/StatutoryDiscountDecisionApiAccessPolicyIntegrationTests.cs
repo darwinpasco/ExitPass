@@ -97,6 +97,37 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         fake.LastCommand.ActorUserId.Should().Be(sourceChannel == "OPERATOR_CONSOLE" ? ActorUserId : ServiceIdentityId);
     }
 
+    [Fact]
+    public async Task Availability_WhenReadPermissionPresent_ReturnsSafeLocalOrdinanceFacts()
+    {
+        var fake = new FakeFacadeService();
+        using var factory = CreateFactory(fake);
+        using var client = factory.CreateClient();
+        AddServiceHeaders(client, "statutory-discounts.decision.read");
+        client.DefaultRequestHeaders.Add("X-Correlation-Id", CorrelationId.ToString());
+
+        using var response = await client.PostAsJsonAsync(
+            "/v1/statutory-discounts/decisions/availability",
+            new StatutoryDiscountParkingAvailabilityRequestDto(
+                RequestReference,
+                ParkingSessionId,
+                "SENIOR_CITIZEN",
+                BeneficiaryResidencySatisfied: true));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var raw = await response.Content.ReadAsStringAsync();
+        raw.Should().NotContain("storageReference");
+        raw.Should().NotContain("raw");
+        raw.Should().NotContain("ordinanceDocument");
+        var body = await response.Content.ReadFromJsonAsync<StatutoryDiscountParkingAvailabilityResponse>();
+        body!.AvailabilityStatus.Should().Be(StatutoryDiscountParkingAvailabilityStatuses.Available);
+        body.JurisdictionDisplayName.Should().Be("Paranaque City");
+        body.OrdinanceNumber.Should().BeNull();
+        body.OrdinanceTextAvailable.Should().BeFalse();
+        body.RequiredEvidenceTypes.Should().ContainSingle(item => item.EvidenceType == "RESIDENCY_EVIDENCE");
+        fake.LastAvailabilityRequest!.BeneficiaryResidencySatisfied.Should().BeTrue();
+    }
+
     [Theory]
     [InlineData("WEBPAY", "statutory-discounts.decision.submit.webpay")]
     [InlineData("ASSISTED_PAYMENT_TERMINAL", "statutory-discounts.decision.submit.assisted-payment-terminal")]
@@ -235,6 +266,8 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
         var propertyNames = typeof(StatutoryDiscountDecisionRequest)
             .GetProperties()
             .Concat(typeof(StatutoryDiscountDecisionResponse).GetProperties())
+            .Concat(typeof(StatutoryDiscountParkingAvailabilityRequestDto).GetProperties())
+            .Concat(typeof(StatutoryDiscountParkingAvailabilityResponse).GetProperties())
             .Select(property => property.Name);
 
         propertyNames.Should().NotContain(name => ContainsProhibitedIdentityOrEvidenceTerm(name));
@@ -324,10 +357,13 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
             .Where(endpoint => endpoint.DisplayName?.Contains("/v1/statutory-discounts/decisions", StringComparison.OrdinalIgnoreCase) == true)
             .ToArray();
 
-        endpoints.Should().HaveCount(2);
+        endpoints.Should().HaveCount(3);
         endpoints.Select(endpoint => endpoint.Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName)
             .Should()
-            .BeEquivalentTo("CentralPmsStatutoryDiscountDecisionSubmit", "CentralPmsStatutoryDiscountDecisionRead");
+            .BeEquivalentTo(
+                "CentralPmsStatutoryDiscountDecisionSubmit",
+                "CentralPmsStatutoryDiscountDecisionRead",
+                "CentralPmsStatutoryDiscountDecisionRead");
     }
 
     private static CustomWebApplicationFactory CreateFactory(FakeFacadeService fake) =>
@@ -443,6 +479,8 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
     {
         public StatutoryDiscountDecisionCommand? LastCommand { get; private set; }
 
+        public StatutoryDiscountParkingAvailabilityRequest? LastAvailabilityRequest { get; private set; }
+
         public bool ReturnNullReadback { get; init; }
 
         public StatutoryDiscountDecisionRejectedException? SubmitException { get; init; }
@@ -472,6 +510,57 @@ public sealed class StatutoryDiscountDecisionApiAccessPolicyIntegrationTests
             }
 
             return Task.FromResult(Result(command.SourceChannel, command.RequestReference, command.CorrelationId));
+        }
+
+        public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
+            StatutoryDiscountParkingAvailabilityRequest request,
+            CancellationToken cancellationToken)
+        {
+            LastAvailabilityRequest = request;
+            return Task.FromResult(new StatutoryDiscountParkingAvailabilityResult(
+                request.RequestReference,
+                request.ParkingSessionId,
+                Guid.Parse("7d000000-0000-0000-0000-000000000007"),
+                Guid.Parse("7d000000-0000-0000-0000-000000000008"),
+                Guid.Parse("7d000000-0000-0000-0000-000000000040"),
+                "137604000",
+                "Paranaque City",
+                StatutoryDiscountParkingAvailabilityStatuses.Available,
+                StatutoryParkingBenefitAvailable: true,
+                ["SENIOR_CITIZEN", "PWD"],
+                request.RequestedEntitlementType,
+                Guid.Parse("7d000000-0000-0000-0000-000000000041"),
+                Guid.Parse("7d000000-0000-0000-0000-000000000042"),
+                "PARANAQUE-SC-PWD-FREE-PARKING",
+                "v1",
+                OrdinanceNumber: null,
+                OrdinanceTitle: null,
+                "Paranaque resident statutory parking benefit",
+                "VERIFIED_ACTIVE_OPERATIONAL",
+                "ACTIVE_FOR_TRANSACTION_USE",
+                "DETAILS_PARTIALLY_VERIFIED",
+                EffectiveFrom: null,
+                EffectiveTo: null,
+                "RESIDENT_ONLY",
+                [new StatutoryDiscountPolicyEvidenceRequirement(
+                    "RESIDENCY_EVIDENCE",
+                    "REQUIRED",
+                    "Residency evidence",
+                    SafeRequirementNotes: null)],
+                "COVERED",
+                "FULL_PARKING_FEE_EXEMPTION",
+                "NOT_SUPPORTED_BY_CURRENT_CALCULATION",
+                OfficialSourceAvailable: false,
+                OrdinanceTextAvailable: false,
+                OrdinanceNumberAvailable: false,
+                "PARANAQUE_OPERATIONAL_AUTHORITY",
+                "controlled-policy-record",
+                SafeReasonCode: null,
+                Retryable: false,
+                StatutoryDiscountParkingAvailabilityRemediationActions.ContinueWithOrdinaryPayment,
+                DateTimeOffset.Parse("2026-07-21T08:00:00Z"),
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                request.CorrelationId));
         }
 
         public Task<StatutoryDiscountDecisionResult?> GetAsync(

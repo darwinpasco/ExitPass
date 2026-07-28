@@ -225,7 +225,15 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             .Returns(call => ((OperatorConsoleAccessEvaluationResult)call[0]!) with { Persisted = true });
         var repository = Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
         var staged = Substitute.For<IStatutoryDiscountStagedCommandService>();
-        var sut = new OperatorConsoleServiceChannelStatutoryDiscountReviewService(accessService, accessWriter, repository, staged);
+        var parkingEligibilityRepository = Substitute.For<IStatutoryDiscountParkingEligibilityRepository>();
+        parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(CommandId, Arg.Any<CancellationToken>())
+            .Returns(PolicyAuthority());
+        var sut = new OperatorConsoleServiceChannelStatutoryDiscountReviewService(
+            accessService,
+            accessWriter,
+            repository,
+            staged,
+            parkingEligibilityRepository);
         return new TestFixture(accessService, repository, staged, sut);
     }
 
@@ -332,6 +340,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             2232,
             8929,
             "PHP",
+            GoverningPolicy: null,
             reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview ? null : UserId,
             reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview ? null : EvaluationId,
             reviewStatus switch
@@ -413,6 +422,35 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             CompletedAt: Now,
             FailedAt: null,
             UpdatedAt: Now);
+
+    private static StatutoryDiscountDecisionPolicyAuthority PolicyAuthority() =>
+        new(
+            CommandId,
+            Guid.Parse("8a000000-0000-0000-0000-000000000020"),
+            Guid.Parse("8a000000-0000-0000-0000-000000000021"),
+            "137604000",
+            "Paranaque City",
+            "PARANAQUE-SC-PWD-FREE-PARKING",
+            "v1",
+            "SENIOR_CITIZEN",
+            "VERIFIED_ACTIVE_OPERATIONAL",
+            "ACTIVE_FOR_TRANSACTION_USE",
+            "DETAILS_PARTIALLY_VERIFIED",
+            "COVERED",
+            "FULL_PARKING_FEE_EXEMPTION",
+            "RESIDENT_ONLY",
+            OfficialSourceAvailable: false,
+            OrdinanceTextAvailable: false,
+            OrdinanceNumberAvailable: false,
+            OrdinanceNumber: null,
+            OrdinanceTitle: null,
+            LegalBasisReference: "PARANAQUE_OPERATIONAL_AUTHORITY",
+            SourceReference: "controlled-policy-record",
+            TransactionUseEffectiveFrom: null,
+            TransactionUseEffectiveTo: null,
+            ResolvedAt: Now,
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            CorrelationId);
 
     private sealed record TestFixture(
         IOperatorConsoleAccessEvaluationService AccessService,

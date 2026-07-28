@@ -157,6 +157,7 @@ public sealed record StatutoryDiscountDecisionCommand(
     bool ReviewerAttestation,
     bool ApplyPayableBasis,
     Guid? OriginalTariffSnapshotId,
+    bool? BeneficiaryResidencySatisfied,
     string IdempotencyKey,
     Guid CorrelationId);
 
@@ -355,7 +356,8 @@ public static class StatutoryDiscountDecisionSemanticHash
             reviewerUserId = command.ReviewerUserId,
             reviewerAttestation = command.ReviewerAttestation,
             applyPayableBasis = command.ApplyPayableBasis,
-            originalTariffSnapshotId = command.OriginalTariffSnapshotId
+            originalTariffSnapshotId = command.OriginalTariffSnapshotId,
+            beneficiaryResidencySatisfied = command.BeneficiaryResidencySatisfied
         };
 
         var json = JsonSerializer.Serialize(source, HashJsonOptions);

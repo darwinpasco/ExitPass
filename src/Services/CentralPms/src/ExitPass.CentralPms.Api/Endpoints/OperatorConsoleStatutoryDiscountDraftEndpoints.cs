@@ -4,6 +4,7 @@ using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
+using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
@@ -919,6 +920,35 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.StatutoryDiscountAmountMinorUnits,
             result.FinalPayableAmountMinorUnits,
             result.Currency,
+            result.GoverningPolicy is null
+                ? null
+                : new OperatorConsoleServiceChannelStatutoryDiscountReviewPolicyAuthority(
+                    result.GoverningPolicy.StatutoryDiscountPolicyVersionId,
+                    result.GoverningPolicy.JurisdictionId,
+                    result.GoverningPolicy.JurisdictionCode,
+                    result.GoverningPolicy.JurisdictionDisplayName,
+                    result.GoverningPolicy.PolicyCode,
+                    result.GoverningPolicy.PolicyVersion,
+                    result.GoverningPolicy.OrdinanceNumber,
+                    result.GoverningPolicy.OrdinanceTitle,
+                    result.GoverningPolicy.SourceVerificationStatus,
+                    result.GoverningPolicy.TransactionPublicationStatus,
+                    result.GoverningPolicy.DetailedRuleVerificationStatus,
+                    result.GoverningPolicy.ParkingServiceApplicability,
+                    result.GoverningPolicy.BenefitType,
+                    result.GoverningPolicy.BeneficiaryResidencyScope,
+                    result.GoverningPolicy.OfficialSourceAvailable,
+                    result.GoverningPolicy.OrdinanceTextAvailable,
+                    result.GoverningPolicy.OrdinanceNumberAvailable,
+                    result.GoverningPolicy.EffectiveFrom,
+                    result.GoverningPolicy.EffectiveTo,
+                    result.GoverningPolicy.RequiredEvidenceTypes.Select(requirement => new StatutoryDiscountPolicyEvidenceRequirementDto(
+                            requirement.EvidenceType,
+                            requirement.RequirementStatus,
+                            requirement.SafeRequirementLabel,
+                            requirement.SafeRequirementNotes))
+                        .ToArray(),
+                    result.GoverningPolicy.LegalApprovabilityReason),
             result.ReviewerUserId,
             result.ReviewerAccessEvaluationId,
             result.ReviewerDecision,

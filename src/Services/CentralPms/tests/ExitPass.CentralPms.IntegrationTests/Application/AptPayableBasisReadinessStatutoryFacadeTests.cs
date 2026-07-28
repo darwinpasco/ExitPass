@@ -641,6 +641,11 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             throw new NotSupportedException("APT payable-basis facade tests must not submit statutory decisions.");
         }
 
+        public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAvailabilityAsync(
+            StatutoryDiscountParkingAvailabilityRequest request,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException("APT payable-basis facade tests must not resolve statutory parking availability.");
+
         public Task<StatutoryDiscountDecisionResult?> GetAsync(
             Guid statutoryDiscountDecisionCommandId,
             Guid correlationId,

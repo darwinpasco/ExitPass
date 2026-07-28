@@ -2,6 +2,8 @@ using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Infrastructure.StatutoryDiscounts;
 using Npgsql;
 using NpgsqlTypes;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace ExitPass.CentralPms.IntegrationTests.Shared;
 
@@ -53,6 +55,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         if (seedPaymentContext)
         {
             await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, $"Seed {scenarioName}.");
+            await SeedSupportedLocalOrdinancePolicyAsync(context, entitlementType);
             await SeedReviewerUserAsync(context, context.RequestedByUserId);
         }
 
@@ -62,13 +65,15 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         }
 
         var staged = CreateStagedService();
+        var policy = await SeedSupportedLocalOrdinancePolicyAsync(context, entitlementType);
         var created = await staged.CreateOrResolveDecisionAsync(
-            DecisionCommand(context, sourceChannel, entitlementType),
+            DecisionCommand(context, sourceChannel, entitlementType, policy.PolicyVersionId),
             CancellationToken.None);
         var awaiting = await staged.MarkDecisionAwaitingReviewAsync(
             created.Record!.StatutoryDiscountDecisionCommandId,
             context.CorrelationId,
             CancellationToken.None);
+        await SeedDecisionPolicyAuthorityAsync(context, awaiting, policy, entitlementType);
 
         var repository = CreateReviewRepository();
         await repository.UpsertIntakeAsync(IntakeCommand(context, awaiting, sourceChannel, entitlementType), CancellationToken.None);
@@ -82,6 +87,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await EnsureSchemaAsync();
         var context = PaymentTestContext.Create(scenarioName);
         await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, $"Seed {scenarioName}.");
+        await SeedSupportedLocalOrdinancePolicyAsync(context);
         await SeedReviewerUserAsync(context, context.RequestedByUserId);
         return context;
     }
@@ -96,6 +102,7 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         PaymentTestContext context,
         string sourceChannel,
         string entitlementType = "SENIOR_CITIZEN",
+        Guid? policyVersionId = null,
         string idempotencyKey = "review-linkage-decision-key") =>
         new(
             Guid.NewGuid(),
@@ -115,11 +122,11 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             OperatorDeviceBindingId: null,
             OperatorShiftId: null,
             new StatutoryDiscountDecisionV2DecisionFacts(StatutoryDiscountDecisionV2ResultStates.NotDecided, null, null),
-            PolicyResolutionReferenceId: null,
-            AppliedPolicyReferenceId: null,
+            PolicyResolutionReferenceId: policyVersionId,
+            AppliedPolicyReferenceId: policyVersionId,
             FallbackPolicyReferenceId: null,
-            PolicyResolutionBasis: "NATIONAL_DEFAULT",
-            LocalOrdinanceApplied: false,
+            PolicyResolutionBasis: policyVersionId.HasValue ? "LOCAL_ORDINANCE_APPLIED" : "NATIONAL_DEFAULT",
+            LocalOrdinanceApplied: policyVersionId.HasValue,
             context.TariffSnapshotId,
             new StatutoryDiscountDecisionV2TariffFacts(10000, 8929, 1071, 1786, 8214, "PHP"),
             idempotencyKey,
@@ -168,6 +175,13 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
 
             DELETE FROM discounts.statutory_discount_payable_basis_application_commands
             WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_policy_authorities
+            WHERE statutory_discount_decision_command_id IN (
+                SELECT statutory_discount_decision_command_id
+                FROM discounts.statutory_discount_decision_commands
+                WHERE parking_session_id = @parking_session_id
+            );
 
             DELETE FROM discounts.statutory_discount_decision_commands
             WHERE parking_session_id = @parking_session_id;
@@ -222,10 +236,30 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
 
             DELETE FROM identity.users
             WHERE user_id = @requested_by_user_id;
+
+            DELETE FROM discounts.statutory_discount_policy_version_evidence_requirements
+            WHERE statutory_discount_policy_version_id IN (
+                SELECT statutory_discount_policy_version_id
+                FROM discounts.statutory_discount_policy_versions
+                WHERE source_reference = @policy_source_reference
+            );
+
+            DELETE FROM discounts.statutory_discount_policy_versions
+            WHERE source_reference = @policy_source_reference;
+
+            DELETE FROM discounts.statutory_discount_policy_registry
+            WHERE source_reference = @policy_source_reference;
+
+            DELETE FROM sites.site_jurisdiction_assignments
+            WHERE source_reference = @policy_source_reference;
+
+            DELETE FROM sites.jurisdictions
+            WHERE source_reference = @policy_source_reference;
             """,
             connection);
         command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
         command.Parameters.AddWithValue("requested_by_user_id", context.RequestedByUserId);
+        command.Parameters.AddWithValue("policy_source_reference", PolicySourceReference(context));
         await command.ExecuteNonQueryAsync();
 
         await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
@@ -431,5 +465,331 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = context.RequestedByUserId;
         await command.ExecuteNonQueryAsync();
     }
+
+    private static async Task<SeededPolicyAuthority> SeedSupportedLocalOrdinancePolicyAsync(
+        PaymentTestContext context,
+        string entitlementType = "SENIOR_CITIZEN")
+    {
+        var jurisdictionId = StableGuid(context.ParkingSessionId, "jurisdiction");
+        var assignmentId = StableGuid(context.ParkingSessionId, "assignment");
+        var registryId = StableGuid(context.ParkingSessionId, $"registry-{entitlementType}");
+        var policyVersionId = StableGuid(context.ParkingSessionId, $"policy-version-{entitlementType}");
+        var policyCode = $"POLICY_{context.ParkingSessionId:N}"[..39].ToUpperInvariant();
+        var sourceReference = PolicySourceReference(context);
+        var jurisdictionCode = $"PH_{context.ParkingSessionId:N}"[..18].ToUpperInvariant();
+        var displayName = $"Canonical Test City {context.SiteCode}";
+        var evidenceType = entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID";
+
+        const string sql = """
+            INSERT INTO sites.jurisdictions (
+                jurisdiction_id,
+                jurisdiction_code,
+                jurisdiction_type,
+                display_name,
+                province_name,
+                region_name,
+                psgc_code,
+                jurisdiction_status,
+                effective_from,
+                source_reference
+            )
+            VALUES (
+                @jurisdiction_id,
+                @jurisdiction_code,
+                'CITY'::sites.jurisdiction_type_enum,
+                @display_name,
+                'Canonical Test Province',
+                'Canonical Test Region',
+                NULL,
+                'ACTIVE'::sites.jurisdiction_status_enum,
+                NOW() - INTERVAL '1 day',
+                @source_reference
+            )
+            ON CONFLICT (jurisdiction_id) DO NOTHING;
+
+            INSERT INTO sites.site_jurisdiction_assignments (
+                site_jurisdiction_assignment_id,
+                site_id,
+                jurisdiction_id,
+                assignment_status,
+                effective_from,
+                source_reference,
+                approval_reference
+            )
+            VALUES (
+                @assignment_id,
+                @site_id,
+                @jurisdiction_id,
+                'ACTIVE'::sites.site_jurisdiction_assignment_status_enum,
+                NOW() - INTERVAL '1 day',
+                @source_reference,
+                'canonical-test-approval'
+            )
+            ON CONFLICT (site_jurisdiction_assignment_id) DO NOTHING;
+
+            INSERT INTO discounts.statutory_discount_policy_registry (
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_name,
+                entitlement_type,
+                policy_status,
+                verification_status,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                benefit_type,
+                discount_base_scope,
+                jurisdiction_id,
+                jurisdiction_code,
+                jurisdiction_name,
+                beneficiary_residency_scope,
+                full_fee_exempt,
+                requires_evidence,
+                required_evidence_type,
+                legal_basis_reference,
+                source_reference,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                effective_from,
+                correlation_id
+            )
+            VALUES (
+                @registry_id,
+                @policy_code,
+                @policy_name,
+                @entitlement_type::discounts.statutory_entitlement_type_enum,
+                'ACTIVE'::discounts.discount_policy_status_enum,
+                'VERIFIED_ACTIVE_OPERATIONAL'::discounts.policy_verification_status_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_level_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_type_enum,
+                'LOCAL_ORDINANCE_APPLIED'::discounts.policy_resolution_basis_enum,
+                'STATUTORY_DISCOUNT_VAT_EXEMPT'::discounts.parking_benefit_type_enum,
+                'VAT_EXCLUSIVE'::discounts.discount_base_scope_enum,
+                @jurisdiction_id,
+                @jurisdiction_code,
+                @display_name,
+                'NON_RESIDENT_ALLOWED'::discounts.beneficiary_residency_scope_enum,
+                false,
+                true,
+                @evidence_type::discounts.discount_evidence_type_enum,
+                'CANONICAL_TEST_LOCAL_ORDINANCE',
+                @source_reference,
+                'canonical-test-reviewer',
+                NOW() - INTERVAL '1 hour',
+                'canonical-test-approver',
+                NOW() - INTERVAL '30 minutes',
+                NOW() - INTERVAL '1 day',
+                @correlation_id
+            )
+            ON CONFLICT (statutory_discount_policy_registry_id) DO NOTHING;
+
+            INSERT INTO discounts.statutory_discount_policy_versions (
+                statutory_discount_policy_version_id,
+                statutory_discount_policy_registry_id,
+                policy_code,
+                policy_version,
+                policy_version_label,
+                entitlement_type,
+                jurisdiction_id,
+                jurisdiction_code,
+                jurisdiction_display_name,
+                policy_scope_type,
+                policy_level,
+                policy_type,
+                policy_resolution_basis,
+                source_verification_status,
+                transaction_publication_status,
+                detailed_rule_verification_status,
+                parking_service_applicability,
+                benefit_type,
+                policy_effect_support_status,
+                discount_base_scope,
+                beneficiary_residency_scope,
+                official_source_identified,
+                official_source_available,
+                ordinance_text_available,
+                ordinance_number_available,
+                ordinance_title_available,
+                legal_basis_reference,
+                source_type,
+                source_reference,
+                safe_channel_summary,
+                safe_reviewer_guidance,
+                full_fee_exempt,
+                transaction_use_effective_from,
+                precedence_rank,
+                policy_semantic_hash,
+                reviewed_by,
+                reviewed_at,
+                approved_by,
+                approved_at,
+                correlation_id
+            )
+            VALUES (
+                @policy_version_id,
+                @registry_id,
+                @policy_code,
+                'v1',
+                'Canonical test local ordinance v1',
+                @entitlement_type::discounts.statutory_entitlement_type_enum,
+                @jurisdiction_id,
+                @jurisdiction_code,
+                @display_name,
+                'JURISDICTION'::discounts.policy_scope_type_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_level_enum,
+                'LOCAL_ORDINANCE'::discounts.discount_policy_type_enum,
+                'LOCAL_ORDINANCE_APPLIED'::discounts.policy_resolution_basis_enum,
+                'VERIFIED_ACTIVE_OPERATIONAL'::discounts.policy_verification_status_enum,
+                'ACTIVE_FOR_TRANSACTION_USE'::discounts.statutory_policy_publication_status_enum,
+                'PARTIALLY_VERIFIED'::discounts.policy_detail_verification_status_enum,
+                'COVERED'::discounts.parking_service_applicability_status_enum,
+                'STATUTORY_DISCOUNT_VAT_EXEMPT'::discounts.parking_benefit_type_enum,
+                'SUPPORTED_BY_CURRENT_CALCULATION'::discounts.policy_effect_support_status_enum,
+                'VAT_EXCLUSIVE'::discounts.discount_base_scope_enum,
+                'NON_RESIDENT_ALLOWED'::discounts.beneficiary_residency_scope_enum,
+                true,
+                false,
+                false,
+                false,
+                false,
+                'CANONICAL_TEST_LOCAL_ORDINANCE',
+                'CONTROLLED_OFFLINE_AUTHORITY'::discounts.policy_source_type_enum,
+                @source_reference,
+                'Canonical test statutory parking policy.',
+                'Review under frozen canonical test policy authority.',
+                false,
+                NOW() - INTERVAL '1 day',
+                100,
+                @policy_semantic_hash,
+                'canonical-test-reviewer',
+                NOW() - INTERVAL '1 hour',
+                'canonical-test-approver',
+                NOW() - INTERVAL '30 minutes',
+                @correlation_id
+            )
+            ON CONFLICT (statutory_discount_policy_version_id) DO NOTHING;
+
+            INSERT INTO discounts.statutory_discount_policy_version_evidence_requirements (
+                statutory_discount_policy_version_id,
+                evidence_type,
+                requirement_status,
+                safe_requirement_label
+            )
+            VALUES (
+                @policy_version_id,
+                @evidence_type::discounts.discount_evidence_type_enum,
+                'REQUIRED'::discounts.policy_requirement_status_enum,
+                'Masked statutory ID reference'
+            )
+            ON CONFLICT (statutory_discount_policy_version_id, evidence_type) DO NOTHING;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("jurisdiction_id", NpgsqlDbType.Uuid).Value = jurisdictionId;
+        command.Parameters.Add("assignment_id", NpgsqlDbType.Uuid).Value = assignmentId;
+        command.Parameters.Add("registry_id", NpgsqlDbType.Uuid).Value = registryId;
+        command.Parameters.Add("policy_version_id", NpgsqlDbType.Uuid).Value = policyVersionId;
+        command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = context.SiteId;
+        command.Parameters.AddWithValue("jurisdiction_code", jurisdictionCode);
+        command.Parameters.AddWithValue("display_name", displayName);
+        command.Parameters.AddWithValue("policy_code", policyCode);
+        command.Parameters.AddWithValue("policy_name", $"Canonical statutory parking policy {context.SiteCode}");
+        command.Parameters.AddWithValue("entitlement_type", entitlementType);
+        command.Parameters.AddWithValue("evidence_type", evidenceType);
+        command.Parameters.AddWithValue("source_reference", sourceReference);
+        command.Parameters.AddWithValue("policy_semantic_hash", "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = context.CorrelationId;
+        await command.ExecuteNonQueryAsync();
+
+        return new SeededPolicyAuthority(
+            policyVersionId,
+            jurisdictionId,
+            jurisdictionCode,
+            displayName,
+            policyCode,
+            "v1",
+            sourceReference,
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    }
+
+    private static async Task SeedDecisionPolicyAuthorityAsync(
+        PaymentTestContext context,
+        StatutoryDiscountDecisionV2Record decision,
+        SeededPolicyAuthority policy,
+        string entitlementType)
+    {
+        var repository = new PostgresStatutoryDiscountParkingEligibilityRepository(ConnectionString);
+        await repository.BindDecisionPolicyAuthorityAsync(
+            decision.StatutoryDiscountDecisionCommandId,
+            new StatutoryDiscountParkingAvailabilityResult(
+                decision.RequestReference,
+                context.ParkingSessionId,
+                context.SiteId,
+                context.SiteGroupId,
+                policy.JurisdictionId,
+                policy.JurisdictionCode,
+                policy.JurisdictionDisplayName,
+                StatutoryDiscountParkingAvailabilityStatuses.Available,
+                StatutoryParkingBenefitAvailable: true,
+                [entitlementType],
+                entitlementType,
+                SiteJurisdictionAssignmentId: null,
+                policy.PolicyVersionId,
+                policy.PolicyCode,
+                policy.PolicyVersion,
+                OrdinanceNumber: null,
+                OrdinanceTitle: null,
+                "Canonical test statutory parking policy",
+                "VERIFIED_ACTIVE_OPERATIONAL",
+                "ACTIVE_FOR_TRANSACTION_USE",
+                "PARTIALLY_VERIFIED",
+                EffectiveFrom: null,
+                EffectiveTo: null,
+                "NON_RESIDENT_ALLOWED",
+                [new StatutoryDiscountPolicyEvidenceRequirement(
+                    entitlementType == "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID",
+                    "REQUIRED",
+                    "Masked statutory ID reference",
+                    SafeRequirementNotes: null)],
+                "COVERED",
+                "STATUTORY_DISCOUNT_VAT_EXEMPT",
+                "SUPPORTED_BY_CURRENT_CALCULATION",
+                OfficialSourceAvailable: false,
+                OrdinanceTextAvailable: false,
+                OrdinanceNumberAvailable: false,
+                "CANONICAL_TEST_LOCAL_ORDINANCE",
+                policy.SourceReference,
+                SafeReasonCode: null,
+                Retryable: false,
+                StatutoryDiscountParkingAvailabilityRemediationActions.ContinueWithOrdinaryPayment,
+                DateTimeOffset.UtcNow,
+                policy.PolicySemanticHash,
+                context.CorrelationId),
+            CancellationToken.None);
+    }
+
+    private static string PolicySourceReference(PaymentTestContext context) =>
+        $"statutory-test:{context.ParkingSessionId:N}";
+
+    private static Guid StableGuid(Guid seed, string purpose)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{seed:N}:{purpose}"));
+        var guidBytes = bytes[..16];
+        return new Guid(guidBytes);
+    }
+
+    private sealed record SeededPolicyAuthority(
+        Guid PolicyVersionId,
+        Guid JurisdictionId,
+        string JurisdictionCode,
+        string JurisdictionDisplayName,
+        string PolicyCode,
+        string PolicyVersion,
+        string SourceReference,
+        string PolicySemanticHash);
 
 }

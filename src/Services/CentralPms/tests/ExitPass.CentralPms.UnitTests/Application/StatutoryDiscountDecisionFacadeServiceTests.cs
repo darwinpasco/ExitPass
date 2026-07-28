@@ -123,6 +123,57 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task ResolveAvailabilityAsync_ReturnsChannelSafeLocalOrdinanceFacts()
+    {
+        var fixture = CreateFixture();
+
+        var result = await fixture.Sut.ResolveAvailabilityAsync(
+            new StatutoryDiscountParkingAvailabilityRequest(
+                RequestReference,
+                ParkingSessionId,
+                "SENIOR_CITIZEN",
+                BeneficiaryResidencySatisfied: true,
+                CorrelationId),
+            CancellationToken.None);
+
+        result.AvailabilityStatus.Should().Be(StatutoryDiscountParkingAvailabilityStatuses.Available);
+        result.SiteId.Should().Be(SiteId);
+        result.SiteGroupId.Should().Be(SiteGroupId);
+        result.JurisdictionDisplayName.Should().Be("Paranaque City");
+        result.VerificationStatus.Should().Be("VERIFIED_ACTIVE_OPERATIONAL");
+        result.OrdinanceNumber.Should().BeNull();
+        result.OrdinanceTextAvailable.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task SubmitAsync_WhenLocalOrdinanceUnavailable_FailsClosedBeforeDecisionCreation()
+    {
+        var unavailable = AvailablePolicy(new StatutoryDiscountParkingAvailabilityRequest(
+            RequestReference,
+            ParkingSessionId,
+            "SENIOR_CITIZEN",
+            BeneficiaryResidencySatisfied: true,
+            CorrelationId)) with
+        {
+            AvailabilityStatus = StatutoryDiscountParkingAvailabilityStatuses.NoApplicableLocalOrdinance,
+            StatutoryParkingBenefitAvailable = false,
+            PolicyVersionId = null,
+            SafeReasonCode = "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_UNAVAILABLE",
+            RemediationAction = StatutoryDiscountParkingAvailabilityRemediationActions.ContinueWithOrdinaryPayment
+        };
+        var fixture = CreateFixture(unavailable);
+
+        var action = () => fixture.Sut.SubmitAsync(Command(sourceChannel: "WEBPAY", applyPayableBasis: false), CancellationToken.None);
+
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_UNAVAILABLE");
+        fixture.Repository.LastDecisionCommand.Should().BeNull();
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ServiceChannelReviewRepository.DidNotReceiveWithAnyArgs().UpsertIntakeAsync(default!, default);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task SubmitAsync_WhenSameIdempotencyKeyChangesRequestReference_ReplaysOriginalResult()
     {
         var fixture = CreateFixture();
@@ -560,6 +611,28 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
     }
 
     [Fact]
+    public async Task SubmitAsync_WhenApprovedDecisionLacksFrozenPolicyAuthority_DoesNotApply()
+    {
+        var fixture = CreateFixture();
+        await CreateApprovedServiceChannelDecisionAsync(fixture, "WEBPAY");
+        fixture.ParkingEligibilityRepository.Clear(CommandId);
+        fixture.ParkingEligibilityRepository.ReturnDefaultAuthority = false;
+
+        var action = () => fixture.Sut.SubmitAsync(
+            Command(sourceChannel: "WEBPAY", applyPayableBasis: true) with
+            {
+                RequestReference = Guid.Parse("6d000000-0000-0000-0000-000000000210"),
+                IdempotencyKey = "statutory-discount-idempotency-key-apply-policy-required"
+            },
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<StatutoryDiscountDecisionRejectedException>()
+            .Where(ex => ex.ErrorCode == "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED");
+        fixture.Repository.ApplicationCount.Should().Be(0);
+        await fixture.ApplyService.DidNotReceive().ApplyAsync(Arg.Any<OperatorConsoleStatutoryDiscountApplyPayableBasisCommand>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task GetAsync_WhenPendingReviewReferenceExists_ReturnsAwaitingReviewReadback()
     {
         var fixture = CreateFixture();
@@ -674,7 +747,7 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             CancellationToken.None);
     }
 
-    private static TestFixture CreateFixture()
+    private static TestFixture CreateFixture(StatutoryDiscountParkingAvailabilityResult? availability = null)
     {
         var repository = new InMemoryStagedCommandService();
         var historicalRepository = Substitute.For<IStatutoryDiscountDecisionFacadeRepository>();
@@ -703,6 +776,10 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         var serviceChannelReviewRepository = Substitute.For<IStatutoryDiscountServiceChannelReviewRepository>();
         serviceChannelReviewRepository.GetValidationReviewerUserIdAsync(ValidationId, Arg.Any<CancellationToken>())
             .Returns(ReviewerUserId);
+        var parkingEligibilityRepository = new InMemoryParkingEligibilityRepository();
+        var parkingEligibilityResolver = Substitute.For<IStatutoryDiscountParkingEligibilityResolver>();
+        parkingEligibilityResolver.ResolveAsync(Arg.Any<StatutoryDiscountParkingAvailabilityRequest>(), Arg.Any<CancellationToken>())
+            .Returns(call => availability ?? AvailablePolicy((StatutoryDiscountParkingAvailabilityRequest)call[0]!));
 
         var sut = new StatutoryDiscountDecisionFacadeService(
             repository,
@@ -712,9 +789,19 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             decisionService,
             applyService,
             readService,
-            serviceChannelReviewRepository);
+            serviceChannelReviewRepository,
+            parkingEligibilityResolver,
+            parkingEligibilityRepository);
 
-        return new TestFixture(repository, draftService, evidenceService, decisionService, applyService, serviceChannelReviewRepository, sut);
+        return new TestFixture(
+            repository,
+            draftService,
+            evidenceService,
+            decisionService,
+            applyService,
+            serviceChannelReviewRepository,
+            parkingEligibilityRepository,
+            sut);
     }
 
     private static StatutoryDiscountDecisionCommand Command(
@@ -761,9 +848,57 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
             operatorConsole,
             applyPayableBasis,
             OriginalTariffSnapshotId,
+            BeneficiaryResidencySatisfied: true,
             "statutory-discount-idempotency-key",
             correlationId ?? CorrelationId);
     }
+
+    private static StatutoryDiscountParkingAvailabilityResult AvailablePolicy(
+        StatutoryDiscountParkingAvailabilityRequest request) =>
+        new(
+            request.RequestReference,
+            request.ParkingSessionId,
+            SiteId,
+            SiteGroupId,
+            Guid.Parse("6d000000-0000-0000-0000-000000000070"),
+            "137604000",
+            "Paranaque City",
+            StatutoryDiscountParkingAvailabilityStatuses.Available,
+            StatutoryParkingBenefitAvailable: true,
+            [request.RequestedEntitlementType ?? "SENIOR_CITIZEN"],
+            request.RequestedEntitlementType,
+            Guid.Parse("6d000000-0000-0000-0000-000000000071"),
+            PolicyId,
+            "PARANAQUE-SC-PWD-FREE-PARKING",
+            "v1",
+            OrdinanceNumber: null,
+            OrdinanceTitle: null,
+            "Paranaque resident statutory parking benefit",
+            "VERIFIED_ACTIVE_OPERATIONAL",
+            "ACTIVE_FOR_TRANSACTION_USE",
+            "DETAILS_PARTIALLY_VERIFIED",
+            EffectiveFrom: null,
+            EffectiveTo: null,
+            "RESIDENT_ONLY",
+            [new StatutoryDiscountPolicyEvidenceRequirement(
+                "RESIDENCY_EVIDENCE",
+                "REQUIRED",
+                "Residency evidence",
+                SafeRequirementNotes: null)],
+            "COVERED",
+            "PERCENTAGE_DISCOUNT",
+            "SUPPORTED_BY_CURRENT_CALCULATION",
+            OfficialSourceAvailable: false,
+            OrdinanceTextAvailable: false,
+            OrdinanceNumberAvailable: false,
+            "PARANAQUE_OPERATIONAL_AUTHORITY",
+            "controlled-policy-record",
+            SafeReasonCode: null,
+            Retryable: false,
+            StatutoryDiscountParkingAvailabilityRemediationActions.ContinueWithOrdinaryPayment,
+            Now,
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            request.CorrelationId);
 
     private static OperatorConsoleStatutoryDiscountDraftResult DraftResult() =>
         new(
@@ -953,7 +1088,95 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
         IOperatorConsoleStatutoryDiscountDecisionService DecisionService,
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService ApplyService,
         IStatutoryDiscountServiceChannelReviewRepository ServiceChannelReviewRepository,
+        InMemoryParkingEligibilityRepository ParkingEligibilityRepository,
         StatutoryDiscountDecisionFacadeService Sut);
+
+    private sealed class InMemoryParkingEligibilityRepository : IStatutoryDiscountParkingEligibilityRepository
+    {
+        private readonly Dictionary<Guid, StatutoryDiscountDecisionPolicyAuthority> _authorities = [];
+
+        public bool ReturnDefaultAuthority { get; set; } = true;
+
+        public Task<StatutoryDiscountParkingAvailabilityResult> ResolveAsync(
+            StatutoryDiscountParkingAvailabilityRequest request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AvailablePolicy(request));
+
+        public Task BindDecisionPolicyAuthorityAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            StatutoryDiscountParkingAvailabilityResult availability,
+            CancellationToken cancellationToken)
+        {
+            _authorities[statutoryDiscountDecisionCommandId] = new StatutoryDiscountDecisionPolicyAuthority(
+                statutoryDiscountDecisionCommandId,
+                availability.PolicyVersionId!.Value,
+                availability.JurisdictionId!.Value,
+                availability.JurisdictionCode!,
+                availability.JurisdictionDisplayName!,
+                availability.PolicyCode!,
+                availability.PolicyVersion!,
+                availability.RequestedEntitlementType!,
+                availability.VerificationStatus!,
+                availability.PublicationStatus!,
+                availability.DetailedRuleVerificationStatus!,
+                availability.ParkingServiceApplicability!,
+                availability.BenefitEffectClassification!,
+                availability.ResidencyRequirement!,
+                availability.OfficialSourceAvailable,
+                availability.OrdinanceTextAvailable,
+                availability.OrdinanceNumberAvailable,
+                availability.OrdinanceNumber,
+                availability.OrdinanceTitle,
+                availability.LegalBasisReference,
+                availability.SourceReference!,
+                availability.EffectiveFrom,
+                availability.EffectiveTo,
+                availability.TransactionAt ?? Now,
+                availability.PolicySemanticHash!,
+                availability.CorrelationId);
+            return Task.CompletedTask;
+        }
+
+        public Task<StatutoryDiscountDecisionPolicyAuthority?> GetDecisionPolicyAuthorityAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_authorities.TryGetValue(statutoryDiscountDecisionCommandId, out var authority)
+                ? authority
+                : ReturnDefaultAuthority && statutoryDiscountDecisionCommandId == CommandId
+                    ? DefaultAuthority(statutoryDiscountDecisionCommandId)
+                    : null);
+
+        public void Clear(Guid statutoryDiscountDecisionCommandId) => _authorities.Remove(statutoryDiscountDecisionCommandId);
+
+        private static StatutoryDiscountDecisionPolicyAuthority DefaultAuthority(Guid statutoryDiscountDecisionCommandId) =>
+            new(
+                statutoryDiscountDecisionCommandId,
+                PolicyId,
+                Guid.Parse("6d000000-0000-0000-0000-000000000070"),
+                "137604000",
+                "Paranaque City",
+                "PARANAQUE-SC-PWD-FREE-PARKING",
+                "v1",
+                "SENIOR_CITIZEN",
+                "VERIFIED_ACTIVE_OPERATIONAL",
+                "ACTIVE_FOR_TRANSACTION_USE",
+                "DETAILS_PARTIALLY_VERIFIED",
+                "COVERED",
+                "PERCENTAGE_DISCOUNT",
+                "RESIDENT_ONLY",
+                OfficialSourceAvailable: false,
+                OrdinanceTextAvailable: false,
+                OrdinanceNumberAvailable: false,
+                OrdinanceNumber: null,
+                OrdinanceTitle: null,
+                LegalBasisReference: "PARANAQUE_OPERATIONAL_AUTHORITY",
+                SourceReference: "controlled-policy-record",
+                TransactionUseEffectiveFrom: null,
+                TransactionUseEffectiveTo: null,
+                ResolvedAt: Now,
+                "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                CorrelationId);
+    }
 
     private sealed class InMemoryStagedCommandService : IStatutoryDiscountStagedCommandService
     {
@@ -1023,7 +1246,13 @@ public sealed class StatutoryDiscountDecisionFacadeServiceTests
 
         public void SeedProcessing(StatutoryDiscountDecisionCommand command)
         {
-            var decisionCommand = ToDecisionV2(command, DeriveTestStageKey(command.IdempotencyKey));
+            var decisionCommand = ToDecisionV2(command, DeriveTestStageKey(command.IdempotencyKey)) with
+            {
+                PolicyResolutionReferenceId = PolicyId,
+                AppliedPolicyReferenceId = PolicyId,
+                PolicyResolutionBasis = "LOCAL_ORDINANCE_APPLIED",
+                LocalOrdinanceApplied = true
+            };
             _decision = CreateDecisionRecord(
                 decisionCommand,
                 StatutoryDiscountDecisionV2SemanticHash.BuildBusinessIdentity(decisionCommand),
