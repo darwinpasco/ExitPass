@@ -3575,6 +3575,7 @@ function DraftDetail({
   currentOperatorUserId: string;
 }) {
   const [rejectReason, setRejectReason] = useState("");
+  const [reviewerPolicyAttestation, setReviewerPolicyAttestation] = useState(false);
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState<"APPROVE" | "REJECT" | null>(null);
@@ -3594,7 +3595,8 @@ function DraftDetail({
     decisionable
   );
   const showDecisionControls = decisionReadOnlyReason === null;
-  const approvalDisabledReason = readinessBlockReason ?? approvalBlockReason(detail, submittingDecision !== null);
+  const approvalDisabledReason =
+    readinessBlockReason ?? approvalBlockReason(detail, submittingDecision !== null, reviewerPolicyAttestation);
   const rejectDisabledReason =
     readinessBlockReason ?? (!decisionable ? "Decision is read-only for the current validation status." : null);
   const payableBasisDisabledReason = readinessBlockReason ?? payableBasisBlockReason(detail, submittingPayableBasis);
@@ -3736,6 +3738,8 @@ function DraftDetail({
 
       <PolicyContextDisplay policy={detail.policyContext} />
 
+      <GoverningOrdinancePanel detail={detail} />
+
       <EvidencePanel
         detail={detail}
         client={client}
@@ -3755,6 +3759,14 @@ function DraftDetail({
         {decisionError && <p className="errorMessage">{decisionError}</p>}
         {showDecisionControls && (
           <>
+            <label className="attestationField">
+              <input
+                type="checkbox"
+                checked={reviewerPolicyAttestation}
+                onChange={(event) => setReviewerPolicyAttestation(event.target.checked)}
+              />
+              I confirm the entitlement and evidence were reviewed under the Central PMS governing ordinance shown above, and I did not select or alter the jurisdiction, policy, benefit effect, or payable-basis snapshot.
+            </label>
             {canRejectDecision && (
               <label className="reasonField">
                 Reject reason code
@@ -4169,6 +4181,75 @@ function PolicyContextDisplay({ policy }: { policy: StatutoryDiscountPolicyConte
   );
 }
 
+function GoverningOrdinancePanel({ detail }: { detail: StatutoryDiscountDraftDetail }) {
+  const policy = detail.governingPolicy;
+  const blockReason = governingPolicyBlockReason(detail);
+
+  if (!policy) {
+    return (
+      <section className="panel ordinancePanel ordinanceBlocked" aria-labelledby="governing-ordinance-title">
+        <div className="panelHeader">
+          <div>
+            <p className="eyebrow">Governing ordinance</p>
+            <h3 id="governing-ordinance-title">Frozen policy authority missing</h3>
+          </div>
+          <span className="statusPill blocked">Approval blocked</span>
+        </div>
+        <p className="notice">
+          Central PMS did not return complete frozen local-ordinance authority for this review. Approval is disabled and ordinary rejection remains available where appropriate.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel ordinancePanel" aria-labelledby="governing-ordinance-title">
+      <div className="panelHeader">
+        <div>
+          <p className="eyebrow">Governing ordinance</p>
+          <h3 id="governing-ordinance-title">{policy.jurisdictionDisplayName}</h3>
+        </div>
+        <span className={`statusPill ${blockReason ? "blocked" : "readiness-ready"}`}>
+          {blockReason ? "Approval blocked" : "Server-authoritative"}
+        </span>
+      </div>
+      <p className="policySummary">
+        Central PMS resolved and froze this local parking-policy authority before creating the service-channel review.
+        Reviewers may validate evidence under this authority only.
+      </p>
+      {blockReason && <p className="notice">{blockReason}</p>}
+      <DescriptionList
+        items={[
+          ["City or municipality", policy.jurisdictionDisplayName],
+          ["Jurisdiction code", policy.jurisdictionCode],
+          ["Policy reference", policy.policyCode],
+          ["Policy display name", detail.policyContext.policyName ?? policy.ordinanceTitle ?? policy.policyCode],
+          ["Policy version", shortPolicyVersion(policy.statutoryDiscountPolicyVersionId, policy.policyVersion)],
+          ["Ordinance number", policy.ordinanceNumberAvailable ? policy.ordinanceNumber ?? "Not available" : "Unavailable"],
+          ["Ordinance title", policy.ordinanceTitle ?? "Unavailable"],
+          ["Effective from", policy.effectiveFrom ? formatDateTime(policy.effectiveFrom) : "Not available"],
+          ["Effective to", policy.effectiveTo ? formatDateTime(policy.effectiveTo) : "Open-ended or not available"],
+          ["Verification status", policy.sourceVerificationStatus],
+          ["Transaction publication", policy.transactionPublicationStatus],
+          ["Detailed rule verification", policy.detailedRuleVerificationStatus],
+          ["Entitlement type", detail.entitlementType],
+          ["Parking-service applicability", policy.parkingServiceApplicability],
+          ["Residency requirement", displayStatusValue(policy.beneficiaryResidencyScope)],
+          ["Required evidence", evidenceRequirementSummary(policy.requiredEvidenceTypes)],
+          ["Benefit-effect classification", policy.benefitType],
+          ["Benefit-effect support", supportedBenefitEffect(policy.benefitType) ? "Supported by current review flow" : "Not supported"],
+          ["Source-document posture", sourceDocumentPosture(policy)],
+          ["Legal approvability", policy.legalApprovabilityReason ?? "Central PMS marked this request legally approvable."]
+        ]}
+      />
+      <div className="policyGuardrail" role="note">
+        <p>Jurisdiction, ordinance, policy version, benefit effect, and payable-basis snapshot are read-only.</p>
+        <p>Unavailable online ordinance text is a source-document availability gap, not an automatic unverified-policy classification.</p>
+      </div>
+    </section>
+  );
+}
+
 function PolicyReadinessSummary({
   policy,
   compact = false
@@ -4252,7 +4333,7 @@ function FinalVerificationPanel({
   );
 }
 
-function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean) {
+function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean, reviewerPolicyAttestation: boolean) {
   if (submitting) {
     return "Decision submission is in progress.";
   }
@@ -4265,11 +4346,98 @@ function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: b
     return "Approval is blocked until required evidence is captured.";
   }
 
+  const policyBlockReason = governingPolicyBlockReason(detail);
+  if (policyBlockReason) {
+    return policyBlockReason;
+  }
+
+  if (!reviewerPolicyAttestation) {
+    return "Approval requires reviewer attestation to the Central PMS governing ordinance and evidence review.";
+  }
+
   if (["Approved", "Rejected", "Cancelled", "Expired", "Blocked"].includes(detail.status)) {
     return "Decision is read-only for the current validation status.";
   }
 
   return null;
+}
+
+function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
+  const policy = detail.governingPolicy;
+  if (!policy) {
+    return "Approval is blocked because Central PMS did not return frozen governing-policy authority.";
+  }
+
+  if (
+    !policy.statutoryDiscountPolicyVersionId ||
+    !policy.jurisdictionId ||
+    !policy.jurisdictionCode ||
+    !policy.jurisdictionDisplayName ||
+    !policy.policyCode ||
+    !policy.policyVersion
+  ) {
+    return "Approval is blocked because the governing-policy readback is incomplete.";
+  }
+
+  if (policy.transactionPublicationStatus !== "ACTIVE_FOR_TRANSACTION_USE") {
+    return "Approval is blocked because the governing policy is not active for transaction use.";
+  }
+
+  if (
+    policy.sourceVerificationStatus !== "VERIFIED_OFFICIAL" &&
+    policy.sourceVerificationStatus !== "VERIFIED_ACTIVE_OPERATIONAL" &&
+    policy.sourceVerificationStatus !== "ACTIVE_APPROVED"
+  ) {
+    return "Approval is blocked because the governing policy is not verified for review.";
+  }
+
+  if (policy.parkingServiceApplicability !== "COVERED") {
+    return "Approval is blocked because the governing policy does not cover parking service.";
+  }
+
+  if (!supportedBenefitEffect(policy.benefitType)) {
+    return "Approval is blocked because the governing policy benefit effect is not supported by this review flow.";
+  }
+
+  return null;
+}
+
+function supportedBenefitEffect(benefitType: string) {
+  return benefitType === "STATUTORY_DISCOUNT_VAT_EXEMPT";
+}
+
+function shortPolicyVersion(policyVersionId: string, policyVersion: string) {
+  return `${policyVersion} (${shortId(policyVersionId)})`;
+}
+
+function evidenceRequirementSummary(requirements: Array<{ evidenceType: string; requirementStatus: string; safeRequirementLabel?: string }>) {
+  if (requirements.length === 0) {
+    return "No evidence requirements returned";
+  }
+
+  return requirements
+    .map((requirement) =>
+      [displayStatusValue(requirement.evidenceType), displayStatusValue(requirement.requirementStatus), requirement.safeRequirementLabel]
+        .filter(Boolean)
+        .join(" - ")
+    )
+    .join("; ");
+}
+
+function sourceDocumentPosture(policy: NonNullable<StatutoryDiscountDraftDetail["governingPolicy"]>) {
+  if (policy.officialSourceAvailable && policy.ordinanceTextAvailable) {
+    return "Official source and ordinance text available";
+  }
+
+  if (policy.sourceVerificationStatus === "VERIFIED_ACTIVE_OPERATIONAL" && !policy.ordinanceTextAvailable) {
+    return "Verified active operational policy; online ordinance text unavailable";
+  }
+
+  if (policy.officialSourceAvailable && !policy.ordinanceTextAvailable) {
+    return "Official source reference available; ordinance text unavailable";
+  }
+
+  return "Source-document posture incomplete or unavailable";
 }
 
 function statutoryDiscountDecisionReadOnlyReason(

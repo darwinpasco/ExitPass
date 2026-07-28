@@ -7,6 +7,10 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:browser-smoke": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1",
+    "test:browser-smoke:headed": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1 -Headed",
+    "test:browser-smoke:server": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1 -ServerOnly",
+    "test:browser-smoke:ui": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1 -Ui",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -14,6 +18,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.6.0",
