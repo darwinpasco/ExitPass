@@ -84,7 +84,39 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   statutoryDiscountAmountMinorUnits?: number;
   finalPayableAmountMinorUnits?: number;
   payableBasisApplicationStatus?: string;
+  governingPolicy?: StatutoryDiscountGoverningPolicy;
   auditActivity: string[];
+}
+
+export interface StatutoryDiscountGoverningPolicyEvidenceRequirement {
+  evidenceType: string;
+  requirementStatus: string;
+  safeRequirementLabel?: string;
+  safeRequirementNotes?: string;
+}
+
+export interface StatutoryDiscountGoverningPolicy {
+  statutoryDiscountPolicyVersionId: string;
+  jurisdictionId: string;
+  jurisdictionCode: string;
+  jurisdictionDisplayName: string;
+  policyCode: string;
+  policyVersion: string;
+  ordinanceNumber?: string;
+  ordinanceTitle?: string;
+  sourceVerificationStatus: string;
+  transactionPublicationStatus: string;
+  detailedRuleVerificationStatus: string;
+  parkingServiceApplicability: string;
+  benefitType: string;
+  beneficiaryResidencyScope: string;
+  officialSourceAvailable: boolean;
+  ordinanceTextAvailable: boolean;
+  ordinanceNumberAvailable: boolean;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  requiredEvidenceTypes: StatutoryDiscountGoverningPolicyEvidenceRequirement[];
+  legalApprovabilityReason?: string;
 }
 
 export type LoadState<T> =

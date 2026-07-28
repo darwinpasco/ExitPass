@@ -19,6 +19,7 @@ import type {
   ProductionPolicyImportReviewListResult,
   ProductionPolicyImportReviewResult,
   StatutoryDiscountDraftDetail,
+  StatutoryDiscountGoverningPolicy,
   StatutoryDiscountQueueItem,
   VendorPaymentAcknowledgmentDetail,
   VendorPaymentAcknowledgmentSearchResult,
@@ -53,6 +54,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
       lookupFiscalIssuanceStatus: vi.fn(),
+      voidFiscalIssuanceReference: vi.fn(),
       listFiscalVoidActionAuditReport: vi.fn(),
       listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
@@ -118,6 +120,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText(firstDraftId)).toBeInTheDocument();
     expect(screen.getByText("Policy context")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "National fallback policy" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /Para.aque City/ })).toBeInTheDocument();
   });
 
   it("TicketLookup_CanStartMetadataOnlyStatutoryDiscountDraftFromEligibleSession", async () => {
@@ -191,6 +194,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("Compatibility policy references")).toBeInTheDocument();
     expect(screen.getByText("Policy readiness is not the same as payment approval.")).toBeInTheDocument();
     expect(screen.getByText("No raw evidence or ID numbers are displayed here.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Para.aque City/ })).toBeInTheDocument();
+    expect(screen.getByText("Verified active operational policy; online ordinance text unavailable")).toBeInTheDocument();
+    expect(screen.queryByText(/automatically unverified/i)).not.toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_RendersVerifiedLocalPolicyContext", async () => {
@@ -202,13 +208,15 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Verified local policy" })).toBeInTheDocument();
-    expect(screen.getByText("QC Ordinance 2026-04")).toBeInTheDocument();
+    expect(screen.getAllByText("QC Ordinance 2026-04").length).toBeGreaterThan(0);
     expect(screen.getByText("RA 10754")).toBeInTheDocument();
     expect(screen.getByText("Dedicated registry")).toBeInTheDocument();
     expect(screen.getAllByText("Manual review").length).toBeGreaterThan(0);
     expect(screen.getAllByText("READY_WITH_MANUAL_REVIEW").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/manual review required before production use/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("QC Ordinance 2026-04").length).toBeGreaterThan(0);
+    expect(screen.getByText(/pwd id - required - masked pwd id reference/i)).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_RendersBlockedUnverifiedLocalPolicyState", async () => {
@@ -252,6 +260,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
@@ -344,8 +353,72 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByText(/approval requires reviewer attestation/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
+
+  it("StatutoryDiscountDetail_DisablesApprovalWhenFrozenGoverningPolicyAuthorityIsMissing", async () => {
+    const draft = decisionEligibleDraft({
+      draftId: "47000000-0000-0000-0000-000000000205",
+      governingPolicy: undefined
+    });
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [draft] })}
+        initialPath={`/operator-console/statutory-discounts/${draft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: "Frozen policy authority missing" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getAllByText(/did not return frozen governing-policy authority/i).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
+
+  it("StatutoryDiscountDetail_DisablesApprovalWhenGoverningPolicyReadbackIsMalformed", async () => {
+    const draft = decisionEligibleDraft({
+      draftId: "47000000-0000-0000-0000-000000000206",
+      governingPolicy: {
+        ...governingPolicy(),
+        policyCode: ""
+      }
+    });
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [draft] })}
+        initialPath={`/operator-console/statutory-discounts/${draft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByRole("heading", { name: /Para.aque City/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getAllByText(/governing-policy readback is incomplete/i).length).toBeGreaterThan(0);
+  });
+
+  it("StatutoryDiscountDetail_DisablesApprovalWhenBenefitEffectIsUnsupported", async () => {
+    const draft = decisionEligibleDraft({
+      draftId: "47000000-0000-0000-0000-000000000207",
+      governingPolicy: {
+        ...governingPolicy(),
+        benefitType: "FULL_FEE_EXEMPTION"
+      }
+    });
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [draft] })}
+        initialPath={`/operator-console/statutory-discounts/${draft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByText("FULL_FEE_EXEMPTION")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getAllByText(/benefit effect is not supported/i).length).toBeGreaterThan(0);
   });
 
   it("StatutoryDiscountDetail_HidesDecisionControlsAfterApprovalAndPayableBasisApplication", async () => {
@@ -407,6 +480,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
@@ -478,6 +552,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByText("Evidence metadata captured.")).toBeInTheDocument();
     expect(await screen.findByText("Required evidence is captured.")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(onEvidenceCapture).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -547,6 +622,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
     expect((await screen.findAllByText("READY")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
     expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeEnabled();
@@ -2397,6 +2474,44 @@ function decisionEligibleDraft(overrides: Partial<StatutoryDiscountDraftDetail> 
   };
 }
 
+function governingPolicy(overrides: Partial<StatutoryDiscountGoverningPolicy> = {}): StatutoryDiscountGoverningPolicy {
+  return {
+    statutoryDiscountPolicyVersionId: "8a000000-0000-0000-0000-000000000101",
+    jurisdictionId: "8a000000-0000-0000-0000-000000000102",
+    jurisdictionCode: "PH-137604000",
+    jurisdictionDisplayName: "Para\u00f1aque City",
+    policyCode: "PARANAQUE_SC_OPERATIONAL",
+    policyVersion: "v1",
+    ordinanceNumber: undefined,
+    ordinanceTitle: undefined,
+    sourceVerificationStatus: "VERIFIED_ACTIVE_OPERATIONAL",
+    transactionPublicationStatus: "ACTIVE_FOR_TRANSACTION_USE",
+    detailedRuleVerificationStatus: "PARTIALLY_VERIFIED",
+    parkingServiceApplicability: "COVERED",
+    benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+    beneficiaryResidencyScope: "RESIDENT_ONLY",
+    officialSourceAvailable: false,
+    ordinanceTextAvailable: false,
+    ordinanceNumberAvailable: false,
+    effectiveFrom: "2026-01-01T00:00:00+08:00",
+    effectiveTo: undefined,
+    requiredEvidenceTypes: [
+      {
+        evidenceType: "SENIOR_CITIZEN_ID",
+        requirementStatus: "REQUIRED",
+        safeRequirementLabel: "Masked statutory ID reference"
+      },
+      {
+        evidenceType: "RESIDENCY_EVIDENCE",
+        requirementStatus: "REQUIRED",
+        safeRequirementLabel: "Residency evidence"
+      }
+    ],
+    legalApprovabilityReason: "Central PMS resolved an active verified operational local parking policy before review creation.",
+    ...overrides
+  };
+}
+
 function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
   return {
     draftId: "47000000-0000-0000-0000-000000000099",
@@ -2446,6 +2561,7 @@ function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
       requiredEvidenceType: "SENIOR_CITIZEN_ID",
       ineligibilityReason: "Sandbox policy is not production-ready."
     },
+    governingPolicy: undefined,
     auditActivity: ["Sandbox policy detected.", "Decision blocked pending production policy readiness."]
   };
 }
@@ -2476,6 +2592,7 @@ function createApprovedDraft(): StatutoryDiscountDraftDetail {
       operatorMessage: "Controlled UAT policy is ready for manual statutory discount smoke.",
       productionAutoApplicationEligible: false
     },
+    governingPolicy: governingPolicy(),
     auditActivity: ["Evidence captured.", "Decision approved."]
   };
 }

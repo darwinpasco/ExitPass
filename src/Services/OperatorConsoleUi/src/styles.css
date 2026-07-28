@@ -624,6 +624,27 @@ dd {
   max-width: 360px;
 }
 
+.attestationField {
+  align-items: flex-start;
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  color: #344756;
+  display: flex;
+  font-size: 0.92rem;
+  font-weight: 700;
+  gap: 10px;
+  line-height: 1.35;
+  margin-top: 16px;
+  max-width: 920px;
+  padding: 12px;
+}
+
+.attestationField input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .wideLookupInput {
   min-width: min(100%, 440px);
   width: min(100%, 560px);

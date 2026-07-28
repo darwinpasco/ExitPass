@@ -31,6 +31,7 @@ import type {
   StatutoryDiscountEvidenceCaptureResult,
   StatutoryDiscountEvidenceItem,
   StatutoryDiscountEvidenceList,
+  StatutoryDiscountGoverningPolicy,
   StatutoryDiscountPayableBasisApplicationInput,
   StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
@@ -153,7 +154,39 @@ interface DetailDto extends QueueItemDto {
   vatExclusiveAmountMinorUnits?: number | null;
   statutoryDiscountAmountMinorUnits?: number | null;
   finalPayableAmountMinorUnits?: number | null;
+  governingPolicy?: GoverningPolicyDto | null;
   activity: string[];
+}
+
+interface GoverningPolicyDto {
+  statutoryDiscountPolicyVersionId?: string | null;
+  jurisdictionId?: string | null;
+  jurisdictionCode?: string | null;
+  jurisdictionDisplayName?: string | null;
+  policyCode?: string | null;
+  policyVersion?: string | null;
+  ordinanceNumber?: string | null;
+  ordinanceTitle?: string | null;
+  sourceVerificationStatus?: string | null;
+  transactionPublicationStatus?: string | null;
+  detailedRuleVerificationStatus?: string | null;
+  parkingServiceApplicability?: string | null;
+  benefitType?: string | null;
+  beneficiaryResidencyScope?: string | null;
+  officialSourceAvailable?: boolean | null;
+  ordinanceTextAvailable?: boolean | null;
+  ordinanceNumberAvailable?: boolean | null;
+  effectiveFrom?: string | null;
+  effectiveTo?: string | null;
+  requiredEvidenceTypes?: GoverningPolicyEvidenceRequirementDto[] | null;
+  legalApprovabilityReason?: string | null;
+}
+
+interface GoverningPolicyEvidenceRequirementDto {
+  evidenceType?: string | null;
+  requirementStatus?: string | null;
+  safeRequirementLabel?: string | null;
+  safeRequirementNotes?: string | null;
 }
 
 interface DraftCreateResponseDto {
@@ -502,6 +535,8 @@ const defaultOperatorPermissions = localFallback(
     "operator-console.policy-import-review.approve.ops",
     "operator-console.policy-import-review.approve.qa",
     "operator-console.policy-import-review.approve.db",
+    statutoryDiscountApprovePermission,
+    statutoryDiscountRejectPermission,
     "operator-console.vendor-projection-health.view",
     "fiscal-issuance.status.read",
     "fiscal-issuance.void.command",
@@ -1180,7 +1215,7 @@ export function createMockOperatorConsoleApiClient(
         };
       }
 
-      const created = {
+      const created: StatutoryDiscountDraftDetail = {
         ...mockDrafts[0],
         draftId: "47000000-0000-0000-0000-000000000099",
         parkingSessionId: input.parkingSessionId,
@@ -1194,7 +1229,8 @@ export function createMockOperatorConsoleApiClient(
         issuingAuthority: input.issuingAuthority,
         evidenceCaptured: false,
         evidenceRequiredSatisfied: false,
-        evidenceCount: 0
+        evidenceCount: 0,
+        governingPolicy: mockDrafts[0].governingPolicy ? { ...mockDrafts[0].governingPolicy } : undefined
       };
       drafts.unshift(created);
       return {
@@ -1941,7 +1977,57 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     statutoryDiscountAmountMinorUnits: item.statutoryDiscountAmountMinorUnits ?? undefined,
     finalPayableAmountMinorUnits: item.finalPayableAmountMinorUnits ?? item.payableAmountMinorUnits ?? undefined,
     payableBasisApplicationStatus: item.payableBasisApplicationStatus ?? undefined,
+    governingPolicy: item.governingPolicy ? toGoverningPolicy(item.governingPolicy) : undefined,
     auditActivity: item.activity.length > 0 ? item.activity : ["No activity history is available yet."]
+  };
+}
+
+function toGoverningPolicy(dto: GoverningPolicyDto): StatutoryDiscountGoverningPolicy | undefined {
+  if (
+    !dto.statutoryDiscountPolicyVersionId ||
+    !dto.jurisdictionId ||
+    !dto.jurisdictionCode ||
+    !dto.jurisdictionDisplayName ||
+    !dto.policyCode ||
+    !dto.policyVersion ||
+    !dto.sourceVerificationStatus ||
+    !dto.transactionPublicationStatus ||
+    !dto.parkingServiceApplicability ||
+    !dto.benefitType ||
+    !dto.beneficiaryResidencyScope
+  ) {
+    return undefined;
+  }
+
+  return {
+    statutoryDiscountPolicyVersionId: dto.statutoryDiscountPolicyVersionId,
+    jurisdictionId: dto.jurisdictionId,
+    jurisdictionCode: dto.jurisdictionCode,
+    jurisdictionDisplayName: dto.jurisdictionDisplayName,
+    policyCode: dto.policyCode,
+    policyVersion: dto.policyVersion,
+    ordinanceNumber: dto.ordinanceNumber ?? undefined,
+    ordinanceTitle: dto.ordinanceTitle ?? undefined,
+    sourceVerificationStatus: dto.sourceVerificationStatus,
+    transactionPublicationStatus: dto.transactionPublicationStatus,
+    detailedRuleVerificationStatus: dto.detailedRuleVerificationStatus ?? "STATUS_UNRESOLVED",
+    parkingServiceApplicability: dto.parkingServiceApplicability,
+    benefitType: dto.benefitType,
+    beneficiaryResidencyScope: dto.beneficiaryResidencyScope,
+    officialSourceAvailable: dto.officialSourceAvailable === true,
+    ordinanceTextAvailable: dto.ordinanceTextAvailable === true,
+    ordinanceNumberAvailable: dto.ordinanceNumberAvailable === true,
+    effectiveFrom: dto.effectiveFrom ?? undefined,
+    effectiveTo: dto.effectiveTo ?? undefined,
+    requiredEvidenceTypes: (dto.requiredEvidenceTypes ?? [])
+      .filter((requirement) => requirement.evidenceType && requirement.requirementStatus)
+      .map((requirement) => ({
+        evidenceType: requirement.evidenceType!,
+        requirementStatus: requirement.requirementStatus!,
+        safeRequirementLabel: requirement.safeRequirementLabel ?? undefined,
+        safeRequirementNotes: requirement.safeRequirementNotes ?? undefined
+      })),
+    legalApprovabilityReason: dto.legalApprovabilityReason ?? undefined
   };
 }
 
@@ -2869,6 +2955,44 @@ const blockedLocalPolicy = {
   ineligibilityReason: "Local policy is not verified for operator use."
 };
 
+function mockGoverningPolicy(overrides: Partial<StatutoryDiscountGoverningPolicy> = {}): StatutoryDiscountGoverningPolicy {
+  return {
+    statutoryDiscountPolicyVersionId: "8a000000-0000-0000-0000-000000000001",
+    jurisdictionId: "8a000000-0000-0000-0000-000000000002",
+    jurisdictionCode: "PH-137604000",
+    jurisdictionDisplayName: "Para\u00f1aque City",
+    policyCode: "PARANAQUE_SC_OPERATIONAL",
+    policyVersion: "v1",
+    ordinanceNumber: undefined,
+    ordinanceTitle: undefined,
+    sourceVerificationStatus: "VERIFIED_ACTIVE_OPERATIONAL",
+    transactionPublicationStatus: "ACTIVE_FOR_TRANSACTION_USE",
+    detailedRuleVerificationStatus: "PARTIALLY_VERIFIED",
+    parkingServiceApplicability: "COVERED",
+    benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+    beneficiaryResidencyScope: "RESIDENT_ONLY",
+    officialSourceAvailable: false,
+    ordinanceTextAvailable: false,
+    ordinanceNumberAvailable: false,
+    effectiveFrom: "2026-01-01T00:00:00+08:00",
+    effectiveTo: undefined,
+    requiredEvidenceTypes: [
+      {
+        evidenceType: "SENIOR_CITIZEN_ID",
+        requirementStatus: "REQUIRED",
+        safeRequirementLabel: "Masked statutory ID reference"
+      },
+      {
+        evidenceType: "RESIDENCY_EVIDENCE",
+        requirementStatus: "REQUIRED",
+        safeRequirementLabel: "Residency evidence"
+      }
+    ],
+    legalApprovabilityReason: "Central PMS resolved an active verified operational local parking policy before review creation.",
+    ...overrides
+  };
+}
+
 function mockFiscalIssuanceStatuses(): FiscalIssuanceStatus[] {
   return [
     {
@@ -3163,6 +3287,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     payableAmountMinorUnits: 14400,
     currencyCode: "PHP",
     policyContext: seniorNationalPolicy,
+    governingPolicy: mockGoverningPolicy(),
     auditActivity: ["Draft created after access evaluation.", "Policy resolved through national fallback."]
   },
   {
@@ -3193,6 +3318,25 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     originalAmountMinorUnits: 22000,
     currencyCode: "PHP",
     policyContext: pwdLocalPolicy,
+    governingPolicy: mockGoverningPolicy({
+      statutoryDiscountPolicyVersionId: "8a000000-0000-0000-0000-000000000011",
+      policyCode: "QC_PWD_PARKING_2026",
+      policyVersion: "v2",
+      ordinanceNumber: "QC Ordinance 2026-04",
+      ordinanceTitle: "Quezon City PWD Parking Benefit",
+      sourceVerificationStatus: "VERIFIED_OFFICIAL",
+      officialSourceAvailable: true,
+      ordinanceTextAvailable: true,
+      ordinanceNumberAvailable: true,
+      beneficiaryResidencyScope: "UNRESTRICTED_VALID_ID",
+      requiredEvidenceTypes: [
+        {
+          evidenceType: "PWD_ID",
+          requirementStatus: "REQUIRED",
+          safeRequirementLabel: "Masked PWD ID reference"
+        }
+      ]
+    }),
     auditActivity: ["Draft created after access evaluation.", "Evidence required flag is active."]
   },
   {
@@ -3223,6 +3367,7 @@ const mockDrafts: StatutoryDiscountDraftDetail[] = [
     originalAmountMinorUnits: 9000,
     currencyCode: "PHP",
     policyContext: blockedLocalPolicy,
+    governingPolicy: undefined,
     auditActivity: ["Unverified local policy detected.", "Decision blocked pending policy verification."]
   }
 ];
