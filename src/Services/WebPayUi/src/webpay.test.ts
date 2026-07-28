@@ -82,11 +82,36 @@ describe("WebPay QR and payment intent helpers", () => {
       ticketReference: "TICKET-001",
       paymentMethod: "QRPH",
       tariffSnapshotId: "77777777-7777-7777-7777-777777777777",
-      expectedAmountMinorUnits: 7500
+      expectedAmountMinorUnits: 7500,
+      expectedCurrency: "php"
     });
 
     expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
     expect(body.expectedAmountMinorUnits).toBe(7500);
+    expect(body.expectedCurrency).toBe("PHP");
+  });
+
+  it("WebPay_WhenAppliedStatutoryBasisProvided_IncludesOnlyCanonicalPaymentGateFacts", () => {
+    const body = buildPaymentIntentBody({
+      ticketReference: "TICKET-001",
+      paymentMethod: "GCASH",
+      tariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+      expectedAmountMinorUnits: 4000,
+      expectedCurrency: "php",
+      statutoryDiscountDecisionCommandId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    });
+
+    expect(body.tariffSnapshotId).toBe("99999999-9999-4999-8999-999999999999");
+    expect(body.expectedAmountMinorUnits).toBe(4000);
+    expect(body.expectedCurrency).toBe("PHP");
+    expect(body.statutoryDiscountDecisionCommandId).toBe("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(body.statutoryDiscountPayableBasisApplicationCommandId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    expect(body).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
+    expect(body).not.toHaveProperty("vatAmountMinorUnits");
+    expect(body).not.toHaveProperty("vatExclusiveBasisAmountMinorUnits");
+    expect(body).not.toHaveProperty("sourceChannel");
+    expect(body).not.toHaveProperty("reviewerUserId");
   });
 
   it("WebPay_WhenStatutoryDecisionSubmitted_UsesWebPayProxyRouteWithIdempotencyAndCorrelation", async () => {

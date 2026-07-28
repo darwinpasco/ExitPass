@@ -18,6 +18,7 @@ let requestLog = [];
 let receiptAttempts = {};
 let statutoryReadAttempts = {};
 let statutoryApplyAttempts = {};
+let paymentIntentAttempts = {};
 let statutoryScenarioByDecisionId = {};
 const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -35,6 +36,7 @@ function resetState() {
   receiptAttempts = {};
   statutoryReadAttempts = {};
   statutoryApplyAttempts = {};
+  paymentIntentAttempts = {};
   statutoryScenarioByDecisionId = {};
 }
 
@@ -208,6 +210,22 @@ function statutoryScenarioForTicket(ticketReference, entitlementType) {
 
   if (ticketReference === "WEBPAY-STAT-READY") {
     return "ready";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-APPLIED-PAYMENT" || ticketReference === "WEBPAY-STAT-APPLIED-DUPLICATE") {
+    return "applied-payment-ready";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-MISSING-SNAPSHOT") {
+    return "missing-applied-snapshot";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-MISSING-AMOUNT") {
+    return "missing-final-amount";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-MISSING-CURRENCY") {
+    return "missing-currency";
   }
 
   if (entitlementType === "PWD") {
@@ -397,7 +415,64 @@ function buildStatutoryDecisionResponse(body, correlationId, scenario) {
     };
   }
 
+  if (scenario === "applied-payment-ready" || scenario === "missing-applied-snapshot" || scenario === "missing-final-amount" || scenario === "missing-currency") {
+    return {
+      ...base,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionCommandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      applicationCommandStatus: "APPLIED",
+      applicationResultClassification: "APPLIED",
+      payableBasisReady: true,
+      payableBasisReadinessStatus: "READY",
+      payableBasisReadinessAction: null,
+      appliedTariffSnapshotId: scenario === "missing-applied-snapshot" ? null : "99999999-9999-4999-8999-999999999999",
+      originalAmountMinorUnits: 5000,
+      vatExclusiveBasisAmountMinorUnits: 3571,
+      vatAmountMinorUnits: 429,
+      vatTreatment: "VAT_EXEMPT_WITH_DISCOUNT",
+      statutoryDiscountAmountMinorUnits: 1000,
+      finalPayableAmountMinorUnits: scenario === "missing-final-amount" ? null : 4000,
+      currency: scenario === "missing-currency" ? null : "PHP",
+      overallResultClassification: "COMPLETED",
+      oneShotComplete: true,
+      decidedAt: "2026-07-27T10:05:00+08:00",
+      appliedAt: "2026-07-27T10:06:00+08:00"
+    };
+  }
+
   return base;
+}
+
+function buildPaymentIntentResponse(body, correlationId) {
+  return {
+    paymentAttemptId: "10000000-0000-4000-8000-000000000010",
+    parkingSessionId: "20000000-0000-4000-8000-000000000001",
+    tariffSnapshotId: body.tariffSnapshotId,
+    siteGroupId: body.siteGroupId ?? "40000000-0000-4000-8000-000000000001",
+    siteId: body.siteId ?? "50000000-0000-4000-8000-000000000001",
+    vendorSystemId: body.vendorSystemId ?? "60000000-0000-4000-8000-000000000001",
+    siteGroupName: "Browser Smoke Site Group",
+    siteName: "Browser Smoke Site",
+    amountMinorUnits: body.expectedAmountMinorUnits,
+    currency: body.expectedCurrency ?? "PHP",
+    paymentMethod: body.paymentMethod ?? "QRPH",
+    selectedProviderCode: "PAYMONGO",
+    fallbackProviderCode: null,
+    routingReason: "PRIMARY_PROVIDER",
+    status: "PENDING_PROVIDER",
+    handoff: {
+      type: "Redirect",
+      handoffUrl: "https://payments.test/handoff",
+      qrCodeUrl: null,
+      expiresAt: "2026-07-27T10:20:00+08:00"
+    },
+    correlationId,
+    ticketReference: body.ticketReference,
+    plateNumber: body.plateNumber,
+    parkingStatus: "PaymentRequired",
+    paymentStatus: "Pending Payment"
+  };
 }
 
 function errorResponse(errorCode, message, retryable, correlationId) {
@@ -427,6 +502,35 @@ async function handleApi(request, response, url) {
   if (request.method === "POST" && url.pathname === "/v1/webpay/payment-intents") {
     const body = await readJson(request);
     recordRequest(request, body);
+    const ticketReference = typeof body.ticketReference === "string" ? body.ticketReference : "";
+
+    if (ticketReference === "WEBPAY-STAT-APPLIED-PAYMENT" || ticketReference === "WEBPAY-STAT-APPLIED-DUPLICATE") {
+      paymentIntentAttempts[ticketReference] = (paymentIntentAttempts[ticketReference] ?? 0) + 1;
+      const isReadyStatutoryPayment =
+        body.tariffSnapshotId === "99999999-9999-4999-8999-999999999999" &&
+        body.expectedAmountMinorUnits === 4000 &&
+        body.expectedCurrency === "PHP" &&
+        body.statutoryDiscountDecisionCommandId === statutoryDecisionCommandId &&
+        body.statutoryDiscountPayableBasisApplicationCommandId === "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+
+      if (isReadyStatutoryPayment) {
+        writeJson(response, 200, buildPaymentIntentResponse(body, body.correlationId));
+        return;
+      }
+
+      writeJson(
+        response,
+        409,
+        errorResponse(
+          "STATUTORY_DISCOUNT_APPLIED_SNAPSHOT_MISMATCH",
+          "The selected payable basis does not match Central PMS readback.",
+          false,
+          body.correlationId
+        )
+      );
+      return;
+    }
+
     writeJson(response, 409, errorResponse("UNEXPECTED_BROWSER_SMOKE_PAYMENT_SUBMISSION", "Browser smoke must not submit payment.", false, body.correlationId));
     return;
   }
@@ -585,7 +689,14 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/__fixture/state") {
-      writeJson(response, 200, { requestLog, receiptAttempts, paymentAttemptIds, statutoryReadAttempts, statutoryApplyAttempts });
+      writeJson(response, 200, {
+        requestLog,
+        receiptAttempts,
+        paymentAttemptIds,
+        statutoryReadAttempts,
+        statutoryApplyAttempts,
+        paymentIntentAttempts
+      });
       return;
     }
 

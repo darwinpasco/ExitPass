@@ -596,7 +596,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("PHP 10.71")).toBeInTheDocument();
     expect(screen.getByText("-PHP 25.00")).toBeInTheDocument();
     expect(screen.getByText("PHP 100.00")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
     expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
   });
 
@@ -724,7 +724,161 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("-PHP 25.00")).toBeInTheDocument();
     expect(screen.getByText("PHP 100.00")).toBeInTheDocument();
     expect(screen.getByText("VAT Treatment")).toBeInTheDocument();
+    expect(screen.getByText(/Payment is available using the Central PMS-approved statutory payable basis/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+  });
+
+  it("WebPay_WhenStatutoryReadbackIsReady_PaymentIntentUsesAppliedBasisAndCanonicalLinkage", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        originalTariffSnapshotId: successResponse.tariffSnapshotId,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        originalAmountMinorUnits: 5000,
+        vatExclusiveBasisAmountMinorUnits: 3571,
+        vatAmountMinorUnits: 429,
+        vatTreatment: "VAT_EXEMPT_WITH_DISCOUNT",
+        statutoryDiscountAmountMinorUnits: 1000,
+        finalPayableAmountMinorUnits: 4000,
+        currency: "PHP"
+      }),
+      intentPayload: {
+        ...successResponse,
+        tariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        amountMinorUnits: 4000,
+        currency: "PHP"
+      }
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    await continueToPayment();
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(1)
+    );
+    const paymentCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/v1/webpay/payment-intents"));
+    const body = JSON.parse((paymentCall?.[1] as RequestInit).body as string);
+    expect(body.tariffSnapshotId).toBe("99999999-9999-4999-8999-999999999999");
+    expect(body.tariffSnapshotId).not.toBe(successResponse.tariffSnapshotId);
+    expect(body.expectedAmountMinorUnits).toBe(4000);
+    expect(body.expectedCurrency).toBe("PHP");
+    expect(body.statutoryDiscountDecisionCommandId).toBe(statutoryDecisionCommandId);
+    expect(body.statutoryDiscountPayableBasisApplicationCommandId).toBe("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    expect(body).not.toHaveProperty("statutoryDiscountAmountMinorUnits");
+    expect(body).not.toHaveProperty("vatAmountMinorUnits");
+    expect(body).not.toHaveProperty("vatExclusiveBasisAmountMinorUnits");
+    expect(body).not.toHaveProperty("sourceChannel");
+    expect(await screen.findByRole("link", { name: /continue to payment/i })).toBeInTheDocument();
+  });
+
+  it("WebPay_WhenStatutoryReadyPaymentClickedRapidly_SubmitsOnePaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        finalPayableAmountMinorUnits: 4000,
+        currency: "PHP"
+      }),
+      intentPayload: {
+        ...successResponse,
+        tariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        amountMinorUnits: 4000,
+        currency: "PHP"
+      }
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    const paymentButton = screen.getByRole("button", { name: /continue to payment/i });
+    await userEvent.dblClick(paymentButton);
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(1)
+    );
+  });
+
+  it("WebPay_WhenBackendRejectsStaleAppliedBasis_ShowsSafeRefreshGuidanceWithoutHandoff", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        finalPayableAmountMinorUnits: 4000,
+        currency: "PHP"
+      }),
+      intentOk: false,
+      intentStatus: 409,
+      intentPayload: {
+        errorCode: "STATUTORY_DISCOUNT_APPLIED_SNAPSHOT_MISMATCH",
+        message: "Downstream mismatch detail should not be shown.",
+        retryable: false,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      }
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    await continueToPayment();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("The payable amount changed or payment has already started. Please restart from lookup.");
+    expect(screen.queryByRole("link", { name: /continue to payment/i })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(1);
+  });
+
+  it.each([
+    ["missing applied snapshot", { appliedTariffSnapshotId: null }],
+    ["missing final amount", { finalPayableAmountMinorUnits: null }],
+    ["missing currency", { currency: null }]
+  ])("WebPay_WhenReadyReadbackHas%s_KeepsPaymentDisabled", async (_caseName, missingFact) => {
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: statutoryDecisionResponse({
+        statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        decisionCommandStatus: "COMPLETED",
+        decisionResultStatus: "APPROVED",
+        applicationCommandStatus: "APPLIED",
+        applicationResultClassification: "APPLIED",
+        payableBasisReady: true,
+        payableBasisReadinessStatus: "READY",
+        payableBasisReadinessAction: null,
+        appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+        finalPayableAmountMinorUnits: 4000,
+        currency: "PHP",
+        ...missingFact
+      })
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+
+    expect(await screen.findByRole("heading", { name: /payment basis incomplete/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /statutory discount pending/i }));
+    expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
   });
 
   it("WebPay_WhenApprovedPayableBasisExists_DisplaysReadOnlyAdjustments", async () => {

@@ -590,6 +590,9 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
     case "STATUTORY_DISCOUNT_EXPIRED":
       return "Statutory discount validation has expired.";
     case "PAYABLE_BASIS_LOCKED":
+    case "STATUTORY_DISCOUNT_APPLIED_SNAPSHOT_MISMATCH":
+    case "STATUTORY_DISCOUNT_FINAL_PAYABLE_AMOUNT_MISMATCH":
+    case "STATUTORY_DISCOUNT_CURRENCY_MISMATCH":
       return "The payable amount changed or payment has already started. Please restart from lookup.";
     case "PAYMENT_ALREADY_INITIATED":
       return "Payment has already been initiated for this payable amount.";
