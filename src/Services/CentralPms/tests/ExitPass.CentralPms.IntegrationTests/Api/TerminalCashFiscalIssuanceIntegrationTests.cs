@@ -23,6 +23,14 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static readonly Guid TariffSnapshotId = Guid.Parse("21000000-0000-4000-8000-000000000005");
     private static readonly Guid FiscalIssuanceReferenceId = Guid.Parse("21000000-0000-4000-8000-000000000006");
     private static readonly Guid PosFiscalDocumentId = Guid.Parse("21000000-0000-4000-8000-000000000007");
+    private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("21000000-0000-4000-8000-000000000030");
+    private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("21000000-0000-4000-8000-000000000031");
+    private static readonly Guid StatutoryValidationId = Guid.Parse("21000000-0000-4000-8000-000000000032");
+    private static readonly Guid StatutoryApplicationId = Guid.Parse("21000000-0000-4000-8000-000000000033");
+    private static readonly Guid OriginalTariffSnapshotId = Guid.Parse("21000000-0000-4000-8000-000000000034");
+    private static readonly Guid AppliedPolicyReferenceId = Guid.Parse("21000000-0000-4000-8000-000000000035");
+    private static readonly Guid PosServerFiscalDiscountPrivilegeTypeCodeId =
+        Guid.Parse("10000000-0000-0000-0000-000000000501");
 
     [Fact]
     public async Task TerminalCashFiscalIssuance_ConfirmedCashPayment_TriggersExistingFiscalIssuancePath()
@@ -46,6 +54,72 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(1, posIntegration.IssueCallCount);
         Assert.NotNull(posIntegration.LastFiscalContext);
         Assert.Equal("CASH", posIntegration.LastFiscalContext!.Tenders.Single().ProviderRef);
+        Assert.Empty(posIntegration.LastFiscalContext.PayableBasis.DiscountReferences);
+        Assert.Empty(posIntegration.LastFiscalContext.DiscountPrivilegeDetails);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_AppliedStatutoryPayment_PopulatesPosServerDiscountReferencesAndPrivilegeDetails()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(amountDueMinorUnits: 8_929),
+            repo,
+            posIntegration,
+            new FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult.Complete(StatutoryContext())));
+
+        await service.IssueOrReadAsync(Command(), CancellationToken.None);
+
+        var fiscalContext = posIntegration.LastFiscalContext!;
+        Assert.Equal(8_929, fiscalContext.PayableBasis.PayableAmountMinorUnits);
+        Assert.Equal(8_929, fiscalContext.Tenders.Single().AmountMinorUnits);
+        Assert.Equal(8_929, fiscalContext.Totals.Single().AmountMinorUnits);
+        var discountReference = Assert.Single(fiscalContext.PayableBasis.DiscountReferences);
+        Assert.Equal(StatutoryValidationId.ToString("D"), discountReference.DiscountValidationRef);
+        Assert.Equal("approved", discountReference.Status);
+        Assert.True(discountReference.AppliesStatutoryDiscountTreatment);
+        Assert.Equal(StatutoryDecisionCommandId.ToString("D"), discountReference.StatutoryDiscountDecisionCommandRef);
+        Assert.Equal("SENIOR_CITIZEN", discountReference.EntitlementType);
+        Assert.Equal(OriginalTariffSnapshotId.ToString("D"), discountReference.OriginalTariffSnapshotRef);
+        Assert.Equal(TariffSnapshotId.ToString("D"), discountReference.AppliedTariffSnapshotRef);
+        Assert.Equal(12_500, discountReference.OriginalAmountMinorUnits);
+        Assert.Equal(11_161, discountReference.VatExclusiveBasisAmountMinorUnits);
+        Assert.Equal(2_232, discountReference.DiscountAmountMinorUnits);
+        Assert.Equal(8_929, discountReference.FinalPayableAmountMinorUnits);
+
+        var privilege = Assert.Single(fiscalContext.DiscountPrivilegeDetails);
+        Assert.Equal(PosServerFiscalDiscountPrivilegeTypeCodeId, privilege.DiscountPrivilegeTypeCodeId);
+        Assert.Equal(11_161, privilege.BasisAmountMinorUnits);
+        Assert.Equal(2_232, privilege.DiscountAmountMinorUnits);
+        Assert.Equal(1_339, privilege.VatPrivilegeAmountMinorUnits);
+        Assert.Equal("PHP", privilege.CurrencyCode);
+        Assert.Equal("SC-***-1234", privilege.BeneficiaryRef);
+        Assert.Equal($"statutory-discount-validation:{StatutoryValidationId:D}", privilege.EvidenceRef);
+        Assert.Equal(StatutoryValidationId.ToString("D"), privilege.ApprovalRef);
+        Assert.Contains("statutoryDiscountDecisionCommandId", fiscalContext.ReferenceContext.Keys);
+        Assert.DoesNotContain("reviewer", Serialize(fiscalContext), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("raw_id", Serialize(fiscalContext), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TerminalCashFiscalIssuance_InvalidStatutoryLinkage_BlocksBeforeFiscalReferenceAndPosServerCall()
+    {
+        var repo = new InMemoryFiscalReferenceRepository();
+        var posIntegration = new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        var service = CreateService(
+            CashPayment(amountDueMinorUnits: 8_929),
+            repo,
+            posIntegration,
+            new FakeStatutoryFiscalLinkageReader(
+                TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_LINKAGE_MISSING")));
+
+        var ex = await Assert.ThrowsAsync<TerminalCashFiscalIssuanceRejectedException>(
+            () => service.IssueOrReadAsync(Command(), CancellationToken.None));
+
+        Assert.Equal("STATUTORY_FISCAL_LINKAGE_MISSING", ex.ErrorCode);
+        Assert.Equal(0, repo.CreateCount);
+        Assert.Equal(0, posIntegration.IssueCallCount);
     }
 
     [Fact]
@@ -208,14 +282,17 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static ITerminalCashFiscalIssuanceService CreateService(
         TerminalCashPaymentReadback? cashPayment,
         InMemoryFiscalReferenceRepository? repo = null,
-        FakePosServerIntegration? posIntegration = null)
+        FakePosServerIntegration? posIntegration = null,
+        ITerminalCashStatutoryFiscalLinkageReader? statutoryFiscalLinkageReader = null)
     {
         repo ??= new InMemoryFiscalReferenceRepository();
         return new TerminalCashFiscalIssuanceService(
             new FakeTerminalCashPaymentService(cashPayment),
             repo,
             new FiscalIssuanceOrchestrationService(repo),
-            posIntegration ?? new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied));
+            posIntegration ?? new FakePosServerIntegration(repo, FiscalIssuancePosServerLiveIntegrationStatus.Applied),
+            statutoryFiscalLinkageReader ?? new FakeStatutoryFiscalLinkageReader(
+                TerminalCashStatutoryFiscalLinkageResult.NotApplicable()));
     }
 
     private static CustomWebApplicationFactory CreateFactory(ITerminalCashFiscalIssuanceService service) =>
@@ -229,7 +306,9 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
     private static TerminalCashFiscalIssuanceCommand Command(string idempotencyKey = "terminal-cash-fiscal-key") =>
         new(TerminalCashTenderId, idempotencyKey, Guid.Parse("21000000-0000-4000-8000-000000000099"));
 
-    private static TerminalCashPaymentReadback CashPayment(string canonicalPaymentStatus = "CONFIRMED") =>
+    private static TerminalCashPaymentReadback CashPayment(
+        string canonicalPaymentStatus = "CONFIRMED",
+        long amountDueMinorUnits = 10_000) =>
         new(
             TerminalCashPaymentCommandId: Guid.Parse("21000000-0000-4000-8000-000000000010"),
             TerminalCashTenderId: TerminalCashTenderId,
@@ -244,8 +323,8 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             CashierId: "cashier-001",
             CashierShiftId: "shift-001",
             Currency: "PHP",
-            AmountDueMinorUnits: 10_000,
-            AmountTenderedMinorUnits: 10_000,
+            AmountDueMinorUnits: amountDueMinorUnits,
+            AmountTenderedMinorUnits: amountDueMinorUnits,
             ChangeDueMinorUnits: 0,
             CanonicalPaymentStatus: canonicalPaymentStatus,
             PaymentConfirmationId: PaymentConfirmationId,
@@ -257,6 +336,35 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             LastUpdatedAt: DateTimeOffset.UtcNow,
             CorrelationId: Guid.Parse("21000000-0000-4000-8000-000000000014"),
             FiscalStatus: "NOT_STARTED_IN_THIS_SLICE");
+
+    private static TerminalCashStatutoryFiscalLinkageContext StatutoryContext() =>
+        new(
+            StatutoryDecisionCommandId,
+            StatutoryApplicationCommandId,
+            StatutoryValidationId,
+            StatutoryApplicationId,
+            ParkingSessionId,
+            Guid.Parse("21000000-0000-4000-8000-000000000012"),
+            Guid.Parse("21000000-0000-4000-8000-000000000013"),
+            OriginalTariffSnapshotId,
+            TariffSnapshotId,
+            AppliedPolicyReferenceId,
+            "NATIONAL_LAW_FALLBACK",
+            "SENIOR_CITIZEN",
+            "ASSISTED_PAYMENT_TERMINAL",
+            OriginalAmountMinorUnits: 12_500,
+            VatExclusiveBasisAmountMinorUnits: 11_161,
+            VatAmountMinorUnits: 1_339,
+            VatTreatment: "VAT_EXCLUSIVE",
+            StatutoryDiscountAmountMinorUnits: 2_232,
+            FinalPayableAmountMinorUnits: 8_929,
+            Currency: "PHP",
+            DecisionTimestamp: DateTimeOffset.Parse("2026-07-28T01:20:00Z"),
+            AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),
+            MaskedIdReference: "SC-***-1234");
+
+    private static string Serialize(object value) =>
+        System.Text.Json.JsonSerializer.Serialize(value);
 
     private static TerminalCashFiscalIssuanceResult Result() =>
         new(
@@ -297,6 +405,21 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
             Guid terminalCashTenderId,
             CancellationToken cancellationToken) =>
             Task.FromResult(_cashPayment?.TerminalCashTenderId == terminalCashTenderId ? _cashPayment : null);
+    }
+
+    private sealed class FakeStatutoryFiscalLinkageReader : ITerminalCashStatutoryFiscalLinkageReader
+    {
+        private readonly TerminalCashStatutoryFiscalLinkageResult _result;
+
+        public FakeStatutoryFiscalLinkageReader(TerminalCashStatutoryFiscalLinkageResult result)
+        {
+            _result = result;
+        }
+
+        public Task<TerminalCashStatutoryFiscalLinkageResult> ReadByAppliedTariffSnapshotAsync(
+            TerminalCashPaymentReadback cashPayment,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_result);
     }
 
     private sealed class FakePosServerIntegration : IFiscalIssuancePosServerLiveIntegrationService

@@ -10,22 +10,27 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 {
     private const string ConfirmedCanonicalPaymentStatus = "CONFIRMED";
     private const string FiscalDocumentTypeCodeKey = "sales_invoice";
+    private static readonly Guid StatutoryDiscountPrivilegeTypeCodeId =
+        Guid.Parse("10000000-0000-0000-0000-000000000501");
 
     private readonly ITerminalCashPaymentService _terminalCashPayments;
     private readonly IFiscalIssuanceReferenceRepository _fiscalReferences;
     private readonly IFiscalIssuanceOrchestrationService _orchestrationService;
     private readonly IFiscalIssuancePosServerLiveIntegrationService _posServerIntegration;
+    private readonly ITerminalCashStatutoryFiscalLinkageReader _statutoryFiscalLinkageReader;
 
     public TerminalCashFiscalIssuanceService(
         ITerminalCashPaymentService terminalCashPayments,
         IFiscalIssuanceReferenceRepository fiscalReferences,
         IFiscalIssuanceOrchestrationService orchestrationService,
-        IFiscalIssuancePosServerLiveIntegrationService posServerIntegration)
+        IFiscalIssuancePosServerLiveIntegrationService posServerIntegration,
+        ITerminalCashStatutoryFiscalLinkageReader statutoryFiscalLinkageReader)
     {
         _terminalCashPayments = terminalCashPayments;
         _fiscalReferences = fiscalReferences;
         _orchestrationService = orchestrationService;
         _posServerIntegration = posServerIntegration;
+        _statutoryFiscalLinkageReader = statutoryFiscalLinkageReader;
     }
 
     public async Task<TerminalCashFiscalIssuanceResult> IssueOrReadAsync(
@@ -68,12 +73,17 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 posServerCallAttempted: false);
         }
 
+        var statutoryFiscalLinkage = await _statutoryFiscalLinkageReader
+            .ReadByAppliedTariffSnapshotAsync(cashPayment, cancellationToken)
+            .ConfigureAwait(false);
+        EnsureStatutoryFiscalLinkageCanBeFiscalized(statutoryFiscalLinkage);
+
         var prepared = await _orchestrationService.PreparePendingAsync(
                 BuildPrepareCommand(cashPayment, upstreamFinalityReference, command.CorrelationId),
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var fiscalContext = BuildFiscalContext(cashPayment, prepared);
+        var fiscalContext = BuildFiscalContext(cashPayment, prepared, statutoryFiscalLinkage.Context);
         var recordingContext = new PosServerCreateResultRecordingContext(
             UpstreamFinalityReference: upstreamFinalityReference,
             SitePosServerId: prepared.SitePosServerId,
@@ -193,12 +203,23 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
 
     private static CentralPmsFiscalDocumentMappingContext BuildFiscalContext(
         TerminalCashPaymentReadback cashPayment,
-        FiscalIssuanceReferenceRecord reference)
+        FiscalIssuanceReferenceRecord reference,
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
     {
         var currency = cashPayment.Currency.Trim().ToUpperInvariant();
-        var amount = cashPayment.AmountDueMinorUnits;
+        var amount = statutoryContext?.FinalPayableAmountMinorUnits ?? cashPayment.AmountDueMinorUnits;
+        var lineGrossAmount = statutoryContext?.VatExclusiveBasisAmountMinorUnits ?? amount;
+        var discountAmount = statutoryContext?.StatutoryDiscountAmountMinorUnits ?? 0;
+        var taxAmount = 0;
         var paymentAttemptRef = cashPayment.PaymentAttemptId.ToString("D");
         var paymentConfirmationRef = cashPayment.PaymentConfirmationId.ToString("D");
+        var payableBasisContext = BuildPayableBasisReferenceContext(cashPayment, statutoryContext);
+        var documentLineContext = BuildDocumentLineContext(cashPayment, statutoryContext);
+        var tenderContext = BuildTenderContext(cashPayment);
+        var totalContext = statutoryContext is null
+            ? new Dictionary<string, string> { ["kind"] = "grand_total" }
+            : new Dictionary<string, string> { ["kind"] = "final_statutory_payable" };
+        var referenceContext = BuildFiscalReferenceContext(cashPayment, reference, statutoryContext);
 
         return new CentralPmsFiscalDocumentMappingContext(
             SitePosServerId: reference.SitePosServerId,
@@ -215,32 +236,26 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 UpstreamFinalityRef: reference.UpstreamFinalityReference,
                 CurrencyCode: currency,
                 PayableAmountMinorUnits: amount,
-                DiscountReferences: Array.Empty<CentralPmsFiscalDiscountReferenceContext>(),
-                ReferenceContext: new Dictionary<string, string>
-                {
-                    ["tariffSnapshotId"] = cashPayment.TariffSnapshotId.ToString("D"),
-                    ["paymentMethod"] = "CASH"
-                }),
+                DiscountReferences: BuildDiscountReferences(statutoryContext),
+                ReferenceContext: payableBasisContext),
             DocumentLines:
             [
                 new CentralPmsFiscalDocumentLineContext(
                     LineSequence: 1,
                     LineTypeCodeId: null,
-                    Description: "Parking fee - cash",
+                    Description: statutoryContext is null
+                        ? "Parking fee - cash"
+                        : "Parking fee - statutory discount applied",
                     Quantity: 1m,
-                    UnitAmountMinorUnits: amount,
-                    GrossAmountMinorUnits: amount,
-                    DiscountAmountMinorUnits: 0,
-                    TaxAmountMinorUnits: 0,
+                    UnitAmountMinorUnits: lineGrossAmount,
+                    GrossAmountMinorUnits: lineGrossAmount,
+                    DiscountAmountMinorUnits: discountAmount,
+                    TaxAmountMinorUnits: taxAmount,
                     NetAmountMinorUnits: amount,
                     CurrencyCode: currency,
                     LineStatusCodeId: null,
                     SourceRef: cashPayment.TariffSnapshotId.ToString("D"),
-                    LineContext: new Dictionary<string, string>
-                    {
-                        ["source"] = "terminal-cash-payment",
-                        ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D")
-                    })
+                    LineContext: documentLineContext)
             ],
             Tenders:
             [
@@ -252,30 +267,204 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                     CentralPmsPaymentConfirmationRef: paymentConfirmationRef,
                     PaymentFinalityRef: reference.UpstreamFinalityReference,
                     ProviderRef: "CASH",
-                    TenderContext: new Dictionary<string, string>
-                    {
-                        ["paymentMethod"] = "CASH",
-                        ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D")
-                    })
+                    TenderContext: tenderContext)
             ],
             TaxDetails: Array.Empty<CentralPmsFiscalTaxDetailContext>(),
-            DiscountPrivilegeDetails: Array.Empty<CentralPmsFiscalDiscountPrivilegeDetailContext>(),
+            DiscountPrivilegeDetails: BuildDiscountPrivilegeDetails(statutoryContext, currency),
             Totals:
             [
                 new CentralPmsFiscalTotalContext(
                     TotalTypeCodeId: null,
                     AmountMinorUnits: amount,
                     CurrencyCode: currency,
-                    TotalContext: new Dictionary<string, string> { ["kind"] = "grand_total" })
+                    TotalContext: totalContext)
             ],
-            ReferenceContext: new Dictionary<string, string>
-            {
-                ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D"),
-                ["cashCustodySessionId"] = cashPayment.CashCustodySessionId.ToString("D"),
-                ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D")
-            },
+            ReferenceContext: referenceContext,
             PaymentFinalityRef: reference.UpstreamFinalityReference,
             VendorAckRef: null);
+    }
+
+    private static void EnsureStatutoryFiscalLinkageCanBeFiscalized(
+        TerminalCashStatutoryFiscalLinkageResult linkage)
+    {
+        if (linkage.Status is TerminalCashStatutoryFiscalLinkageStatus.NotApplicable
+            or TerminalCashStatutoryFiscalLinkageStatus.CompleteApprovedContext)
+        {
+            return;
+        }
+
+        throw Rejected(
+            linkage.SafeErrorCode ?? "STATUTORY_FISCAL_LINKAGE_NOT_READY",
+            linkage.Status == TerminalCashStatutoryFiscalLinkageStatus.RetryableUnavailable
+                ? "Statutory discount fiscal context is temporarily unavailable."
+                : "Statutory discount fiscal context is incomplete or inconsistent.");
+    }
+
+    private static IReadOnlyList<CentralPmsFiscalDiscountReferenceContext> BuildDiscountReferences(
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
+    {
+        if (statutoryContext is null)
+        {
+            return Array.Empty<CentralPmsFiscalDiscountReferenceContext>();
+        }
+
+        return
+        [
+            new CentralPmsFiscalDiscountReferenceContext(
+                DiscountValidationRef: statutoryContext.StatutoryDiscountValidationId.ToString("D"),
+                Status: "approved",
+                AppliesStatutoryDiscountTreatment: true,
+                ReferenceContext: new Dictionary<string, string>
+                {
+                    ["statutoryDiscountPayableBasisApplicationCommandId"] =
+                        statutoryContext.StatutoryDiscountPayableBasisApplicationCommandId.ToString("D"),
+                    ["entitlementType"] = statutoryContext.EntitlementType,
+                    ["source"] = "central-pms-canonical-statutory-discount"
+                })
+            {
+                StatutoryDiscountDecisionCommandRef = statutoryContext.StatutoryDiscountDecisionCommandId.ToString("D"),
+                EntitlementType = statutoryContext.EntitlementType,
+                AppliedPolicyReferenceRef = statutoryContext.AppliedPolicyReferenceId?.ToString("D"),
+                OriginalTariffSnapshotRef = statutoryContext.OriginalTariffSnapshotId.ToString("D"),
+                AppliedTariffSnapshotRef = statutoryContext.AppliedTariffSnapshotId.ToString("D"),
+                OriginalAmountMinorUnits = statutoryContext.OriginalAmountMinorUnits,
+                VatExclusiveBasisAmountMinorUnits = statutoryContext.VatExclusiveBasisAmountMinorUnits,
+                VatTreatment = statutoryContext.VatTreatment,
+                DiscountAmountMinorUnits = statutoryContext.StatutoryDiscountAmountMinorUnits,
+                FinalPayableAmountMinorUnits = statutoryContext.FinalPayableAmountMinorUnits,
+                DecisionTimestamp = statutoryContext.DecisionTimestamp,
+                SourceChannel = statutoryContext.SourceChannel
+            }
+        ];
+    }
+
+    private static IReadOnlyList<CentralPmsFiscalDiscountPrivilegeDetailContext> BuildDiscountPrivilegeDetails(
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext,
+        string currency)
+    {
+        if (statutoryContext is null)
+        {
+            return Array.Empty<CentralPmsFiscalDiscountPrivilegeDetailContext>();
+        }
+
+        var context = new Dictionary<string, string>
+        {
+            ["entitlementType"] = statutoryContext.EntitlementType,
+            ["discountBaseScope"] = statutoryContext.VatTreatment,
+            ["statutoryDiscountDecisionCommandId"] = statutoryContext.StatutoryDiscountDecisionCommandId.ToString("D"),
+            ["statutoryDiscountPayableBasisApplicationCommandId"] =
+                statutoryContext.StatutoryDiscountPayableBasisApplicationCommandId.ToString("D")
+        };
+        AddIfPresent(context, "policyResolutionBasis", statutoryContext.PolicyResolutionBasis);
+        AddIfPresent(context, "statutoryDiscountPayableBasisApplicationId",
+            statutoryContext.StatutoryDiscountPayableBasisApplicationId?.ToString("D"));
+
+        return
+        [
+            new CentralPmsFiscalDiscountPrivilegeDetailContext(
+                DiscountPrivilegeTypeCodeId: StatutoryDiscountPrivilegeTypeCodeId,
+                BasisAmountMinorUnits: statutoryContext.VatExclusiveBasisAmountMinorUnits,
+                DiscountAmountMinorUnits: statutoryContext.StatutoryDiscountAmountMinorUnits,
+                VatPrivilegeAmountMinorUnits: statutoryContext.VatAmountMinorUnits,
+                CurrencyCode: currency,
+                LineSequence: 1,
+                BeneficiaryRef: statutoryContext.MaskedIdReference,
+                EvidenceRef: $"statutory-discount-validation:{statutoryContext.StatutoryDiscountValidationId:D}",
+                ApprovalRef: statutoryContext.StatutoryDiscountValidationId.ToString("D"),
+                DiscountPrivilegeContext: context)
+        ];
+    }
+
+    private static Dictionary<string, string> BuildPayableBasisReferenceContext(
+        TerminalCashPaymentReadback cashPayment,
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
+    {
+        var context = new Dictionary<string, string>
+        {
+            ["tariffSnapshotId"] = cashPayment.TariffSnapshotId.ToString("D"),
+            ["paymentMethod"] = "CASH"
+        };
+
+        if (statutoryContext is null)
+        {
+            return context;
+        }
+
+        context["appliedTariffSnapshotId"] = statutoryContext.AppliedTariffSnapshotId.ToString("D");
+        context["originalTariffSnapshotId"] = statutoryContext.OriginalTariffSnapshotId.ToString("D");
+        context["statutoryDiscountValidationId"] = statutoryContext.StatutoryDiscountValidationId.ToString("D");
+        context["statutoryDiscountDecisionCommandId"] = statutoryContext.StatutoryDiscountDecisionCommandId.ToString("D");
+        context["statutoryDiscountPayableBasisApplicationCommandId"] =
+            statutoryContext.StatutoryDiscountPayableBasisApplicationCommandId.ToString("D");
+        context["entitlementType"] = statutoryContext.EntitlementType;
+        return context;
+    }
+
+    private static Dictionary<string, string> BuildDocumentLineContext(
+        TerminalCashPaymentReadback cashPayment,
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
+    {
+        var context = new Dictionary<string, string>
+        {
+            ["source"] = statutoryContext is null ? "terminal-cash-payment" : "central-pms-applied-statutory-payable-basis",
+            ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D")
+        };
+
+        if (statutoryContext is null)
+        {
+            return context;
+        }
+
+        context["entitlementType"] = statutoryContext.EntitlementType;
+        context["originalAmountMinorUnits"] = statutoryContext.OriginalAmountMinorUnits.ToString();
+        context["vatExclusiveBasisAmountMinorUnits"] = statutoryContext.VatExclusiveBasisAmountMinorUnits.ToString();
+        context["vatAmountMinorUnits"] = statutoryContext.VatAmountMinorUnits.ToString();
+        context["statutoryDiscountAmountMinorUnits"] = statutoryContext.StatutoryDiscountAmountMinorUnits.ToString();
+        context["finalPayableAmountMinorUnits"] = statutoryContext.FinalPayableAmountMinorUnits.ToString();
+        return context;
+    }
+
+    private static Dictionary<string, string> BuildTenderContext(TerminalCashPaymentReadback cashPayment) =>
+        new()
+        {
+            ["paymentMethod"] = "CASH",
+            ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D")
+        };
+
+    private static Dictionary<string, string> BuildFiscalReferenceContext(
+        TerminalCashPaymentReadback cashPayment,
+        FiscalIssuanceReferenceRecord reference,
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
+    {
+        var context = new Dictionary<string, string>
+        {
+            ["terminalCashTenderId"] = cashPayment.TerminalCashTenderId.ToString("D"),
+            ["cashCustodySessionId"] = cashPayment.CashCustodySessionId.ToString("D"),
+            ["fiscalIssuanceReferenceId"] = reference.FiscalIssuanceReferenceId.ToString("D")
+        };
+
+        if (statutoryContext is null)
+        {
+            return context;
+        }
+
+        context["statutoryDiscountValidationId"] = statutoryContext.StatutoryDiscountValidationId.ToString("D");
+        context["statutoryDiscountDecisionCommandId"] = statutoryContext.StatutoryDiscountDecisionCommandId.ToString("D");
+        context["statutoryDiscountPayableBasisApplicationCommandId"] =
+            statutoryContext.StatutoryDiscountPayableBasisApplicationCommandId.ToString("D");
+        AddIfPresent(context, "statutoryDiscountPayableBasisApplicationId",
+            statutoryContext.StatutoryDiscountPayableBasisApplicationId?.ToString("D"));
+        context["appliedTariffSnapshotId"] = statutoryContext.AppliedTariffSnapshotId.ToString("D");
+        context["originalTariffSnapshotId"] = statutoryContext.OriginalTariffSnapshotId.ToString("D");
+        return context;
+    }
+
+    private static void AddIfPresent(Dictionary<string, string> context, string key, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            context[key] = value.Trim();
+        }
     }
 
     private static void EnsureExistingReferenceMatchesTerminalCashPayment(
