@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
 using ExitPass.CentralPms.Domain.Sessions;
@@ -21,19 +22,22 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
     private readonly ITariffSnapshotReadRepository _tariffSnapshots;
     private readonly ITerminalCashPayableBasisEligibilityReader _terminalCashEligibility;
     private readonly ISalesInvoiceProfileAdministrationService _salesInvoiceReadiness;
+    private readonly IStatutoryDiscountDecisionFacadeService _statutoryDiscounts;
 
     public AptPayableBasisReadinessService(
         IResolveVendorParkingUseCase vendorResolution,
         IParkingSessionReadRepository parkingSessions,
         ITariffSnapshotReadRepository tariffSnapshots,
         ITerminalCashPayableBasisEligibilityReader terminalCashEligibility,
-        ISalesInvoiceProfileAdministrationService salesInvoiceReadiness)
+        ISalesInvoiceProfileAdministrationService salesInvoiceReadiness,
+        IStatutoryDiscountDecisionFacadeService statutoryDiscounts)
     {
         _vendorResolution = vendorResolution;
         _parkingSessions = parkingSessions;
         _tariffSnapshots = tariffSnapshots;
         _terminalCashEligibility = terminalCashEligibility;
         _salesInvoiceReadiness = salesInvoiceReadiness;
+        _statutoryDiscounts = statutoryDiscounts;
     }
 
     public async Task<AptPayableBasisReadinessResult> ResolveAsync(
@@ -69,6 +73,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 ParseRequiredGuid(request.SitePosServerId, nameof(request.SitePosServerId)),
                 expectedAmountMinorUnits: null,
                 expectedCurrency: null,
+                requestedStatutoryDecisionCommandId: request.StatutoryDiscountDecisionCommandId,
                 forceNotReadyCode: null,
                 cancellationToken)
             : MapResolutionFailure(resolved, correlationId);
@@ -133,12 +138,6 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             return MapResolutionFailure(resolved, correlationId);
         }
 
-        var currentAmount = ToMinorUnits(resolved.TariffSnapshot!.NetPayable);
-        var currentCurrency = resolved.TariffSnapshot.CurrencyCode.Trim().ToUpperInvariant();
-        var amountChanged = currentAmount != request.ExpectedAmountMinorUnits ||
-            !string.Equals(currentCurrency, request.ExpectedCurrency.Trim(), StringComparison.OrdinalIgnoreCase) ||
-            resolved.TariffSnapshot.TariffSnapshotId != previousTariffSnapshotId;
-
         var responseResult = await BuildReadinessResultAsync(
             operation: "REVALIDATE",
             revalidationOutcome: null,
@@ -147,6 +146,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             sitePosServerId,
             request.ExpectedAmountMinorUnits,
             request.ExpectedCurrency,
+            request.StatutoryDiscountDecisionCommandId,
             forceNotReadyCode: null,
             cancellationToken);
 
@@ -154,6 +154,10 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         {
             return responseResult;
         }
+
+        var amountChanged = responseResult.Response.AuthoritativeAmountMinorUnits != request.ExpectedAmountMinorUnits ||
+            !string.Equals(responseResult.Response.Currency, request.ExpectedCurrency.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            responseResult.Response.TariffSnapshotId != previousTariffSnapshotId;
 
         var outcome = ResolveRevalidationOutcome(
             responseResult.Response,
@@ -171,6 +175,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             sitePosServerId,
             request.ExpectedAmountMinorUnits,
             request.ExpectedCurrency,
+            request.StatutoryDiscountDecisionCommandId,
             forceNotReadyCode,
             cancellationToken);
     }
@@ -183,6 +188,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         Guid sitePosServerId,
         long? expectedAmountMinorUnits,
         string? expectedCurrency,
+        Guid? requestedStatutoryDecisionCommandId,
         string? forceNotReadyCode,
         CancellationToken cancellationToken)
     {
@@ -191,15 +197,25 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         var correlationId = resolved.CorrelationId;
         var siteGroupId = Guid.Parse(session.SiteGroupId);
         var siteId = Guid.Parse(session.SiteId);
-        var amountMinorUnits = ToMinorUnits(tariff.NetPayable);
-        var currency = tariff.CurrencyCode.Trim().ToUpperInvariant();
+        var statutory = await StatutoryReadinessAsync(
+            requestedStatutoryDecisionCommandId ?? resolved.EffectivePayableBasis?.StatutoryDiscountDecisionCommandId,
+            session,
+            tariff,
+            siteGroupId,
+            siteId,
+            correlationId,
+            cancellationToken);
+        var effectiveTariff = statutory.EffectiveTariff ?? tariff;
+        var amountMinorUnits = statutory.FinalPayableAmountMinorUnits ?? ToMinorUnits(effectiveTariff.NetPayable);
+        var currency = statutory.Currency ?? effectiveTariff.CurrencyCode.Trim().ToUpperInvariant();
 
         var sessionDimension = SessionReadiness(session);
-        var tariffDimension = TariffReadiness(tariff);
+        var tariffDimension = TariffReadiness(effectiveTariff);
+        var statutoryDimension = ToStatutoryDimension(statutory.Readiness);
         var terminalCash = await _terminalCashEligibility.EvaluateAsync(
             new TerminalCashPayableBasisEligibilityRequest(
                 session.ParkingSessionId,
-                tariff.TariffSnapshotId,
+                effectiveTariff.TariffSnapshotId,
                 siteGroupId,
                 siteId,
                 terminalId,
@@ -220,6 +236,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         {
             sessionDimension,
             tariffDimension,
+            statutoryDimension,
             paymentDimension,
             terminalCashDimension,
             salesInvoiceDimension,
@@ -249,7 +266,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             operation,
             revalidationOutcome,
             session.ParkingSessionId,
-            tariff.TariffSnapshotId,
+            effectiveTariff.TariffSnapshotId,
             siteGroupId,
             siteId,
             sitePosServerId,
@@ -263,9 +280,9 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             resolved.PaymentStatus ?? "Unknown",
             amountMinorUnits,
             currency,
-            tariff.CalculatedAt,
-            tariff.ExpiresAt,
-            tariff.ExpiresAt,
+            effectiveTariff.CalculatedAt,
+            effectiveTariff.ExpiresAt,
+            effectiveTariff.ExpiresAt,
             resolved.VendorSystemId ?? session.VendorSystemCode,
             dimensions,
             sessionDimension.Status,
@@ -274,6 +291,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             terminalCashDimension.Status,
             fiscalDimension.Status,
             salesInvoiceDimension.Status,
+            statutory.Readiness,
             cashReadiness,
             ready,
             blockingCodes,
@@ -385,11 +403,335 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                 "Fiscal path is not ready for cash acceptance.");
     }
 
+    private async Task<StatutoryBasisReadiness> StatutoryReadinessAsync(
+        Guid? statutoryDiscountDecisionCommandId,
+        ParkingSession session,
+        TariffSnapshot originalTariff,
+        Guid siteGroupId,
+        Guid siteId,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (statutoryDiscountDecisionCommandId is null || statutoryDiscountDecisionCommandId == Guid.Empty)
+        {
+            return new StatutoryBasisReadiness(
+                NotApplicableStatutoryReadiness(),
+                EffectiveTariff: null,
+                FinalPayableAmountMinorUnits: null,
+                Currency: null);
+        }
+
+        StatutoryDiscountDecisionResult? readback;
+        try
+        {
+            readback = await _statutoryDiscounts.GetAsync(
+                    statutoryDiscountDecisionCommandId.Value,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (StatutoryDiscountDecisionRejectedException ex)
+        {
+            return BlockedStatutory(
+                statutoryDiscountDecisionCommandId,
+                "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+                ex.ErrorCode,
+                "Canonical statutory-discount readback is unavailable.",
+                retryable: false);
+        }
+
+        if (readback is null)
+        {
+            return BlockedStatutory(
+                statutoryDiscountDecisionCommandId,
+                "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+                "STATUTORY_DISCOUNT_DECISION_NOT_FOUND",
+                "Canonical statutory-discount readback is unavailable.",
+                retryable: false);
+        }
+
+        if (readback.ParkingSessionId != session.ParkingSessionId ||
+            readback.SiteId is { } decisionSiteId && decisionSiteId != siteId ||
+            readback.SiteGroupId is { } decisionSiteGroupId && decisionSiteGroupId != siteGroupId)
+        {
+            return FromStatutoryReadback(
+                readback,
+                ready: false,
+                blockingReasonCode: "STATUTORY_DISCOUNT_STATE_INCONSISTENT",
+                safeErrorCode: "STATUTORY_DISCOUNT_STATE_INCONSISTENT",
+                message: "Statutory-discount readback does not match the resolved parking session.",
+                effectiveTariff: null,
+                finalPayableAmountMinorUnits: null,
+                currency: null);
+        }
+
+        if (string.Equals(
+                readback.PayableBasisReadinessStatus,
+                StatutoryDiscountPayableBasisReadinessStatuses.PayableBasisReady,
+                StringComparison.Ordinal) ||
+            readback.PayableBasisReady)
+        {
+            if (readback.AppliedTariffSnapshotId is null ||
+                readback.NetPayableAmountMinorUnits is null ||
+                string.IsNullOrWhiteSpace(readback.Currency))
+            {
+                return FromStatutoryReadback(
+                    readback,
+                    ready: false,
+                    blockingReasonCode: "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+                    safeErrorCode: "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+                    message: "Applied statutory payable-basis facts are incomplete.",
+                    effectiveTariff: null,
+                    finalPayableAmountMinorUnits: null,
+                    currency: null);
+            }
+
+            var appliedTariff = await _tariffSnapshots.GetByIdAsync(
+                    readback.AppliedTariffSnapshotId.Value,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (appliedTariff is null ||
+                appliedTariff.ParkingSessionId != session.ParkingSessionId)
+            {
+                return FromStatutoryReadback(
+                    readback,
+                    ready: false,
+                    blockingReasonCode: "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+                    safeErrorCode: "STATUTORY_DISCOUNT_APPLIED_TARIFF_SNAPSHOT_UNAVAILABLE",
+                    message: "Applied statutory tariff snapshot is unavailable.",
+                    effectiveTariff: null,
+                    finalPayableAmountMinorUnits: null,
+                    currency: null);
+            }
+
+            if (readback.OriginalTariffSnapshotId is { } originalTariffSnapshotId &&
+                originalTariffSnapshotId != originalTariff.TariffSnapshotId &&
+                originalTariff.SupersedesTariffSnapshotId != originalTariffSnapshotId)
+            {
+                return FromStatutoryReadback(
+                    readback,
+                    ready: false,
+                    blockingReasonCode: "STATUTORY_DISCOUNT_STATE_INCONSISTENT",
+                    safeErrorCode: "STATUTORY_DISCOUNT_STATE_INCONSISTENT",
+                    message: "Applied statutory payable basis does not match the displayed original tariff snapshot.",
+                    effectiveTariff: null,
+                    finalPayableAmountMinorUnits: null,
+                    currency: null);
+            }
+
+            return FromStatutoryReadback(
+                readback,
+                ready: true,
+                blockingReasonCode: null,
+                safeErrorCode: readback.ErrorCode,
+                message: "Statutory-discount payable basis is applied.",
+                effectiveTariff: appliedTariff,
+                finalPayableAmountMinorUnits: readback.NetPayableAmountMinorUnits,
+                currency: readback.Currency.Trim().ToUpperInvariant());
+        }
+
+        return FromStatutoryReadback(
+            readback,
+            ready: false,
+            blockingReasonCode: MapStatutoryBlockingReason(readback),
+            safeErrorCode: readback.ErrorCode,
+            message: MapStatutoryMessage(readback),
+            effectiveTariff: null,
+            finalPayableAmountMinorUnits: null,
+            currency: null);
+    }
+
+    private static StatutoryBasisReadiness FromStatutoryReadback(
+        StatutoryDiscountDecisionResult readback,
+        bool ready,
+        string? blockingReasonCode,
+        string? safeErrorCode,
+        string message,
+        TariffSnapshot? effectiveTariff,
+        long? finalPayableAmountMinorUnits,
+        string? currency)
+    {
+        var retryable = readback.DecisionRetryable ||
+            readback.ApplicationRetryable;
+
+        return new StatutoryBasisReadiness(
+            new AptStatutoryDiscountReadinessDto(
+                Applicable: true,
+                Ready: ready,
+                readback.StatutoryDiscountDecisionCommandId,
+                readback.StatutoryDiscountValidationId,
+                readback.StatutoryDiscountPayableBasisApplicationCommandId,
+                readback.EntitlementType,
+                readback.DecisionStatus,
+                readback.DecisionResultStatus,
+                readback.DecisionCommandStatus,
+                readback.ApplicationCommandStatus,
+                readback.ApplicationResultClassification,
+                readback.PayableBasisReady,
+                readback.PayableBasisReadinessStatus,
+                readback.PayableBasisReadinessAction,
+                readback.OriginalTariffSnapshotId,
+                readback.AppliedTariffSnapshotId,
+                readback.GrossAmountMinorUnits,
+                readback.VatExclusiveBasisAmountMinorUnits,
+                readback.VatAmountMinorUnits,
+                readback.VatTreatment,
+                readback.StatutoryDiscountAmountMinorUnits,
+                readback.NetPayableAmountMinorUnits,
+                string.IsNullOrWhiteSpace(readback.Currency) ? null : readback.Currency.Trim().ToUpperInvariant(),
+                retryable,
+                ResolveStatutoryRecoveryClassification(readback),
+                ResolveStatutoryRecoveryAction(readback),
+                safeErrorCode,
+                blockingReasonCode,
+                message),
+            effectiveTariff,
+            finalPayableAmountMinorUnits,
+            currency);
+    }
+
+    private static StatutoryBasisReadiness BlockedStatutory(
+        Guid? statutoryDiscountDecisionCommandId,
+        string blockingReasonCode,
+        string safeErrorCode,
+        string message,
+        bool retryable) =>
+        new(
+            new AptStatutoryDiscountReadinessDto(
+                Applicable: true,
+                Ready: false,
+                statutoryDiscountDecisionCommandId,
+                StatutoryDiscountValidationId: null,
+                StatutoryDiscountPayableBasisApplicationCommandId: null,
+                EntitlementType: null,
+                DecisionStatus: null,
+                DecisionResultStatus: null,
+                DecisionCommandStatus: null,
+                ApplicationCommandStatus: null,
+                ApplicationResultClassification: null,
+                PayableBasisReady: false,
+                PayableBasisReadinessStatus: StatutoryDiscountPayableBasisReadinessStatuses.RequiredFactsUnavailable,
+                PayableBasisReadinessAction: StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
+                OriginalTariffSnapshotId: null,
+                AppliedTariffSnapshotId: null,
+                OriginalAmountMinorUnits: null,
+                VatExclusiveBasisAmountMinorUnits: null,
+                VatAmountMinorUnits: null,
+                VatTreatment: null,
+                StatutoryDiscountAmountMinorUnits: null,
+                FinalPayableAmountMinorUnits: null,
+                Currency: null,
+                retryable,
+                RecoveryClassification: StatutoryDiscountDecisionRecoveryClassifications.NotRecoverable,
+                RecoveryAction: StatutoryDiscountDecisionRecoveryActions.DoNotRetry,
+                safeErrorCode,
+                blockingReasonCode,
+                message),
+            EffectiveTariff: null,
+            FinalPayableAmountMinorUnits: null,
+            Currency: null);
+
+    private static AptStatutoryDiscountReadinessDto NotApplicableStatutoryReadiness() =>
+        new(
+            Applicable: false,
+            Ready: true,
+            StatutoryDiscountDecisionCommandId: null,
+            StatutoryDiscountValidationId: null,
+            StatutoryDiscountPayableBasisApplicationCommandId: null,
+            EntitlementType: null,
+            DecisionStatus: null,
+            DecisionResultStatus: null,
+            DecisionCommandStatus: null,
+            ApplicationCommandStatus: null,
+            ApplicationResultClassification: null,
+            PayableBasisReady: false,
+            PayableBasisReadinessStatus: "NOT_APPLICABLE",
+            PayableBasisReadinessAction: null,
+            OriginalTariffSnapshotId: null,
+            AppliedTariffSnapshotId: null,
+            OriginalAmountMinorUnits: null,
+            VatExclusiveBasisAmountMinorUnits: null,
+            VatAmountMinorUnits: null,
+            VatTreatment: null,
+            StatutoryDiscountAmountMinorUnits: null,
+            FinalPayableAmountMinorUnits: null,
+            Currency: null,
+            Retryable: false,
+            RecoveryClassification: null,
+            RecoveryAction: null,
+            SafeErrorCode: null,
+            BlockingReasonCode: null,
+            Message: "No statutory-discount workflow is active.");
+
+    private static AptReadinessDimensionDto ToStatutoryDimension(AptStatutoryDiscountReadinessDto readiness) =>
+        readiness.Ready
+            ? Ready("statutoryDiscountReadiness", readiness.Message)
+            : Blocked(
+                "statutoryDiscountReadiness",
+                readiness.BlockingReasonCode ?? "STATUTORY_DISCOUNT_STATE_INCONSISTENT",
+                readiness.Message,
+                readiness.Retryable);
+
+    private static string MapStatutoryBlockingReason(StatutoryDiscountDecisionResult readback) =>
+        readback.PayableBasisReadinessStatus switch
+        {
+            StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview =>
+                "STATUTORY_DISCOUNT_AWAITING_REVIEW",
+            StatutoryDiscountPayableBasisReadinessStatuses.DecisionApprovedApplicationNotRequested =>
+                "STATUTORY_DISCOUNT_APPLICATION_NOT_REQUESTED",
+            StatutoryDiscountPayableBasisReadinessStatuses.ApplicationProcessing =>
+                "STATUTORY_DISCOUNT_APPLICATION_PROCESSING",
+            StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected =>
+                "STATUTORY_DISCOUNT_DECISION_REJECTED",
+            StatutoryDiscountPayableBasisReadinessStatuses.RetryableFailure =>
+                "STATUTORY_DISCOUNT_RETRYABLE_FAILURE",
+            StatutoryDiscountPayableBasisReadinessStatuses.TerminalFailure =>
+                "STATUTORY_DISCOUNT_TERMINAL_FAILURE",
+            StatutoryDiscountPayableBasisReadinessStatuses.RequiredFactsUnavailable =>
+                "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+            _ => "STATUTORY_DISCOUNT_STATE_INCONSISTENT"
+        };
+
+    private static string MapStatutoryMessage(StatutoryDiscountDecisionResult readback) =>
+        readback.PayableBasisReadinessStatus switch
+        {
+            StatutoryDiscountPayableBasisReadinessStatuses.AwaitingReview =>
+                "Statutory-discount request is awaiting review.",
+            StatutoryDiscountPayableBasisReadinessStatuses.DecisionApprovedApplicationNotRequested =>
+                "Approved statutory-discount decision has not requested payable-basis application.",
+            StatutoryDiscountPayableBasisReadinessStatuses.ApplicationProcessing =>
+                "Statutory-discount payable-basis application is still processing.",
+            StatutoryDiscountPayableBasisReadinessStatuses.DecisionRejected =>
+                "Statutory-discount decision was rejected.",
+            StatutoryDiscountPayableBasisReadinessStatuses.RetryableFailure =>
+                "Statutory-discount readback is retryable.",
+            StatutoryDiscountPayableBasisReadinessStatuses.TerminalFailure =>
+                "Statutory-discount workflow requires support.",
+            StatutoryDiscountPayableBasisReadinessStatuses.RequiredFactsUnavailable =>
+                "Required statutory-discount payable-basis facts are unavailable.",
+            _ => "Statutory-discount readiness is inconsistent."
+        };
+
+    private static string? ResolveStatutoryRecoveryClassification(StatutoryDiscountDecisionResult readback) =>
+        !string.Equals(readback.ApplicationRecoveryClassification, StatutoryDiscountDecisionRecoveryClassifications.None, StringComparison.Ordinal)
+            ? readback.ApplicationRecoveryClassification
+            : readback.DecisionRecoveryClassification;
+
+    private static string? ResolveStatutoryRecoveryAction(StatutoryDiscountDecisionResult readback) =>
+        !string.IsNullOrWhiteSpace(readback.ApplicationRecoveryAction)
+            ? readback.ApplicationRecoveryAction
+            : readback.DecisionRecoveryAction;
+
     private static string ResolveRevalidationOutcome(
         AptPayableBasisReadinessResponse response,
         bool amountChanged,
         bool previousTariffExpired)
     {
+        if (response.StatutoryDiscountReadiness is { Applicable: true, Ready: false })
+        {
+            return AptPayableBasisRevalidationOutcomes.StatutoryDiscountBlocked;
+        }
+
         if (amountChanged)
         {
             return AptPayableBasisRevalidationOutcomes.AmountChanged;
@@ -569,4 +911,10 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
 
     private static long ToMinorUnits(decimal amount) =>
         decimal.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
+
+    private sealed record StatutoryBasisReadiness(
+        AptStatutoryDiscountReadinessDto Readiness,
+        TariffSnapshot? EffectiveTariff,
+        long? FinalPayableAmountMinorUnits,
+        string? Currency);
 }

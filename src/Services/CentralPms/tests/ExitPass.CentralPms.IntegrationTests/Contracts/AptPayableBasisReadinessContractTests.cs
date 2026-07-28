@@ -24,6 +24,7 @@ public sealed class AptPayableBasisReadinessContractTests
             ReferenceType: "TICKET",
             TicketReference: "TICKET-001",
             PlateNumber: null,
+            StatutoryDiscountDecisionCommandId: Guid.NewGuid(),
             CorrelationId: Guid.NewGuid());
         var revalidate = new AptPayableBasisRevalidateRequest(
             ParkingSessionId: Guid.NewGuid().ToString("D"),
@@ -37,6 +38,7 @@ public sealed class AptPayableBasisReadinessContractTests
             PlateNumber: null,
             ExpectedAmountMinorUnits: 10000,
             ExpectedCurrency: "PHP",
+            StatutoryDiscountDecisionCommandId: resolve.StatutoryDiscountDecisionCommandId,
             CorrelationId: resolve.CorrelationId);
         var response = new AptPayableBasisReadinessResponse(
             Operation: "REVALIDATE",
@@ -70,6 +72,36 @@ public sealed class AptPayableBasisReadinessContractTests
             TerminalCashAvailability: "READY",
             FiscalReadiness: "READY",
             SalesInvoiceConfigurationReadiness: "READY",
+            StatutoryDiscountReadiness: new AptStatutoryDiscountReadinessDto(
+                Applicable: true,
+                Ready: true,
+                resolve.StatutoryDiscountDecisionCommandId,
+                StatutoryDiscountValidationId: Guid.NewGuid(),
+                StatutoryDiscountPayableBasisApplicationCommandId: Guid.NewGuid(),
+                EntitlementType: "SENIOR_CITIZEN",
+                DecisionStatus: "APPLIED_PAYABLE_BASIS",
+                DecisionResultStatus: "APPROVED",
+                DecisionCommandStatus: "COMPLETED",
+                ApplicationCommandStatus: "APPLIED",
+                ApplicationResultClassification: "APPLIED",
+                PayableBasisReady: true,
+                PayableBasisReadinessStatus: "PAYABLE_BASIS_READY",
+                PayableBasisReadinessAction: null,
+                OriginalTariffSnapshotId: Guid.NewGuid(),
+                AppliedTariffSnapshotId: Guid.NewGuid(),
+                OriginalAmountMinorUnits: 10000,
+                VatExclusiveBasisAmountMinorUnits: 8929,
+                VatAmountMinorUnits: 1071,
+                VatTreatment: "VAT_EXCLUSIVE",
+                StatutoryDiscountAmountMinorUnits: 2000,
+                FinalPayableAmountMinorUnits: 8000,
+                Currency: "PHP",
+                Retryable: false,
+                RecoveryClassification: "NONE",
+                RecoveryAction: null,
+                SafeErrorCode: null,
+                BlockingReasonCode: null,
+                Message: "Statutory-discount payable basis is applied."),
             CashAcceptanceReadiness: "READY",
             ReadyForCashAcceptance: true,
             BlockingReasonCodes: [],
@@ -83,6 +115,10 @@ public sealed class AptPayableBasisReadinessContractTests
         json.Should().Contain("authoritativeAmountMinorUnits");
         json.Should().Contain("readyForCashAcceptance");
         json.Should().Contain("revalidationOutcome");
+        json.Should().Contain("statutoryDiscountDecisionCommandId");
+        json.Should().Contain("statutoryDiscountReadiness");
+        json.Should().Contain("payableBasisReadinessStatus");
+        json.Should().Contain("vatExclusiveBasisAmountMinorUnits");
         var lowerJson = json.ToLowerInvariant();
         lowerJson.Should().NotContain("apikey");
         lowerJson.Should().NotContain("connectionstring");

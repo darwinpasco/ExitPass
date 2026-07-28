@@ -33,6 +33,7 @@
       "referenceType",
       "ticketReference",
       "plateNumber",
+      "statutoryDiscountDecisionCommandId",
       "correlationId"
     ],
     "revalidate": [
@@ -47,6 +48,7 @@
       "plateNumber",
       "expectedAmountMinorUnits",
       "expectedCurrency",
+      "statutoryDiscountDecisionCommandId",
       "correlationId"
     ]
   },
@@ -79,6 +81,7 @@
     "terminalCashAvailability",
     "fiscalReadiness",
     "salesInvoiceConfigurationReadiness",
+    "statutoryDiscountReadiness",
     "cashAcceptanceReadiness",
     "readyForCashAcceptance",
     "blockingReasonCodes",
@@ -92,8 +95,46 @@
     "paymentEligibility",
     "terminalCashAvailability",
     "salesInvoiceConfigurationReadiness",
-    "fiscalReadiness"
+    "fiscalReadiness",
+    "statutoryDiscountReadiness"
   ],
+  "statutoryDiscountReadiness": {
+    "requestAnchor": "Optional statutoryDiscountDecisionCommandId. When omitted, no statutory workflow is active unless the shared vendor parking resolution returns an already-applied statutory payable basis.",
+    "readbackAuthority": "IStatutoryDiscountDecisionFacadeService.GetAsync",
+    "fields": [
+      "applicable",
+      "ready",
+      "statutoryDiscountDecisionCommandId",
+      "statutoryDiscountValidationId",
+      "statutoryDiscountPayableBasisApplicationCommandId",
+      "entitlementType",
+      "decisionStatus",
+      "decisionResultStatus",
+      "decisionCommandStatus",
+      "applicationCommandStatus",
+      "applicationResultClassification",
+      "payableBasisReady",
+      "payableBasisReadinessStatus",
+      "payableBasisReadinessAction",
+      "originalTariffSnapshotId",
+      "appliedTariffSnapshotId",
+      "originalAmountMinorUnits",
+      "vatExclusiveBasisAmountMinorUnits",
+      "vatAmountMinorUnits",
+      "vatTreatment",
+      "statutoryDiscountAmountMinorUnits",
+      "finalPayableAmountMinorUnits",
+      "currency",
+      "retryable",
+      "recoveryClassification",
+      "recoveryAction",
+      "safeErrorCode",
+      "blockingReasonCode",
+      "message"
+    ],
+    "nullSemantics": "Missing statutory monetary or VAT facts remain null. The facade must not convert missing canonical values to zero.",
+    "appliedBasisRule": "When payableBasisReady is true and APPLIED facts are complete, tariffSnapshotId and authoritativeAmountMinorUnits identify the applied tariff snapshot and final statutory payable amount. originalTariffSnapshotId remains historical evidence in statutoryDiscountReadiness."
+  },
   "revalidationOutcomes": [
     "PASSED_UNCHANGED",
     "AMOUNT_CHANGED",
@@ -102,7 +143,8 @@
     "SESSION_ALREADY_PAID",
     "TERMINAL_CASH_UNAVAILABLE",
     "FISCAL_READINESS_FAILED",
-    "REVALIDATION_FAILED"
+    "REVALIDATION_FAILED",
+    "STATUTORY_DISCOUNT_BLOCKED"
   ],
   "safeErrorCodes": [
     "INVALID_REQUEST",
@@ -121,13 +163,22 @@
     "FISCAL_PATH_UNAVAILABLE",
     "FORBIDDEN_SITE",
     "AMOUNT_CHANGED",
-    "REVALIDATION_REFERENCE_UNAVAILABLE"
+    "REVALIDATION_REFERENCE_UNAVAILABLE",
+    "STATUTORY_DISCOUNT_AWAITING_REVIEW",
+    "STATUTORY_DISCOUNT_APPLICATION_NOT_REQUESTED",
+    "STATUTORY_DISCOUNT_APPLICATION_PROCESSING",
+    "STATUTORY_DISCOUNT_DECISION_REJECTED",
+    "STATUTORY_DISCOUNT_RETRYABLE_FAILURE",
+    "STATUTORY_DISCOUNT_TERMINAL_FAILURE",
+    "STATUTORY_DISCOUNT_REQUIRED_FACTS_UNAVAILABLE",
+    "STATUTORY_DISCOUNT_STATE_INCONSISTENT"
   ],
   "sharedRuntimeReuse": {
     "vendorParkingResolution": "IResolveVendorParkingUseCase",
     "vendorPmsClient": "IVendorPmsParkingResolutionClient",
     "terminalCashEligibility": "ITerminalCashPayableBasisEligibilityReader",
-    "salesInvoiceReadiness": "ISalesInvoiceProfileAdministrationService"
+    "salesInvoiceReadiness": "ISalesInvoiceProfileAdministrationService",
+    "statutoryDiscountReadback": "IStatutoryDiscountDecisionFacadeService.GetAsync"
   },
   "authorityBoundaries": {
     "centralPmsOwnsReadyForCashAcceptance": true,

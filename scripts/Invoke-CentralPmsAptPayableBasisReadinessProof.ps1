@@ -11,6 +11,7 @@ $testProject = Join-Path $repoRoot "src\Services\CentralPms\tests\ExitPass.Centr
 Write-Host "Running Central PMS APT payable-basis readiness proof..."
 Write-Host "Repository: $repoRoot"
 Write-Host "Test project: $testProject"
+Write-Host "Coverage: non-statutory readiness, statutory blocked states, applied statutory basis, and applied-basis revalidation."
 
 dotnet test $testProject `
     --configuration $Configuration `
