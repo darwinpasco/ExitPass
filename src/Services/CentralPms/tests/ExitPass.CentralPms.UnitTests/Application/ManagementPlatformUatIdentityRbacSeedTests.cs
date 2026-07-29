@@ -81,12 +81,14 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
 
         rolePermissions["OPERATIONS_SUPERVISOR"].Should().Contain(
             [
+                "statutory-discounts.review.queue.read",
+                "statutory-discounts.review.detail.read",
                 "statutory-discounts.decision.approve",
                 "statutory-discounts.decision.reject",
-                "statutory-discounts.payable-basis.apply",
                 "statutory-discounts.policy.resolve",
                 "fiscal-issuance.void.command"
             ]);
+        rolePermissions["OPERATIONS_SUPERVISOR"].Should().NotContain("statutory-discounts.payable-basis.apply");
         rolePermissions["OPERATIONS_SUPERVISOR"].Should().NotContain(["user.manage", "rbac.manage"]);
 
         rolePermissions["COMPLIANCE_POLICY_ADMINISTRATOR"].Should().Contain(
@@ -151,7 +153,7 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         script.Should().Contain("statutory-discounts.draft.create");
         script.Should().Contain("statutory-discounts.evidence.capture");
         script.Should().Contain("statutory-discounts.decision.approve");
-        script.Should().Contain("statutory-discounts.payable-basis.apply");
+        script.Should().NotContain("statutory-discounts.payable-basis.apply");
         script.Should().NotContain("operator-console.policy-import-review.submit,operator-console.policy-import-review.view-own,operator-console.policy-import-review.review,fiscal-issuance.status.read");
     }
 
@@ -169,7 +171,8 @@ public sealed class ManagementPlatformUatIdentityRbacSeedTests
         script.Should().Contain("uat-operator-support");
         script.Should().Contain("uat-operations-supervisor");
         script.Should().Contain("Requester/evidence actor");
-        script.Should().Contain("Reviewer/apply actor");
+        script.Should().Contain("Reviewer actor");
+        script.Should().NotContain("Reviewer/apply actor");
         script.Should().Contain("gross=12500 vatExclusive=11161 vat=1339 discount=2232 final=8929");
     }
 

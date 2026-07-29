@@ -41,7 +41,7 @@ $expectedTariffSnapshotId = "23100000-0000-0000-0000-000000000004"
 $expectedAmountMinorUnits = 12500
 $expectedCurrency = "PHP"
 $requesterPermissions = "statutory-discounts.session.lookup,statutory-discounts.draft.view,statutory-discounts.draft.create,statutory-discounts.evidence.view,statutory-discounts.evidence.capture,statutory-discounts.policy.resolve,fiscal-issuance.status.read,ticket.lookup,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
-$reviewerPermissions = "statutory-discounts.draft.view,statutory-discounts.evidence.view,statutory-discounts.decision.review,statutory-discounts.decision.approve,statutory-discounts.decision.reject,statutory-discounts.payable-basis.apply,statutory-discounts.policy.resolve,fiscal-issuance.status.read,fiscal-issuance.void.command,operator-workflow-audit.view,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
+$reviewerPermissions = "statutory-discounts.draft.view,statutory-discounts.evidence.view,statutory-discounts.review.queue.read,statutory-discounts.review.detail.read,statutory-discounts.decision.review,statutory-discounts.decision.approve,statutory-discounts.decision.reject,statutory-discounts.policy.resolve,fiscal-issuance.status.read,fiscal-issuance.void.command,operator-workflow-audit.view,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
 
 $canonicalSqlPath = Join-Path $DbRepoRoot "build\generated\exitpass-full-object.generated.sql"
 $canonicalValidationSqlPath = Join-Path $DbRepoRoot "scripts\validation\Validate-V13CentralPmsAlignment.sql"
@@ -287,7 +287,7 @@ Write-Host "DB source: $canonicalSqlPath"
 Write-Host "Disposable DB: $DbName"
 Write-Host "Ticket: $TicketReference"
 Write-Host "Requester/evidence actor: uat-operator-support / $expectedRequesterUserId"
-Write-Host "Reviewer/apply actor: uat-operations-supervisor / $expectedReviewerUserId"
+Write-Host "Reviewer actor: uat-operations-supervisor / $expectedReviewerUserId"
 Write-Host "Expected amounts: gross=12500 vatExclusive=11161 vat=1339 discount=2232 final=8929"
 Write-Host ""
 Write-StartupCommands

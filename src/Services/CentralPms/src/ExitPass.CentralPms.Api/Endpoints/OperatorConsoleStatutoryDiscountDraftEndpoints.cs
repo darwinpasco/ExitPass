@@ -1,10 +1,13 @@
 using System.Diagnostics;
+using System.Security.Claims;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
@@ -26,11 +29,15 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
     private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string DraftViewPolicy = "OperatorConsoleStatutoryDiscountDraftView";
     private const string DraftCreatePolicy = "OperatorConsoleStatutoryDiscountDraftCreate";
-    private const string DecisionPolicy = "OperatorConsoleStatutoryDiscountDecisionReview";
+    private const string ServiceChannelReviewQueueReadPolicy = "OperatorConsoleStatutoryDiscountReviewQueueRead";
+    private const string ServiceChannelReviewDetailReadPolicy = "OperatorConsoleStatutoryDiscountReviewDetailRead";
+    private const string DecisionMutatePolicy = "OperatorConsoleStatutoryDiscountDecisionMutate";
     private const string EvidenceCapturePolicy = "OperatorConsoleStatutoryDiscountEvidenceCapture";
     private const string EvidenceViewPolicy = "OperatorConsoleStatutoryDiscountEvidenceView";
     private const string ApplyPayableBasisPolicy = "OperatorConsoleStatutoryDiscountPayableBasisApply";
     private const string AuditReadPolicy = "OperatorConsoleStatutoryDiscountAuditRead";
+    private const string ApprovePermission = "statutory-discounts.decision.approve";
+    private const string RejectPermission = "statutory-discounts.decision.reject";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
     private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
@@ -84,7 +91,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
-            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithMetadata(new ReconciliationPolicyMetadata(ServiceChannelReviewQueueReadPolicy))
             .WithSummary("List service-channel statutory discount decisions awaiting Operator Console review")
             .WithDescription("Returns safe service-channel statutory-discount decisions that are awaiting Operator Console review. This endpoint does not approve, reject, apply payable basis, create payments, issue fiscal documents, issue exit authorization, or command gates.");
 
@@ -95,7 +102,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
-            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithMetadata(new ReconciliationPolicyMetadata(ServiceChannelReviewDetailReadPolicy))
             .WithSummary("Get service-channel statutory discount review detail")
             .WithDescription("Returns safe submitted facts and evidence references for one service-channel statutory-discount decision awaiting Operator Console review. It does not return raw evidence, raw statutory IDs, payment authority, fiscal authority, exit authorization, or gate state.");
 
@@ -107,7 +114,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
-            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionMutatePolicy))
             .WithSummary("Approve or reject a service-channel statutory discount decision")
             .WithDescription("Completes the same canonical decision-v2 created by WebPay or Assisted Payment Terminal pending-review intake. This endpoint does not create application-v1, apply payable basis, mutate payments, issue fiscal documents, issue exit authorization, or command gates.");
 
@@ -132,7 +139,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
-            .WithMetadata(new ReconciliationPolicyMetadata(DecisionPolicy))
+            .WithMetadata(new ReconciliationPolicyMetadata(DecisionMutatePolicy))
             .WithSummary("Decide Operator Console statutory discount validation")
             .WithDescription("Approves or rejects an existing Operator Console statutory discount validation draft after evaluating and persisting Operator Console access. This endpoint only transitions validation decision status and does not apply the discount or mutate payment, gate, coupon, provider, payable, settlement, or reconciliation state.");
 
@@ -786,6 +793,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         OperatorConsoleStatutoryDiscountDecisionRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleServiceChannelStatutoryDiscountReviewService service,
+        IOptions<CentralPmsRbacOptions> rbacOptions,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory)
     {
         using var activity = ServiceChannelReviewActivitySource.StartActivity("HTTP DecideOperatorConsoleServiceChannelStatutoryDiscountReview", ActivityKind.Server);
@@ -801,6 +810,19 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 request.SiteId,
                 request.SiteGroupId,
                 request.CorrelationId);
+
+            var decisionPermission = await VerifyDecisionPermissionAsync(
+                    httpRequest,
+                    identity.UserId,
+                    request.Decision,
+                    request.CorrelationId,
+                    rbacOptions.Value,
+                    rbacRepository)
+                .ConfigureAwait(false);
+            if (decisionPermission is not null)
+            {
+                return decisionPermission;
+            }
 
             var result = await service.DecideAsync(
                     new StatutoryDiscountServiceChannelReviewDecisionCommand(
@@ -986,6 +1008,8 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         OperatorConsoleStatutoryDiscountDecisionRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleStatutoryDiscountDecisionService service,
+        IOptions<CentralPmsRbacOptions> rbacOptions,
+        ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory)
     {
         using var activity = DecisionActivitySource.StartActivity("HTTP DecideOperatorConsoleStatutoryDiscount", ActivityKind.Server);
@@ -1007,6 +1031,19 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 request.SiteId,
                 request.SiteGroupId,
                 request.CorrelationId);
+
+            var decisionPermission = await VerifyDecisionPermissionAsync(
+                    httpRequest,
+                    identity.UserId,
+                    request.Decision,
+                    request.CorrelationId,
+                    rbacOptions.Value,
+                    rbacRepository)
+                .ConfigureAwait(false);
+            if (decisionPermission is not null)
+            {
+                return decisionPermission;
+            }
 
             var result = await service.DecideAsync(
                 new OperatorConsoleStatutoryDiscountDecisionCommand(
@@ -1467,4 +1504,103 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 "Access denied for this Operator Console action.",
                 correlationId),
             statusCode: StatusCodes.Status403Forbidden);
+
+    private static async Task<IResult?> VerifyDecisionPermissionAsync(
+        HttpRequest request,
+        Guid operatorUserId,
+        string decision,
+        Guid correlationId,
+        CentralPmsRbacOptions options,
+        ICentralPmsRbacRepository repository)
+    {
+        if (!options.Enabled)
+        {
+            return null;
+        }
+
+        if (ResolveGuid(request, CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, "service_identity_id", "client_id") is not null)
+        {
+            return Results.Json(
+                BuildError(
+                    "OPERATOR_CONSOLE_HUMAN_REVIEWER_REQUIRED",
+                    "A human Operator Console reviewer is required for statutory discount approval or rejection.",
+                    correlationId),
+                statusCode: StatusCodes.Status403Forbidden);
+        }
+
+        var requiredPermission = NormalizeDecisionPermission(decision);
+        if (requiredPermission is null)
+        {
+            return null;
+        }
+
+        if (ReadPermissions(request.HttpContext, options).Contains(requiredPermission) ||
+            await repository.UserHasAnyPermissionAsync(operatorUserId, [requiredPermission], request.HttpContext.RequestAborted)
+                .ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        return Results.Json(
+            BuildError(
+                "OPERATOR_CONSOLE_DECISION_PERMISSION_REQUIRED",
+                requiredPermission == ApprovePermission
+                    ? "Approval requires statutory discount approve authority."
+                    : "Rejection requires statutory discount reject authority.",
+                correlationId),
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    private static string? NormalizeDecisionPermission(string decision) =>
+        string.IsNullOrWhiteSpace(decision)
+            ? null
+            : decision.Trim().ToUpperInvariant() switch
+            {
+                "APPROVE" => ApprovePermission,
+                "REJECT" => RejectPermission,
+                _ => null
+            };
+
+    private static IReadOnlySet<string> ReadPermissions(HttpContext context, CentralPmsRbacOptions options)
+    {
+        var permissions = context.User.Claims
+            .Where(claim => string.Equals(claim.Type, CentralPmsRbacPolicyCatalog.PermissionClaimType, StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(claim.Type, "permission", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(claim.Type, "scope", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(claim => claim.Value.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (options.AllowPermissionHeader &&
+            context.Request.Headers.TryGetValue(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, out var headerValue))
+        {
+            foreach (var permission in headerValue.ToString()
+                         .Split([',', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                permissions.Add(permission);
+            }
+        }
+
+        return permissions;
+    }
+
+    private static Guid? ResolveGuid(HttpRequest request, string headerName, params string[] claimTypes)
+    {
+        if (request.Headers.TryGetValue(headerName, out var headerValue) &&
+            Guid.TryParse(headerValue.ToString(), out var headerGuid) &&
+            headerGuid != Guid.Empty)
+        {
+            return headerGuid;
+        }
+
+        foreach (var claimType in claimTypes)
+        {
+            if (Guid.TryParse(request.HttpContext.User.FindFirstValue(claimType), out var claimGuid) &&
+                claimGuid != Guid.Empty)
+            {
+                return claimGuid;
+            }
+        }
+
+        return null;
+    }
 }

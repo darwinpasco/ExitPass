@@ -4,6 +4,7 @@ using System.Text.Json;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using FluentAssertions;
@@ -36,7 +37,10 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     private const string EvidenceViewPermission = "statutory-discounts.evidence.view";
     private const string EvidenceCapturePermission = "statutory-discounts.evidence.capture";
     private const string DecisionReviewPermission = "statutory-discounts.decision.review";
+    private const string ReviewQueueReadPermission = "statutory-discounts.review.queue.read";
+    private const string ReviewDetailReadPermission = "statutory-discounts.review.detail.read";
     private const string DecisionApprovePermission = "statutory-discounts.decision.approve";
+    private const string DecisionRejectPermission = "statutory-discounts.decision.reject";
     private const string ApplyPermission = "statutory-discounts.payable-basis.apply";
     private const string PolicyResolvePermission = "statutory-discounts.policy.resolve";
     private const string AuditReadPermission = "statutory-discounts.audit.read";
@@ -57,14 +61,19 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     private static readonly Guid OriginalTariffSnapshotId = Guid.Parse("99000000-0000-0000-0000-000000000012");
     private static readonly Guid AppliedTariffSnapshotId = Guid.Parse("99000000-0000-0000-0000-000000000013");
     private static readonly Guid CorrelationId = Guid.Parse("99000000-0000-0000-0000-000000000014");
+    private static readonly Guid PolicyVersionId = Guid.Parse("99000000-0000-0000-0000-000000000016");
+    private static readonly Guid JurisdictionId = Guid.Parse("99000000-0000-0000-0000-000000000017");
 
     [Theory]
     [InlineData(SessionLookupEndpoint, "POST", "OperatorConsoleStatutoryDiscountSessionLookup")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/drafts", "GET", "OperatorConsoleStatutoryDiscountDraftView")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/drafts/{draftId:guid}", "GET", "OperatorConsoleStatutoryDiscountDraftView")]
     [InlineData(AuditEndpoint, "GET", "OperatorConsoleStatutoryDiscountAuditRead")]
+    [InlineData("/v1/ops/operator-console/statutory-discounts/reviews/pending", "GET", "OperatorConsoleStatutoryDiscountReviewQueueRead")]
+    [InlineData("/v1/ops/operator-console/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}", "GET", "OperatorConsoleStatutoryDiscountReviewDetailRead")]
+    [InlineData("/v1/ops/operator-console/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}/decision", "POST", "OperatorConsoleStatutoryDiscountDecisionMutate")]
     [InlineData(DraftEndpoint, "POST", "OperatorConsoleStatutoryDiscountDraftCreate")]
-    [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/decision", "POST", "OperatorConsoleStatutoryDiscountDecisionReview")]
+    [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/decision", "POST", "OperatorConsoleStatutoryDiscountDecisionMutate")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/evidence", "POST", "OperatorConsoleStatutoryDiscountEvidenceCapture")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/evidence", "GET", "OperatorConsoleStatutoryDiscountEvidenceView")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{validationId:guid}/apply-payable-basis", "POST", "OperatorConsoleStatutoryDiscountPayableBasisApply")]
@@ -134,20 +143,93 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         services.ApplyCallCount.Should().Be(0);
     }
 
-    [Theory]
-    [InlineData(DecisionReviewPermission)]
-    [InlineData(DecisionApprovePermission)]
-    public async Task DecisionUser_CanDecide_ButCannotApplyPayableBasis(string decisionPermission)
+    [Fact]
+    public async Task ReviewReadUser_CanReadServiceChannelQueueAndDetail_ButCannotApproveOrReject()
     {
         var services = new FakeStatutoryDiscountServices();
         using var factory = CreateFactory(services);
-        using var client = CreateClient(factory, decisionPermission);
+        using var client = CreateClient(factory, ReviewQueueReadPermission);
 
-        (await SendDecisionAsync(client)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await client.GetAsync($"/v1/ops/operator-console/statutory-discounts/reviews/pending?correlationId={CorrelationId}")).StatusCode.Should().Be(HttpStatusCode.OK);
+        services.ServiceChannelReviewListCallCount.Should().Be(1);
+
+        (await SendServiceChannelDecisionAsync(client, "APPROVE")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendServiceChannelDecisionAsync(client, "REJECT")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        services.ServiceChannelReviewDecisionCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReviewDetailUser_CanReadServiceChannelDetail_ButCannotApproveOrReject()
+    {
+        var services = new FakeStatutoryDiscountServices();
+        using var factory = CreateFactory(services);
+        using var client = CreateClient(factory, ReviewDetailReadPermission);
+
+        (await client.GetAsync($"/v1/ops/operator-console/statutory-discounts/reviews/{DraftId}?correlationId={CorrelationId}")).StatusCode.Should().Be(HttpStatusCode.OK);
+        services.ServiceChannelReviewDetailCallCount.Should().Be(1);
+
+        (await SendServiceChannelDecisionAsync(client, "APPROVE")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendServiceChannelDecisionAsync(client, "REJECT")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        services.ServiceChannelReviewDecisionCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task LegacyDecisionReviewUser_CannotApproveOrReject()
+    {
+        var services = new FakeStatutoryDiscountServices();
+        using var factory = CreateFactory(services);
+        using var client = CreateClient(factory, DecisionReviewPermission);
+
+        (await SendDecisionAsync(client, "APPROVE")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendDecisionAsync(client, "REJECT")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        services.DecisionCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ApproveUser_CanApprove_ButCannotRejectOrApplyPayableBasis()
+    {
+        var services = new FakeStatutoryDiscountServices();
+        using var factory = CreateFactory(services);
+        using var client = CreateClient(factory, DecisionApprovePermission);
+
+        (await SendDecisionAsync(client, "APPROVE")).StatusCode.Should().Be(HttpStatusCode.OK);
         services.DecisionCallCount.Should().Be(1);
 
+        (await SendDecisionAsync(client, "REJECT")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        services.DecisionCallCount.Should().Be(1);
         services.ApplyCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RejectUser_CanReject_ButCannotApproveOrApplyPayableBasis()
+    {
+        var services = new FakeStatutoryDiscountServices();
+        using var factory = CreateFactory(services);
+        using var client = CreateClient(factory, DecisionRejectPermission);
+
+        (await SendDecisionAsync(client, "REJECT")).StatusCode.Should().Be(HttpStatusCode.OK);
+        services.DecisionCallCount.Should().Be(1);
+
+        (await SendDecisionAsync(client, "APPROVE")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        services.DecisionCallCount.Should().Be(1);
+        services.ApplyCallCount.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(DecisionApprovePermission, "APPROVE")]
+    [InlineData(DecisionRejectPermission, "REJECT")]
+    public async Task ServiceIdentity_CannotUseHumanReviewDecisionRoute(string permission, string decision)
+    {
+        var services = new FakeStatutoryDiscountServices();
+        using var factory = CreateFactory(services);
+        using var client = CreateServiceClient(factory, permission);
+
+        var response = await SendDecisionAsync(client, decision);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        services.DecisionCallCount.Should().Be(0);
     }
 
     [Fact]
@@ -258,6 +340,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 collection.RemoveAll<IOperatorConsoleStatutoryDiscountApplyPayableBasisService>();
                 collection.RemoveAll<IOperatorConsoleStatutoryDiscountPolicyResolutionService>();
                 collection.RemoveAll<IOperatorConsoleStatutoryDiscountReadService>();
+                collection.RemoveAll<IOperatorConsoleServiceChannelStatutoryDiscountReviewService>();
                 collection.RemoveAll<IOperatorConsoleAccessEvaluationService>();
                 collection.RemoveAll<IOperatorConsoleAccessEvaluationWriter>();
                 collection.RemoveAll<ICentralPmsRbacRepository>();
@@ -269,6 +352,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 collection.AddSingleton<IOperatorConsoleStatutoryDiscountApplyPayableBasisService>(services);
                 collection.AddSingleton<IOperatorConsoleStatutoryDiscountPolicyResolutionService>(services);
                 collection.AddSingleton<IOperatorConsoleStatutoryDiscountReadService>(services);
+                collection.AddSingleton<IOperatorConsoleServiceChannelStatutoryDiscountReviewService>(services);
                 collection.AddSingleton<IOperatorConsoleAccessEvaluationService>(services);
                 collection.AddSingleton<IOperatorConsoleAccessEvaluationWriter>(services);
                 collection.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository());
@@ -278,6 +362,20 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     {
         var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, UserId.ToString());
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, permission);
+        client.DefaultRequestHeaders.Add("X-Operator-User-Id", UserId.ToString());
+        client.DefaultRequestHeaders.Add("X-Operator-Device-Binding-Id", DeviceBindingId.ToString());
+        client.DefaultRequestHeaders.Add("X-Operator-Shift-Id", ShiftId.ToString());
+        client.DefaultRequestHeaders.Add("X-Site-Id", SiteId.ToString());
+        client.DefaultRequestHeaders.Add("X-Site-Group-Id", SiteGroupId.ToString());
+        client.DefaultRequestHeaders.Add("X-Correlation-Id", CorrelationId.ToString());
+        return client;
+    }
+
+    private static HttpClient CreateServiceClient(CustomWebApplicationFactory factory, string permission)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, Guid.Parse("99000000-0000-0000-0000-000000000015").ToString());
         client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, permission);
         client.DefaultRequestHeaders.Add("X-Operator-User-Id", UserId.ToString());
         client.DefaultRequestHeaders.Add("X-Operator-Device-Binding-Id", DeviceBindingId.ToString());
@@ -345,18 +443,32 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
             "rbac-evidence",
             CorrelationId));
 
-    private static Task<HttpResponseMessage> SendDecisionAsync(HttpClient client) =>
+    private static Task<HttpResponseMessage> SendDecisionAsync(HttpClient client, string decision = "APPROVE") =>
         client.PostAsJsonAsync(string.Format(DecisionEndpoint, DraftId), new OperatorConsoleStatutoryDiscountDecisionRequest(
             UserId,
             DeviceBindingId,
             SiteId,
             SiteGroupId,
             ShiftId,
-            "APPROVE",
-            DecisionReasonCode: "RBAC_TEST",
+            decision,
+            DecisionReasonCode: string.Equals(decision, "APPROVE", StringComparison.OrdinalIgnoreCase) ? "RBAC_TEST" : "DOCUMENT_INVALID",
             DecisionNotes: "RBAC contract test.",
             ReviewerAttestation: true,
             "rbac-decision",
+            CorrelationId));
+
+    private static Task<HttpResponseMessage> SendServiceChannelDecisionAsync(HttpClient client, string decision = "APPROVE") =>
+        client.PostAsJsonAsync($"/v1/ops/operator-console/statutory-discounts/reviews/{DraftId}/decision", new OperatorConsoleStatutoryDiscountDecisionRequest(
+            UserId,
+            DeviceBindingId,
+            SiteId,
+            SiteGroupId,
+            ShiftId,
+            decision,
+            DecisionReasonCode: string.Equals(decision, "APPROVE", StringComparison.OrdinalIgnoreCase) ? "RBAC_TEST" : "DOCUMENT_INVALID",
+            DecisionNotes: "RBAC contract test.",
+            ReviewerAttestation: true,
+            "rbac-service-channel-decision",
             CorrelationId));
 
     private static Task<HttpResponseMessage> SendApplyAsync(HttpClient client) =>
@@ -416,6 +528,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         IOperatorConsoleStatutoryDiscountApplyPayableBasisService,
         IOperatorConsoleStatutoryDiscountPolicyResolutionService,
         IOperatorConsoleStatutoryDiscountReadService,
+        IOperatorConsoleServiceChannelStatutoryDiscountReviewService,
         IOperatorConsoleAccessEvaluationService,
         IOperatorConsoleAccessEvaluationWriter
     {
@@ -428,6 +541,9 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         public int ApplyCallCount { get; private set; }
         public int PolicyResolveCallCount { get; private set; }
         public int AuditReportCallCount { get; private set; }
+        public int ServiceChannelReviewListCallCount { get; private set; }
+        public int ServiceChannelReviewDetailCallCount { get; private set; }
+        public int ServiceChannelReviewDecisionCallCount { get; private set; }
 
         public Task<OperatorConsoleSessionLookupResult> LookupAsync(
             OperatorConsoleSessionLookupCommand command,
@@ -568,6 +684,80 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                         query.CorrelationId)
                 ],
                 query.CorrelationId));
+        }
+
+        public Task<StatutoryDiscountServiceChannelReviewQueueResult> ListAsync(
+            StatutoryDiscountServiceChannelReviewQueueQuery query,
+            OperatorConsoleReviewAccessContext accessContext,
+            CancellationToken cancellationToken)
+        {
+            ServiceChannelReviewListCallCount++;
+            return Task.FromResult(new StatutoryDiscountServiceChannelReviewQueueResult(
+                [
+                    new StatutoryDiscountServiceChannelReviewQueueItem(
+                        DraftId,
+                        ParkingSessionId,
+                        "WEBPAY",
+                        SiteId,
+                        SiteGroupId,
+                        "RBAC-TICKET-001",
+                        "ABC-1234",
+                        "SENIOR_CITIZEN",
+                        "PENDING_REVIEW",
+                        "PENDING_REVIEW",
+                        StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+                        EvidenceRequired: true,
+                        EvidenceRecorded: true,
+                        OriginalTariffSnapshotId,
+                        DateTimeOffset.Parse("2026-07-12T09:00:00+08:00"),
+                        query.CorrelationId)
+                ],
+                query.Page,
+                query.PageSize,
+                HasMore: false,
+                query.CorrelationId));
+        }
+
+        public Task<StatutoryDiscountServiceChannelReviewDetail?> GetAsync(
+            Guid statutoryDiscountDecisionCommandId,
+            OperatorConsoleReviewAccessContext accessContext,
+            CancellationToken cancellationToken)
+        {
+            ServiceChannelReviewDetailCallCount++;
+            return Task.FromResult<StatutoryDiscountServiceChannelReviewDetail?>(ServiceChannelReviewDetail(accessContext.CorrelationId));
+        }
+
+        public Task<StatutoryDiscountServiceChannelReviewDecisionResult> DecideAsync(
+            StatutoryDiscountServiceChannelReviewDecisionCommand command,
+            CancellationToken cancellationToken)
+        {
+            ServiceChannelReviewDecisionCallCount++;
+            return Task.FromResult(new StatutoryDiscountServiceChannelReviewDecisionResult(
+                EvaluationId,
+                AccessAllowed: true,
+                "ALLOWED",
+                Array.Empty<string>(),
+                AccessPersisted: true,
+                DecisionAccepted: true,
+                DecisionPersisted: true,
+                command.StatutoryDiscountDecisionCommandId,
+                ParkingSessionId,
+                "WEBPAY",
+                "SENIOR_CITIZEN",
+                "PENDING_REVIEW",
+                command.Decision,
+                "PENDING_REVIEW",
+                command.Decision,
+                string.Equals(command.Decision, "APPROVE", StringComparison.OrdinalIgnoreCase)
+                    ? StatutoryDiscountServiceChannelReviewStatuses.Approved
+                    : StatutoryDiscountServiceChannelReviewStatuses.Rejected,
+                command.Decision,
+                command.DecisionReasonCode,
+                AlreadyDecided: false,
+                DecisionChanged: true,
+                IneligibilityReason: null,
+                ErrorCode: null,
+                command.CorrelationId));
         }
 
         public Task<OperatorConsoleStatutoryDiscountApplyPayableBasisResult> ApplyAsync(
@@ -814,6 +1004,89 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 EffectiveTo: null,
                 SourceReference: "rbac-contract-test",
                 JsonSerializer.SerializeToElement(new { nationalLawReference = "RA 9994" }));
+
+        private static StatutoryDiscountServiceChannelReviewDetail ServiceChannelReviewDetail(Guid correlationId) =>
+            new(
+                DraftId,
+                StatutoryDiscountValidationId: null,
+                DraftId,
+                ParkingSessionId,
+                "WEBPAY",
+                SiteId,
+                SiteGroupId,
+                "RBAC-TICKET-001",
+                "ABC-1234",
+                "SENIOR_CITIZEN",
+                "PENDING_REVIEW",
+                "PENDING_REVIEW",
+                StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+                "SENIOR_CITIZEN_ID",
+                "OSCA",
+                ExpiryDate: null,
+                "SC-RBAC-****-0001",
+                [
+                    new StatutoryDiscountServiceChannelReviewEvidenceFact(
+                        "SENIOR_CITIZEN_ID",
+                        "WEBPAY_UPLOAD_REFERENCE",
+                        StorageReference: null,
+                        "SC-RBAC-****-0001",
+                        "SUBMITTED")
+                ],
+                RequesterAttestation: true,
+                "RBAC contract test.",
+                ReasonCode: "RBAC_TEST",
+                EvidenceRequired: true,
+                EvidenceRecorded: true,
+                OriginalTariffSnapshotId,
+                OriginalAmountMinorUnits: 12500,
+                VatExclusiveAmountMinorUnits: null,
+                VatAmountMinorUnits: null,
+                StatutoryDiscountAmountMinorUnits: null,
+                FinalPayableAmountMinorUnits: null,
+                "PHP",
+                GoverningPolicy(),
+                ReviewerUserId: null,
+                ReviewerAccessEvaluationId: null,
+                ReviewerDecision: null,
+                ReviewerReasonCode: null,
+                DateTimeOffset.Parse("2026-07-12T09:00:00+08:00"),
+                ReviewedAt: null,
+                correlationId);
+
+        private static StatutoryDiscountServiceChannelReviewPolicyAuthority GoverningPolicy() =>
+            new(
+                PolicyVersionId,
+                JurisdictionId,
+                "137604000",
+                "Paranaque City",
+                "PARANAQUE_PARKING_PRIVILEGE",
+                "2026.07",
+                OrdinanceNumber: null,
+                OrdinanceTitle: null,
+                "VERIFIED_ACTIVE_OPERATIONAL",
+                "ACTIVE_FOR_TRANSACTION_USE",
+                "PARTIAL_VERIFIED",
+                "PARKING_SERVICE_COVERED",
+                "FULL_FEE_EXEMPTION",
+                "RESIDENT_ONLY",
+                OfficialSourceAvailable: false,
+                OrdinanceTextAvailable: false,
+                OrdinanceNumberAvailable: false,
+                DateTimeOffset.Parse("2026-07-01T00:00:00+08:00"),
+                EffectiveTo: null,
+                [
+                    new StatutoryDiscountPolicyEvidenceRequirement(
+                        "SENIOR_CITIZEN_ID",
+                        "REQUIRED",
+                        "Valid Senior Citizen ID",
+                        SafeRequirementNotes: null),
+                    new StatutoryDiscountPolicyEvidenceRequirement(
+                        "RESIDENCY_EVIDENCE",
+                        "REQUIRED",
+                        "Proof of residency",
+                        SafeRequirementNotes: null)
+                ],
+                "FROZEN_LOCAL_ORDINANCE_POLICY_AUTHORITY");
     }
 
     private sealed class FakeRbacRepository : ICentralPmsRbacRepository
