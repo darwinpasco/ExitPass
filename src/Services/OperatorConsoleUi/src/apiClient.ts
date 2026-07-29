@@ -1977,6 +1977,7 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     statutoryDiscountAmountMinorUnits: item.statutoryDiscountAmountMinorUnits ?? undefined,
     finalPayableAmountMinorUnits: item.finalPayableAmountMinorUnits ?? item.payableAmountMinorUnits ?? undefined,
     payableBasisApplicationStatus: item.payableBasisApplicationStatus ?? undefined,
+    decisionReasonCode: item.decisionReasonCode ?? undefined,
     governingPolicy: item.governingPolicy ? toGoverningPolicy(item.governingPolicy) : undefined,
     auditActivity: item.activity.length > 0 ? item.activity : ["No activity history is available yet."]
   };
