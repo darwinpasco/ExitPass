@@ -127,10 +127,11 @@ expected_role_permissions(role_code, permission_code) AS (
     ('PLATFORM_ADMINISTRATOR', 'uat-fixture.manage'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.draft.view'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.evidence.view'),
+    ('OPERATIONS_SUPERVISOR', 'statutory-discounts.review.queue.read'),
+    ('OPERATIONS_SUPERVISOR', 'statutory-discounts.review.detail.read'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.decision.review'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.decision.approve'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.decision.reject'),
-    ('OPERATIONS_SUPERVISOR', 'statutory-discounts.payable-basis.apply'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.policy.resolve'),
     ('OPERATIONS_SUPERVISOR', 'fiscal-issuance.status.read'),
     ('OPERATIONS_SUPERVISOR', 'fiscal-issuance.void.command'),
@@ -277,7 +278,8 @@ SELECT
       AND EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATOR_SUPPORT_STAFF' AND permission_code = 'statutory-discounts.evidence.capture')
       AND NOT EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATOR_SUPPORT_STAFF' AND permission_code IN ('statutory-discounts.decision.approve', 'statutory-discounts.decision.reject', 'statutory-discounts.payable-basis.apply')) AS operator_support_requester_only,
     EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATIONS_SUPERVISOR' AND permission_code = 'statutory-discounts.decision.approve')
-      AND EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATIONS_SUPERVISOR' AND permission_code = 'statutory-discounts.payable-basis.apply')
+      AND EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATIONS_SUPERVISOR' AND permission_code = 'statutory-discounts.decision.reject')
+      AND NOT EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATIONS_SUPERVISOR' AND permission_code = 'statutory-discounts.payable-basis.apply')
       AND NOT EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'OPERATIONS_SUPERVISOR' AND permission_code IN ('user.manage', 'rbac.manage')) AS operations_supervisor_approves_without_rbac_admin,
     EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'COMPLIANCE_POLICY_ADMINISTRATOR' AND permission_code = 'policy-import.approve')
       AND EXISTS (SELECT 1 FROM active_role_permissions WHERE role_code = 'COMPLIANCE_POLICY_ADMINISTRATOR' AND permission_code = 'statutory-discounts.audit.read')

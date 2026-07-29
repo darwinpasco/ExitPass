@@ -30,8 +30,12 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("OperatorConsoleStatutoryDiscountEvidenceView", "statutory-discounts.evidence.view")]
     [InlineData("OperatorConsoleStatutoryDiscountEvidenceCapture", "statutory-discounts.evidence.capture")]
     [InlineData("OperatorConsoleStatutoryDiscountDecisionReview", "statutory-discounts.decision.review")]
-    [InlineData("OperatorConsoleStatutoryDiscountDecisionReview", "statutory-discounts.decision.approve")]
-    [InlineData("OperatorConsoleStatutoryDiscountDecisionReview", "statutory-discounts.decision.reject")]
+    [InlineData("OperatorConsoleStatutoryDiscountReviewQueueRead", "statutory-discounts.review.queue.read")]
+    [InlineData("OperatorConsoleStatutoryDiscountReviewDetailRead", "statutory-discounts.review.detail.read")]
+    [InlineData("OperatorConsoleStatutoryDiscountDecisionMutate", "statutory-discounts.decision.approve")]
+    [InlineData("OperatorConsoleStatutoryDiscountDecisionMutate", "statutory-discounts.decision.reject")]
+    [InlineData("OperatorConsoleStatutoryDiscountDecisionApprove", "statutory-discounts.decision.approve")]
+    [InlineData("OperatorConsoleStatutoryDiscountDecisionReject", "statutory-discounts.decision.reject")]
     [InlineData("OperatorConsoleStatutoryDiscountPayableBasisApply", "statutory-discounts.payable-basis.apply")]
     [InlineData("OperatorConsoleStatutoryDiscountPolicyResolve", "statutory-discounts.policy.resolve")]
     [InlineData("OperatorConsoleStatutoryDiscountAuditRead", "statutory-discounts.audit.read")]
@@ -51,6 +55,16 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     }
 
     [Fact]
+    public void ResolvePermissions_KeepsStatutoryReviewReadSeparateFromApproveAndReject()
+    {
+        var reviewPermissions = CentralPmsRbacPolicyCatalog.ResolvePermissions("OperatorConsoleStatutoryDiscountDecisionReview");
+
+        reviewPermissions.Should().Contain("statutory-discounts.decision.review");
+        reviewPermissions.Should().NotContain("statutory-discounts.decision.approve");
+        reviewPermissions.Should().NotContain("statutory-discounts.decision.reject");
+    }
+
+    [Fact]
     public void ResolvePermissions_KeepsStatutoryDiscountRuntimeSeparateFromPolicyImportReview()
     {
         var runtimePermissions = new[]
@@ -61,6 +75,11 @@ public sealed class CentralPmsRbacPolicyCatalogTests
             "OperatorConsoleStatutoryDiscountEvidenceView",
             "OperatorConsoleStatutoryDiscountEvidenceCapture",
             "OperatorConsoleStatutoryDiscountDecisionReview",
+            "OperatorConsoleStatutoryDiscountReviewQueueRead",
+            "OperatorConsoleStatutoryDiscountReviewDetailRead",
+            "OperatorConsoleStatutoryDiscountDecisionMutate",
+            "OperatorConsoleStatutoryDiscountDecisionApprove",
+            "OperatorConsoleStatutoryDiscountDecisionReject",
             "OperatorConsoleStatutoryDiscountPayableBasisApply",
             "OperatorConsoleStatutoryDiscountPolicyResolve",
             "OperatorConsoleStatutoryDiscountAuditRead"

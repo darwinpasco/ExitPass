@@ -89,14 +89,15 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
         new(
             "operations-supervisor",
             "Operations Supervisor",
-            "Supervises operational workflows and reviews higher-trust operator actions.",
+            "Supervises operational workflows and approves or rejects statutory privilege eligibility without applying payable-basis changes.",
             [
                 "statutory-discounts.draft.view",
                 "statutory-discounts.evidence.view",
+                "statutory-discounts.review.queue.read",
+                "statutory-discounts.review.detail.read",
                 "statutory-discounts.decision.review",
                 "statutory-discounts.decision.approve",
                 "statutory-discounts.decision.reject",
-                "statutory-discounts.payable-basis.apply",
                 "fiscal-issuance.status.read",
                 "fiscal-issuance.void.command",
                 "operator-workflow-audit.view"
@@ -104,6 +105,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
             [
                 "No user/RBAC administration.",
                 "No global platform configuration administration.",
+                "No payable-basis application authority.",
                 "Requester cannot approve their own statutory discount."
             ],
             "Operator Console for workflow; Management Platform for supervisor reports"),
@@ -301,10 +303,13 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
         ("statutory-discounts.draft.create", "Statutory discount draft create", "Statutory discount"),
         ("statutory-discounts.evidence.view", "Statutory discount evidence view", "Statutory discount"),
         ("statutory-discounts.evidence.capture", "Statutory discount evidence capture", "Statutory discount"),
+        ("statutory-discounts.review.queue.read", "Statutory discount review queue read", "Statutory discount"),
+        ("statutory-discounts.review.detail.read", "Statutory discount review detail read", "Statutory discount"),
         ("statutory-discounts.decision.review", "Statutory discount decision review", "Statutory discount"),
         ("statutory-discounts.decision.approve", "Statutory discount decision approve", "Statutory discount"),
         ("statutory-discounts.decision.reject", "Statutory discount decision reject", "Statutory discount"),
-        ("statutory-discounts.payable-basis.apply", "Statutory discount payable-basis apply", "Statutory discount"),
+        ("statutory-discounts.payable-basis.apply", "Statutory discount payment-time payable-basis apply", "Statutory discount"),
+        ("statutory-discounts.application.read", "Statutory discount application status read", "Statutory discount"),
         ("statutory-discounts.policy.resolve", "Statutory discount policy resolve", "Statutory discount"),
         ("statutory-discounts.audit.read", "Statutory discount audit read", "Statutory discount"),
         ("fiscal-issuance.status.read", "Sales Invoice status read", "Fiscal / Sales Invoice"),

@@ -125,7 +125,33 @@ public static class CentralPmsRbacPolicyCatalog
             ["OperatorConsoleStatutoryDiscountDecisionReview"] =
             [
                 "statutory-discounts.decision.review",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountReviewQueueRead"] =
+            [
+                "statutory-discounts.review.queue.read",
+                "statutory-discounts.decision.review",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountReviewDetailRead"] =
+            [
+                "statutory-discounts.review.detail.read",
+                "statutory-discounts.decision.review",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountDecisionMutate"] =
+            [
                 "statutory-discounts.decision.approve",
+                "statutory-discounts.decision.reject",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountDecisionApprove"] =
+            [
+                "statutory-discounts.decision.approve",
+                "reconciliation.manage"
+            ],
+            ["OperatorConsoleStatutoryDiscountDecisionReject"] =
+            [
                 "statutory-discounts.decision.reject",
                 "reconciliation.manage"
             ],

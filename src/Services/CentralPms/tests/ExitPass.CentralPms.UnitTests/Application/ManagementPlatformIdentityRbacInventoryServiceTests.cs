@@ -42,6 +42,16 @@ public sealed class ManagementPlatformIdentityRbacInventoryServiceTests
             permission.PermissionKey == "statutory-discounts.payable-basis.apply" &&
             permission.Status == "implemented");
 
+        inventory.RoleBundles.Single(role => role.RoleKey == "operations-supervisor")
+            .TypicalAccessRights.Should().NotContain("statutory-discounts.payable-basis.apply");
+        inventory.RoleBundles.Single(role => role.RoleKey == "operations-supervisor")
+            .TypicalAccessRights.Should().Contain([
+                "statutory-discounts.review.queue.read",
+                "statutory-discounts.review.detail.read",
+                "statutory-discounts.decision.approve",
+                "statutory-discounts.decision.reject"
+            ]);
+
         inventory.PolicyMappings.Should().Contain(mapping =>
             mapping.PolicyName == "FiscalIssuanceVoidCommand" &&
             mapping.RouteOrFeatureArea == "Fiscal / Sales Invoice");
