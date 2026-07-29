@@ -165,6 +165,48 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(result.payableBasisReadinessStatus).toBe("AWAITING_REVIEW");
   });
 
+  it("WebPay_WhenStatutoryServiceAuthFails_ShowsCustomerSafeMessage", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        errorCode: "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE",
+        message:
+          "Authenticated Central PMS service identity required by CentralPmsStatutoryDiscountDecisionSubmit policy.",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      submitStatutoryDiscountDecision(
+        statutoryDecisionRequest(),
+        "statutory-decision:webpay:test",
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toThrow("Parking-privilege requests are temporarily unavailable");
+  });
+
+  it("WebPay_WhenStatutoryServiceUnavailable_ShowsSafeRetryGuidance", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        errorCode: "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE",
+        message: "Central PMS timeout at http://central-pms.internal.",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      retrieveStatutoryDiscountDecision(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toThrow("Statutory discount status is temporarily unavailable");
+  });
+
   it("WebPay_WhenApplicationIntentKeyCreated_UsesCanonicalDecisionIdentifier", () => {
     expect(createStatutoryApplicationIdempotencyKey(" aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa ")).toBe(
       "webpay-statutory-discount-application:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"

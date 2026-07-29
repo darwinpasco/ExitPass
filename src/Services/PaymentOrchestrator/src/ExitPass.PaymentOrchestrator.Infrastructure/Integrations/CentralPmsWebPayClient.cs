@@ -25,6 +25,13 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private readonly Uri _webPayPaymentAttemptsBaseUri;
     private readonly Uri _statutoryDiscountDecisionsUri;
     private readonly Uri _statutoryDiscountDecisionsBaseUri;
+    private readonly bool _statutoryDiscountServiceIdentityConfigured;
+    private readonly Guid _statutoryDiscountWebPayServiceIdentityId;
+
+    private const string CentralPmsPermissionsHeaderName = "X-ExitPass-Permissions";
+    private const string CentralPmsServiceIdentityIdHeaderName = "X-ExitPass-Service-Identity-Id";
+    private const string StatutoryDiscountSubmitWebPayPermission = "statutory-discounts.decision.submit.webpay";
+    private const string StatutoryDiscountDecisionReadPermission = "statutory-discounts.decision.read";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsWebPayClient"/> class.
@@ -56,6 +63,11 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         _webPayPaymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/payment-attempts/");
         _statutoryDiscountDecisionsUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions");
         _statutoryDiscountDecisionsBaseUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/");
+
+        var serviceIdentityValue = configuration["Integrations:CentralPms:StatutoryDiscounts:WebPayServiceIdentityId"];
+        _statutoryDiscountServiceIdentityConfigured =
+            Guid.TryParse(serviceIdentityValue, out _statutoryDiscountWebPayServiceIdentityId) &&
+            _statutoryDiscountWebPayServiceIdentityId != Guid.Empty;
     }
 
     /// <inheritdoc />
@@ -292,8 +304,26 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             HttpMethod.Get,
             new Uri(_statutoryDiscountDecisionsBaseUri, statutoryDiscountDecisionCommandId.ToString("D")));
         request.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        if (!TryAddStatutoryDiscountServiceHeaders(
+                request,
+                StatutoryDiscountDecisionReadPermission,
+                correlationId,
+                out var serviceAuthError))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(serviceAuthError!);
+        }
 
-        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        using var response = await SendStatutoryDiscountAsync(
+            request,
+            "readback",
+            correlationId,
+            cancellationToken);
+        if (response is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                BuildTransientStatutoryDiscountError(correlationId));
+        }
+
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
@@ -382,16 +412,35 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         };
         message.Headers.Add("X-Correlation-Id", correlationId.ToString());
         message.Headers.Add("Idempotency-Key", idempotencyKey);
+        if (!TryAddStatutoryDiscountServiceHeaders(
+                message,
+                StatutoryDiscountSubmitWebPayPermission,
+                correlationId,
+                out var serviceAuthError))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(serviceAuthError!);
+        }
 
-        using var response = await _httpClient.SendAsync(message, cancellationToken);
+        using var response = await SendStatutoryDiscountAsync(
+            message,
+            applyPayableBasis ? "payable-basis application" : "decision submit",
+            correlationId,
+            cancellationToken);
+        if (response is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                BuildTransientStatutoryDiscountError(correlationId));
+        }
+
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
-                ReadError((int)response.StatusCode, responseBody, applyPayableBasis
-                    ? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_FAILED"
-                    : "STATUTORY_DISCOUNT_DECISION_SUBMIT_FAILED"));
+                ReadError(
+                    (int)response.StatusCode,
+                    responseBody,
+                    ResolveStatutoryDiscountSubmitFallbackCode((int)response.StatusCode, applyPayableBasis)));
         }
 
         var payload = JsonSerializer.Deserialize<StatutoryDiscountDecisionResponse>(responseBody, JsonOptions);
@@ -406,6 +455,81 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         }
 
         return CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(ToStatutoryDecision(payload));
+    }
+
+    private bool TryAddStatutoryDiscountServiceHeaders(
+        HttpRequestMessage request,
+        string permission,
+        Guid correlationId,
+        out CentralPmsWebPayError? error)
+    {
+        if (!_statutoryDiscountServiceIdentityConfigured)
+        {
+            error = new CentralPmsWebPayError(
+                503,
+                "CENTRAL_PMS_AUTH_CONFIGURATION_MISSING",
+                "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.",
+                true,
+                correlationId);
+            return false;
+        }
+
+        request.Headers.Remove(CentralPmsServiceIdentityIdHeaderName);
+        request.Headers.Remove(CentralPmsPermissionsHeaderName);
+        request.Headers.Add(CentralPmsServiceIdentityIdHeaderName, _statutoryDiscountWebPayServiceIdentityId.ToString("D"));
+        request.Headers.Add(CentralPmsPermissionsHeaderName, permission);
+        error = null;
+        return true;
+    }
+
+    private async Task<HttpResponseMessage?> SendStatutoryDiscountAsync(
+        HttpRequestMessage request,
+        string operation,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(
+                "Central PMS statutory-discount {Operation} request timed out. CorrelationId {CorrelationId}",
+                operation,
+                correlationId);
+            return null;
+        }
+        catch (HttpRequestException)
+        {
+            _logger.LogWarning(
+                "Central PMS statutory-discount {Operation} request failed before a response was received. CorrelationId {CorrelationId}",
+                operation,
+                correlationId);
+            return null;
+        }
+    }
+
+    private static CentralPmsWebPayError BuildTransientStatutoryDiscountError(Guid correlationId) =>
+        new(
+            503,
+            "CENTRAL_PMS_UNAVAILABLE",
+            "We could not process the parking-privilege request right now. Please try again.",
+            true,
+            correlationId);
+
+    private static string ResolveStatutoryDiscountSubmitFallbackCode(int statusCode, bool applyPayableBasis)
+    {
+        if (statusCode == 409)
+        {
+            return applyPayableBasis
+                ? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_SEMANTIC_CONFLICT"
+                : "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT";
+        }
+
+        return applyPayableBasis
+            ? "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_FAILED"
+            : "STATUTORY_DISCOUNT_DECISION_SUBMIT_FAILED";
     }
 
     private CentralPmsWebPayError ReadError(int statusCode, string responseBody, string fallbackCode)

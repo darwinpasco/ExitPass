@@ -128,6 +128,7 @@ const emptyStatutoryDiscountUiState: StatutoryDiscountUiState = {
 
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
+  const resetStatutoryRecoveryForLocalValidation = shouldResetStatutoryRecoveryForLocalValidation();
   const [entryMode, setEntryMode] = useState<EntryMode>("ticket");
   const [ticketReference, setTicketReference] = useState(initialTicketReference);
   const [scannedContext, setScannedContext] = useState<Partial<PaymentIntentRequest>>({});
@@ -145,7 +146,14 @@ export function App() {
   const [showStatutoryDiscountForm, setShowStatutoryDiscountForm] = useState(false);
   const [statutoryDiscountForm, setStatutoryDiscountForm] = useState<StatutoryDiscountFormState>(defaultStatutoryDiscountForm);
   const [statutoryDiscountState, setStatutoryDiscountState] = useState<StatutoryDiscountUiState>(emptyStatutoryDiscountUiState);
-  const [initialRecoveryLoad] = useState(() => loadStatutoryRecoveryRecord());
+  const [initialRecoveryLoad] = useState(() => {
+    if (resetStatutoryRecoveryForLocalValidation) {
+      clearStatutoryRecoveryRecord();
+      return { record: null, cleared: false, unavailable: false, reason: "LOCAL_VALIDATION_RESET" };
+    }
+
+    return loadStatutoryRecoveryRecord();
+  });
   const [statutoryRecoveryRecord, setStatutoryRecoveryRecord] = useState<WebPayStatutoryRecoveryRecord | null>(initialRecoveryLoad.record);
   const [statutoryRecoveryMessage, setStatutoryRecoveryMessage] = useState(() => getInitialRecoveryMessage(initialRecoveryLoad));
   const [isRestoringStatutoryRecovery, setIsRestoringStatutoryRecovery] = useState(false);
@@ -2231,6 +2239,19 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
     };
   }
 
+  if (
+    readinessStatus === "AWAITING_REVIEW" ||
+    decision.decisionCommandStatus.toUpperCase() === "AWAITING_REVIEW" ||
+    decision.overallResultClassification.toUpperCase() === "PENDING_REVIEW" ||
+    decision.recoveryClassification.toUpperCase() === "PENDING_REVIEW"
+  ) {
+    return {
+      heading: "Awaiting review",
+      body: "Your Senior Citizen or PWD parking privilege request was received and is awaiting review. Payment remains unavailable until review and payable-basis application are complete.",
+      tone: "pending"
+    };
+  }
+
   if (decision.retryable || readinessAction.includes("RETRY")) {
     return {
       heading: "Status temporarily unavailable",
@@ -2241,7 +2262,7 @@ function getStatutoryDiscountStatusCopy(decision: WebPayStatutoryDiscountDecisio
 
   return {
     heading: "Awaiting review",
-    body: "Your statutory discount request requires Operator Console review. Payment remains unavailable until review and payable-basis application are complete.",
+    body: "Your Senior Citizen or PWD parking privilege request was received and is awaiting review. Payment remains unavailable until review and payable-basis application are complete.",
     tone: "pending"
   };
 }
@@ -2386,6 +2407,16 @@ function getReturnPageMode(pathname: string): ReturnPageMode | null {
 
 function getQueryParam(name: string): string {
   return new URLSearchParams(window.location.search).get(name)?.trim() ?? "";
+}
+
+function shouldResetStatutoryRecoveryForLocalValidation(): boolean {
+  const value = getQueryParam("webpayStatutoryRecoveryReset").toLowerCase();
+  if (value !== "1" && value !== "true") {
+    return false;
+  }
+
+  const hostname = window.location.hostname.toLowerCase();
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
 }
 
 function validateLookupInput(entryMode: EntryMode, lookupValue: string): string {

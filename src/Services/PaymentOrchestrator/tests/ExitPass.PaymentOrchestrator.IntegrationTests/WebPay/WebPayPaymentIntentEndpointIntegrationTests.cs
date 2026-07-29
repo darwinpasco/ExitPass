@@ -458,6 +458,170 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     /// <summary>
+    /// Verifies upstream Central PMS authentication failures are translated to a customer-safe service posture.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenCentralPmsAuthenticationFails_ReturnsSafeServiceUnavailable()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                new CentralPmsWebPayError(
+                    401,
+                    "CENTRAL_PMS_AUTHENTICATED_ACTOR_REQUIRED",
+                    "Authenticated user or service identity is required for statutory-discount decision submission.",
+                    false,
+                    Guid.Parse("33333333-3333-3333-3333-333333333333")))
+        };
+        using var client = CreateClient(state);
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(StatutoryDecisionRequest())
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-decision:webpay:test");
+        request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("WEBPAY_STATUTORY_SERVICE_UNAVAILABLE", body);
+        Assert.Contains("Parking-privilege requests are temporarily unavailable", body);
+        Assert.DoesNotContain("Authenticated user", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("service identity", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CENTRAL_PMS_AUTHENTICATED_ACTOR_REQUIRED", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("X-ExitPass", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("permission", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies upstream Central PMS authorization failures do not leak policy or permission details.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountReadback_WhenCentralPmsAuthorizationFails_ReturnsSafeServiceUnavailable()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                new CentralPmsWebPayError(
+                    403,
+                    "CENTRAL_PMS_SOURCE_CHANNEL_FORBIDDEN",
+                    "The caller is not authorized to submit statutory-discount decisions for a supported source channel.",
+                    false,
+                    Guid.Parse("33333333-3333-3333-3333-333333333333")))
+        };
+        using var client = CreateClient(state);
+
+        using var response = await client.GetAsync($"{StatutoryDecisionRoute}/{StatutoryDecisionCommandId:D}");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("WEBPAY_STATUTORY_SERVICE_UNAVAILABLE", body);
+        Assert.DoesNotContain("authorized", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("source channel", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CENTRAL_PMS_SOURCE_CHANNEL_FORBIDDEN", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("permission", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies transient Central PMS failures are translated to retryable customer guidance.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenCentralPmsUnavailable_ReturnsSafeRetryableGuidance()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                new CentralPmsWebPayError(
+                    503,
+                    "CENTRAL_PMS_TIMEOUT",
+                    "Central PMS request failed.",
+                    true,
+                    Guid.Parse("33333333-3333-3333-3333-333333333333")))
+        };
+        using var client = CreateClient(state);
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(StatutoryDecisionRequest())
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-decision:webpay:test");
+        request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE", body);
+        Assert.Contains("Please try again", body);
+        Assert.Contains("\"retryable\":true", body);
+        Assert.DoesNotContain("Central PMS", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Verifies safe Central PMS validation guidance is preserved for customer-correctable input errors.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenCentralPmsValidationFails_PreservesSafeGuidance()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                new CentralPmsWebPayError(
+                    400,
+                    "STATUTORY_DISCOUNT_REQUEST_INVALID",
+                    "maskedIdReference must be masked.",
+                    false,
+                    Guid.Parse("33333333-3333-3333-3333-333333333333")))
+        };
+        using var client = CreateClient(state);
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(StatutoryDecisionRequest())
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-decision:webpay:test");
+        request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("STATUTORY_DISCOUNT_REQUEST_INVALID", body);
+        Assert.Contains("maskedIdReference must be masked.", body);
+    }
+
+    /// <summary>
+    /// Verifies statutory business conflicts remain deterministic and are not flattened to service failures.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryDiscountSubmit_WhenCentralPmsConflictOccurs_PreservesSafeConflict()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            StatutoryDecisionResult = CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Failure(
+                new CentralPmsWebPayError(
+                    409,
+                    "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT",
+                    "The statutory-discount request already exists with different submitted facts.",
+                    false,
+                    Guid.Parse("33333333-3333-3333-3333-333333333333")))
+        };
+        using var client = CreateClient(state);
+        using var request = new HttpRequestMessage(HttpMethod.Post, StatutoryDecisionRoute)
+        {
+            Content = JsonContent.Create(StatutoryDecisionRequest())
+        };
+        request.Headers.Add("Idempotency-Key", "statutory-decision:webpay:test");
+        request.Headers.Add("X-Correlation-Id", "33333333-3333-3333-3333-333333333333");
+
+        using var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT", body);
+        Assert.Contains("different submitted facts", body);
+    }
+
+    /// <summary>
     /// Verifies durable statutory-discount readback is exposed without mutation.
     /// </summary>
     [Fact]

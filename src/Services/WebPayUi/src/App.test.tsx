@@ -400,6 +400,72 @@ describe("ExitPass WebPay UI", () => {
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).not.toContainEqual(expect.stringContaining("/v1/statutory-discounts/decisions"));
   });
 
+  it("WebPay_WhenManualServiceAuthPendingReviewReadbackIsRetryable_RendersAwaitingReviewNotUnavailable", async () => {
+    const manualPendingReviewPayload = statutoryDecisionResponse({
+      statutoryDiscountDecisionCommandId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      decisionCommandStatus: "AWAITING_REVIEW",
+      decisionResultStatus: "NOT_DECIDED",
+      applicationCommandStatus: "NOT_REQUESTED",
+      applicationResultClassification: "NOT_REQUESTED",
+      payableBasisReady: false,
+      payableBasisReadinessStatus: "AWAITING_REVIEW",
+      payableBasisReadinessAction: "POLL_READBACK",
+      retryable: true,
+      recoveryClassification: "PENDING_REVIEW",
+      recoveryAction: "POLL_READBACK",
+      safeErrorCode: null,
+      overallResultClassification: "PENDING_REVIEW",
+      currency: "PHP",
+      correlationId: "11111111-1111-4111-8111-111111111111"
+    });
+    const fetchMock = stubWebPayFetch({
+      statutorySubmitPayload: manualPendingReviewPayload,
+      statutoryReadPayload: manualPendingReviewPayload
+    });
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+
+    expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(screen.getAllByText(/parking privilege request was received and is awaiting review/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/i)).toBeInTheDocument();
+    expect(screen.getByText(/11111111-1111-4111-8111-111111111111/i)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /refresh status/i }, { timeout: 6000 })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /status temporarily unavailable/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/statutory discount status is temporarily unavailable/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/CentralPmsStatutoryDiscountDecisionSubmit/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/statutory-discounts\.decision\.submit\.webpay/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/stack trace/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: /refresh status/i }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((call) => String(call[0]).includes(`/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`))).toBe(true)
+    );
+  });
+
+  it("WebPay_WhenLocalValidationRecoveryResetParamPresent_ClearsOnlyStatutoryRecoveryBeforeLoad", () => {
+    const staleRecovery = createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      stage: "DECISION_SUBMITTING",
+      decisionIdempotencyKey: "stale-decision-key"
+    });
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(staleRecovery));
+    localStorage.setItem("exitpass:webpay:unrelated-local-state", "keep");
+    window.history.pushState({}, "", "/?ticketReference=WEBPAY-STAT-SERVICE-AUTH-001&webpayStatutoryRecoveryReset=1");
+    stubWebPayFetch();
+
+    render(<App />);
+
+    expect(localStorage.getItem(statutoryRecoveryStorageKey)).toBeNull();
+    expect(localStorage.getItem("exitpass:webpay:unrelated-local-state")).toBe("keep");
+    expect(screen.queryByText(/another page may be submitting this statutory discount request/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/ticket reference/i)).toHaveValue("WEBPAY-STAT-SERVICE-AUTH-001");
+  });
+
   it("WebPay_WhenPwdRequestSubmitted_EntersPendingReviewAndPreventsDuplicateSubmit", async () => {
     const fetchMock = stubWebPayFetch();
 
@@ -420,7 +486,7 @@ describe("ExitPass WebPay UI", () => {
     expect(statutoryPosts).toHaveLength(1);
     const body = JSON.parse((statutoryPosts[0][1] as RequestInit).body as string);
     expect(body.entitlementType).toBe("PWD");
-    expect(screen.getAllByText(/requires Operator Console review/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/parking privilege request was received and is awaiting review/i).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
   });
 

@@ -19,6 +19,7 @@ public sealed class CentralPmsWebPayClientTests
     private static readonly Guid CorrelationId = Guid.Parse("33333333-3333-3333-3333-333333333333");
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("99999999-9999-9999-9999-999999999999");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    private static readonly Guid WebPayServiceIdentityId = Guid.Parse("9b000000-0000-0000-0000-000000000005");
 
     /// <summary>
     /// Verifies Central PMS payment attempt creation receives both provider rail and payment method.
@@ -317,6 +318,8 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal("/v1/statutory-discounts/decisions", handler.LastRequest.RequestUri!.AbsolutePath);
         Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
         Assert.Equal("statutory-decision:test", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
+        Assert.Equal(WebPayServiceIdentityId.ToString("D"), handler.LastRequest.Headers.GetValues("X-ExitPass-Service-Identity-Id").Single());
+        Assert.Equal("statutory-discounts.decision.submit.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
 
         using var document = JsonDocument.Parse(handler.LastRequestBody!);
         var root = document.RootElement;
@@ -355,6 +358,8 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(HttpMethod.Get, handler.LastRequest!.Method);
         Assert.Equal($"/v1/statutory-discounts/decisions/{StatutoryDecisionCommandId:D}", handler.LastRequest.RequestUri!.AbsolutePath);
         Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal(WebPayServiceIdentityId.ToString("D"), handler.LastRequest.Headers.GetValues("X-ExitPass-Service-Identity-Id").Single());
+        Assert.Equal("statutory-discounts.decision.read", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
         Assert.Equal(StatutoryApplicationCommandId, result.Value!.StatutoryDiscountPayableBasisApplicationCommandId);
         Assert.True(result.Value.PayableBasisReady);
     }
@@ -381,9 +386,95 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
         Assert.Equal("/v1/statutory-discounts/decisions", handler.LastRequest.RequestUri!.AbsolutePath);
         Assert.Equal("statutory-application:test", handler.LastRequest.Headers.GetValues("Idempotency-Key").Single());
+        Assert.Equal(WebPayServiceIdentityId.ToString("D"), handler.LastRequest.Headers.GetValues("X-ExitPass-Service-Identity-Id").Single());
+        Assert.Equal("statutory-discounts.decision.submit.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
         using var document = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.True(document.RootElement.GetProperty("applyPayableBasis").GetBoolean());
         Assert.Equal("WEBPAY", document.RootElement.GetProperty("sourceChannel").GetString());
+    }
+
+    /// <summary>
+    /// Verifies Central PMS semantic-conflict codes are preserved for WebPay instead of flattened to a generic submit failure.
+    /// </summary>
+    [Fact]
+    public async Task SubmitStatutoryDiscountDecisionAsync_WhenSemanticConflict_PreservesSafeConflictCode()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Conflict)
+        {
+            Content = JsonContent(new
+            {
+                errorCode = "STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT",
+                message = "A statutory discount request already exists with different submitted details.",
+                retryable = false,
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.SubmitStatutoryDiscountDecisionAsync(
+            StatutoryDecisionRequest(),
+            "statutory-decision:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT", result.Error.ErrorCode);
+        Assert.Equal("A statutory discount request already exists with different submitted details.", result.Error.Message);
+        Assert.False(result.Error.Retryable);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+    }
+
+    /// <summary>
+    /// Verifies an opaque Central PMS 409 from statutory submit still maps to a deterministic semantic-conflict code.
+    /// </summary>
+    [Fact]
+    public async Task SubmitStatutoryDiscountDecisionAsync_WhenOpaqueConflict_UsesSemanticConflictFallback()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Conflict)
+        {
+            Content = JsonContent(new { detail = "A statutory discount request already exists with different submitted details." })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.SubmitStatutoryDiscountDecisionAsync(
+            StatutoryDecisionRequest(),
+            "statutory-decision:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("STATUTORY_DISCOUNT_DECISION_SEMANTIC_CONFLICT", result.Error.ErrorCode);
+        Assert.Contains("different submitted details", result.Error.Message);
+        Assert.False(result.Error.Retryable);
+    }
+
+    /// <summary>
+    /// Verifies statutory calls fail closed when the server-side Central PMS service identity is not configured.
+    /// </summary>
+    [Fact]
+    public async Task SubmitStatutoryDiscountDecisionAsync_WhenServiceIdentityMissing_FailsClosedWithoutHttpRequest()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.Accepted)
+        {
+            Content = JsonContent(StatutoryDecisionResponse())
+        });
+        var client = CreateClient(handler, configureStatutoryServiceIdentity: false);
+
+        var result = await client.SubmitStatutoryDiscountDecisionAsync(
+            StatutoryDecisionRequest(),
+            "statutory-decision:test",
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(503, result.Error!.StatusCode);
+        Assert.Equal("CENTRAL_PMS_AUTH_CONFIGURATION_MISSING", result.Error.ErrorCode);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+        Assert.Contains("Parking-privilege requests are temporarily unavailable", result.Error.Message);
+        Assert.Equal(0, handler.SendCount);
+        Assert.Null(handler.LastRequest);
     }
 
     /// <summary>
@@ -411,13 +502,21 @@ public sealed class CentralPmsWebPayClientTests
         Assert.DoesNotContain("secret", result.Error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static CentralPmsWebPayClient CreateClient(HttpMessageHandler handler)
+    private static CentralPmsWebPayClient CreateClient(
+        HttpMessageHandler handler,
+        bool configureStatutoryServiceIdentity = true)
     {
+        var values = new Dictionary<string, string?>
+        {
+            ["Integrations:CentralPms:BaseUrl"] = "http://central-pms.test"
+        };
+        if (configureStatutoryServiceIdentity)
+        {
+            values["Integrations:CentralPms:StatutoryDiscounts:WebPayServiceIdentityId"] = WebPayServiceIdentityId.ToString("D");
+        }
+
         var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Integrations:CentralPms:BaseUrl"] = "http://central-pms.test"
-            })
+            .AddInMemoryCollection(values)
             .Build();
 
         return new CentralPmsWebPayClient(
@@ -527,10 +626,13 @@ public sealed class CentralPmsWebPayClientTests
 
         public string? LastRequestBody { get; private set; }
 
+        public int SendCount { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            SendCount++;
             LastRequest = request;
             LastRequestBody = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
             return Task.FromResult(_response);

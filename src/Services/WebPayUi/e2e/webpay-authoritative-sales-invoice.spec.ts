@@ -193,7 +193,8 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
 
     await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
-    await expect(page.getByText(/requires Operator Console review/i).first()).toBeVisible();
+    await expect(page.getByText(/parking privilege request was received and is awaiting review/i).first()).toBeVisible();
+    await expect(page.getByText(/status temporarily unavailable/i)).toHaveCount(0);
 
     const state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(1);

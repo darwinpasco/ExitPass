@@ -621,7 +621,10 @@ export function toStatutoryDiscountMessage(errorCode?: string, message?: string)
     case "APPLICATION_PROCESSING":
       return "The approved statutory discount is still being applied.";
     case "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE":
+    case "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE":
       return "Statutory discount status is temporarily unavailable. Refresh status shortly.";
+    case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
+      return "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.";
     case "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE":
       return "Statutory discount payable basis is missing required authoritative facts.";
     case "STATUTORY_DISCOUNT_TERMINAL_FAILURE":
