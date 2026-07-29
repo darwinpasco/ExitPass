@@ -3,6 +3,7 @@ using ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace ExitPass.PaymentOrchestrator.IntegrationTests.Persistence;
@@ -203,23 +204,189 @@ public sealed class ProviderSessionRepositorySqlContractTests
         }
     }
 
+    /// <summary>
+    /// Verifies provider initiation reservation persists before provider execution and can be completed in place.
+    /// </summary>
+    [Fact]
+    public async Task ProviderSessionRepository_ReserveAndCompleteInitiation_UpdatesOneProviderSessionRow()
+    {
+        await ApplySqlFileAsync(Path.Combine("infra", "db", "seed", "ExitPass_Reference_Data_v1.2.sql"));
+        await ApplySqlFileAsync(Path.Combine("infra", "db", "patches", "ExitPass_PayMongoPaymentRailReferenceData_v1.2.sql"));
+
+        var serviceIdentityId = await QueryGuidAsync(
+            "select service_identity_id from identity.service_identities where service_identity_code = 'payment-orchestrator';");
+        var vendorSystemId = await QueryGuidAsync(
+            "select vendor_system_id from integration.vendor_systems where vendor_code = 'MOCK_VENDOR_PMS' and environment_code = 'DEV';");
+        var siteGroupId = await QueryGuidAsync(
+            "select site_group_id from sites.site_groups where site_group_code = 'DEV_PROPERTY';");
+        var siteId = await QueryGuidAsync(
+            """
+            select s.site_id
+            from sites.sites s
+            join sites.site_groups sg on sg.site_group_id = s.site_group_id
+            where sg.site_group_code = 'DEV_PROPERTY'
+              and s.site_code = 'DEV_PARKING';
+            """);
+        var parkingSessionId = Guid.NewGuid();
+        var tariffSnapshotId = Guid.NewGuid();
+        var paymentAttemptId = Guid.NewGuid();
+        var providerSessionRecordId = Guid.NewGuid();
+        var correlationId = Guid.NewGuid();
+
+        await InsertPaymentAttemptFixtureAsync(
+            parkingSessionId,
+            tariffSnapshotId,
+            paymentAttemptId,
+            vendorSystemId,
+            siteGroupId,
+            siteId,
+            serviceIdentityId);
+
+        try
+        {
+            var repository = new ProviderSessionRepository(
+                CreateConfiguration(),
+                NullLogger<ProviderSessionRepository>.Instance);
+
+            var reservation = await repository.TryReserveInitiationAsync(
+                new ProviderSessionInitiationReservation(
+                    providerSessionRecordId,
+                    paymentAttemptId,
+                    "PAYMONGO_CHECKOUT_SESSION",
+                    "provider-initiation-idempotency",
+                    correlationId,
+                    "{\"AmountMinor\":12500,\"Currency\":\"PHP\"}",
+                    12500,
+                    "PHP",
+                    DateTimeOffset.UtcNow),
+                CancellationToken.None);
+
+            Assert.Equal(ProviderSessionInitiationReservationOutcome.Acquired, reservation.Outcome);
+            Assert.Equal(providerSessionRecordId, reservation.ProviderSession.ProviderSessionRecordId);
+            Assert.Equal(string.Empty, reservation.ProviderSession.ProviderSessionId);
+            Assert.Equal("CREATED", reservation.ProviderSession.SessionStatus);
+
+            await repository.CompleteInitiationAsync(
+                providerSessionRecordId,
+                new ProviderSessionRecord(
+                    providerSessionRecordId,
+                    paymentAttemptId,
+                    "PAYMONGO",
+                    "PAYMONGO_CHECKOUT_SESSION",
+                    "cs_test_reserved_001",
+                    "pi_test_reserved_001",
+                    "PENDING_PROVIDER",
+                    "https://checkout.paymongo.test/session/cs_test_reserved_001",
+                    null,
+                    DateTimeOffset.UtcNow.AddMinutes(30),
+                    "provider-initiation-idempotency",
+                    correlationId,
+                    "{\"AmountMinor\":12500,\"Currency\":\"PHP\"}",
+                    "{\"data\":{\"id\":\"cs_test_reserved_001\"}}",
+                    DateTimeOffset.UtcNow,
+                    12500,
+                    "PHP"),
+                CancellationToken.None);
+
+            var persisted = await repository.FindLatestByPaymentAttemptIdAsync(paymentAttemptId, CancellationToken.None);
+
+            Assert.NotNull(persisted);
+            Assert.Equal(providerSessionRecordId, persisted!.ProviderSessionRecordId);
+            Assert.Equal("cs_test_reserved_001", persisted.ProviderSessionId);
+            Assert.Equal("https://checkout.paymongo.test/session/cs_test_reserved_001", persisted.RedirectUrl);
+            Assert.Equal("PENDING", persisted.SessionStatus);
+            Assert.Equal(1, await CountProviderSessionsAsync(paymentAttemptId));
+        }
+        finally
+        {
+            await DeletePaymentAttemptFixtureAsync(providerSessionRecordId, paymentAttemptId, tariffSnapshotId, parkingSessionId);
+        }
+    }
+
+    /// <summary>
+    /// Verifies two independent repository instances converge on one durable provider-initiation owner.
+    /// </summary>
+    [Fact]
+    public async Task ProviderSessionRepository_TryReserveInitiationAsync_WhenTwoInstancesRace_CreatesOneDurableOwner()
+    {
+        await ApplySqlFileAsync(Path.Combine("infra", "db", "seed", "ExitPass_Reference_Data_v1.2.sql"));
+        await ApplySqlFileAsync(Path.Combine("infra", "db", "patches", "ExitPass_PayMongoPaymentRailReferenceData_v1.2.sql"));
+
+        var serviceIdentityId = await QueryGuidAsync(
+            "select service_identity_id from identity.service_identities where service_identity_code = 'payment-orchestrator';");
+        var vendorSystemId = await QueryGuidAsync(
+            "select vendor_system_id from integration.vendor_systems where vendor_code = 'MOCK_VENDOR_PMS' and environment_code = 'DEV';");
+        var siteGroupId = await QueryGuidAsync(
+            "select site_group_id from sites.site_groups where site_group_code = 'DEV_PROPERTY';");
+        var siteId = await QueryGuidAsync(
+            """
+            select s.site_id
+            from sites.sites s
+            join sites.site_groups sg on sg.site_group_id = s.site_group_id
+            where sg.site_group_code = 'DEV_PROPERTY'
+              and s.site_code = 'DEV_PARKING';
+            """);
+        var parkingSessionId = Guid.NewGuid();
+        var tariffSnapshotId = Guid.NewGuid();
+        var paymentAttemptId = Guid.NewGuid();
+        var firstProviderSessionRecordId = Guid.NewGuid();
+        var secondProviderSessionRecordId = Guid.NewGuid();
+
+        await InsertPaymentAttemptFixtureAsync(
+            parkingSessionId,
+            tariffSnapshotId,
+            paymentAttemptId,
+            vendorSystemId,
+            siteGroupId,
+            siteId,
+            serviceIdentityId);
+
+        try
+        {
+            var firstRepository = new ProviderSessionRepository(
+                CreateConfiguration(),
+                NullLogger<ProviderSessionRepository>.Instance);
+            var secondRepository = new ProviderSessionRepository(
+                CreateConfiguration(),
+                NullLogger<ProviderSessionRepository>.Instance);
+
+            var first = firstRepository.TryReserveInitiationAsync(
+                CreateReservation(firstProviderSessionRecordId, paymentAttemptId),
+                CancellationToken.None);
+            var second = secondRepository.TryReserveInitiationAsync(
+                CreateReservation(secondProviderSessionRecordId, paymentAttemptId),
+                CancellationToken.None);
+
+            var results = await Task.WhenAll(first, second);
+
+            Assert.Single(results, result => result.Outcome == ProviderSessionInitiationReservationOutcome.Acquired);
+            Assert.Single(results, result => result.Outcome == ProviderSessionInitiationReservationOutcome.Existing);
+            Assert.Equal(1, await CountProviderSessionsAsync(paymentAttemptId));
+            Assert.All(results, result =>
+            {
+                Assert.Equal(paymentAttemptId, result.ProviderSession.PaymentAttemptId);
+                Assert.Equal("CREATED", result.ProviderSession.SessionStatus);
+                Assert.Equal(string.Empty, result.ProviderSession.ProviderSessionId);
+            });
+        }
+        finally
+        {
+            await DeletePaymentAttemptFixtureAsync(firstProviderSessionRecordId, paymentAttemptId, tariffSnapshotId, parkingSessionId);
+            await DeleteProviderSessionAsync(secondProviderSessionRecordId);
+        }
+    }
+
     private static void AssertInsertColumnsExistInProviderSessionsDdl(
         string repositorySource,
         string providerSessionsDdl)
     {
-        var insertStart = repositorySource.IndexOf("insert into payments.provider_sessions", StringComparison.Ordinal);
-        Assert.True(insertStart >= 0, "ProviderSessionRepository provider_sessions insert was not found.");
+        var match = Regex.Match(
+            repositorySource,
+            @"insert into payments\.provider_sessions\s*\((?<columns>.*?)\)\s*values",
+            RegexOptions.Singleline | RegexOptions.CultureInvariant);
+        Assert.True(match.Success, "ProviderSessionRepository provider_sessions insert column list was not found.");
 
-        var columnListStart = repositorySource.IndexOf('(', insertStart);
-        var columnListEnd = repositorySource.IndexOf(")\r\n            values", columnListStart, StringComparison.Ordinal);
-        if (columnListEnd < 0)
-        {
-            columnListEnd = repositorySource.IndexOf(")\n            values", columnListStart, StringComparison.Ordinal);
-        }
-
-        Assert.True(columnListEnd > columnListStart, "ProviderSessionRepository provider_sessions insert column list was not found.");
-
-        var columnList = repositorySource[(columnListStart + 1)..columnListEnd];
+        var columnList = match.Groups["columns"].Value;
         var insertColumns = columnList
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .Select(column => column.Trim())
@@ -289,6 +456,45 @@ public sealed class ProviderSessionRepositorySqlContractTests
         var scalar = await command.ExecuteScalarAsync();
         Assert.IsType<Guid>(scalar);
         return (Guid)scalar;
+    }
+
+    private static ProviderSessionInitiationReservation CreateReservation(
+        Guid providerSessionRecordId,
+        Guid paymentAttemptId)
+    {
+        return new ProviderSessionInitiationReservation(
+            providerSessionRecordId,
+            paymentAttemptId,
+            "PAYMONGO_CHECKOUT_SESSION",
+            "provider-initiation-idempotency",
+            Guid.NewGuid(),
+            "{\"AmountMinor\":12500,\"Currency\":\"PHP\"}",
+            12500,
+            "PHP",
+            DateTimeOffset.UtcNow);
+    }
+
+    private static async Task<int> CountProviderSessionsAsync(Guid paymentAttemptId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "select count(*) from payments.provider_sessions where payment_attempt_id = @payment_attempt_id;",
+            connection);
+        command.Parameters.AddWithValue("payment_attempt_id", paymentAttemptId);
+        var scalar = await command.ExecuteScalarAsync();
+        return Convert.ToInt32(scalar);
+    }
+
+    private static async Task DeleteProviderSessionAsync(Guid providerSessionRecordId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "delete from payments.provider_sessions where provider_session_id = @provider_session_id;",
+            connection);
+        command.Parameters.AddWithValue("provider_session_id", providerSessionRecordId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private static async Task InsertPaymentAttemptFixtureAsync(
@@ -401,7 +607,9 @@ public sealed class ProviderSessionRepositorySqlContractTests
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(
             """
-            delete from payments.provider_sessions where provider_session_id = @provider_session_id;
+            delete from payments.provider_sessions
+            where provider_session_id = @provider_session_id
+               or payment_attempt_id = @payment_attempt_id;
             delete from core.payment_attempts where payment_attempt_id = @payment_attempt_id;
             delete from core.tariff_snapshots where tariff_snapshot_id = @tariff_snapshot_id;
             delete from core.parking_sessions where parking_session_id = @parking_session_id;

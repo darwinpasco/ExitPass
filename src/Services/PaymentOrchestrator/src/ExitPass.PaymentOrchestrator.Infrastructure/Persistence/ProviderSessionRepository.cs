@@ -21,6 +21,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Persistence;
 public sealed class ProviderSessionRepository : IProviderSessionRepository
 {
     private const string ServiceIdentityCode = "payment-orchestrator";
+    private const string DuplicateUniqueConstraintSqlState = "23505";
 
     private readonly string _connectionString;
     private readonly ILogger<ProviderSessionRepository> _logger;
@@ -40,6 +41,192 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             ?? throw new InvalidOperationException("Connection string 'MainDatabase' is required.");
 
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    /// <inheritdoc />
+    public async Task<ProviderSessionInitiationReservationResult> TryReserveInitiationAsync(
+        ProviderSessionInitiationReservation reservation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(reservation);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var paymentRailId = await ResolvePaymentRailIdAsync(
+            connection,
+            reservation.ProviderProduct,
+            cancellationToken);
+        var serviceIdentityId = await ResolvePaymentOrchestratorServiceIdentityIdAsync(
+            connection,
+            cancellationToken);
+
+        const string sql = """
+            insert into payments.provider_sessions
+            (
+                provider_session_id,
+                payment_attempt_id,
+                payment_rail_id,
+                provider_session_ref,
+                provider_transaction_ref,
+                idempotency_key,
+                session_status,
+                currency_code,
+                amount,
+                checkout_url,
+                qr_payload,
+                expires_at,
+                provider_created_at,
+                provider_expires_at,
+                raw_provider_metadata_ref,
+                correlation_id,
+                created_by_service_identity_id,
+                updated_by_service_identity_id
+            )
+            values
+            (
+                @provider_session_id,
+                @payment_attempt_id,
+                @payment_rail_id,
+                null,
+                null,
+                @idempotency_key,
+                'CREATED',
+                @currency_code,
+                @amount,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                @correlation_id,
+                @created_by_service_identity_id,
+                @updated_by_service_identity_id
+            );
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("provider_session_id", reservation.ProviderSessionRecordId);
+        command.Parameters.AddWithValue("payment_attempt_id", reservation.PaymentAttemptId);
+        command.Parameters.AddWithValue("payment_rail_id", paymentRailId);
+        command.Parameters.AddWithValue("idempotency_key", reservation.IdempotencyKey);
+        command.Parameters.AddWithValue("currency_code", reservation.CurrencyCode);
+        command.Parameters.AddWithValue("amount", reservation.AmountMinorUnits);
+        command.Parameters.AddWithValue("correlation_id", (object?)reservation.CorrelationId ?? DBNull.Value);
+        command.Parameters.AddWithValue("created_by_service_identity_id", serviceIdentityId);
+        command.Parameters.AddWithValue("updated_by_service_identity_id", serviceIdentityId);
+
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+
+            var reserved = new ProviderSessionRecord(
+                reservation.ProviderSessionRecordId,
+                reservation.PaymentAttemptId,
+                string.Empty,
+                reservation.ProviderProduct,
+                string.Empty,
+                null,
+                "CREATED",
+                null,
+                null,
+                null,
+                reservation.IdempotencyKey,
+                reservation.CorrelationId,
+                reservation.RequestPayloadJson,
+                "{}",
+                reservation.CreatedAtUtc,
+                reservation.AmountMinorUnits,
+                reservation.CurrencyCode);
+
+            _logger.LogInformation(
+                "Reserved provider session initiation. PaymentAttemptId {PaymentAttemptId}, ProviderProduct {ProviderProduct}",
+                reservation.PaymentAttemptId,
+                reservation.ProviderProduct);
+
+            return new ProviderSessionInitiationReservationResult(
+                ProviderSessionInitiationReservationOutcome.Acquired,
+                reserved);
+        }
+        catch (PostgresException exception) when (exception.SqlState == DuplicateUniqueConstraintSqlState)
+        {
+            var existing = await FindLatestByPaymentAttemptIdAsync(
+                reservation.PaymentAttemptId,
+                cancellationToken);
+
+            if (existing is not null)
+            {
+                _logger.LogInformation(
+                    "Provider session initiation already exists. PaymentAttemptId {PaymentAttemptId}, ProviderProduct {ProviderProduct}, ProviderSessionStatus {ProviderSessionStatus}",
+                    reservation.PaymentAttemptId,
+                    existing.ProviderProduct,
+                    existing.SessionStatus);
+
+                return new ProviderSessionInitiationReservationResult(
+                    ProviderSessionInitiationReservationOutcome.Existing,
+                    existing);
+            }
+
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task CompleteInitiationAsync(
+        Guid providerSessionRecordId,
+        ProviderSessionRecord record,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(record);
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        var serviceIdentityId = await ResolvePaymentOrchestratorServiceIdentityIdAsync(
+            connection,
+            cancellationToken);
+
+        const string sql = """
+            update payments.provider_sessions
+            set
+                provider_session_ref = @provider_session_ref,
+                provider_transaction_ref = @provider_transaction_ref,
+                session_status = cast(@session_status as payments.provider_session_status_enum),
+                checkout_url = @checkout_url,
+                qr_payload = @qr_payload,
+                expires_at = @expires_at,
+                provider_expires_at = @provider_expires_at,
+                updated_at = now(),
+                updated_by_service_identity_id = @updated_by_service_identity_id
+            where provider_session_id = @provider_session_id
+              and payment_attempt_id = @payment_attempt_id
+              and provider_session_ref is null;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("provider_session_id", providerSessionRecordId);
+        command.Parameters.AddWithValue("payment_attempt_id", record.PaymentAttemptId);
+        command.Parameters.AddWithValue("provider_session_ref", record.ProviderSessionId);
+        command.Parameters.AddWithValue("provider_transaction_ref", (object?)record.ProviderReference ?? DBNull.Value);
+        command.Parameters.AddWithValue("session_status", NormalizeProviderSessionStatus(record.SessionStatus));
+        command.Parameters.AddWithValue("checkout_url", (object?)record.RedirectUrl ?? DBNull.Value);
+        command.Parameters.AddWithValue("qr_payload", (object?)record.QrPayload ?? DBNull.Value);
+        command.Parameters.AddWithValue("expires_at", (object?)record.ExpiresAtUtc ?? DBNull.Value);
+        command.Parameters.AddWithValue("provider_expires_at", (object?)record.ExpiresAtUtc ?? DBNull.Value);
+        command.Parameters.AddWithValue("updated_by_service_identity_id", serviceIdentityId);
+
+        var rows = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (rows == 0)
+        {
+            throw new InvalidOperationException("Provider session initiation reservation could not be completed.");
+        }
+
+        _logger.LogInformation(
+            "Completed provider session initiation reservation. PaymentAttemptId {PaymentAttemptId}, ProviderProduct {ProviderProduct}, ProviderSessionRef {ProviderSessionRef}",
+            record.PaymentAttemptId,
+            record.ProviderProduct,
+            record.ProviderSessionId);
     }
 
     /// <inheritdoc />
@@ -419,7 +606,9 @@ public sealed class ProviderSessionRepository : IProviderSessionRepository
             PaymentAttemptId: reader.GetGuid(reader.GetOrdinal("payment_attempt_id")),
             ProviderCode: providerCode,
             ProviderProduct: providerProduct,
-            ProviderSessionId: reader.GetString(reader.GetOrdinal("provider_session_ref")),
+            ProviderSessionId: reader.IsDBNull(reader.GetOrdinal("provider_session_ref"))
+                ? string.Empty
+                : reader.GetString(reader.GetOrdinal("provider_session_ref")),
             ProviderReference: reader.IsDBNull(reader.GetOrdinal("provider_transaction_ref"))
                 ? null
                 : reader.GetString(reader.GetOrdinal("provider_transaction_ref")),

@@ -70,6 +70,7 @@ public sealed class PayMongoClient
             $"{_options.BaseUrl.TrimEnd('/')}/v1/checkout_sessions");
 
         request.Headers.Authorization = BuildBasicAuthorizationHeader(_options.SecretKey);
+        request.Headers.TryAddWithoutValidation("Idempotency-Key", command.IdempotencyKey);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         request.Content = new StringContent(requestJson, Encoding.UTF8, "application/json");
 

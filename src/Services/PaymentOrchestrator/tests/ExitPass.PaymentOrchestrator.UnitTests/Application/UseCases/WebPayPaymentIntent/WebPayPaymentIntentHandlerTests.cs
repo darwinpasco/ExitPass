@@ -535,6 +535,79 @@ public sealed class WebPayPaymentIntentHandlerTests
     }
 
     /// <summary>
+    /// Verifies identical payment-intent replay reuses durable provider-session evidence before provider initiation.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenPaymentAttemptReplayHasProviderSession_ReturnsExistingHandoffWithoutProviderCall()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.ProviderSessions.LatestProviderSessionByPaymentAttempt = ExistingProviderSession(
+            "cs_test_replay",
+            "https://payments.test/replay-checkout",
+            "PENDING");
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(PaymentAttemptId, result.Response!.PaymentAttemptId);
+        Assert.Equal("PENDING", result.Response.Status);
+        Assert.Equal("Pending Payment", result.Response.PaymentStatus);
+        Assert.Equal("https://payments.test/replay-checkout", result.Response.Handoff.HandoffUrl);
+        Assert.Null(fixture.CapturedInitiateRequest);
+        Assert.Equal(0, fixture.Handoff.InitiateCallCount);
+    }
+
+    /// <summary>
+    /// Verifies non-resumable provider-session evidence is reported safely instead of creating a second handoff.
+    /// </summary>
+    [Theory]
+    [InlineData("FAILED")]
+    [InlineData("EXPIRED")]
+    [InlineData("UNKNOWN")]
+    public async Task WebPayPaymentIntent_WhenPaymentAttemptReplayHasNonReusableProviderSession_ReturnsSafeRecovery(
+        string sessionStatus)
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.ProviderSessions.LatestProviderSessionByPaymentAttempt = ExistingProviderSession(
+            "cs_test_nonreusable",
+            "https://payments.test/nonreusable",
+            sessionStatus);
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("PAYMENT_PROVIDER_HANDOFF_NOT_REUSABLE", result.Error.ErrorCode);
+        Assert.Equal(PaymentAttemptId, result.Error.PaymentAttemptId);
+        Assert.Equal(sessionStatus, result.Error.Status);
+        Assert.Null(fixture.CapturedInitiateRequest);
+        Assert.Equal(0, fixture.Handoff.InitiateCallCount);
+    }
+
+    /// <summary>
+    /// Verifies an incomplete durable initiation reservation is reported as in progress instead of starting another handoff.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenPaymentAttemptReplayHasFreshIncompleteProviderReservation_ReturnsInProgress()
+    {
+        var fixture = CreateFixture("QRPH", "PAYMONGO", null);
+        fixture.ProviderSessions.LatestProviderSessionByPaymentAttempt = ExistingProviderSession(
+            string.Empty,
+            string.Empty,
+            "CREATED");
+
+        var result = await fixture.Sut.HandleAsync(DefaultRequest("QRPH"), CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(409, result.Error!.StatusCode);
+        Assert.Equal("PAYMENT_PROVIDER_HANDOFF_IN_PROGRESS", result.Error.ErrorCode);
+        Assert.Equal(PaymentAttemptId, result.Error.PaymentAttemptId);
+        Assert.Equal("CREATED", result.Error.Status);
+        Assert.Null(fixture.CapturedInitiateRequest);
+        Assert.Equal(0, fixture.Handoff.InitiateCallCount);
+    }
+
+    /// <summary>
     /// Verifies payment is blocked until the statutory decision has completed Operator Console review.
     /// </summary>
     [Fact]
@@ -1036,6 +1109,31 @@ public sealed class WebPayPaymentIntentHandlerTests
         return request;
     }
 
+    private static ProviderSessionRecord ExistingProviderSession(
+        string providerSessionId,
+        string checkoutUrl,
+        string sessionStatus)
+    {
+        return new ProviderSessionRecord(
+            Guid.Parse("99999999-9999-9999-9999-999999999999"),
+            PaymentAttemptId,
+            "PAYMONGO",
+            "PAYMONGO_CHECKOUT_SESSION",
+            providerSessionId,
+            "pi_test_existing",
+            sessionStatus,
+            checkoutUrl,
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(15),
+            "existing-idempotency-key",
+            CorrelationId,
+            "{}",
+            "{}",
+            DateTimeOffset.UtcNow,
+            12500,
+            "PHP");
+    }
+
     private static CentralPmsStatutoryDiscountDecision StatutoryDecision(
         Guid? parkingSessionId = null,
         Guid? appliedTariffSnapshotId = null,
@@ -1311,6 +1409,21 @@ public sealed class WebPayPaymentIntentHandlerTests
 
         public ProviderSessionRecord? LatestProviderSessionByPaymentAttempt { get; set; }
 
+        public Task<ProviderSessionInitiationReservationResult> TryReserveInitiationAsync(
+            ProviderSessionInitiationReservation reservation,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CompleteInitiationAsync(
+            Guid providerSessionRecordId,
+            ProviderSessionRecord record,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
@@ -1335,7 +1448,9 @@ public sealed class WebPayPaymentIntentHandlerTests
             Guid paymentAttemptId,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(LatestProviderSessionByPaymentAttempt);
+            return Task.FromResult(LatestProviderSessionByPaymentAttempt?.PaymentAttemptId == paymentAttemptId
+                ? LatestProviderSessionByPaymentAttempt
+                : null);
         }
 
         public Task MarkWebhookOutcomeAsync(

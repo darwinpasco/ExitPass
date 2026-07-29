@@ -62,6 +62,44 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     }
 
     /// <summary>
+    /// Verifies identical WebPay payment-intent replay returns the durable provider handoff without initiating a new provider session.
+    /// </summary>
+    [Fact]
+    public async Task WebPayPaymentIntent_WhenPaymentAttemptReplayHasProviderSession_ReturnsExistingHandoffWithoutProviderCall()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        state.LatestProviderSessionByPaymentAttempt = new ProviderSessionRecord(
+            Guid.Parse("88888888-8888-8888-8888-888888888888"),
+            Guid.Parse("66666666-6666-6666-6666-666666666666"),
+            "PAYMONGO",
+            "PAYMONGO_CHECKOUT_SESSION",
+            "cs_test_replay",
+            "reference_test_replay",
+            "PENDING",
+            "https://payments.test/replay-checkout",
+            null,
+            DateTimeOffset.Parse("2026-05-16T12:15:00Z"),
+            "existing-idempotency-key",
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            "{}",
+            "{}",
+            DateTimeOffset.Parse("2026-05-16T12:00:00Z"));
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(Route, DefaultRequest("QRPH"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Null(state.CapturedInitiateRequest);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = body.RootElement;
+        Assert.Equal("66666666-6666-6666-6666-666666666666", root.GetProperty("paymentAttemptId").GetString());
+        Assert.Equal("PENDING", root.GetProperty("status").GetString());
+        Assert.Equal("https://payments.test/replay-checkout", root.GetProperty("handoff").GetProperty("handoffUrl").GetString());
+        Assert.DoesNotContain("providerSessionRef", root.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ux_provider_sessions", root.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// Verifies ticketReference can drive the same flow without QR-source metadata.
     /// </summary>
     [Fact]
@@ -843,6 +881,21 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
                 DateTimeOffset.Parse("2026-05-16T12:00:00Z")));
         }
 
+        public Task<ProviderSessionInitiationReservationResult> TryReserveInitiationAsync(
+            ProviderSessionInitiationReservation reservation,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
+        public Task CompleteInitiationAsync(
+            Guid providerSessionRecordId,
+            ProviderSessionRecord record,
+            CancellationToken cancellationToken)
+        {
+            throw new NotSupportedException();
+        }
+
         public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
         {
             throw new NotSupportedException();
@@ -867,7 +920,9 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             Guid paymentAttemptId,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(LatestProviderSessionByPaymentAttempt);
+            return Task.FromResult(LatestProviderSessionByPaymentAttempt?.PaymentAttemptId == paymentAttemptId
+                ? LatestProviderSessionByPaymentAttempt
+                : null);
         }
 
         public Task MarkWebhookOutcomeAsync(

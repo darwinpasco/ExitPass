@@ -2,10 +2,12 @@ using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Persistence;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Internal;
+using ExitPass.PaymentOrchestrator.Contracts.Payments;
 using ExitPass.PaymentOrchestrator.Contracts.Providers;
 using ExitPass.PaymentOrchestrator.Contracts.Routing;
 using ExitPass.PaymentOrchestrator.Contracts.WebPay;
 using ExitPass.PaymentOrchestrator.Application.Observability;
+using ExitPass.PaymentOrchestrator.Application.UseCases.InitiateProviderPayment;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -16,6 +18,8 @@ namespace ExitPass.PaymentOrchestrator.Application.UseCases.WebPayPaymentIntents
 /// </summary>
 public sealed class WebPayPaymentIntentHandler
 {
+    private static readonly TimeSpan InitiationOwnershipFreshnessWindow = TimeSpan.FromMinutes(5);
+
     private const string RequestedBy = "webpay-api";
     private const string PendingProviderStatus = "PENDING_PROVIDER";
     private const string ActivePaymentAttemptExists = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
@@ -255,6 +259,19 @@ public sealed class WebPayPaymentIntentHandler
             providerProduct,
             correlationId);
 
+        var replayResult = await TryBuildExistingProviderSessionResultAsync(
+            attempt,
+            resolvedParking,
+            paymentMethod,
+            route,
+            providerProduct,
+            correlationId,
+            cancellationToken);
+        if (replayResult is not null)
+        {
+            return replayResult;
+        }
+
         var customerDisplayName = BuildCustomerDisplayName(resolvedParking);
         var customerDescription = BuildCustomerDescription(resolvedParking);
         var metadata = BuildProviderMetadata(
@@ -299,6 +316,35 @@ public sealed class WebPayPaymentIntentHandler
                     customerDisplayName),
                 cancellationToken);
         }
+        catch (ProviderSessionInitiationPendingException exception)
+        {
+            _logger.LogWarning(
+                exception,
+                "Provider handoff cannot be initiated because durable initiation state already exists. PaymentMethod {PaymentMethod}, SelectedProviderCode {SelectedProviderCode}, PaymentAttemptId {PaymentAttemptId}, ProviderSessionStatus {ProviderSessionStatus}, CorrelationId {CorrelationId}",
+                paymentMethod,
+                route.SelectedProviderCode,
+                attempt.PaymentAttemptId,
+                exception.Status,
+                correlationId);
+
+            return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
+                409,
+                exception.ErrorCode,
+                exception.Message,
+                exception.Retryable,
+                correlationId,
+                resolvedParking.ParkingSessionId,
+                exception.PaymentAttemptId,
+                exception.Status,
+                PaymentMethod: paymentMethod,
+                AmountMinorUnits: resolvedParking.NetPayableMinorUnits,
+                Currency: resolvedParking.Currency,
+                SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(resolvedParking.SiteName),
+                TicketReference: BlankToNull(resolvedParking.TicketReference),
+                PlateNumber: BlankToNull(resolvedParking.PlateNumber),
+                SelectedProviderCode: route.SelectedProviderCode,
+                FallbackProviderCode: route.FallbackProviderCode));
+        }
         catch (InvalidOperationException exception)
         {
             _metrics.ProviderCheckoutCreationFailed(route.SelectedProviderCode, providerProduct, exception.GetType().Name);
@@ -326,9 +372,113 @@ public sealed class WebPayPaymentIntentHandler
 
         _metrics.WebPayPaymentIntentCreated(paymentMethod, route.SelectedProviderCode);
 
-        return WebPayPaymentIntentResult.Success(new WebPayPaymentIntentResponse
+        return WebPayPaymentIntentResult.Success(BuildPaymentIntentResponse(
+            attempt.PaymentAttemptId,
+            resolvedParking,
+            paymentMethod,
+            route,
+            handoff,
+            correlationId));
+    }
+
+    private async Task<WebPayPaymentIntentResult?> TryBuildExistingProviderSessionResultAsync(
+        CentralPmsPaymentAttempt attempt,
+        CentralPmsResolvedParking resolvedParking,
+        string paymentMethod,
+        ResolvePaymentProviderRouteResponse route,
+        string providerProduct,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var providerSession = await _providerSessionRepository.FindLatestByPaymentAttemptIdAsync(
+            attempt.PaymentAttemptId,
+            cancellationToken);
+
+        if (providerSession is null)
         {
-            PaymentAttemptId = attempt.PaymentAttemptId,
+            return null;
+        }
+
+        if (!IsReusableProviderSession(providerSession))
+        {
+            if (IsIncompleteInitiationReservation(providerSession))
+            {
+                var age = DateTimeOffset.UtcNow - providerSession.CreatedAtUtc;
+                var isFresh = age <= InitiationOwnershipFreshnessWindow;
+                return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
+                    409,
+                    isFresh ? "PAYMENT_PROVIDER_HANDOFF_IN_PROGRESS" : "PAYMENT_PROVIDER_HANDOFF_RECONCILIATION_REQUIRED",
+                    isFresh
+                        ? "The payment provider handoff is already being prepared. Please retry payment status shortly."
+                        : "The payment provider handoff could not be confirmed safely. Please refresh payment status before retrying.",
+                    true,
+                    correlationId,
+                    resolvedParking.ParkingSessionId,
+                    attempt.PaymentAttemptId,
+                    providerSession.SessionStatus,
+                    PaymentMethod: paymentMethod,
+                    AmountMinorUnits: resolvedParking.NetPayableMinorUnits,
+                    Currency: resolvedParking.Currency,
+                    SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(resolvedParking.SiteName),
+                    TicketReference: BlankToNull(resolvedParking.TicketReference),
+                    PlateNumber: BlankToNull(resolvedParking.PlateNumber),
+                    SelectedProviderCode: route.SelectedProviderCode,
+                    FallbackProviderCode: route.FallbackProviderCode));
+            }
+
+            return WebPayPaymentIntentResult.Failure(new WebPayPaymentIntentError(
+                409,
+                "PAYMENT_PROVIDER_HANDOFF_NOT_REUSABLE",
+                "The existing provider handoff for this payment attempt cannot be resumed safely. Please refresh payment status before starting another provider handoff.",
+                true,
+                correlationId,
+                resolvedParking.ParkingSessionId,
+                attempt.PaymentAttemptId,
+                providerSession.SessionStatus,
+                PaymentMethod: paymentMethod,
+                AmountMinorUnits: resolvedParking.NetPayableMinorUnits,
+                Currency: resolvedParking.Currency,
+                SiteName: WebPayDisplayNameSanitizer.ResolveSiteName(resolvedParking.SiteName),
+                TicketReference: BlankToNull(resolvedParking.TicketReference),
+                PlateNumber: BlankToNull(resolvedParking.PlateNumber),
+                SelectedProviderCode: route.SelectedProviderCode,
+                FallbackProviderCode: route.FallbackProviderCode));
+        }
+
+        _logger.LogInformation(
+            "Reusing existing provider session for WebPay payment intent replay. PaymentAttemptId {PaymentAttemptId}, ProviderCode {ProviderCode}, ProviderProduct {ProviderProduct}, ProviderSessionStatus {ProviderSessionStatus}, CorrelationId {CorrelationId}",
+            attempt.PaymentAttemptId,
+            providerSession.ProviderCode,
+            providerSession.ProviderProduct,
+            providerSession.SessionStatus,
+            correlationId);
+
+        var handoff = BuildProviderHandoffResponseFromRecord(
+            providerSession,
+            route.SelectedProviderCode ?? string.Empty,
+            providerProduct,
+            attempt.PaymentAttemptId);
+
+        return WebPayPaymentIntentResult.Success(BuildPaymentIntentResponse(
+            attempt.PaymentAttemptId,
+            resolvedParking,
+            paymentMethod,
+            route,
+            handoff,
+            correlationId));
+    }
+
+    private static WebPayPaymentIntentResponse BuildPaymentIntentResponse(
+        Guid paymentAttemptId,
+        CentralPmsResolvedParking resolvedParking,
+        string paymentMethod,
+        ResolvePaymentProviderRouteResponse route,
+        InitiateProviderPaymentResponse handoff,
+        Guid correlationId)
+    {
+        return new WebPayPaymentIntentResponse
+        {
+            PaymentAttemptId = paymentAttemptId,
             ParkingSessionId = resolvedParking.ParkingSessionId,
             TariffSnapshotId = resolvedParking.TariffSnapshotId,
             SiteGroupId = resolvedParking.SiteGroupId,
@@ -347,7 +497,7 @@ public sealed class WebPayPaymentIntentHandler
             PaymentStatus = MapPaymentStatusForDisplay(handoff.SessionStatus),
             FeeValidUntil = resolvedParking.FeeValidUntil,
             PaymentMethod = route.PaymentMethod,
-            SelectedProviderCode = route.SelectedProviderCode,
+            SelectedProviderCode = route.SelectedProviderCode ?? string.Empty,
             FallbackProviderCode = route.FallbackProviderCode,
             RoutingReason = route.RoutingReason,
             Status = string.IsNullOrWhiteSpace(handoff.SessionStatus) ? PendingProviderStatus : handoff.SessionStatus,
@@ -359,7 +509,7 @@ public sealed class WebPayPaymentIntentHandler
                 ExpiresAt = handoff.ProviderHandoff.ExpiresAtUtc ?? handoff.ExpiresAtUtc
             },
             CorrelationId = correlationId
-        });
+        };
     }
 
     /// <summary>
@@ -1013,6 +1163,74 @@ public sealed class WebPayPaymentIntentHandler
             WebPayDisplayNameSanitizer.ResolveSiteName(parking.SiteName),
             BlankToNull(parking.TicketReference),
             BlankToNull(parking.PlateNumber));
+    }
+
+    private static bool IsReusableProviderSession(ProviderSessionRecord providerSession)
+    {
+        if (string.IsNullOrWhiteSpace(providerSession.RedirectUrl) &&
+            string.IsNullOrWhiteSpace(providerSession.QrPayload))
+        {
+            return false;
+        }
+
+        return Normalize(providerSession.SessionStatus) is
+            "CREATED" or
+            "ACTIVE" or
+            "HANDOFF_READY" or
+            "PENDING" or
+            "PENDING_PROVIDER" or
+            "PAID" or
+            "SUCCEEDED" or
+            "SUCCESS" or
+            "CONFIRMED";
+    }
+
+    private static bool IsIncompleteInitiationReservation(ProviderSessionRecord providerSession)
+    {
+        if (!string.IsNullOrWhiteSpace(providerSession.ProviderSessionId))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(providerSession.RedirectUrl) ||
+            !string.IsNullOrWhiteSpace(providerSession.QrPayload))
+        {
+            return false;
+        }
+
+        return Normalize(providerSession.SessionStatus) is "CREATED" or "PENDING" or "ACTIVE";
+    }
+
+    private static InitiateProviderPaymentResponse BuildProviderHandoffResponseFromRecord(
+        ProviderSessionRecord providerSession,
+        string selectedProviderCode,
+        string providerProduct,
+        Guid paymentAttemptId)
+    {
+        var handoffType = !string.IsNullOrWhiteSpace(providerSession.RedirectUrl)
+            ? ProviderHandoffType.Redirect
+            : ProviderHandoffType.QrDisplay;
+
+        return new InitiateProviderPaymentResponse(
+            paymentAttemptId,
+            string.IsNullOrWhiteSpace(providerSession.ProviderCode)
+                ? selectedProviderCode
+                : providerSession.ProviderCode,
+            string.IsNullOrWhiteSpace(providerSession.ProviderProduct)
+                ? providerProduct
+                : providerSession.ProviderProduct,
+            providerSession.ProviderSessionId,
+            providerSession.ProviderReference,
+            providerSession.SessionStatus,
+            new ProviderHandoffDto(
+                handoffType,
+                providerSession.RedirectUrl,
+                null,
+                null,
+                providerSession.QrPayload,
+                null,
+                providerSession.ExpiresAtUtc),
+            providerSession.ExpiresAtUtc);
     }
 
     private static WebPayPaymentIntentError BuildProviderConfigurationError(

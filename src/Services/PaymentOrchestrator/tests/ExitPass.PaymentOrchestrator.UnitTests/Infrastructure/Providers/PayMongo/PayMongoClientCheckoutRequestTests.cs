@@ -74,6 +74,8 @@ public sealed class PayMongoClientCheckoutRequestTests
         Assert.Contains($"correlationId={correlationId}", handler.RequestJson);
         Assert.Contains("result=success", handler.RequestJson);
         Assert.Contains("result=cancelled", handler.RequestJson);
+        Assert.True(handler.Request!.Headers.TryGetValues("Idempotency-Key", out var idempotencyHeaders));
+        Assert.Equal("webpay-idempotency", Assert.Single(idempotencyHeaders));
         Assert.Equal("ExitPass Parking Fee - WEBPAY-20260521-FRESH-001", lineItemName);
         Assert.Equal(
             "Site: WebPay Test Site 2026-05-21  Ticket: WEBPAY-20260521-FRESH-001  Plate: WEBPAY001",
@@ -212,10 +214,13 @@ public sealed class PayMongoClientCheckoutRequestTests
 
         public string? RequestJson { get; private set; }
 
+        public HttpRequestMessage? Request { get; private set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            Request = request;
             RequestJson = await request.Content!.ReadAsStringAsync(cancellationToken);
 
             return new HttpResponseMessage(_statusCode)
