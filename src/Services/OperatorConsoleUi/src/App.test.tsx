@@ -116,11 +116,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: /view STAT-OP-SESSION-0001/i }));
 
-    expect(await screen.findByRole("heading", { name: "STAT-OP-SESSION-0001" })).toBeInTheDocument();
-    expect(screen.getByText(firstDraftId)).toBeInTheDocument();
-    expect(screen.getByText("Policy context")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "National fallback policy" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: /Para.aque City/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
+    expect(screen.queryByText(firstDraftId)).not.toBeInTheDocument();
+    expect(screen.getByText("Location eligibility")).toBeInTheDocument();
+    expect(screen.queryByText("Policy context")).not.toBeInTheDocument();
   });
 
   it("TicketLookup_CanStartMetadataOnlyStatutoryDiscountDraftFromEligibleSession", async () => {
@@ -174,10 +173,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
         operatorAttestation: true
       }))
     );
-    expect(await screen.findByRole("heading", { name: "E2E-231-SESSION-001" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
+    expect(screen.getAllByText("E2E-231-SESSION-001").length).toBeGreaterThan(0);
   });
 
-  it("StatutoryDiscountDetail_RendersNationalFallbackPolicyContext", async () => {
+  it("StatutoryDiscountDetail_RendersOperationalEligibilityChecklistWithoutAuditMetadata", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient()}
@@ -185,21 +185,21 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "National fallback policy" })).toBeInTheDocument();
-    expect(screen.getByText("Republic Act No. 9994")).toBeInTheDocument();
-    expect(screen.getAllByText("RA 9994").length).toBeGreaterThan(0);
-    expect(screen.getByText(/no verified local ordinance overrides it/i)).toBeInTheDocument();
-    expect(screen.getByText("Production-ready")).toBeInTheDocument();
-    expect(screen.getAllByText("READY_VERIFIED").length).toBeGreaterThan(0);
-    expect(screen.getByText("Compatibility policy references")).toBeInTheDocument();
-    expect(screen.getByText("Policy readiness is not the same as payment approval.")).toBeInTheDocument();
-    expect(screen.getByText("No raw evidence or ID numbers are displayed here.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /Para.aque City/ })).toBeInTheDocument();
-    expect(screen.getByText("Verified active operational policy; online ordinance text unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
+    expect(screen.getAllByText("Parking discount").length).toBeGreaterThan(0);
+    expect(screen.getByText("Location eligibility")).toBeInTheDocument();
+    expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Valid Senior Citizen ID").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Proof of residency").length).toBeGreaterThan(0);
+    expect(screen.queryByText("PARANAQUE_SC_OPERATIONAL")).not.toBeInTheDocument();
+    expect(screen.queryByText("PH-137604000")).not.toBeInTheDocument();
+    expect(screen.queryByText("8a000000")).not.toBeInTheDocument();
+    expect(screen.queryByText("VERIFIED_ACTIVE_OPERATIONAL")).not.toBeInTheDocument();
+    expect(screen.queryByText("ACTIVE_FOR_TRANSACTION_USE")).not.toBeInTheDocument();
     expect(screen.queryByText(/automatically unverified/i)).not.toBeInTheDocument();
   });
 
-  it("StatutoryDiscountDetail_RendersVerifiedLocalPolicyContext", async () => {
+  it("StatutoryDiscountDetail_RendersRequiredEvidenceAndResidencyWithoutOrdinanceMetadata", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient()}
@@ -207,16 +207,13 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Verified local policy" })).toBeInTheDocument();
-    expect(screen.getAllByText("QC Ordinance 2026-04").length).toBeGreaterThan(0);
-    expect(screen.getByText("RA 10754")).toBeInTheDocument();
-    expect(screen.getByText("Dedicated registry")).toBeInTheDocument();
-    expect(screen.getAllByText("Manual review").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("READY_WITH_MANUAL_REVIEW").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/manual review required before production use/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("QC Ordinance 2026-04").length).toBeGreaterThan(0);
-    expect(screen.getByText(/pwd id - required - masked pwd id reference/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "PWD Parking Privilege" })).toBeInTheDocument();
+    expect(screen.getAllByText("Parking discount").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Valid PWD ID").length).toBeGreaterThan(0);
+    expect(screen.queryByText("QC Ordinance 2026-04")).not.toBeInTheDocument();
+    expect(screen.queryByText("QC_PWD_PARKING_2026")).not.toBeInTheDocument();
+    expect(screen.queryByText("READY_WITH_MANUAL_REVIEW")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/required documents are missing or need review/i).length).toBeGreaterThan(0);
   });
 
   it("StatutoryDiscountDetail_RendersBlockedUnverifiedLocalPolicyState", async () => {
@@ -227,11 +224,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Unverified local policy blocked" })).toBeInTheDocument();
-    expect(screen.getByText("LOCAL_POLICY_BLOCKED")).toBeInTheDocument();
-    expect(screen.getByText("Local policy is not verified for operator use.")).toBeInTheDocument();
-    expect(screen.getAllByText("CONFIGURED_BUT_UNVERIFIED").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/automatic production application is not allowed/i).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
+    expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/location eligibility record is incomplete/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText("LOCAL_POLICY_BLOCKED")).not.toBeInTheDocument();
+    expect(screen.queryByText("CONFIGURED_BUT_UNVERIFIED")).not.toBeInTheDocument();
     expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0);
   });
 
@@ -243,11 +240,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Sandbox/test policy warning" })).toBeInTheDocument();
-    expect(screen.getAllByText("SANDBOX_ONLY").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Sandbox/test").length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/sandbox\/test policies are not production-ready/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/automatic production application is not allowed/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
+    expect(screen.getAllByText("Blocked").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/location eligibility record is incomplete/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText("SANDBOX_ONLY")).not.toBeInTheDocument();
+    expect(screen.queryByText(/sandbox\/test policies are not production-ready/i)).not.toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_ApproveActionCallsDecisionEndpointAndRefreshes", async () => {
@@ -259,8 +256,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/I verified the required beneficiary documents/i));
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
@@ -281,12 +278,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
-    expect(screen.getByText("Reject requires a reason code.")).toBeInTheDocument();
+    expect(screen.getByText("Select a rejection reason.")).toBeInTheDocument();
     expect(onDecision).not.toHaveBeenCalled();
 
-    await userEvent.type(screen.getByLabelText(/reject reason code/i), "ID_NOT_VALID");
+    await userEvent.selectOptions(screen.getByLabelText(/reason for rejection/i), "ID_NOT_VALID");
     await userEvent.click(screen.getByRole("button", { name: "Reject" }));
 
     expect(await screen.findByText("Decision rejected.")).toBeInTheDocument();
@@ -313,7 +310,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
     expect(screen.getByText("You cannot approve or reject your own statutory discount request.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
@@ -335,7 +332,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
     expect(screen.getByText("Decision requires an authorized reviewer.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
@@ -352,12 +349,111 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
     expect(screen.getByText(/approval requires reviewer attestation/i)).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
+    await userEvent.click(screen.getByLabelText(/I verified the required beneficiary documents/i));
+    expect(within(screen.getByLabelText("Decision")).getByText("Ready")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+  });
+
+  it("StatutoryDiscountDetail_AllowsRepresentativeTransactionWhenPresenceIsOptionalNotRequiredOrUnspecified", async () => {
+    const presenceStatuses = ["OPTIONAL", "NOT_REQUIRED", "UNSPECIFIED"];
+
+    for (const presenceStatus of presenceStatuses) {
+      const draft = decisionEligibleDraft({
+        draftId: `47000000-0000-0000-0000-0000000003${presenceStatuses.indexOf(presenceStatus)}1`,
+        governingPolicy: governingPolicy({
+          beneficiaryResidencyScope: "UNRESTRICTED_VALID_ID",
+          requiredEvidenceTypes: [
+            {
+              evidenceType: "SENIOR_CITIZEN_ID",
+              requirementStatus: "REQUIRED",
+              safeRequirementLabel: "Masked statutory ID reference"
+            },
+            {
+              evidenceType: "BENEFICIARY_PRESENCE",
+              requirementStatus: presenceStatus,
+              safeRequirementLabel: "Beneficiary presence"
+            }
+          ]
+        })
+      });
+
+      const { unmount } = render(
+        <App
+          apiClient={createMockOperatorConsoleApiClient({ drafts: [draft] })}
+          initialPath={`/operator-console/statutory-discounts/${draft.draftId}`}
+        />
+      );
+
+      expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
+      expect(screen.getAllByText("Valid Senior Citizen ID").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Beneficiary must be present")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByLabelText(/I verified the required beneficiary documents/i));
+      expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+      unmount();
+    }
+  });
+
+  it("StatutoryDiscountDetail_BlocksApprovalForExplicitDriverOrPassengerRequirementsUntilEvidenceIsSatisfied", async () => {
+    const driverDraft = decisionEligibleDraft({
+      draftId: "47000000-0000-0000-0000-000000000321",
+      evidenceRequiredSatisfied: false,
+      governingPolicy: governingPolicy({
+        beneficiaryResidencyScope: "UNRESTRICTED_VALID_ID",
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "BENEFICIARY_DRIVER",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Beneficiary is the driver"
+          }
+        ]
+      })
+    });
+    const passengerDraft = decisionEligibleDraft({
+      draftId: "47000000-0000-0000-0000-000000000322",
+      evidenceRequiredSatisfied: false,
+      governingPolicy: governingPolicy({
+        beneficiaryResidencyScope: "UNRESTRICTED_VALID_ID",
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "BENEFICIARY_PASSENGER",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Beneficiary is a passenger"
+          }
+        ]
+      })
+    });
+
+    const driverRender = render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [driverDraft] })}
+        initialPath={`/operator-console/statutory-discounts/${driverDraft.draftId}`}
+      />
+    );
+
+    await waitFor(() => expect(screen.getAllByText("Beneficiary must be the driver").length).toBeGreaterThan(0));
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
+    expect(screen.getByText(/required driver condition is verified/i)).toBeInTheDocument();
+    driverRender.unmount();
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [passengerDraft] })}
+        initialPath={`/operator-console/statutory-discounts/${passengerDraft.draftId}`}
+      />
+    );
+
+    await waitFor(() => expect(screen.getAllByText("Beneficiary must be a passenger").length).toBeGreaterThan(0));
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
+    expect(screen.getByText(/required passenger condition is verified/i)).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_DisablesApprovalWhenFrozenGoverningPolicyAuthorityIsMissing", async () => {
@@ -373,9 +469,14 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Frozen policy authority missing" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getAllByText(/did not return frozen governing-policy authority/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/location eligibility record is incomplete/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Parking-location eligibility could not be confirmed.")).toBeInTheDocument();
+    expect(screen.getByText("Reject the request or ask support to refresh the parking-location record.")).toBeInTheDocument();
+    expect(screen.queryByText("This parking location is eligible for the requested privilege.")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
   });
 
@@ -395,9 +496,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: /Para.aque City/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Senior Citizen Parking Privilege" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getAllByText(/governing-policy readback is incomplete/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/location eligibility record is incomplete/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Parking-location eligibility could not be confirmed.")).toBeInTheDocument();
+    expect(screen.queryByText("This parking location is eligible for the requested privilege.")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_DisablesApprovalWhenBenefitEffectIsUnsupported", async () => {
@@ -416,9 +520,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByText("FULL_FEE_EXEMPTION")).toBeInTheDocument();
+    expect(await screen.findByText("Free parking")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getAllByText(/benefit effect is not supported/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/parking benefit is not supported/i).length).toBeGreaterThan(0);
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
   });
 
   it("StatutoryDiscountDetail_HidesDecisionControlsAfterApprovalAndPayableBasisApplication", async () => {
@@ -437,8 +543,39 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
-    expect(screen.getByText("Decision is read-only because payable basis has already been applied.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
+    expect(screen.getByText("Parking privilege approved")).toBeInTheDocument();
+    expect(screen.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
+    expect(screen.queryByText("Ready for review")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
+  });
+
+  it("StatutoryDiscountDetail_ShowsRejectedRequestAsReadOnlyWithoutReadyBadgesOrCanonicalReasonCode", async () => {
+    const rejectedDraft: StatutoryDiscountDraftDetail = {
+      ...createApprovedDraft(),
+      draftId: "47000000-0000-0000-0000-000000000208",
+      status: "Rejected",
+      decisionReasonCode: "ID_NOT_VALID",
+      auditActivity: ["Evidence captured.", "Decision rejected."]
+    };
+
+    render(
+      <App
+        apiClient={createMockOperatorConsoleApiClient({ drafts: [rejectedDraft] })}
+        initialPath={`/operator-console/statutory-discounts/${rejectedDraft.draftId}`}
+      />
+    );
+
+    expect(await screen.findByText("Parking privilege rejected")).toBeInTheDocument();
+    expect(screen.getByText("Document is invalid")).toBeInTheDocument();
+    expect(screen.queryByText("Ready for review")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Rejected").length).toBeGreaterThan(0);
+    expect(screen.queryByText("ID_NOT_VALID")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
   });
@@ -451,13 +588,16 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Evidence" })).toBeInTheDocument();
-    expect(await screen.findByText(/no evidence metadata has been captured/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Document review" })).toBeInTheDocument();
+    expect(screen.getAllByText("Valid PWD ID").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Missing").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    expect(screen.getAllByText(/approval is blocked until required evidence is captured/i).length).toBeGreaterThan(0);
+    expect(within(screen.getByLabelText("Decision")).getByText("Blocked")).toBeInTheDocument();
+    expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
+    expect(screen.getAllByText(/required documents are missing or need review/i).length).toBeGreaterThan(0);
   });
 
-  it("StatutoryDiscountDetail_DisablesApplyPayableBasisBeforeApproval", async () => {
+  it("StatutoryDiscountDetail_HidesParkingAmountUpdateBeforeApproval", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient()}
@@ -465,12 +605,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Apply payable basis" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
-    expect(screen.getAllByText(/payable basis can be applied only after approval/i).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
   });
 
-  it("StatutoryDiscountDetail_EnablesApplyPayableBasisAfterApprovalAndDisablesOnceApplied", async () => {
+  it("StatutoryDiscountDetail_ApprovesDecisionOnlyAndShowsLaterPaymentApplicationGuidance", async () => {
     const onPayableBasisApply = vi.fn();
     render(
       <App
@@ -479,28 +619,21 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText(/I verified the required beneficiary documents/i));
     await userEvent.click(screen.getByRole("button", { name: "Approve" }));
 
     expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Apply payable basis" })).toBeEnabled();
-
-    await userEvent.click(screen.getByRole("button", { name: "Apply payable basis" }));
-
-    expect(await screen.findByText("Payable basis applied.")).toBeInTheDocument();
-    expect(onPayableBasisApply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        draftId: firstDraftId,
-        originalTariffSnapshotId: "23100000-0000-0000-0000-000000000004"
-      })
-    );
-    expect(await screen.findByText(/this did not create payment, exit authorization, coupon, or gate records/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
-    expect(screen.getAllByText(/payable basis has already been applied/i).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Parking privilege approved")).toBeInTheDocument();
+    expect(screen.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Original tariff snapshot")).not.toBeInTheDocument();
+    expect(screen.queryByText("Application ID")).not.toBeInTheDocument();
+    expect(onPayableBasisApply).not.toHaveBeenCalled();
   });
 
-  it("StatutoryDiscountDetail_AllowsApplyWhenApprovedAndBackendDerivesOriginalTariffSnapshot", async () => {
+  it("StatutoryDiscountDetail_DoesNotExposeAmountApplicationForApprovedDecisionWithoutSnapshot", async () => {
     const onPayableBasisApply = vi.fn();
     const approvedDraftWithoutSnapshot: StatutoryDiscountDraftDetail = {
       ...createApprovedDraft(),
@@ -520,19 +653,12 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Apply payable basis" })).toBeInTheDocument();
-    expect(screen.getByText("Ready to apply")).toBeInTheDocument();
-    expect(screen.getByText("Original tariff snapshot").closest("div")).toHaveTextContent("Not available");
-
-    await userEvent.click(screen.getByRole("button", { name: "Apply payable basis" }));
-
-    expect(await screen.findByText("Payable basis applied.")).toBeInTheDocument();
-    expect(onPayableBasisApply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        draftId: approvedDraftWithoutSnapshot.draftId,
-        originalTariffSnapshotId: undefined
-      })
-    );
+    expect(await screen.findByText("Parking privilege approved")).toBeInTheDocument();
+    expect(screen.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Original tariff snapshot")).not.toBeInTheDocument();
+    expect(onPayableBasisApply).not.toHaveBeenCalled();
   });
 
   it("StatutoryDiscountDetail_CapturesEvidenceAndEnablesApprovalAfterRefresh", async () => {
@@ -544,15 +670,15 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Evidence" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Document review" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
 
-    await userEvent.click(await screen.findByLabelText(/operator confirms evidence was reviewed/i));
-    await userEvent.click(await screen.findByRole("button", { name: "Capture evidence" }));
+    await userEvent.click(await screen.findByLabelText(/document is verified/i));
+    await userEvent.click(await screen.findByRole("button", { name: "Mark as verified" }));
 
-    expect(await screen.findByText("Evidence metadata captured.")).toBeInTheDocument();
-    expect(await screen.findByText("Required evidence is captured.")).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
+    expect(await screen.findByText("Document marked as verified.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("Verified").length).toBeGreaterThan(0));
+    await userEvent.click(screen.getByLabelText(/I verified the required beneficiary documents/i));
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(onEvidenceCapture).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -604,11 +730,11 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Operator readiness state" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
-    expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Apply payable basis" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Mark as verified" })).toBeDisabled();
     expect(screen.getAllByText(/readiness check is blocking controlled operator console actions/i).length).toBeGreaterThan(0);
   });
 
@@ -620,13 +746,16 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Decision actions" })).toBeInTheDocument();
-    expect((await screen.findAllByText("READY")).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Operator readiness state" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
-    await userEvent.click(screen.getByLabelText(/I confirm the entitlement and evidence were reviewed/i));
+    await userEvent.click(screen.getByLabelText(/I verified the required beneficiary documents/i));
     expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
-    expect(await screen.findByRole("button", { name: "Capture evidence" })).toBeEnabled();
+    const markReviewedButton = await screen.findByRole("button", { name: "Mark as verified" });
+    expect(markReviewedButton).toBeDisabled();
+    await userEvent.click(screen.getByLabelText(/document is verified/i));
+    expect(markReviewedButton).toBeEnabled();
   });
 
   it("TicketLookup_LooksUpByTicketOnlyAndShowsConfirmedVendorExitInstruction", async () => {
@@ -967,7 +1096,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByRole("button", { name: /PDF|HTML|QR/i })).not.toBeInTheDocument();
   });
 
-  it("StatutoryDiscountDetail_EvidencePanelShowsMetadataOnlyAndMaskedReferenceGuidance", async () => {
+  it("StatutoryDiscountDetail_ShowsCompactDocumentReviewWithoutCaptureInternals", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient()}
@@ -975,15 +1104,14 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(await screen.findByRole("heading", { name: "Evidence" })).toBeInTheDocument();
-    expect(screen.getByText(/metadata-only evidence capture/i)).toBeInTheDocument();
-    expect(screen.getByText(/do not upload or enter raw id numbers/i)).toBeInTheDocument();
-
-    await userEvent.selectOptions(await screen.findByLabelText(/capture method/i), "MANUAL_REFERENCE");
-
-    expect(screen.getByLabelText(/masked id reference \/ last 4 only/i)).toBeInTheDocument();
-    expect(screen.getByText("Do not enter the full ID number.")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("****1234")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Document review" })).toBeInTheDocument();
+    expect(screen.getAllByText("Valid PWD ID").length).toBeGreaterThan(0);
+    expect(screen.getByRole("checkbox", { name: /document is verified/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark as verified" })).toBeDisabled();
+    expect(screen.queryByText(/metadata-only evidence capture/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/do not upload or enter raw id numbers/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/masked id reference/i)).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("****1234")).not.toBeInTheDocument();
   });
 
   it("FiscalStatusViewer_RecordedWithFiscalDocumentNumberShowsIssuedAndNumber", async () => {

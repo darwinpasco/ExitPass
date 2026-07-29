@@ -17,19 +17,33 @@ const contentTypes = {
 };
 
 const scenarioIds = {
-  active: "active-authority",
+  seniorRepresentative: "senior-representative-optional",
+  pwdRepresentative: "pwd-representative-unspecified",
+  residencyRequired: "residency-required",
+  driverRequired: "driver-required",
+  passengerRequired: "passenger-required",
+  missingEvidence: "missing-evidence",
   missing: "missing-authority",
   malformed: "malformed-authority",
   unsupported: "unsupported-effect",
-  paranaque: "paranaque-operational"
+  paranaque: "paranaque-operational",
+  approved: "approved-request",
+  rejected: "rejected-request"
 };
 
 const scenarioParkingSessionIds = {
-  [scenarioIds.active]: "20000000-0000-0000-0000-000000000101",
+  [scenarioIds.seniorRepresentative]: "20000000-0000-0000-0000-000000000101",
+  [scenarioIds.pwdRepresentative]: "20000000-0000-0000-0000-000000000106",
+  [scenarioIds.residencyRequired]: "20000000-0000-0000-0000-000000000107",
+  [scenarioIds.driverRequired]: "20000000-0000-0000-0000-000000000108",
+  [scenarioIds.passengerRequired]: "20000000-0000-0000-0000-000000000109",
+  [scenarioIds.missingEvidence]: "20000000-0000-0000-0000-000000000110",
   [scenarioIds.missing]: "20000000-0000-0000-0000-000000000102",
   [scenarioIds.malformed]: "20000000-0000-0000-0000-000000000103",
   [scenarioIds.unsupported]: "20000000-0000-0000-0000-000000000104",
-  [scenarioIds.paranaque]: "20000000-0000-0000-0000-000000000105"
+  [scenarioIds.paranaque]: "20000000-0000-0000-0000-000000000105",
+  [scenarioIds.approved]: "20000000-0000-0000-0000-000000000111",
+  [scenarioIds.rejected]: "20000000-0000-0000-0000-000000000112"
 };
 
 function writeJson(response, statusCode, body) {
@@ -132,8 +146,8 @@ function governingPolicy(overrides = {}) {
       },
       {
         evidenceType: "BENEFICIARY_PRESENCE",
-        requirementStatus: "REQUIRED",
-        safeRequirementLabel: "Beneficiary present at review"
+        requirementStatus: "OPTIONAL",
+        safeRequirementLabel: "Representative transaction allowed"
       }
     ],
     legalApprovabilityReason:
@@ -195,7 +209,134 @@ function baseDraft(id, overrides = {}) {
 }
 
 const drafts = new Map([
-  [scenarioIds.active, baseDraft(scenarioIds.active)],
+  [
+    scenarioIds.seniorRepresentative,
+    baseDraft(scenarioIds.seniorRepresentative, {
+      entitlementType: "SENIOR_CITIZEN",
+      policyName: "Senior Citizen representative parking discount",
+      requiredEvidenceType: "SENIOR_CITIZEN_ID",
+      requiredEvidenceTypes: ["SENIOR_CITIZEN_ID"],
+      governingPolicy: governingPolicy({
+        policyCode: "QC_SC_REPRESENTATIVE_2026",
+        ordinanceTitle: "Quezon City Senior Citizen Parking Benefit",
+        benefitType: "STATUTORY_DISCOUNT_VAT_EXEMPT",
+        beneficiaryResidencyScope: "UNRESTRICTED_VALID_ID",
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "SENIOR_CITIZEN_ID",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Masked statutory ID reference"
+          },
+          {
+            evidenceType: "BENEFICIARY_PRESENCE",
+            requirementStatus: "OPTIONAL",
+            safeRequirementLabel: "Representative transaction allowed"
+          }
+        ]
+      })
+    })
+  ],
+  [
+    scenarioIds.pwdRepresentative,
+    baseDraft(scenarioIds.pwdRepresentative, {
+      entitlementType: "PWD",
+      policyName: "PWD representative parking discount",
+      requiredEvidenceType: "PWD_ID",
+      requiredEvidenceTypes: ["PWD_ID"],
+      governingPolicy: governingPolicy({
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "PWD_ID",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Masked PWD ID reference"
+          },
+          {
+            evidenceType: "BENEFICIARY_PRESENCE",
+            requirementStatus: "UNSPECIFIED",
+            safeRequirementLabel: "Representative transaction allowed"
+          }
+        ]
+      })
+    })
+  ],
+  [
+    scenarioIds.residencyRequired,
+    baseDraft(scenarioIds.residencyRequired, {
+      entitlementType: "SENIOR_CITIZEN",
+      evidenceRequiredSatisfied: false,
+      latestEvidenceStatus: "MISSING",
+      policyName: "Residency-required Senior Citizen parking privilege",
+      requiredEvidenceType: "SENIOR_CITIZEN_ID",
+      requiredEvidenceTypes: ["SENIOR_CITIZEN_ID", "RESIDENCY_EVIDENCE"],
+      governingPolicy: governingPolicy({
+        policyCode: "QC_SC_RESIDENT_ONLY_2026",
+        beneficiaryResidencyScope: "RESIDENT_ONLY",
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "SENIOR_CITIZEN_ID",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Masked statutory ID reference"
+          },
+          {
+            evidenceType: "RESIDENCY_EVIDENCE",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Proof of residency"
+          }
+        ]
+      })
+    })
+  ],
+  [
+    scenarioIds.driverRequired,
+    baseDraft(scenarioIds.driverRequired, {
+      evidenceRequiredSatisfied: false,
+      latestEvidenceStatus: "MISSING",
+      requiredEvidenceTypes: ["PWD_ID", "BENEFICIARY_DRIVER"],
+      governingPolicy: governingPolicy({
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "PWD_ID",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Masked PWD ID reference"
+          },
+          {
+            evidenceType: "BENEFICIARY_DRIVER",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Beneficiary is the driver"
+          }
+        ]
+      })
+    })
+  ],
+  [
+    scenarioIds.passengerRequired,
+    baseDraft(scenarioIds.passengerRequired, {
+      evidenceRequiredSatisfied: false,
+      latestEvidenceStatus: "MISSING",
+      requiredEvidenceTypes: ["PWD_ID", "BENEFICIARY_PASSENGER"],
+      governingPolicy: governingPolicy({
+        requiredEvidenceTypes: [
+          {
+            evidenceType: "PWD_ID",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Masked PWD ID reference"
+          },
+          {
+            evidenceType: "BENEFICIARY_PASSENGER",
+            requirementStatus: "REQUIRED",
+            safeRequirementLabel: "Beneficiary is a passenger"
+          }
+        ]
+      })
+    })
+  ],
+  [
+    scenarioIds.missingEvidence,
+    baseDraft(scenarioIds.missingEvidence, {
+      evidenceRequiredSatisfied: false,
+      latestEvidenceStatus: "MISSING"
+    })
+  ],
   [
     scenarioIds.missing,
     baseDraft(scenarioIds.missing, {
@@ -271,6 +412,25 @@ const drafts = new Map([
           "Central PMS resolved verified active operational Paranaque resident benefit authority; online ordinance text is unavailable."
       }),
       activity: ["Paranaque verified active operational policy displayed without inventing ordinance number."]
+    })
+  ],
+  [
+    scenarioIds.approved,
+    baseDraft(scenarioIds.approved, {
+      validationStatus: "APPROVED",
+      evidenceRequiredSatisfied: true,
+      latestEvidenceStatus: "VERIFIED_METADATA_ONLY",
+      activity: ["Decision approved by reviewer."]
+    })
+  ],
+  [
+    scenarioIds.rejected,
+    baseDraft(scenarioIds.rejected, {
+      validationStatus: "REJECTED",
+      evidenceRequiredSatisfied: true,
+      latestEvidenceStatus: "VERIFIED_METADATA_ONLY",
+      decisionReasonCode: "ID_NOT_VALID",
+      activity: ["Decision rejected by reviewer."]
     })
   ]
 ]);

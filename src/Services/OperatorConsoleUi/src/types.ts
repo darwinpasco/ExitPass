@@ -84,6 +84,7 @@ export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem
   statutoryDiscountAmountMinorUnits?: number;
   finalPayableAmountMinorUnits?: number;
   payableBasisApplicationStatus?: string;
+  decisionReasonCode?: string | null;
   governingPolicy?: StatutoryDiscountGoverningPolicy;
   auditActivity: string[];
 }

@@ -56,11 +56,17 @@ try {
     if ($ServerOnly) {
         Write-Host "Operator Console ordinance browser-smoke fixture is ready at http://127.0.0.1:$port"
         Write-Host "Open these deterministic scenario URLs:"
-        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/active-authority"
-        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/missing-authority"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/senior-representative-optional"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/pwd-representative-unspecified"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/residency-required"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/driver-required"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/passenger-required"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/missing-evidence"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/malformed-authority"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/unsupported-effect"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/paranaque-operational"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/approved-request"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/rejected-request"
         Read-Host "Press Enter to stop the fixture server"
         return
     }

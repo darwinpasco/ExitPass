@@ -586,6 +586,134 @@ dd {
   border-left-color: #2f8a6a;
 }
 
+.reviewerChecklistPanel {
+  border-left: 5px solid #2f8a6a;
+}
+
+.reviewerSummaryGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.reviewerSummaryItem {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  min-height: 76px;
+  padding: 12px;
+}
+
+.reviewerSummaryItem span {
+  color: #61717e;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.reviewerSummaryItem strong {
+  color: #1b252f;
+  font-size: 1rem;
+}
+
+.reviewerChecklistGrid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+}
+
+.reviewerChecklistGrid h4 {
+  margin: 0 0 10px;
+}
+
+.operationalCheckList {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.operationalCheckList li {
+  border: 1px solid #e2e9ee;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.operationalCheckList span {
+  color: #465969;
+}
+
+.compactEvidencePanel {
+  border-left: 5px solid #6f9ead;
+}
+
+.compactEvidenceGrid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+}
+
+.compactEvidenceGrid h4 {
+  margin: 0 0 10px;
+}
+
+.documentStatusList {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.documentStatusList li {
+  align-items: center;
+  border: 1px solid #e2e9ee;
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.documentStatusList span {
+  color: #1b252f;
+}
+
+.documentStatusList strong {
+  color: #1f6a4b;
+}
+
+.compactEvidenceForm {
+  background: #f7fafb;
+  border: 1px solid #dfe5ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.compactEvidenceForm label {
+  color: #465969;
+  display: grid;
+  font-size: 0.9rem;
+  font-weight: 700;
+  gap: 7px;
+}
+
+.compactEvidenceForm textarea {
+  min-height: 62px;
+}
+
+.compactPayablePanel {
+  border-left: 5px solid #d7a63b;
+}
+
 .policy-blocked-unverified-local,
 .policy-unsupported-entitlement,
 .policy-missing-site-jurisdiction {
@@ -1104,6 +1232,9 @@ dd {
     .readinessDimensionGrid,
     .ticketLookupForm,
     .evidenceLayout,
+    .reviewerSummaryGrid,
+    .reviewerChecklistGrid,
+    .compactEvidenceGrid,
     .reviewDetailGrid {
     display: grid;
     grid-template-columns: 1fr;

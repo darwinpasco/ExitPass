@@ -27,10 +27,8 @@ import type {
   ProductionPolicyImportReviewResult,
   StatutoryDiscountDraftDetail,
   StatutoryDiscountEvidenceList,
-  EvidenceCaptureMethod,
   EvidenceType,
   OperatorTicketLookupResult,
-  StatutoryDiscountPayableBasisApplicationResult,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem,
   VendorPaymentAcknowledgmentDetail,
@@ -214,11 +212,13 @@ export function App({ apiClient, initialPath }: AppProps) {
         </aside>
 
         <section className="workspace">
-          <AccessReadinessPanel
-            state={readinessState}
-            usesLocalDevFallbackContext={devModeContext.usesLocalDevFallbackContext}
-            onRefresh={() => refreshReadiness("SESSION_LOOKUP")}
-          />
+          {!draftId && (
+            <AccessReadinessPanel
+              state={readinessState}
+              usesLocalDevFallbackContext={devModeContext.usesLocalDevFallbackContext}
+              onRefresh={() => refreshReadiness("SESSION_LOOKUP")}
+            />
+          )}
           {draftId ? (
             <StatutoryDiscountDetailPage
               client={client}
@@ -3579,11 +3579,6 @@ function DraftDetail({
   const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [submittingDecision, setSubmittingDecision] = useState<"APPROVE" | "REJECT" | null>(null);
-  const [payableBasisMessage, setPayableBasisMessage] = useState<string | null>(null);
-  const [payableBasisError, setPayableBasisError] = useState<string | null>(null);
-  const [submittingPayableBasis, setSubmittingPayableBasis] = useState(false);
-  const [latestPayableBasisResult, setLatestPayableBasisResult] =
-    useState<StatutoryDiscountPayableBasisApplicationResult | null>(null);
   const decisionable = detail.status === "Requested" || detail.status === "Pending Review";
   const canApproveDecision = client.canApproveStatutoryDiscount?.() ?? true;
   const canRejectDecision = client.canRejectStatutoryDiscount?.() ?? true;
@@ -3599,14 +3594,15 @@ function DraftDetail({
     readinessBlockReason ?? approvalBlockReason(detail, submittingDecision !== null, reviewerPolicyAttestation);
   const rejectDisabledReason =
     readinessBlockReason ?? (!decisionable ? "Decision is read-only for the current validation status." : null);
-  const payableBasisDisabledReason = readinessBlockReason ?? payableBasisBlockReason(detail, submittingPayableBasis);
+  const decisionPanelStatus = !showDecisionControls ? "Read-only" : approvalDisabledReason ? "Blocked" : "Ready";
+  const pageStatusLabel = statutoryReviewPageStatus(detail, showDecisionControls, approvalDisabledReason);
 
   async function submitDecision(decision: "APPROVE" | "REJECT") {
     setDecisionMessage(null);
     setDecisionError(null);
 
     if (decision === "REJECT" && rejectReason.trim().length === 0) {
-      setDecisionError("Reject requires a reason code.");
+      setDecisionError("Select a rejection reason.");
       return;
     }
 
@@ -3635,124 +3631,33 @@ function DraftDetail({
     }
   }
 
-  async function applyPayableBasis() {
-    setPayableBasisMessage(null);
-    setPayableBasisError(null);
-
-    if (payableBasisDisabledReason) {
-      setPayableBasisError(payableBasisDisabledReason);
-      return;
-    }
-
-    setSubmittingPayableBasis(true);
-    try {
-      const result = await client.applyStatutoryDiscountPayableBasis({
-        draftId: detail.draftId,
-        siteId: detail.siteId,
-        siteGroupId: detail.siteGroupId,
-        originalTariffSnapshotId: detail.originalTariffSnapshotId
-      });
-
-      if (!result.accepted) {
-        setPayableBasisError(result.message);
-        return;
-      }
-
-      setLatestPayableBasisResult(result);
-      setPayableBasisMessage(result.message);
-      refreshDetail();
-    } catch (error) {
-      setPayableBasisError(mapApiError(error).message);
-    } finally {
-      setSubmittingPayableBasis(false);
-    }
-  }
-
   return (
     <>
       <section className="pageTitle">
         <div>
-          <p className="eyebrow">Draft detail</p>
-          <h2>{detail.ticketReference}</h2>
-          <p>
-            {detail.entitlementType} validation for plate {detail.plateNumber} at {detail.siteName}.
-          </p>
+          <p className="eyebrow">Statutory review</p>
+          <h2>{plainEntitlementLabel(detail.entitlementType)} Parking Privilege</h2>
+          <p>{detail.ticketReference} / {detail.plateNumber}</p>
         </div>
-        <span className={`statusPill ${statusClass(detail.status)}`}>{detail.status}</span>
+        <span className={`statusPill ${statusClassForOperationalState(pageStatusLabel)}`}>{pageStatusLabel}</span>
       </section>
 
-      <section className="detailGrid">
-        <section className="panel" aria-labelledby="draft-summary-title">
-          <div className="panelHeader">
-            <h3 id="draft-summary-title">Draft summary</h3>
-          </div>
-          <DescriptionList
-            items={[
-              ["Draft ID", detail.draftId],
-              ["Parking session", detail.parkingSessionId],
-              ["Ticket reference", detail.ticketReference],
-              ["Plate number", detail.plateNumber],
-              ["Current status", detail.status],
-              ["Requested by", detail.requestedBy],
-              ["Requested at", formatDateTime(detail.requestedAt)]
-            ]}
-          />
-        </section>
+      <StatutoryReviewEligibilityPanel detail={detail} />
 
-        <section className="panel" aria-labelledby="session-context-title">
-          <div className="panelHeader">
-            <h3 id="session-context-title">Parking session context</h3>
-          </div>
-          <DescriptionList
-            items={[
-              ["Site", detail.siteName],
-              ["Lane", detail.laneName],
-              ["Started", formatDateTime(detail.parkingStartedAt)],
-              ["Payment status", detail.currentPaymentStatus],
-              ["Original tariff amount", detail.originalTariffAmount],
-              ["Payable-basis preview", detail.payableBasisPreview]
-            ]}
-          />
-        </section>
-
-        <section className="panel" aria-labelledby="entitlement-title">
-          <div className="panelHeader">
-            <h3 id="entitlement-title">Entitlement context</h3>
-          </div>
-          <DescriptionList
-            items={[
-              ["Entitlement type", detail.entitlementType],
-              ["Masked ID reference", detail.maskedIdReference],
-              ["Issuing authority", detail.issuingAuthority],
-              ["Evidence required", detail.policyContext.evidenceRequired ? "Yes" : "No"],
-              ["Evidence captured", detail.evidenceCaptured ? "Yes" : "No"],
-              ["Evidence satisfied", detail.evidenceRequiredSatisfied ? "Yes" : "No"],
-              ["Evidence count", String(detail.evidenceCount)],
-              ["Latest evidence status", detail.latestEvidenceStatus ?? "None"]
-            ]}
-          />
-        </section>
-      </section>
-
-      <WorkflowStatePanel detail={detail} payableBasisResult={latestPayableBasisResult} />
-
-      <PolicyContextDisplay policy={detail.policyContext} />
-
-      <GoverningOrdinancePanel detail={detail} />
-
-      <EvidencePanel
+      <CompactEvidencePanel
         detail={detail}
         client={client}
         refreshDetail={refreshDetail}
         readinessBlockReason={readinessBlockReason}
+        readOnly={!showDecisionControls}
       />
 
       <section className="panel" aria-labelledby="decision-title">
         <div className="panelHeader">
-          <h3 id="decision-title">Decision actions</h3>
-          <span className="statusPill">{showDecisionControls ? "Ready" : "Read-only status"}</span>
+          <h3 id="decision-title">Decision</h3>
+          <span className={`statusPill ${decisionPanelStatus === "Blocked" ? "blocked" : ""}`}>{decisionPanelStatus}</span>
         </div>
-        {decisionReadOnlyReason && <p className="notice">{decisionReadOnlyReason}</p>}
+        {decisionReadOnlyReason && <StatutoryDecisionReadOnlySummary detail={detail} fallbackReason={decisionReadOnlyReason} />}
         {showDecisionControls && approvalDisabledReason && <p className="notice">{approvalDisabledReason}</p>}
         {showDecisionControls && rejectDisabledReason && <p className="notice">{rejectDisabledReason}</p>}
         {decisionMessage && <p className="successMessage">{decisionMessage}</p>}
@@ -3765,17 +3670,22 @@ function DraftDetail({
                 checked={reviewerPolicyAttestation}
                 onChange={(event) => setReviewerPolicyAttestation(event.target.checked)}
               />
-              I confirm the entitlement and evidence were reviewed under the Central PMS governing ordinance shown above, and I did not select or alter the jurisdiction, policy, benefit effect, or payable-basis snapshot.
+              I verified the required beneficiary documents and confirmed that the request meets the applicable parking-privilege requirements.
             </label>
             {canRejectDecision && (
               <label className="reasonField">
-                Reject reason code
-                <input
-                  type="text"
+                Reason for rejection
+                <select
                   value={rejectReason}
-                  placeholder="ID_NOT_VALID"
                   onChange={(event) => setRejectReason(event.target.value)}
-                />
+                >
+                  <option value="">Select a reason</option>
+                  {statutoryDiscountRejectionReasons.map((reason) => (
+                    <option key={reason.code} value={reason.code}>
+                      {reason.label}
+                    </option>
+                  ))}
+                </select>
               </label>
             )}
             <div className="actionBar">
@@ -3801,124 +3711,26 @@ function DraftDetail({
           </>
         )}
       </section>
-
-      <section className="panel" aria-labelledby="payable-basis-title">
-        <div className="panelHeader">
-          <h3 id="payable-basis-title">Apply payable basis</h3>
-          <span className="statusPill">{payableBasisStatusLabel(detail)}</span>
-        </div>
-        <DescriptionList
-          items={[
-            ["Original tariff snapshot", detail.originalTariffSnapshotId ?? "Not available"],
-            ["Application status", detail.payableBasisApplicationStatus ?? "Not applied"],
-            ["Application ID", detail.payableBasisApplicationId ?? latestPayableBasisResult?.payableBasisApplicationId ?? "Not available"]
-          ]}
-        />
-        {payableBasisDisabledReason && <p className="notice">{payableBasisDisabledReason}</p>}
-        {payableBasisMessage && <p className="successMessage">{payableBasisMessage}</p>}
-        {payableBasisError && <p className="errorMessage">{payableBasisError}</p>}
-        <div className="actionBar">
-          <button
-            type="button"
-            disabled={payableBasisDisabledReason !== null}
-            onClick={() => void applyPayableBasis()}
-          >
-            {submittingPayableBasis ? "Applying payable basis" : "Apply payable basis"}
-          </button>
-        </div>
-      </section>
-
-      <FinalVerificationPanel detail={detail} payableBasisResult={latestPayableBasisResult} />
-
-      <section className="panel" aria-labelledby="activity-title">
-        <div className="panelHeader">
-          <h3 id="activity-title">Audit activity placeholder</h3>
-        </div>
-        <ul className="activityList">
-          {detail.auditActivity.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-      </section>
     </>
   );
 }
 
-function WorkflowStatePanel({
-  detail,
-  payableBasisResult
-}: {
-  detail: StatutoryDiscountDraftDetail;
-  payableBasisResult: StatutoryDiscountPayableBasisApplicationResult | null;
-}) {
-  const applied = isPayableBasisApplied(detail) || payableBasisResult?.applicationStatus === "APPLIED";
-  const finalAmount =
-    payableBasisResult?.finalPayableAmountMinorUnits ?? detail.finalPayableAmountMinorUnits ?? detail.payableAmountMinorUnits;
-
-  return (
-    <section className="panel" aria-labelledby="workflow-state-title">
-      <div className="panelHeader">
-        <h3 id="workflow-state-title">Workflow state</h3>
-        <span className="statusPill">Validated sequence</span>
-      </div>
-      <div className="workflowGrid">
-        <WorkflowStateItem label="Session resolved" complete={Boolean(detail.parkingSessionId)} />
-        <WorkflowStateItem label="Policy resolved" complete={Boolean(detail.policyContext.policyCode)} />
-        <WorkflowStateItem label="Draft created" complete={Boolean(detail.draftId)} />
-        <WorkflowStateItem
-          label="Evidence required"
-          complete={detail.policyContext.evidenceRequired}
-          inactiveLabel={detail.policyContext.evidenceRequired ? undefined : "Not required"}
-        />
-        <WorkflowStateItem label="Evidence satisfied" complete={detail.evidenceRequiredSatisfied} />
-        <WorkflowStateItem label={`Validation ${detail.status.toLowerCase()}`} complete={detail.status === "Approved"} />
-        <WorkflowStateItem label="Payable basis applied" complete={applied} />
-        <WorkflowStateItem
-          label={`Final payable ${formatMoney(finalAmount, detail.currencyCode)}`}
-          complete={applied && finalAmount !== undefined}
-        />
-      </div>
-    </section>
-  );
-}
-
-function WorkflowStateItem({
-  label,
-  complete,
-  inactiveLabel
-}: {
-  label: string;
-  complete: boolean;
-  inactiveLabel?: string;
-}) {
-  return (
-    <div className={`workflowStep ${complete ? "workflowComplete" : "workflowPending"}`}>
-      <span>{complete ? "Complete" : inactiveLabel ?? "Pending"}</span>
-      <strong>{label}</strong>
-    </div>
-  );
-}
-
-function EvidencePanel({
+function CompactEvidencePanel({
   detail,
   client,
   refreshDetail,
-  readinessBlockReason
+  readinessBlockReason,
+  readOnly
 }: {
   detail: StatutoryDiscountDraftDetail;
   client: OperatorConsoleApiClient;
   refreshDetail: () => void;
   readinessBlockReason: string | null;
+  readOnly: boolean;
 }) {
   const [evidenceState, setEvidenceState] = useState<LoadState<StatutoryDiscountEvidenceList>>({ status: "loading" });
-  const [evidenceType, setEvidenceType] = useState<EvidenceType>(
-    (detail.requiredEvidenceTypes[0] as EvidenceType | undefined) ?? "SENIOR_CITIZEN_ID"
-  );
-  const [captureMethod, setCaptureMethod] = useState<EvidenceCaptureMethod>("OPERATOR_CONFIRMED");
-  const [fileName, setFileName] = useState("");
-  const [contentType, setContentType] = useState("image/jpeg");
-  const [sizeBytes, setSizeBytes] = useState("");
-  const [referenceNumber, setReferenceNumber] = useState("");
+  const evidenceOptions = operationalEvidenceOptions(detail);
+  const [evidenceType, setEvidenceType] = useState<EvidenceType>(evidenceOptions[0]?.value ?? "SENIOR_CITIZEN_ID");
   const [notes, setNotes] = useState("");
   const [operatorConfirmation, setOperatorConfirmation] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -3953,8 +3765,13 @@ function EvidencePanel({
     setFormError(null);
     setFormMessage(null);
 
+    if (readOnly) {
+      setFormError("Document review is read-only for this request.");
+      return;
+    }
+
     if (!operatorConfirmation) {
-      setFormError("Operator confirmation is required.");
+      setFormError("Confirm the selected document is verified.");
       return;
     }
 
@@ -3963,36 +3780,21 @@ function EvidencePanel({
       return;
     }
 
-    if (captureMethod === "UPLOAD" && (!fileName.trim() || !contentType.trim() || Number(sizeBytes) <= 0)) {
-      setFormError("Upload metadata requires file name, content type, and size.");
-      return;
-    }
-
-    if (captureMethod === "MANUAL_REFERENCE" && !referenceNumber.trim()) {
-      setFormError("Manual reference capture requires a reference value.");
-      return;
-    }
-
     setSubmitting(true);
     try {
-      const result = await client.captureStatutoryDiscountEvidence({
+      await client.captureStatutoryDiscountEvidence({
         draftId: detail.draftId,
         siteId: detail.siteId,
         siteGroupId: detail.siteGroupId,
         evidenceType,
-        captureMethod,
-        fileName: captureMethod === "UPLOAD" ? fileName : undefined,
-        contentType: captureMethod === "UPLOAD" ? contentType : undefined,
-        sizeBytes: captureMethod === "UPLOAD" ? Number(sizeBytes) : undefined,
-        referenceNumber: captureMethod === "MANUAL_REFERENCE" ? referenceNumber : undefined,
+        captureMethod: "OPERATOR_CONFIRMED",
         notes: notes.trim() || undefined,
         operatorConfirmation
       });
 
-      setReferenceNumber("");
       setNotes("");
       setOperatorConfirmation(false);
-      setFormMessage(result.message);
+      setFormMessage("Document marked as verified.");
       setRefreshToken((value) => value + 1);
       refreshDetail();
     } catch (error) {
@@ -4003,248 +3805,167 @@ function EvidencePanel({
   }
 
   const evidenceLoaded = evidenceState.status === "loaded" ? evidenceState.data : null;
-  const requiredSatisfied = evidenceLoaded?.evidenceRequiredSatisfied ?? detail.evidenceRequiredSatisfied;
+  const evidenceSatisfied = evidenceLoaded?.evidenceRequiredSatisfied ?? detail.evidenceRequiredSatisfied;
+  const evidenceStatus = plainEvidenceStatus(detail, evidenceSatisfied);
 
   return (
-    <section className="panel" aria-labelledby="evidence-title">
+    <section className="panel compactEvidencePanel" aria-labelledby="compact-evidence-title">
       <div className="panelHeader">
-        <h3 id="evidence-title">Evidence</h3>
-        <span className="statusPill">{detail.policyContext.evidenceRequired ? "Required" : "Not required"}</span>
+        <div>
+          <p className="eyebrow">Evidence</p>
+          <h3 id="compact-evidence-title">Document review</h3>
+        </div>
+        <span className={`statusPill ${evidenceSatisfied ? "readiness-ready" : "warningPill"}`}>{evidenceStatus}</span>
       </div>
 
-      <p className="notice">Metadata-only evidence capture. Do not upload or enter raw ID numbers.</p>
-      {detail.policyContext.evidenceRequired && !requiredSatisfied && (
-        <p className="notice">Approval is blocked until required evidence is captured.</p>
-      )}
-      {readinessBlockReason && <p className="notice">{readinessBlockReason}</p>}
-      {requiredSatisfied && <p className="successMessage">Required evidence is captured.</p>}
+      <div className="compactEvidenceGrid">
+        <div>
+          <h4>Documents</h4>
+          <ul className="documentStatusList">
+            {evidenceOptions.map((option) => (
+              <li key={option.label}>
+                <span>{option.label}</span>
+                <strong>{evidenceStatus}</strong>
+              </li>
+            ))}
+          </ul>
+        </div>
 
-      {evidenceState.status === "loading" && <StateMessage title="Loading evidence" message="Retrieving evidence metadata." />}
-      {evidenceState.status === "error" && <StateMessage title="Unable to load evidence" message={evidenceState.message} />}
-      {evidenceLoaded && (
-        <div className="evidenceLayout">
-          <div>
-            <DescriptionList
-              items={[
-                ["Evidence satisfied", evidenceLoaded.evidenceRequiredSatisfied ? "Yes" : "No"],
-                ["Required types", evidenceLoaded.requiredEvidenceTypes.join(", ") || "None"],
-                ["Evidence count", String(evidenceLoaded.evidenceCount)],
-                ["Latest status", evidenceLoaded.latestEvidenceStatus ?? "None"],
-                ["Metadata-only", "Yes"],
-                ["Raw ID or evidence bytes", "Do not enter or upload"]
-              ]}
-            />
-
-            {evidenceLoaded.items.length === 0 ? (
-              <p className="placeholderCopy">No evidence metadata has been captured for this draft.</p>
-            ) : (
-              <ul className="evidenceList">
-                {evidenceLoaded.items.map((item) => (
-                  <li key={item.evidenceId}>
-                    <strong>{item.evidenceType}</strong>
-                    <span>{item.captureMethod} / {item.verificationStatus}</span>
-                    <span>Storage reference: {item.storageReference ?? "metadata-only"}</span>
-                    <span>{formatDateTime(item.capturedAt)}</span>
-                    <span>{item.capturedByUserId ?? "Unknown operator"}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <form className="evidenceForm" onSubmit={(event) => void submitEvidence(event)}>
+        {!readOnly ? (
+          <form className="compactEvidenceForm" onSubmit={(event) => void submitEvidence(event)}>
             <label>
-              Evidence type
+              Document to verify
               <select value={evidenceType} onChange={(event) => setEvidenceType(event.target.value as EvidenceType)}>
-                <option value="SENIOR_CITIZEN_ID">Senior Citizen ID</option>
-                <option value="PWD_ID">PWD ID</option>
-                <option value="OTHER_SUPPORTING_DOCUMENT">Other supporting document</option>
+                {evidenceOptions.map((option) => (
+                  <option key={option.label} value={option.value}>{option.label}</option>
+                ))}
               </select>
             </label>
-
             <label>
-              Capture method
-              <select value={captureMethod} onChange={(event) => setCaptureMethod(event.target.value as EvidenceCaptureMethod)}>
-                <option value="OPERATOR_CONFIRMED">Operator confirmed</option>
-                <option value="MANUAL_REFERENCE">Masked manual reference</option>
-                <option value="UPLOAD">File metadata only</option>
-              </select>
+              Reviewer note
+              <textarea
+                value={notes}
+                placeholder="Optional short note"
+                onChange={(event) => setNotes(event.target.value)}
+              />
             </label>
-
-            {captureMethod === "UPLOAD" && (
-              <>
-                <label>
-                  File name
-                  <input value={fileName} onChange={(event) => setFileName(event.target.value)} />
-                </label>
-                <label>
-                  Content type
-                  <input value={contentType} onChange={(event) => setContentType(event.target.value)} />
-                </label>
-                <label>
-                  Size bytes
-                  <input inputMode="numeric" value={sizeBytes} onChange={(event) => setSizeBytes(event.target.value)} />
-                </label>
-              </>
-            )}
-
-            {captureMethod === "MANUAL_REFERENCE" && (
-              <label>
-                Masked ID reference / last 4 only
-                <input
-                  value={referenceNumber}
-                  placeholder="****1234"
-                  onChange={(event) => setReferenceNumber(event.target.value)}
-                />
-                <span className="fieldHelp">Do not enter the full ID number.</span>
-              </label>
-            )}
-
-            <label>
-              Notes
-              <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
-            </label>
-
             <label className="checkboxField">
               <input
                 type="checkbox"
                 checked={operatorConfirmation}
                 onChange={(event) => setOperatorConfirmation(event.target.checked)}
               />
-              Operator confirms evidence was reviewed
+              Document is verified
             </label>
-
             {formMessage && <p className="successMessage">{formMessage}</p>}
             {formError && <p className="errorMessage">{formError}</p>}
-            <button type="submit" disabled={submitting || readinessBlockReason !== null}>
-              {submitting ? "Capturing" : "Capture evidence"}
+            {evidenceState.status === "error" && <p className="errorMessage">{evidenceState.message}</p>}
+            <button type="submit" disabled={submitting || !operatorConfirmation || readinessBlockReason !== null}>
+              {submitting ? "Saving" : "Mark as verified"}
             </button>
           </form>
-        </div>
-      )}
+        ) : (
+          <div className="compactEvidenceForm readOnlyEvidenceSummary">
+            <p className="notice">Document review is read-only for this request.</p>
+            {evidenceState.status === "error" && <p className="errorMessage">{evidenceState.message}</p>}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
-function PolicyContextDisplay({ policy }: { policy: StatutoryDiscountPolicyContext }) {
-  const readiness = policy.policyReadinessClassification ?? "NOT_READY";
-  const readinessClassName = policyReadinessClass(readiness);
-  return (
-    <section
-      className={`panel policyPanel policy-${policy.kind} ${readinessClassName}`}
-      aria-labelledby="policy-context-title"
-    >
-      <div className="panelHeader">
-        <div>
-          <p className="eyebrow">Policy context</p>
-          <h3 id="policy-context-title">{policy.title}</h3>
-        </div>
-        <span className={`statusPill ${readinessClassName}`}>{readinessLabelForPolicy(readiness)}</span>
-      </div>
-      <p className="policySummary">{policy.operatorSummary}</p>
-      <div className="policyGuardrail" role="note">
-        <p>Policy readiness is not the same as payment approval.</p>
-        <p>Sandbox/test policies are not production-ready.</p>
-        <p>Manual review is required before automatic production application.</p>
-        <p>No raw evidence or ID numbers are displayed here.</p>
-      </div>
-      {!policy.productionAutoApplicationEligible && (
-        <p className="notice">Automatic production application is not allowed for this policy state.</p>
-      )}
-      {policy.requiresManualReview && <p className="notice">Manual review required before production use.</p>}
-      <DescriptionList
-        items={[
-          ["Policy source", policySourceLabel(policy.registrySource)],
-          ["Policy basis", policyBasisLabel(policy.kind)],
-          ["Resolution basis", policy.policyResolutionBasis],
-          ["Policy code", policy.policyCode ?? "Not available"],
-          ["Policy name", policy.policyName ?? "Not available"],
-          ["Readiness classification", readiness],
-          ["Manual review required", policy.requiresManualReview ? "Yes" : "No"],
-          ["Production auto-application eligible", policy.productionAutoApplicationEligible ? "Yes" : "No"],
-          ["Readiness reason", policy.policyReadinessReason ?? "Not available"],
-          ["Operator message", policy.operatorMessage ?? "Not available"],
-          ["Legal basis", policy.legalBasisReference ?? "Not available"],
-          ["National law", policy.nationalLawReference ?? "Not available"],
-          ["Local ordinance", policy.ordinanceReference ?? "None"],
-          ["Verification status", policy.verificationStatus ?? "Not available"],
-          ["Benefit type", policy.benefitType ?? "Not available"],
-          ["Discount base scope", policy.discountBaseScope ?? "Not available"],
-          ["Evidence required", policy.evidenceRequired ? "Yes" : "No"],
-          ["Required evidence type", policy.requiredEvidenceType ?? "Not available"],
-          ["Effective from", policy.effectiveFrom ? formatDateTime(policy.effectiveFrom) : "Not available"],
-          ["Effective to", policy.effectiveTo ? formatDateTime(policy.effectiveTo) : "Open-ended or not available"],
-          ["Operator action", policy.ineligibilityReason ?? "Review can proceed when access and evidence rules allow."]
-        ]}
-      />
-    </section>
-  );
-}
-
-function GoverningOrdinancePanel({ detail }: { detail: StatutoryDiscountDraftDetail }) {
+function StatutoryReviewEligibilityPanel({ detail }: { detail: StatutoryDiscountDraftDetail }) {
   const policy = detail.governingPolicy;
   const blockReason = governingPolicyBlockReason(detail);
-
-  if (!policy) {
-    return (
-      <section className="panel ordinancePanel ordinanceBlocked" aria-labelledby="governing-ordinance-title">
-        <div className="panelHeader">
-          <div>
-            <p className="eyebrow">Governing ordinance</p>
-            <h3 id="governing-ordinance-title">Frozen policy authority missing</h3>
-          </div>
-          <span className="statusPill blocked">Approval blocked</span>
-        </div>
-        <p className="notice">
-          Central PMS did not return complete frozen local-ordinance authority for this review. Approval is disabled and ordinary rejection remains available where appropriate.
-        </p>
-      </section>
-    );
-  }
+  const checks = operationalRequiredChecks(detail);
+  const benefitLabel = benefitDisplayLabel(policy, detail.policyContext);
+  const evidenceStatus = plainEvidenceStatus(detail, detail.evidenceRequiredSatisfied);
+  const requestCardStatus = privilegeRequestCardStatus(detail, blockReason);
+  const eligibilityConfirmed = parkingLocationEligibilityConfirmed(detail);
 
   return (
-    <section className="panel ordinancePanel" aria-labelledby="governing-ordinance-title">
+    <section className="panel reviewerChecklistPanel" aria-labelledby="reviewer-checklist-title">
       <div className="panelHeader">
         <div>
-          <p className="eyebrow">Governing ordinance</p>
-          <h3 id="governing-ordinance-title">{policy.jurisdictionDisplayName}</h3>
+          <p className="eyebrow">Privilege request</p>
+          <h3 id="reviewer-checklist-title">{plainEntitlementLabel(detail.entitlementType)} Parking Privilege</h3>
         </div>
-        <span className={`statusPill ${blockReason ? "blocked" : "readiness-ready"}`}>
-          {blockReason ? "Approval blocked" : "Server-authoritative"}
-        </span>
+        <span className={`statusPill ${statusClassForOperationalState(requestCardStatus)}`}>{requestCardStatus}</span>
       </div>
-      <p className="policySummary">
-        Central PMS resolved and froze this local parking-policy authority before creating the service-channel review.
-        Reviewers may validate evidence under this authority only.
-      </p>
+
+      <div className="reviewerSummaryGrid">
+        <div className="reviewerSummaryItem">
+          <span>Ticket</span>
+          <strong>{detail.ticketReference}</strong>
+        </div>
+        <div className="reviewerSummaryItem">
+          <span>Plate</span>
+          <strong>{detail.plateNumber}</strong>
+        </div>
+        <div className="reviewerSummaryItem">
+          <span>Parking amount</span>
+          <strong>{formatMoney(detail.originalAmountMinorUnits ?? detail.payableAmountMinorUnits, detail.currencyCode)}</strong>
+        </div>
+        <div className="reviewerSummaryItem">
+          <span>Benefit</span>
+          <strong>{benefitLabel}</strong>
+        </div>
+        <div className="reviewerSummaryItem">
+          <span>Location eligibility</span>
+          <strong>{eligibilityConfirmed ? "Confirmed" : "Could not be confirmed"}</strong>
+        </div>
+        {policy?.beneficiaryResidencyScope === "RESIDENT_ONLY" && (
+          <div className="reviewerSummaryItem">
+            <span>Residency requirement</span>
+            <strong>{policy.jurisdictionDisplayName} resident</strong>
+          </div>
+        )}
+      </div>
+
       {blockReason && <p className="notice">{blockReason}</p>}
-      <DescriptionList
-        items={[
-          ["City or municipality", policy.jurisdictionDisplayName],
-          ["Jurisdiction code", policy.jurisdictionCode],
-          ["Policy reference", policy.policyCode],
-          ["Policy display name", detail.policyContext.policyName ?? policy.ordinanceTitle ?? policy.policyCode],
-          ["Policy version", shortPolicyVersion(policy.statutoryDiscountPolicyVersionId, policy.policyVersion)],
-          ["Ordinance number", policy.ordinanceNumberAvailable ? policy.ordinanceNumber ?? "Not available" : "Unavailable"],
-          ["Ordinance title", policy.ordinanceTitle ?? "Unavailable"],
-          ["Effective from", policy.effectiveFrom ? formatDateTime(policy.effectiveFrom) : "Not available"],
-          ["Effective to", policy.effectiveTo ? formatDateTime(policy.effectiveTo) : "Open-ended or not available"],
-          ["Verification status", policy.sourceVerificationStatus],
-          ["Transaction publication", policy.transactionPublicationStatus],
-          ["Detailed rule verification", policy.detailedRuleVerificationStatus],
-          ["Entitlement type", detail.entitlementType],
-          ["Parking-service applicability", policy.parkingServiceApplicability],
-          ["Residency requirement", displayStatusValue(policy.beneficiaryResidencyScope)],
-          ["Required evidence", evidenceRequirementSummary(policy.requiredEvidenceTypes)],
-          ["Benefit-effect classification", policy.benefitType],
-          ["Benefit-effect support", supportedBenefitEffect(policy.benefitType) ? "Supported by current review flow" : "Not supported"],
-          ["Source-document posture", sourceDocumentPosture(policy)],
-          ["Legal approvability", policy.legalApprovabilityReason ?? "Central PMS marked this request legally approvable."]
-        ]}
-      />
+
+      <div className="reviewerChecklistGrid">
+        <section aria-labelledby="required-checks-title">
+          <h4 id="required-checks-title">Required checks</h4>
+          {checks.length === 0 ? (
+            <p className="placeholderCopy">No additional document checks were returned for this request.</p>
+          ) : (
+            <ul className="operationalCheckList">
+              {checks.map((check) => (
+                <li key={`${check.kind}-${check.label}`}>
+                  <strong>{check.label}</strong>
+                  <span>{check.description}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section aria-labelledby="evidence-status-title">
+          <h4 id="evidence-status-title">Evidence status</h4>
+          <DescriptionList
+            items={[
+              ["Submitted", detail.evidenceCaptured ? "Yes" : "No"],
+              ["Required documents", detail.evidenceRequiredSatisfied ? "Complete" : "Missing or needs review"],
+              ["Review status", evidenceStatus]
+            ]}
+          />
+        </section>
+      </div>
+
       <div className="policyGuardrail" role="note">
-        <p>Jurisdiction, ordinance, policy version, benefit effect, and payable-basis snapshot are read-only.</p>
-        <p>Unavailable online ordinance text is a source-document availability gap, not an automatic unverified-policy classification.</p>
+        {eligibilityConfirmed ? (
+          <>
+            <p>This parking location is eligible for the requested privilege.</p>
+            <p>Review the required beneficiary documents and applicable conditions.</p>
+          </>
+        ) : (
+          <>
+            <p>Parking-location eligibility could not be confirmed.</p>
+            <p>Reject the request or ask support to refresh the parking-location record.</p>
+          </>
+        )}
       </div>
     </section>
   );
@@ -4284,55 +4005,6 @@ function AuditPolicyReadinessSummary({ item }: { item: AuditReportItem }) {
   );
 }
 
-function FinalVerificationPanel({
-  detail,
-  payableBasisResult
-}: {
-  detail: StatutoryDiscountDraftDetail;
-  payableBasisResult: StatutoryDiscountPayableBasisApplicationResult | null;
-}) {
-  const applied = isPayableBasisApplied(detail) || payableBasisResult?.applicationStatus === "APPLIED";
-  const currency = payableBasisResult?.currencyCode ?? detail.currencyCode;
-  const originalAmount = payableBasisResult?.grossAmountMinorUnits ?? detail.originalAmountMinorUnits;
-  const statutoryDiscountAmount =
-    payableBasisResult?.statutoryDiscountAmountMinorUnits ?? detail.statutoryDiscountAmountMinorUnits;
-  const finalPayableAmount =
-    payableBasisResult?.finalPayableAmountMinorUnits ?? detail.finalPayableAmountMinorUnits ?? detail.payableAmountMinorUnits;
-  const appliedTariffSnapshotId = payableBasisResult?.appliedTariffSnapshotId ?? detail.appliedTariffSnapshotId;
-
-  return (
-    <section className="panel" aria-labelledby="final-verification-title">
-      <div className="panelHeader">
-        <h3 id="final-verification-title">Final verification</h3>
-        <span className="statusPill">{applied ? "Approved + applied" : "Pending apply"}</span>
-      </div>
-      <DescriptionList
-        items={[
-          ["Validation status", detail.status],
-          ["Payable basis status", detail.payableBasisApplicationStatus ?? payableBasisResult?.applicationStatus ?? "Not applied"],
-          ["Original amount", formatMoney(originalAmount, currency)],
-          ["VAT amount", formatMoney(payableBasisResult?.vatAmountMinorUnits ?? detail.vatAmountMinorUnits, currency)],
-          [
-            "VAT-exclusive amount",
-            formatMoney(payableBasisResult?.vatExclusiveAmountMinorUnits ?? detail.vatExclusiveAmountMinorUnits, currency)
-          ],
-          ["Statutory discount amount", formatMoney(statutoryDiscountAmount, currency)],
-          ["Final payable amount", formatMoney(finalPayableAmount, currency)],
-          ["Currency", currency ?? "Not available"],
-          ["Applied tariff snapshot ID", appliedTariffSnapshotId ?? "Not available"]
-        ]}
-      />
-      {applied ? (
-        <p className="successMessage">
-          This did not create payment, exit authorization, coupon, or gate records.
-        </p>
-      ) : (
-        <p className="notice">Final payable verification appears after approval and payable-basis application.</p>
-      )}
-    </section>
-  );
-}
-
 function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean, reviewerPolicyAttestation: boolean) {
   if (submitting) {
     return "Decision submission is in progress.";
@@ -4343,7 +4015,7 @@ function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: b
   }
 
   if (detail.policyContext.evidenceRequired && !detail.evidenceRequiredSatisfied) {
-    return "Approval is blocked until required evidence is captured.";
+    return requiredEvidenceBlockMessage(detail);
   }
 
   const policyBlockReason = governingPolicyBlockReason(detail);
@@ -4352,7 +4024,7 @@ function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: b
   }
 
   if (!reviewerPolicyAttestation) {
-    return "Approval requires reviewer attestation to the Central PMS governing ordinance and evidence review.";
+    return "Approval requires reviewer attestation that the required documents and parking-privilege conditions were checked.";
   }
 
   if (["Approved", "Rejected", "Cancelled", "Expired", "Blocked"].includes(detail.status)) {
@@ -4365,7 +4037,7 @@ function approvalBlockReason(detail: StatutoryDiscountDraftDetail, submitting: b
 function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
   const policy = detail.governingPolicy;
   if (!policy) {
-    return "Approval is blocked because Central PMS did not return frozen governing-policy authority.";
+    return "This request cannot be approved because the location eligibility record is incomplete. Reject the request or ask support to refresh it.";
   }
 
   if (
@@ -4376,11 +4048,11 @@ function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
     !policy.policyCode ||
     !policy.policyVersion
   ) {
-    return "Approval is blocked because the governing-policy readback is incomplete.";
+    return "This request cannot be approved because the location eligibility record is incomplete. Reject the request or ask support to refresh it.";
   }
 
   if (policy.transactionPublicationStatus !== "ACTIVE_FOR_TRANSACTION_USE") {
-    return "Approval is blocked because the governing policy is not active for transaction use.";
+    return "This request cannot be approved because the parking privilege is not currently available for this site.";
   }
 
   if (
@@ -4388,56 +4060,385 @@ function governingPolicyBlockReason(detail: StatutoryDiscountDraftDetail) {
     policy.sourceVerificationStatus !== "VERIFIED_ACTIVE_OPERATIONAL" &&
     policy.sourceVerificationStatus !== "ACTIVE_APPROVED"
   ) {
-    return "Approval is blocked because the governing policy is not verified for review.";
+    return "This request cannot be approved because the parking privilege is not available for operational review.";
   }
 
   if (policy.parkingServiceApplicability !== "COVERED") {
-    return "Approval is blocked because the governing policy does not cover parking service.";
+    return "This request cannot be approved because the resolved privilege does not cover parking service.";
   }
 
   if (!supportedBenefitEffect(policy.benefitType)) {
-    return "Approval is blocked because the governing policy benefit effect is not supported by this review flow.";
+    return "This request cannot be approved because this parking benefit is not supported by the current approval flow.";
   }
 
   return null;
+}
+
+function parkingLocationEligibilityConfirmed(detail: StatutoryDiscountDraftDetail) {
+  const policy = detail.governingPolicy;
+  if (!policy) {
+    return false;
+  }
+
+  if (
+    !policy.statutoryDiscountPolicyVersionId ||
+    !policy.jurisdictionId ||
+    !policy.jurisdictionCode ||
+    !policy.jurisdictionDisplayName ||
+    !policy.policyCode ||
+    !policy.policyVersion
+  ) {
+    return false;
+  }
+
+  if (policy.transactionPublicationStatus !== "ACTIVE_FOR_TRANSACTION_USE") {
+    return false;
+  }
+
+  if (
+    policy.sourceVerificationStatus !== "VERIFIED_OFFICIAL" &&
+    policy.sourceVerificationStatus !== "VERIFIED_ACTIVE_OPERATIONAL" &&
+    policy.sourceVerificationStatus !== "ACTIVE_APPROVED"
+  ) {
+    return false;
+  }
+
+  return policy.parkingServiceApplicability === "COVERED";
+}
+
+type OperationalCheck = {
+  kind: string;
+  label: string;
+  description: string;
+};
+
+function operationalRequiredChecks(detail: StatutoryDiscountDraftDetail): OperationalCheck[] {
+  const policy = detail.governingPolicy;
+  if (!policy) {
+    return [];
+  }
+
+  const requirements = policy.requiredEvidenceTypes.filter((requirement) => isRequiredRequirement(requirement.requirementStatus));
+  const checks = requirements.map((requirement) => operationalCheckForRequirement(requirement.evidenceType, requirement.safeRequirementLabel));
+
+  if (policy.beneficiaryResidencyScope === "RESIDENT_ONLY" && !checks.some((check) => check.kind === "residency")) {
+    checks.push({
+      kind: "residency",
+      label: "Proof of residency",
+      description: "Confirm residency evidence required by the resolved parking privilege."
+    });
+  }
+
+  return checks;
+}
+
+function operationalEvidenceOptions(detail: StatutoryDiscountDraftDetail): Array<{ label: string; value: EvidenceType }> {
+  const checks = operationalRequiredChecks(detail);
+  const options = checks.map((check) => ({
+    label: check.label,
+    value: evidenceTypeForOperationalCheck(check)
+  }));
+
+  if (options.length > 0) {
+    return uniqueEvidenceOptions(options);
+  }
+
+  return [
+    {
+      label: plainEntitlementLabel(detail.entitlementType) === "PWD" ? "Valid PWD ID" : "Valid Senior Citizen ID",
+      value: plainEntitlementLabel(detail.entitlementType) === "PWD" ? "PWD_ID" : "SENIOR_CITIZEN_ID"
+    }
+  ];
+}
+
+function evidenceTypeForOperationalCheck(check: OperationalCheck): EvidenceType {
+  if (check.kind === "senior-id") {
+    return "SENIOR_CITIZEN_ID";
+  }
+
+  if (check.kind === "pwd-id") {
+    return "PWD_ID";
+  }
+
+  return "OTHER_SUPPORTING_DOCUMENT";
+}
+
+function uniqueEvidenceOptions(options: Array<{ label: string; value: EvidenceType }>) {
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    const key = `${option.label}:${option.value}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function operationalCheckForRequirement(evidenceType: string, safeRequirementLabel?: string): OperationalCheck {
+  const normalized = evidenceType.toUpperCase();
+  if (normalized === "SENIOR_CITIZEN_ID") {
+    return {
+      kind: "senior-id",
+      label: "Valid Senior Citizen ID",
+      description: safeRequirementLabel ?? "Confirm the beneficiary document is present and readable."
+    };
+  }
+
+  if (normalized === "PWD_ID") {
+    return {
+      kind: "pwd-id",
+      label: "Valid PWD ID",
+      description: safeRequirementLabel ?? "Confirm the beneficiary document is present and readable."
+    };
+  }
+
+  if (normalized === "RESIDENCY_EVIDENCE") {
+    return {
+      kind: "residency",
+      label: "Proof of residency",
+      description: safeRequirementLabel ?? "Confirm residency evidence required by the resolved parking privilege."
+    };
+  }
+
+  if (normalized === "BENEFICIARY_PRESENCE") {
+    return {
+      kind: "beneficiary-presence",
+      label: "Beneficiary must be present",
+      description: safeRequirementLabel ?? "Confirm the beneficiary is physically present only because the policy requires it."
+    };
+  }
+
+  if (normalized === "BENEFICIARY_DRIVER" || normalized === "DRIVER_REQUIREMENT" || normalized === "DRIVER_STATUS") {
+    return {
+      kind: "driver",
+      label: "Beneficiary must be the driver",
+      description: safeRequirementLabel ?? "Confirm the beneficiary is the driver only because the policy requires it."
+    };
+  }
+
+  if (normalized === "BENEFICIARY_PASSENGER" || normalized === "PASSENGER_REQUIREMENT" || normalized === "PASSENGER_STATUS") {
+    return {
+      kind: "passenger",
+      label: "Beneficiary must be a passenger",
+      description: safeRequirementLabel ?? "Confirm the beneficiary is a passenger only because the policy requires it."
+    };
+  }
+
+  return {
+    kind: normalized.toLowerCase(),
+    label: displayStatusValue(evidenceType),
+    description: safeRequirementLabel ?? "Confirm this policy-required document or condition."
+  };
+}
+
+function isRequiredRequirement(requirementStatus: string) {
+  return requirementStatus.toUpperCase() === "REQUIRED";
+}
+
+function requiredEvidenceBlockMessage(detail: StatutoryDiscountDraftDetail) {
+  const requiredChecks = operationalRequiredChecks(detail);
+  if (requiredChecks.some((check) => check.kind === "residency")) {
+    return "This request cannot be approved because proof of residency is missing.";
+  }
+
+  if (requiredChecks.some((check) => check.kind === "driver")) {
+    return "This request cannot be approved until the required driver condition is verified.";
+  }
+
+  if (requiredChecks.some((check) => check.kind === "passenger")) {
+    return "This request cannot be approved until the required passenger condition is verified.";
+  }
+
+  if (requiredChecks.some((check) => check.kind === "beneficiary-presence")) {
+    return "This request cannot be approved until required beneficiary presence is verified.";
+  }
+
+  return "This request cannot be approved because required documents are missing or need review.";
 }
 
 function supportedBenefitEffect(benefitType: string) {
   return benefitType === "STATUTORY_DISCOUNT_VAT_EXEMPT";
 }
 
-function shortPolicyVersion(policyVersionId: string, policyVersion: string) {
-  return `${policyVersion} (${shortId(policyVersionId)})`;
+function benefitDisplayLabel(
+  policy: StatutoryDiscountDraftDetail["governingPolicy"],
+  policyContext: StatutoryDiscountPolicyContext
+) {
+  const benefitType = policy?.benefitType ?? policyContext.benefitType;
+  const policyName = policyContext.policyName?.toLowerCase() ?? "";
+  if (policyName.includes("free parking")) {
+    return "Free parking";
+  }
+
+  switch (benefitType) {
+    case "FULL_FEE_EXEMPTION":
+      return "Free parking";
+    case "PERCENTAGE_DISCOUNT":
+    case "STATUTORY_DISCOUNT_VAT_EXEMPT":
+      return "Parking discount";
+    case "FREE_DURATION":
+      return "Free parking period";
+    case "INITIAL_RATE_EXEMPTION":
+      return "Initial parking fee waived";
+    case "CAPPED_BENEFIT":
+      return "Capped parking benefit";
+    default:
+      return benefitType ? displayStatusValue(benefitType) : "Parking privilege";
+  }
 }
 
-function evidenceRequirementSummary(requirements: Array<{ evidenceType: string; requirementStatus: string; safeRequirementLabel?: string }>) {
-  if (requirements.length === 0) {
-    return "No evidence requirements returned";
-  }
-
-  return requirements
-    .map((requirement) =>
-      [displayStatusValue(requirement.evidenceType), displayStatusValue(requirement.requirementStatus), requirement.safeRequirementLabel]
-        .filter(Boolean)
-        .join(" - ")
-    )
-    .join("; ");
+function plainEntitlementLabel(entitlementType: string) {
+  return entitlementType === "PWD" ? "PWD" : "Senior Citizen";
 }
 
-function sourceDocumentPosture(policy: NonNullable<StatutoryDiscountDraftDetail["governingPolicy"]>) {
-  if (policy.officialSourceAvailable && policy.ordinanceTextAvailable) {
-    return "Official source and ordinance text available";
+function plainReviewStatus(status: string) {
+  const normalized = status.toUpperCase().replaceAll(" ", "_");
+  if (normalized === "REQUESTED" || normalized === "PENDING_REVIEW" || normalized === "PENDING_OPERATOR_REVIEW") {
+    return "Ready for review";
   }
 
-  if (policy.sourceVerificationStatus === "VERIFIED_ACTIVE_OPERATIONAL" && !policy.ordinanceTextAvailable) {
-    return "Verified active operational policy; online ordinance text unavailable";
+  if (normalized === "APPROVED") {
+    return "Approved";
   }
 
-  if (policy.officialSourceAvailable && !policy.ordinanceTextAvailable) {
-    return "Official source reference available; ordinance text unavailable";
+  if (normalized === "REJECTED") {
+    return "Rejected";
   }
 
-  return "Source-document posture incomplete or unavailable";
+  if (normalized === "BLOCKED") {
+    return "Blocked";
+  }
+
+  return displayStatusValue(status);
+}
+
+function privilegeRequestCardStatus(detail: StatutoryDiscountDraftDetail, blockReason: string | null) {
+  const normalized = detail.status.toUpperCase().replaceAll(" ", "_");
+  if (normalized === "APPROVED") {
+    return "Approved";
+  }
+
+  if (normalized === "REJECTED") {
+    return "Rejected";
+  }
+
+  if (blockReason) {
+    return "Blocked";
+  }
+
+  if (detail.policyContext.evidenceRequired && !detail.evidenceRequiredSatisfied) {
+    return "Blocked";
+  }
+
+  return "Ready for review";
+}
+
+function statutoryReviewPageStatus(
+  detail: StatutoryDiscountDraftDetail,
+  showDecisionControls: boolean,
+  approvalDisabledReason: string | null
+) {
+  const normalized = detail.status.toUpperCase().replaceAll(" ", "_");
+  if (normalized === "APPROVED" || normalized === "REJECTED" || normalized === "BLOCKED") {
+    return plainReviewStatus(detail.status);
+  }
+
+  if (showDecisionControls && approvalDisabledReason && !isAttestationApprovalBlock(approvalDisabledReason)) {
+    return "Blocked";
+  }
+
+  return plainReviewStatus(detail.status);
+}
+
+function isAttestationApprovalBlock(reason: string) {
+  return reason.toLowerCase().includes("attestation");
+}
+
+function statusClassForOperationalState(status: string) {
+  if (status === "Blocked") {
+    return "blocked";
+  }
+
+  if (status === "Approved") {
+    return "approved";
+  }
+
+  if (status === "Rejected") {
+    return "rejected";
+  }
+
+  return "readiness-ready";
+}
+
+const statutoryDiscountRejectionReasons = [
+  { code: "ID_NOT_VALID", label: "Document is invalid" },
+  { code: "ENTITLEMENT_MISMATCH", label: "Document does not match the requested privilege" },
+  { code: "REQUIRED_DOCUMENT_MISSING", label: "Required document is missing" },
+  { code: "RESIDENCY_NOT_VERIFIED", label: "Residency could not be verified" },
+  { code: "DRIVER_CONDITION_NOT_MET", label: "Required driver condition was not met" },
+  { code: "PASSENGER_CONDITION_NOT_MET", label: "Required passenger condition was not met" },
+  { code: "INFORMATION_INCONSISTENT", label: "Information is inconsistent" },
+  { code: "OTHER_REVIEW_ISSUE", label: "Other review issue" }
+];
+
+function rejectionReasonLabel(reasonCode?: string | null) {
+  const normalized = (reasonCode ?? "").trim().toUpperCase();
+  if (!normalized) {
+    return "Review issue recorded";
+  }
+
+  return statutoryDiscountRejectionReasons.find((reason) => reason.code === normalized)?.label ?? "Review issue recorded";
+}
+
+function plainEvidenceStatus(detail: StatutoryDiscountDraftDetail, evidenceSatisfied: boolean) {
+  if (evidenceSatisfied) {
+    return "Verified";
+  }
+
+  const normalized = (detail.latestEvidenceStatus ?? "").trim().toUpperCase();
+  if (normalized.includes("INVALID") || normalized.includes("REJECTED")) {
+    return "Invalid";
+  }
+
+  if (normalized.includes("MISSING") || !detail.evidenceCaptured) {
+    return "Missing";
+  }
+
+  if (normalized.includes("SUBMITTED") || normalized.includes("CAPTURED")) {
+    return "Submitted";
+  }
+
+  return "Needs review";
+}
+
+function StatutoryDecisionReadOnlySummary({
+  detail,
+  fallbackReason
+}: {
+  detail: StatutoryDiscountDraftDetail;
+  fallbackReason: string;
+}) {
+  if (detail.status === "Approved") {
+    return (
+      <div className="readOnlyDecisionSummary">
+        <p className="successMessage">Parking privilege approved</p>
+        <p>The approved privilege will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal.</p>
+      </div>
+    );
+  }
+
+  if (detail.status === "Rejected") {
+    return (
+      <div className="readOnlyDecisionSummary">
+        <p className="errorMessage">Parking privilege rejected</p>
+        <p>{rejectionReasonLabel(detail.decisionReasonCode)}</p>
+      </div>
+    );
+  }
+
+  return <p className="notice">{fallbackReason}</p>;
 }
 
 function statutoryDiscountDecisionReadOnlyReason(
@@ -4447,10 +4448,6 @@ function statutoryDiscountDecisionReadOnlyReason(
   canRejectDecision: boolean,
   decisionable: boolean
 ) {
-  if (isPayableBasisApplied(detail)) {
-    return "Decision is read-only because payable basis has already been applied.";
-  }
-
   if (!decisionable || ["Approved", "Rejected", "Cancelled", "Expired", "Blocked"].includes(detail.status)) {
     return "Decision is read-only for the current validation status.";
   }
@@ -4466,30 +4463,6 @@ function statutoryDiscountDecisionReadOnlyReason(
   return null;
 }
 
-function sameIdentity(left?: string | null, right?: string | null) {
-  return (left ?? "").trim().toLowerCase() === (right ?? "").trim().toLowerCase();
-}
-
-function payableBasisBlockReason(detail: StatutoryDiscountDraftDetail, submitting: boolean) {
-  if (submitting) {
-    return "Payable basis application is in progress.";
-  }
-
-  if (!detail.draftId) {
-    return "Resolve a session before starting statutory discount validation.";
-  }
-
-  if (detail.status !== "Approved") {
-    return "Payable basis can be applied only after approval.";
-  }
-
-  if (isPayableBasisApplied(detail)) {
-    return "Payable basis has already been applied.";
-  }
-
-  return null;
-}
-
 function readinessBlockedActionReason(readiness: AccessReadinessResponse) {
   const reasonCodes = readiness.denialReasons.map((reason) => reason.code).join(", ");
   return `Readiness check is blocking controlled Operator Console actions.${reasonCodes ? ` Reasons: ${reasonCodes}.` : ""}`;
@@ -4499,20 +4472,8 @@ function readinessLabel(ready: boolean, status: string) {
   return `${ready ? "Ready" : "Not ready"} (${status})`;
 }
 
-function isPayableBasisApplied(detail: StatutoryDiscountDraftDetail) {
-  return detail.payableBasisApplicationStatus?.toUpperCase() === "APPLIED";
-}
-
-function payableBasisStatusLabel(detail: StatutoryDiscountDraftDetail) {
-  if (isPayableBasisApplied(detail)) {
-    return "Applied";
-  }
-
-  if (detail.status === "Approved") {
-    return "Ready to apply";
-  }
-
-  return "Awaiting approval";
+function sameIdentity(left?: string | null, right?: string | null) {
+  return (left ?? "").trim().toLowerCase() === (right ?? "").trim().toLowerCase();
 }
 
 function DescriptionList({ items }: { items: Array<[string, string]> }) {
