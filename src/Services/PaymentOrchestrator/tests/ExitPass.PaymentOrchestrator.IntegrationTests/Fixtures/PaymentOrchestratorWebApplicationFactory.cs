@@ -474,6 +474,55 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
     {
         private readonly ConcurrentDictionary<string, ProviderSessionRecord> _records = new(StringComparer.Ordinal);
 
+        public Task<ProviderSessionInitiationReservationResult> TryReserveInitiationAsync(
+            ProviderSessionInitiationReservation reservation,
+            CancellationToken cancellationToken)
+        {
+            var existing = _records.Values.FirstOrDefault(record => record.PaymentAttemptId == reservation.PaymentAttemptId);
+            if (existing is not null)
+            {
+                return Task.FromResult(new ProviderSessionInitiationReservationResult(
+                    ProviderSessionInitiationReservationOutcome.Existing,
+                    existing));
+            }
+
+            var reserved = new ProviderSessionRecord(
+                reservation.ProviderSessionRecordId,
+                reservation.PaymentAttemptId,
+                "PAYMONGO",
+                reservation.ProviderProduct,
+                string.Empty,
+                null,
+                "CREATED",
+                null,
+                null,
+                null,
+                reservation.IdempotencyKey,
+                reservation.CorrelationId,
+                reservation.RequestPayloadJson,
+                "{}",
+                reservation.CreatedAtUtc,
+                reservation.AmountMinorUnits,
+                reservation.CurrencyCode);
+            _records[CreateReservationKey(reserved.ProviderSessionRecordId)] = reserved;
+
+            return Task.FromResult(new ProviderSessionInitiationReservationResult(
+                ProviderSessionInitiationReservationOutcome.Acquired,
+                reserved));
+        }
+
+        public Task CompleteInitiationAsync(
+            Guid providerSessionRecordId,
+            ProviderSessionRecord record,
+            CancellationToken cancellationToken)
+        {
+            _records[CreateReservationKey(providerSessionRecordId)] = record with
+            {
+                ProviderSessionRecordId = providerSessionRecordId
+            };
+            return Task.CompletedTask;
+        }
+
         public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(record);
@@ -557,6 +606,11 @@ public sealed class PaymentOrchestratorWebApplicationFactory : WebApplicationFac
         private static string CreateKey(string providerCode, string providerSessionId)
         {
             return $"{providerCode.Trim().ToUpperInvariant()}::{providerSessionId.Trim()}";
+        }
+
+        private static string CreateReservationKey(Guid providerSessionRecordId)
+        {
+            return $"reservation::{providerSessionRecordId:N}";
         }
     }
 
