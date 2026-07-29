@@ -467,14 +467,103 @@ public static class WebPayPaymentIntentEndpoints
             "Statutory discount state could not be resolved.",
             true,
             fallbackCorrelationId);
-        httpContext.Response.Headers["X-Correlation-Id"] = (error.CorrelationId ?? fallbackCorrelationId).ToString();
+        var browserSafeError = ToBrowserSafeStatutoryError(error, fallbackCorrelationId);
+        httpContext.Response.Headers["X-Correlation-Id"] = browserSafeError.CorrelationId.ToString();
         return Results.Json(
             BuildStatutoryErrorResponse(
-                error.ErrorCode,
-                error.Message,
-                error.Retryable,
-                error.CorrelationId ?? fallbackCorrelationId),
-            statusCode: error.StatusCode);
+                browserSafeError.ErrorCode,
+                browserSafeError.Message,
+                browserSafeError.Retryable,
+                browserSafeError.CorrelationId),
+            statusCode: browserSafeError.StatusCode);
+    }
+
+    private static BrowserSafeStatutoryError ToBrowserSafeStatutoryError(
+        CentralPmsWebPayError error,
+        Guid fallbackCorrelationId)
+    {
+        var correlationId = error.CorrelationId ?? fallbackCorrelationId;
+        if (IsCentralPmsAuthOrTrustFailure(error))
+        {
+            return new BrowserSafeStatutoryError(
+                StatusCodes.Status503ServiceUnavailable,
+                "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE",
+                "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.",
+                true,
+                correlationId);
+        }
+
+        if (IsCentralPmsTransientFailure(error))
+        {
+            return new BrowserSafeStatutoryError(
+                StatusCodes.Status503ServiceUnavailable,
+                "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE",
+                "We could not process the parking-privilege request right now. Please try again.",
+                true,
+                correlationId);
+        }
+
+        if (ContainsInternalErrorText(error.Message))
+        {
+            return new BrowserSafeStatutoryError(
+                StatusCodes.Status502BadGateway,
+                "WEBPAY_STATUTORY_REQUEST_FAILED",
+                "We could not process the parking-privilege request right now. Please try again.",
+                true,
+                correlationId);
+        }
+
+        return new BrowserSafeStatutoryError(
+            error.StatusCode,
+            error.ErrorCode,
+            error.Message,
+            error.Retryable,
+            correlationId);
+    }
+
+    private static bool IsCentralPmsAuthOrTrustFailure(CentralPmsWebPayError error) =>
+        error.StatusCode is StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden ||
+        error.ErrorCode.Contains("AUTHENTICAT", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("AUTHORIZ", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("FORBIDDEN", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("PERMISSION", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("SERVICE_IDENTITY", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("SOURCE_CHANNEL_MISMATCH", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("SOURCE_CHANNEL_AMBIGUOUS", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("AUTH_CONFIGURATION", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsCentralPmsTransientFailure(CentralPmsWebPayError error) =>
+        error.StatusCode is StatusCodes.Status408RequestTimeout or StatusCodes.Status502BadGateway or StatusCodes.Status503ServiceUnavailable or StatusCodes.Status504GatewayTimeout ||
+        error.ErrorCode.Contains("UNAVAILABLE", StringComparison.OrdinalIgnoreCase) ||
+        error.ErrorCode.Contains("TIMEOUT", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ContainsInternalErrorText(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        var internalTerms = new[]
+        {
+            "authenticated",
+            "authentication",
+            "authorization",
+            "permission",
+            "policy",
+            "service identity",
+            "x-exitpass",
+            "central pms",
+            "stack trace",
+            "exception",
+            "database",
+            "connection string",
+            "npgsql",
+            "http://",
+            "https://"
+        };
+
+        return internalTerms.Any(term => message.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private static WebPayStatutoryDiscountDecisionResponse ToStatutoryDiscountResponse(
@@ -529,6 +618,13 @@ public static class WebPayPaymentIntentEndpoints
             ["retryable"] = retryable,
             ["correlationId"] = correlationId == Guid.Empty ? null : correlationId
         };
+
+    private sealed record BrowserSafeStatutoryError(
+        int StatusCode,
+        string ErrorCode,
+        string Message,
+        bool Retryable,
+        Guid CorrelationId);
 
     private static WebPayReceiptPresentationResponse ToReceiptPresentationResponse(
         CentralPmsWebPayReceiptPresentation result) =>
