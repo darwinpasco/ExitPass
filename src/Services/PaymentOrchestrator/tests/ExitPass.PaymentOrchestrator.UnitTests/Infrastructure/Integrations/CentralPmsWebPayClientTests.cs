@@ -502,6 +502,97 @@ public sealed class CentralPmsWebPayClientTests
         Assert.DoesNotContain("secret", result.Error.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Verifies statutory ordinance availability is resolved through the Central PMS service-channel route.
+    /// </summary>
+    [Fact]
+    public async Task ResolveStatutoryDiscountAvailabilityAsync_UsesAvailabilityRouteAndReadPermission()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryAvailabilityResponse())
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.ResolveStatutoryDiscountAvailabilityAsync(
+            StatutoryAvailabilityRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(handler.LastRequest);
+        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+        Assert.Equal("/v1/statutory-discounts/decisions/availability", handler.LastRequest.RequestUri!.AbsolutePath);
+        Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal(WebPayServiceIdentityId.ToString("D"), handler.LastRequest.Headers.GetValues("X-ExitPass-Service-Identity-Id").Single());
+        Assert.Equal("statutory-discounts.decision.read", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
+        Assert.False(handler.LastRequest.Headers.Contains("X-ExitPass-Source-Channel"));
+
+        using var requestDocument = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal("SENIOR_CITIZEN", requestDocument.RootElement.GetProperty("requestedEntitlementType").GetString());
+        Assert.False(requestDocument.RootElement.TryGetProperty("sourceChannel", out _));
+        Assert.False(requestDocument.RootElement.TryGetProperty("reviewerUserId", out _));
+
+        Assert.Equal("AVAILABLE", result.Value!.AvailabilityStatus);
+        Assert.Equal(new[] { "SENIOR_CITIZEN", "PWD" }, result.Value.CoveredEntitlementTypes);
+        Assert.True(result.Value.Covers("SENIOR_CITIZEN"));
+        Assert.True(result.Value.Covers("PWD"));
+    }
+
+    /// <summary>
+    /// Verifies statutory availability fails closed without an HTTP call when service identity configuration is missing.
+    /// </summary>
+    [Fact]
+    public async Task ResolveStatutoryDiscountAvailabilityAsync_WhenServiceIdentityMissing_FailsClosedWithoutHttpRequest()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryAvailabilityResponse())
+        });
+        var client = CreateClient(handler, configureStatutoryServiceIdentity: false);
+
+        var result = await client.ResolveStatutoryDiscountAvailabilityAsync(
+            StatutoryAvailabilityRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(503, result.Error!.StatusCode);
+        Assert.Equal("CENTRAL_PMS_AUTH_CONFIGURATION_MISSING", result.Error.ErrorCode);
+        Assert.Equal(0, handler.SendCount);
+        Assert.Null(handler.LastRequest);
+    }
+
+    /// <summary>
+    /// Verifies transient Central PMS availability failures are safely classified.
+    /// </summary>
+    [Fact]
+    public async Task ResolveStatutoryDiscountAvailabilityAsync_WhenCentralPmsUnavailable_ReturnsRetryableFailure()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = JsonContent(new
+            {
+                errorCode = "CENTRAL_PMS_TEMPORARILY_UNAVAILABLE",
+                message = "Central PMS is unavailable.",
+                retryable = true,
+                correlationId = CorrelationId
+            })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.ResolveStatutoryDiscountAvailabilityAsync(
+            StatutoryAvailabilityRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(503, result.Error!.StatusCode);
+        Assert.Equal("CENTRAL_PMS_TEMPORARILY_UNAVAILABLE", result.Error.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+    }
+
     private static CentralPmsWebPayClient CreateClient(
         HttpMessageHandler handler,
         bool configureStatutoryServiceIdentity = true)
@@ -561,6 +652,35 @@ public sealed class CentralPmsWebPayClientTests
             "Customer attests eligibility for review.",
             null,
             TariffSnapshotId);
+    }
+
+    private static CentralPmsStatutoryDiscountAvailabilityRequest StatutoryAvailabilityRequest()
+    {
+        return new CentralPmsStatutoryDiscountAvailabilityRequest(
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ParkingSessionId,
+            "SENIOR_CITIZEN",
+            BeneficiaryResidencySatisfied: null);
+    }
+
+    private static object StatutoryAvailabilityResponse()
+    {
+        return new
+        {
+            requestReference = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            parkingSessionId = ParkingSessionId,
+            siteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            siteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            availabilityStatus = "AVAILABLE",
+            statutoryParkingBenefitAvailable = true,
+            coveredEntitlementTypes = new[] { "SENIOR_CITIZEN", "PWD" },
+            requestedEntitlementType = "SENIOR_CITIZEN",
+            safeReasonCode = (string?)null,
+            retryable = false,
+            remediationAction = "CONTINUE_WITH_ORDINARY_PAYMENT",
+            requiredEvidenceTypes = Array.Empty<object>(),
+            correlationId = CorrelationId
+        };
     }
 
     private static object StatutoryDecisionResponse()

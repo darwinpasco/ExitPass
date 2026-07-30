@@ -182,7 +182,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
 
     const state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.path === "/v1/webpay/payment-intents")).toHaveLength(1);
-    expect(state.requestLog.some((request) => request.path.includes("/statutory-discounts"))).toBe(false);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
     await expectApiBoundary(apiRequests);
   });
 

@@ -63,6 +63,9 @@ function stubWebPayFetch(options?: {
   statutorySubmitPayload?: unknown;
   statutorySubmitOk?: boolean;
   statutorySubmitStatus?: number;
+  statutoryAvailabilityPayload?: unknown;
+  statutoryAvailabilityOk?: boolean;
+  statutoryAvailabilityStatus?: number;
   statutoryReadPayload?: unknown;
   statutoryReadOk?: boolean;
   statutoryReadStatus?: number;
@@ -73,6 +76,7 @@ function stubWebPayFetch(options?: {
   const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
     const isResolve = url.includes("/v1/webpay/parking-session");
     const isReceipt = url.includes("/v1/webpay/payment-attempts/") && url.includes("/receipt-presentation");
+    const isStatutoryAvailability = url.endsWith("/v1/webpay/statutory-discounts/availability");
     const isStatutorySubmit = url.endsWith("/v1/webpay/statutory-discounts/decisions") && _init?.method === "POST";
     const isStatutoryApply =
       url.includes("/v1/webpay/statutory-discounts/decisions/") &&
@@ -83,7 +87,9 @@ function stubWebPayFetch(options?: {
       ok: isResolve
         ? options?.resolveOk ?? true
         : isReceipt
-          ? options?.receiptOk ?? true
+        ? options?.receiptOk ?? true
+        : isStatutoryAvailability
+          ? options?.statutoryAvailabilityOk ?? true
         : isStatutorySubmit
           ? options?.statutorySubmitOk ?? true
         : isStatutoryApply
@@ -94,7 +100,9 @@ function stubWebPayFetch(options?: {
       status: isResolve
         ? options?.resolveStatus ?? 200
         : isReceipt
-          ? options?.receiptStatus ?? 200
+        ? options?.receiptStatus ?? 200
+        : isStatutoryAvailability
+          ? options?.statutoryAvailabilityStatus ?? 200
         : isStatutorySubmit
           ? options?.statutorySubmitStatus ?? 200
         : isStatutoryApply
@@ -107,6 +115,8 @@ function stubWebPayFetch(options?: {
           ? options?.resolvePayload ?? successResponse
           : isReceipt
             ? options?.receiptPayload ?? salesInvoicePresentationResponse
+          : isStatutoryAvailability
+            ? options?.statutoryAvailabilityPayload ?? statutoryAvailabilityResponse()
           : isStatutorySubmit
             ? options?.statutorySubmitPayload ?? statutoryDecisionResponse()
           : isStatutoryApply
@@ -195,6 +205,33 @@ function statutoryDecisionResponse(overrides?: Record<string, unknown>) {
   };
 }
 
+function statutoryAvailabilityResponse(overrides?: Record<string, unknown>) {
+  return {
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    parkingSessionId: successResponse.parkingSessionId,
+    siteId: successResponse.siteId,
+    siteGroupId: successResponse.siteGroupId,
+    availabilityStatus: "AVAILABLE",
+    statutoryParkingBenefitAvailable: true,
+    coveredEntitlementTypes: ["SENIOR_CITIZEN", "PWD"],
+    requestedEntitlementType: null,
+    safeReasonCode: null,
+    retryable: false,
+    remediationAction: "CONTINUE_WITH_ORDINARY_PAYMENT",
+    requiredEvidenceTypes: [],
+    correlationId: "77777777-7777-7777-7777-777777777777",
+    ...overrides
+  };
+}
+
+function routeCalls(fetchMock: ReturnType<typeof vi.fn>, path: string) {
+  return fetchMock.mock.calls.filter(([url]) => String(url).includes(path));
+}
+
+function firstRouteCall(fetchMock: ReturnType<typeof vi.fn>, path: string) {
+  return routeCalls(fetchMock, path)[0];
+}
+
 beforeEach(() => {
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_GROUP_ID", "11111111-1111-1111-1111-111111111111");
   vi.stubEnv("VITE_WEBPAY_DEFAULT_SITE_ID", "22222222-2222-2222-2222-222222222222");
@@ -238,9 +275,8 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/ticket reference/i), "TICKET-TEST-027{Enter}");
 
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
-    expect(fetchMock.mock.calls[0][0]).not.toContain("/v1/webpay/payment-intents");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/webpay/parking-session"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/webpay/payment-intents"))).toBe(false);
   });
 
   it("WebPay_WhenEnterPressedInPlateInput_ResolvesSessionOnly", async () => {
@@ -252,9 +288,8 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.type(screen.getByLabelText(/plate number/i), "ABC 1234{Enter}");
 
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
-    expect(fetchMock.mock.calls[0][0]).not.toContain("/v1/webpay/payment-intents");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/webpay/parking-session"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/webpay/payment-intents"))).toBe(false);
   });
 
   it("WebPay_WhenInitialContinueClicked_ResolvesSessionBeforePaymentIntent", async () => {
@@ -267,8 +302,105 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
     expect(screen.getAllByText("125.00").length).toBeGreaterThan(0);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/webpay/parking-session"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/webpay/payment-intents"))).toBe(false);
+  });
+
+  it("WebPay_WhenBothEntitlementsAreCovered_ShowsStatutoryRequestAction", async () => {
+    stubWebPayFetch({
+      statutoryAvailabilityPayload: statutoryAvailabilityResponse({
+        coveredEntitlementTypes: ["SENIOR_CITIZEN", "PWD"]
+      })
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-COVERED-BOTH");
+
+    expect(await screen.findByText("Parking privilege request available")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    const entitlementSelect = screen.getByLabelText(/entitlement type/i);
+    expect(entitlementSelect).toHaveTextContent("Senior Citizen");
+    expect(entitlementSelect).toHaveTextContent("PWD");
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+  });
+
+  it("WebPay_WhenOnlySeniorCitizenIsCovered_HidesPwdOption", async () => {
+    stubWebPayFetch({
+      statutoryAvailabilityPayload: statutoryAvailabilityResponse({
+        coveredEntitlementTypes: ["SENIOR_CITIZEN"]
+      })
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-COVERED-SENIOR");
+    await screen.findByText("Parking privilege request available");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    const entitlementSelect = screen.getByLabelText(/entitlement type/i);
+    expect(entitlementSelect).toHaveTextContent("Senior Citizen");
+    expect(entitlementSelect).not.toHaveTextContent("PWD");
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+  });
+
+  it("WebPay_WhenOnlyPwdIsCovered_HidesSeniorCitizenOption", async () => {
+    stubWebPayFetch({
+      statutoryAvailabilityPayload: statutoryAvailabilityResponse({
+        coveredEntitlementTypes: ["PWD"]
+      })
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-COVERED-PWD");
+    await screen.findByText("Parking privilege request available");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    const entitlementSelect = screen.getByLabelText(/entitlement type/i);
+    await waitFor(() => expect(entitlementSelect).toHaveValue("PWD"));
+    expect(entitlementSelect).toHaveTextContent("PWD");
+    expect(entitlementSelect).not.toHaveTextContent("Senior Citizen");
+  });
+
+  it("WebPay_WhenNoOrdinanceCoverage_HidesStatutoryControlsAndPreservesOrdinaryPayment", async () => {
+    stubWebPayFetch({
+      statutoryAvailabilityPayload: statutoryAvailabilityResponse({
+        availabilityStatus: "NO_APPLICABLE_LOCAL_ORDINANCE",
+        statutoryParkingBenefitAvailable: false,
+        coveredEntitlementTypes: [],
+        safeReasonCode: "NO_APPLICABLE_LOCAL_ORDINANCE"
+      })
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-NO-COVERAGE");
+
+    expect(await screen.findByText("Parking privilege request not available")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /request statutory discount/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/entitlement type/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/id document type/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+  });
+
+  it("WebPay_WhenAvailabilityIsTemporarilyUnavailable_HidesStatutoryControlsAndKeepsPaymentAvailable", async () => {
+    stubWebPayFetch({
+      statutoryAvailabilityOk: false,
+      statutoryAvailabilityStatus: 503,
+      statutoryAvailabilityPayload: {
+        errorCode: "WEBPAY_STATUTORY_AVAILABILITY_TEMPORARILY_UNAVAILABLE",
+        message: "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      }
+    });
+
+    render(<App />);
+    await resolveTicket("TICKET-AVAILABILITY-UNAVAILABLE");
+
+    expect(await screen.findByText("Parking privilege availability unavailable")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /request statutory discount/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /check availability/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
+    expect(screen.queryByText(/central pms/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/httpclient/i)).not.toBeInTheDocument();
   });
 
   it("WebPay_WhenLookupInputIsInvalid_RejectsClientSide", async () => {
@@ -293,10 +425,10 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByText("PaymentRequired")).toBeInTheDocument();
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
-    expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
-    const paymentIntentBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as Record<string, unknown>;
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const paymentIntentBody = JSON.parse(paymentIntentCall[1]?.body as string) as Record<string, unknown>;
     expect(paymentIntentBody.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
     expect(paymentIntentBody.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
   });
@@ -314,10 +446,10 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-DISPLAYED-001", "99.00");
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
-    expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
-    const paymentIntentBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as Record<string, unknown>;
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const paymentIntentBody = JSON.parse(paymentIntentCall[1]?.body as string) as Record<string, unknown>;
     expect(paymentIntentBody.tariffSnapshotId).toBe(displayedBasis.tariffSnapshotId);
     expect(paymentIntentBody.expectedAmountMinorUnits).toBe(displayedBasis.amountMinorUnits);
   });
@@ -352,7 +484,8 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByRole("button", { name: /discount review pending/i })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: /discount review pending/i }));
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
     expect(fetchMock.mock.calls.map((call) => String(call[0]))).not.toContainEqual(expect.stringContaining("/v1/public/discounts/statutory/validate"));
   });
 
@@ -1171,8 +1304,9 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("TICKET-COUPON-004", "75.00");
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
     expect(body.tariffSnapshotId).toBe("77777777-7777-7777-7777-777777777777");
     expect(body.expectedAmountMinorUnits).toBe(7500);
   });
@@ -1235,8 +1369,8 @@ describe("ExitPass WebPay UI", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /payment completed/i }));
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
 
   it("WebPay_WhenResolvedSessionHasContext_UsesResolvedContextForPaymentIntentInsteadOfDefaults", async () => {
@@ -1250,8 +1384,9 @@ describe("ExitPass WebPay UI", () => {
     await resolveTicket("WEBPAY-20260519-FRESH-001");
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
     expect(body.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
     expect(body.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
     expect(body.vendorSystemId).toBe("45a625de-9034-4fb6-b527-0950d384e51f");
@@ -1305,8 +1440,9 @@ describe("ExitPass WebPay UI", () => {
 
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
     expect(body.siteGroupId).toBe("d392e487-fba0-4281-bdf4-8d62f923d518");
     expect(body.siteId).toBe("6c4b92bd-ced4-44e3-a61a-4349aa81f91d");
     expect(body.vendorSystemId).toBe("25831de5-7144-4a34-a6ea-4ef2bd65c89c");
@@ -1372,16 +1508,16 @@ describe("ExitPass WebPay UI", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Your parking fee quote has expired. Please recalculate the fee to continue.");
     expect(screen.getByRole("button", { name: /recalculate fee/i })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment completed/i })).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
-    expect(fetchMock.mock.calls[1][0]).toContain("/v1/webpay/payment-intents");
-    const paymentIntentBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string) as Record<string, unknown>;
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1);
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const paymentIntentBody = JSON.parse(paymentIntentCall[1]?.body as string) as Record<string, unknown>;
     expect(paymentIntentBody.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
     expect(paymentIntentBody.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
 
     await userEvent.click(screen.getByRole("button", { name: /recalculate fee/i }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
-    expect(fetchMock.mock.calls[2][0]).toContain("/v1/webpay/parking-session");
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(2));
     expect(screen.getAllByText("126.00").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /recalculate fee/i })).not.toBeInTheDocument();
   });
@@ -1481,7 +1617,8 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByRole("link", { name: /continue existing payment/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /payment already started/i })).not.toBeInTheDocument();
     expect(screen.queryByText("https://payments.test/existing")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(2);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1);
   });
 
   it("WebPay_WhenSiteNameMissing_UsesSafeGenericSiteName", async () => {
@@ -1592,7 +1729,8 @@ describe("ExitPass WebPay UI", () => {
     expect(await screen.findByRole("heading", { name: /payment already started/i })).toBeInTheDocument();
     expect(screen.getByText(/cannot be resumed directly/i)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1);
   });
 
   it("WebPay_WhenActivePaymentAttemptHasHandoff_ShowsContinueExistingPayment", async () => {
@@ -1651,7 +1789,8 @@ describe("ExitPass WebPay UI", () => {
     await screen.findAllByRole("button", { name: /check status/i });
     await userEvent.click(screen.getAllByRole("button", { name: /check status/i }).at(-1)!);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1);
   });
 
   it("WebPay_WhenActivePaymentAttemptConflict_DoesNotExposeProviderChoice", async () => {
@@ -1752,8 +1891,9 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByLabelText(new RegExp(label, "i")));
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
     expect(body.paymentMethod).toBe(expectedMethod);
   });
 
@@ -1768,8 +1908,8 @@ describe("ExitPass WebPay UI", () => {
     await screen.findByText("Parking Session Summary");
     await continueToPayment();
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    const intentCall = fetchMock.mock.calls[1];
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(1));
+    const intentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
     expect(intentCall).toBeDefined();
     const request = intentCall?.[1] as RequestInit;
     const body = JSON.parse(request.body as string);
@@ -1794,9 +1934,9 @@ describe("ExitPass WebPay UI", () => {
 
     expect(screen.getAllByText("Checking payment status").length).toBeGreaterThan(0);
     expect(await screen.findByText("Parking Session Summary")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toContain("/v1/webpay/parking-session");
-    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(1);
+    const parkingSessionCall = firstRouteCall(fetchMock, "/v1/webpay/parking-session");
+    const body = JSON.parse((parkingSessionCall[1] as RequestInit).body as string);
     expect(body.ticketReference).toBe("WEBPAY-20260523-FRESH-008");
   });
 
@@ -1966,6 +2106,6 @@ describe("ExitPass WebPay UI", () => {
     );
 
     await userEvent.click(screen.getByRole("button", { name: /check status/i }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(routeCalls(fetchMock, "/v1/webpay/parking-session")).toHaveLength(2));
   });
 });

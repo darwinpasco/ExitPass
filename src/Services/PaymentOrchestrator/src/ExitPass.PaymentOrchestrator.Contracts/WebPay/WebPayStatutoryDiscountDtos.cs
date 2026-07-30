@@ -138,6 +138,135 @@ public sealed class WebPayStatutoryDiscountEvidenceReference
 }
 
 /// <summary>
+/// WebPay-facing statutory parking local-ordinance availability request.
+/// </summary>
+public sealed class WebPayStatutoryDiscountAvailabilityRequest
+{
+    /// <summary>
+    /// Browser-generated non-secret request reference used for safe support correlation.
+    /// </summary>
+    public Guid RequestReference { get; set; }
+
+    /// <summary>
+    /// Canonical parking session identifier returned by WebPay parking-session resolution.
+    /// </summary>
+    public Guid ParkingSessionId { get; set; }
+
+    /// <summary>
+    /// Optional Site identifier returned by WebPay parking-session resolution.
+    /// </summary>
+    public Guid? SiteId { get; set; }
+
+    /// <summary>
+    /// Optional Site Group identifier returned by WebPay parking-session resolution.
+    /// </summary>
+    public Guid? SiteGroupId { get; set; }
+
+    /// <summary>
+    /// Optional entitlement filter, limited to Senior Citizen or PWD.
+    /// </summary>
+    public string? RequestedEntitlementType { get; set; }
+}
+
+/// <summary>
+/// Browser-safe statutory parking local-ordinance availability readback.
+/// </summary>
+public sealed class WebPayStatutoryDiscountAvailabilityResponse
+{
+    /// <summary>
+    /// Non-secret request reference used for safe support correlation.
+    /// </summary>
+    public Guid RequestReference { get; set; }
+
+    /// <summary>
+    /// Canonical parking session identifier.
+    /// </summary>
+    public Guid ParkingSessionId { get; set; }
+
+    /// <summary>
+    /// Resolved Site identifier when available.
+    /// </summary>
+    public Guid? SiteId { get; set; }
+
+    /// <summary>
+    /// Resolved Site Group identifier when available.
+    /// </summary>
+    public Guid? SiteGroupId { get; set; }
+
+    /// <summary>
+    /// Authoritative Central PMS availability status.
+    /// </summary>
+    public string AvailabilityStatus { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Indicates whether Central PMS reports an active statutory parking benefit.
+    /// </summary>
+    public bool StatutoryParkingBenefitAvailable { get; set; }
+
+    /// <summary>
+    /// Entitlement types currently covered by the authoritative result.
+    /// </summary>
+    public IReadOnlyList<string> CoveredEntitlementTypes { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Requested entitlement filter echoed when supplied.
+    /// </summary>
+    public string? RequestedEntitlementType { get; set; }
+
+    /// <summary>
+    /// Browser-safe reason code.
+    /// </summary>
+    public string? SafeReasonCode { get; set; }
+
+    /// <summary>
+    /// Indicates whether the availability request can be retried.
+    /// </summary>
+    public bool Retryable { get; set; }
+
+    /// <summary>
+    /// Browser-safe remediation action.
+    /// </summary>
+    public string RemediationAction { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Browser-safe evidence requirement metadata for active coverage.
+    /// </summary>
+    public IReadOnlyList<WebPayStatutoryDiscountAvailabilityEvidenceRequirement> RequiredEvidenceTypes { get; set; } =
+        Array.Empty<WebPayStatutoryDiscountAvailabilityEvidenceRequirement>();
+
+    /// <summary>
+    /// Correlation identifier for safe diagnostics and support.
+    /// </summary>
+    public Guid CorrelationId { get; set; }
+}
+
+/// <summary>
+/// Browser-safe evidence requirement metadata returned only when Central PMS reports active coverage.
+/// </summary>
+public sealed class WebPayStatutoryDiscountAvailabilityEvidenceRequirement
+{
+    /// <summary>
+    /// Safe evidence type code.
+    /// </summary>
+    public string EvidenceType { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Requirement status.
+    /// </summary>
+    public string RequirementStatus { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Customer-safe requirement label.
+    /// </summary>
+    public string SafeRequirementLabel { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional customer-safe requirement notes.
+    /// </summary>
+    public string? SafeRequirementNotes { get; set; }
+}
+
+/// <summary>
 /// Browser-safe durable statutory-discount readback.
 /// </summary>
 public sealed class WebPayStatutoryDiscountDecisionResponse
