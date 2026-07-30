@@ -1269,6 +1269,9 @@ public sealed class WebPayPaymentIntentHandlerTests
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision> StatutoryDecisionResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>.Success(StatutoryDecision());
 
+        public CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> StatutoryAvailabilityResult { get; set; } =
+            CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(StatutoryAvailability());
+
         private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
         private readonly Queue<CentralPmsWebPayResult<CentralPmsResolvedParking>> _resolveResults = new();
         private readonly List<Guid> _capturedTariffSnapshotIds = new();
@@ -1284,6 +1287,8 @@ public sealed class WebPayPaymentIntentHandlerTests
         public int FinalizePaymentAttemptCallCount { get; private set; }
 
         public int GetStatutoryDiscountDecisionCallCount { get; private set; }
+
+        public int ResolveStatutoryDiscountAvailabilityCallCount { get; private set; }
 
         public Guid? FinalizedPaymentAttemptId { get; private set; }
 
@@ -1384,6 +1389,15 @@ public sealed class WebPayPaymentIntentHandlerTests
             throw new NotSupportedException();
         }
 
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>> ResolveStatutoryDiscountAvailabilityAsync(
+            CentralPmsStatutoryDiscountAvailabilityRequest request,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            ResolveStatutoryDiscountAvailabilityCallCount++;
+            return Task.FromResult(StatutoryAvailabilityResult);
+        }
+
         public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(
             Guid statutoryDiscountDecisionCommandId,
             Guid correlationId,
@@ -1402,6 +1416,26 @@ public sealed class WebPayPaymentIntentHandlerTests
             throw new NotSupportedException();
         }
     }
+
+    private static CentralPmsStatutoryDiscountAvailability StatutoryAvailability(
+        IReadOnlyList<string>? coveredEntitlementTypes = null,
+        string availabilityStatus = "AVAILABLE",
+        bool statutoryParkingBenefitAvailable = true,
+        bool retryable = false) =>
+        new(
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            ParkingSessionId,
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            availabilityStatus,
+            statutoryParkingBenefitAvailable,
+            coveredEntitlementTypes ?? new[] { "SENIOR_CITIZEN", "PWD" },
+            null,
+            null,
+            retryable,
+            retryable ? "WAIT_AND_RETRY" : "CONTINUE_WITH_ORDINARY_PAYMENT",
+            Array.Empty<CentralPmsStatutoryDiscountAvailabilityEvidenceRequirement>(),
+            CorrelationId);
 
     private sealed class FakeProviderSessionRepository : IProviderSessionRepository
     {

@@ -138,6 +138,24 @@ function buildSessionResponse(ticketReference, correlationId) {
   };
 }
 
+function buildStatutoryAvailabilityResponse(body, correlationId) {
+  return {
+    requestReference: body.requestReference ?? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    parkingSessionId: body.parkingSessionId ?? "20000000-0000-4000-8000-000000000001",
+    siteId: body.siteId ?? "50000000-0000-4000-8000-000000000001",
+    siteGroupId: body.siteGroupId ?? "40000000-0000-4000-8000-000000000001",
+    availabilityStatus: "AVAILABLE",
+    statutoryParkingBenefitAvailable: true,
+    coveredEntitlementTypes: ["SENIOR_CITIZEN", "PWD"],
+    requestedEntitlementType: body.requestedEntitlementType ?? null,
+    safeReasonCode: null,
+    retryable: false,
+    remediationAction: "CONTINUE_WITH_ORDINARY_PAYMENT",
+    requiredEvidenceTypes: [],
+    correlationId
+  };
+}
+
 function buildPresentationResponse(paymentAttemptId, correlationId) {
   return {
     paymentAttemptId,
@@ -561,6 +579,14 @@ async function handleApi(request, response, url) {
     }
 
     writeJson(response, 409, errorResponse("UNEXPECTED_BROWSER_SMOKE_PAYMENT_SUBMISSION", "Browser smoke must not submit payment.", false, body.correlationId));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/webpay/statutory-discounts/availability") {
+    const body = await readJson(request);
+    recordRequest(request, body);
+    const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
+    writeJson(response, 200, buildStatutoryAvailabilityResponse(body, correlationId));
     return;
   }
 

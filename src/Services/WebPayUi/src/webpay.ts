@@ -8,6 +8,7 @@ import type {
   StatutoryDiscountEntitlementType,
   WebPayReceiptPresentationResponse,
   WebPayHandoff,
+  WebPayStatutoryDiscountAvailabilityResponse,
   WebPayStatutoryDiscountDecisionRequest,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
@@ -15,6 +16,7 @@ import type {
 const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
 const receiptPresentationPathPrefix = "/v1/webpay/payment-attempts";
+const statutoryDiscountAvailabilityPath = "/v1/webpay/statutory-discounts/availability";
 const statutoryDiscountDecisionPath = "/v1/webpay/statutory-discounts/decisions";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 const refreshRequiredErrorCode = "PAYABLE_BASIS_REFRESH_REQUIRED";
@@ -388,6 +390,43 @@ export async function createPaymentIntent(
   return payload as PaymentIntentResponse;
 }
 
+export async function retrieveStatutoryDiscountAvailability(
+  session: Pick<ParkingSessionResolveResponse, "parkingSessionId" | "siteId" | "siteGroupId">,
+  requestedEntitlementType?: StatutoryDiscountEntitlementType,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<WebPayStatutoryDiscountAvailabilityResponse> {
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+  const body = {
+    requestReference: createRequestReference(),
+    parkingSessionId: session.parkingSessionId,
+    siteId: session.siteId ?? null,
+    siteGroupId: session.siteGroupId ?? null,
+    requestedEntitlementType: requestedEntitlementType ?? null
+  };
+
+  const response = await fetchImpl(`${getApiBaseUrl()}${statutoryDiscountAvailabilityPath}`, {
+    method: "POST",
+    headers: jsonHeaders(requestCorrelationId),
+    body: JSON.stringify(body),
+    signal
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as WebPayStatutoryDiscountAvailabilityResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new StatutoryDiscountDecisionError(
+      error.errorCode,
+      toStatutoryDiscountAvailabilityMessage(error.errorCode, error.message),
+      Boolean(error.retryable),
+      error.correlationId
+    );
+  }
+
+  return payload as WebPayStatutoryDiscountAvailabilityResponse;
+}
+
 export function buildStatutoryDiscountDecisionBody(
   request: WebPayStatutoryDiscountDecisionRequest
 ): WebPayStatutoryDiscountDecisionRequest {
@@ -636,6 +675,32 @@ export function toStatutoryDiscountMessage(errorCode?: string, message?: string)
       return "The statutory discount request could not be found.";
     default:
       return message?.trim() || "Statutory discount status is unavailable. Please try again shortly.";
+  }
+}
+
+export function toStatutoryDiscountAvailabilityMessage(errorCode?: string, message?: string): string {
+  switch ((errorCode ?? "").toUpperCase()) {
+    case "WEBPAY_STATUTORY_PRIVILEGE_NOT_AVAILABLE":
+    case "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_UNAVAILABLE":
+    case "NO_APPLICABLE_LOCAL_ORDINANCE":
+    case "ENTITLEMENT_NOT_COVERED":
+    case "PARKING_SERVICE_NOT_COVERED":
+    case "POLICY_NOT_YET_EFFECTIVE":
+    case "POLICY_EXPIRED":
+    case "POLICY_SUSPENDED":
+    case "POLICY_WITHDRAWN":
+    case "POLICY_SUPERSEDED_WITHOUT_SUCCESSOR":
+    case "POLICY_UNVERIFIED":
+    case "POLICY_NOT_PUBLISHED":
+    case "REQUIRED_POLICY_FACTS_INCOMPLETE":
+    case "BENEFIT_EFFECT_NOT_SUPPORTED":
+      return "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.";
+    case "WEBPAY_STATUTORY_AVAILABILITY_TEMPORARILY_UNAVAILABLE":
+    case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
+    case "TEMPORARILY_UNAVAILABLE":
+      return "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
+    default:
+      return message?.trim() || "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
   }
 }
 

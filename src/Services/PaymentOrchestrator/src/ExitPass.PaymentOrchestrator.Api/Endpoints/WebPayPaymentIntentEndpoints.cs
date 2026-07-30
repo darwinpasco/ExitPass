@@ -109,6 +109,39 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapPost("/v1/webpay/statutory-discounts/availability", async (
+            WebPayStatutoryDiscountAvailabilityRequest request,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(centralPmsClient);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            if (!TryBuildCentralPmsStatutoryAvailabilityRequest(request, correlationId, out var centralPmsRequest, out var validationError))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(validationError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var result = await centralPmsClient.ResolveStatutoryDiscountAvailabilityAsync(
+                    centralPmsRequest,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return ToStatutoryAvailabilityResult(result, httpContext, correlationId);
+        })
+        .WithName("ResolveWebPayStatutoryDiscountAvailability")
+        .Produces<WebPayStatutoryDiscountAvailabilityResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status422UnprocessableEntity)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         app.MapPost("/v1/webpay/statutory-discounts/decisions", async (
             WebPayStatutoryDiscountDecisionRequest request,
             ICentralPmsWebPayClient centralPmsClient,
@@ -130,6 +163,32 @@ public static class WebPayPaymentIntentEndpoints
             {
                 httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
                 return Results.Json(validationError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var availability = await centralPmsClient.ResolveStatutoryDiscountAvailabilityAsync(
+                    new CentralPmsStatutoryDiscountAvailabilityRequest(
+                        centralPmsRequest.RequestReference,
+                        centralPmsRequest.ParkingSessionId,
+                        centralPmsRequest.EntitlementType,
+                        BeneficiaryResidencySatisfied: null),
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (!availability.Succeeded || availability.Value is null)
+            {
+                return ToStatutoryAvailabilityGateFailure(availability, httpContext, correlationId);
+            }
+
+            if (!availability.Value.Covers(centralPmsRequest.EntitlementType))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = availability.Value.CorrelationId.ToString();
+                return Results.Json(
+                    BuildStatutoryErrorResponse(
+                        "WEBPAY_STATUTORY_PRIVILEGE_NOT_AVAILABLE",
+                        "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.",
+                        retryable: availability.Value.Retryable,
+                        availability.Value.CorrelationId),
+                    statusCode: StatusCodes.Status409Conflict);
             }
 
             var result = await centralPmsClient.SubmitStatutoryDiscountDecisionAsync(
@@ -342,6 +401,49 @@ public static class WebPayPaymentIntentEndpoints
         return false;
     }
 
+    private static bool TryBuildCentralPmsStatutoryAvailabilityRequest(
+        WebPayStatutoryDiscountAvailabilityRequest request,
+        Guid correlationId,
+        out CentralPmsStatutoryDiscountAvailabilityRequest centralPmsRequest,
+        out object error)
+    {
+        var errors = new List<string>();
+        if (request.RequestReference == Guid.Empty)
+        {
+            errors.Add("requestReference is required.");
+        }
+
+        if (request.ParkingSessionId == Guid.Empty)
+        {
+            errors.Add("parkingSessionId is required.");
+        }
+
+        var entitlementType = Normalize(request.RequestedEntitlementType);
+        if (entitlementType.Length > 0 && entitlementType is not "SENIOR_CITIZEN" and not "PWD")
+        {
+            errors.Add("requestedEntitlementType must be SENIOR_CITIZEN or PWD.");
+        }
+
+        if (errors.Count > 0)
+        {
+            centralPmsRequest = null!;
+            error = BuildStatutoryErrorResponse(
+                "WEBPAY_STATUTORY_AVAILABILITY_REQUEST_INVALID",
+                $"The statutory availability request is invalid. errors={string.Join(" ", errors)}",
+                retryable: false,
+                correlationId);
+            return false;
+        }
+
+        centralPmsRequest = new CentralPmsStatutoryDiscountAvailabilityRequest(
+            request.RequestReference,
+            request.ParkingSessionId,
+            entitlementType.Length == 0 ? null : entitlementType,
+            BeneficiaryResidencySatisfied: null);
+        error = new { };
+        return true;
+    }
+
     private static bool TryBuildCentralPmsStatutoryRequest(
         WebPayStatutoryDiscountDecisionRequest request,
         Guid correlationId,
@@ -450,6 +552,42 @@ public static class WebPayPaymentIntentEndpoints
         return true;
     }
 
+    private static IResult ToStatutoryAvailabilityResult(
+        CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> result,
+        HttpContext httpContext,
+        Guid fallbackCorrelationId)
+    {
+        if (result.Succeeded && result.Value is not null)
+        {
+            httpContext.Response.Headers["X-Correlation-Id"] = result.Value.CorrelationId.ToString();
+            return Results.Ok(ToStatutoryAvailabilityResponse(result.Value));
+        }
+
+        return ToStatutoryAvailabilityGateFailure(result, httpContext, fallbackCorrelationId);
+    }
+
+    private static IResult ToStatutoryAvailabilityGateFailure(
+        CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> result,
+        HttpContext httpContext,
+        Guid fallbackCorrelationId)
+    {
+        var error = result.Error ?? new CentralPmsWebPayError(
+            StatusCodes.Status502BadGateway,
+            "WEBPAY_STATUTORY_AVAILABILITY_FAILED",
+            "Parking privilege availability could not be resolved.",
+            true,
+            fallbackCorrelationId);
+        var browserSafeError = ToBrowserSafeStatutoryAvailabilityError(error, fallbackCorrelationId);
+        httpContext.Response.Headers["X-Correlation-Id"] = browserSafeError.CorrelationId.ToString();
+        return Results.Json(
+            BuildStatutoryErrorResponse(
+                browserSafeError.ErrorCode,
+                browserSafeError.Message,
+                browserSafeError.Retryable,
+                browserSafeError.CorrelationId),
+            statusCode: browserSafeError.StatusCode);
+    }
+
     private static IResult ToStatutoryDecisionResult(
         CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision> result,
         HttpContext httpContext,
@@ -476,6 +614,39 @@ public static class WebPayPaymentIntentEndpoints
                 browserSafeError.Retryable,
                 browserSafeError.CorrelationId),
             statusCode: browserSafeError.StatusCode);
+    }
+
+    private static BrowserSafeStatutoryError ToBrowserSafeStatutoryAvailabilityError(
+        CentralPmsWebPayError error,
+        Guid fallbackCorrelationId)
+    {
+        var correlationId = error.CorrelationId ?? fallbackCorrelationId;
+        if (IsCentralPmsAuthOrTrustFailure(error))
+        {
+            return new BrowserSafeStatutoryError(
+                StatusCodes.Status503ServiceUnavailable,
+                "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE",
+                "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
+                true,
+                correlationId);
+        }
+
+        if (IsCentralPmsTransientFailure(error) || ContainsInternalErrorText(error.Message))
+        {
+            return new BrowserSafeStatutoryError(
+                StatusCodes.Status503ServiceUnavailable,
+                "WEBPAY_STATUTORY_AVAILABILITY_TEMPORARILY_UNAVAILABLE",
+                "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
+                true,
+                correlationId);
+        }
+
+        return new BrowserSafeStatutoryError(
+            error.StatusCode,
+            error.ErrorCode,
+            error.Message,
+            error.Retryable,
+            correlationId);
     }
 
     private static BrowserSafeStatutoryError ToBrowserSafeStatutoryError(
@@ -604,6 +775,36 @@ public static class WebPayPaymentIntentEndpoints
             CreatedAt = decision.CreatedAt,
             DecidedAt = decision.DecidedAt,
             AppliedAt = decision.AppliedAt
+        };
+
+    private static WebPayStatutoryDiscountAvailabilityResponse ToStatutoryAvailabilityResponse(
+        CentralPmsStatutoryDiscountAvailability availability) =>
+        new()
+        {
+            RequestReference = availability.RequestReference,
+            ParkingSessionId = availability.ParkingSessionId,
+            SiteId = availability.SiteId,
+            SiteGroupId = availability.SiteGroupId,
+            AvailabilityStatus = availability.AvailabilityStatus,
+            StatutoryParkingBenefitAvailable = availability.StatutoryParkingBenefitAvailable,
+            CoveredEntitlementTypes = availability.CoveredEntitlementTypes
+                .Where(static entitlement => entitlement is "SENIOR_CITIZEN" or "PWD")
+                .Distinct(StringComparer.Ordinal)
+                .ToArray(),
+            RequestedEntitlementType = availability.RequestedEntitlementType,
+            SafeReasonCode = availability.SafeReasonCode,
+            Retryable = availability.Retryable,
+            RemediationAction = availability.RemediationAction,
+            RequiredEvidenceTypes = availability.RequiredEvidenceTypes.Select(static requirement =>
+                    new WebPayStatutoryDiscountAvailabilityEvidenceRequirement
+                    {
+                        EvidenceType = requirement.EvidenceType,
+                        RequirementStatus = requirement.RequirementStatus,
+                        SafeRequirementLabel = requirement.SafeRequirementLabel,
+                        SafeRequirementNotes = requirement.SafeRequirementNotes
+                    })
+                .ToArray(),
+            CorrelationId = availability.CorrelationId
         };
 
     private static object BuildStatutoryErrorResponse(

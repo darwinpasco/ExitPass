@@ -14,6 +14,7 @@ import {
   StatutoryDiscountDecisionError,
   retrieveReceiptPresentation,
   retrievePaymentStatus,
+  retrieveStatutoryDiscountAvailability,
   retrieveStatutoryDiscountDecision,
   resolveParkingSession,
   submitStatutoryDiscountDecision,
@@ -146,6 +147,72 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(body).not.toHaveProperty("vatAmountMinorUnits");
     expect(body).not.toHaveProperty("finalPayableAmountMinorUnits");
     expect(body).not.toHaveProperty("appliedTariffSnapshotId");
+  });
+
+  it("WebPay_WhenStatutoryAvailabilityRequested_UsesSameOriginProxyWithSafeSessionScope", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => statutoryAvailabilityResponse()
+    });
+
+    const result = await retrieveStatutoryDiscountAvailability(
+      {
+        parkingSessionId: "55555555-5555-5555-5555-555555555555",
+        siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+        siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"
+      },
+      "PWD",
+      "77777777-7777-7777-7777-777777777777",
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/statutory-discounts/availability");
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.method).toBe("POST");
+    const headers = request.headers as Record<string, string>;
+    expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
+    expect(headers).not.toHaveProperty("X-ExitPass-Service-Identity-Id");
+    expect(headers).not.toHaveProperty("X-ExitPass-Permissions");
+    expect(headers).not.toHaveProperty("Authorization");
+    const body = JSON.parse(request.body as string);
+    expect(body.parkingSessionId).toBe("55555555-5555-5555-5555-555555555555");
+    expect(body.siteId).toBe("93bd3cb3-e806-4c5c-ac8c-df6c4addff14");
+    expect(body.siteGroupId).toBe("29b8b4f4-40dd-447b-ac06-dd52e6ad51c5");
+    expect(body.requestedEntitlementType).toBe("PWD");
+    expect(body).not.toHaveProperty("sourceChannel");
+    expect(body).not.toHaveProperty("reviewerUserId");
+    expect(body).not.toHaveProperty("evidenceReferences");
+    expect(result.coveredEntitlementTypes).toEqual(["SENIOR_CITIZEN", "PWD"]);
+  });
+
+  it("WebPay_WhenStatutoryAvailabilityIsUnavailable_MapsToSafeRetryGuidance", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        errorCode: "WEBPAY_STATUTORY_AVAILABILITY_TEMPORARILY_UNAVAILABLE",
+        message: "HttpClient connection refused http://central-pms.internal",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      retrieveStatutoryDiscountAvailability(
+        {
+          parkingSessionId: "55555555-5555-5555-5555-555555555555",
+          siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+          siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"
+        },
+        undefined,
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+      name: "StatutoryDiscountDecisionError",
+      message: "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
+      retryable: true
+    } satisfies Partial<StatutoryDiscountDecisionError>);
   });
 
   it("WebPay_WhenStatutoryDecisionReadbackRequested_UsesGetOnlyWebPayProxyRoute", async () => {
@@ -843,6 +910,25 @@ function statutoryDecisionResponse(overrides?: Record<string, unknown>) {
     createdAt: "2026-07-27T10:00:00+08:00",
     decidedAt: null,
     appliedAt: null,
+    ...overrides
+  };
+}
+
+function statutoryAvailabilityResponse(overrides?: Record<string, unknown>) {
+  return {
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    parkingSessionId: "55555555-5555-5555-5555-555555555555",
+    siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+    siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+    availabilityStatus: "AVAILABLE",
+    statutoryParkingBenefitAvailable: true,
+    coveredEntitlementTypes: ["SENIOR_CITIZEN", "PWD"],
+    requestedEntitlementType: null,
+    safeReasonCode: null,
+    retryable: false,
+    remediationAction: "CONTINUE_WITH_ORDINARY_PAYMENT",
+    requiredEvidenceTypes: [],
+    correlationId: "77777777-7777-7777-7777-777777777777",
     ...overrides
   };
 }

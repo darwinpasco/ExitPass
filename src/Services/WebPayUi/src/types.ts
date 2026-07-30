@@ -218,6 +218,29 @@ export type ApiError = {
 
 export type StatutoryDiscountEntitlementType = "SENIOR_CITIZEN" | "PWD";
 
+export type WebPayStatutoryDiscountAvailabilityEvidenceRequirement = {
+  evidenceType: string;
+  requirementStatus: string;
+  safeRequirementLabel: string;
+  safeRequirementNotes?: string | null;
+};
+
+export type WebPayStatutoryDiscountAvailabilityResponse = {
+  requestReference: string;
+  parkingSessionId: string;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  availabilityStatus: string;
+  statutoryParkingBenefitAvailable: boolean;
+  coveredEntitlementTypes: StatutoryDiscountEntitlementType[];
+  requestedEntitlementType?: string | null;
+  safeReasonCode?: string | null;
+  retryable: boolean;
+  remediationAction: string;
+  requiredEvidenceTypes: WebPayStatutoryDiscountAvailabilityEvidenceRequirement[];
+  correlationId: string;
+};
+
 export type WebPayStatutoryDiscountDecisionRequest = {
   requestReference: string;
   parkingSessionId: string;

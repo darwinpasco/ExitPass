@@ -76,6 +76,14 @@ public interface ICentralPmsWebPayClient
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Resolves Central PMS statutory parking local-ordinance availability for a WebPay parking session.
+    /// </summary>
+    Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>> ResolveStatutoryDiscountAvailabilityAsync(
+        CentralPmsStatutoryDiscountAvailabilityRequest request,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Creates or reuses a Central PMS statutory-discount decision for WebPay.
     /// </summary>
     /// <param name="request">Server-normalized WebPay statutory-discount request.</param>

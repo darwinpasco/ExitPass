@@ -15,6 +15,7 @@ import {
   normalizeTicketReference,
   retrieveReceiptPresentation,
   retrievePaymentStatus,
+  retrieveStatutoryDiscountAvailability,
   retrieveStatutoryDiscountDecision,
   resolveParkingSession,
   submitStatutoryDiscountDecision
@@ -36,6 +37,7 @@ import type {
   PaymentIntentResponse,
   PaymentMethod,
   StatutoryDiscountEntitlementType,
+  WebPayStatutoryDiscountAvailabilityResponse,
   WebPayReceiptPresentationResponse,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
@@ -95,6 +97,12 @@ type StatutoryDiscountUiState = {
   error: string;
 };
 
+type StatutoryDiscountAvailabilityUiState = {
+  availability: WebPayStatutoryDiscountAvailabilityResponse | null;
+  isLoading: boolean;
+  error: string;
+};
+
 type AppliedStatutoryPaymentBasis = {
   tariffSnapshotId: string;
   amountMinorUnits: number;
@@ -126,6 +134,12 @@ const emptyStatutoryDiscountUiState: StatutoryDiscountUiState = {
   error: ""
 };
 
+const emptyStatutoryDiscountAvailabilityState: StatutoryDiscountAvailabilityUiState = {
+  availability: null,
+  isLoading: false,
+  error: ""
+};
+
 export function App() {
   const initialTicketReference = getQueryParam("ticketReference");
   const resetStatutoryRecoveryForLocalValidation = shouldResetStatutoryRecoveryForLocalValidation();
@@ -146,6 +160,8 @@ export function App() {
   const [showStatutoryDiscountForm, setShowStatutoryDiscountForm] = useState(false);
   const [statutoryDiscountForm, setStatutoryDiscountForm] = useState<StatutoryDiscountFormState>(defaultStatutoryDiscountForm);
   const [statutoryDiscountState, setStatutoryDiscountState] = useState<StatutoryDiscountUiState>(emptyStatutoryDiscountUiState);
+  const [statutoryAvailabilityState, setStatutoryAvailabilityState] =
+    useState<StatutoryDiscountAvailabilityUiState>(emptyStatutoryDiscountAvailabilityState);
   const [initialRecoveryLoad] = useState(() => {
     if (resetStatutoryRecoveryForLocalValidation) {
       clearStatutoryRecoveryRecord();
@@ -183,6 +199,7 @@ export function App() {
     setShowStatutoryDiscountForm(false);
     setStatutoryDiscountForm(defaultStatutoryDiscountForm);
     setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+    setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     clearStatutoryRecovery();
     setStage("INPUT");
   }
@@ -197,6 +214,7 @@ export function App() {
     setShowStatutoryDiscountForm(false);
     setStatutoryDiscountForm(defaultStatutoryDiscountForm);
     setStatutoryDiscountState(emptyStatutoryDiscountUiState);
+    setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
     setStage("INPUT");
   }
 
@@ -307,12 +325,41 @@ export function App() {
       setActivePaymentAttempt(null);
       setResolvedSession(response);
       setStage("SESSION_RESOLVED");
+      void refreshStatutoryAvailability(response);
     } catch (apiError) {
       setResolvedSession(null);
+      setStatutoryAvailabilityState(emptyStatutoryDiscountAvailabilityState);
       setResolveError(apiError instanceof Error ? apiError.message : "Parking lookup failed. Please try again.");
       setStage("ERROR");
     } finally {
       setIsResolving(false);
+    }
+  }
+
+  async function refreshStatutoryAvailability(session?: ParkingSessionResolveResponse | null) {
+    const activeSession = session ?? resolvedSession;
+    if (!activeSession?.parkingSessionId) {
+      return;
+    }
+
+    setStatutoryAvailabilityState((current) => ({ ...current, isLoading: true, error: "" }));
+    try {
+      const availability = await retrieveStatutoryDiscountAvailability(activeSession);
+      setStatutoryAvailabilityState({
+        availability,
+        isLoading: false,
+        error: ""
+      });
+      const coveredEntitlements = getCoveredStatutoryEntitlementTypes(availability);
+      if (coveredEntitlements.length > 0 && !coveredEntitlements.includes(statutoryDiscountForm.entitlementType)) {
+        setStatutoryDiscountForm((current) => ({ ...current, entitlementType: coveredEntitlements[0] }));
+      }
+    } catch (apiError) {
+      setStatutoryAvailabilityState({
+        availability: null,
+        isLoading: false,
+        error: apiError instanceof Error ? apiError.message : "Parking privilege availability is temporarily unavailable."
+      });
     }
   }
 
@@ -495,6 +542,16 @@ export function App() {
 
   async function handleSubmitStatutoryDiscount() {
     if (!resolvedSession || statutoryDiscountState.isSubmitting) {
+      return;
+    }
+
+    const coveredEntitlements = getCoveredStatutoryEntitlementTypes(statutoryAvailabilityState.availability);
+    if (!coveredEntitlements.includes(statutoryDiscountForm.entitlementType)) {
+      setStatutoryDiscountState((current) => ({
+        ...current,
+        error: "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.",
+        message: ""
+      }));
       return;
     }
 
@@ -876,6 +933,8 @@ export function App() {
     (isPayablePending || (isActiveStatutoryWorkflow && !appliedStatutoryBasis));
   const statutoryRecoveryMutationInFlight = hasKnownInFlightStatutoryRecoveryStage(statutoryRecoveryRecord);
   const statutoryRecoveryPaymentBlocked = stage === "SESSION_RESOLVED" && statutoryRecoveryMutationInFlight;
+  const coveredStatutoryEntitlements = getCoveredStatutoryEntitlementTypes(statutoryAvailabilityState.availability);
+  const canStartStatutoryDiscountRequest = coveredStatutoryEntitlements.length > 0 || Boolean(statutoryDiscountState.decision);
 
   return (
     <main className="app-shell">
@@ -1000,6 +1059,9 @@ export function App() {
             session={summary}
             form={statutoryDiscountForm}
             state={statutoryDiscountState}
+            availabilityState={statutoryAvailabilityState}
+            coveredEntitlements={coveredStatutoryEntitlements}
+            canStartRequest={canStartStatutoryDiscountRequest}
             showForm={showStatutoryDiscountForm}
             onShowForm={() => {
               setShowStatutoryDiscountForm(true);
@@ -1019,6 +1081,7 @@ export function App() {
             onSubmit={() => void handleSubmitStatutoryDiscount()}
             onApply={() => void handleApplyStatutoryDiscount()}
             onRefresh={() => void handleRefreshStatutoryDecision()}
+            onRefreshAvailability={() => void refreshStatutoryAvailability(summary)}
           />
         )}
 
@@ -1222,17 +1285,24 @@ function StatutoryDiscountRequestPanel({
   session,
   form,
   state,
+  availabilityState,
+  coveredEntitlements,
+  canStartRequest,
   showForm,
   onShowForm,
   onCancel,
   onFormChange,
   onSubmit,
   onApply,
-  onRefresh
+  onRefresh,
+  onRefreshAvailability
 }: {
   session: ParkingSessionResolveResponse;
   form: StatutoryDiscountFormState;
   state: StatutoryDiscountUiState;
+  availabilityState: StatutoryDiscountAvailabilityUiState;
+  coveredEntitlements: StatutoryDiscountEntitlementType[];
+  canStartRequest: boolean;
   showForm: boolean;
   onShowForm: () => void;
   onCancel: () => void;
@@ -1240,11 +1310,13 @@ function StatutoryDiscountRequestPanel({
   onSubmit: () => void;
   onApply: () => void;
   onRefresh: () => void;
+  onRefreshAvailability: () => void;
 }) {
   const decision = state.decision;
   const copy = decision ? getStatutoryDiscountStatusCopy(decision) : null;
   const showApplyAction = Boolean(decision && canSubmitApplicationIntent(decision));
   const showApplicationRetryAction = Boolean(decision && canRetryApplicationIntent(decision));
+  const availabilityCopy = getStatutoryAvailabilityCopy(availabilityState);
 
   return (
     <section className="statutory-discount-panel" aria-labelledby="statutory-discount-heading">
@@ -1253,21 +1325,44 @@ function StatutoryDiscountRequestPanel({
           <p className="eyebrow">Statutory discount</p>
           <h2 id="statutory-discount-heading">Senior Citizen or PWD request</h2>
         </div>
-        {!decision && !showForm && (
+        {!decision && !showForm && canStartRequest && (
           <button type="button" className="secondary-button" onClick={onShowForm}>
             Request statutory discount
           </button>
         )}
       </div>
 
+      {!decision && availabilityCopy && (
+        <div className={`statutory-status is-${availabilityCopy.tone}`} aria-live="polite">
+          <div>
+            <h3>{availabilityCopy.heading}</h3>
+            <p>{availabilityCopy.body}</p>
+          </div>
+          {availabilityState.availability?.correlationId && (
+            <dl>
+              <div>
+                <dt>Support reference</dt>
+                <dd>{availabilityState.availability.correlationId}</dd>
+              </div>
+            </dl>
+          )}
+          {(availabilityState.isLoading || availabilityState.error || availabilityState.availability?.retryable) && (
+            <button type="button" className="secondary-button" onClick={onRefreshAvailability} disabled={availabilityState.isLoading}>
+              {availabilityState.isLoading ? "Checking availability..." : "Check availability"}
+            </button>
+          )}
+        </div>
+      )}
+
       {!decision && !showForm && (
         <p className="statutory-copy">
-          Submit safe entitlement details for review. Payment remains unavailable until review and payable-basis application
-          are complete; WebPay does not approve the entitlement.
+          {canStartRequest
+            ? "Submit safe entitlement details for review. Payment remains unavailable until review and payable-basis application are complete; WebPay does not approve the entitlement."
+            : "Regular parking payment remains available."}
         </p>
       )}
 
-      {showForm && (
+      {showForm && canStartRequest && (
         <div className="statutory-form">
           <fieldset disabled={state.isSubmitting || state.isApplying}>
             <legend>Entitlement details for review</legend>
@@ -1278,8 +1373,8 @@ function StatutoryDiscountRequestPanel({
                 value={form.entitlementType}
                 onChange={(event) => onFormChange({ ...form, entitlementType: event.target.value as StatutoryDiscountEntitlementType })}
               >
-                <option value="SENIOR_CITIZEN">Senior Citizen</option>
-                <option value="PWD">PWD</option>
+                {coveredEntitlements.includes("SENIOR_CITIZEN") && <option value="SENIOR_CITIZEN">Senior Citizen</option>}
+                {coveredEntitlements.includes("PWD") && <option value="PWD">PWD</option>}
               </select>
             </label>
 
@@ -2098,6 +2193,63 @@ function getStatutoryDiscountPaymentAvailabilityCopy(decision: WebPayStatutoryDi
   return getAppliedStatutoryPaymentBasis(decision)
     ? "Payment is available using the Central PMS-approved statutory payable basis."
     : "Payment remains unavailable while this statutory discount workflow is active.";
+}
+
+function getCoveredStatutoryEntitlementTypes(
+  availability: WebPayStatutoryDiscountAvailabilityResponse | null
+): StatutoryDiscountEntitlementType[] {
+  if (!availability ||
+      !availability.statutoryParkingBenefitAvailable ||
+      availability.availabilityStatus.toUpperCase() !== "AVAILABLE") {
+    return [];
+  }
+
+  return availability.coveredEntitlementTypes.filter(
+    (entitlement): entitlement is StatutoryDiscountEntitlementType => entitlement === "SENIOR_CITIZEN" || entitlement === "PWD"
+  );
+}
+
+function getStatutoryAvailabilityCopy(
+  state: StatutoryDiscountAvailabilityUiState
+): { heading: string; body: string; tone: "pending" | "success" | "warning" | "error" } | null {
+  if (state.isLoading) {
+    return {
+      heading: "Checking parking privilege availability",
+      body: "Checking whether this parking session has an active covered Senior Citizen or PWD parking privilege.",
+      tone: "pending"
+    };
+  }
+
+  if (state.error) {
+    return {
+      heading: "Parking privilege availability unavailable",
+      body: state.error,
+      tone: "warning"
+    };
+  }
+
+  const availability = state.availability;
+  if (!availability) {
+    return null;
+  }
+
+  const covered = getCoveredStatutoryEntitlementTypes(availability);
+  if (covered.length > 0) {
+    const label = covered.length === 2
+      ? "Senior Citizen and PWD"
+      : covered[0] === "SENIOR_CITIZEN" ? "Senior Citizen" : "PWD";
+    return {
+      heading: "Parking privilege request available",
+      body: `${label} parking privilege requests may be submitted for review for this parking session.`,
+      tone: "success"
+    };
+  }
+
+  return {
+    heading: "Parking privilege request not available",
+    body: "Parking privilege requests are not available for this parking session. You may continue with the regular parking amount.",
+    tone: "warning"
+  };
 }
 
 function getStatutoryRecoveryStageFromDecision(decision: WebPayStatutoryDiscountDecisionResponse): StatutoryRecoveryStage {

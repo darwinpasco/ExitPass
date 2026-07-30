@@ -7,6 +7,10 @@ $ErrorActionPreference = "Stop"
 $script:serverProcess = $null
 $port = if ($env:WEBPAY_BROWSER_SMOKE_PORT) { [int] $env:WEBPAY_BROWSER_SMOKE_PORT } else { 5196 }
 $healthUrl = "http://127.0.0.1:$port/__fixture/health"
+$env:VITE_WEBPAY_DEFAULT_SITE_GROUP_ID = "40000000-0000-4000-8000-000000000001"
+$env:VITE_WEBPAY_DEFAULT_SITE_ID = "50000000-0000-4000-8000-000000000001"
+$env:VITE_WEBPAY_DEFAULT_VENDOR_SYSTEM_ID = "60000000-0000-4000-8000-000000000001"
+$env:VITE_WEBPAY_API_BASE_URL = ""
 
 function Stop-SmokeServer {
     if ($script:serverProcess -and -not $script:serverProcess.HasExited) {
@@ -19,6 +23,11 @@ try {
     $existingConnection = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     if ($existingConnection) {
         throw "Port $port is already in use. Set WEBPAY_BROWSER_SMOKE_PORT to a free port or stop the existing test server."
+    }
+
+    & npm.cmd run build
+    if ($LASTEXITCODE -ne 0) {
+        throw "WebPay production build failed with exit code $LASTEXITCODE."
     }
 
     $env:WEBPAY_BROWSER_SMOKE_PORT = [string] $port
@@ -47,7 +56,7 @@ try {
         throw "WebPay browser-smoke fixture server did not become ready on port $port."
     }
 
-    $arguments = @("playwright", "test", "--config", "playwright.config.ts")
+    $arguments = @("playwright", "test", "e2e/webpay-authoritative-sales-invoice.spec.ts", "--config", "playwright.config.ts")
     if ($Headed) {
         $arguments += "--headed"
     }
