@@ -702,10 +702,12 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             {
                 services.RemoveAll<ICentralPmsWebPayClient>();
                 services.RemoveAll<IPaymentProviderRoutingPolicyResolver>();
+                services.RemoveAll<IProviderProductResolver>();
                 services.RemoveAll<IProviderPaymentHandoffInitiator>();
                 services.RemoveAll<IProviderSessionRepository>();
                 services.AddSingleton<ICentralPmsWebPayClient>(state);
                 services.AddSingleton<IPaymentProviderRoutingPolicyResolver>(state);
+                services.AddSingleton<IProviderProductResolver>(state);
                 services.AddSingleton<IProviderPaymentHandoffInitiator>(state);
                 services.AddSingleton<IProviderSessionRepository>(state);
             });
@@ -827,6 +829,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     private sealed class WebPayEndpointState :
         ICentralPmsWebPayClient,
         IPaymentProviderRoutingPolicyResolver,
+        IProviderProductResolver,
         IProviderPaymentHandoffInitiator,
         IProviderSessionRepository
     {
@@ -907,6 +910,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public ProviderSessionRecord? LatestActiveProviderSession { get; set; }
 
         public ProviderSessionRecord? LatestProviderSessionByPaymentAttempt { get; set; }
+
+        public ProviderSessionRecord? ReservedProviderSession { get; private set; }
 
         public void EnqueueCreateAttemptResult(CentralPmsWebPayResult<CentralPmsPaymentAttempt> result)
         {
@@ -1022,6 +1027,11 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
                 _routeErrorCode));
         }
 
+        public string ResolveProviderProduct(string providerCode, string paymentMethod)
+        {
+            return "PAYMONGO_CHECKOUT_SESSION";
+        }
+
         public Task<InitiateProviderPaymentResponse> InitiateAsync(
             InitiateProviderPaymentRequest request,
             CancellationToken cancellationToken)
@@ -1049,7 +1059,42 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             ProviderSessionInitiationReservation reservation,
             CancellationToken cancellationToken)
         {
-            throw new NotSupportedException();
+            if (LatestProviderSessionByPaymentAttempt?.PaymentAttemptId == reservation.PaymentAttemptId)
+            {
+                return Task.FromResult(new ProviderSessionInitiationReservationResult(
+                    ProviderSessionInitiationReservationOutcome.Existing,
+                    LatestProviderSessionByPaymentAttempt));
+            }
+
+            if (ReservedProviderSession?.PaymentAttemptId == reservation.PaymentAttemptId)
+            {
+                return Task.FromResult(new ProviderSessionInitiationReservationResult(
+                    ProviderSessionInitiationReservationOutcome.Existing,
+                    ReservedProviderSession));
+            }
+
+            ReservedProviderSession = new ProviderSessionRecord(
+                reservation.ProviderSessionRecordId,
+                reservation.PaymentAttemptId,
+                "PAYMONGO",
+                reservation.ProviderProduct,
+                string.Empty,
+                null,
+                "CREATED",
+                null,
+                null,
+                null,
+                reservation.IdempotencyKey,
+                reservation.CorrelationId,
+                reservation.RequestPayloadJson,
+                "{}",
+                reservation.CreatedAtUtc,
+                reservation.AmountMinorUnits,
+                reservation.CurrencyCode);
+
+            return Task.FromResult(new ProviderSessionInitiationReservationResult(
+                ProviderSessionInitiationReservationOutcome.Acquired,
+                ReservedProviderSession));
         }
 
         public Task CompleteInitiationAsync(
@@ -1057,7 +1102,12 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             ProviderSessionRecord record,
             CancellationToken cancellationToken)
         {
-            throw new NotSupportedException();
+            ReservedProviderSession = record with
+            {
+                ProviderSessionRecordId = providerSessionRecordId
+            };
+            LatestProviderSessionByPaymentAttempt = ReservedProviderSession;
+            return Task.CompletedTask;
         }
 
         public Task AddAsync(ProviderSessionRecord record, CancellationToken cancellationToken)
