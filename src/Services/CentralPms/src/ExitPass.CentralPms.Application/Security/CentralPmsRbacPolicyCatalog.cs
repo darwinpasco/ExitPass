@@ -187,6 +187,10 @@ public static class CentralPmsRbacPolicyCatalog
                 "statutory-discounts.draft.view",
                 "reconciliation.manage"
             ],
+            ["WebPayStatutoryDiscountPendingLifecycleRediscover"] =
+            [
+                "statutory-discounts.pending-lifecycle.rediscover.webpay"
+            ],
 
             ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
             ["OperatorConsolePolicyImportReviewViewer"] =

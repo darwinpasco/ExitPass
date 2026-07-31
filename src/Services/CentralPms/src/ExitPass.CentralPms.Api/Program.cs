@@ -61,6 +61,7 @@ using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using ExitPass.CentralPms.Infrastructure.VendorParking;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorPaymentAcknowledgments;
+using ExitPass.CentralPms.Infrastructure.WebPay;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -169,6 +170,7 @@ app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
 app.MapAptPayableBasisEndpoints();
 app.MapTerminalCashPaymentEndpoints();
 app.MapWebPayReceiptPresentationEndpoints();
+app.MapWebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -714,6 +716,11 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();
     builder.Services.AddScoped<IWebPayReceiptPresentationService, WebPayReceiptPresentationService>();
+    builder.Services.AddScoped<IWebPayStatutoryDiscountPendingLifecycleRediscoveryRepository>(_ =>
+        new PostgresWebPayStatutoryDiscountPendingLifecycleRediscoveryRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<
+        IWebPayStatutoryDiscountPendingLifecycleRediscoveryService,
+        WebPayStatutoryDiscountPendingLifecycleRediscoveryService>();
 
     builder.Services.TryAddSingleton<CentralPmsMetrics>();
     builder.Services.AddSingleton<ISystemClock, SystemClock>();
