@@ -164,6 +164,7 @@ app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapStatutoryDiscountDecisionEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
+app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
 app.MapAptPayableBasisEndpoints();
 app.MapTerminalCashPaymentEndpoints();
@@ -676,6 +677,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryRepository>(_ =>
         new ManagementPlatformIdentityRbacInventoryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
+    builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
+        new ManagementPlatformStatutoryDiscountPolicyCoverageRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageService, ManagementPlatformStatutoryDiscountPolicyCoverageService>();
     builder.Services.Configure<PosServerSalesInvoiceProfileAdministrationOptions>(
         builder.Configuration.GetSection(PosServerSalesInvoiceProfileAdministrationOptions.SectionName));
     builder.Services.AddScoped(serviceProvider =>

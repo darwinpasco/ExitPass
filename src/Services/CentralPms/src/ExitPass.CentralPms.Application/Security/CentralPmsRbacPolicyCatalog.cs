@@ -80,6 +80,10 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "management-platform.identity-rbac.inventory.read"
             ],
+            ["ManagementPlatformStatutoryDiscountPolicyCoverageRead"] =
+            [
+                "statutory-discount-policy.view"
+            ],
             ["SalesInvoiceProfileRead"] =
             [
                 "sales-invoice-profile.read"
