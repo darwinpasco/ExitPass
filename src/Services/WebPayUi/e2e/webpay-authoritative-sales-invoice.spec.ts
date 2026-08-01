@@ -20,6 +20,49 @@ type FixtureState = {
   statutoryApplyAttempts: Record<string, number>;
   paymentIntentAttempts: Record<string, number>;
   ambiguousDecisionAttempts: Record<string, number>;
+  providerHandoffCount: number;
+  latestStatutoryDecisionSubmissionResponse: RecordedFixtureResponse | null;
+  latestStatutoryDecisionReadResponse: RecordedFixtureResponse | null;
+  latestPendingLifecycleRediscoveryResponse: RecordedFixtureResponse | null;
+  latestPaymentIntentRequest: Record<string, unknown> | null;
+  latestPaymentIntentResponse: RecordedFixtureResponse | null;
+  latestValidationPaymentIntentReplay: {
+    route: string;
+    reusedRecordedBody: boolean;
+    reusedIdempotencyKey: boolean;
+    originalIdempotencyKeyPresent: boolean;
+    replayIdempotencyKeyPresent: boolean;
+    idempotencyKeyValuesMatch: boolean;
+    idempotencyKeyDisposition: string;
+    idempotencyKeyPreservationPassed: boolean;
+    reusedCorrelationId: boolean;
+    reusedCanonicalRequestIdentity: boolean;
+    statusCode: number;
+    body: Record<string, unknown>;
+  } | null;
+  validationPaymentIntentReplayCount: number;
+  paymentIntentRequestLog: Array<Record<string, unknown>>;
+  paymentIntentResponseLog: RecordedFixtureResponse[];
+  observedPaymentAttemptIds: string[];
+  observedProviderHandoffIdentities: string[];
+  paymentIntentReplayResult: {
+    requestCount: number;
+    responseCount: number;
+    successfulResponseCount: number;
+    observedPaymentAttemptIds: string[];
+    uniquePaymentAttemptCount: number;
+    observedProviderHandoffIdentities: string[];
+    uniqueProviderHandoffCount: number;
+    samePaymentAttemptId: boolean;
+    sameHandoffIdentity: boolean;
+    semanticallyEquivalent: boolean;
+  };
+  fixtureLifecycleState: Record<string, unknown> | null;
+};
+
+type RecordedFixtureResponse = {
+  statusCode: number;
+  body: Record<string, unknown>;
 };
 
 const consoleMessagesByTest = new Map<string, string[]>();
@@ -279,6 +322,245 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     const state = await getFixtureState();
     expect(state.requestLog.some((request) => request.path.includes("/statutory-discounts/decisions"))).toBe(false);
   });
+
+  test("ticket re-lookup with no browser recovery restores the same pending decision and continuation by rediscovery", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-REDISCOVER-PENDING");
+
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /this continuation link/i })).toHaveAttribute(
+      "href",
+      `${baseFixtureUrl}/privilege-review/g005-pending-review`
+    );
+    await expect(page.getByRole("button", { name: /pay regular amount/i })).toBeVisible();
+    expect(await readStatutoryRecoveryStorage(page)).toContain(statutoryDecisionCommandId);
+
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover")).toHaveLength(1);
+    expect(state.requestLog.filter((request) => request.method === "GET" && request.path.includes("/statutory-discounts/decisions/"))).not.toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.path.includes("/apply-payable-basis"))).toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(state.latestPendingLifecycleRediscoveryResponse).toMatchObject({
+      statusCode: 200,
+      body: {
+        classification: "FOUND",
+        statutoryDecisionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        statutoryDecisionCommandId,
+        requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        opaqueContinuationReference: "continuation:g005:pending-review",
+        opaqueContinuationUrl: `${baseFixtureUrl}/privilege-review/g005-pending-review`
+      }
+    });
+    expect(state.fixtureLifecycleState).toMatchObject({
+      statutoryDecisionId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      statutoryDecisionCommandId,
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      opaqueContinuationReference: "continuation:g005:pending-review",
+      opaqueContinuationUrl: `${baseFixtureUrl}/privilege-review/g005-pending-review`
+    });
+    await expectApiBoundary(apiRequests);
+    await expectBrowserStorageSafe(page);
+  });
+
+  test("fresh browser restart and plate re-lookup recover the same pending decision without duplicate creation", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await resolveTicketOnStartPage(page, "WEBPAY-STAT-REDISCOVER-PENDING");
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+
+    const restartedPage = await page.context().newPage();
+    await restartedPage.goto("/?webpayStatutoryRecoveryReset=1");
+    await restartedPage.getByRole("button", { name: /plate/i }).click();
+    await restartedPage.getByLabel(/plate number/i).fill("G005PLATE");
+    await restartedPage.getByRole("button", { name: /^continue$/i }).click();
+
+    await expect(restartedPage.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await expect(restartedPage.getByRole("link", { name: /this continuation link/i })).toHaveAttribute(
+      "href",
+      `${baseFixtureUrl}/privilege-review/g005-pending-review`
+    );
+
+    const state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover")).toHaveLength(2);
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.path.includes("/apply-payable-basis"))).toHaveLength(0);
+    expect(state.requestLog.filter((request) => request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    await expectApiBoundary(apiRequests);
+    await expectBrowserStorageSafe(restartedPage);
+    await restartedPage.close();
+  });
+
+  test("pending-review Pay regular amount requires warning and creates ordinary payment intent without statutory IDs", async ({ page }) => {
+    const apiRequests = collectApiRequests(page);
+
+    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-REGULAR", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+    await page.getByRole("button", { name: /pay regular amount/i }).click();
+
+    await expect(page.getByRole("dialog", { name: /proceed without the parking privilege/i })).toBeVisible();
+    await expect(page.getByText(/will not automatically refund or retroactively adjust/i)).toBeVisible();
+    let state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(state.providerHandoffCount).toBe(0);
+    await page.getByRole("button", { name: /keep waiting/i }).click();
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+
+    await page.getByRole("button", { name: /pay regular amount/i }).click();
+    await page.getByRole("button", { name: /continue with regular payment/i }).click();
+    await expect(page.getByRole("link", { name: /continue to payment/i })).toHaveAttribute("href", "https://payments.test/handoff");
+
+    state = await getFixtureState();
+    await replayLatestPaymentIntent(page, state);
+    state = await getFixtureState();
+    const paymentRequests = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents");
+    expect(paymentRequests).toHaveLength(2);
+    const body = paymentRequests[0].body as Record<string, unknown>;
+    expect(body.expectedAmountMinorUnits).toBe(12900);
+    expect(body.expectedCurrency).toBe("PHP");
+    expect(body.tariffSnapshotId).toBe("30000000-0000-4000-8000-000000000001");
+    expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
+    expect(body).not.toHaveProperty("statutoryDiscountPayableBasisApplicationCommandId");
+    expect(state.latestStatutoryDecisionSubmissionResponse?.body).toMatchObject({
+      statutoryDiscountDecisionCommandId,
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    });
+    expect(state.latestStatutoryDecisionReadResponse?.body).toMatchObject({
+      statutoryDiscountDecisionCommandId,
+      requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    });
+    expect(state.latestPaymentIntentRequest).toEqual(body);
+    expect(state.latestPaymentIntentResponse).toMatchObject({
+      statusCode: 200,
+      body: {
+        amountMinorUnits: 12900,
+        currency: "PHP"
+      }
+    });
+    expect(state.paymentIntentRequestLog).toHaveLength(2);
+    expect(state.paymentIntentResponseLog).toHaveLength(2);
+    expect(state.observedPaymentAttemptIds).toEqual(["10000000-0000-4000-8000-000000000010"]);
+    expect(state.observedProviderHandoffIdentities).toEqual(["https://payments.test/handoff"]);
+    expect(state.paymentIntentReplayResult).toMatchObject({
+      requestCount: 2,
+      responseCount: 2,
+      successfulResponseCount: 2,
+      uniquePaymentAttemptCount: 1,
+      uniqueProviderHandoffCount: 1,
+      samePaymentAttemptId: true,
+      sameHandoffIdentity: true,
+      semanticallyEquivalent: true
+    });
+    expect(state.latestValidationPaymentIntentReplay).toMatchObject({
+      route: "/v1/webpay/payment-intents",
+      reusedRecordedBody: true,
+      reusedIdempotencyKey: false,
+      originalIdempotencyKeyPresent: false,
+      replayIdempotencyKeyPresent: false,
+      idempotencyKeyValuesMatch: true,
+      idempotencyKeyDisposition: "ABSENT_IN_RECORDED_BROWSER_REQUEST",
+      idempotencyKeyPreservationPassed: true,
+      reusedCorrelationId: true,
+      reusedCanonicalRequestIdentity: true,
+      statusCode: 200
+    });
+    expect(state.validationPaymentIntentReplayCount).toBe(1);
+    expect(state.providerHandoffCount).toBe(1);
+    await expectApiBoundary(apiRequests);
+  });
+
+  test("changed regular amount before pending-review payment requires renewed confirmation", async ({ page }) => {
+    await submitStatutoryRequest(page, "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED", "Senior Citizen", "SC-****-1234");
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
+
+    await page.getByRole("button", { name: /pay regular amount/i }).click();
+    await page.getByRole("button", { name: /continue with regular payment/i }).click();
+    await expect(page.getByText(/regular parking amount changed before payment/i)).toBeVisible();
+    await expect(page.getByText("PHP 159.00").first()).toBeVisible();
+    let state = await getFixtureState();
+    expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(state.providerHandoffCount).toBe(0);
+
+    await page.getByRole("button", { name: /continue with regular payment/i }).click();
+    await expect(page.getByRole("link", { name: /continue to payment/i })).toHaveAttribute("href", "https://payments.test/handoff");
+
+    state = await getFixtureState();
+    await replayLatestPaymentIntent(page, state);
+    state = await getFixtureState();
+    const paymentRequests = state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents");
+    expect(paymentRequests).toHaveLength(2);
+    const body = paymentRequests[0].body as Record<string, unknown>;
+    expect(body.expectedAmountMinorUnits).toBe(15900);
+    expect(body.tariffSnapshotId).toBe("30000000-0000-4000-8000-000000000099");
+    expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
+    expect(body).not.toHaveProperty("statutoryDiscountPayableBasisApplicationCommandId");
+    expect(state.latestPaymentIntentRequest).toEqual(body);
+    expect(state.latestPaymentIntentResponse).toMatchObject({
+      statusCode: 200,
+      body: {
+        amountMinorUnits: 15900,
+        currency: "PHP"
+      }
+    });
+    expect(state.paymentIntentRequestLog).toHaveLength(2);
+    expect(state.paymentIntentResponseLog).toHaveLength(2);
+    expect(state.observedPaymentAttemptIds).toEqual(["10000000-0000-4000-8000-000000000010"]);
+    expect(state.observedProviderHandoffIdentities).toEqual(["https://payments.test/handoff"]);
+    expect(state.paymentIntentReplayResult).toMatchObject({
+      requestCount: 2,
+      responseCount: 2,
+      successfulResponseCount: 2,
+      uniquePaymentAttemptCount: 1,
+      uniqueProviderHandoffCount: 1,
+      samePaymentAttemptId: true,
+      sameHandoffIdentity: true,
+      semanticallyEquivalent: true
+    });
+    expect(state.latestValidationPaymentIntentReplay).toMatchObject({
+      route: "/v1/webpay/payment-intents",
+      reusedRecordedBody: true,
+      reusedIdempotencyKey: false,
+      originalIdempotencyKeyPresent: false,
+      replayIdempotencyKeyPresent: false,
+      idempotencyKeyValuesMatch: true,
+      idempotencyKeyDisposition: "ABSENT_IN_RECORDED_BROWSER_REQUEST",
+      idempotencyKeyPreservationPassed: true,
+      reusedCorrelationId: true,
+      reusedCanonicalRequestIdentity: true,
+      statusCode: 200
+    });
+    expect(state.validationPaymentIntentReplayCount).toBe(1);
+    expect(state.providerHandoffCount).toBe(1);
+  });
+
+  for (const scenario of [
+    ["WEBPAY-STAT-REDISCOVER-NOT-FOUND", "NOT_FOUND"],
+    ["WEBPAY-STAT-REDISCOVER-NO-ACTIVE", "NO_ACTIVE_LIFECYCLE"],
+    ["WEBPAY-STAT-REDISCOVER-AMBIGUOUS", "AMBIGUOUS_SESSION"],
+    ["WEBPAY-STAT-REDISCOVER-UNAVAILABLE", "SOURCE_UNAVAILABLE"],
+    ["WEBPAY-STAT-REDISCOVER-MALFORMED", "MALFORMED_AUTHORITATIVE_STATE"],
+    ["WEBPAY-STAT-REDISCOVER-DENIED", "ACCESS_DENIED"],
+    ["WEBPAY-STAT-REDISCOVER-UNEXPECTED", "UNEXPECTED_FAILURE"]
+  ] as const) {
+    test(`${scenario[1]} rediscovery does not fabricate pending state or create durable side effects`, async ({ page }) => {
+      const apiRequests = collectApiRequests(page);
+
+      await resolveTicketOnStartPage(page, scenario[0]);
+
+      await expect(page.getByRole("heading", { name: /awaiting review/i })).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /continue to payment/i }).first()).toBeVisible();
+      const state = await getFixtureState();
+      const rediscovery = state.requestLog.find((request) => request.path === "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
+      expect(rediscovery).toBeTruthy();
+      expect(JSON.stringify(rediscovery?.body)).toContain("PARKING_SESSION_ID");
+      expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(0);
+      expect(state.requestLog.filter((request) => request.path.includes("/apply-payable-basis"))).toHaveLength(0);
+      expect(state.requestLog.filter((request) => request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+      await expectApiBoundary(apiRequests);
+      await expectBrowserStorageSafe(page);
+    });
+  }
 });
 
 test.describe("WebPay statutory discount applied payment browser smoke", () => {
@@ -643,20 +925,43 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
     const secondPage = await page.context().newPage();
     await secondPage.goto("/?ticketReference=WEBPAY-STAT-APPLIED-PAYMENT");
     await expect(secondPage.getByText(/statutory discount workflow is ready for payment/i)).toBeVisible();
+    await secondPage.getByRole("button", { name: /^continue$/i }).click();
+    await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
 
-    await secondPage.evaluate(({ key, value }) => {
+    await page.evaluate(({ key, value }) => {
       localStorage.setItem(key, JSON.stringify({ ...value, stage: "PAYMENT_SUBMITTING", updatedAt: new Date().toISOString() }));
     }, {
       key: statutoryRecoveryStorageKey,
       value: record
     });
 
+    await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
+    await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
     await secondPage.reload();
     await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
     await secondPage.getByRole("button", { name: /^continue$/i }).click();
+    await expect.poll(async () => {
+      const state = await getFixtureState();
+      return state.requestLog.filter(
+        (request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover"
+      ).length;
+    }).toBe(2);
+    await expect.poll(async () => {
+      const state = await getFixtureState();
+      return state.requestLog.filter(
+        (request) => request.method === "GET" && request.path.includes("/v1/webpay/statutory-discounts/decisions/")
+      ).length;
+    }).toBeGreaterThan(0);
     await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
     const state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents")).toHaveLength(0);
+    expect(state.providerHandoffCount).toBe(0);
+    const browserStorage = await secondPage.evaluate((key) => ({
+      local: localStorage.getItem(key),
+      session: sessionStorage.getItem(key)
+    }), statutoryRecoveryStorageKey);
+    expect(JSON.parse(browserStorage.local ?? "{}").stage).toBe("PAYMENT_SUBMITTING");
+    expect(browserStorage.session).toBeNull();
     await secondPage.close();
   });
 
@@ -789,6 +1094,8 @@ async function expectApiBoundary(requests: Request[]) {
     const headers = await request.allHeaders();
     expect(headers["x-posserver-admin-key"]).toBeUndefined();
     expect(headers["x-posserver-admin-permission"]).toBeUndefined();
+    expect(headers["x-exitpass-service-identity-id"]).toBeUndefined();
+    expect(headers["x-exitpass-permissions"]).toBeUndefined();
     expect(headers.authorization).toBeUndefined();
     expect(headers["x-correlation-id"]).toBeTruthy();
   }
@@ -797,6 +1104,54 @@ async function expectApiBoundary(requests: Request[]) {
 async function getFixtureState(): Promise<FixtureState> {
   const response = await fetch(`${baseFixtureUrl}/__fixture/state`);
   return (await response.json()) as FixtureState;
+}
+
+async function replayLatestPaymentIntent(_page: Page, state: FixtureState): Promise<void> {
+  const paymentRequests = state.requestLog.filter(
+    (request) => request.method === "POST" && request.path === "/v1/webpay/payment-intents"
+  );
+  expect(paymentRequests).toHaveLength(1);
+  expect(paymentRequests[0].headers["idempotency-key"]).toBeUndefined();
+  expect(paymentRequests[0].headers["x-correlation-id"]).toBeTruthy();
+  expect((paymentRequests[0].body as Record<string, unknown>).correlationId).toBe(
+    paymentRequests[0].headers["x-correlation-id"]
+  );
+
+  const response = await fetch(`${baseFixtureUrl}/__fixture/replay-latest-payment-intent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  const result = (await response.json()) as {
+    ok: boolean;
+    route: string;
+    reusedRecordedBody: boolean;
+    reusedIdempotencyKey: boolean;
+    originalIdempotencyKeyPresent: boolean;
+    replayIdempotencyKeyPresent: boolean;
+    idempotencyKeyValuesMatch: boolean;
+    idempotencyKeyDisposition: string;
+    idempotencyKeyPreservationPassed: boolean;
+    reusedCorrelationId: boolean;
+    reusedCanonicalRequestIdentity: boolean;
+    statusCode: number;
+  };
+
+  expect(response.status).toBe(200);
+  expect(result).toMatchObject({
+    ok: true,
+    route: "/v1/webpay/payment-intents",
+    reusedRecordedBody: true,
+    reusedIdempotencyKey: false,
+    originalIdempotencyKeyPresent: false,
+    replayIdempotencyKeyPresent: false,
+    idempotencyKeyValuesMatch: true,
+    idempotencyKeyDisposition: "ABSENT_IN_RECORDED_BROWSER_REQUEST",
+    idempotencyKeyPreservationPassed: true,
+    reusedCorrelationId: true,
+    reusedCanonicalRequestIdentity: true,
+    statusCode: 200
+  });
 }
 
 async function expectNoDuplicatePaymentOrFiscalSubmission() {

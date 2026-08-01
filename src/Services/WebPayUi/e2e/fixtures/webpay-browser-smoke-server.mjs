@@ -21,7 +21,24 @@ let statutoryApplyAttempts = {};
 let paymentIntentAttempts = {};
 let statutoryScenarioByDecisionId = {};
 let ambiguousDecisionAttempts = {};
+let lastTicketReferenceByParkingSessionId = {};
+let parkingSessionResolveAttempts = {};
+let latestStatutoryDecisionSubmissionResponse = null;
+let latestStatutoryDecisionReadResponse = null;
+let latestPendingLifecycleRediscoveryResponse = null;
+let latestPaymentIntentRequest = null;
+let latestPaymentIntentResponse = null;
+let latestValidationPaymentIntentReplay = null;
+let validationPaymentIntentReplayCount = 0;
+let paymentIntentRequestLog = [];
+let paymentIntentResponseLog = [];
+let fixtureLifecycleState = null;
+let providerHandoffIdentities = new Set();
 const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+const statutoryDecisionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+const statutoryRequestReference = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+const statutoryContinuationReference = "continuation:g005:pending-review";
+const statutoryContinuationUrl = `http://127.0.0.1:${port}/privilege-review/g005-pending-review`;
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -40,6 +57,19 @@ function resetState() {
   paymentIntentAttempts = {};
   statutoryScenarioByDecisionId = {};
   ambiguousDecisionAttempts = {};
+  lastTicketReferenceByParkingSessionId = {};
+  parkingSessionResolveAttempts = {};
+  latestStatutoryDecisionSubmissionResponse = null;
+  latestStatutoryDecisionReadResponse = null;
+  latestPendingLifecycleRediscoveryResponse = null;
+  latestPaymentIntentRequest = null;
+  latestPaymentIntentResponse = null;
+  latestValidationPaymentIntentReplay = null;
+  validationPaymentIntentReplayCount = 0;
+  paymentIntentRequestLog = [];
+  paymentIntentResponseLog = [];
+  fixtureLifecycleState = null;
+  providerHandoffIdentities = new Set();
 }
 
 function writeJson(response, statusCode, body) {
@@ -49,6 +79,73 @@ function writeJson(response, statusCode, body) {
     "Content-Length": Buffer.byteLength(payload)
   });
   response.end(payload);
+}
+
+function recordedResponse(statusCode, body) {
+  return { statusCode, body };
+}
+
+function buildFixtureLifecycleState(source = {}) {
+  return {
+    statutoryDecisionId: source.statutoryDecisionId ?? statutoryDecisionId,
+    statutoryDecisionCommandId:
+      source.statutoryDecisionCommandId ?? source.statutoryDiscountDecisionCommandId ?? statutoryDecisionCommandId,
+    requestReference: source.requestReference ?? statutoryRequestReference,
+    opaqueContinuationReference: source.opaqueContinuationReference ?? statutoryContinuationReference,
+    opaqueContinuationUrl: source.opaqueContinuationUrl ?? statutoryContinuationUrl
+  };
+}
+
+function recordPaymentIntentEvidence(requestBody, statusCode, responseBody) {
+  latestPaymentIntentRequest = requestBody;
+  latestPaymentIntentResponse = recordedResponse(statusCode, responseBody);
+  paymentIntentRequestLog.push(requestBody);
+  paymentIntentResponseLog.push(recordedResponse(statusCode, responseBody));
+
+  const handoffIdentity =
+    responseBody?.providerSessionReference ??
+    responseBody?.handoff?.handoffUrl ??
+    responseBody?.handoff?.qrCodeUrl ??
+    null;
+  if (handoffIdentity) {
+    providerHandoffIdentities.add(handoffIdentity);
+  }
+}
+
+function buildPaymentIntentReplayEvidence() {
+  const successfulResponses = paymentIntentResponseLog
+    .filter((entry) => entry.statusCode >= 200 && entry.statusCode < 300 && entry.body?.paymentAttemptId)
+    .map((entry) => entry.body);
+  const observedPaymentAttemptIds = [...new Set(successfulResponses.map((body) => body.paymentAttemptId))];
+  const observedProviderHandoffIdentities = [...providerHandoffIdentities];
+  const semanticResults = successfulResponses.map((body) => ({
+    paymentAttemptId: body.paymentAttemptId,
+    amountMinorUnits: body.amountMinorUnits,
+    currency: body.currency,
+    status: body.status,
+    selectedProviderCode: body.selectedProviderCode,
+    handoffType: body.handoff?.type ?? null,
+    handoffUrl: body.handoff?.handoffUrl ?? null,
+    qrCodeUrl: body.handoff?.qrCodeUrl ?? null,
+    handoffExpiresAt: body.handoff?.expiresAt ?? null
+  }));
+  const firstSemanticResult = semanticResults[0] ?? null;
+  const semanticallyEquivalent =
+    semanticResults.length > 1 &&
+    semanticResults.every((result) => JSON.stringify(result) === JSON.stringify(firstSemanticResult));
+
+  return {
+    requestCount: paymentIntentRequestLog.length,
+    responseCount: paymentIntentResponseLog.length,
+    successfulResponseCount: successfulResponses.length,
+    observedPaymentAttemptIds,
+    uniquePaymentAttemptCount: observedPaymentAttemptIds.length,
+    observedProviderHandoffIdentities,
+    uniqueProviderHandoffCount: observedProviderHandoffIdentities.length,
+    samePaymentAttemptId: successfulResponses.length > 1 && observedPaymentAttemptIds.length === 1,
+    sameHandoffIdentity: successfulResponses.length > 1 && observedProviderHandoffIdentities.length === 1,
+    semanticallyEquivalent
+  };
 }
 
 async function readJson(request) {
@@ -72,10 +169,17 @@ function recordRequest(request, body) {
       "x-correlation-id": request.headers["x-correlation-id"],
       "idempotency-key": request.headers["idempotency-key"],
       "x-posserver-admin-key": request.headers["x-posserver-admin-key"],
-      "x-posserver-admin-permission": request.headers["x-posserver-admin-permission"]
+      "x-posserver-admin-permission": request.headers["x-posserver-admin-permission"],
+      "x-exitpass-service-identity-id": request.headers["x-exitpass-service-identity-id"],
+      "x-exitpass-permissions": request.headers["x-exitpass-permissions"],
+      authorization: request.headers.authorization
     },
     body
   });
+}
+
+function isLoopbackAddress(address) {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
 }
 
 function paymentStatusForTicket(ticketReference) {
@@ -98,20 +202,42 @@ function parkingStatusForTicket(ticketReference) {
   return ticketReference === "WEBPAY-SMOKE-FAILED" ? "PaymentRequired" : "Payment Completed";
 }
 
-function buildSessionResponse(ticketReference, correlationId) {
+function ticketReferenceForLookup(body) {
+  if (typeof body.ticketReference === "string" && body.ticketReference.length > 0) {
+    return body.ticketReference;
+  }
+
+  if (typeof body.plateNumber === "string" && body.plateNumber.trim().toUpperCase() === "G005PLATE") {
+    return "WEBPAY-STAT-REDISCOVER-PLATE";
+  }
+
+  return "";
+}
+
+function plateNumberForLookup(body) {
+  if (typeof body.plateNumber === "string" && body.plateNumber.trim().length > 0) {
+    return body.plateNumber.trim().toUpperCase();
+  }
+
+  return "SMK 0001";
+}
+
+function buildSessionResponse(ticketReference, correlationId, plateNumber = "SMK 0001") {
+  const resolveAttempt = parkingSessionResolveAttempts[ticketReference] ?? 1;
+  const amountChanged = ticketReference === "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED" && resolveAttempt > 1;
   return {
     paymentAttemptId: paymentAttemptIds.available,
     parkingSessionId: "20000000-0000-4000-8000-000000000001",
-    tariffSnapshotId: "30000000-0000-4000-8000-000000000001",
+    tariffSnapshotId: amountChanged ? "30000000-0000-4000-8000-000000000099" : "30000000-0000-4000-8000-000000000001",
     siteGroupId: "40000000-0000-4000-8000-000000000001",
     siteId: "50000000-0000-4000-8000-000000000001",
     vendorSystemId: "60000000-0000-4000-8000-000000000001",
     siteGroupName: "Browser Smoke Site Group",
     siteName: "Browser Smoke Site",
-    amountMinorUnits: 12900,
+    amountMinorUnits: amountChanged ? 15900 : 12900,
     currency: "PHP",
     ticketReference,
-    plateNumber: "SMK 0001",
+    plateNumber,
     entryTime: "2026-07-21T08:00:00+08:00",
     currentFeeCalculationTime: "2026-07-21T10:00:00+08:00",
     durationParked: "2h 0m",
@@ -154,6 +280,114 @@ function buildStatutoryAvailabilityResponse(body, correlationId) {
     requiredEvidenceTypes: [],
     correlationId
   };
+}
+
+function buildPendingLifecycleRediscoveryResponse(body, correlationId, classification, ticketReference) {
+  if (classification !== "FOUND") {
+    return {
+      classification,
+      statutoryDecisionId: null,
+      statutoryDecisionCommandId: null,
+      requestReference: null,
+      entitlementType: body.entitlementType ?? null,
+      decisionStatus: null,
+      payableBasisStatus: null,
+      parkingSessionId: body.parkingSessionId ?? "20000000-0000-4000-8000-000000000001",
+      siteId: body.siteId ?? "50000000-0000-4000-8000-000000000001",
+      siteGroupId: body.siteGroupId ?? "40000000-0000-4000-8000-000000000001",
+      opaqueContinuationReference: null,
+      opaqueContinuationUrl: null,
+      lifecycleState: classification,
+      retryable: classification === "SOURCE_UNAVAILABLE" || classification === "UNEXPECTED_FAILURE" || classification === "ACCESS_DENIED",
+      correlationId,
+      createdAt: null,
+      updatedAt: null,
+      submittedAt: null,
+      decidedAt: null,
+      reviewedAt: null,
+      safeMessage:
+        classification === "AMBIGUOUS_SESSION"
+          ? "We could not safely match one parking privilege request for this parking session. Please ask a parking attendant for assistance."
+          : "Existing parking privilege status could not be restored right now. You may continue with the regular parking amount."
+    };
+  }
+
+  const existingStored = Object.values(statutoryScenarioByDecisionId).find((stored) => stored?.body?.ticketReference === ticketReference);
+  const storedBody = existingStored?.body ?? {
+    requestReference: statutoryRequestReference,
+    parkingSessionId: body.parkingSessionId ?? "20000000-0000-4000-8000-000000000001",
+    siteId: body.siteId ?? "50000000-0000-4000-8000-000000000001",
+    siteGroupId: body.siteGroupId ?? "40000000-0000-4000-8000-000000000001",
+    ticketReference,
+    plateNumber: ticketReference === "WEBPAY-STAT-REDISCOVER-PLATE" ? "G005PLATE" : "SMK 0001",
+    entitlementType: body.entitlementType ?? "SENIOR_CITIZEN",
+    originalTariffSnapshotId: "30000000-0000-4000-8000-000000000001"
+  };
+  statutoryScenarioByDecisionId[statutoryDecisionCommandId] = existingStored ?? { scenario: "pending", body: storedBody };
+
+  return {
+    classification,
+    statutoryDecisionId,
+    statutoryDecisionCommandId,
+    requestReference: statutoryRequestReference,
+    entitlementType: storedBody.entitlementType,
+    decisionStatus: "AWAITING_REVIEW",
+    payableBasisStatus: "AWAITING_REVIEW",
+    parkingSessionId: storedBody.parkingSessionId,
+    siteId: storedBody.siteId,
+    siteGroupId: storedBody.siteGroupId,
+    opaqueContinuationReference: statutoryContinuationReference,
+    opaqueContinuationUrl: statutoryContinuationUrl,
+    lifecycleState: "PENDING_REVIEW",
+    retryable: true,
+    correlationId,
+    createdAt: "2026-07-27T10:00:00+08:00",
+    updatedAt: "2026-07-27T10:01:00+08:00",
+    submittedAt: "2026-07-27T10:00:00+08:00",
+    decidedAt: null,
+    reviewedAt: null,
+    safeMessage: "Your parking privilege request was received and is awaiting review."
+  };
+}
+
+function rediscoveryClassificationForTicket(ticketReference) {
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-NOT-FOUND") {
+    return "NOT_FOUND";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-NO-ACTIVE") {
+    return "NO_ACTIVE_LIFECYCLE";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-AMBIGUOUS") {
+    return "AMBIGUOUS_SESSION";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-UNAVAILABLE") {
+    return "SOURCE_UNAVAILABLE";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-MALFORMED") {
+    return "MALFORMED_AUTHORITATIVE_STATE";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-DENIED") {
+    return "ACCESS_DENIED";
+  }
+
+  if (ticketReference === "WEBPAY-STAT-REDISCOVER-UNEXPECTED") {
+    return "UNEXPECTED_FAILURE";
+  }
+
+  if (
+    ticketReference === "WEBPAY-STAT-REDISCOVER-PENDING" ||
+    ticketReference === "WEBPAY-STAT-REDISCOVER-PLATE" ||
+    Object.values(statutoryScenarioByDecisionId).some((stored) => stored?.body?.ticketReference === ticketReference)
+  ) {
+    return "FOUND";
+  }
+
+  return "NO_ACTIVE_LIFECYCLE";
 }
 
 function buildPresentationResponse(paymentAttemptId, correlationId) {
@@ -517,20 +751,56 @@ async function handleApi(request, response, url) {
     const body = await readJson(request);
     recordRequest(request, body);
 
-    const ticketReference = typeof body.ticketReference === "string" ? body.ticketReference : "";
+    const ticketReference = ticketReferenceForLookup(body);
     if (ticketReference === "WEBPAY-SMOKE-EXPIRED") {
       writeJson(response, 404, errorResponse("SESSION_NOT_FOUND", "The transaction reference is invalid or expired.", false, body.correlationId));
       return;
     }
 
-    writeJson(response, 200, buildSessionResponse(ticketReference, body.correlationId));
+    parkingSessionResolveAttempts[ticketReference] = (parkingSessionResolveAttempts[ticketReference] ?? 0) + 1;
+    lastTicketReferenceByParkingSessionId["20000000-0000-4000-8000-000000000001"] = ticketReference;
+    writeJson(response, 200, buildSessionResponse(ticketReference, body.correlationId, plateNumberForLookup(body)));
     return;
   }
 
   if (request.method === "POST" && url.pathname === "/v1/webpay/payment-intents") {
     const body = await readJson(request);
     recordRequest(request, body);
+    latestPaymentIntentRequest = body;
     const ticketReference = typeof body.ticketReference === "string" ? body.ticketReference : "";
+
+    if (
+      ticketReference === "WEBPAY-STAT-PENDING-REGULAR" ||
+      ticketReference === "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED" ||
+      ticketReference === "WEBPAY-STAT-REDISCOVER-PENDING" ||
+      ticketReference === "WEBPAY-STAT-REDISCOVER-PLATE"
+    ) {
+      paymentIntentAttempts[ticketReference] = (paymentIntentAttempts[ticketReference] ?? 0) + 1;
+      const amountChanged = ticketReference === "WEBPAY-STAT-REGULAR-AMOUNT-CHANGED";
+      const isOrdinaryPayment =
+        !body.statutoryDiscountDecisionCommandId &&
+        !body.statutoryDiscountPayableBasisApplicationCommandId &&
+        body.tariffSnapshotId === (amountChanged ? "30000000-0000-4000-8000-000000000099" : "30000000-0000-4000-8000-000000000001") &&
+        body.expectedAmountMinorUnits === (amountChanged ? 15900 : 12900) &&
+        body.expectedCurrency === "PHP";
+
+      if (isOrdinaryPayment) {
+        const responseBody = buildPaymentIntentResponse(body, body.correlationId);
+        recordPaymentIntentEvidence(body, 200, responseBody);
+        writeJson(response, 200, responseBody);
+        return;
+      }
+
+      const responseBody = errorResponse(
+        "ORDINARY_PAYABLE_BASIS_MISMATCH",
+        "The regular parking amount changed. Please review the latest amount.",
+        false,
+        body.correlationId
+      );
+      recordPaymentIntentEvidence(body, 409, responseBody);
+      writeJson(response, 409, responseBody);
+      return;
+    }
 
     if (ticketReference === "WEBPAY-STAT-APPLIED-PAYMENT" || ticketReference === "WEBPAY-STAT-APPLIED-DUPLICATE") {
       paymentIntentAttempts[ticketReference] = (paymentIntentAttempts[ticketReference] ?? 0) + 1;
@@ -542,26 +812,26 @@ async function handleApi(request, response, url) {
         body.statutoryDiscountPayableBasisApplicationCommandId === "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
       if (isReadyStatutoryPayment) {
-        writeJson(response, 200, buildPaymentIntentResponse(body, body.correlationId));
+        const responseBody = buildPaymentIntentResponse(body, body.correlationId);
+        recordPaymentIntentEvidence(body, 200, responseBody);
+        writeJson(response, 200, responseBody);
         return;
       }
 
-      writeJson(
-        response,
-        409,
-        errorResponse(
-          "STATUTORY_DISCOUNT_APPLIED_SNAPSHOT_MISMATCH",
-          "The selected payable basis does not match Central PMS readback.",
-          false,
-          body.correlationId
-        )
+      const responseBody = errorResponse(
+        "STATUTORY_DISCOUNT_APPLIED_SNAPSHOT_MISMATCH",
+        "The selected payable basis does not match Central PMS readback.",
+        false,
+        body.correlationId
       );
+      recordPaymentIntentEvidence(body, 409, responseBody);
+      writeJson(response, 409, responseBody);
       return;
     }
 
     if (ticketReference === "WEBPAY-STAT-AMBIGUOUS-PAYMENT") {
       paymentIntentAttempts[ticketReference] = (paymentIntentAttempts[ticketReference] ?? 0) + 1;
-      writeJson(response, 409, {
+      const responseBody = {
         errorCode: "ACTIVE_PAYMENT_ATTEMPT_EXISTS",
         message: "A payment is already in progress. Continue with the existing payment attempt.",
         retryable: false,
@@ -574,11 +844,20 @@ async function handleApi(request, response, url) {
           expiresAt: "2026-07-27T10:20:00+08:00"
         },
         correlationId: body.correlationId
-      });
+      };
+      recordPaymentIntentEvidence(body, 409, responseBody);
+      writeJson(response, 409, responseBody);
       return;
     }
 
-    writeJson(response, 409, errorResponse("UNEXPECTED_BROWSER_SMOKE_PAYMENT_SUBMISSION", "Browser smoke must not submit payment.", false, body.correlationId));
+    const responseBody = errorResponse(
+      "UNEXPECTED_BROWSER_SMOKE_PAYMENT_SUBMISSION",
+      "Browser smoke must not submit payment.",
+      false,
+      body.correlationId
+    );
+    recordPaymentIntentEvidence(body, 409, responseBody);
+    writeJson(response, 409, responseBody);
     return;
   }
 
@@ -590,24 +869,55 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover") {
+    const body = await readJson(request);
+    recordRequest(request, body);
+    const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
+    const lookupTicket =
+      typeof body.ticketReference === "string" && body.ticketReference.length > 0
+        ? body.ticketReference
+        : typeof body.plateNumber === "string" && body.plateNumber.trim().toUpperCase() === "G005PLATE"
+          ? "WEBPAY-STAT-REDISCOVER-PLATE"
+          : lastTicketReferenceByParkingSessionId[body.parkingSessionId] ?? "";
+    const classification = rediscoveryClassificationForTicket(lookupTicket);
+    const responseBody = buildPendingLifecycleRediscoveryResponse(body, correlationId, classification, lookupTicket);
+    latestPendingLifecycleRediscoveryResponse = recordedResponse(200, responseBody);
+    if (classification === "FOUND") {
+      fixtureLifecycleState = buildFixtureLifecycleState(responseBody);
+    }
+    writeJson(response, 200, responseBody);
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/v1/webpay/statutory-discounts/decisions") {
     const body = await readJson(request);
     recordRequest(request, body);
     const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
     const scenario = statutoryScenarioForTicket(body.ticketReference, body.entitlementType);
-    statutoryScenarioByDecisionId[statutoryDecisionCommandId] = { scenario, body };
+    const canonicalBody = { ...body, requestReference: statutoryRequestReference };
+    statutoryScenarioByDecisionId[statutoryDecisionCommandId] = { scenario, body: canonicalBody };
 
     if (scenario === "ambiguous-decision") {
       const idempotencyKey = typeof request.headers["idempotency-key"] === "string" ? request.headers["idempotency-key"] : "missing";
       ambiguousDecisionAttempts[idempotencyKey] = (ambiguousDecisionAttempts[idempotencyKey] ?? 0) + 1;
       if (ambiguousDecisionAttempts[idempotencyKey] === 1) {
-        writeJson(response, 503, errorResponse("STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE", "Statutory discount decision readback is temporarily unavailable.", true, correlationId));
+        const responseBody = errorResponse(
+          "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE",
+          "Statutory discount decision readback is temporarily unavailable.",
+          true,
+          correlationId
+        );
+        latestStatutoryDecisionSubmissionResponse = recordedResponse(503, responseBody);
+        writeJson(response, 503, responseBody);
         return;
       }
     }
 
     const initialScenario = scenario.startsWith("apply-") || scenario === "application-required" ? "pending" : scenario;
-    writeJson(response, 200, buildStatutoryDecisionResponse(body, correlationId, initialScenario));
+    const responseBody = buildStatutoryDecisionResponse(canonicalBody, correlationId, initialScenario);
+    latestStatutoryDecisionSubmissionResponse = recordedResponse(200, responseBody);
+    fixtureLifecycleState = buildFixtureLifecycleState(responseBody);
+    writeJson(response, 200, responseBody);
     return;
   }
 
@@ -664,7 +974,10 @@ async function handleApi(request, response, url) {
         : stored.scenario.startsWith("apply-") && !applyAttempted
           ? "application-required"
           : stored.scenario;
-    writeJson(response, 200, buildStatutoryDecisionResponse(stored.body, correlationId, scenario));
+    const responseBody = buildStatutoryDecisionResponse(stored.body, correlationId, scenario);
+    latestStatutoryDecisionReadResponse = recordedResponse(200, responseBody);
+    fixtureLifecycleState = buildFixtureLifecycleState({ ...fixtureLifecycleState, ...responseBody });
+    writeJson(response, 200, responseBody);
     return;
   }
 
@@ -770,7 +1083,95 @@ const server = createServer(async (request, response) => {
           ticketReference
         }
       };
+      fixtureLifecycleState = buildFixtureLifecycleState({
+        statutoryDecisionCommandId: decisionId,
+        requestReference: statutoryRequestReference
+      });
       writeJson(response, 200, { ok: true, decisionId, scenario });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/__fixture/replay-latest-payment-intent") {
+      await readJson(request).catch(() => ({}));
+      if (!isLoopbackAddress(request.socket.remoteAddress)) {
+        writeJson(response, 403, { ok: false, errorCode: "FIXTURE_LOOPBACK_REQUIRED" });
+        return;
+      }
+
+      const recordedPaymentRequests = requestLog.filter(
+        (entry) => entry.method === "POST" && entry.path === "/v1/webpay/payment-intents"
+      );
+      if (recordedPaymentRequests.length !== 1) {
+        writeJson(response, 409, {
+          ok: false,
+          errorCode: "FIXTURE_REPLAY_REQUIRES_ONE_PAYMENT_INTENT",
+          observedRequestCount: recordedPaymentRequests.length
+        });
+        return;
+      }
+
+      const recordedRequest = recordedPaymentRequests[0];
+      const idempotencyKey = recordedRequest.headers["idempotency-key"];
+      const correlationId = recordedRequest.headers["x-correlation-id"];
+      const bodyCorrelationId = recordedRequest.body?.correlationId;
+      if (
+        typeof correlationId !== "string" ||
+        correlationId.length === 0 ||
+        typeof bodyCorrelationId !== "string" ||
+        bodyCorrelationId !== correlationId
+      ) {
+        writeJson(response, 409, { ok: false, errorCode: "FIXTURE_REPLAY_CANONICAL_IDENTITY_MISSING" });
+        return;
+      }
+
+      const replayHeaders = {
+        "Content-Type": "application/json",
+        "X-Correlation-Id": correlationId
+      };
+      if (typeof idempotencyKey === "string" && idempotencyKey.length > 0) {
+        replayHeaders["Idempotency-Key"] = idempotencyKey;
+      }
+      const originalIdempotencyKeyPresent = typeof idempotencyKey === "string" && idempotencyKey.length > 0;
+      const replayIdempotencyKey = replayHeaders["Idempotency-Key"];
+      const replayIdempotencyKeyPresent = typeof replayIdempotencyKey === "string" && replayIdempotencyKey.length > 0;
+      const idempotencyKeyValuesMatch =
+        (!originalIdempotencyKeyPresent && !replayIdempotencyKeyPresent) ||
+        (originalIdempotencyKeyPresent && replayIdempotencyKeyPresent && replayIdempotencyKey === idempotencyKey);
+      const idempotencyKeyDisposition = originalIdempotencyKeyPresent
+        ? "REUSED_RECORDED_HEADER"
+        : "ABSENT_IN_RECORDED_BROWSER_REQUEST";
+      const idempotencyKeyPreservationPassed =
+        idempotencyKeyValuesMatch &&
+        ((originalIdempotencyKeyPresent && replayIdempotencyKeyPresent) ||
+          (!originalIdempotencyKeyPresent &&
+            !replayIdempotencyKeyPresent &&
+            idempotencyKeyDisposition === "ABSENT_IN_RECORDED_BROWSER_REQUEST"));
+
+      const replayResponse = await fetch(`http://127.0.0.1:${port}/v1/webpay/payment-intents`, {
+        method: "POST",
+        headers: replayHeaders,
+        body: JSON.stringify(recordedRequest.body)
+      });
+      validationPaymentIntentReplayCount += 1;
+      const replayBody = await replayResponse.json();
+      latestValidationPaymentIntentReplay = {
+        route: "/v1/webpay/payment-intents",
+        reusedRecordedBody: true,
+        reusedIdempotencyKey: originalIdempotencyKeyPresent && replayIdempotencyKeyPresent && idempotencyKeyValuesMatch,
+        originalIdempotencyKeyPresent,
+        replayIdempotencyKeyPresent,
+        idempotencyKeyValuesMatch,
+        idempotencyKeyDisposition,
+        idempotencyKeyPreservationPassed,
+        reusedCorrelationId: true,
+        reusedCanonicalRequestIdentity: true,
+        statusCode: replayResponse.status,
+        body: replayBody
+      };
+      writeJson(response, replayResponse.status, {
+        ok: replayResponse.ok,
+        ...latestValidationPaymentIntentReplay
+      });
       return;
     }
 
@@ -782,7 +1183,21 @@ const server = createServer(async (request, response) => {
         statutoryReadAttempts,
         statutoryApplyAttempts,
         paymentIntentAttempts,
-        ambiguousDecisionAttempts
+        ambiguousDecisionAttempts,
+        providerHandoffCount: providerHandoffIdentities.size,
+        observedPaymentAttemptIds: buildPaymentIntentReplayEvidence().observedPaymentAttemptIds,
+        observedProviderHandoffIdentities: buildPaymentIntentReplayEvidence().observedProviderHandoffIdentities,
+        paymentIntentRequestLog,
+        paymentIntentResponseLog,
+        paymentIntentReplayResult: buildPaymentIntentReplayEvidence(),
+        latestStatutoryDecisionSubmissionResponse,
+        latestStatutoryDecisionReadResponse,
+        latestPendingLifecycleRediscoveryResponse,
+        latestPaymentIntentRequest,
+        latestPaymentIntentResponse,
+        latestValidationPaymentIntentReplay,
+        validationPaymentIntentReplayCount,
+        fixtureLifecycleState
       });
       return;
     }

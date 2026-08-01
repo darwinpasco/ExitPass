@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildPaymentIntentBody,
   buildParkingSessionResolveBody,
+  buildStatutoryDiscountPendingLifecycleRediscoveryBody,
   buildStatutoryDiscountDecisionBody,
   applyStatutoryDiscountPayableBasis,
   createPaymentIntent,
@@ -14,6 +15,7 @@ import {
   StatutoryDiscountDecisionError,
   retrieveReceiptPresentation,
   retrievePaymentStatus,
+  rediscoverStatutoryDiscountPendingLifecycle,
   retrieveStatutoryDiscountAvailability,
   retrieveStatutoryDiscountDecision,
   resolveParkingSession,
@@ -212,6 +214,153 @@ describe("WebPay QR and payment intent helpers", () => {
       name: "StatutoryDiscountDecisionError",
       message: "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.",
       retryable: true
+    } satisfies Partial<StatutoryDiscountDecisionError>);
+  });
+
+  it("WebPay_WhenPendingLifecycleRediscoveryUsesParkingSession_SubmitsExactlyOneLookupMode", async () => {
+    const body = buildStatutoryDiscountPendingLifecycleRediscoveryBody({
+      lookupMode: "PARKING_SESSION_ID",
+      parkingSessionId: " 55555555-5555-5555-5555-555555555555 ",
+      ticketReference: "TICKET-SHOULD-NOT-BE-SENT",
+      plateNumber: "ABC1234",
+      siteId: " 93bd3cb3-e806-4c5c-ac8c-df6c4addff14 ",
+      siteGroupId: " 29b8b4f4-40dd-447b-ac06-dd52e6ad51c5 ",
+      vendorSystemId: " WEBPAY_LOCAL_MOCK_PMS ",
+      entitlementType: "SENIOR_CITIZEN"
+    });
+
+    expect(body).toEqual({
+      lookupMode: "PARKING_SESSION_ID",
+      parkingSessionId: "55555555-5555-5555-5555-555555555555",
+      siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+      siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+      vendorSystemId: "WEBPAY_LOCAL_MOCK_PMS",
+      entitlementType: "SENIOR_CITIZEN"
+    });
+    expect(body).not.toHaveProperty("ticketReference");
+    expect(body).not.toHaveProperty("plateNumber");
+  });
+
+  it("WebPay_WhenPendingLifecycleRediscoveryUsesTicket_SubmitsSameOriginProxyWithoutPrivilegedHeaders", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => statutoryPendingLifecycleRediscoveryResponse({ classification: "FOUND" })
+    });
+
+    const result = await rediscoverStatutoryDiscountPendingLifecycle(
+      {
+        lookupMode: "TICKET_REFERENCE",
+        ticketReference: " WEBPAY-STAT-001 ",
+        parkingSessionId: "55555555-5555-5555-5555-555555555555",
+        siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+        siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+        vendorSystemId: "WEBPAY_LOCAL_MOCK_PMS"
+      },
+      "77777777-7777-7777-7777-777777777777",
+      fetchMock as never
+    );
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(request.method).toBe("POST");
+    const headers = request.headers as Record<string, string>;
+    expect(headers["X-Correlation-Id"]).toBe("77777777-7777-7777-7777-777777777777");
+    expect(headers).not.toHaveProperty("X-ExitPass-Service-Identity-Id");
+    expect(headers).not.toHaveProperty("X-ExitPass-Permissions");
+    expect(headers).not.toHaveProperty("Authorization");
+    const body = JSON.parse(request.body as string);
+    expect(body).toMatchObject({
+      lookupMode: "TICKET_REFERENCE",
+      ticketReference: "WEBPAY-STAT-001",
+      siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+      siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"
+    });
+    expect(body).not.toHaveProperty("parkingSessionId");
+    expect(result.classification).toBe("FOUND");
+  });
+
+  it("WebPay_WhenPendingLifecycleRediscoveryUsesPlate_NormalizesPlateAndKeepsTicketOut", () => {
+    const body = buildStatutoryDiscountPendingLifecycleRediscoveryBody({
+      lookupMode: "PLATE_NUMBER",
+      plateNumber: " abc 1234 ",
+      ticketReference: "TICKET-SHOULD-NOT-BE-SENT",
+      siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+      siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"
+    });
+
+    expect(body).toMatchObject({
+      lookupMode: "PLATE_NUMBER",
+      plateNumber: "ABC 1234"
+    });
+    expect(body).not.toHaveProperty("ticketReference");
+    expect(body).not.toHaveProperty("parkingSessionId");
+  });
+
+  it.each([
+    ["NOT_FOUND", "not found"],
+    ["NO_ACTIVE_LIFECYCLE", "no active lifecycle"],
+    ["AMBIGUOUS_SESSION", "ambiguous"],
+    ["SOURCE_UNAVAILABLE", "temporarily unavailable"],
+    ["MALFORMED_AUTHORITATIVE_STATE", "malformed"],
+    ["ACCESS_DENIED", "authenticated Central PMS service identity required"],
+    ["UNEXPECTED_FAILURE", "SocketException http://central-pms.internal"]
+  ])("WebPay_WhenPendingLifecycleRediscoveryReturns%s_ConsumesSafeClassification", async (classification, unsafeMessage) => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => statutoryPendingLifecycleRediscoveryResponse({
+        classification,
+        safeMessage: unsafeMessage
+      })
+    });
+
+    const result = await rediscoverStatutoryDiscountPendingLifecycle(
+      {
+        lookupMode: "PARKING_SESSION_ID",
+        parkingSessionId: "55555555-5555-5555-5555-555555555555",
+        siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+        siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"
+      },
+      undefined,
+      fetchMock as never
+    );
+
+    expect(result.classification).toBe(classification);
+    expect(fetchMock.mock.calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["WEBPAY_STATUTORY_PENDING_LIFECYCLE_REDISCOVERY_REQUEST_INVALID", "HttpClient should not leak", "could not be checked for this parking session"],
+    ["WEBPAY_STATUTORY_SERVICE_UNAVAILABLE", "authenticated Central PMS operator/service identity required", "could not be checked right now"],
+    ["WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE", "SocketException http://central-pms.internal", "could not be checked right now"],
+    ["ACCESS_DENIED", "permission statutory-discounts.pending-lifecycle.rediscover.webpay denied", "temporarily unavailable"]
+  ])("WebPay_WhenPendingLifecycleRediscoveryFailsWith%s_ReturnsSafeMessage", async (errorCode, unsafeMessage, expectedMessage) => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        errorCode,
+        message: unsafeMessage,
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      })
+    });
+
+    await expect(
+      rediscoverStatutoryDiscountPendingLifecycle(
+        {
+          lookupMode: "PARKING_SESSION_ID",
+          parkingSessionId: "55555555-5555-5555-5555-555555555555",
+          siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+          siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5"
+        },
+        "77777777-7777-7777-7777-777777777777",
+        fetchMock as never
+      )
+    ).rejects.toMatchObject({
+      name: "StatutoryDiscountDecisionError",
+      message: expect.stringContaining(expectedMessage),
+      retryable: true,
+      correlationId: "77777777-7777-7777-7777-777777777777"
     } satisfies Partial<StatutoryDiscountDecisionError>);
   });
 
@@ -929,6 +1078,33 @@ function statutoryAvailabilityResponse(overrides?: Record<string, unknown>) {
     remediationAction: "CONTINUE_WITH_ORDINARY_PAYMENT",
     requiredEvidenceTypes: [],
     correlationId: "77777777-7777-7777-7777-777777777777",
+    ...overrides
+  };
+}
+
+function statutoryPendingLifecycleRediscoveryResponse(overrides?: Record<string, unknown>) {
+  return {
+    classification: "FOUND",
+    statutoryDecisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    statutoryDecisionCommandId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    entitlementType: "SENIOR_CITIZEN",
+    decisionStatus: "AWAITING_REVIEW",
+    payableBasisStatus: "AWAITING_REVIEW",
+    parkingSessionId: "55555555-5555-5555-5555-555555555555",
+    siteId: "93bd3cb3-e806-4c5c-ac8c-df6c4addff14",
+    siteGroupId: "29b8b4f4-40dd-447b-ac06-dd52e6ad51c5",
+    opaqueContinuationReference: "continuation:test:existing",
+    opaqueContinuationUrl: "https://pay.example.test/privilege-review/opaque-existing",
+    lifecycleState: "PENDING_REVIEW",
+    retryable: true,
+    correlationId: "77777777-7777-7777-7777-777777777777",
+    createdAt: "2026-07-27T10:00:00+08:00",
+    updatedAt: "2026-07-27T10:01:00+08:00",
+    submittedAt: "2026-07-27T10:00:00+08:00",
+    decidedAt: null,
+    reviewedAt: null,
+    safeMessage: null,
     ...overrides
   };
 }

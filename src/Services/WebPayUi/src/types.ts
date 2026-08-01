@@ -241,6 +241,55 @@ export type WebPayStatutoryDiscountAvailabilityResponse = {
   correlationId: string;
 };
 
+export type WebPayStatutoryDiscountPendingLifecycleLookupMode =
+  | "PARKING_SESSION_ID"
+  | "TICKET_REFERENCE"
+  | "PLATE_NUMBER";
+
+export type WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest = {
+  lookupMode: WebPayStatutoryDiscountPendingLifecycleLookupMode;
+  parkingSessionId?: string | null;
+  siteId: string;
+  siteGroupId: string;
+  ticketReference?: string | null;
+  plateNumber?: string | null;
+  vendorSystemId?: string | null;
+  entitlementType?: StatutoryDiscountEntitlementType | null;
+};
+
+export type WebPayStatutoryDiscountPendingLifecycleRediscoveryClassification =
+  | "FOUND"
+  | "NOT_FOUND"
+  | "NO_ACTIVE_LIFECYCLE"
+  | "AMBIGUOUS_SESSION"
+  | "SOURCE_UNAVAILABLE"
+  | "MALFORMED_AUTHORITATIVE_STATE"
+  | "ACCESS_DENIED"
+  | "UNEXPECTED_FAILURE";
+
+export type WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse = {
+  classification: WebPayStatutoryDiscountPendingLifecycleRediscoveryClassification | string;
+  statutoryDecisionId?: string | null;
+  statutoryDecisionCommandId?: string | null;
+  requestReference?: string | null;
+  entitlementType?: string | null;
+  decisionStatus?: string | null;
+  payableBasisStatus?: string | null;
+  parkingSessionId?: string | null;
+  siteId?: string | null;
+  siteGroupId?: string | null;
+  opaqueContinuationReference?: string | null;
+  opaqueContinuationUrl?: string | null;
+  lifecycleState: string;
+  retryable: boolean;
+  correlationId: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  submittedAt?: string | null;
+  decidedAt?: string | null;
+  reviewedAt?: string | null;
+};
+
 export type WebPayStatutoryDiscountDecisionRequest = {
   requestReference: string;
   parkingSessionId: string;

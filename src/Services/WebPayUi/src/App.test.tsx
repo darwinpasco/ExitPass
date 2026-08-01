@@ -66,6 +66,9 @@ function stubWebPayFetch(options?: {
   statutoryAvailabilityPayload?: unknown;
   statutoryAvailabilityOk?: boolean;
   statutoryAvailabilityStatus?: number;
+  statutoryRediscoveryPayload?: unknown;
+  statutoryRediscoveryOk?: boolean;
+  statutoryRediscoveryStatus?: number;
   statutoryReadPayload?: unknown;
   statutoryReadOk?: boolean;
   statutoryReadStatus?: number;
@@ -77,6 +80,7 @@ function stubWebPayFetch(options?: {
     const isResolve = url.includes("/v1/webpay/parking-session");
     const isReceipt = url.includes("/v1/webpay/payment-attempts/") && url.includes("/receipt-presentation");
     const isStatutoryAvailability = url.endsWith("/v1/webpay/statutory-discounts/availability");
+    const isStatutoryRediscovery = url.endsWith("/v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
     const isStatutorySubmit = url.endsWith("/v1/webpay/statutory-discounts/decisions") && _init?.method === "POST";
     const isStatutoryApply =
       url.includes("/v1/webpay/statutory-discounts/decisions/") &&
@@ -90,6 +94,8 @@ function stubWebPayFetch(options?: {
         ? options?.receiptOk ?? true
         : isStatutoryAvailability
           ? options?.statutoryAvailabilityOk ?? true
+        : isStatutoryRediscovery
+          ? options?.statutoryRediscoveryOk ?? true
         : isStatutorySubmit
           ? options?.statutorySubmitOk ?? true
         : isStatutoryApply
@@ -103,6 +109,8 @@ function stubWebPayFetch(options?: {
         ? options?.receiptStatus ?? 200
         : isStatutoryAvailability
           ? options?.statutoryAvailabilityStatus ?? 200
+        : isStatutoryRediscovery
+          ? options?.statutoryRediscoveryStatus ?? 200
         : isStatutorySubmit
           ? options?.statutorySubmitStatus ?? 200
         : isStatutoryApply
@@ -117,6 +125,8 @@ function stubWebPayFetch(options?: {
             ? options?.receiptPayload ?? salesInvoicePresentationResponse
           : isStatutoryAvailability
             ? options?.statutoryAvailabilityPayload ?? statutoryAvailabilityResponse()
+          : isStatutoryRediscovery
+            ? options?.statutoryRediscoveryPayload ?? statutoryPendingLifecycleRediscoveryResponse({ classification: "NO_ACTIVE_LIFECYCLE" })
           : isStatutorySubmit
             ? options?.statutorySubmitPayload ?? statutoryDecisionResponse()
           : isStatutoryApply
@@ -220,6 +230,32 @@ function statutoryAvailabilityResponse(overrides?: Record<string, unknown>) {
     remediationAction: "CONTINUE_WITH_ORDINARY_PAYMENT",
     requiredEvidenceTypes: [],
     correlationId: "77777777-7777-7777-7777-777777777777",
+    ...overrides
+  };
+}
+
+function statutoryPendingLifecycleRediscoveryResponse(overrides?: Record<string, unknown>) {
+  return {
+    classification: "FOUND",
+    statutoryDecisionId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    statutoryDecisionCommandId,
+    requestReference: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    entitlementType: "SENIOR_CITIZEN",
+    decisionStatus: "AWAITING_REVIEW",
+    payableBasisStatus: "AWAITING_REVIEW",
+    parkingSessionId: successResponse.parkingSessionId,
+    siteId: successResponse.siteId,
+    siteGroupId: successResponse.siteGroupId,
+    opaqueContinuationReference: "continuation:test:existing",
+    opaqueContinuationUrl: "https://pay.example.test/privilege-review/opaque-existing",
+    lifecycleState: "PENDING_REVIEW",
+    retryable: true,
+    correlationId: "77777777-7777-7777-7777-777777777777",
+    createdAt: "2026-07-27T10:00:00+08:00",
+    updatedAt: "2026-07-27T10:01:00+08:00",
+    submittedAt: "2026-07-27T10:00:30+08:00",
+    decidedAt: null,
+    reviewedAt: null,
     ...overrides
   };
 }
@@ -577,6 +613,195 @@ describe("ExitPass WebPay UI", () => {
     await waitFor(() =>
       expect(fetchMock.mock.calls.some((call) => String(call[0]).includes(`/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`))).toBe(true)
     );
+  });
+
+  it("WebPay_WhenPendingLifecycleRediscoveryFindsExistingDecision_RestoresPendingPanelAndContinuationWithoutNewDecision", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse(),
+      statutoryReadPayload: statutoryDecisionResponse()
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-REDISCOVER");
+
+    expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(screen.getByText(/existing statutory discount request restored from central pms/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /this continuation link/i })).toHaveAttribute(
+      "href",
+      "https://pay.example.test/privilege-review/opaque-existing"
+    );
+    expect(screen.getByRole("button", { name: /pay regular amount/i })).toBeInTheDocument();
+
+    const rediscoveryCall = firstRouteCall(fetchMock, "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
+    const rediscoveryBody = JSON.parse((rediscoveryCall[1] as RequestInit).body as string);
+    const rediscoveryHeaders = (rediscoveryCall[1] as RequestInit).headers as Record<string, string>;
+    expect(rediscoveryBody.lookupMode).toBe("PARKING_SESSION_ID");
+    expect(rediscoveryBody.parkingSessionId).toBe(successResponse.parkingSessionId);
+    expect(rediscoveryBody.siteId).toBe(successResponse.siteId);
+    expect(rediscoveryBody.siteGroupId).toBe(successResponse.siteGroupId);
+    expect(rediscoveryBody).not.toHaveProperty("ticketReference");
+    expect(rediscoveryBody).not.toHaveProperty("plateNumber");
+    expect(rediscoveryHeaders["X-Correlation-Id"]).toBeTruthy();
+    expect(rediscoveryHeaders).not.toHaveProperty("X-ExitPass-Service-Identity-Id");
+    expect(rediscoveryHeaders).not.toHaveProperty("X-ExitPass-Permissions");
+    expect(rediscoveryHeaders).not.toHaveProperty("Authorization");
+
+    expect(routeCalls(fetchMock, `/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`).length).toBeGreaterThanOrEqual(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(0);
+    expect(routeCalls(fetchMock, "/apply-payable-basis")).toHaveLength(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+  });
+
+  it("WebPay_WhenPendingLifecycleRediscoveryHasNoActiveLifecycle_DoesNotFabricatePendingState", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse({
+        classification: "NO_ACTIVE_LIFECYCLE",
+        statutoryDecisionId: null,
+        statutoryDecisionCommandId: null,
+        requestReference: null,
+        opaqueContinuationReference: null,
+        opaqueContinuationUrl: null,
+        retryable: false
+      })
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-NO-ACTIVE-LIFECYCLE");
+
+    expect(await screen.findByRole("button", { name: /continue to payment/i })).toBeEnabled();
+    expect(screen.queryByRole("heading", { name: /awaiting review/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/continuation link/i)).not.toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover")).toHaveLength(1);
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+  });
+
+  it("WebPay_WhenPendingLifecycleRediscoveryIsUnavailable_ShowsSafeRetryWithoutNewDecision", async () => {
+    const fetchMock = stubWebPayFetch({
+      statutoryRediscoveryPayload: {
+        errorCode: "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE",
+        message: "The parking privilege request could not be checked right now. Please try again.",
+        retryable: true,
+        correlationId: "77777777-7777-7777-7777-777777777777"
+      },
+      statutoryRediscoveryOk: false,
+      statutoryRediscoveryStatus: 503
+    });
+
+    render(<App />);
+
+    await resolveTicket("TICKET-REDISCOVERY-UNAVAILABLE");
+
+    expect(await screen.findByText(/existing statutory discount request could not be checked/i)).toBeInTheDocument();
+    expect(screen.queryByText(/authenticated Central PMS/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/X-ExitPass-Permissions/i)).not.toBeInTheDocument();
+    expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/decisions").filter((call) => (call[1] as RequestInit)?.method === "POST")).toHaveLength(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+  });
+
+  it("WebPay_WhenPendingReviewCustomerCancelsRegularPaymentWarning_KeepsReviewPendingWithoutPaymentIntent", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    const payRegular = await screen.findByRole("button", { name: /pay regular amount/i });
+    await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
+    await userEvent.click(payRegular);
+
+    expect(screen.getByRole("dialog", { name: /proceed without the parking privilege/i })).toBeInTheDocument();
+    expect(screen.getByText(/approval after payment will not automatically refund or retroactively adjust/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /keep waiting/i }));
+
+    expect(screen.queryByRole("dialog", { name: /proceed without the parking privilege/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+  });
+
+  it("WebPay_WhenPendingReviewCustomerConfirmsRegularPayment_RevalidatesAndCreatesOrdinaryIntentOnly", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    const payRegular = await screen.findByRole("button", { name: /pay regular amount/i });
+    await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
+    await userEvent.click(payRegular);
+    await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
+
+    await screen.findByText("Payment handoff ready");
+
+    const decisionReads = routeCalls(fetchMock, `/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`);
+    expect(decisionReads.length).toBeGreaterThan(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/parking-session").length).toBeGreaterThanOrEqual(2);
+
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
+    expect(body.expectedAmountMinorUnits).toBe(successResponse.amountMinorUnits);
+    expect(body.expectedCurrency).toBe(successResponse.currency);
+    expect(body.tariffSnapshotId).toBe(successResponse.tariffSnapshotId);
+    expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
+    expect(body).not.toHaveProperty("statutoryDiscountPayableBasisApplicationCommandId");
+  });
+
+  it("WebPay_WhenRegularAmountChangesBeforePendingReviewPayment_RequiresRenewedConfirmation", async () => {
+    let resolveCount = 0;
+    const changedResolve = {
+      ...successResponse,
+      tariffSnapshotId: "12121212-1212-4121-8121-121212121212",
+      amountMinorUnits: 13000
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const isResolve = url.includes("/v1/webpay/parking-session");
+      const isAvailability = url.endsWith("/v1/webpay/statutory-discounts/availability");
+      const isRediscovery = url.endsWith("/v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
+      const isStatutorySubmit = url.endsWith("/v1/webpay/statutory-discounts/decisions") && init?.method === "POST";
+      const isStatutoryRead = url.includes("/v1/webpay/statutory-discounts/decisions/") && init?.method === "GET";
+      return {
+        ok: true,
+        status: 200,
+        json: async () => {
+          if (isResolve) {
+            resolveCount += 1;
+            return resolveCount === 1 ? successResponse : changedResolve;
+          }
+          if (isAvailability) {
+            return statutoryAvailabilityResponse();
+          }
+          if (isRediscovery) {
+            return statutoryPendingLifecycleRediscoveryResponse({ classification: "NO_ACTIVE_LIFECYCLE" });
+          }
+          if (isStatutorySubmit || isStatutoryRead) {
+            return statutoryDecisionResponse();
+          }
+          return { ...successResponse, ...changedResolve };
+        }
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await submitBasicStatutoryRequest();
+    const payRegular = await screen.findByRole("button", { name: /pay regular amount/i });
+    await waitFor(() => expect(payRegular).toBeEnabled(), { timeout: 6000 });
+    await userEvent.click(payRegular);
+    await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
+
+    expect(await screen.findByText(/regular parking amount changed before payment/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/PHP 130.00/i).length).toBeGreaterThan(0);
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole("button", { name: /continue with regular payment/i }));
+    await screen.findByText("Payment handoff ready");
+
+    const paymentIntentCall = firstRouteCall(fetchMock, "/v1/webpay/payment-intents");
+    const body = JSON.parse((paymentIntentCall[1] as RequestInit).body as string);
+    expect(body.expectedAmountMinorUnits).toBe(13000);
+    expect(body.tariffSnapshotId).toBe(changedResolve.tariffSnapshotId);
+    expect(body).not.toHaveProperty("statutoryDiscountDecisionCommandId");
   });
 
   it("WebPay_WhenLocalValidationRecoveryResetParamPresent_ClearsOnlyStatutoryRecoveryBeforeLoad", () => {
@@ -1122,6 +1347,52 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
     expect(fetchMock.mock.calls.map((call) => String(call[0])).filter((path) => path.includes("/v1/webpay/payment-intents"))).toHaveLength(0);
+  });
+
+  it("WebPay_WhenRediscoveryReadsAppliedDecision_PreservesSameSessionPaymentSubmittingBlock", async () => {
+    const appliedDecision = statutoryDecisionResponse({
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      decisionCommandStatus: "COMPLETED",
+      decisionResultStatus: "APPROVED",
+      applicationCommandStatus: "APPLIED",
+      applicationResultClassification: "APPLIED",
+      payableBasisReady: true,
+      payableBasisReadinessStatus: "READY",
+      payableBasisReadinessAction: null,
+      appliedTariffSnapshotId: "99999999-9999-4999-8999-999999999999",
+      finalPayableAmountMinorUnits: 4000,
+      currency: "PHP"
+    });
+    const fetchMock = stubWebPayFetch({
+      statutoryRediscoveryPayload: statutoryPendingLifecycleRediscoveryResponse({
+        decisionStatus: "APPROVED",
+        payableBasisStatus: "READY",
+        lifecycleState: "APPLIED",
+        retryable: false
+      }),
+      statutoryReadPayload: appliedDecision
+    });
+    localStorage.setItem(statutoryRecoveryStorageKey, JSON.stringify(createStatutoryRecoveryRecord({
+      parkingSessionId: successResponse.parkingSessionId,
+      entitlementType: "SENIOR_CITIZEN",
+      statutoryDiscountDecisionCommandId: statutoryDecisionCommandId,
+      statutoryDiscountPayableBasisApplicationCommandId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      paymentIntentCorrelationId: "99999999-9999-4999-8999-999999999999",
+      stage: "PAYMENT_SUBMITTING"
+    })));
+
+    render(<App />);
+    await resolveTicket();
+
+    await waitFor(() =>
+      expect(routeCalls(fetchMock, "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover")).toHaveLength(1)
+    );
+    await waitFor(() =>
+      expect(routeCalls(fetchMock, `/v1/webpay/statutory-discounts/decisions/${statutoryDecisionCommandId}`)).not.toHaveLength(0)
+    );
+    expect(screen.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
+    expect(JSON.parse(localStorage.getItem(statutoryRecoveryStorageKey) ?? "{}").stage).toBe("PAYMENT_SUBMITTING");
+    expect(routeCalls(fetchMock, "/v1/webpay/payment-intents")).toHaveLength(0);
   });
 
   it("WebPay_WhenClearRecoveryClicked_RemovesOnlyBrowserMetadata", async () => {

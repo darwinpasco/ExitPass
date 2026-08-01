@@ -142,6 +142,42 @@ public static class WebPayPaymentIntentEndpoints
         .Produces(StatusCodes.Status502BadGateway)
         .Produces(StatusCodes.Status503ServiceUnavailable);
 
+        app.MapPost("/v1/webpay/statutory-discounts/pending-lifecycle/rediscover", async (
+            WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest request,
+            ICentralPmsWebPayClient centralPmsClient,
+            HttpContext httpContext,
+            CancellationToken cancellationToken) =>
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(centralPmsClient);
+            ArgumentNullException.ThrowIfNull(httpContext);
+
+            var correlationId = ReadOrCreateCorrelationId(httpContext);
+            if (!TryBuildCentralPmsStatutoryPendingLifecycleRediscoveryRequest(
+                    request,
+                    correlationId,
+                    out var centralPmsRequest,
+                    out var validationError))
+            {
+                httpContext.Response.Headers["X-Correlation-Id"] = correlationId.ToString();
+                return Results.Json(validationError, statusCode: StatusCodes.Status400BadRequest);
+            }
+
+            var result = await centralPmsClient.RediscoverStatutoryDiscountPendingLifecycleAsync(
+                    centralPmsRequest,
+                    correlationId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+
+            return ToStatutoryPendingLifecycleRediscoveryResult(result, httpContext, correlationId);
+        })
+        .WithName("RediscoverWebPayStatutoryDiscountPendingLifecycle")
+        .Produces<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse>(StatusCodes.Status200OK)
+        .Produces(StatusCodes.Status400BadRequest)
+        .Produces(StatusCodes.Status409Conflict)
+        .Produces(StatusCodes.Status502BadGateway)
+        .Produces(StatusCodes.Status503ServiceUnavailable);
+
         app.MapPost("/v1/webpay/statutory-discounts/decisions", async (
             WebPayStatutoryDiscountDecisionRequest request,
             ICentralPmsWebPayClient centralPmsClient,
@@ -444,6 +480,99 @@ public static class WebPayPaymentIntentEndpoints
         return true;
     }
 
+    private static bool TryBuildCentralPmsStatutoryPendingLifecycleRediscoveryRequest(
+        WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest request,
+        Guid correlationId,
+        out CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest centralPmsRequest,
+        out object error)
+    {
+        var errors = new List<string>();
+        var lookupMode = Normalize(request.LookupMode);
+        var ticketReference = BlankToNull(request.TicketReference);
+        var plateNumber = BlankToNull(request.PlateNumber)?.ToUpperInvariant();
+        var entitlementType = Normalize(request.EntitlementType);
+
+        if (lookupMode is not "PARKING_SESSION_ID" and not "TICKET_REFERENCE" and not "PLATE_NUMBER")
+        {
+            errors.Add("lookupMode must be PARKING_SESSION_ID, TICKET_REFERENCE, or PLATE_NUMBER.");
+        }
+
+        if (request.SiteId is null || request.SiteId == Guid.Empty)
+        {
+            errors.Add("siteId is required.");
+        }
+
+        if (request.SiteGroupId is null || request.SiteGroupId == Guid.Empty)
+        {
+            errors.Add("siteGroupId is required.");
+        }
+
+        if (entitlementType.Length > 0 && entitlementType is not "SENIOR_CITIZEN" and not "PWD")
+        {
+            errors.Add("entitlementType must be SENIOR_CITIZEN or PWD.");
+        }
+
+        if (lookupMode == "PARKING_SESSION_ID")
+        {
+            if (request.ParkingSessionId is null || request.ParkingSessionId == Guid.Empty)
+            {
+                errors.Add("parkingSessionId is required for PARKING_SESSION_ID lookup.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(ticketReference) || !string.IsNullOrWhiteSpace(plateNumber))
+            {
+                errors.Add("PARKING_SESSION_ID lookup must not include ticketReference or plateNumber.");
+            }
+        }
+        else if (lookupMode == "TICKET_REFERENCE")
+        {
+            if (string.IsNullOrWhiteSpace(ticketReference))
+            {
+                errors.Add("ticketReference is required for TICKET_REFERENCE lookup.");
+            }
+
+            if (request.ParkingSessionId is not null || !string.IsNullOrWhiteSpace(plateNumber))
+            {
+                errors.Add("TICKET_REFERENCE lookup must not include parkingSessionId or plateNumber.");
+            }
+        }
+        else if (lookupMode == "PLATE_NUMBER")
+        {
+            if (string.IsNullOrWhiteSpace(plateNumber))
+            {
+                errors.Add("plateNumber is required for PLATE_NUMBER lookup.");
+            }
+
+            if (request.ParkingSessionId is not null || !string.IsNullOrWhiteSpace(ticketReference))
+            {
+                errors.Add("PLATE_NUMBER lookup must not include parkingSessionId or ticketReference.");
+            }
+        }
+
+        if (errors.Count > 0)
+        {
+            centralPmsRequest = null!;
+            error = BuildStatutoryErrorResponse(
+                "WEBPAY_STATUTORY_PENDING_LIFECYCLE_REDISCOVERY_REQUEST_INVALID",
+                $"The statutory pending-lifecycle rediscovery request is invalid. errors={string.Join(" ", errors)}",
+                retryable: false,
+                correlationId);
+            return false;
+        }
+
+        centralPmsRequest = new CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest(
+            lookupMode,
+            request.ParkingSessionId,
+            request.SiteId!.Value,
+            request.SiteGroupId!.Value,
+            ticketReference,
+            plateNumber,
+            BlankToNull(request.VendorSystemId),
+            entitlementType.Length == 0 ? null : entitlementType);
+        error = new { };
+        return true;
+    }
+
     private static bool TryBuildCentralPmsStatutoryRequest(
         WebPayStatutoryDiscountDecisionRequest request,
         Guid correlationId,
@@ -564,6 +693,34 @@ public static class WebPayPaymentIntentEndpoints
         }
 
         return ToStatutoryAvailabilityGateFailure(result, httpContext, fallbackCorrelationId);
+    }
+
+    private static IResult ToStatutoryPendingLifecycleRediscoveryResult(
+        CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery> result,
+        HttpContext httpContext,
+        Guid fallbackCorrelationId)
+    {
+        if (result.Succeeded && result.Value is not null)
+        {
+            httpContext.Response.Headers["X-Correlation-Id"] = result.Value.CorrelationId.ToString();
+            return Results.Ok(ToStatutoryPendingLifecycleRediscoveryResponse(result.Value));
+        }
+
+        var error = result.Error ?? new CentralPmsWebPayError(
+            StatusCodes.Status502BadGateway,
+            "WEBPAY_STATUTORY_PENDING_LIFECYCLE_REDISCOVERY_FAILED",
+            "The parking privilege request could not be checked right now. Please try again.",
+            true,
+            fallbackCorrelationId);
+        var browserSafeError = ToBrowserSafeStatutoryError(error, fallbackCorrelationId);
+        httpContext.Response.Headers["X-Correlation-Id"] = browserSafeError.CorrelationId.ToString();
+        return Results.Json(
+            BuildStatutoryErrorResponse(
+                browserSafeError.ErrorCode,
+                browserSafeError.Message,
+                browserSafeError.Retryable,
+                browserSafeError.CorrelationId),
+            statusCode: browserSafeError.StatusCode);
     }
 
     private static IResult ToStatutoryAvailabilityGateFailure(
@@ -805,6 +962,32 @@ public static class WebPayPaymentIntentEndpoints
                     })
                 .ToArray(),
             CorrelationId = availability.CorrelationId
+        };
+
+    private static WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse ToStatutoryPendingLifecycleRediscoveryResponse(
+        CentralPmsStatutoryDiscountPendingLifecycleRediscovery rediscovery) =>
+        new()
+        {
+            Classification = rediscovery.Classification,
+            StatutoryDecisionId = rediscovery.StatutoryDecisionId,
+            StatutoryDecisionCommandId = rediscovery.StatutoryDecisionCommandId,
+            RequestReference = rediscovery.RequestReference,
+            EntitlementType = rediscovery.EntitlementType,
+            DecisionStatus = rediscovery.DecisionStatus,
+            PayableBasisStatus = rediscovery.PayableBasisStatus,
+            ParkingSessionId = rediscovery.ParkingSessionId,
+            SiteId = rediscovery.SiteId,
+            SiteGroupId = rediscovery.SiteGroupId,
+            OpaqueContinuationReference = rediscovery.OpaqueContinuationReference,
+            OpaqueContinuationUrl = rediscovery.OpaqueContinuationUrl,
+            LifecycleState = rediscovery.LifecycleState,
+            Retryable = rediscovery.Retryable,
+            CorrelationId = rediscovery.CorrelationId,
+            CreatedAt = rediscovery.CreatedAt,
+            UpdatedAt = rediscovery.UpdatedAt,
+            SubmittedAt = rediscovery.SubmittedAt,
+            DecidedAt = rediscovery.DecidedAt,
+            ReviewedAt = rediscovery.ReviewedAt
         };
 
     private static object BuildStatutoryErrorResponse(

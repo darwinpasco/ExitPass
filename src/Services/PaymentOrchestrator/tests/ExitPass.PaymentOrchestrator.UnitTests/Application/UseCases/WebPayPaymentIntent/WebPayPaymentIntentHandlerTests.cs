@@ -1272,6 +1272,29 @@ public sealed class WebPayPaymentIntentHandlerTests
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> StatutoryAvailabilityResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(StatutoryAvailability());
 
+        public CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery> PendingLifecycleRediscoveryResult { get; set; } =
+            CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Success(new CentralPmsStatutoryDiscountPendingLifecycleRediscovery(
+                "NOT_FOUND",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "NOT_FOUND",
+                false,
+                CorrelationId,
+                null,
+                null,
+                null,
+                null,
+                null));
+
         private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
         private readonly Queue<CentralPmsWebPayResult<CentralPmsResolvedParking>> _resolveResults = new();
         private readonly List<Guid> _capturedTariffSnapshotIds = new();
@@ -1289,6 +1312,8 @@ public sealed class WebPayPaymentIntentHandlerTests
         public int GetStatutoryDiscountDecisionCallCount { get; private set; }
 
         public int ResolveStatutoryDiscountAvailabilityCallCount { get; private set; }
+
+        public int RediscoverStatutoryDiscountPendingLifecycleCallCount { get; private set; }
 
         public Guid? FinalizedPaymentAttemptId { get; private set; }
 
@@ -1396,6 +1421,15 @@ public sealed class WebPayPaymentIntentHandlerTests
         {
             ResolveStatutoryDiscountAvailabilityCallCount++;
             return Task.FromResult(StatutoryAvailabilityResult);
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>> RediscoverStatutoryDiscountPendingLifecycleAsync(
+            CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest request,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            RediscoverStatutoryDiscountPendingLifecycleCallCount++;
+            return Task.FromResult(PendingLifecycleRediscoveryResult);
         }
 
         public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(

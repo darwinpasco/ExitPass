@@ -244,6 +244,51 @@ textarea {
   line-height: 1.45;
 }
 
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(16, 24, 40, 0.42);
+}
+
+.regular-payment-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 520px);
+  padding: 18px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 42px rgba(16, 24, 40, 0.24);
+}
+
+.regular-payment-dialog h2,
+.regular-payment-dialog p {
+  margin: 0;
+}
+
+.regular-payment-dialog h2 {
+  color: #0b1f3a;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.dialog-copy {
+  display: grid;
+  gap: 10px;
+  color: #344054;
+  line-height: 1.5;
+}
+
+.dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .statutory-recovery-panel {
   display: grid;
   gap: 12px;
@@ -272,6 +317,12 @@ textarea {
 
 .status-button {
   width: 100%;
+}
+
+@media (max-width: 420px) {
+  .dialog-actions {
+    grid-template-columns: 1fr;
+  }
 }
 
 .payment-form {
