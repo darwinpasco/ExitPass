@@ -9,6 +9,8 @@ import type {
   WebPayReceiptPresentationResponse,
   WebPayHandoff,
   WebPayStatutoryDiscountAvailabilityResponse,
+  WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest,
+  WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse,
   WebPayStatutoryDiscountDecisionRequest,
   WebPayStatutoryDiscountDecisionResponse
 } from "./types";
@@ -17,6 +19,7 @@ const paymentIntentPath = "/v1/webpay/payment-intents";
 const parkingSessionResolvePath = "/v1/webpay/parking-session";
 const receiptPresentationPathPrefix = "/v1/webpay/payment-attempts";
 const statutoryDiscountAvailabilityPath = "/v1/webpay/statutory-discounts/availability";
+const statutoryDiscountPendingLifecycleRediscoveryPath = "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover";
 const statutoryDiscountDecisionPath = "/v1/webpay/statutory-discounts/decisions";
 const activePaymentAttemptErrorCode = "ACTIVE_PAYMENT_ATTEMPT_EXISTS";
 const refreshRequiredErrorCode = "PAYABLE_BASIS_REFRESH_REQUIRED";
@@ -427,6 +430,91 @@ export async function retrieveStatutoryDiscountAvailability(
   return payload as WebPayStatutoryDiscountAvailabilityResponse;
 }
 
+export function buildStatutoryDiscountPendingLifecycleRediscoveryBody(
+  request: WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest
+): WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest {
+  const lookupMode = request.lookupMode;
+  if (lookupMode !== "PARKING_SESSION_ID" && lookupMode !== "TICKET_REFERENCE" && lookupMode !== "PLATE_NUMBER") {
+    throw new Error("Choose a valid statutory recovery lookup mode.");
+  }
+
+  const siteId = request.siteId?.trim();
+  const siteGroupId = request.siteGroupId?.trim();
+  if (!siteId || !siteGroupId) {
+    throw new Error("Statutory recovery requires the resolved Site and Site Group.");
+  }
+
+  const body: WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest = {
+    lookupMode,
+    siteId,
+    siteGroupId
+  };
+
+  const parkingSessionId = request.parkingSessionId?.trim();
+  const ticketReference = request.ticketReference?.trim();
+  const plateNumber = request.plateNumber?.trim().toUpperCase();
+
+  if (lookupMode === "PARKING_SESSION_ID") {
+    if (!parkingSessionId) {
+      throw new Error("Statutory recovery requires the resolved parking session.");
+    }
+
+    body.parkingSessionId = parkingSessionId;
+  } else if (lookupMode === "TICKET_REFERENCE") {
+    if (!ticketReference) {
+      throw new Error("Statutory recovery requires the ticket reference.");
+    }
+
+    body.ticketReference = ticketReference;
+  } else {
+    if (!plateNumber) {
+      throw new Error("Statutory recovery requires the plate number.");
+    }
+
+    body.plateNumber = plateNumber;
+  }
+
+  if (request.vendorSystemId?.trim()) {
+    body.vendorSystemId = request.vendorSystemId.trim();
+  }
+
+  if (request.entitlementType === "SENIOR_CITIZEN" || request.entitlementType === "PWD") {
+    body.entitlementType = request.entitlementType;
+  }
+
+  return body;
+}
+
+export async function rediscoverStatutoryDiscountPendingLifecycle(
+  request: WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest,
+  correlationId?: string,
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
+): Promise<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse> {
+  const body = buildStatutoryDiscountPendingLifecycleRediscoveryBody(request);
+  const requestCorrelationId = correlationId?.trim() || createCorrelationId();
+
+  const response = await fetchImpl(`${getApiBaseUrl()}${statutoryDiscountPendingLifecycleRediscoveryPath}`, {
+    method: "POST",
+    headers: jsonHeaders(requestCorrelationId),
+    body: JSON.stringify(body),
+    signal
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse | ApiError;
+  if (!response.ok) {
+    const error = payload as ApiError;
+    throw new StatutoryDiscountDecisionError(
+      error.errorCode,
+      toStatutoryPendingLifecycleRediscoveryMessage(error.errorCode, error.message),
+      Boolean(error.retryable),
+      error.correlationId
+    );
+  }
+
+  return payload as WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse;
+}
+
 export function buildStatutoryDiscountDecisionBody(
   request: WebPayStatutoryDiscountDecisionRequest
 ): WebPayStatutoryDiscountDecisionRequest {
@@ -701,6 +789,24 @@ export function toStatutoryDiscountAvailabilityMessage(errorCode?: string, messa
       return "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
     default:
       return message?.trim() || "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
+  }
+}
+
+export function toStatutoryPendingLifecycleRediscoveryMessage(errorCode?: string, message?: string): string {
+  switch ((errorCode ?? "").toUpperCase()) {
+    case "WEBPAY_STATUTORY_PENDING_LIFECYCLE_REDISCOVERY_REQUEST_INVALID":
+    case "VALIDATION_FAILED":
+      return "The parking privilege request could not be checked for this parking session. Please try again.";
+    case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
+    case "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE":
+    case "CENTRAL_PMS_UNAVAILABLE":
+    case "SOURCE_UNAVAILABLE":
+    case "UNEXPECTED_FAILURE":
+      return "The parking privilege request could not be checked right now. Please try again.";
+    case "ACCESS_DENIED":
+      return "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.";
+    default:
+      return message?.trim() || "The parking privilege request could not be checked right now. Please try again.";
   }
 }
 

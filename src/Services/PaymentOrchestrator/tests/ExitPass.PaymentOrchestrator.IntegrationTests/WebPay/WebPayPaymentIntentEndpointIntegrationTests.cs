@@ -25,6 +25,7 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
     private const string Route = "/v1/webpay/payment-intents";
     private const string ResolveRoute = "/v1/webpay/parking-session";
     private const string StatutoryAvailabilityRoute = "/v1/webpay/statutory-discounts/availability";
+    private const string StatutoryPendingLifecycleRediscoveryRoute = "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover";
     private const string StatutoryDecisionRoute = "/v1/webpay/statutory-discounts/decisions";
     private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("99999999-9999-9999-9999-999999999999");
     private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -461,6 +462,68 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         Assert.Equal(1, state.ResolveStatutoryDiscountAvailabilityCallCount);
         Assert.Equal(0, state.ApplyStatutoryDiscountPayableBasisCallCount);
         Assert.Null(state.CapturedStatutorySubmitRequest);
+    }
+
+    /// <summary>
+    /// Verifies WebPay pending-lifecycle rediscovery returns the existing canonical decision and continuation without writes.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryPendingLifecycleRediscovery_WhenFound_ReturnsExistingDecisionAndContinuationWithoutWrites()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null);
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(
+            StatutoryPendingLifecycleRediscoveryRoute,
+            StatutoryPendingLifecycleRediscoveryRequest());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse>();
+        Assert.NotNull(body);
+        Assert.Equal("FOUND", body!.Classification);
+        Assert.Equal(StatutoryDecisionCommandId, body.StatutoryDecisionCommandId);
+        Assert.Equal(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"), body.RequestReference);
+        Assert.Equal("continuation:test:existing", body.OpaqueContinuationReference);
+        Assert.Equal("https://pay.example.test/privilege-review/opaque-existing", body.OpaqueContinuationUrl);
+        Assert.Equal(1, state.RediscoverStatutoryDiscountPendingLifecycleCallCount);
+        Assert.Equal("PARKING_SESSION_ID", state.CapturedPendingLifecycleRediscoveryRequest!.LookupMode);
+        Assert.Equal(0, state.ResolveStatutoryDiscountAvailabilityCallCount);
+        Assert.Null(state.CapturedStatutorySubmitRequest);
+        Assert.Equal(0, state.ApplyStatutoryDiscountPayableBasisCallCount);
+        Assert.Equal(0, state.CreatePaymentAttemptCallCount);
+    }
+
+    /// <summary>
+    /// Verifies WebPay pending-lifecycle rediscovery maps access failures to a customer-safe unavailable response.
+    /// </summary>
+    [Fact]
+    public async Task WebPayStatutoryPendingLifecycleRediscovery_WhenAccessDenied_ReturnsSafeUnavailable()
+    {
+        var state = new WebPayEndpointState("QRPH", "PAYMONGO", null)
+        {
+            PendingLifecycleRediscoveryResult =
+                CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Failure(
+                    new CentralPmsWebPayError(
+                        403,
+                        "ACCESS_DENIED",
+                        "authenticated Central PMS operator/service identity required",
+                        false,
+                        Guid.Parse("33333333-3333-3333-3333-333333333333")))
+        };
+        using var client = CreateClient(state);
+
+        using var response = await client.PostAsJsonAsync(
+            StatutoryPendingLifecycleRediscoveryRoute,
+            StatutoryPendingLifecycleRediscoveryRequest());
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("WEBPAY_STATUTORY_SERVICE_UNAVAILABLE", body);
+        Assert.DoesNotContain("authenticated", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("permission", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, state.RediscoverStatutoryDiscountPendingLifecycleCallCount);
+        Assert.Null(state.CapturedStatutorySubmitRequest);
+        Assert.Equal(0, state.CreatePaymentAttemptCallCount);
     }
 
     /// <summary>
@@ -911,6 +974,48 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             Guid.Parse("33333333-3333-3333-3333-333333333333"));
     }
 
+    private static WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest StatutoryPendingLifecycleRediscoveryRequest()
+    {
+        return new WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest
+        {
+            LookupMode = "PARKING_SESSION_ID",
+            ParkingSessionId = Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            SiteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            SiteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            VendorSystemId = "WEBPAY_LOCAL_MOCK_PMS"
+        };
+    }
+
+    private static CentralPmsStatutoryDiscountPendingLifecycleRediscovery PendingLifecycleRediscovery(
+        string classification = "FOUND",
+        Guid? statutoryDecisionCommandId = null,
+        string? opaqueContinuationReference = "continuation:test:existing",
+        string? opaqueContinuationUrl = "https://pay.example.test/privilege-review/opaque-existing",
+        bool retryable = true)
+    {
+        return new CentralPmsStatutoryDiscountPendingLifecycleRediscovery(
+            classification,
+            Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            statutoryDecisionCommandId ?? StatutoryDecisionCommandId,
+            Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            "SENIOR_CITIZEN",
+            "AWAITING_REVIEW",
+            "AWAITING_REVIEW",
+            Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            opaqueContinuationReference,
+            opaqueContinuationUrl,
+            "PENDING_REVIEW",
+            retryable,
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            DateTimeOffset.Parse("2026-07-30T08:00:00Z"),
+            DateTimeOffset.Parse("2026-07-30T08:01:00Z"),
+            DateTimeOffset.Parse("2026-07-30T08:00:30Z"),
+            null,
+            null);
+    }
+
     private sealed class WebPayEndpointState :
         ICentralPmsWebPayClient,
         IPaymentProviderRoutingPolicyResolver,
@@ -959,6 +1064,9 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability> StatutoryAvailabilityResult { get; set; } =
             CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(StatutoryAvailability());
 
+        public CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery> PendingLifecycleRediscoveryResult { get; set; } =
+            CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Success(PendingLifecycleRediscovery());
+
         private readonly Queue<CentralPmsWebPayResult<CentralPmsPaymentAttempt>> _createAttemptResults = new();
 
         public bool ResolveVendorParkingWasCalled { get; private set; }
@@ -973,6 +1081,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
 
         public int ResolveStatutoryDiscountAvailabilityCallCount { get; private set; }
 
+        public int RediscoverStatutoryDiscountPendingLifecycleCallCount { get; private set; }
+
         public int ApplyStatutoryDiscountPayableBasisCallCount { get; private set; }
 
         public Guid? CapturedStatutoryReadbackId { get; private set; }
@@ -986,6 +1096,8 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
         public CentralPmsStatutoryDiscountDecisionRequest? CapturedStatutoryApplyRequest { get; private set; }
 
         public CentralPmsStatutoryDiscountAvailabilityRequest? CapturedStatutoryAvailabilityRequest { get; private set; }
+
+        public CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest? CapturedPendingLifecycleRediscoveryRequest { get; private set; }
 
         public string? FinalAttemptStatus { get; private set; }
 
@@ -1088,6 +1200,16 @@ public sealed class WebPayPaymentIntentEndpointIntegrationTests
             ResolveStatutoryDiscountAvailabilityCallCount++;
             CapturedStatutoryAvailabilityRequest = request;
             return Task.FromResult(StatutoryAvailabilityResult);
+        }
+
+        public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>> RediscoverStatutoryDiscountPendingLifecycleAsync(
+            CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest request,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            RediscoverStatutoryDiscountPendingLifecycleCallCount++;
+            CapturedPendingLifecycleRediscoveryRequest = request;
+            return Task.FromResult(PendingLifecycleRediscoveryResult);
         }
 
         public Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> GetStatutoryDiscountDecisionAsync(

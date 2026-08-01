@@ -593,6 +593,92 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(CorrelationId, result.Error.CorrelationId);
     }
 
+    /// <summary>
+    /// Verifies pending-lifecycle rediscovery uses the WebPay service identity and rediscovery permission.
+    /// </summary>
+    [Fact]
+    public async Task RediscoverStatutoryDiscountPendingLifecycleAsync_UsesRediscoveryRouteAndPermission()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryPendingLifecycleRediscoveryResponse())
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.RediscoverStatutoryDiscountPendingLifecycleAsync(
+            StatutoryPendingLifecycleRediscoveryRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(handler.LastRequest);
+        Assert.Equal(HttpMethod.Post, handler.LastRequest!.Method);
+        Assert.Equal("/v1/webpay/statutory-discounts/pending-lifecycle/rediscover", handler.LastRequest.RequestUri!.AbsolutePath);
+        Assert.Equal(CorrelationId.ToString(), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        Assert.Equal(WebPayServiceIdentityId.ToString("D"), handler.LastRequest.Headers.GetValues("X-ExitPass-Service-Identity-Id").Single());
+        Assert.Equal("statutory-discounts.pending-lifecycle.rediscover.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
+        Assert.False(handler.LastRequest.Headers.Contains("Authorization"));
+
+        using var requestDocument = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal("PARKING_SESSION_ID", requestDocument.RootElement.GetProperty("lookupMode").GetString());
+        Assert.Equal(ParkingSessionId, requestDocument.RootElement.GetProperty("parkingSessionId").GetGuid());
+        Assert.False(requestDocument.RootElement.TryGetProperty("sourceChannel", out _));
+        Assert.False(requestDocument.RootElement.TryGetProperty("reviewerUserId", out _));
+
+        Assert.Equal("FOUND", result.Value!.Classification);
+        Assert.Equal(StatutoryDecisionCommandId, result.Value.StatutoryDecisionCommandId);
+        Assert.Equal("continuation:test:existing", result.Value.OpaqueContinuationReference);
+        Assert.Equal("https://pay.example.test/privilege-review/opaque-existing", result.Value.OpaqueContinuationUrl);
+    }
+
+    /// <summary>
+    /// Verifies pending-lifecycle rediscovery fails closed without an HTTP call when service identity configuration is missing.
+    /// </summary>
+    [Fact]
+    public async Task RediscoverStatutoryDiscountPendingLifecycleAsync_WhenServiceIdentityMissing_FailsClosedWithoutHttpRequest()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryPendingLifecycleRediscoveryResponse())
+        });
+        var client = CreateClient(handler, configureStatutoryServiceIdentity: false);
+
+        var result = await client.RediscoverStatutoryDiscountPendingLifecycleAsync(
+            StatutoryPendingLifecycleRediscoveryRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(503, result.Error!.StatusCode);
+        Assert.Equal("CENTRAL_PMS_AUTH_CONFIGURATION_MISSING", result.Error.ErrorCode);
+        Assert.Equal(0, handler.SendCount);
+        Assert.Null(handler.LastRequest);
+    }
+
+    /// <summary>
+    /// Verifies malformed pending-lifecycle rediscovery responses fail closed.
+    /// </summary>
+    [Fact]
+    public async Task RediscoverStatutoryDiscountPendingLifecycleAsync_WhenMalformed_ReturnsRetryableFailure()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new { classification = "" })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.RediscoverStatutoryDiscountPendingLifecycleAsync(
+            StatutoryPendingLifecycleRediscoveryRequest(),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(502, result.Error!.StatusCode);
+        Assert.Equal("MALFORMED_STATUTORY_DISCOUNT_PENDING_LIFECYCLE_REDISCOVERY_RESPONSE", result.Error.ErrorCode);
+        Assert.True(result.Error.Retryable);
+        Assert.Equal(CorrelationId, result.Error.CorrelationId);
+    }
+
     private static CentralPmsWebPayClient CreateClient(
         HttpMessageHandler handler,
         bool configureStatutoryServiceIdentity = true)
@@ -663,6 +749,19 @@ public sealed class CentralPmsWebPayClientTests
             BeneficiaryResidencySatisfied: null);
     }
 
+    private static CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest StatutoryPendingLifecycleRediscoveryRequest()
+    {
+        return new CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest(
+            "PARKING_SESSION_ID",
+            ParkingSessionId,
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            null,
+            null,
+            "WEBPAY_LOCAL_MOCK_PMS",
+            null);
+    }
+
     private static object StatutoryAvailabilityResponse()
     {
         return new
@@ -680,6 +779,33 @@ public sealed class CentralPmsWebPayClientTests
             remediationAction = "CONTINUE_WITH_ORDINARY_PAYMENT",
             requiredEvidenceTypes = Array.Empty<object>(),
             correlationId = CorrelationId
+        };
+    }
+
+    private static object StatutoryPendingLifecycleRediscoveryResponse()
+    {
+        return new
+        {
+            classification = "FOUND",
+            statutoryDecisionId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            statutoryDecisionCommandId = StatutoryDecisionCommandId,
+            requestReference = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+            entitlementType = "SENIOR_CITIZEN",
+            decisionStatus = "AWAITING_REVIEW",
+            payableBasisStatus = "AWAITING_REVIEW",
+            parkingSessionId = ParkingSessionId,
+            siteId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            siteGroupId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            opaqueContinuationReference = "continuation:test:existing",
+            opaqueContinuationUrl = "https://pay.example.test/privilege-review/opaque-existing",
+            lifecycleState = "PENDING_REVIEW",
+            retryable = true,
+            correlationId = CorrelationId,
+            createdAt = "2026-07-30T08:00:00Z",
+            updatedAt = "2026-07-30T08:01:00Z",
+            submittedAt = "2026-07-30T08:00:30Z",
+            decidedAt = (string?)null,
+            reviewedAt = (string?)null
         };
     }
 

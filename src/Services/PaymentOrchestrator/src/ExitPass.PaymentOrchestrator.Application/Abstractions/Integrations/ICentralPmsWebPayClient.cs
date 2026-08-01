@@ -84,6 +84,14 @@ public interface ICentralPmsWebPayClient
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Rediscovers an existing Central PMS statutory-discount pending lifecycle for WebPay.
+    /// </summary>
+    Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>> RediscoverStatutoryDiscountPendingLifecycleAsync(
+        CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest request,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Creates or reuses a Central PMS statutory-discount decision for WebPay.
     /// </summary>
     /// <param name="request">Server-normalized WebPay statutory-discount request.</param>

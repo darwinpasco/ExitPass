@@ -267,6 +267,158 @@ public sealed class WebPayStatutoryDiscountAvailabilityEvidenceRequirement
 }
 
 /// <summary>
+/// WebPay-facing request for rediscovering an existing statutory-discount pending lifecycle.
+/// </summary>
+public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryRequest
+{
+    /// <summary>
+    /// Lookup mode. Must be PARKING_SESSION_ID, TICKET_REFERENCE, or PLATE_NUMBER.
+    /// </summary>
+    public string? LookupMode { get; set; }
+
+    /// <summary>
+    /// Canonical parking session identifier when lookup mode is PARKING_SESSION_ID.
+    /// </summary>
+    public Guid? ParkingSessionId { get; set; }
+
+    /// <summary>
+    /// Authoritative Site identifier from the resolved parking session.
+    /// </summary>
+    public Guid? SiteId { get; set; }
+
+    /// <summary>
+    /// Authoritative Site Group identifier from the resolved parking session.
+    /// </summary>
+    public Guid? SiteGroupId { get; set; }
+
+    /// <summary>
+    /// Ticket reference when lookup mode is TICKET_REFERENCE.
+    /// </summary>
+    public string? TicketReference { get; set; }
+
+    /// <summary>
+    /// Plate number when lookup mode is PLATE_NUMBER.
+    /// </summary>
+    public string? PlateNumber { get; set; }
+
+    /// <summary>
+    /// Optional vendor system identifier from the resolved parking session.
+    /// </summary>
+    public string? VendorSystemId { get; set; }
+
+    /// <summary>
+    /// Optional entitlement filter.
+    /// </summary>
+    public string? EntitlementType { get; set; }
+}
+
+/// <summary>
+/// WebPay-safe response for rediscovering an existing statutory-discount pending lifecycle.
+/// </summary>
+public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryResponse
+{
+    /// <summary>
+    /// Safe rediscovery classification.
+    /// </summary>
+    public string Classification { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Canonical statutory decision identifier when found.
+    /// </summary>
+    public Guid? StatutoryDecisionId { get; set; }
+
+    /// <summary>
+    /// Canonical statutory decision command identifier when found.
+    /// </summary>
+    public Guid? StatutoryDecisionCommandId { get; set; }
+
+    /// <summary>
+    /// Existing request reference when found.
+    /// </summary>
+    public Guid? RequestReference { get; set; }
+
+    /// <summary>
+    /// Existing entitlement type when found.
+    /// </summary>
+    public string? EntitlementType { get; set; }
+
+    /// <summary>
+    /// Existing decision status when found.
+    /// </summary>
+    public string? DecisionStatus { get; set; }
+
+    /// <summary>
+    /// Existing payable-basis status when found.
+    /// </summary>
+    public string? PayableBasisStatus { get; set; }
+
+    /// <summary>
+    /// Canonical parking session identifier.
+    /// </summary>
+    public Guid? ParkingSessionId { get; set; }
+
+    /// <summary>
+    /// Canonical Site identifier.
+    /// </summary>
+    public Guid? SiteId { get; set; }
+
+    /// <summary>
+    /// Canonical Site Group identifier.
+    /// </summary>
+    public Guid? SiteGroupId { get; set; }
+
+    /// <summary>
+    /// Opaque continuation reference when found.
+    /// </summary>
+    public string? OpaqueContinuationReference { get; set; }
+
+    /// <summary>
+    /// Opaque continuation URL when found.
+    /// </summary>
+    public string? OpaqueContinuationUrl { get; set; }
+
+    /// <summary>
+    /// Safe lifecycle state.
+    /// </summary>
+    public string LifecycleState { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Indicates whether rediscovery can be retried.
+    /// </summary>
+    public bool Retryable { get; set; }
+
+    /// <summary>
+    /// Safe correlation identifier.
+    /// </summary>
+    public Guid CorrelationId { get; set; }
+
+    /// <summary>
+    /// Safe lifecycle creation timestamp when found.
+    /// </summary>
+    public DateTimeOffset? CreatedAt { get; set; }
+
+    /// <summary>
+    /// Safe lifecycle update timestamp when found.
+    /// </summary>
+    public DateTimeOffset? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// Safe lifecycle submitted timestamp when found.
+    /// </summary>
+    public DateTimeOffset? SubmittedAt { get; set; }
+
+    /// <summary>
+    /// Safe lifecycle decided timestamp when found.
+    /// </summary>
+    public DateTimeOffset? DecidedAt { get; set; }
+
+    /// <summary>
+    /// Safe lifecycle reviewed timestamp when found.
+    /// </summary>
+    public DateTimeOffset? ReviewedAt { get; set; }
+}
+
+/// <summary>
 /// Browser-safe durable statutory-discount readback.
 /// </summary>
 public sealed class WebPayStatutoryDiscountDecisionResponse

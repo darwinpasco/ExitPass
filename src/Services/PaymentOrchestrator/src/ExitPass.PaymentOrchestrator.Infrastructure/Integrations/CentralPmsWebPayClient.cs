@@ -24,6 +24,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private readonly Uri _paymentAttemptsBaseUri;
     private readonly Uri _webPayPaymentAttemptsBaseUri;
     private readonly Uri _statutoryDiscountAvailabilityUri;
+    private readonly Uri _statutoryDiscountPendingLifecycleRediscoveryUri;
     private readonly Uri _statutoryDiscountDecisionsUri;
     private readonly Uri _statutoryDiscountDecisionsBaseUri;
     private readonly bool _statutoryDiscountServiceIdentityConfigured;
@@ -33,6 +34,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private const string CentralPmsServiceIdentityIdHeaderName = "X-ExitPass-Service-Identity-Id";
     private const string StatutoryDiscountSubmitWebPayPermission = "statutory-discounts.decision.submit.webpay";
     private const string StatutoryDiscountDecisionReadPermission = "statutory-discounts.decision.read";
+    private const string StatutoryDiscountPendingLifecycleRediscoverWebPayPermission = "statutory-discounts.pending-lifecycle.rediscover.webpay";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsWebPayClient"/> class.
@@ -63,6 +65,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         _paymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/internal/payment-attempts/");
         _webPayPaymentAttemptsBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/payment-attempts/");
         _statutoryDiscountAvailabilityUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/availability");
+        _statutoryDiscountPendingLifecycleRediscoveryUri = new Uri(normalizedBaseUrl, "v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
         _statutoryDiscountDecisionsUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions");
         _statutoryDiscountDecisionsBaseUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/");
 
@@ -340,6 +343,72 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         }
 
         return CentralPmsWebPayResult<CentralPmsStatutoryDiscountAvailability>.Success(ToStatutoryAvailability(payload));
+    }
+
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>> RediscoverStatutoryDiscountPendingLifecycleAsync(
+        CentralPmsStatutoryDiscountPendingLifecycleRediscoveryRequest request,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var body = new StatutoryDiscountPendingLifecycleRediscoveryRequest(
+            request.LookupMode,
+            request.ParkingSessionId,
+            request.SiteId,
+            request.SiteGroupId,
+            request.TicketReference,
+            request.PlateNumber,
+            request.VendorSystemId,
+            request.EntitlementType);
+
+        using var message = new HttpRequestMessage(HttpMethod.Post, _statutoryDiscountPendingLifecycleRediscoveryUri)
+        {
+            Content = JsonContent.Create(body, options: JsonOptions)
+        };
+        message.Headers.Add("X-Correlation-Id", correlationId.ToString());
+        if (!TryAddStatutoryDiscountServiceHeaders(
+                message,
+                StatutoryDiscountPendingLifecycleRediscoverWebPayPermission,
+                correlationId,
+                out var serviceAuthError))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Failure(serviceAuthError!);
+        }
+
+        using var response = await SendStatutoryDiscountAsync(
+            message,
+            "pending lifecycle rediscovery",
+            correlationId,
+            cancellationToken);
+        if (response is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Failure(
+                BuildTransientStatutoryDiscountError(correlationId));
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Failure(
+                ReadError((int)response.StatusCode, responseBody, "STATUTORY_DISCOUNT_PENDING_LIFECYCLE_REDISCOVERY_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<StatutoryDiscountPendingLifecycleRediscoveryResponse>(responseBody, JsonOptions);
+        if (payload is null || string.IsNullOrWhiteSpace(payload.Classification))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Failure(new CentralPmsWebPayError(
+                502,
+                "MALFORMED_STATUTORY_DISCOUNT_PENDING_LIFECYCLE_REDISCOVERY_RESPONSE",
+                "Central PMS statutory-discount pending lifecycle rediscovery response could not be parsed.",
+                true,
+                correlationId));
+        }
+
+        return CentralPmsWebPayResult<CentralPmsStatutoryDiscountPendingLifecycleRediscovery>.Success(
+            ToPendingLifecycleRediscovery(payload));
     }
 
     /// <inheritdoc />
@@ -747,6 +816,30 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
                 .ToArray() ?? Array.Empty<CentralPmsStatutoryDiscountAvailabilityEvidenceRequirement>(),
             payload.CorrelationId);
 
+    private static CentralPmsStatutoryDiscountPendingLifecycleRediscovery ToPendingLifecycleRediscovery(
+        StatutoryDiscountPendingLifecycleRediscoveryResponse payload) =>
+        new(
+            payload.Classification,
+            payload.StatutoryDecisionId,
+            payload.StatutoryDecisionCommandId,
+            payload.RequestReference,
+            payload.EntitlementType,
+            payload.DecisionStatus,
+            payload.PayableBasisStatus,
+            payload.ParkingSessionId,
+            payload.SiteId,
+            payload.SiteGroupId,
+            payload.OpaqueContinuationReference,
+            payload.OpaqueContinuationUrl,
+            payload.LifecycleState,
+            payload.Retryable,
+            payload.CorrelationId,
+            payload.CreatedAt,
+            payload.UpdatedAt,
+            payload.SubmittedAt,
+            payload.DecidedAt,
+            payload.ReviewedAt);
+
     private static Guid? ExtractPaymentAttemptId(JsonElement? details)
     {
         if (details is not { ValueKind: JsonValueKind.Object } detailsObject)
@@ -933,6 +1026,38 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         string RequirementStatus,
         string SafeRequirementLabel,
         string? SafeRequirementNotes);
+
+    private sealed record StatutoryDiscountPendingLifecycleRediscoveryRequest(
+        string LookupMode,
+        Guid? ParkingSessionId,
+        Guid SiteId,
+        Guid SiteGroupId,
+        string? TicketReference,
+        string? PlateNumber,
+        string? VendorSystemId,
+        string? EntitlementType);
+
+    private sealed record StatutoryDiscountPendingLifecycleRediscoveryResponse(
+        string Classification,
+        Guid? StatutoryDecisionId,
+        Guid? StatutoryDecisionCommandId,
+        Guid? RequestReference,
+        string? EntitlementType,
+        string? DecisionStatus,
+        string? PayableBasisStatus,
+        Guid? ParkingSessionId,
+        Guid? SiteId,
+        Guid? SiteGroupId,
+        string? OpaqueContinuationReference,
+        string? OpaqueContinuationUrl,
+        string LifecycleState,
+        bool Retryable,
+        Guid CorrelationId,
+        DateTimeOffset? CreatedAt,
+        DateTimeOffset? UpdatedAt,
+        DateTimeOffset? SubmittedAt,
+        DateTimeOffset? DecidedAt,
+        DateTimeOffset? ReviewedAt);
 
     private sealed record StatutoryDiscountDecisionResponse(
         Guid StatutoryDiscountDecisionCommandId,
