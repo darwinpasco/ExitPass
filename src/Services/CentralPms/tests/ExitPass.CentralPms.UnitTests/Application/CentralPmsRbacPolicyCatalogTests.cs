@@ -40,6 +40,10 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("OperatorConsoleStatutoryDiscountAuditRead", "statutory-discounts.audit.read")]
     [InlineData("WebPayStatutoryDiscountPendingLifecycleRediscover", "statutory-discounts.pending-lifecycle.rediscover.webpay")]
     [InlineData("AptStatutoryOrdinanceAvailabilityRead", "statutory-discounts.ordinance-availability.read.apt")]
+    [InlineData("CentralPmsStatutoryEvidenceCaptureMetadata", "statutory-discounts.evidence.capture")]
+    [InlineData("CentralPmsStatutoryEvidenceViewMetadata", "statutory-discounts.evidence.view")]
+    [InlineData("CentralPmsStatutoryEvidenceHoldManage", "statutory-discounts.evidence.hold")]
+    [InlineData("CentralPmsStatutoryEvidenceDeletionRequest", "statutory-discounts.evidence.delete-request")]
     public void ResolvePermissions_ReturnsExpectedPermission(string policyName, string expectedPermission)
     {
         var permissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);

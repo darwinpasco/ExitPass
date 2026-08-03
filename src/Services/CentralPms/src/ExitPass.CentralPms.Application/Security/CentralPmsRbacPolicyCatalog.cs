@@ -190,6 +190,22 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "statutory-discounts.pending-lifecycle.rediscover.webpay"
             ],
+            ["CentralPmsStatutoryEvidenceCaptureMetadata"] =
+            [
+                "statutory-discounts.evidence.capture"
+            ],
+            ["CentralPmsStatutoryEvidenceViewMetadata"] =
+            [
+                "statutory-discounts.evidence.view"
+            ],
+            ["CentralPmsStatutoryEvidenceHoldManage"] =
+            [
+                "statutory-discounts.evidence.hold"
+            ],
+            ["CentralPmsStatutoryEvidenceDeletionRequest"] =
+            [
+                "statutory-discounts.evidence.delete-request"
+            ],
 
             ["OperatorConsolePolicyImportReviewSubmit"] = ["operator-console.policy-import-review.submit", "operator-console.policy-import-review.manage"],
             ["OperatorConsolePolicyImportReviewViewer"] =
