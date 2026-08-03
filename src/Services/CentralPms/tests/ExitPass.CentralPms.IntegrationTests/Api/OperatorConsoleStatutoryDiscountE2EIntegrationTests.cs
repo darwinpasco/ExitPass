@@ -302,6 +302,16 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                     discount.DiscountAmountMinorUnits == 2232 &&
                     discount.VatPrivilegeAmountMinorUnits == 1339 &&
                     discount.ApprovalRef == draftId.ToString("D"));
+            posServerRequest.AppliedStatutoryFiscalFacts.Should().NotBeNull();
+            posServerRequest.AppliedStatutoryFiscalFacts!.StatutoryDiscountDecisionCommandId.Should().Be(draftId);
+            posServerRequest.AppliedStatutoryFiscalFacts.StatutoryRequestReference.Should().Be(draftId);
+            posServerRequest.AppliedStatutoryFiscalFacts.StatutoryPayableBasisApplicationCommandId.Should()
+                .Be(applied.PayableBasisApplicationId.Value);
+            posServerRequest.AppliedStatutoryFiscalFacts.EntitlementType.Should().Be("SENIOR_CITIZEN");
+            posServerRequest.AppliedStatutoryFiscalFacts.BenefitClassification.Should()
+                .Be("VAT_EXEMPTION_AND_STATUTORY_DISCOUNT");
+            posServerRequest.AppliedStatutoryFiscalFacts.SourcePaymentChannel.Should().Be("WEBPAY");
+            posServerRequest.AppliedStatutoryFiscalFacts.FinalPayableAmountMinorUnits.Should().Be(8929);
             posServerRequest.ReferenceContext.Should().Contain("payableBasisApplicationId", applied.PayableBasisApplicationId.Value.ToString("D"));
             posServerRequest.ReferenceContext.Should().Contain("statutoryDiscountValidationId", draftId.ToString("D"));
             posServerRequest.PayableBasis.ReferenceContext.Should().Contain("appliedTariffSnapshotId", applied.AppliedTariffSnapshotId.Value.ToString("D"));
@@ -1640,8 +1650,8 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                     VatPrivilegeAmountMinorUnits: 1339,
                     CurrencyCode: "PHP",
                     LineSequence: 1,
-                    BeneficiaryRef: "metadata-only-beneficiary-ref",
-                    EvidenceRef: "metadata-only-evidence-captured",
+                    BeneficiaryRef: null,
+                    EvidenceRef: null,
                     ApprovalRef: validationId.ToString("D"),
                     DiscountPrivilegeContext: new Dictionary<string, string>
                     {
@@ -1668,7 +1678,31 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
                 ["fiscalIssuanceReferenceId"] = fiscalReference.FiscalIssuanceReferenceId.ToString("D")
             },
             PaymentFinalityRef: paymentConfirmationId.ToString("D"),
-            VendorAckRef: null);
+            VendorAckRef: null,
+            AppliedStatutoryFiscalFacts: new CentralPmsAppliedStatutoryFiscalFactsContext(
+                StatutoryDiscountDecisionCommandId: validationId,
+                StatutoryRequestReference: validationId,
+                StatutoryPayableBasisApplicationCommandId: payableBasisApplicationId,
+                StatutoryValidationId: validationId,
+                ParkingSessionId: ParkingSessionId,
+                SiteId: SiteId,
+                SiteGroupId: SiteGroupId,
+                EntitlementType: "SENIOR_CITIZEN",
+                BenefitClassification: "VAT_EXEMPTION_AND_STATUTORY_DISCOUNT",
+                PolicyReference: new CentralPmsAppliedStatutoryPolicyReferenceContext(
+                    ResolutionBasis: "LOCAL_ORDINANCE",
+                    PolicyCode: "PH_ATC_SENIOR_CITIZEN_SITE_POLICY_231"),
+                OriginalTariffSnapshotId: OriginalTariffSnapshotId,
+                AppliedTariffSnapshotId: appliedTariffSnapshotId,
+                OriginalAmountMinorUnits: 12500,
+                VatExclusiveBasisAmountMinorUnits: 11161,
+                VatAmountMinorUnits: 1339,
+                VatTreatment: "VAT_EXEMPT",
+                StatutoryDiscountAmountMinorUnits: 2232,
+                FinalPayableAmountMinorUnits: 8929,
+                Currency: "PHP",
+                AppliedAt: DateTimeOffset.Parse("2026-07-11T02:00:00Z"),
+                SourcePaymentChannel: "WEBPAY"));
 
     private static void AssertNoSensitiveEvidenceOrPii(PosServerFiscalDocumentCreateRequest request)
     {

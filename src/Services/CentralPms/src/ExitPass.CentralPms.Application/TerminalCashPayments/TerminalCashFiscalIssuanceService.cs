@@ -281,7 +281,8 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
             ],
             ReferenceContext: referenceContext,
             PaymentFinalityRef: reference.UpstreamFinalityReference,
-            VendorAckRef: null);
+            VendorAckRef: null,
+            AppliedStatutoryFiscalFacts: BuildAppliedStatutoryFiscalFacts(cashPayment, statutoryContext));
     }
 
     private static void EnsureStatutoryFiscalLinkageCanBeFiscalized(
@@ -368,11 +369,93 @@ public sealed class TerminalCashFiscalIssuanceService : ITerminalCashFiscalIssua
                 VatPrivilegeAmountMinorUnits: statutoryContext.VatAmountMinorUnits,
                 CurrencyCode: currency,
                 LineSequence: 1,
-                BeneficiaryRef: statutoryContext.MaskedIdReference,
-                EvidenceRef: $"statutory-discount-validation:{statutoryContext.StatutoryDiscountValidationId:D}",
+                BeneficiaryRef: null,
+                EvidenceRef: null,
                 ApprovalRef: statutoryContext.StatutoryDiscountValidationId.ToString("D"),
                 DiscountPrivilegeContext: context)
         ];
+    }
+
+    private static CentralPmsAppliedStatutoryFiscalFactsContext? BuildAppliedStatutoryFiscalFacts(
+        TerminalCashPaymentReadback cashPayment,
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext)
+    {
+        if (statutoryContext is null)
+        {
+            return null;
+        }
+
+        if (cashPayment.SiteId == Guid.Empty ||
+            cashPayment.SiteGroupId == Guid.Empty)
+        {
+            throw Rejected(
+                "STATUTORY_FISCAL_SITE_SCOPE_MISSING",
+                "Statutory discount fiscal context requires canonical Site and Site Group scope.");
+        }
+
+        return new CentralPmsAppliedStatutoryFiscalFactsContext(
+            StatutoryDiscountDecisionCommandId: statutoryContext.StatutoryDiscountDecisionCommandId,
+            StatutoryRequestReference: statutoryContext.StatutoryDiscountValidationId,
+            StatutoryPayableBasisApplicationCommandId: statutoryContext.StatutoryDiscountPayableBasisApplicationCommandId,
+            StatutoryValidationId: statutoryContext.StatutoryDiscountValidationId,
+            ParkingSessionId: statutoryContext.ParkingSessionId,
+            SiteId: cashPayment.SiteId,
+            SiteGroupId: cashPayment.SiteGroupId,
+            EntitlementType: statutoryContext.EntitlementType,
+            BenefitClassification: ResolveBenefitClassification(statutoryContext),
+            PolicyReference: new CentralPmsAppliedStatutoryPolicyReferenceContext(
+                ResolutionBasis: NormalizePolicyResolutionBasis(statutoryContext.PolicyResolutionBasis),
+                AppliedPolicyReferenceId: statutoryContext.AppliedPolicyReferenceId),
+            OriginalTariffSnapshotId: statutoryContext.OriginalTariffSnapshotId,
+            AppliedTariffSnapshotId: statutoryContext.AppliedTariffSnapshotId,
+            OriginalAmountMinorUnits: statutoryContext.OriginalAmountMinorUnits,
+            VatExclusiveBasisAmountMinorUnits: statutoryContext.VatExclusiveBasisAmountMinorUnits,
+            VatAmountMinorUnits: statutoryContext.VatAmountMinorUnits,
+            VatTreatment: statutoryContext.VatTreatment,
+            StatutoryDiscountAmountMinorUnits: statutoryContext.StatutoryDiscountAmountMinorUnits,
+            FinalPayableAmountMinorUnits: statutoryContext.FinalPayableAmountMinorUnits,
+            Currency: statutoryContext.Currency,
+            AppliedAt: statutoryContext.AppliedAt ?? DateTimeOffset.UtcNow,
+            SourcePaymentChannel: "ASSISTED_PAYMENT_TERMINAL",
+            TerminalCashTenderId: cashPayment.TerminalCashTenderId);
+    }
+
+    private static string ResolveBenefitClassification(TerminalCashStatutoryFiscalLinkageContext statutoryContext)
+    {
+        if (statutoryContext.FinalPayableAmountMinorUnits == 0)
+        {
+            return "FREE_PARKING";
+        }
+
+        if (statutoryContext.VatAmountMinorUnits > 0 && statutoryContext.StatutoryDiscountAmountMinorUnits > 0)
+        {
+            return "VAT_EXEMPTION_AND_STATUTORY_DISCOUNT";
+        }
+
+        if (statutoryContext.VatAmountMinorUnits > 0)
+        {
+            return "VAT_EXEMPTION_ONLY";
+        }
+
+        return statutoryContext.StatutoryDiscountAmountMinorUnits > 0
+            ? "STATUTORY_DISCOUNT_ONLY"
+            : "REDUCED_PARKING_RATE";
+    }
+
+    private static string NormalizePolicyResolutionBasis(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "INTERNAL_POLICY_REFERENCE";
+        }
+
+        var normalized = value.Trim().ToUpperInvariant();
+        return normalized switch
+        {
+            "NATIONAL_LAW" or "LOCAL_ORDINANCE" or "MIXED" or "INTERNAL_POLICY_REFERENCE" => normalized,
+            "NATIONAL_LAW_FALLBACK" => "NATIONAL_LAW",
+            _ => "INTERNAL_POLICY_REFERENCE"
+        };
     }
 
     private static Dictionary<string, string> BuildPayableBasisReferenceContext(

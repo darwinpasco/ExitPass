@@ -134,7 +134,8 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
                     CurrencyCode: total.CurrencyCode.Trim().ToUpperInvariant(),
                     TotalContext: NormalizeDictionary(total.TotalContext)))
                 .ToArray(),
-            ReferenceContext: NormalizeDictionary(context.ReferenceContext));
+            ReferenceContext: NormalizeDictionary(context.ReferenceContext),
+            AppliedStatutoryFiscalFacts: MapAppliedStatutoryFiscalFacts(context.AppliedStatutoryFiscalFacts));
     }
 
     private static IReadOnlyList<string> Validate(CentralPmsFiscalDocumentMappingContext context)
@@ -186,6 +187,7 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         }
 
         ValidateNoSensitivePayloadTerms(context, errors);
+        ValidateAppliedStatutoryFacts(context, errors);
         return errors;
     }
 
@@ -260,6 +262,101 @@ public sealed class PosServerFiscalDocumentRequestMapper : IPosServerFiscalDocum
         {
             errors.Add("sensitive_payload_reference_rejected");
         }
+    }
+
+    private static void ValidateAppliedStatutoryFacts(
+        CentralPmsFiscalDocumentMappingContext context,
+        List<string> errors)
+    {
+        var facts = context.AppliedStatutoryFiscalFacts;
+        if (facts is null)
+        {
+            return;
+        }
+
+        if (facts.StatutoryDiscountDecisionCommandId == Guid.Empty ||
+            facts.StatutoryRequestReference == Guid.Empty ||
+            facts.StatutoryPayableBasisApplicationCommandId == Guid.Empty ||
+            facts.StatutoryValidationId == Guid.Empty ||
+            facts.ParkingSessionId == Guid.Empty ||
+            facts.SiteId == Guid.Empty ||
+            facts.SiteGroupId == Guid.Empty ||
+            facts.OriginalTariffSnapshotId == Guid.Empty ||
+            facts.AppliedTariffSnapshotId == Guid.Empty ||
+            facts.OriginalTariffSnapshotId == facts.AppliedTariffSnapshotId)
+        {
+            errors.Add("applied_statutory_fiscal_facts_final_snapshot_required");
+        }
+
+        if (string.IsNullOrWhiteSpace(facts.EntitlementType) ||
+            string.IsNullOrWhiteSpace(facts.BenefitClassification) ||
+            string.IsNullOrWhiteSpace(facts.VatTreatment) ||
+            string.IsNullOrWhiteSpace(facts.Currency) ||
+            string.IsNullOrWhiteSpace(facts.SourcePaymentChannel) ||
+            string.IsNullOrWhiteSpace(facts.PolicyReference.ResolutionBasis))
+        {
+            errors.Add("applied_statutory_fiscal_facts_classification_required");
+        }
+
+        if (facts.OriginalAmountMinorUnits < 0 ||
+            facts.VatExclusiveBasisAmountMinorUnits < 0 ||
+            facts.VatAmountMinorUnits < 0 ||
+            facts.StatutoryDiscountAmountMinorUnits < 0 ||
+            facts.FinalPayableAmountMinorUnits < 0)
+        {
+            errors.Add("applied_statutory_fiscal_facts_amounts_must_be_nonnegative");
+        }
+
+        if (context.PayableBasis is not null &&
+            (facts.FinalPayableAmountMinorUnits != context.PayableBasis.PayableAmountMinorUnits ||
+             !string.Equals(facts.Currency.Trim(), context.PayableBasis.CurrencyCode.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            errors.Add("applied_statutory_fiscal_facts_must_match_payable_basis");
+        }
+
+        if (!string.Equals(facts.ParkingSessionId.ToString("D"), context.CentralPmsParkingSessionRef, StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("applied_statutory_fiscal_facts_must_match_parking_session");
+        }
+    }
+
+    private static PosServerAppliedStatutoryFiscalFactsRequest? MapAppliedStatutoryFiscalFacts(
+        CentralPmsAppliedStatutoryFiscalFactsContext? facts)
+    {
+        if (facts is null)
+        {
+            return null;
+        }
+
+        return new PosServerAppliedStatutoryFiscalFactsRequest(
+            facts.StatutoryDiscountDecisionCommandId,
+            facts.StatutoryRequestReference,
+            facts.StatutoryPayableBasisApplicationCommandId,
+            facts.StatutoryValidationId,
+            facts.ParkingSessionId,
+            facts.SiteId,
+            facts.SiteGroupId,
+            facts.EntitlementType.Trim().ToUpperInvariant(),
+            facts.BenefitClassification.Trim().ToUpperInvariant(),
+            new PosServerAppliedStatutoryPolicyReferenceRequest(
+                facts.PolicyReference.ResolutionBasis.Trim().ToUpperInvariant(),
+                facts.PolicyReference.AppliedPolicyReferenceId,
+                TrimToNull(facts.PolicyReference.PolicyCode),
+                facts.PolicyReference.PolicyVersionId,
+                TrimToNull(facts.PolicyReference.NationalLawReference),
+                TrimToNull(facts.PolicyReference.OrdinanceReference)),
+            facts.OriginalTariffSnapshotId,
+            facts.AppliedTariffSnapshotId,
+            facts.OriginalAmountMinorUnits,
+            facts.VatExclusiveBasisAmountMinorUnits,
+            facts.VatAmountMinorUnits,
+            facts.VatTreatment.Trim().ToUpperInvariant(),
+            facts.StatutoryDiscountAmountMinorUnits,
+            facts.FinalPayableAmountMinorUnits,
+            facts.Currency.Trim().ToUpperInvariant(),
+            facts.AppliedAt,
+            facts.SourcePaymentChannel.Trim().ToUpperInvariant(),
+            facts.TerminalCashTenderId);
     }
 
     private static bool ContainsSensitiveTerm(string? value) =>
