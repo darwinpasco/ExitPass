@@ -20,7 +20,7 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     private const string SharedReadbackEndpointTemplate = "/v1/statutory-discounts/decisions/{0}";
     private const string ReviewDecisionEndpointTemplate = "/v1/ops/operator-console/statutory-discounts/reviews/{0}/decision";
     private const string ReviewDetailEndpointTemplate = "/v1/ops/operator-console/statutory-discounts/reviews/{0}";
-    private const string OperatorApplyEndpointTemplate = "/v1/ops/operator-console/statutory-discounts/{0}/apply-payable-basis";
+    private const string LegacyOperatorApplyEndpointTemplate = "/v1/ops/operator-console/statutory-discounts/{0}/apply-payable-basis";
     private static readonly Guid ReviewerDeviceBindingId = Guid.Parse("9b000000-0000-0000-0000-000000000002");
     private static readonly Guid ReviewerShiftId = Guid.Parse("9b000000-0000-0000-0000-000000000003");
     private static readonly Guid AccessEvaluationId = Guid.Parse("9b000000-0000-0000-0000-000000000004");
@@ -197,11 +197,11 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task OperatorConsoleApplyAndServiceChannelApplicationIntent_ConvergeOnSameCanonicalApplication(
-        bool serviceChannelAppliesFirst)
+    public async Task LegacyOperatorConsoleApplyRoute_IsRemoved_AndServiceChannelApplicationIntent_RemainsAuthoritative(
+        bool attemptLegacyRouteBeforeServiceApplication)
     {
         var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
-            nameof(OperatorConsoleApplyAndServiceChannelApplicationIntent_ConvergeOnSameCanonicalApplication) + serviceChannelAppliesFirst);
+            nameof(LegacyOperatorConsoleApplyRoute_IsRemoved_AndServiceChannelApplicationIntent_RemainsAuthoritative) + attemptLegacyRouteBeforeServiceApplication);
 
         try
         {
@@ -220,35 +220,83 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
             await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
             var validationId = (await StatutoryDiscountReviewIntegrationTestSupport.ValidationIdForDecisionAsync(intake.StatutoryDiscountDecisionCommandId))!.Value;
 
-            StatutoryDiscountDecisionResponse? serviceApplication = null;
-            OperatorConsoleStatutoryDiscountApplyPayableBasisResponse? operatorApplication = null;
-            if (serviceChannelAppliesFirst)
+            if (attemptLegacyRouteBeforeServiceApplication)
             {
-                serviceApplication = await PostSharedDecisionAsync(
-                    serviceClient,
-                    Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
-                    $"oc-converge-service-apply-{context.ParkingSessionId:N}",
-                    Guid.NewGuid(),
-                    HttpStatusCode.OK);
-                operatorApplication = await ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
-            }
-            else
-            {
-                operatorApplication = await ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
-                serviceApplication = await PostSharedDecisionAsync(
-                    serviceClient,
-                    Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
-                    $"oc-converge-service-apply-{context.ParkingSessionId:N}",
-                    Guid.NewGuid(),
-                    HttpStatusCode.OK);
+                await ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
             }
 
-            operatorApplication.StatutoryDiscountDecisionCommandId.Should().Be(intake.StatutoryDiscountDecisionCommandId);
-            operatorApplication.StatutoryDiscountPayableBasisApplicationCommandId.Should().Be(serviceApplication.StatutoryDiscountPayableBasisApplicationCommandId);
-            operatorApplication.AppliedTariffSnapshotId.Should().Be(serviceApplication.AppliedTariffSnapshotId);
+            var serviceApplication = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: true),
+                $"oc-converge-service-apply-{context.ParkingSessionId:N}",
+                Guid.NewGuid(),
+                HttpStatusCode.OK);
+
+            if (!attemptLegacyRouteBeforeServiceApplication)
+            {
+                await ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
+            }
+
+            serviceApplication.StatutoryDiscountDecisionCommandId.Should().Be(intake.StatutoryDiscountDecisionCommandId);
+            serviceApplication.StatutoryDiscountPayableBasisApplicationCommandId.Should().NotBeNull();
+            serviceApplication.AppliedTariffSnapshotId.Should().NotBeNull();
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.AppliedTariffSnapshotRowCountAsync(context.ParkingSessionId)).Should().Be(1);
+        }
+        finally
+        {
+            await StatutoryDiscountReviewIntegrationTestSupport.CleanupAsync(context);
+        }
+    }
+
+    [Fact]
+    public async Task RemovedLegacyOperatorConsoleApplyRoute_DoesNotWriteWorkflowPaymentCashFiscalOrParkingRows()
+    {
+        var context = await StatutoryDiscountReviewIntegrationTestSupport.SeedPaymentContextAsync(
+            nameof(RemovedLegacyOperatorConsoleApplyRoute_DoesNotWriteWorkflowPaymentCashFiscalOrParkingRows));
+
+        try
+        {
+            using var factory = CreateFactory(context);
+            using var serviceClient = factory.CreateClient();
+            using var operatorClient = factory.CreateClient();
+            AddServiceHeaders(serviceClient, StatutoryDiscountSourceChannels.WebPay);
+            AddOperatorHeaders(operatorClient, context);
+
+            var intake = await PostSharedDecisionAsync(
+                serviceClient,
+                Request(context, StatutoryDiscountSourceChannels.WebPay, applyPayableBasis: false),
+                $"oc-no-write-intake-{context.ParkingSessionId:N}",
+                context.CorrelationId,
+                HttpStatusCode.Created);
+            await CompleteReviewAsync(operatorClient, context, intake.StatutoryDiscountDecisionCommandId, "APPROVE");
+            var validationId = (await StatutoryDiscountReviewIntegrationTestSupport.ValidationIdForDecisionAsync(
+                intake.StatutoryDiscountDecisionCommandId))!.Value;
+
+            var before = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId);
+
+            before.DecisionCommandCount.Should().Be(1);
+            before.ReviewCount.Should().Be(1);
+            before.ApplicationCommandCount.Should().Be(0);
+            before.PayableBasisApplicationCount.Should().Be(0);
+            before.AppliedTariffSnapshotCount.Should().Be(0);
+            before.PaymentAttemptCount.Should().Be(0);
+            before.PaymentConfirmationCount.Should().Be(0);
+            before.TerminalCashCommandCount.Should().Be(0);
+            before.TerminalCashCommandAuditCount.Should().Be(0);
+            before.FiscalIssuanceReferenceCount.Should().Be(0);
+            before.ParkingSessionCount.Should().Be(1);
+
+            await ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
+
+            var after = await StatutoryDiscountReviewIntegrationTestSupport.WorkflowBoundaryRowCountsAsync(
+                context.ParkingSessionId,
+                intake.StatutoryDiscountDecisionCommandId);
+
+            after.Should().BeEquivalentTo(before);
         }
         finally
         {
@@ -379,21 +427,19 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 $"concurrent-apt-apply-{context.ParkingSessionId:N}",
                 Guid.NewGuid(),
                 expectedStatus: null);
-            var operatorApply = ApplyWithOperatorConsoleAsync(operatorClient, context, validationId, expectedStatus: null);
+            var operatorApply = ApplyWithOperatorConsoleAsync(operatorClient, context, validationId);
 
             var serviceResult = await serviceApply;
             var aptResult = await aptApply;
-            var operatorResult = await operatorApply;
+            await operatorApply;
 
             var readback = await GetSharedReadbackAsync(webPayClient, intake.StatutoryDiscountDecisionCommandId);
             readback.ApplicationCommandStatus.Should().Be(
                 StatutoryDiscountPayableBasisApplicationV1CommandStates.Applied,
-                "concurrent service-channel and Operator Console application intent must converge instead of leaving status {0}; service result {1}, APT result {2}, operator accepted {3} error {4}",
+                "concurrent service-channel application intent must converge while the legacy Operator Console route is absent instead of leaving status {0}; service result {1}, APT result {2}",
                 readback.ApplicationCommandStatus,
                 serviceResult.ApplicationCommandStatus,
-                aptResult.ApplicationCommandStatus,
-                operatorResult.ApplicationAccepted,
-                operatorResult.ErrorCode);
+                aptResult.ApplicationCommandStatus);
 
             (await StatutoryDiscountReviewIntegrationTestSupport.ApplicationCommandRowCountAsync(intake.StatutoryDiscountDecisionCommandId)).Should().Be(1);
             (await StatutoryDiscountReviewIntegrationTestSupport.PayableBasisApplicationRowCountAsync(context.ParkingSessionId)).Should().Be(1);
@@ -474,69 +520,25 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
         return (await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>())!;
     }
 
-    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse> ApplyWithOperatorConsoleAsync(
+    private static async Task ApplyWithOperatorConsoleAsync(
         HttpClient client,
         PaymentTestContext context,
-        Guid validationId,
-        HttpStatusCode? expectedStatus = HttpStatusCode.OK)
+        Guid validationId)
     {
         using var response = await client.PostAsJsonAsync(
-            string.Format(OperatorApplyEndpointTemplate, validationId),
-            new OperatorConsoleStatutoryDiscountApplyPayableBasisRequest(
-                context.RequestedByUserId,
-                ReviewerDeviceBindingId,
-                context.SiteId,
-                context.SiteGroupId,
-                ReviewerShiftId,
-                context.TariffSnapshotId,
-                $"operator-apply-{validationId:N}",
-                Guid.NewGuid()));
-        if (expectedStatus is not null)
-        {
-            response.StatusCode.Should().Be(expectedStatus.Value, await response.Content.ReadAsStringAsync());
-        }
-        else
-        {
-            response.StatusCode.Should().BeOneOf(HttpStatusCode.OK, HttpStatusCode.Conflict);
-        }
-
-        if (response.StatusCode == HttpStatusCode.Conflict)
-        {
-            return new OperatorConsoleStatutoryDiscountApplyPayableBasisResponse(
-                AccessEvaluationId,
-                AccessAllowed: true,
-                AccessDecision: "ALLOW",
-                AccessDenialReasons: [],
-                AccessPersisted: true,
-                ApplicationAccepted: false,
-                ApplicationPersisted: false,
-                PayableBasisApplicationId: null,
-                validationId,
-                context.ParkingSessionId,
-                context.TariffSnapshotId,
-                AppliedTariffSnapshotId: null,
-                ApplicationStatus: "CONFLICT",
-                AlreadyApplied: false,
-                GrossAmountMinorUnits: null,
-                VatAmountMinorUnits: null,
-                VatExclusiveAmountMinorUnits: null,
-                StatutoryDiscountAmountMinorUnits: null,
-                FinalPayableAmountMinorUnits: null,
-                CurrencyCode: null,
-                StatutoryDiscountPolicyId: null,
-                ResolvedJurisdictionId: null,
-                PolicyResolutionBasis: null,
-                PolicyCode: null,
-                BenefitType: null,
-                NationalLawReference: null,
-                OrdinanceReference: null,
-                PolicySnapshotUsed: false,
-                IneligibilityReason: null,
-                ErrorCode: "CONFLICT",
-                Guid.NewGuid());
-        }
-
-        return (await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>())!;
+            string.Format(LegacyOperatorApplyEndpointTemplate, validationId),
+            new
+            {
+                userId = context.RequestedByUserId,
+                operatorDeviceBindingId = ReviewerDeviceBindingId,
+                siteId = context.SiteId,
+                siteGroupId = context.SiteGroupId,
+                operatorShiftId = ReviewerShiftId,
+                originalTariffSnapshotId = context.TariffSnapshotId,
+                idempotencyKey = $"operator-apply-{validationId:N}",
+                correlationId = Guid.NewGuid()
+            });
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound, await response.Content.ReadAsStringAsync());
     }
 
     private static async Task<OperatorConsoleServiceChannelStatutoryDiscountReviewDetailResponse> GetReviewDetailAsync(

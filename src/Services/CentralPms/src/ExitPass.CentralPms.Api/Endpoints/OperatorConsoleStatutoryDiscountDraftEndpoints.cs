@@ -19,7 +19,6 @@ namespace ExitPass.CentralPms.Api.Endpoints;
 /// - This endpoint persists Operator Console access evaluation evidence before draft creation.
 /// - This endpoint may persist a privacy-minimized statutory discount validation draft and metadata-only evidence reference.
 /// - This endpoint may persist a review decision status transition on an existing validation draft.
-/// - This endpoint may apply an approved statutory discount validation to payable basis by creating immutable application evidence.
 /// - This endpoint never mutates PaymentAttempt, PaymentConfirmation,
 ///   ExitAuthorization, provider outcome, gate consume, coupon application, settlement truth,
 ///   reconciliation records, or payment finality.
@@ -34,14 +33,12 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
     private const string DecisionMutatePolicy = "OperatorConsoleStatutoryDiscountDecisionMutate";
     private const string EvidenceCapturePolicy = "OperatorConsoleStatutoryDiscountEvidenceCapture";
     private const string EvidenceViewPolicy = "OperatorConsoleStatutoryDiscountEvidenceView";
-    private const string ApplyPayableBasisPolicy = "OperatorConsoleStatutoryDiscountPayableBasisApply";
     private const string AuditReadPolicy = "OperatorConsoleStatutoryDiscountAuditRead";
     private const string ApprovePermission = "statutory-discounts.decision.approve";
     private const string RejectPermission = "statutory-discounts.decision.reject";
     private static readonly ActivitySource ActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft");
     private static readonly ActivitySource ReadActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead");
     private static readonly ActivitySource DecisionActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision");
-    private static readonly ActivitySource ApplyPayableBasisActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis");
     private static readonly ActivitySource EvidenceActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountEvidence");
     private static readonly ActivitySource ServiceChannelReviewActivitySource = new("ExitPass.CentralPms.Api.OperatorConsoleServiceChannelStatutoryDiscountReview");
 
@@ -165,19 +162,6 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithMetadata(new ReconciliationPolicyMetadata(EvidenceViewPolicy))
             .WithSummary("List Operator Console statutory discount evidence metadata")
             .WithDescription("Lists metadata-only statutory discount evidence records for an Operator Console validation draft. This endpoint does not return raw evidence, OCR data, raw ID numbers, or document verification results.");
-
-        group.MapPost("/statutory-discounts/{validationId:guid}/apply-payable-basis", ApplyPayableBasisAsync)
-            .WithName("ApplyOperatorConsoleStatutoryDiscountPayableBasis")
-            .WithTags("OperatorConsole")
-            .Accepts<OperatorConsoleStatutoryDiscountApplyPayableBasisRequest>("application/json")
-            .Produces<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(StatusCodes.Status200OK)
-            .Produces<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(StatusCodes.Status404NotFound)
-            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
-            .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
-            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
-            .WithMetadata(new ReconciliationPolicyMetadata(ApplyPayableBasisPolicy))
-            .WithSummary("Apply Operator Console statutory discount payable basis")
-            .WithDescription("Applies an already-approved Operator Console statutory discount validation to payable basis after evaluating and persisting Operator Console access. This endpoint uses the policy snapshot persisted on the validation and may create an applied tariff snapshot plus statutory discount payable-basis application evidence; it does not create payment attempts, confirm payment, call providers, issue exit authorization, open gates, create coupons, or create reconciliation records.");
 
         return app;
     }
@@ -1355,120 +1339,6 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.VerificationStatus,
                 item.CorrelationId)).ToArray(),
             result.CorrelationId);
-
-    private static async Task<IResult> ApplyPayableBasisAsync(
-        Guid validationId,
-        OperatorConsoleStatutoryDiscountApplyPayableBasisRequest request,
-        HttpRequest httpRequest,
-        IOperatorConsoleStatutoryDiscountApplyPayableBasisService service,
-        ILoggerFactory loggerFactory)
-    {
-        using var activity = ApplyPayableBasisActivitySource.StartActivity("HTTP ApplyOperatorConsoleStatutoryDiscountPayableBasis", ActivityKind.Server);
-        var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
-
-        activity?.SetTag("url.path", httpRequest.Path.Value);
-        activity?.SetTag("http.request.method", httpRequest.Method);
-        activity?.SetTag("correlation_id", request.CorrelationId);
-        activity?.SetTag("statutory_discount_validation_id", validationId);
-
-        try
-        {
-            var identity = OperatorConsoleIdentityContext.Resolve(
-                httpRequest,
-                request.UserId,
-                request.OperatorDeviceBindingId,
-                request.OperatorShiftId,
-                request.SiteId,
-                request.SiteGroupId,
-                request.CorrelationId);
-
-            var result = await service.ApplyAsync(
-                new OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
-                    validationId,
-                    identity.UserId,
-                    identity.OperatorDeviceBindingId,
-                    identity.SiteId,
-                    identity.SiteGroupId,
-                    identity.OperatorShiftId,
-                    request.OriginalTariffSnapshotId,
-                    request.IdempotencyKey,
-                    identity.CorrelationId),
-                httpRequest.HttpContext.RequestAborted);
-
-            activity?.SetTag("operator_access_evaluation_id", result.AccessEvaluationId);
-            activity?.SetTag("access_evaluation_allowed", result.AccessAllowed);
-            activity?.SetTag("access_evaluation_persisted", result.AccessPersisted);
-            activity?.SetTag("application_accepted", result.ApplicationAccepted);
-            activity?.SetTag("application_persisted", result.ApplicationPersisted);
-            activity?.SetStatus(ActivityStatusCode.Ok);
-
-            logger.LogInformation(
-                "Operator Console statutory discount payable-basis application completed. evaluation_id={EvaluationId} access_allowed={AccessAllowed} application_accepted={ApplicationAccepted} application_persisted={ApplicationPersisted}",
-                result.AccessEvaluationId,
-                result.AccessAllowed,
-                result.ApplicationAccepted,
-                result.ApplicationPersisted);
-
-            var response = ToContract(result);
-            return result.AccessAllowed && result.ErrorCode == "STATUTORY_DISCOUNT_VALIDATION_NOT_FOUND"
-                ? Results.NotFound(response)
-                : Results.Ok(response);
-        }
-        catch (ArgumentException ex)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_STATUTORY_DISCOUNT_APPLY_PAYABLE_BASIS_REQUEST", ex.Message, request.CorrelationId));
-        }
-        catch (Exception ex)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            logger.LogError(ex, "Operator Console statutory discount payable-basis application failed.");
-            return Results.Json(
-                BuildError(
-                    "OPERATOR_CONSOLE_STATUTORY_DISCOUNT_APPLY_PAYABLE_BASIS_FAILED",
-                    "The Operator Console statutory discount payable-basis application could not be completed.",
-                    request.CorrelationId),
-                statusCode: StatusCodes.Status500InternalServerError);
-        }
-    }
-
-    private static OperatorConsoleStatutoryDiscountApplyPayableBasisResponse ToContract(
-        OperatorConsoleStatutoryDiscountApplyPayableBasisResult result) =>
-        new(
-            result.AccessEvaluationId,
-            result.AccessAllowed,
-            result.AccessDecision,
-            result.AccessDenialReasons,
-            result.AccessPersisted,
-            result.ApplicationAccepted,
-            result.ApplicationPersisted,
-            result.PayableBasisApplicationId,
-            result.StatutoryDiscountValidationId,
-            result.ParkingSessionId,
-            result.OriginalTariffSnapshotId,
-            result.AppliedTariffSnapshotId,
-            result.ApplicationStatus,
-            result.AlreadyApplied,
-            result.GrossAmountMinorUnits,
-            result.VatAmountMinorUnits,
-            result.VatExclusiveAmountMinorUnits,
-            result.StatutoryDiscountAmountMinorUnits,
-            result.FinalPayableAmountMinorUnits,
-            result.CurrencyCode,
-            result.StatutoryDiscountPolicyId,
-            result.ResolvedJurisdictionId,
-            result.PolicyResolutionBasis,
-            result.PolicyCode,
-            result.BenefitType,
-            result.NationalLawReference,
-            result.OrdinanceReference,
-            result.PolicySnapshotUsed,
-            result.IneligibilityReason,
-            result.ErrorCode,
-            result.CorrelationId,
-            result.StatutoryDiscountDecisionCommandId,
-            result.StatutoryDiscountPayableBasisApplicationCommandId);
 
     private static async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAccessAsync(
         OperatorConsoleIdentityContext identity,

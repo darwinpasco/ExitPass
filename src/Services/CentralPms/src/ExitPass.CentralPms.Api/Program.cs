@@ -260,7 +260,6 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraft")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
-                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountApplyPayableBasis")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleServiceChannelStatutoryDiscountReview")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountPolicyResolution")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImport")

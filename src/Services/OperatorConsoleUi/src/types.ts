@@ -714,33 +714,6 @@ export interface StatutoryDiscountDecisionResult {
   message: string;
 }
 
-export interface StatutoryDiscountPayableBasisApplicationInput {
-  draftId: string;
-  siteId?: string;
-  siteGroupId?: string;
-  originalTariffSnapshotId?: string;
-}
-
-export interface StatutoryDiscountPayableBasisApplicationResult {
-  accepted: boolean;
-  persisted: boolean;
-  alreadyApplied: boolean;
-  applicationStatus?: string;
-  payableBasisApplicationId?: string;
-  statutoryDiscountValidationId?: string;
-  parkingSessionId?: string;
-  originalTariffSnapshotId?: string;
-  appliedTariffSnapshotId?: string;
-  grossAmountMinorUnits?: number;
-  vatAmountMinorUnits?: number;
-  vatExclusiveAmountMinorUnits?: number;
-  statutoryDiscountAmountMinorUnits?: number;
-  finalPayableAmountMinorUnits?: number;
-  currencyCode?: string;
-  errorCode?: string;
-  message: string;
-}
-
 export type EvidenceType = "SENIOR_CITIZEN_ID" | "PWD_ID" | "OTHER_SUPPORTING_DOCUMENT";
 
 export type EvidenceCaptureMethod = "UPLOAD" | "MANUAL_REFERENCE" | "OPERATOR_CONFIRMED";

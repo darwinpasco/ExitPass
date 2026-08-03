@@ -38,7 +38,7 @@ public sealed class OperatorConsoleStatutoryDiscountAlignedDbUatApiIntegrationTe
     private const string TicketReference = "E2E-231-SESSION-001";
 
     [Fact]
-    public async Task AlignedDbUatFixture_CompletesReviewApproveApplyWithoutUnsafeSideEffects()
+    public async Task AlignedDbUatFixture_CompletesReviewApprovalOnlyWithoutUnsafeSideEffects()
     {
         if (!await CanOpenDatabaseAsync())
         {
@@ -113,21 +113,11 @@ public sealed class OperatorConsoleStatutoryDiscountAlignedDbUatApiIntegrationTe
         approved.CurrentValidationStatus.Should().Be("APPROVED");
         (await ReadValidatedByUserIdAsync(draftId)).Should().Be(ReviewerUserId);
 
-        var applied = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
-            client,
-            ApplyEndpoint(draftId),
-            ApplyRequest());
-        applied.ApplicationAccepted.Should().BeTrue();
-        applied.ApplicationPersisted.Should().BeTrue();
-        applied.ApplicationStatus.Should().Be("APPLIED");
-        applied.PayableBasisApplicationId.Should().NotBeNull();
-        applied.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
-        applied.AppliedTariffSnapshotId.Should().NotBeNull();
-        applied.GrossAmountMinorUnits.Should().Be(12500);
-        applied.VatExclusiveAmountMinorUnits.Should().Be(11161);
-        applied.VatAmountMinorUnits.Should().Be(1339);
-        applied.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
-        applied.FinalPayableAmountMinorUnits.Should().Be(8929);
+        using (var legacyApply = await client.PostAsJsonAsync(ApplyEndpoint(draftId), ApplyRequest()))
+        {
+            legacyApply.StatusCode.Should().Be(HttpStatusCode.NotFound, await legacyApply.Content.ReadAsStringAsync());
+        }
+        (await CountApplicationsAsync(draftId)).Should().Be(0);
 
         var finalDetail = await GetOkAsync<OperatorConsoleStatutoryDiscountDraftDetailResponse>(
             client,
@@ -137,13 +127,9 @@ public sealed class OperatorConsoleStatutoryDiscountAlignedDbUatApiIntegrationTe
         finalDetail.ValidationStatus.Should().Be("APPROVED");
         finalDetail.EvidenceRequiredSatisfied.Should().BeTrue();
         finalDetail.LatestEvidenceStatus.Should().Be("CAPTURED");
-        finalDetail.PayableBasisApplicationStatus.Should().Be("APPLIED");
-        finalDetail.PayableBasisApplicationId.Should().Be(applied.PayableBasisApplicationId);
-        finalDetail.AppliedTariffSnapshotId.Should().Be(applied.AppliedTariffSnapshotId);
-        finalDetail.VatExclusiveAmountMinorUnits.Should().Be(11161);
-        finalDetail.VatAmountMinorUnits.Should().Be(1339);
-        finalDetail.StatutoryDiscountAmountMinorUnits.Should().Be(2232);
-        finalDetail.FinalPayableAmountMinorUnits.Should().Be(8929);
+        finalDetail.PayableBasisApplicationStatus.Should().BeNull();
+        finalDetail.PayableBasisApplicationId.Should().BeNull();
+        finalDetail.AppliedTariffSnapshotId.Should().BeNull();
 
         (await CountUnsafeSideEffectRecordsAsync()).Should().Be(beforeUnsafeSideEffectCount);
     }
@@ -222,16 +208,18 @@ public sealed class OperatorConsoleStatutoryDiscountAlignedDbUatApiIntegrationTe
             $"operator-console-statutory-discount-aligned-uat-decision-{Guid.NewGuid():N}",
             Guid.NewGuid());
 
-    private static OperatorConsoleStatutoryDiscountApplyPayableBasisRequest ApplyRequest() =>
-        new(
-            ReviewerUserId,
-            DeviceBindingId,
-            SiteId,
-            SiteGroupId,
-            ReviewerShiftId,
-            OriginalTariffSnapshotId,
-            $"operator-console-statutory-discount-aligned-uat-apply-{Guid.NewGuid():N}",
-            Guid.NewGuid());
+    private static object ApplyRequest() =>
+        new
+        {
+            userId = ReviewerUserId,
+            operatorDeviceBindingId = DeviceBindingId,
+            siteId = SiteId,
+            siteGroupId = SiteGroupId,
+            operatorShiftId = ReviewerShiftId,
+            originalTariffSnapshotId = OriginalTariffSnapshotId,
+            idempotencyKey = $"operator-console-statutory-discount-aligned-uat-apply-{Guid.NewGuid():N}",
+            correlationId = Guid.NewGuid()
+        };
 
     private static string DraftDetailEndpoint(Guid draftId) =>
         string.Format(DraftDetailEndpointTemplate, draftId, Guid.NewGuid());

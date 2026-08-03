@@ -163,11 +163,6 @@ public static class CentralPmsRbacPolicyCatalog
                 "statutory-discounts.decision.reject",
                 "reconciliation.manage"
             ],
-            ["OperatorConsoleStatutoryDiscountPayableBasisApply"] =
-            [
-                "statutory-discounts.payable-basis.apply",
-                "reconciliation.manage"
-            ],
             ["OperatorConsoleStatutoryDiscountPolicyResolve"] =
             [
                 "statutory-discounts.policy.resolve",

@@ -132,13 +132,12 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             initialDetail.RequiredEvidenceTypes.Should().ContainSingle().Which.Should().Be("SENIOR_CITIZEN_ID");
             initialDetail.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
 
-            var applyBeforeApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
-                client,
+            using (var applyBeforeApproval = await client.PostAsJsonAsync(
                 ApplyEndpoint(draftId),
-                ApplyRequest());
-            applyBeforeApproval.ApplicationAccepted.Should().BeFalse();
-            applyBeforeApproval.ApplicationPersisted.Should().BeFalse();
-            applyBeforeApproval.ErrorCode.Should().Be("STATUTORY_DISCOUNT_NOT_APPROVED");
+                ApplyRequest()))
+            {
+                applyBeforeApproval.StatusCode.Should().Be(HttpStatusCode.NotFound, await applyBeforeApproval.Content.ReadAsStringAsync());
+            }
             (await CountApplicationsAsync(draftId)).Should().Be(0);
 
             var blockedApproval = await PostOkAsync<OperatorConsoleStatutoryDiscountDecisionResponse>(
@@ -198,10 +197,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             approved.DecisionPersisted.Should().BeTrue();
             approved.CurrentValidationStatus.Should().Be("APPROVED");
 
-            var applied = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
-                client,
-                ApplyEndpoint(draftId),
-                ApplyRequest());
+            var applied = await ApplyDirectlyAsync(factory, draftId);
             applied.AccessAllowed.Should().BeTrue();
             applied.ApplicationAccepted.Should().BeTrue();
             applied.ApplicationPersisted.Should().BeTrue();
@@ -834,16 +830,18 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             $"operator-console-statutory-discount-e2e-decision-{Guid.NewGuid():N}",
             Guid.NewGuid());
 
-    private static OperatorConsoleStatutoryDiscountApplyPayableBasisRequest ApplyRequest() =>
-        new(
-            UserId,
-            DeviceBindingId,
-            SiteId,
-            SiteGroupId,
-            ShiftId,
-            OriginalTariffSnapshotId,
-            $"operator-console-statutory-discount-e2e-apply-{Guid.NewGuid():N}",
-            Guid.NewGuid());
+    private static object ApplyRequest() =>
+        new
+        {
+            userId = UserId,
+            operatorDeviceBindingId = DeviceBindingId,
+            siteId = SiteId,
+            siteGroupId = SiteGroupId,
+            operatorShiftId = ShiftId,
+            originalTariffSnapshotId = OriginalTariffSnapshotId,
+            idempotencyKey = $"operator-console-statutory-discount-e2e-apply-{Guid.NewGuid():N}",
+            correlationId = Guid.NewGuid()
+        };
 
     private static string DraftDetailEndpoint(Guid draftId) =>
         string.Format(DraftDetailEndpointTemplate, draftId, Guid.NewGuid());
@@ -914,7 +912,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             PosServerResponseTimestamp: DateTimeOffset.UtcNow,
             ServiceIdentityId: ServiceIdentityId);
 
-    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse> PrepareApprovedStatutoryDiscountApplicationAsync()
+    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisResult> PrepareApprovedStatutoryDiscountApplicationAsync()
     {
         using var factory = CreateAllowedAccessFactory();
         using var client = factory.CreateClient();
@@ -945,10 +943,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             DecisionRequest("APPROVE"));
         approved.DecisionAccepted.Should().BeTrue();
 
-        var applied = await PostOkAsync<OperatorConsoleStatutoryDiscountApplyPayableBasisResponse>(
-            client,
-            ApplyEndpoint(draftId),
-            ApplyRequest());
+        var applied = await ApplyDirectlyAsync(factory, draftId);
         applied.ApplicationAccepted.Should().BeTrue();
         applied.ApplicationPersisted.Should().BeTrue();
         applied.PayableBasisApplicationId.Should().NotBeNull();
@@ -956,6 +951,26 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
         applied.FinalPayableAmountMinorUnits.Should().Be(8929);
 
         return applied;
+    }
+
+    private static async Task<OperatorConsoleStatutoryDiscountApplyPayableBasisResult> ApplyDirectlyAsync(
+        CustomWebApplicationFactory factory,
+        Guid draftId)
+    {
+        using var scope = factory.Services.CreateScope();
+        var service = scope.ServiceProvider.GetRequiredService<IOperatorConsoleStatutoryDiscountApplyPayableBasisService>();
+        return await service.ApplyAsync(
+            new OperatorConsoleStatutoryDiscountApplyPayableBasisCommand(
+                draftId,
+                UserId,
+                DeviceBindingId,
+                SiteId,
+                SiteGroupId,
+                ShiftId,
+                OriginalTariffSnapshotId,
+                $"central-pms-internal-application-fixture-{draftId:N}-{Guid.NewGuid():N}",
+                Guid.NewGuid()),
+            CancellationToken.None);
     }
 
     private static CustomWebApplicationFactory CreateAllowedAccessFactory() =>
