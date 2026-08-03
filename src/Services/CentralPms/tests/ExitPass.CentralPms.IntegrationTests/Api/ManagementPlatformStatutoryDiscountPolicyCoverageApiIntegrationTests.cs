@@ -45,7 +45,10 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageApiIntegrat
             row.SiteReference == SiteId &&
             row.EntitlementType == "SENIOR_CITIZEN" &&
             row.CoverageClassification == "ACTIVE_COVERED" &&
-            row.AuthoritativeCoverageAvailable);
+            row.AuthoritativeCoverageAvailable &&
+            row.CanonicalJurisdictionReference == Guid.Parse("77000000-0000-0000-0000-000000000401") &&
+            row.CanonicalJurisdictionCode == "QUEZON_CITY" &&
+            row.ScopeJurisdictionClassification == "SINGLE_LGU");
     }
 
     [Fact]
@@ -193,7 +196,17 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageApiIntegrat
                             DateTimeOffset.Parse("2026-07-30T08:00:00Z"),
                             "COMPLETE",
                             "ACTIVE_POLICY_EFFECTIVE",
-                            "INTEGRATION_TEST")
+                            "INTEGRATION_TEST",
+                            Guid.Parse("77000000-0000-0000-0000-000000000401"),
+                            "QUEZON_CITY",
+                            "Quezon City",
+                            "CITY",
+                            "METRO_MANILA",
+                            "SINGLE_LGU",
+                            "FREE_DURATION",
+                            "RESIDENT_ONLY",
+                            SourceDocumentAvailable: true,
+                            "RESEARCH_COVERAGE_IDENTIFIED")
                     ])));
         }
     }
