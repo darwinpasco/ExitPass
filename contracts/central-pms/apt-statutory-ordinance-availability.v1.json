@@ -1,0 +1,127 @@
+{
+  "contractId": "central-pms.apt-statutory-ordinance-availability.v1",
+  "owner": "ExitPass.CentralPms",
+  "consumer": "ExitPass.AssistedPaymentTerminal",
+  "purpose": "APT-facing read-only facade for Site-level statutory parking ordinance availability and immediate pre-cash revalidation.",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v1/apt/statutory-discounts/ordinance-availability/resolve",
+      "operation": "resolve",
+      "description": "Resolves one parking-session lookup and returns whether one statutory entitlement may be offered for the authoritative Site."
+    },
+    {
+      "method": "POST",
+      "path": "/v1/apt/statutory-discounts/ordinance-availability/revalidate",
+      "operation": "revalidate",
+      "description": "Immediately revalidates Site-level statutory ordinance coverage before an APT statutory path may cross CASH_RECEIVED."
+    }
+  ],
+  "authorization": {
+    "policy": "AptStatutoryOrdinanceAvailabilityRead",
+    "permission": "statutory-discounts.ordinance-availability.read.apt",
+    "siteScopeHeader": "X-Site-Id",
+    "serviceIdentityHeader": "X-ExitPass-Service-Identity-Id",
+    "allowAnonymous": false,
+    "humanUserAllowed": false
+  },
+  "requestFields": [
+    "siteGroupId",
+    "siteId",
+    "terminalId",
+    "vendorSystemId",
+    "parkingSessionId",
+    "ticketReference",
+    "plateNumber",
+    "entitlementType",
+    "correlationId"
+  ],
+  "lookupRule": "Exactly one of parkingSessionId, ticketReference, or plateNumber is required.",
+  "entitlementTypes": [
+    "SENIOR_CITIZEN",
+    "PWD"
+  ],
+  "responseFields": [
+    "operation",
+    "revalidationOutcome",
+    "classification",
+    "entitlementType",
+    "ordinanceCoverageAvailable",
+    "statutoryRequestAllowed",
+    "preCashRevalidationPassed",
+    "readyForStatutoryCashFlow",
+    "ordinaryPaymentPreserved",
+    "parkingSessionId",
+    "siteId",
+    "siteGroupId",
+    "resolvedScopeType",
+    "coverageClassification",
+    "policyStatusClassification",
+    "effectiveFrom",
+    "effectiveTo",
+    "authorityClassification",
+    "jurisdictionDisplayName",
+    "supportReference",
+    "correlationId",
+    "evaluatedAt",
+    "authoritativeUpdatedAt",
+    "retryable",
+    "safeMessage"
+  ],
+  "safeClassifications": [
+    "AVAILABLE",
+    "NOT_AVAILABLE",
+    "NO_CONFIGURED_POLICY",
+    "NOT_YET_EFFECTIVE",
+    "EXPIRED",
+    "INACTIVE",
+    "AMBIGUOUS_SCOPE",
+    "SESSION_NOT_FOUND",
+    "AMBIGUOUS_SESSION",
+    "SOURCE_UNAVAILABLE",
+    "MALFORMED_AUTHORITATIVE_STATE",
+    "ACCESS_DENIED",
+    "UNEXPECTED_FAILURE"
+  ],
+  "revalidationOutcomes": [
+    "PASSED_UNCHANGED",
+    "FAILED"
+  ],
+  "canonicalAuthorityReuse": {
+    "sessionById": "IParkingSessionReadRepository.GetByIdAsync",
+    "ticketLookup": "IParkingSessionReadRepository.FindByTicketReferenceAsync",
+    "plateLookup": "IParkingSessionReadRepository.FindByPlateNumberAsync",
+    "policyCoverage": "IManagementPlatformStatutoryDiscountPolicyCoverageRepository and shared StatutoryDiscountPolicyCoverageEvaluator"
+  },
+  "authorityBoundaries": {
+    "centralPmsOwnsCoverageTruth": true,
+    "aptDoesNotInterpretOrdinances": true,
+    "aptDoesNotDetermineJurisdiction": true,
+    "noDirectHikCentralAccess": true,
+    "noLocalPolicyEngine": true,
+    "ordinaryPaymentPreserved": true
+  },
+  "sideEffects": {
+    "createStatutoryDecision": false,
+    "createStatutoryApplication": false,
+    "createReview": false,
+    "updatePayableBasis": false,
+    "createPaymentIntent": false,
+    "createPaymentAttempt": false,
+    "updateParkingSession": false,
+    "updateTariff": false,
+    "updatePolicy": false,
+    "createCashCustody": false,
+    "acceptCash": false,
+    "issueFiscalDocument": false,
+    "callPosServer": false,
+    "callPaymentOrchestrator": false,
+    "callHikCentral": false,
+    "callVendorParkingSystem": false
+  },
+  "correlation": {
+    "requestField": "correlationId",
+    "responseField": "correlationId",
+    "responseHeader": "X-Correlation-Id"
+  }
+}

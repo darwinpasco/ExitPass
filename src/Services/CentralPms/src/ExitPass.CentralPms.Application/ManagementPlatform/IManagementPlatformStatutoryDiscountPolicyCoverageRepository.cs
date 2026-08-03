@@ -8,6 +8,10 @@ public interface IManagementPlatformStatutoryDiscountPolicyCoverageRepository
         Guid scopeId,
         CancellationToken cancellationToken);
 
+    Task<ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult> ResolveServiceSiteScopeAsync(
+        Guid siteId,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>> ReadPolicyCandidatesAsync(
         IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite> sites,
         IReadOnlyList<string> entitlementTypes,

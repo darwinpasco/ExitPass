@@ -117,6 +117,45 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
         return candidates;
     }
 
+    public async Task<ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult> ResolveServiceSiteScopeAsync(
+        Guid siteId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync(cancellationToken);
+
+            var sites = await ReadSiteScopeAsync(connection, siteId, cancellationToken);
+            if (sites is null)
+            {
+                return new ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult(
+                    ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadStatus.NotFound,
+                    ScopeDisplayName: null,
+                    Sites: []);
+            }
+
+            return new ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult(
+                ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadStatus.Resolved,
+                sites[0].SiteName,
+                sites);
+        }
+        catch (PostgresException)
+        {
+            return new ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult(
+                ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadStatus.SourceUnavailable,
+                ScopeDisplayName: null,
+                Sites: []);
+        }
+        catch (NpgsqlException)
+        {
+            return new ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult(
+                ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadStatus.SourceUnavailable,
+                ScopeDisplayName: null,
+                Sites: []);
+        }
+    }
+
     private static async Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite>?> ReadSiteScopeAsync(
         NpgsqlConnection connection,
         Guid siteId,

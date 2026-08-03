@@ -791,6 +791,22 @@ public sealed class ResolveVendorParkingHandlerTests
             _sessions.TryGetValue(parkingSessionId, out var session);
             return Task.FromResult(session);
         }
+
+        public Task<ParkingSessionLookupResult> FindByTicketReferenceAsync(
+            Guid siteGroupId,
+            Guid siteId,
+            string? vendorSystemId,
+            string ticketReference,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ParkingSessionLookupResult(ParkingSessionLookupStatus.NotFound, null));
+
+        public Task<ParkingSessionLookupResult> FindByPlateNumberAsync(
+            Guid siteGroupId,
+            Guid siteId,
+            string? vendorSystemId,
+            string plateNumber,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ParkingSessionLookupResult(ParkingSessionLookupStatus.NotFound, null));
     }
 
     private sealed class InMemoryTariffSnapshotReadRepository : ITariffSnapshotReadRepository

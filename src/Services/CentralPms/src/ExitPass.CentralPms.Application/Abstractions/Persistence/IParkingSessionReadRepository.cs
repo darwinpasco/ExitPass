@@ -14,4 +14,37 @@ public interface IParkingSessionReadRepository
     /// <param name="cancellationToken">Cancellation token for the asynchronous operation.</param>
     /// <returns>The parking session, or <see langword="null"/> when it is unknown to Central PMS.</returns>
     Task<ParkingSession?> GetByIdAsync(Guid parkingSessionId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the canonical parking session by ticket reference within the supplied APT scope.
+    /// </summary>
+    Task<ParkingSessionLookupResult> FindByTicketReferenceAsync(
+        Guid siteGroupId,
+        Guid siteId,
+        string? vendorSystemId,
+        string ticketReference,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Finds the canonical parking session by plate number within the supplied APT scope.
+    /// </summary>
+    Task<ParkingSessionLookupResult> FindByPlateNumberAsync(
+        Guid siteGroupId,
+        Guid siteId,
+        string? vendorSystemId,
+        string plateNumber,
+        CancellationToken cancellationToken);
+}
+
+public sealed record ParkingSessionLookupResult(
+    ParkingSessionLookupStatus Status,
+    ParkingSession? Session);
+
+public enum ParkingSessionLookupStatus
+{
+    Found,
+    NotFound,
+    Ambiguous,
+    SourceUnavailable,
+    Malformed
 }

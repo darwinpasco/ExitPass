@@ -248,6 +248,11 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
             CancellationToken cancellationToken) =>
             Task.FromResult(_scope);
 
+        public Task<ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult> ResolveServiceSiteScopeAsync(
+            Guid siteId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(_scope);
+
         public Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>> ReadPolicyCandidatesAsync(
             IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite> sites,
             IReadOnlyList<string> entitlementTypes,
