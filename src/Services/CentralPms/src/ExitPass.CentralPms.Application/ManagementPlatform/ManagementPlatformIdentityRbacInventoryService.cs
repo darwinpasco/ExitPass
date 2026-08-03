@@ -311,6 +311,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
         ("statutory-discounts.payable-basis.apply", "Statutory discount payment-time payable-basis apply", "Statutory discount"),
         ("statutory-discounts.application.read", "Statutory discount application status read", "Statutory discount"),
         ("statutory-discounts.policy.resolve", "Statutory discount policy resolve", "Statutory discount"),
+        ("statutory-discounts.ordinance-availability.read.apt", "APT statutory ordinance availability read", "Statutory discount"),
         ("statutory-discounts.audit.read", "Statutory discount audit read", "Statutory discount"),
         ("fiscal-issuance.status.read", "Sales Invoice status read", "Fiscal / Sales Invoice"),
         ("fiscal-issuance.void.command", "Sales Invoice void command", "Fiscal / Sales Invoice"),

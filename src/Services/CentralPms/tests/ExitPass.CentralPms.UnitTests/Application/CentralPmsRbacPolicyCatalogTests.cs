@@ -40,6 +40,7 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("OperatorConsoleStatutoryDiscountPolicyResolve", "statutory-discounts.policy.resolve")]
     [InlineData("OperatorConsoleStatutoryDiscountAuditRead", "statutory-discounts.audit.read")]
     [InlineData("WebPayStatutoryDiscountPendingLifecycleRediscover", "statutory-discounts.pending-lifecycle.rediscover.webpay")]
+    [InlineData("AptStatutoryOrdinanceAvailabilityRead", "statutory-discounts.ordinance-availability.read.apt")]
     public void ResolvePermissions_ReturnsExpectedPermission(string policyName, string expectedPermission)
     {
         var permissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);

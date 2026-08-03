@@ -100,6 +100,10 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "terminal-cash.payable-basis.read"
             ],
+            ["AptStatutoryOrdinanceAvailabilityRead"] =
+            [
+                "statutory-discounts.ordinance-availability.read.apt"
+            ],
 
             ["OperatorConsoleStatutoryDiscountSessionLookup"] =
             [

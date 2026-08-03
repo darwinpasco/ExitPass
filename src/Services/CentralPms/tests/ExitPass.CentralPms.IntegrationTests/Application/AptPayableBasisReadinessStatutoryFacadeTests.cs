@@ -577,6 +577,22 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
 
         public Task<ParkingSession?> GetByIdAsync(Guid parkingSessionId, CancellationToken cancellationToken) =>
             Task.FromResult(parkingSessionId == _session.ParkingSessionId ? _session : null);
+
+        public Task<ParkingSessionLookupResult> FindByTicketReferenceAsync(
+            Guid siteGroupId,
+            Guid siteId,
+            string? vendorSystemId,
+            string ticketReference,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ParkingSessionLookupResult(ParkingSessionLookupStatus.NotFound, null));
+
+        public Task<ParkingSessionLookupResult> FindByPlateNumberAsync(
+            Guid siteGroupId,
+            Guid siteId,
+            string? vendorSystemId,
+            string plateNumber,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new ParkingSessionLookupResult(ParkingSessionLookupStatus.NotFound, null));
     }
 
     private sealed class FixedTariffSnapshotReadRepository : ITariffSnapshotReadRepository
