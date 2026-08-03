@@ -159,6 +159,41 @@ public sealed class FiscalSemanticRequestHashCalculatorTests
     }
 
     [Fact]
+    public void Calculate_WhenAppliedStatutoryFactsArePresent_UsesPosServerStatutoryHashVersion()
+    {
+        var request = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.StatutoryContext("WEBPAY"));
+
+        var result = _sut.InspectCanonicalSource(request);
+
+        result.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        result.HashSourceVersion.Should().Be(FiscalSemanticRequestHashCalculator.CurrentStatutoryHashSourceVersion);
+        result.NormalizedFacts.Should().Contain("applied_statutory_fiscal_facts");
+        result.CanonicalSourceText.Should().Contain("\"applied_statutory_fiscal_facts\"");
+        result.CanonicalSourceText.Should().Contain("\"statutory_payable_basis_application_command_id\"");
+        result.CanonicalSourceText.Should().Contain("\"final_payable_amount_minor_units\":8929");
+    }
+
+    [Fact]
+    public void Calculate_WhenAppliedStatutoryMaterialFactChanges_ReturnsDifferentHash()
+    {
+        var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.StatutoryContext("WEBPAY"));
+        var changed = baseline with
+        {
+            AppliedStatutoryFiscalFacts = baseline.AppliedStatutoryFiscalFacts! with
+            {
+                StatutoryDiscountAmountMinorUnits = 2_231
+            }
+        };
+
+        var baselineResult = _sut.Calculate(baseline);
+        var changedResult = _sut.Calculate(changed);
+
+        baselineResult.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        changedResult.Status.Should().Be(FiscalSemanticRequestHashSourceStatus.Available);
+        changedResult.HashValue.Should().NotBe(baselineResult.HashValue);
+    }
+
+    [Fact]
     public void Calculate_WhenPosServerSemanticScopeFieldChannelTerminalChanges_ReturnsDifferentHash()
     {
         var baseline = _mapper.Map(PosServerFiscalDocumentRequestMapperTests.ValidContext());

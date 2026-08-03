@@ -42,7 +42,40 @@ public sealed record CentralPmsFiscalDocumentMappingContext(
     IReadOnlyList<CentralPmsFiscalTotalContext> Totals,
     IReadOnlyDictionary<string, string> ReferenceContext,
     string? PaymentFinalityRef,
-    string? VendorAckRef);
+    string? VendorAckRef,
+    CentralPmsAppliedStatutoryFiscalFactsContext? AppliedStatutoryFiscalFacts = null);
+
+public sealed record CentralPmsAppliedStatutoryFiscalFactsContext(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid StatutoryRequestReference,
+    Guid StatutoryPayableBasisApplicationCommandId,
+    Guid StatutoryValidationId,
+    Guid ParkingSessionId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string EntitlementType,
+    string BenefitClassification,
+    CentralPmsAppliedStatutoryPolicyReferenceContext PolicyReference,
+    Guid OriginalTariffSnapshotId,
+    Guid AppliedTariffSnapshotId,
+    long OriginalAmountMinorUnits,
+    long VatExclusiveBasisAmountMinorUnits,
+    long VatAmountMinorUnits,
+    string VatTreatment,
+    long StatutoryDiscountAmountMinorUnits,
+    long FinalPayableAmountMinorUnits,
+    string Currency,
+    DateTimeOffset AppliedAt,
+    string SourcePaymentChannel,
+    Guid? TerminalCashTenderId = null);
+
+public sealed record CentralPmsAppliedStatutoryPolicyReferenceContext(
+    string ResolutionBasis,
+    Guid? AppliedPolicyReferenceId = null,
+    string? PolicyCode = null,
+    Guid? PolicyVersionId = null,
+    string? NationalLawReference = null,
+    string? OrdinanceReference = null);
 
 public sealed record CentralPmsPayableBasisContext(
     string PayableBasisRef,
@@ -157,7 +190,40 @@ public sealed record PosServerFiscalDocumentCreateRequest(
     IReadOnlyList<PosServerFiscalTaxDetailRequest> TaxDetails,
     IReadOnlyList<PosServerFiscalDiscountPrivilegeDetailRequest> DiscountPrivilegeDetails,
     IReadOnlyList<PosServerFiscalTotalRequest> Totals,
-    IReadOnlyDictionary<string, string> ReferenceContext);
+    IReadOnlyDictionary<string, string> ReferenceContext,
+    PosServerAppliedStatutoryFiscalFactsRequest? AppliedStatutoryFiscalFacts = null);
+
+public sealed record PosServerAppliedStatutoryFiscalFactsRequest(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid StatutoryRequestReference,
+    Guid StatutoryPayableBasisApplicationCommandId,
+    Guid StatutoryValidationId,
+    Guid ParkingSessionId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    string EntitlementType,
+    string BenefitClassification,
+    PosServerAppliedStatutoryPolicyReferenceRequest PolicyReference,
+    Guid OriginalTariffSnapshotId,
+    Guid AppliedTariffSnapshotId,
+    long OriginalAmountMinorUnits,
+    long VatExclusiveBasisAmountMinorUnits,
+    long VatAmountMinorUnits,
+    string VatTreatment,
+    long StatutoryDiscountAmountMinorUnits,
+    long FinalPayableAmountMinorUnits,
+    string Currency,
+    DateTimeOffset AppliedAt,
+    string SourcePaymentChannel,
+    Guid? TerminalCashTenderId = null);
+
+public sealed record PosServerAppliedStatutoryPolicyReferenceRequest(
+    string ResolutionBasis,
+    Guid? AppliedPolicyReferenceId = null,
+    string? PolicyCode = null,
+    Guid? PolicyVersionId = null,
+    string? NationalLawReference = null,
+    string? OrdinanceReference = null);
 
 public sealed record PosServerPayableBasisRequest(
     string PayableBasisRef,

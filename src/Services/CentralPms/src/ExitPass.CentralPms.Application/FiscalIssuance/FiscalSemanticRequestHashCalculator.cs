@@ -9,6 +9,7 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
 {
     public const string CurrentHashAlgorithm = "SHA-256";
     public const string CurrentHashSourceVersion = "sha256:v1";
+    public const string CurrentStatutoryHashSourceVersion = "pos-server-fiscal-document-create:sha256:v2";
 
     private static readonly JsonWriterOptions CanonicalJsonOptions = new()
     {
@@ -41,7 +42,7 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
                 Status: FiscalSemanticRequestHashSourceStatus.Incomplete,
                 HashValue: null,
                 HashAlgorithm: CurrentHashAlgorithm,
-                HashSourceVersion: CurrentHashSourceVersion,
+                HashSourceVersion: HashSourceVersion(request),
                 SourceFactCount: 0,
                 SafeSourceSummary: $"semantic_request_hash_source_incomplete:{string.Join(",", missingFacts)}",
                 BlockReasonCode: missingFacts[0],
@@ -51,13 +52,13 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
 
         var canonicalSource = CanonicalSource(request);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalSource))).ToLowerInvariant();
-        var topLevelFacts = TopLevelFactNames();
+        var topLevelFacts = TopLevelFactNames(request);
 
         return new FiscalSemanticRequestHashCanonicalInspectionResult(
             Status: FiscalSemanticRequestHashSourceStatus.Available,
             HashValue: hash,
             HashAlgorithm: CurrentHashAlgorithm,
-            HashSourceVersion: CurrentHashSourceVersion,
+            HashSourceVersion: HashSourceVersion(request),
             SourceFactCount: topLevelFacts.Length,
             SafeSourceSummary: $"semantic_request_hash_source_available:facts={topLevelFacts.Length}",
             BlockReasonCode: null,
@@ -118,6 +119,11 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         using (var writer = new Utf8JsonWriter(stream, CanonicalJsonOptions))
         {
             writer.WriteStartObject();
+            if (request.AppliedStatutoryFiscalFacts is not null)
+            {
+                WriteAppliedStatutoryFiscalFacts(writer, request.AppliedStatutoryFiscalFacts);
+            }
+
             WriteString(writer, "business_day_date", request.BusinessDayDate);
             WriteString(writer, "central_pms_parking_session_ref", request.CentralPmsParkingSessionRef);
             WriteString(writer, "central_pms_payment_attempt_ref", request.CentralPmsPaymentAttemptRef);
@@ -293,6 +299,52 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         writer.WriteEndArray();
     }
 
+    private static void WriteAppliedStatutoryFiscalFacts(
+        Utf8JsonWriter writer,
+        PosServerAppliedStatutoryFiscalFactsRequest facts)
+    {
+        writer.WritePropertyName("applied_statutory_fiscal_facts");
+        writer.WriteStartObject();
+        WriteStatutoryTimestamp(writer, "applied_at", facts.AppliedAt);
+        WriteString(writer, "applied_tariff_snapshot_id", facts.AppliedTariffSnapshotId);
+        WriteString(writer, "benefit_classification", facts.BenefitClassification);
+        WriteString(writer, "currency", NormalizeCurrency(facts.Currency));
+        WriteString(writer, "entitlement_type", facts.EntitlementType);
+        writer.WriteNumber("final_payable_amount_minor_units", facts.FinalPayableAmountMinorUnits);
+        writer.WriteNumber("original_amount_minor_units", facts.OriginalAmountMinorUnits);
+        WriteString(writer, "original_tariff_snapshot_id", facts.OriginalTariffSnapshotId);
+        WriteString(writer, "parking_session_id", facts.ParkingSessionId);
+        WriteAppliedStatutoryPolicyReference(writer, facts.PolicyReference);
+        WriteString(writer, "site_group_id", facts.SiteGroupId);
+        WriteString(writer, "site_id", facts.SiteId);
+        WriteString(writer, "source_payment_channel", facts.SourcePaymentChannel);
+        writer.WriteNumber("statutory_discount_amount_minor_units", facts.StatutoryDiscountAmountMinorUnits);
+        WriteString(writer, "statutory_discount_decision_command_id", facts.StatutoryDiscountDecisionCommandId);
+        WriteString(writer, "statutory_payable_basis_application_command_id", facts.StatutoryPayableBasisApplicationCommandId);
+        WriteString(writer, "statutory_request_reference", facts.StatutoryRequestReference);
+        WriteString(writer, "statutory_validation_id", facts.StatutoryValidationId);
+        WriteString(writer, "terminal_cash_tender_id", facts.TerminalCashTenderId);
+        writer.WriteNumber("vat_amount_minor_units", facts.VatAmountMinorUnits);
+        writer.WriteNumber("vat_exclusive_basis_amount_minor_units", facts.VatExclusiveBasisAmountMinorUnits);
+        WriteString(writer, "vat_treatment", facts.VatTreatment);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteAppliedStatutoryPolicyReference(
+        Utf8JsonWriter writer,
+        PosServerAppliedStatutoryPolicyReferenceRequest policyReference)
+    {
+        writer.WritePropertyName("policy_reference");
+        writer.WriteStartObject();
+        WriteString(writer, "applied_policy_reference_id", policyReference.AppliedPolicyReferenceId);
+        WriteString(writer, "national_law_reference", policyReference.NationalLawReference);
+        WriteString(writer, "ordinance_reference", policyReference.OrdinanceReference);
+        WriteString(writer, "policy_code", policyReference.PolicyCode);
+        WriteString(writer, "policy_version_id", policyReference.PolicyVersionId);
+        WriteString(writer, "resolution_basis", policyReference.ResolutionBasis);
+        writer.WriteEndObject();
+    }
+
     private static void WriteDictionary(
         Utf8JsonWriter writer,
         string propertyName,
@@ -352,6 +404,17 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
         }
 
         writer.WriteString(propertyName, value.Value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", CultureInfo.InvariantCulture));
+    }
+
+    private static void WriteStatutoryTimestamp(Utf8JsonWriter writer, string propertyName, DateTimeOffset? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNull(propertyName);
+            return;
+        }
+
+        writer.WriteString(propertyName, value.Value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
     }
 
     private static void WriteNumber(Utf8JsonWriter writer, string propertyName, decimal value) =>
@@ -418,27 +481,42 @@ public sealed class FiscalSemanticRequestHashCalculator : IFiscalSemanticRequest
             : normalized;
     }
 
-    private static string[] TopLevelFactNames() =>
-    [
-        "business_day_date",
-        "central_pms_parking_session_ref",
-        "central_pms_payment_attempt_ref",
-        "central_pms_payment_confirmation_ref",
-        "channel_terminal_id",
-        "discount_privilege_details",
-        "document_lines",
-        "document_links",
-        "fiscal_document_status_code_id",
-        "fiscal_document_type_code_id",
-        "fiscal_document_type_code_key",
-        "payable_basis",
-        "payment_finality_ref",
-        "reference_context",
-        "site_pos_server_id",
-        "site_pos_server_ref",
-        "tax_details",
-        "tenders",
-        "totals",
-        "vendor_ack_ref"
-    ];
+    private static string HashSourceVersion(PosServerFiscalDocumentCreateRequest request) =>
+        request.AppliedStatutoryFiscalFacts is null
+            ? CurrentHashSourceVersion
+            : CurrentStatutoryHashSourceVersion;
+
+    private static string[] TopLevelFactNames(PosServerFiscalDocumentCreateRequest request)
+    {
+        var facts = new List<string>();
+        if (request.AppliedStatutoryFiscalFacts is not null)
+        {
+            facts.Add("applied_statutory_fiscal_facts");
+        }
+
+        facts.AddRange(
+        [
+            "business_day_date",
+            "central_pms_parking_session_ref",
+            "central_pms_payment_attempt_ref",
+            "central_pms_payment_confirmation_ref",
+            "channel_terminal_id",
+            "discount_privilege_details",
+            "document_lines",
+            "document_links",
+            "fiscal_document_status_code_id",
+            "fiscal_document_type_code_id",
+            "fiscal_document_type_code_key",
+            "payable_basis",
+            "payment_finality_ref",
+            "reference_context",
+            "site_pos_server_id",
+            "site_pos_server_ref",
+            "tax_details",
+            "tenders",
+            "totals",
+            "vendor_ack_ref"
+        ]);
+        return facts.ToArray();
+    }
 }

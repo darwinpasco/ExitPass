@@ -88,18 +88,38 @@ public sealed class TerminalCashFiscalIssuanceIntegrationTests
         Assert.Equal(2_232, discountReference.DiscountAmountMinorUnits);
         Assert.Equal(8_929, discountReference.FinalPayableAmountMinorUnits);
 
+        var statutoryFacts = fiscalContext.AppliedStatutoryFiscalFacts;
+        Assert.NotNull(statutoryFacts);
+        Assert.Equal(StatutoryDecisionCommandId, statutoryFacts!.StatutoryDiscountDecisionCommandId);
+        Assert.Equal(StatutoryValidationId, statutoryFacts.StatutoryRequestReference);
+        Assert.Equal(StatutoryApplicationCommandId, statutoryFacts.StatutoryPayableBasisApplicationCommandId);
+        Assert.Equal(StatutoryValidationId, statutoryFacts.StatutoryValidationId);
+        Assert.Equal(ParkingSessionId, statutoryFacts.ParkingSessionId);
+        Assert.Equal("SENIOR_CITIZEN", statutoryFacts.EntitlementType);
+        Assert.Equal("VAT_EXEMPTION_AND_STATUTORY_DISCOUNT", statutoryFacts.BenefitClassification);
+        Assert.Equal(OriginalTariffSnapshotId, statutoryFacts.OriginalTariffSnapshotId);
+        Assert.Equal(TariffSnapshotId, statutoryFacts.AppliedTariffSnapshotId);
+        Assert.Equal(12_500, statutoryFacts.OriginalAmountMinorUnits);
+        Assert.Equal(11_161, statutoryFacts.VatExclusiveBasisAmountMinorUnits);
+        Assert.Equal(1_339, statutoryFacts.VatAmountMinorUnits);
+        Assert.Equal(2_232, statutoryFacts.StatutoryDiscountAmountMinorUnits);
+        Assert.Equal(8_929, statutoryFacts.FinalPayableAmountMinorUnits);
+        Assert.Equal("ASSISTED_PAYMENT_TERMINAL", statutoryFacts.SourcePaymentChannel);
+        Assert.Equal(TerminalCashTenderId, statutoryFacts.TerminalCashTenderId);
+
         var privilege = Assert.Single(fiscalContext.DiscountPrivilegeDetails);
         Assert.Equal(PosServerFiscalDiscountPrivilegeTypeCodeId, privilege.DiscountPrivilegeTypeCodeId);
         Assert.Equal(11_161, privilege.BasisAmountMinorUnits);
         Assert.Equal(2_232, privilege.DiscountAmountMinorUnits);
         Assert.Equal(1_339, privilege.VatPrivilegeAmountMinorUnits);
         Assert.Equal("PHP", privilege.CurrencyCode);
-        Assert.Equal("SC-***-1234", privilege.BeneficiaryRef);
-        Assert.Equal($"statutory-discount-validation:{StatutoryValidationId:D}", privilege.EvidenceRef);
+        Assert.Null(privilege.BeneficiaryRef);
+        Assert.Null(privilege.EvidenceRef);
         Assert.Equal(StatutoryValidationId.ToString("D"), privilege.ApprovalRef);
         Assert.Contains("statutoryDiscountDecisionCommandId", fiscalContext.ReferenceContext.Keys);
         Assert.DoesNotContain("reviewer", Serialize(fiscalContext), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("raw_id", Serialize(fiscalContext), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("SC-***-1234", Serialize(fiscalContext), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

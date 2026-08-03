@@ -63,7 +63,8 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
         result.PayableBasis.DiscountReferences.Should().ContainSingle();
         result.PayableBasis.DiscountReferences[0].DiscountValidationRef.Should().Be("discount-validation-ref");
         result.DiscountPrivilegeDetails.Should().ContainSingle();
-        result.DiscountPrivilegeDetails[0].EvidenceRef.Should().Be("evidence-ref");
+        result.DiscountPrivilegeDetails[0].BeneficiaryRef.Should().BeNull();
+        result.DiscountPrivilegeDetails[0].EvidenceRef.Should().BeNull();
         result.DiscountPrivilegeDetails[0].ApprovalRef.Should().Be("approval-ref");
     }
 
@@ -208,8 +209,8 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
                     VatPrivilegeAmountMinorUnits: 1339,
                     CurrencyCode: "PHP",
                     LineSequence: 1,
-                    BeneficiaryRef: "metadata-only-beneficiary-ref",
-                    EvidenceRef: "metadata-only-evidence-captured",
+                    BeneficiaryRef: null,
+                    EvidenceRef: null,
                     ApprovalRef: validationId.ToString("D"),
                     DiscountPrivilegeContext: new Dictionary<string, string>
                     {
@@ -245,6 +246,85 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
                 discount.DiscountAmountMinorUnits == 2232 &&
                 discount.VatPrivilegeAmountMinorUnits == 1339 &&
                 discount.ApprovalRef == validationId.ToString("D"));
+    }
+
+    [Fact]
+    public void Map_WhenAppliedStatutoryFactsArePresent_MapsFirstClassPosServerPayload()
+    {
+        var context = StatutoryContext("WEBPAY");
+
+        var result = _sut.Map(context);
+
+        result.AppliedStatutoryFiscalFacts.Should().NotBeNull();
+        var facts = result.AppliedStatutoryFiscalFacts!;
+        facts.StatutoryDiscountDecisionCommandId.Should().Be(StatutoryDecisionCommandId);
+        facts.StatutoryRequestReference.Should().Be(StatutoryValidationId);
+        facts.StatutoryPayableBasisApplicationCommandId.Should().Be(StatutoryApplicationCommandId);
+        facts.StatutoryValidationId.Should().Be(StatutoryValidationId);
+        facts.ParkingSessionId.Should().Be(StatutoryParkingSessionId);
+        facts.SiteId.Should().Be(StatutorySiteId);
+        facts.SiteGroupId.Should().Be(StatutorySiteGroupId);
+        facts.EntitlementType.Should().Be("SENIOR_CITIZEN");
+        facts.BenefitClassification.Should().Be("VAT_EXEMPTION_AND_STATUTORY_DISCOUNT");
+        facts.PolicyReference.ResolutionBasis.Should().Be("LOCAL_ORDINANCE");
+        facts.OriginalTariffSnapshotId.Should().Be(OriginalTariffSnapshotId);
+        facts.AppliedTariffSnapshotId.Should().Be(AppliedTariffSnapshotId);
+        facts.OriginalAmountMinorUnits.Should().Be(12_500);
+        facts.VatExclusiveBasisAmountMinorUnits.Should().Be(11_161);
+        facts.VatAmountMinorUnits.Should().Be(1_339);
+        facts.VatTreatment.Should().Be("VAT_EXEMPT");
+        facts.StatutoryDiscountAmountMinorUnits.Should().Be(2_232);
+        facts.FinalPayableAmountMinorUnits.Should().Be(8_929);
+        facts.Currency.Should().Be("PHP");
+        facts.SourcePaymentChannel.Should().Be("WEBPAY");
+        facts.TerminalCashTenderId.Should().BeNull();
+    }
+
+    [Fact]
+    public void Map_WhenWebPayAndAptHaveEquivalentAppliedBenefit_ProducesParityExceptChannelContext()
+    {
+        var webPay = _sut.Map(StatutoryContext("WEBPAY")).AppliedStatutoryFiscalFacts!;
+        var aptTenderId = Guid.Parse("12121212-1212-4121-8121-121212121212");
+        var apt = _sut.Map(StatutoryContext("ASSISTED_PAYMENT_TERMINAL", aptTenderId)).AppliedStatutoryFiscalFacts!;
+
+        apt.Should().BeEquivalentTo(
+            webPay with
+            {
+                SourcePaymentChannel = "ASSISTED_PAYMENT_TERMINAL",
+                TerminalCashTenderId = aptTenderId
+            });
+    }
+
+    [Fact]
+    public void Map_WhenAppliedStatutoryFactsDoNotMatchFinalPayableBasis_RejectsBeforePosServerCall()
+    {
+        var context = StatutoryContext("WEBPAY") with
+        {
+            AppliedStatutoryFiscalFacts = StatutoryFacts("WEBPAY") with
+            {
+                FinalPayableAmountMinorUnits = 8_930
+            }
+        };
+
+        var ex = Assert.Throws<ArgumentException>(() => _sut.Map(context));
+
+        ex.Message.Should().Contain("applied_statutory_fiscal_facts_must_match_payable_basis");
+    }
+
+    [Fact]
+    public void Map_WhenAppliedStatutoryFactsUseOriginalSnapshotAsAppliedSnapshot_RejectsBeforePosServerCall()
+    {
+        var context = StatutoryContext("WEBPAY") with
+        {
+            AppliedStatutoryFiscalFacts = StatutoryFacts("WEBPAY") with
+            {
+                AppliedTariffSnapshotId = OriginalTariffSnapshotId
+            }
+        };
+
+        var ex = Assert.Throws<ArgumentException>(() => _sut.Map(context));
+
+        ex.Message.Should().Contain("applied_statutory_fiscal_facts_final_snapshot_required");
     }
 
     [Fact]
@@ -399,8 +479,8 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
                     VatPrivilegeAmountMinorUnits: 0,
                     CurrencyCode: "php",
                     LineSequence: 1,
-                    BeneficiaryRef: "beneficiary-ref",
-                    EvidenceRef: "evidence-ref",
+                    BeneficiaryRef: null,
+                    EvidenceRef: null,
                     ApprovalRef: "approval-ref",
                     DiscountPrivilegeContext: new Dictionary<string, string> { ["classification"] = "statutory" })
             ],
@@ -415,4 +495,76 @@ public sealed class PosServerFiscalDocumentRequestMapperTests
             ReferenceContext: new Dictionary<string, string> { ["correlation"] = "correlation-ref" },
             PaymentFinalityRef: "payment-finality-ref",
             VendorAckRef: null);
+
+    private static readonly Guid StatutoryDecisionCommandId = Guid.Parse("01010101-0101-4101-8101-010101010101");
+    private static readonly Guid StatutoryApplicationCommandId = Guid.Parse("02020202-0202-4202-8202-020202020202");
+    private static readonly Guid StatutoryValidationId = Guid.Parse("03030303-0303-4303-8303-030303030303");
+    private static readonly Guid StatutoryParkingSessionId = Guid.Parse("04040404-0404-4404-8404-040404040404");
+    private static readonly Guid StatutorySiteId = Guid.Parse("05050505-0505-4505-8505-050505050505");
+    private static readonly Guid StatutorySiteGroupId = Guid.Parse("06060606-0606-4606-8606-060606060606");
+    private static readonly Guid OriginalTariffSnapshotId = Guid.Parse("07070707-0707-4707-8707-070707070707");
+    private static readonly Guid AppliedTariffSnapshotId = Guid.Parse("08080808-0808-4808-8808-080808080808");
+    private static readonly Guid AppliedPolicyReferenceId = Guid.Parse("09090909-0909-4909-8909-090909090909");
+
+    internal static CentralPmsFiscalDocumentMappingContext StatutoryContext(
+        string sourcePaymentChannel,
+        Guid? terminalCashTenderId = null) =>
+        ValidContext() with
+        {
+            CentralPmsParkingSessionRef = StatutoryParkingSessionId.ToString("D"),
+            PayableBasis = ValidContext().PayableBasis with
+            {
+                PayableBasisRef = AppliedTariffSnapshotId.ToString("D"),
+                PayableAmountMinorUnits = 8_929,
+                CurrencyCode = "PHP"
+            },
+            Tenders =
+            [
+                ValidContext().Tenders[0] with
+                {
+                    AmountMinorUnits = 8_929,
+                    CurrencyCode = "PHP"
+                }
+            ],
+            Totals =
+            [
+                ValidContext().Totals[0] with
+                {
+                    AmountMinorUnits = 8_929,
+                    CurrencyCode = "PHP"
+                }
+            ],
+            AppliedStatutoryFiscalFacts = StatutoryFacts(sourcePaymentChannel, terminalCashTenderId)
+        };
+
+    internal static CentralPmsAppliedStatutoryFiscalFactsContext StatutoryFacts(
+        string sourcePaymentChannel,
+        Guid? terminalCashTenderId = null) =>
+        new(
+            StatutoryDecisionCommandId,
+            StatutoryValidationId,
+            StatutoryApplicationCommandId,
+            StatutoryValidationId,
+            StatutoryParkingSessionId,
+            StatutorySiteId,
+            StatutorySiteGroupId,
+            "senior_citizen",
+            "vat_exemption_and_statutory_discount",
+            new CentralPmsAppliedStatutoryPolicyReferenceContext(
+                "local_ordinance",
+                AppliedPolicyReferenceId,
+                PolicyCode: "PARANAQUE_SENIOR_PARKING",
+                OrdinanceReference: "SOURCE_TEXT_UNAVAILABLE_OPERATIONAL"),
+            OriginalTariffSnapshotId,
+            AppliedTariffSnapshotId,
+            OriginalAmountMinorUnits: 12_500,
+            VatExclusiveBasisAmountMinorUnits: 11_161,
+            VatAmountMinorUnits: 1_339,
+            VatTreatment: "vat_exempt",
+            StatutoryDiscountAmountMinorUnits: 2_232,
+            FinalPayableAmountMinorUnits: 8_929,
+            Currency: "php",
+            AppliedAt: DateTimeOffset.Parse("2026-07-28T01:21:00Z"),
+            SourcePaymentChannel: sourcePaymentChannel,
+            TerminalCashTenderId: terminalCashTenderId);
 }
