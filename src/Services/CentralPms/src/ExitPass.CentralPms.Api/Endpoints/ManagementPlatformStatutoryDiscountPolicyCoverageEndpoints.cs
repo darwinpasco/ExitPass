@@ -183,7 +183,17 @@ public static class ManagementPlatformStatutoryDiscountPolicyCoverageEndpoints
                 row.LastAuthoritativeUpdateTimestamp,
                 row.DataQualityClassification,
                 row.ReasonClassification,
-                row.SourceClassification)).ToArray());
+                row.SourceClassification,
+                row.CanonicalJurisdictionReference,
+                row.CanonicalJurisdictionCode,
+                row.CanonicalJurisdictionName,
+                row.CanonicalJurisdictionType,
+                row.MetropolitanAreaReferences,
+                row.ScopeJurisdictionClassification,
+                row.BenefitType,
+                row.BeneficiaryResidencyScope,
+                row.SourceDocumentAvailable,
+                row.CoverageResolutionStatus)).ToArray());
 
     private static bool IsSupportedScopeType(string scopeType)
     {

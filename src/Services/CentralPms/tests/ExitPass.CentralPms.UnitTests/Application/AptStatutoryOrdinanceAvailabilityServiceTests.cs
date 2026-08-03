@@ -12,6 +12,7 @@ public sealed class AptStatutoryOrdinanceAvailabilityServiceTests
 {
     private static readonly Guid SiteGroupId = Guid.Parse("91000000-0000-0000-0000-000000000001");
     private static readonly Guid SiteId = Guid.Parse("91000000-0000-0000-0000-000000000002");
+    private static readonly Guid LocalGovernmentUnitId = Guid.Parse("91000000-0000-0000-0000-000000000004");
     private static readonly Guid ParkingSessionId = Guid.Parse("91000000-0000-0000-0000-000000000003");
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-08-03T02:30:00Z");
 
@@ -268,7 +269,18 @@ public sealed class AptStatutoryOrdinanceAvailabilityServiceTests
             new(
                 ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadStatus.Resolved,
                 "Synthetic Site",
-                [new ManagementPlatformStatutoryDiscountPolicyCoverageSite(SiteId, SiteGroupId, "Synthetic Site", "Synthetic Group", "SYNTHETIC_LGU")]);
+                [new ManagementPlatformStatutoryDiscountPolicyCoverageSite(
+                    SiteId,
+                    SiteGroupId,
+                    "Synthetic Site",
+                    "Synthetic Group",
+                    "SYNTHETIC_LGU",
+                    LocalGovernmentUnitId,
+                    "SYNTHETIC_LGU",
+                    "Synthetic City",
+                    "CITY",
+                    null,
+                    ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionSingleLgu)]);
     }
 
     private sealed class FixedTimeProvider : TimeProvider

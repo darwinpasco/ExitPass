@@ -24,13 +24,13 @@ internal static class StatutoryDiscountPolicyCoverageEvaluator
         IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate> candidates,
         DateOnly evaluationDate)
     {
-        if (string.IsNullOrWhiteSpace(site.LguCode))
+        if (site.LocalGovernmentUnitId is null || string.IsNullOrWhiteSpace(site.CanonicalJurisdictionCode))
         {
             return EmptyRow(
                 site,
                 entitlementType,
                 ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicableOrdinance,
-                "SITE_JURISDICTION_NOT_CONFIGURED");
+                "CANONICAL_SITE_JURISDICTION_NOT_CONFIGURED");
         }
 
         if (candidates.Count == 0)
@@ -51,6 +51,22 @@ internal static class StatutoryDiscountPolicyCoverageEvaluator
                 malformed,
                 ManagementPlatformStatutoryDiscountPolicyCoverageValues.MalformedAuthoritativeRecord,
                 "MALFORMED_POLICY_RECORD",
+                authoritativeCoverageAvailable: false);
+        }
+
+        var unavailable = candidates.FirstOrDefault(candidate => !candidate.CoverageAvailable);
+        if (unavailable is not null && candidates.All(candidate => !candidate.CoverageAvailable))
+        {
+            return CandidateRow(
+                site,
+                entitlementType,
+                unavailable,
+                string.Equals(unavailable.VerificationStatus, "NO_LOCAL_RULE_FOUND", StringComparison.OrdinalIgnoreCase)
+                    ? ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicableOrdinance
+                    : ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicablePolicy,
+                string.Equals(unavailable.VerificationStatus, "NO_LOCAL_RULE_FOUND", StringComparison.OrdinalIgnoreCase)
+                    ? "NO_LOCAL_RULE_FOUND"
+                    : "COVERAGE_NOT_AVAILABLE",
                 authoritativeCoverageAvailable: false);
         }
 
@@ -139,12 +155,18 @@ internal static class StatutoryDiscountPolicyCoverageEvaluator
             EffectiveTo: null,
             PolicyReference: null,
             OrdinanceOrLegalAuthorityReference: null,
-            JurisdictionOrLocalityReference: site.LguCode,
+            JurisdictionOrLocalityReference: site.CanonicalJurisdictionCode ?? site.LguCode,
             PolicyVersionOrRevisionReference: null,
             LastAuthoritativeUpdateTimestamp: null,
             DataQualityClassification: "COMPLETE",
             ReasonClassification: reason,
-            SourceClassification: "CENTRAL_PMS_READ_MODEL");
+            SourceClassification: "CENTRAL_PMS_READ_MODEL",
+            CanonicalJurisdictionReference: site.LocalGovernmentUnitId,
+            CanonicalJurisdictionCode: site.CanonicalJurisdictionCode,
+            CanonicalJurisdictionName: site.CanonicalJurisdictionName,
+            CanonicalJurisdictionType: site.CanonicalJurisdictionType,
+            MetropolitanAreaReferences: site.MetropolitanAreaReferences,
+            ScopeJurisdictionClassification: site.ScopeJurisdictionClassification);
 
     private static ManagementPlatformStatutoryDiscountPolicyCoverageRow CandidateRow(
         ManagementPlatformStatutoryDiscountPolicyCoverageSite site,
@@ -164,20 +186,38 @@ internal static class StatutoryDiscountPolicyCoverageEvaluator
             candidate.EffectiveTo,
             candidate.PolicyCode ?? candidate.PolicyId?.ToString("D"),
             FirstNonBlank(candidate.OrdinanceReference, candidate.LegalBasisReference, candidate.NationalLawReference),
-            site.LguCode,
+            site.CanonicalJurisdictionCode ?? site.LguCode,
             candidate.SourceReference,
             candidate.UpdatedAt,
             IsMalformed(candidate) ? "MALFORMED" : "COMPLETE",
             reason,
-            candidate.SourceClassification);
+            candidate.SourceClassification,
+            site.LocalGovernmentUnitId,
+            site.CanonicalJurisdictionCode,
+            site.CanonicalJurisdictionName,
+            site.CanonicalJurisdictionType,
+            site.MetropolitanAreaReferences,
+            site.ScopeJurisdictionClassification,
+            candidate.BenefitType,
+            candidate.BeneficiaryResidencyScope,
+            candidate.SourceDocumentAvailable,
+            candidate.CoverageResolutionStatus);
 
     private static bool IsActiveCovered(
         ManagementPlatformStatutoryDiscountPolicyCoverageCandidate candidate,
         DateOnly evaluationDate) =>
         string.Equals(candidate.PolicyStatus, "ACTIVE", StringComparison.OrdinalIgnoreCase) &&
+        candidate.CoverageAvailable &&
+        IsVerifiedCoverage(candidate.VerificationStatus) &&
         !IsMalformed(candidate) &&
         candidate.EffectiveFrom <= evaluationDate &&
         (candidate.EffectiveTo is null || candidate.EffectiveTo >= evaluationDate);
+
+    private static bool IsVerifiedCoverage(string? verificationStatus) =>
+        string.Equals(verificationStatus, "VERIFIED_OFFICIAL", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(verificationStatus, "VERIFIED_ACTIVE_OPERATIONAL", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(verificationStatus, "VERIFIED_SECONDARY", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(verificationStatus, "ACTIVE_APPROVED", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMalformed(ManagementPlatformStatutoryDiscountPolicyCoverageCandidate candidate) =>
         candidate.PolicyId is null ||

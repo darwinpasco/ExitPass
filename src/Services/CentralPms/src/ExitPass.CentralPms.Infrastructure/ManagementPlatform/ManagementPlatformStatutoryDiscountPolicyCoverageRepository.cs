@@ -104,7 +104,11 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
 
         var candidates = new List<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>();
         var capabilities = await ReadPolicyRegistryCapabilitiesAsync(connection, cancellationToken);
-        if (capabilities.HasDedicatedRegistry)
+        if (capabilities.HasCanonicalSiteCoverageView)
+        {
+            candidates.AddRange(await ReadCanonicalSiteCoverageCandidatesAsync(connection, sites, entitlementTypes, includeInactive, cancellationToken));
+        }
+        else if (capabilities.HasDedicatedRegistry)
         {
             candidates.AddRange(await ReadDedicatedCandidatesAsync(connection, sites, entitlementTypes, includeInactive, evaluationDate, cancellationToken));
         }
@@ -167,9 +171,28 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
                 s.site_group_id,
                 COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), s.site_id::text) AS site_name,
                 COALESCE(NULLIF(sg.site_group_name, ''), NULLIF(sg.site_group_code, ''), s.site_group_id::text) AS site_group_name,
-                NULLIF(s.lgu_code, '') AS lgu_code
+                COALESCE(NULLIF(j.jurisdiction_code, ''), NULLIF(s.lgu_code, '')) AS lgu_code,
+                s.local_government_unit_id,
+                j.jurisdiction_code,
+                j.display_name AS jurisdiction_name,
+                j.jurisdiction_type::text AS jurisdiction_type,
+                metro.metropolitan_area_references
             FROM sites.sites AS s
             LEFT JOIN sites.site_groups AS sg ON sg.site_group_id = s.site_group_id
+            LEFT JOIN sites.jurisdictions AS j
+              ON j.jurisdiction_id = s.local_government_unit_id
+             AND j.jurisdiction_status = 'ACTIVE'::sites.jurisdiction_status_enum
+             AND j.jurisdiction_type IN ('CITY'::sites.jurisdiction_type_enum, 'MUNICIPALITY'::sites.jurisdiction_type_enum)
+            LEFT JOIN LATERAL (
+                SELECT string_agg(DISTINCT ma.metropolitan_area_code, ',' ORDER BY ma.metropolitan_area_code) AS metropolitan_area_references
+                FROM sites.metropolitan_area_jurisdictions AS maj
+                JOIN sites.metropolitan_areas AS ma ON ma.metropolitan_area_id = maj.metropolitan_area_id
+                WHERE maj.jurisdiction_id = j.jurisdiction_id
+                  AND maj.membership_status = 'ACTIVE'::sites.jurisdiction_status_enum
+                  AND ma.metropolitan_area_status = 'ACTIVE'::sites.jurisdiction_status_enum
+                  AND (maj.effective_to IS NULL OR maj.effective_to > now())
+                  AND (ma.effective_to IS NULL OR ma.effective_to > now())
+            ) AS metro ON true
             WHERE s.site_id = @site_id;
             """;
 
@@ -181,7 +204,7 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
             return null;
         }
 
-        return [ReadSite(reader)];
+        return ApplyScopeJurisdictionClassification([ReadSite(reader)]);
     }
 
     private static async Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite>?> ReadSiteGroupScopeAsync(
@@ -210,9 +233,28 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
                 s.site_group_id,
                 COALESCE(NULLIF(s.site_name, ''), NULLIF(s.site_code, ''), s.site_id::text) AS site_name,
                 COALESCE(NULLIF(sg.site_group_name, ''), NULLIF(sg.site_group_code, ''), s.site_group_id::text) AS site_group_name,
-                NULLIF(s.lgu_code, '') AS lgu_code
+                COALESCE(NULLIF(j.jurisdiction_code, ''), NULLIF(s.lgu_code, '')) AS lgu_code,
+                s.local_government_unit_id,
+                j.jurisdiction_code,
+                j.display_name AS jurisdiction_name,
+                j.jurisdiction_type::text AS jurisdiction_type,
+                metro.metropolitan_area_references
             FROM sites.sites AS s
             LEFT JOIN sites.site_groups AS sg ON sg.site_group_id = s.site_group_id
+            LEFT JOIN sites.jurisdictions AS j
+              ON j.jurisdiction_id = s.local_government_unit_id
+             AND j.jurisdiction_status = 'ACTIVE'::sites.jurisdiction_status_enum
+             AND j.jurisdiction_type IN ('CITY'::sites.jurisdiction_type_enum, 'MUNICIPALITY'::sites.jurisdiction_type_enum)
+            LEFT JOIN LATERAL (
+                SELECT string_agg(DISTINCT ma.metropolitan_area_code, ',' ORDER BY ma.metropolitan_area_code) AS metropolitan_area_references
+                FROM sites.metropolitan_area_jurisdictions AS maj
+                JOIN sites.metropolitan_areas AS ma ON ma.metropolitan_area_id = maj.metropolitan_area_id
+                WHERE maj.jurisdiction_id = j.jurisdiction_id
+                  AND maj.membership_status = 'ACTIVE'::sites.jurisdiction_status_enum
+                  AND ma.metropolitan_area_status = 'ACTIVE'::sites.jurisdiction_status_enum
+                  AND (maj.effective_to IS NULL OR maj.effective_to > now())
+                  AND (ma.effective_to IS NULL OR ma.effective_to > now())
+            ) AS metro ON true
             WHERE s.site_group_id = @site_group_id
             ORDER BY site_name, s.site_id;
             """;
@@ -226,7 +268,7 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
             sites.Add(ReadSite(reader));
         }
 
-        return sites;
+        return ApplyScopeJurisdictionClassification(sites);
     }
 
     private static async Task<bool> IsActorAllowedForScopeAsync(
@@ -276,6 +318,11 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = 'discounts'
                       AND table_name = 'discount_policy_references'
+                ),
+                EXISTS (
+                    SELECT 1 FROM information_schema.views
+                    WHERE table_schema = 'discounts'
+                      AND table_name = 'statutory_parking_site_policy_coverage'
                 );
             """;
 
@@ -283,10 +330,59 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
-            return new PolicyRegistryCapabilities(false, false);
+            return new PolicyRegistryCapabilities(false, false, false);
         }
 
-        return new PolicyRegistryCapabilities(reader.GetBoolean(0), reader.GetBoolean(1));
+        return new PolicyRegistryCapabilities(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2));
+    }
+
+    private static async Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>> ReadCanonicalSiteCoverageCandidatesAsync(
+        NpgsqlConnection connection,
+        IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite> sites,
+        IReadOnlyList<string> entitlementTypes,
+        bool includeInactive,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT
+                coverage.site_id AS resolved_site_id,
+                coverage.statutory_discount_policy_registry_id,
+                coverage.policy_code,
+                coverage.policy_name,
+                coverage.entitlement_type::text,
+                coverage.policy_status::text,
+                coverage.verification_status::text,
+                'LOCAL_ORDINANCE' AS policy_level,
+                'CANONICAL_LGU_POLICY_INHERITED' AS policy_resolution_basis,
+                registry.ordinance_reference AS legal_basis_reference,
+                registry.ordinance_reference,
+                NULL::text AS national_law_reference,
+                coverage.effective_from,
+                coverage.effective_to,
+                COALESCE(registry.source_reference, coverage.local_government_unit_code) AS source_reference,
+                COALESCE(registry.updated_at, registry.created_at) AS updated_at,
+                coverage.coverage_available,
+                coverage.auto_application_allowed,
+                coverage.coverage_resolution_status,
+                coverage.benefit_type::text,
+                coverage.beneficiary_residency_scope::text,
+                registry.source_document_available
+            FROM discounts.statutory_parking_site_policy_coverage AS coverage
+            LEFT JOIN discounts.statutory_discount_policy_registry AS registry
+              ON registry.statutory_discount_policy_registry_id = coverage.statutory_discount_policy_registry_id
+            JOIN unnest(@site_ids::uuid[]) AS matched(site_id)
+              ON coverage.site_id = matched.site_id
+            WHERE coverage.entitlement_type::text = ANY(@entitlement_types)
+              AND (@include_inactive OR coverage.policy_status = 'ACTIVE'::discounts.discount_policy_status_enum)
+            ORDER BY coverage.site_id, coverage.entitlement_type::text, coverage.effective_from DESC, coverage.policy_code;
+            """;
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        AddScopeParameters(command, sites, entitlementTypes, includeInactive, DateOnly.FromDateTime(DateTime.UtcNow));
+        return await ReadCandidatesAsync(
+            command,
+            ManagementPlatformStatutoryDiscountPolicyCoverageValues.CanonicalLguCoverageSource,
+            cancellationToken);
     }
 
     private static async Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>> ReadDedicatedCandidatesAsync(
@@ -314,7 +410,13 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
                 p.effective_from,
                 p.effective_to,
                 p.source_reference,
-                COALESCE(p.updated_at, p.created_at) AS updated_at
+                COALESCE(p.updated_at, p.created_at) AS updated_at,
+                true AS coverage_available,
+                false AS auto_application_allowed,
+                'LEGACY_COMPATIBILITY' AS coverage_resolution_status,
+                NULL::text AS benefit_type,
+                NULL::text AS beneficiary_residency_scope,
+                NULL::boolean AS source_document_available
             FROM discounts.statutory_discount_policy_registry AS p
             JOIN unnest(@site_ids::uuid[], @site_group_ids::uuid[], @lgu_codes::text[]) AS matched(site_id, site_group_id, lgu_code)
               ON p.site_id = matched.site_id
@@ -332,7 +434,10 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
 
         await using var command = new NpgsqlCommand(sql, connection);
         AddScopeParameters(command, sites, entitlementTypes, includeInactive, evaluationDate);
-        return await ReadCandidatesAsync(command, "STATUTORY_POLICY_REGISTRY", cancellationToken);
+        return await ReadCandidatesAsync(
+            command,
+            ManagementPlatformStatutoryDiscountPolicyCoverageValues.DedicatedRegistrySource,
+            cancellationToken);
     }
 
     private static async Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>> ReadCompatibilityCandidatesAsync(
@@ -363,7 +468,13 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
                 p.effective_from,
                 p.effective_to,
                 p.policy_version AS source_reference,
-                COALESCE(p.updated_at, p.created_at) AS updated_at
+                COALESCE(p.updated_at, p.created_at) AS updated_at,
+                true AS coverage_available,
+                false AS auto_application_allowed,
+                'LEGACY_COMPATIBILITY' AS coverage_resolution_status,
+                NULL::text AS benefit_type,
+                NULL::text AS beneficiary_residency_scope,
+                NULL::boolean AS source_document_available
             FROM discounts.discount_policy_references AS p
             JOIN unnest(@site_ids::uuid[], @site_group_ids::uuid[], @lgu_codes::text[]) AS matched(site_id, site_group_id, lgu_code)
               ON p.site_id = matched.site_id
@@ -376,7 +487,10 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
 
         await using var command = new NpgsqlCommand(sql, connection);
         AddScopeParameters(command, sites, entitlementTypes, includeInactive, evaluationDate);
-        return await ReadCandidatesAsync(command, "DISCOUNT_POLICY_REFERENCES_COMPATIBILITY", cancellationToken);
+        return await ReadCandidatesAsync(
+            command,
+            ManagementPlatformStatutoryDiscountPolicyCoverageValues.CompatibilityPolicyReferenceSource,
+            cancellationToken);
     }
 
     private static async Task<IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageCandidate>> ReadCandidatesAsync(
@@ -405,7 +519,13 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
                 GetNullableDateOnly(reader, 13),
                 GetNullableString(reader, 14),
                 GetNullableDateTimeOffset(reader, 15),
-                sourceClassification));
+                sourceClassification,
+                reader.GetBoolean(16),
+                reader.GetBoolean(17),
+                GetNullableString(reader, 18),
+                GetNullableString(reader, 19),
+                GetNullableString(reader, 20),
+                reader.IsDBNull(21) ? null : reader.GetBoolean(21)));
         }
 
         return candidates;
@@ -432,7 +552,31 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
             reader.GetGuid(1),
             GetNullableString(reader, 2),
             GetNullableString(reader, 3),
-            GetNullableString(reader, 4));
+            GetNullableString(reader, 4),
+            reader.IsDBNull(5) ? null : reader.GetGuid(5),
+            GetNullableString(reader, 6),
+            GetNullableString(reader, 7),
+            GetNullableString(reader, 8),
+            GetNullableString(reader, 9));
+
+    private static IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite> ApplyScopeJurisdictionClassification(
+        IReadOnlyList<ManagementPlatformStatutoryDiscountPolicyCoverageSite> sites)
+    {
+        var distinctLguCount = sites
+            .Where(site => site.LocalGovernmentUnitId is not null)
+            .Select(site => site.LocalGovernmentUnitId!.Value)
+            .Distinct()
+            .Count();
+
+        var classification = distinctLguCount switch
+        {
+            0 => ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionMissing,
+            1 => ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionSingleLgu,
+            _ => ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionMultiLgu
+        };
+
+        return sites.Select(site => site with { ScopeJurisdictionClassification = classification }).ToArray();
+    }
 
     private static string? GetNullableString(NpgsqlDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
@@ -470,5 +614,8 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageRepository
         };
     }
 
-    private sealed record PolicyRegistryCapabilities(bool HasDedicatedRegistry, bool HasCompatibilityTable);
+    private sealed record PolicyRegistryCapabilities(
+        bool HasDedicatedRegistry,
+        bool HasCompatibilityTable,
+        bool HasCanonicalSiteCoverageView);
 }

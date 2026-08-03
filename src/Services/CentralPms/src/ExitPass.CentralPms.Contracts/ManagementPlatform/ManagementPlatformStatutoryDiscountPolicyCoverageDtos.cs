@@ -26,4 +26,14 @@ public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageRowDto(
     DateTimeOffset? LastAuthoritativeUpdateTimestamp,
     string DataQualityClassification,
     string ReasonClassification,
-    string SourceClassification);
+    string SourceClassification,
+    Guid? CanonicalJurisdictionReference = null,
+    string? CanonicalJurisdictionCode = null,
+    string? CanonicalJurisdictionName = null,
+    string? CanonicalJurisdictionType = null,
+    string? MetropolitanAreaReferences = null,
+    string? ScopeJurisdictionClassification = null,
+    string? BenefitType = null,
+    string? BeneficiaryResidencyScope = null,
+    bool? SourceDocumentAvailable = null,
+    string? CoverageResolutionStatus = null);

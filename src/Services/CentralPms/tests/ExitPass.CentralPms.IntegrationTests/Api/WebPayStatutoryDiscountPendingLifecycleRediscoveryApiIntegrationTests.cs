@@ -17,6 +17,7 @@ using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
 
+[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class WebPayStatutoryDiscountPendingLifecycleRediscoveryApiIntegrationTests
 {
     private const string Route = "/v1/webpay/statutory-discounts/pending-lifecycle/rediscover";

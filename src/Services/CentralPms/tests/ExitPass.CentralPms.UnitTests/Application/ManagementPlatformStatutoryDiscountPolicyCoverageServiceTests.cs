@@ -12,6 +12,8 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
     private static readonly Guid SiteId = Guid.Parse("77000000-0000-0000-0000-000000000101");
     private static readonly Guid SiteTwoId = Guid.Parse("77000000-0000-0000-0000-000000000102");
     private static readonly Guid SiteGroupId = Guid.Parse("77000000-0000-0000-0000-000000000201");
+    private static readonly Guid QuezonCityLguId = Guid.Parse("77000000-0000-0000-0000-000000000401");
+    private static readonly Guid ParanaqueLguId = Guid.Parse("77000000-0000-0000-0000-000000000402");
     private static readonly DateTimeOffset EvaluationInstant = DateTimeOffset.Parse("2026-07-30T08:00:00Z");
 
     [Fact]
@@ -117,13 +119,88 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
     public async Task ReadCoverageAsync_WhenSiteHasNoJurisdiction_ReturnsNoApplicableOrdinance()
     {
         var repository = new FakeRepository()
-            .WithScope(ResolvedScope(Site(lguCode: null)));
+            .WithScope(ResolvedScope(Site(lguCode: null, localGovernmentUnitId: null, canonicalJurisdictionCode: null)));
         var service = CreateService(repository);
 
         var result = await service.ReadCoverageAsync(Query(entitlementType: ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen), CancellationToken.None);
 
         result.Coverage!.CoverageRows.Single().CoverageClassification.Should().Be(ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicableOrdinance);
+        result.Coverage.CoverageRows.Single().ReasonClassification.Should().Be("CANONICAL_SITE_JURISDICTION_NOT_CONFIGURED");
         repository.ReadPolicyCandidateCallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ReadCoverageAsync_WhenLegacyLguCodeExistsWithoutCanonicalJurisdiction_ReturnsNoApplicableOrdinance()
+    {
+        var repository = new FakeRepository()
+            .WithScope(ResolvedScope(Site(lguCode: "QUEZON_CITY", localGovernmentUnitId: null, canonicalJurisdictionCode: null)));
+        var service = CreateService(repository);
+
+        var result = await service.ReadCoverageAsync(Query(entitlementType: ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen), CancellationToken.None);
+
+        result.Coverage!.CoverageRows.Single().CoverageClassification.Should().Be(ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicableOrdinance);
+        result.Coverage.CoverageRows.Single().AuthoritativeCoverageAvailable.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("NO_LOCAL_RULE_FOUND", false, ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicableOrdinance, "NO_LOCAL_RULE_FOUND")]
+    [InlineData("PROPOSED", false, ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicablePolicy, "COVERAGE_NOT_AVAILABLE")]
+    [InlineData("LEAD_UNVERIFIED", true, ManagementPlatformStatutoryDiscountPolicyCoverageValues.IncompleteConfiguration, "POLICY_CONFIGURATION_INCOMPLETE")]
+    public async Task ReadCoverageAsync_DoesNotTreatUnverifiedOrUnavailableResearchAsActiveCoverage(
+        string verificationStatus,
+        bool coverageAvailable,
+        string expectedClassification,
+        string expectedReason)
+    {
+        var repository = new FakeRepository()
+            .WithScope(ResolvedScope(Site()))
+            .WithCandidates([
+                Candidate(
+                    ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen,
+                    verificationStatus: verificationStatus,
+                    coverageAvailable: coverageAvailable)
+            ]);
+        var service = CreateService(repository);
+
+        var result = await service.ReadCoverageAsync(Query(entitlementType: ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen), CancellationToken.None);
+
+        result.Coverage!.CoverageRows.Single().CoverageClassification.Should().Be(expectedClassification);
+        result.Coverage.CoverageRows.Single().ReasonClassification.Should().Be(expectedReason);
+        result.Coverage.CoverageRows.Single().AuthoritativeCoverageAvailable.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReadCoverageAsync_PreservesParanaqueSeniorCitizenVerifiedOperationalSourceUnavailableCoverage()
+    {
+        var repository = new FakeRepository()
+            .WithScope(ResolvedScope(Site(
+                localGovernmentUnitId: ParanaqueLguId,
+                canonicalJurisdictionCode: "PARANAQUE",
+                canonicalJurisdictionName: "City of Paranaque",
+                metropolitanAreaReferences: "METRO_MANILA")))
+            .WithCandidates([
+                Candidate(
+                    ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen,
+                    policyCode: "PH-NCR-PARANAQUE-SENIOR-CITIZEN-PARKING-20260728",
+                    ordinanceReference: null,
+                    verificationStatus: "VERIFIED_ACTIVE_OPERATIONAL",
+                    benefitType: "FULL_FEE_EXEMPTION",
+                    beneficiaryResidencyScope: "RESIDENT_ONLY",
+                    sourceDocumentAvailable: false,
+                    coverageResolutionStatus: "RESEARCH_COVERAGE_IDENTIFIED")
+            ]);
+        var service = CreateService(repository);
+
+        var result = await service.ReadCoverageAsync(Query(entitlementType: ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen), CancellationToken.None);
+
+        var row = result.Coverage!.CoverageRows.Single();
+        row.CoverageClassification.Should().Be(ManagementPlatformStatutoryDiscountPolicyCoverageValues.ActiveCovered);
+        row.AuthoritativeCoverageAvailable.Should().BeTrue();
+        row.CanonicalJurisdictionReference.Should().Be(ParanaqueLguId);
+        row.CanonicalJurisdictionCode.Should().Be("PARANAQUE");
+        row.SourceDocumentAvailable.Should().BeFalse();
+        row.BeneficiaryResidencyScope.Should().Be("RESIDENT_ONLY");
+        row.OrdinanceOrLegalAuthorityReference.Should().BeNull();
     }
 
     [Fact]
@@ -179,6 +256,36 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
         result.Coverage.CoverageRows.Should().HaveCount(4);
     }
 
+    [Fact]
+    public async Task ReadCoverageAsync_WhenSiteGroupSpansMultipleLgus_DoesNotLeakOneLguPolicyToOtherSites()
+    {
+        var repository = new FakeRepository()
+            .WithScope(ResolvedScope(
+                Site(scopeJurisdictionClassification: ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionMultiLgu),
+                Site(
+                    SiteTwoId,
+                    "Second Site",
+                    localGovernmentUnitId: ParanaqueLguId,
+                    canonicalJurisdictionCode: "PARANAQUE",
+                    canonicalJurisdictionName: "City of Paranaque",
+                    scopeJurisdictionClassification: ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionMultiLgu)))
+            .WithCandidates([
+                Candidate(ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen, siteId: SiteId, policyCode: "QC-SC")
+            ]);
+        var service = CreateService(repository);
+
+        var result = await service.ReadCoverageAsync(Query(
+            scopeType: ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeTypeSiteGroup,
+            entitlementType: ManagementPlatformStatutoryDiscountPolicyCoverageValues.SeniorCitizen), CancellationToken.None);
+
+        result.Coverage!.CoverageRows.Single(row => row.SiteReference == SiteId).CoverageClassification
+            .Should().Be(ManagementPlatformStatutoryDiscountPolicyCoverageValues.ActiveCovered);
+        result.Coverage.CoverageRows.Single(row => row.SiteReference == SiteTwoId).CoverageClassification
+            .Should().Be(ManagementPlatformStatutoryDiscountPolicyCoverageValues.NoApplicablePolicy);
+        result.Coverage.CoverageRows.Should().OnlyContain(row =>
+            row.ScopeJurisdictionClassification == ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionMultiLgu);
+    }
+
     private static ManagementPlatformStatutoryDiscountPolicyCoverageService CreateService(FakeRepository repository) =>
         new(repository, new FixedTimeProvider(EvaluationInstant));
 
@@ -193,8 +300,24 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
     private static ManagementPlatformStatutoryDiscountPolicyCoverageSite Site(
         Guid? siteId = null,
         string? siteName = "Synthetic Site",
-        string? lguCode = "QUEZON_CITY") =>
-        new(siteId ?? SiteId, SiteGroupId, siteName, "Synthetic Group", lguCode);
+        string? lguCode = "QUEZON_CITY",
+        Guid? localGovernmentUnitId = null,
+        string? canonicalJurisdictionCode = "QUEZON_CITY",
+        string? canonicalJurisdictionName = "Quezon City",
+        string? metropolitanAreaReferences = "METRO_MANILA",
+        string? scopeJurisdictionClassification = ManagementPlatformStatutoryDiscountPolicyCoverageValues.ScopeJurisdictionSingleLgu) =>
+        new(
+            siteId ?? SiteId,
+            SiteGroupId,
+            siteName,
+            "Synthetic Group",
+            lguCode,
+            localGovernmentUnitId ?? QuezonCityLguId,
+            canonicalJurisdictionCode,
+            canonicalJurisdictionName,
+            "CITY",
+            metropolitanAreaReferences,
+            scopeJurisdictionClassification);
 
     private static ManagementPlatformStatutoryDiscountPolicyCoverageCandidate Candidate(
         string entitlementType,
@@ -202,7 +325,14 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
         DateOnly? effectiveFrom = null,
         DateOnly? effectiveTo = null,
         string policyCode = "POLICY-ACTIVE",
-        Guid? siteId = null) =>
+        Guid? siteId = null,
+        string verificationStatus = "ACTIVE_APPROVED",
+        bool coverageAvailable = true,
+        string? ordinanceReference = "QC-ORD-001",
+        string? benefitType = null,
+        string? beneficiaryResidencyScope = null,
+        bool? sourceDocumentAvailable = null,
+        string? coverageResolutionStatus = null) =>
         new(
             siteId ?? SiteId,
             entitlementType,
@@ -210,17 +340,23 @@ public sealed class ManagementPlatformStatutoryDiscountPolicyCoverageServiceTest
             policyCode,
             "Synthetic statutory policy",
             status,
-            "ACTIVE_APPROVED",
+            verificationStatus,
             "LOCAL_ORDINANCE",
             "LOCAL_ORDINANCE_APPLIED",
-            "QC-ORD-001",
-            "QC-ORD-001",
+            ordinanceReference,
+            ordinanceReference,
             null,
             effectiveFrom ?? DateOnly.Parse("2026-01-01"),
             effectiveTo,
             "synthetic-policy-v1",
             EvaluationInstant,
-            "UNIT_TEST");
+            "UNIT_TEST",
+            coverageAvailable,
+            AutoApplicationAllowed: false,
+            coverageResolutionStatus,
+            benefitType,
+            beneficiaryResidencyScope,
+            sourceDocumentAvailable);
 
     private sealed class FakeRepository : IManagementPlatformStatutoryDiscountPolicyCoverageRepository
     {

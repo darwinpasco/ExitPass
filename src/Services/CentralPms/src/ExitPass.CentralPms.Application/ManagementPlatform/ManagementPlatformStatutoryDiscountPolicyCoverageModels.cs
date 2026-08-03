@@ -31,6 +31,14 @@ public static class ManagementPlatformStatutoryDiscountPolicyCoverageValues
     public const string OrdinanceSourceUnavailable = "ORDINANCE_SOURCE_UNAVAILABLE";
     public const string TransientDependencyFailure = "TRANSIENT_DEPENDENCY_FAILURE";
     public const string UnexpectedFailure = "UNEXPECTED_INTERNAL_FAILURE";
+
+    public const string CanonicalLguCoverageSource = "CANONICAL_LGU_POLICY_COVERAGE";
+    public const string DedicatedRegistrySource = "STATUTORY_POLICY_REGISTRY";
+    public const string CompatibilityPolicyReferenceSource = "DISCOUNT_POLICY_REFERENCES_COMPATIBILITY";
+
+    public const string ScopeJurisdictionSingleLgu = "SINGLE_LGU";
+    public const string ScopeJurisdictionMultiLgu = "MULTI_LGU";
+    public const string ScopeJurisdictionMissing = "NO_CANONICAL_LGU";
 }
 
 public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageQuery(
@@ -103,7 +111,17 @@ public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageRow(
     DateTimeOffset? LastAuthoritativeUpdateTimestamp,
     string DataQualityClassification,
     string ReasonClassification,
-    string SourceClassification);
+    string SourceClassification,
+    Guid? CanonicalJurisdictionReference = null,
+    string? CanonicalJurisdictionCode = null,
+    string? CanonicalJurisdictionName = null,
+    string? CanonicalJurisdictionType = null,
+    string? MetropolitanAreaReferences = null,
+    string? ScopeJurisdictionClassification = null,
+    string? BenefitType = null,
+    string? BeneficiaryResidencyScope = null,
+    bool? SourceDocumentAvailable = null,
+    string? CoverageResolutionStatus = null);
 
 public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadResult(
     ManagementPlatformStatutoryDiscountPolicyCoverageScopeReadStatus Status,
@@ -125,7 +143,13 @@ public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageSite(
     Guid SiteGroupId,
     string? SiteName,
     string? SiteGroupName,
-    string? LguCode);
+    string? LguCode,
+    Guid? LocalGovernmentUnitId = null,
+    string? CanonicalJurisdictionCode = null,
+    string? CanonicalJurisdictionName = null,
+    string? CanonicalJurisdictionType = null,
+    string? MetropolitanAreaReferences = null,
+    string? ScopeJurisdictionClassification = null);
 
 public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageCandidate(
     Guid SiteId,
@@ -144,4 +168,10 @@ public sealed record ManagementPlatformStatutoryDiscountPolicyCoverageCandidate(
     DateOnly? EffectiveTo,
     string? SourceReference,
     DateTimeOffset? UpdatedAt,
-    string SourceClassification);
+    string SourceClassification,
+    bool CoverageAvailable = true,
+    bool AutoApplicationAllowed = false,
+    string? CoverageResolutionStatus = null,
+    string? BenefitType = null,
+    string? BeneficiaryResidencyScope = null,
+    bool? SourceDocumentAvailable = null);
