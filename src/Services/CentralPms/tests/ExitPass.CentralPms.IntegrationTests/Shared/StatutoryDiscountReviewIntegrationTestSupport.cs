@@ -12,6 +12,19 @@ internal sealed record SeededServiceChannelReview(
     StatutoryDiscountDecisionV2Record Decision,
     StatutoryDiscountServiceChannelReviewDetail Review);
 
+internal sealed record StatutoryDiscountWorkflowBoundaryRowCounts(
+    long DecisionCommandCount,
+    long ReviewCount,
+    long ApplicationCommandCount,
+    long PayableBasisApplicationCount,
+    long AppliedTariffSnapshotCount,
+    long PaymentAttemptCount,
+    long PaymentConfirmationCount,
+    long TerminalCashCommandCount,
+    long TerminalCashCommandAuditCount,
+    long FiscalIssuanceReferenceCount,
+    long ParkingSessionCount);
+
 internal static class StatutoryDiscountReviewIntegrationTestSupport
 {
     private static readonly SemaphoreSlim PatchLock = new(1, 1);
@@ -359,6 +372,79 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             """,
             decisionCommandId);
 
+    public static async Task<StatutoryDiscountWorkflowBoundaryRowCounts> WorkflowBoundaryRowCountsAsync(
+        Guid parkingSessionId,
+        Guid statutoryDiscountDecisionCommandId)
+    {
+        const string sql = """
+            SELECT
+                (SELECT COUNT(*) FROM discounts.statutory_discount_decision_commands
+                    WHERE parking_session_id = @parking_session_id) AS decision_command_count,
+                (SELECT COUNT(*) FROM operator_console.statutory_discount_service_channel_reviews
+                    WHERE statutory_discount_decision_command_id = @decision_command_id) AS review_count,
+                (SELECT COUNT(*) FROM discounts.statutory_discount_payable_basis_application_commands
+                    WHERE statutory_discount_decision_command_id = @decision_command_id) AS application_command_count,
+                (SELECT COUNT(*) FROM discounts.statutory_discount_payable_basis_applications
+                    WHERE parking_session_id = @parking_session_id) AS payable_basis_application_count,
+                (SELECT COUNT(*) FROM core.tariff_snapshots
+                    WHERE parking_session_id = @parking_session_id
+                      AND statutory_discount_validation_id IS NOT NULL) AS applied_tariff_snapshot_count,
+                (SELECT COUNT(*) FROM core.payment_attempts
+                    WHERE parking_session_id = @parking_session_id) AS payment_attempt_count,
+                (SELECT COUNT(*) FROM core.payment_confirmations AS pc
+                    INNER JOIN core.payment_attempts AS pa
+                        ON pa.payment_attempt_id = pc.payment_attempt_id
+                    WHERE pa.parking_session_id = @parking_session_id) AS payment_confirmation_count,
+                (SELECT COUNT(*) FROM core.fiscal_issuance_references
+                    WHERE parking_session_id = @parking_session_id) AS fiscal_issuance_reference_count,
+                (SELECT COUNT(*) FROM core.parking_sessions
+                    WHERE parking_session_id = @parking_session_id) AS parking_session_count;
+            """;
+
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        command.Parameters.Add("decision_command_id", NpgsqlDbType.Uuid).Value = statutoryDiscountDecisionCommandId;
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            throw new InvalidOperationException("Unable to read statutory discount workflow boundary row counts.");
+        }
+
+        var terminalCashCommandCount = await CountIfTablesExistAsync(
+            ["core.terminal_cash_payment_commands"],
+            """
+            SELECT COUNT(*)::bigint
+            FROM core.terminal_cash_payment_commands
+            WHERE parking_session_id = @parking_session_id;
+            """,
+            parkingSessionId);
+        var terminalCashCommandAuditCount = await CountIfTablesExistAsync(
+            ["core.terminal_cash_payment_commands", "core.terminal_cash_payment_command_audits"],
+            """
+            SELECT COUNT(*)::bigint
+            FROM core.terminal_cash_payment_command_audits AS audit
+            INNER JOIN core.terminal_cash_payment_commands AS command
+                ON command.terminal_cash_payment_command_id = audit.terminal_cash_payment_command_id
+            WHERE command.parking_session_id = @parking_session_id;
+            """,
+            parkingSessionId);
+
+        return new StatutoryDiscountWorkflowBoundaryRowCounts(
+            reader.GetInt64(reader.GetOrdinal("decision_command_count")),
+            reader.GetInt64(reader.GetOrdinal("review_count")),
+            reader.GetInt64(reader.GetOrdinal("application_command_count")),
+            reader.GetInt64(reader.GetOrdinal("payable_basis_application_count")),
+            reader.GetInt64(reader.GetOrdinal("applied_tariff_snapshot_count")),
+            reader.GetInt64(reader.GetOrdinal("payment_attempt_count")),
+            reader.GetInt64(reader.GetOrdinal("payment_confirmation_count")),
+            terminalCashCommandCount,
+            terminalCashCommandAuditCount,
+            reader.GetInt64(reader.GetOrdinal("fiscal_issuance_reference_count")),
+            reader.GetInt64(reader.GetOrdinal("parking_session_count")));
+    }
+
     public static async Task<IReadOnlyList<string>> SensitiveReviewColumnNamesAsync()
     {
         const string sql = """
@@ -406,6 +492,29 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.Add("id", NpgsqlDbType.Uuid).Value = id;
         return (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    private static async Task<long> CountIfTablesExistAsync(
+        IReadOnlyCollection<string> qualifiedTableNames,
+        string sql,
+        Guid parkingSessionId)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        foreach (var qualifiedTableName in qualifiedTableNames)
+        {
+            await using var tableCommand = new NpgsqlCommand("SELECT to_regclass(@table_name) IS NOT NULL;", connection);
+            tableCommand.Parameters.Add("table_name", NpgsqlDbType.Text).Value = qualifiedTableName;
+            var exists = (bool)(await tableCommand.ExecuteScalarAsync() ?? false);
+            if (!exists)
+            {
+                return 0;
+            }
+        }
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = parkingSessionId;
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 
     private static async Task SeedReviewerUserAsync(PaymentTestContext context, Guid reviewerUserId)

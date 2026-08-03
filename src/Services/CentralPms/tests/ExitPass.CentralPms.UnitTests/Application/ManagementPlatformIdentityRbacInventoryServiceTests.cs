@@ -40,7 +40,8 @@ public sealed class ManagementPlatformIdentityRbacInventoryServiceTests
 
         inventory.Permissions.Should().Contain(permission =>
             permission.PermissionKey == "statutory-discounts.payable-basis.apply" &&
-            permission.Status == "implemented");
+            permission.Status == "target-only" &&
+            permission.MappedPolicies.Count == 0);
 
         inventory.RoleBundles.Single(role => role.RoleKey == "operations-supervisor")
             .TypicalAccessRights.Should().NotContain("statutory-discounts.payable-basis.apply");

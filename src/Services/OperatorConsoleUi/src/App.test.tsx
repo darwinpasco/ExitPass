@@ -69,7 +69,6 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       listStatutoryDiscountEvidence: vi.fn(),
       captureStatutoryDiscountEvidence: vi.fn(),
       submitStatutoryDiscountDecision: vi.fn(),
-      applyStatutoryDiscountPayableBasis: vi.fn(),
       dryRunProductionPolicyImport: vi.fn(),
       submitProductionPolicyImportReview: vi.fn(),
       decideProductionPolicyImportReview: vi.fn(),
@@ -611,10 +610,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
   });
 
   it("StatutoryDiscountDetail_ApprovesDecisionOnlyAndShowsLaterPaymentApplicationGuidance", async () => {
-    const onPayableBasisApply = vi.fn();
     render(
       <App
-        apiClient={createMockOperatorConsoleApiClient({ onPayableBasisApply })}
+        apiClient={createMockOperatorConsoleApiClient()}
         initialPath={`/operator-console/statutory-discounts/${firstDraftId}`}
       />
     );
@@ -630,11 +628,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
     expect(screen.queryByText("Original tariff snapshot")).not.toBeInTheDocument();
     expect(screen.queryByText("Application ID")).not.toBeInTheDocument();
-    expect(onPayableBasisApply).not.toHaveBeenCalled();
   });
 
   it("StatutoryDiscountDetail_DoesNotExposeAmountApplicationForApprovedDecisionWithoutSnapshot", async () => {
-    const onPayableBasisApply = vi.fn();
     const approvedDraftWithoutSnapshot: StatutoryDiscountDraftDetail = {
       ...createApprovedDraft(),
       originalTariffSnapshotId: undefined,
@@ -646,8 +642,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient({
-          drafts: [approvedDraftWithoutSnapshot],
-          onPayableBasisApply
+          drafts: [approvedDraftWithoutSnapshot]
         })}
         initialPath={`/operator-console/statutory-discounts/${approvedDraftWithoutSnapshot.draftId}`}
       />
@@ -658,7 +653,6 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
     expect(screen.queryByText("Original tariff snapshot")).not.toBeInTheDocument();
-    expect(onPayableBasisApply).not.toHaveBeenCalled();
   });
 
   it("StatutoryDiscountDetail_CapturesEvidenceAndEnablesApprovalAfterRefresh", async () => {

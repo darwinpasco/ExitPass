@@ -18,7 +18,6 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 /// <summary>
 /// Verifies least-privilege RBAC contracts for Operator Console statutory discount endpoints.
 /// </summary>
-[Collection(OperatorConsoleManualFixtureCollection.Name)]
 public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
 {
     private const string SessionLookupEndpoint = "/v1/ops/operator-console/sessions/lookup";
@@ -46,6 +45,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     private const string AuditReadPermission = "statutory-discounts.audit.read";
     private const string StatusReadOnlyPermission = "fiscal-issuance.status.read";
     private const string PolicyImportReviewPermission = "operator-console.policy-import-review.review";
+    private const string ReconciliationManagePermission = "reconciliation.manage";
 
     private static readonly Guid UserId = Guid.Parse("99000000-0000-0000-0000-000000000001");
     private static readonly Guid DeviceBindingId = Guid.Parse("99000000-0000-0000-0000-000000000002");
@@ -76,7 +76,6 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/decision", "POST", "OperatorConsoleStatutoryDiscountDecisionMutate")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/evidence", "POST", "OperatorConsoleStatutoryDiscountEvidenceCapture")]
     [InlineData("/v1/ops/operator-console/statutory-discounts/{draftId:guid}/evidence", "GET", "OperatorConsoleStatutoryDiscountEvidenceView")]
-    [InlineData("/v1/ops/operator-console/statutory-discounts/{validationId:guid}/apply-payable-basis", "POST", "OperatorConsoleStatutoryDiscountPayableBasisApply")]
     [InlineData(PolicyResolutionEndpoint, "POST", "OperatorConsoleStatutoryDiscountPolicyResolve")]
     public void StatutoryDiscountEndpointsDeclareExpectedRbacPolicy(string route, string method, string policyName)
     {
@@ -121,7 +120,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
 
         (await SendEvidenceCaptureAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await SendDecisionAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         services.EvidenceCaptureCallCount.Should().Be(0);
         services.DecisionCallCount.Should().Be(0);
         services.ApplyCallCount.Should().Be(0);
@@ -138,7 +137,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         services.EvidenceCaptureCallCount.Should().Be(1);
 
         (await SendDecisionAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         services.DecisionCallCount.Should().Be(0);
         services.ApplyCallCount.Should().Be(0);
     }
@@ -196,7 +195,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         services.DecisionCallCount.Should().Be(1);
 
         (await SendDecisionAsync(client, "REJECT")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         services.DecisionCallCount.Should().Be(1);
         services.ApplyCallCount.Should().Be(0);
     }
@@ -212,7 +211,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         services.DecisionCallCount.Should().Be(1);
 
         (await SendDecisionAsync(client, "APPROVE")).StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         services.DecisionCallCount.Should().Be(1);
         services.ApplyCallCount.Should().Be(0);
     }
@@ -233,17 +232,28 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
     }
 
     [Fact]
-    public async Task ApplyPayableBasisUser_CanApplyApprovedValidation_ButCannotApprove()
+    public async Task PayableBasisApplyPermission_CannotUseRemovedOperatorConsoleRouteOrApprove()
     {
         var services = new FakeStatutoryDiscountServices();
         using var factory = CreateFactory(services);
         using var client = CreateClient(factory, ApplyPermission);
 
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.OK);
-        services.ApplyCallCount.Should().Be(1);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        services.ApplyCallCount.Should().Be(0);
 
         (await SendDecisionAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
         services.DecisionCallCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ReconciliationManage_CannotBypassRemovedOperatorConsoleApplyRoute()
+    {
+        var services = new FakeStatutoryDiscountServices();
+        using var factory = CreateFactory(services);
+        using var client = CreateClient(factory, ReconciliationManagePermission);
+
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
+        services.ApplyCallCount.Should().Be(0);
     }
 
     [Fact]
@@ -291,7 +301,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         (await SendDraftAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await SendEvidenceCaptureAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
         (await SendDecisionAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         services.DraftCallCount.Should().Be(0);
         services.EvidenceCaptureCallCount.Should().Be(0);
         services.DecisionCallCount.Should().Be(0);
@@ -306,7 +316,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
         using var client = CreateClient(factory, PolicyImportReviewPermission);
 
         (await SendDraftAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await SendApplyAsync(client)).StatusCode.Should().Be(HttpStatusCode.NotFound);
         services.DraftCallCount.Should().Be(0);
         services.ApplyCallCount.Should().Be(0);
     }
@@ -472,15 +482,17 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
             CorrelationId));
 
     private static Task<HttpResponseMessage> SendApplyAsync(HttpClient client) =>
-        client.PostAsJsonAsync(string.Format(ApplyEndpoint, DraftId), new OperatorConsoleStatutoryDiscountApplyPayableBasisRequest(
-            UserId,
-            DeviceBindingId,
-            SiteId,
-            SiteGroupId,
-            ShiftId,
-            OriginalTariffSnapshotId,
-            "rbac-apply",
-            CorrelationId));
+        client.PostAsJsonAsync(string.Format(ApplyEndpoint, DraftId), new
+        {
+            userId = UserId,
+            operatorDeviceBindingId = DeviceBindingId,
+            siteId = SiteId,
+            siteGroupId = SiteGroupId,
+            operatorShiftId = ShiftId,
+            originalTariffSnapshotId = OriginalTariffSnapshotId,
+            idempotencyKey = "rbac-apply",
+            correlationId = CorrelationId
+        });
 
     private static Task<HttpResponseMessage> SendPolicyResolutionAsync(HttpClient client) =>
         client.PostAsJsonAsync(PolicyResolutionEndpoint, new OperatorConsoleStatutoryDiscountPolicyResolutionRequest(

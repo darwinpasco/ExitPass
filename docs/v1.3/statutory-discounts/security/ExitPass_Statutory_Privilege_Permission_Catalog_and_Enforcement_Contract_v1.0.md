@@ -63,7 +63,7 @@ Central PMS files inspected include:
 | Policy resolution/read | `statutory-discounts.policy.resolve` | Human operational policy reader | Implemented |
 | Policy read/admin target | `statutory-discount-policy.view`, `statutory-discount-policy.manage` | Policy administrator | Target/legacy Management Platform catalog, not runtime policy-management API |
 | Audit read | `statutory-discounts.audit.read` | Auditor/compliance | Implemented |
-| Payment-time payable-basis application | `statutory-discounts.payable-basis.apply` | WebPay/APT service boundary target | Existing endpoint permission remains; human UAT supervisor grants removed in this worktree |
+| Payment-time payable-basis application | `statutory-discounts.payable-basis.apply` | WebPay/APT service boundary target | Permission identifier retained as payment-time service-channel authority; no Operator Console route maps it |
 | Application status read | `statutory-discounts.application.read` | Service/support/audit target | Target-only; no separate Central PMS named policy found |
 | Reconciliation read | `reconciliation.view` | Reconciliation/support | Implemented |
 
@@ -83,7 +83,7 @@ Compatibility note: `statutory-discounts.decision.review` remains for read/conte
 | `OperatorConsoleStatutoryDiscountDecisionReject` | Human | `statutory-discounts.decision.reject` or `reconciliation.manage` | Same as decision mutate | Same as decision mutate | Catalog only | Implemented in catalog |
 | `OperatorConsoleStatutoryDiscountEvidenceView` | Evidence viewer/human | `statutory-discounts.evidence.view` or `reconciliation.manage` | Operator Console access evaluation | Evidence access separate from queue/detail | Evidence metadata GET | Implemented |
 | `OperatorConsoleStatutoryDiscountEvidenceCapture` | Human capture actor | `statutory-discounts.evidence.capture` or `reconciliation.manage` | Operator Console access evaluation | Evidence capture separate from approval | Evidence metadata POST | Implemented |
-| `OperatorConsoleStatutoryDiscountPayableBasisApply` | Payment-time service target; legacy human route remains | `statutory-discounts.payable-basis.apply` or `reconciliation.manage` | Operator Console access evaluation if legacy route used | Must not be invoked by approval/rejection | Legacy Operator Console apply route | Contradictory legacy route remains; UI removed and human UAT grants removed |
+| `OperatorConsoleStatutoryDiscountPayableBasisApply` | Removed | Removed from Central PMS RBAC policy catalog | None | Operator Console must not apply payable basis | Former legacy Operator Console apply route | Removed; legacy path returns no endpoint and cannot invoke workflow writes |
 | `OperatorConsoleStatutoryDiscountPolicyResolve` | Human policy reader | `statutory-discounts.policy.resolve` or `reconciliation.manage` | Operator Console access evaluation | Policy read does not grant review | Policy resolve | Implemented |
 | `OperatorConsoleStatutoryDiscountAuditRead` | Auditor/compliance | `statutory-discounts.audit.read` or `reconciliation.manage` | Operator Console access evaluation filters | Read-only | Audit report | Implemented |
 | `CentralPmsStatutoryDiscountDecisionSubmit` | Service or operator submitter | channel-specific submit permission or `reconciliation.manage` | Source channel maps to required permission; browser fields do not grant auth | Service channel cannot approve/reject | `POST /v1/statutory-discounts/decisions` | Implemented |
@@ -107,7 +107,7 @@ Compatibility note: `statutory-discounts.decision.review` remains for read/conte
 | `/v1/ops/operator-console/statutory-discounts/{draftId}/decision` | POST | Legacy OC approve/reject | Human reviewer | `OperatorConsoleStatutoryDiscountDecisionMutate` | Same plus handler decision check | approve for APPROVE, reject for REJECT | Access evaluation | Self-review guard exists in legacy service | Implemented |
 | `/v1/ops/operator-console/statutory-discounts/{draftId}/evidence` | GET | Evidence metadata read | Evidence viewer | `OperatorConsoleStatutoryDiscountEvidenceView` | Same | `statutory-discounts.evidence.view` | Access evaluation | Evidence access separate | Implemented |
 | `/v1/ops/operator-console/statutory-discounts/{draftId}/evidence` | POST | Evidence metadata capture | Capture actor | `OperatorConsoleStatutoryDiscountEvidenceCapture` | Same | `statutory-discounts.evidence.capture` | Access evaluation | Capture separate from approval | Implemented |
-| `/v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis` | POST | Legacy payable-basis application | Legacy operator route | `OperatorConsoleStatutoryDiscountPayableBasisApply` | Future service-only payment-time route | `statutory-discounts.payable-basis.apply` | Access evaluation | Must not be side effect of approval | Contradictory legacy route remains |
+| `/v1/ops/operator-console/statutory-discounts/{validationId}/apply-payable-basis` | POST | Former legacy payable-basis application | None | Removed | Service-channel application remains on shared statutory decision/application authority | None on Operator Console path | None | Operator Console must not apply payable basis | Removed; route is absent from endpoint catalog and Swagger |
 | `/v1/ops/operator-console/statutory-discounts/resolve-policy` | POST | Policy resolution read | Human policy reader | `OperatorConsoleStatutoryDiscountPolicyResolve` | Same | `statutory-discounts.policy.resolve` | Access evaluation | Read-only | Implemented |
 | `/v1/ops/operator-console/audit/statutory-discounts` | GET | Audit report | Auditor/compliance | `OperatorConsoleStatutoryDiscountAuditRead` | Same | `statutory-discounts.audit.read` | Access evaluation filters | Read-only | Implemented |
 | Policy import review routes under `/v1/ops/operator-console/statutory-discounts/policies/import` | POST/GET | Policy import workflow | Policy admin/reviewer | `OperatorConsolePolicyImportReview*` | Same | `operator-console.policy-import-review.*` | Import workflow rules | Policy admin does not imply runtime review | Implemented and separated from runtime statutory policies |
@@ -148,7 +148,7 @@ Current enforcement status:
 | Evidence separation | Implemented at permission-policy level: evidence read/capture are separate from queue/detail and approve/reject. Raw evidence storage/viewing is not implemented here. |
 | Service separation | Implemented for human review decision routes: service identity is rejected. Shared service submit/read routes remain service-capable. |
 | Approve/reject distinction | Implemented by handler-level decision-specific permission check and tests. |
-| Application separation | Implemented for approval/rejection side effects and local UAT human role grants. Legacy Operator Console apply endpoint remains as a compatibility risk. |
+| Application separation | Implemented for approval/rejection side effects and Operator Console route removal. WebPay/APT service-channel application remains separate. |
 
 ## Fail-Closed Behavior
 
@@ -160,7 +160,7 @@ Current enforcement status:
 
 ## Compatibility And Migration Notes
 
-- No existing public route was removed.
+- The legacy Operator Console payable-basis application route was removed because no compatibility requirement justified retaining a hidden human application path.
 - `OperatorConsoleStatutoryDiscountDecisionReview` is preserved but narrowed to read/context only.
 - `OperatorConsoleStatutoryDiscountDecisionMutate` is an endpoint metadata compatibility policy because ASP.NET endpoint metadata cannot vary by request body decision. The endpoint handler performs the exact approve/reject permission check.
 - Local/UAT role bundles were updated to remove human reviewer `statutory-discounts.payable-basis.apply`.
@@ -187,14 +187,13 @@ Not implemented in this task:
 - Evidence-object access retrieval.
 - Service identity lifecycle management.
 - Full Site/Site Group scoped authorization in the RBAC middleware.
-- Removal of legacy Operator Console payable-basis apply endpoint.
+- RBAC administration writes and canonical reference-data promotion for final production grant management.
 
 ## Gaps And Blockers
 
 | Gap | Severity | Blocking effect |
 |---|---|---|
 | Canonical generated DB reference data still grants UAT `OPERATIONS_SUPERVISOR` payable-basis apply and lacks new queue/detail/application-read permission rows. | High | Blocks production RBAC canonicalization and full H-002 write support. |
-| Legacy Operator Console apply-payable-basis route still exists. UI no longer calls it and local UAT human grants are removed, but the route remains callable with the apply permission. | High | Blocks declaring Operator Console application authority fully retired. |
 | RBAC middleware does not enforce durable Site/Site Group grant scope. | High | Blocks production Site-scoped RBAC administration. |
 | Service-channel application permissions are not split by WebPay/APT in the current application endpoint policy. | Medium | Blocks final service-principal least-privilege contract. |
 | Service-channel self-review comparison is not fully proven. | Medium | Blocks full SoD certification. |

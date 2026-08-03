@@ -36,7 +36,6 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("OperatorConsoleStatutoryDiscountDecisionMutate", "statutory-discounts.decision.reject")]
     [InlineData("OperatorConsoleStatutoryDiscountDecisionApprove", "statutory-discounts.decision.approve")]
     [InlineData("OperatorConsoleStatutoryDiscountDecisionReject", "statutory-discounts.decision.reject")]
-    [InlineData("OperatorConsoleStatutoryDiscountPayableBasisApply", "statutory-discounts.payable-basis.apply")]
     [InlineData("OperatorConsoleStatutoryDiscountPolicyResolve", "statutory-discounts.policy.resolve")]
     [InlineData("OperatorConsoleStatutoryDiscountAuditRead", "statutory-discounts.audit.read")]
     [InlineData("WebPayStatutoryDiscountPendingLifecycleRediscover", "statutory-discounts.pending-lifecycle.rediscover.webpay")]
@@ -82,7 +81,6 @@ public sealed class CentralPmsRbacPolicyCatalogTests
             "OperatorConsoleStatutoryDiscountDecisionMutate",
             "OperatorConsoleStatutoryDiscountDecisionApprove",
             "OperatorConsoleStatutoryDiscountDecisionReject",
-            "OperatorConsoleStatutoryDiscountPayableBasisApply",
             "OperatorConsoleStatutoryDiscountPolicyResolve",
             "OperatorConsoleStatutoryDiscountAuditRead"
         }
@@ -101,6 +99,17 @@ public sealed class CentralPmsRbacPolicyCatalogTests
             .ToArray();
 
         policyImportPermissions.Should().NotContain(permission => permission.StartsWith("statutory-discounts.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ListPolicyMappings_DoesNotExposeOperatorConsolePayableBasisApplyPolicy()
+    {
+        var mappings = CentralPmsRbacPolicyCatalog.ListPolicyMappings();
+
+        mappings.Should().NotContainKey("OperatorConsoleStatutoryDiscountPayableBasisApply");
+        mappings.Values.SelectMany(permissions => permissions)
+            .Should()
+            .NotContain("statutory-discounts.payable-basis.apply");
     }
 
     [Fact]
