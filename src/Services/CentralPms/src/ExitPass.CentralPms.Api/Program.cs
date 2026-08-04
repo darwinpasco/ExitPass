@@ -169,6 +169,7 @@ app.MapStatutoryEvidenceMetadataEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
+app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
 app.MapAptPayableBasisEndpoints();
 app.MapAptStatutoryOrdinanceAvailabilityEndpoints();
@@ -701,6 +702,13 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
         new ManagementPlatformStatutoryDiscountPolicyCoverageRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageService, ManagementPlatformStatutoryDiscountPolicyCoverageService>();
+    builder.Services.AddScoped<IManagementPlatformStatutoryEvidenceGovernanceRepository>(_ =>
+        new ManagementPlatformStatutoryEvidenceGovernanceRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementPlatformStatutoryEvidenceGovernanceService>(serviceProvider =>
+        new ManagementPlatformStatutoryEvidenceGovernanceService(
+            serviceProvider.GetRequiredService<IManagementPlatformStatutoryEvidenceGovernanceRepository>(),
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value,
+            serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddScoped<IAptStatutoryOrdinanceAvailabilityService, AptStatutoryOrdinanceAvailabilityService>();
     builder.Services.Configure<PosServerSalesInvoiceProfileAdministrationOptions>(
         builder.Configuration.GetSection(PosServerSalesInvoiceProfileAdministrationOptions.SectionName));

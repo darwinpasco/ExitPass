@@ -84,6 +84,10 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "statutory-discount-policy.view"
             ],
+            ["StatutoryEvidenceGovernanceView"] =
+            [
+                "statutory-discounts.evidence-governance.view"
+            ],
             ["SalesInvoiceProfileRead"] =
             [
                 "sales-invoice-profile.read"
