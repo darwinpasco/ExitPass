@@ -4,7 +4,7 @@ using NpgsqlTypes;
 
 namespace ExitPass.CentralPms.Infrastructure.StatutoryEvidence;
 
-public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMetadataRepository
+public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMetadataRepository, IStatutoryEvidenceUploadRepository
 {
     private const string HashSourceVersion = StatutoryEvidenceMetadataConstants.SemanticHashSourceVersion;
     private readonly string _connectionString;
@@ -361,6 +361,421 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
         await InsertEventAsync(connection, null, evidenceSetReference.HasValue ? "CROSS_SCOPE_ATTEMPT" : "MALFORMED_REFERENCE_LOOKUP", "DENIED", null, null, null, reasonCode, actor.SourceChannel, siteId, siteGroupId, parkingSessionId, actor, correlationId, cancellationToken);
     }
 
+    public async Task<StatutoryEvidenceUploadTarget?> GetUploadTargetAsync(
+        Guid evidenceSetReference,
+        Guid evidenceItemReference,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT set_table.statutory_evidence_set_id,
+                   item.statutory_evidence_item_id
+            FROM discounts.statutory_evidence_sets set_table
+            JOIN discounts.statutory_evidence_items item
+              ON item.statutory_evidence_set_id = set_table.statutory_evidence_set_id
+            WHERE set_table.evidence_set_reference = @set_reference
+              AND item.evidence_item_reference = @item_reference;
+            """,
+            connection);
+        command.Parameters.AddWithValue("set_reference", evidenceSetReference);
+        command.Parameters.AddWithValue("item_reference", evidenceItemReference);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var setId = reader.GetGuid(0);
+        var itemId = reader.GetGuid(1);
+        await reader.CloseAsync();
+        var set = await GetEvidenceSetByIdAsync(setId, cancellationToken);
+        var item = set?.Items.SingleOrDefault(value => value.EvidenceItemReference == evidenceItemReference);
+        return set is null || item is null
+            ? null
+            : new StatutoryEvidenceUploadTarget(setId, itemId, set, item);
+    }
+
+    public async Task<bool> HasSemanticConflictAsync(
+        string idempotencyScope,
+        string idempotencyKey,
+        string semanticRequestHash,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM discounts.statutory_evidence_operations
+                WHERE idempotency_scope = @scope
+                  AND idempotency_key = @key
+                  AND semantic_request_hash <> @hash
+            );
+            """,
+            connection);
+        command.Parameters.AddWithValue("scope", idempotencyScope);
+        command.Parameters.AddWithValue("key", idempotencyKey);
+        command.Parameters.AddWithValue("hash", semanticRequestHash);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+    }
+
+    public async Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> FindUploadAuthorizationByOperationAsync(
+        string idempotencyScope,
+        string idempotencyKey,
+        string semanticRequestHash,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT upload_authorization.statutory_evidence_upload_authorization_id,
+                   upload_authorization.upload_authorization_reference,
+                   upload_authorization.statutory_evidence_set_id,
+                   upload_authorization.statutory_evidence_item_id,
+                   upload_authorization.statutory_evidence_operation_id,
+                   upload_authorization.provider_type,
+                   upload_authorization.bucket_reference,
+                   upload_authorization.internal_object_key,
+                   upload_authorization.upload_method,
+                   upload_authorization.expected_content_type,
+                   upload_authorization.expected_content_length,
+                   upload_authorization.checksum_algorithm,
+                   upload_authorization.expected_checksum_sha256,
+                   upload_authorization.authorization_status,
+                   upload_authorization.issued_at,
+                   upload_authorization.expires_at,
+                   upload_authorization.consumed_at,
+                   upload_authorization.verified_content_type,
+                   upload_authorization.verified_content_length,
+                   upload_authorization.verified_checksum_sha256,
+                   upload_authorization.provider_object_version,
+                   upload_authorization.provider_encryption_classification,
+                   upload_authorization.failure_classification
+            FROM discounts.statutory_evidence_operations operation
+            JOIN discounts.statutory_evidence_upload_authorizations upload_authorization
+              ON upload_authorization.statutory_evidence_operation_id = operation.statutory_evidence_operation_id
+            WHERE operation.idempotency_scope = @scope
+              AND operation.idempotency_key = @key
+              AND operation.semantic_request_hash = @hash;
+            """,
+            connection);
+        command.Parameters.AddWithValue("scope", idempotencyScope);
+        command.Parameters.AddWithValue("key", idempotencyKey);
+        command.Parameters.AddWithValue("hash", semanticRequestHash);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadUploadAuthorization(reader) : null;
+    }
+
+    public async Task<StatutoryEvidenceUploadAuthorizationStorageRecord> CreateUploadAuthorizationAsync(
+        StatutoryEvidenceUploadAuthorizationCommand command,
+        StatutoryEvidenceUploadTarget target,
+        string semanticRequestHash,
+        string providerType,
+        string bucketReference,
+        string internalObjectKey,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var operationId = await InsertOperationAsync(
+            connection,
+            transaction,
+            "AUTHORIZE_UPLOAD",
+            "ACCEPTED",
+            command.IdempotencyScope,
+            command.IdempotencyKey,
+            semanticRequestHash,
+            target.EvidenceSetId,
+            target.EvidenceItemId,
+            "ACCEPTED",
+            command.CorrelationId,
+            command.Actor,
+            cancellationToken);
+
+        var authorizationId = Guid.NewGuid();
+        var authorizationReference = Guid.NewGuid();
+        await using (var insert = new NpgsqlCommand(
+            """
+            INSERT INTO discounts.statutory_evidence_upload_authorizations (
+                statutory_evidence_upload_authorization_id,
+                upload_authorization_reference,
+                statutory_evidence_set_id,
+                statutory_evidence_item_id,
+                statutory_evidence_operation_id,
+                provider_type,
+                bucket_reference,
+                internal_object_key,
+                upload_method,
+                expected_content_type,
+                expected_content_length,
+                checksum_algorithm,
+                expected_checksum_sha256,
+                expires_at,
+                correlation_id,
+                created_by_user_id,
+                created_by_service_identity_id,
+                updated_by_user_id,
+                updated_by_service_identity_id)
+            VALUES (
+                @authorization_id,
+                @authorization_reference,
+                @set_id,
+                @item_id,
+                @operation_id,
+                @provider_type,
+                @bucket_reference,
+                @internal_object_key,
+                'PUT',
+                @expected_content_type,
+                @expected_content_length,
+                'SHA256',
+                @expected_checksum,
+                @expires_at,
+                @correlation_id,
+                @user_id,
+                @service_identity_id,
+                @user_id,
+                @service_identity_id);
+            """,
+            connection,
+            transaction))
+        {
+            insert.Parameters.AddWithValue("authorization_id", authorizationId);
+            insert.Parameters.AddWithValue("authorization_reference", authorizationReference);
+            insert.Parameters.AddWithValue("set_id", target.EvidenceSetId);
+            insert.Parameters.AddWithValue("item_id", target.EvidenceItemId);
+            insert.Parameters.AddWithValue("operation_id", operationId);
+            insert.Parameters.AddWithValue("provider_type", providerType);
+            insert.Parameters.AddWithValue("bucket_reference", bucketReference);
+            insert.Parameters.AddWithValue("internal_object_key", internalObjectKey);
+            insert.Parameters.AddWithValue("expected_content_type", command.DeclaredContentType);
+            insert.Parameters.AddWithValue("expected_content_length", command.DeclaredContentLength);
+            insert.Parameters.AddWithValue("expected_checksum", command.DeclaredChecksumSha256.ToLowerInvariant());
+            insert.Parameters.AddWithValue("expires_at", expiresAt);
+            AddActorParameters(insert, command.CorrelationId, command.Actor);
+            await insert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var updateItem = new NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_evidence_items
+               SET upload_status = 'AUTHORIZED'::discounts.statutory_evidence_upload_status_enum,
+                   declared_content_type = @declared_content_type,
+                   updated_at = now(),
+                   updated_by_user_id = @user_id,
+                   updated_by_service_identity_id = @service_identity_id,
+                   row_version = row_version + 1
+             WHERE statutory_evidence_item_id = @item_id
+               AND upload_status IN ('NOT_AUTHORIZED', 'AUTHORIZED', 'FAILED', 'EXPIRED')
+               AND deletion_status <> 'DELETED'::discounts.statutory_evidence_deletion_status_enum;
+            """,
+            connection,
+            transaction))
+        {
+            updateItem.Parameters.AddWithValue("item_id", target.EvidenceItemId);
+            updateItem.Parameters.AddWithValue("declared_content_type", command.DeclaredContentType);
+            updateItem.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.UserId ?? DBNull.Value;
+            updateItem.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.ServiceIdentityId ?? DBNull.Value;
+            if (await updateItem.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw new InvalidOperationException("Evidence item upload lifecycle does not allow authorization.");
+            }
+        }
+
+        await InsertEventAsync(connection, transaction, "UPLOAD_AUTHORIZATION_ISSUED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return (await GetUploadAuthorizationAsync(authorizationReference, target.EvidenceSetId, target.EvidenceItemId, cancellationToken))!;
+    }
+
+    public async Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> GetUploadAuthorizationAsync(
+        Guid authorizationReference,
+        Guid evidenceSetId,
+        Guid evidenceItemId,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            """
+            SELECT statutory_evidence_upload_authorization_id,
+                   upload_authorization_reference,
+                   statutory_evidence_set_id,
+                   statutory_evidence_item_id,
+                   statutory_evidence_operation_id,
+                   provider_type,
+                   bucket_reference,
+                   internal_object_key,
+                   upload_method,
+                   expected_content_type,
+                   expected_content_length,
+                   checksum_algorithm,
+                   expected_checksum_sha256,
+                   authorization_status,
+                   issued_at,
+                   expires_at,
+                   consumed_at,
+                   verified_content_type,
+                   verified_content_length,
+                   verified_checksum_sha256,
+                   provider_object_version,
+                   provider_encryption_classification,
+                   failure_classification
+            FROM discounts.statutory_evidence_upload_authorizations
+            WHERE upload_authorization_reference = @authorization_reference
+              AND statutory_evidence_set_id = @set_id
+              AND statutory_evidence_item_id = @item_id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("authorization_reference", authorizationReference);
+        command.Parameters.AddWithValue("set_id", evidenceSetId);
+        command.Parameters.AddWithValue("item_id", evidenceItemId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadUploadAuthorization(reader) : null;
+    }
+
+    public async Task<StatutoryEvidenceItemReadModel?> FinalizeUploadAsync(
+        StatutoryEvidenceUploadFinalizationCommand command,
+        StatutoryEvidenceUploadTarget target,
+        StatutoryEvidenceUploadAuthorizationStorageRecord authorization,
+        StatutoryEvidenceObjectMetadata metadata,
+        string semanticRequestHash,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        var operationId = await InsertOperationAsync(connection, transaction, "FINALIZE_UPLOAD", "ACCEPTED", command.IdempotencyScope, command.IdempotencyKey, semanticRequestHash, target.EvidenceSetId, target.EvidenceItemId, "ACCEPTED", command.CorrelationId, command.Actor, cancellationToken);
+        await InsertEventAsync(connection, transaction, "UPLOAD_VERIFICATION_STARTED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+
+        await using (var updateAuthorization = new NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_evidence_upload_authorizations
+               SET authorization_status = 'CONSUMED',
+                   consumed_at = now(),
+                   verified_content_type = @verified_content_type,
+                   verified_content_length = @verified_content_length,
+                   verified_checksum_sha256 = @verified_checksum,
+                   provider_object_version = @provider_object_version,
+                   provider_encryption_classification = @provider_encryption,
+                   updated_at = now(),
+                   updated_by_user_id = @user_id,
+                   updated_by_service_identity_id = @service_identity_id,
+                   row_version = row_version + 1
+             WHERE statutory_evidence_upload_authorization_id = @authorization_id
+               AND authorization_status = 'ISSUED';
+            """,
+            connection,
+            transaction))
+        {
+            updateAuthorization.Parameters.AddWithValue("authorization_id", authorization.UploadAuthorizationId);
+            updateAuthorization.Parameters.AddWithValue("verified_content_type", metadata.ContentType);
+            updateAuthorization.Parameters.AddWithValue("verified_content_length", metadata.ContentLength);
+            updateAuthorization.Parameters.AddWithValue("verified_checksum", metadata.ChecksumSha256!.ToLowerInvariant());
+            updateAuthorization.Parameters.AddWithValue("provider_object_version", (object?)metadata.ObjectVersion ?? DBNull.Value);
+            updateAuthorization.Parameters.AddWithValue("provider_encryption", (object?)metadata.EncryptionClassification ?? DBNull.Value);
+            updateAuthorization.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.UserId ?? DBNull.Value;
+            updateAuthorization.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.ServiceIdentityId ?? DBNull.Value;
+            if (await updateAuthorization.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return null;
+            }
+        }
+
+        await using (var updateItem = new NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_evidence_items
+               SET upload_status = 'UPLOADED'::discounts.statutory_evidence_upload_status_enum,
+                   internal_storage_locator_ref = @storage_locator_ref,
+                   internal_checksum_sha256 = @checksum,
+                   uploaded_at = now(),
+                   updated_at = now(),
+                   updated_by_user_id = @user_id,
+                   updated_by_service_identity_id = @service_identity_id,
+                   row_version = row_version + 1
+             WHERE statutory_evidence_item_id = @item_id
+               AND upload_status = 'AUTHORIZED'::discounts.statutory_evidence_upload_status_enum
+               AND validation_status = 'NOT_STARTED'::discounts.statutory_evidence_validation_status_enum
+               AND scan_status = 'NOT_STARTED'::discounts.statutory_evidence_scan_status_enum
+               AND reviewability_status = 'NOT_REVIEWABLE'::discounts.statutory_evidence_reviewability_status_enum
+               AND deletion_status <> 'DELETED'::discounts.statutory_evidence_deletion_status_enum;
+            """,
+            connection,
+            transaction))
+        {
+            updateItem.Parameters.AddWithValue("item_id", target.EvidenceItemId);
+            updateItem.Parameters.AddWithValue("storage_locator_ref", $"upload-authorization:{authorization.UploadAuthorizationReference:D}");
+            updateItem.Parameters.AddWithValue("checksum", metadata.ChecksumSha256!.ToLowerInvariant());
+            updateItem.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.UserId ?? DBNull.Value;
+            updateItem.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.ServiceIdentityId ?? DBNull.Value;
+            if (await updateItem.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return null;
+            }
+        }
+
+        await InsertEventAsync(connection, transaction, "UPLOAD_VERIFIED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+        await InsertEventAsync(connection, transaction, "UPLOAD_FINALIZED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        var set = await GetEvidenceSetByIdAsync(target.EvidenceSetId, cancellationToken);
+        return set?.Items.SingleOrDefault(item => item.EvidenceItemReference == command.EvidenceItemReference);
+    }
+
+    public async Task RecordUploadDeniedAsync(Guid? evidenceSetReference, Guid? evidenceItemReference, Guid? siteId, Guid? siteGroupId, Guid? parkingSessionId, Guid correlationId, StatutoryEvidenceActor actor, string reasonCode, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await InsertEventAsync(connection, null, evidenceSetReference.HasValue || evidenceItemReference.HasValue ? "CROSS_SCOPE_ATTEMPT" : "MALFORMED_REFERENCE_LOOKUP", "DENIED", null, null, null, reasonCode, actor.SourceChannel, siteId, siteGroupId, parkingSessionId, actor, correlationId, cancellationToken);
+    }
+
+    public async Task RecordUploadConflictAsync(string operationType, string idempotencyScope, string idempotencyKey, Guid correlationId, StatutoryEvidenceActor actor, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await InsertEventAsync(connection, null, "SEMANTIC_CONFLICT", "CONFLICT", null, null, null, "IDEMPOTENCY_SEMANTIC_CONFLICT", actor.SourceChannel, null, null, null, actor, correlationId, cancellationToken);
+    }
+
+    public async Task RecordUploadVerificationFailureAsync(StatutoryEvidenceUploadFinalizationCommand command, StatutoryEvidenceUploadTarget target, StatutoryEvidenceUploadAuthorizationStorageRecord authorization, string reasonCode, CancellationToken cancellationToken)
+    {
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using (var update = new NpgsqlCommand(
+            """
+            UPDATE discounts.statutory_evidence_upload_authorizations
+               SET authorization_status = CASE WHEN authorization_status = 'ISSUED' THEN 'FAILED' ELSE authorization_status END,
+                   failure_classification = @reason_code,
+                   updated_at = now(),
+                   updated_by_user_id = @user_id,
+                   updated_by_service_identity_id = @service_identity_id,
+                   row_version = row_version + 1
+             WHERE statutory_evidence_upload_authorization_id = @authorization_id;
+            """,
+            connection,
+            transaction))
+        {
+            update.Parameters.AddWithValue("authorization_id", authorization.UploadAuthorizationId);
+            update.Parameters.AddWithValue("reason_code", reasonCode);
+            update.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.UserId ?? DBNull.Value;
+            update.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.ServiceIdentityId ?? DBNull.Value;
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await InsertEventAsync(connection, transaction, reasonCode == StatutoryEvidenceUploadConstants.ProviderUnavailable ? "PROVIDER_UNAVAILABLE" : "UPLOAD_VERIFICATION_FAILED", "DENIED", target.EvidenceSetId, target.EvidenceItemId, null, reasonCode, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     private async Task<StatutoryEvidenceSetReadModel?> TransitionSetAsync(Guid reference, string operationType, string scope, string key, string hash, Guid correlationId, StatutoryEvidenceActor actor, string eventType, string eventResult, string setClause, string whereClause, CancellationToken cancellationToken, string? reasonCode = null)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -604,6 +1019,32 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
         command.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)actor.UserId ?? DBNull.Value;
         command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)actor.ServiceIdentityId ?? DBNull.Value;
     }
+
+    private static StatutoryEvidenceUploadAuthorizationStorageRecord ReadUploadAuthorization(NpgsqlDataReader reader) =>
+        new(
+            reader.GetGuid(0),
+            reader.GetGuid(1),
+            reader.GetGuid(2),
+            reader.GetGuid(3),
+            reader.GetGuid(4),
+            reader.GetString(5),
+            reader.GetString(6),
+            reader.GetString(7),
+            reader.GetString(8),
+            reader.GetString(9),
+            reader.GetInt64(10),
+            reader.GetString(11),
+            reader.GetString(12),
+            reader.GetString(13),
+            ToOffset(reader.GetDateTime(14)),
+            ToOffset(reader.GetDateTime(15)),
+            reader.IsDBNull(16) ? null : ToOffset(reader.GetDateTime(16)),
+            reader.IsDBNull(17) ? null : reader.GetString(17),
+            reader.IsDBNull(18) ? null : reader.GetInt64(18),
+            reader.IsDBNull(19) ? null : reader.GetString(19),
+            reader.IsDBNull(20) ? null : reader.GetString(20),
+            reader.IsDBNull(21) ? null : reader.GetString(21),
+            reader.IsDBNull(22) ? null : reader.GetString(22));
 
     private static DateTimeOffset ToOffset(DateTime value) =>
         new(DateTime.SpecifyKind(value, DateTimeKind.Utc));

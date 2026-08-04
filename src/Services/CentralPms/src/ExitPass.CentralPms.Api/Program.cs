@@ -669,6 +669,19 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryEvidenceMetadataRepository>(_ =>
         new StatutoryEvidenceMetadataRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryEvidenceMetadataService, StatutoryEvidenceMetadataService>();
+    builder.Services.Configure<StatutoryEvidenceUploadOptions>(
+        builder.Configuration.GetSection(StatutoryEvidenceUploadOptions.SectionName));
+    builder.Services.AddScoped<IStatutoryEvidenceUploadRepository>(_ =>
+        new StatutoryEvidenceMetadataRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryEvidenceProtectedObjectStorageAdapter>(serviceProvider =>
+        new S3CompatibleStatutoryEvidenceObjectStorageAdapter(
+            new HttpClient(),
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>()));
+    builder.Services.AddScoped<IStatutoryEvidenceUploadService>(serviceProvider =>
+        new StatutoryEvidenceUploadService(
+            serviceProvider.GetRequiredService<IStatutoryEvidenceUploadRepository>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value));
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandRepository>(_ =>
         new PostgresStatutoryDiscountStagedCommandRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandService, StatutoryDiscountStagedCommandService>();
