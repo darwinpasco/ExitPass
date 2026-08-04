@@ -36,6 +36,24 @@ public static class StatutoryEvidenceMetadataEndpoints
             .WithSummary("Add statutory evidence item metadata")
             .WithDescription("Adds metadata for one controlled statutory evidence item. No evidence bytes, Base64, object key, signed URL, or checksum is accepted.");
 
+        group.MapPost("/sets/{evidenceSetReference:guid}/items/{evidenceItemReference:guid}/upload-authorizations", AuthorizeUploadAsync)
+            .WithName("AuthorizeStatutoryEvidenceItemUpload")
+            .Accepts<StatutoryEvidenceUploadAuthorizationRequest>("application/json")
+            .Produces<StatutoryEvidenceUploadAuthorizationResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .WithMetadata(new ReconciliationPolicyMetadata(EvidenceCapturePolicy))
+            .WithSummary("Authorize direct protected upload for a statutory evidence item")
+            .WithDescription("Issues short-lived direct-upload authorization for an existing evidence item. Evidence bytes never pass through Central PMS, PostgreSQL, payment payloads, or POS fiscal payloads.");
+
+        group.MapPost("/sets/{evidenceSetReference:guid}/items/{evidenceItemReference:guid}/upload-finalizations", FinalizeUploadAsync)
+            .WithName("FinalizeStatutoryEvidenceItemUpload")
+            .Accepts<StatutoryEvidenceUploadFinalizationRequest>("application/json")
+            .Produces<StatutoryEvidenceUploadFinalizationResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .WithMetadata(new ReconciliationPolicyMetadata(EvidenceCapturePolicy))
+            .WithSummary("Finalize direct protected upload for a statutory evidence item")
+            .WithDescription("Verifies provider object metadata server-side and marks upload complete without marking validation, scan, or reviewability as passed.");
+
         group.MapGet("/sets/{evidenceSetReference:guid}", GetSetAsync)
             .WithName("GetStatutoryEvidenceSetMetadata")
             .Produces<StatutoryEvidenceSetResponse>(StatusCodes.Status200OK)
@@ -113,6 +131,54 @@ public static class StatutoryEvidenceMetadataEndpoints
         return ToResult(result, effectiveCorrelationId);
     }
 
+    private static async Task<IResult> AuthorizeUploadAsync(
+        Guid evidenceSetReference,
+        Guid evidenceItemReference,
+        StatutoryEvidenceUploadAuthorizationRequest request,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IStatutoryEvidenceUploadService service)
+    {
+        var effectiveCorrelationId = ResolveCorrelation(correlationId, httpRequest);
+        var result = await service.AuthorizeUploadAsync(
+            new StatutoryEvidenceUploadAuthorizationCommand(
+                evidenceSetReference,
+                evidenceItemReference,
+                request.DeclaredContentType,
+                request.DeclaredContentLength,
+                request.MediaClass,
+                request.ChecksumAlgorithm,
+                request.DeclaredChecksumSha256,
+                request.IdempotencyScope,
+                request.IdempotencyKey,
+                effectiveCorrelationId,
+                ResolveActor(httpRequest, request.SourceChannel)),
+            httpRequest.HttpContext.RequestAborted);
+        return ToUploadAuthorizationResult(result, effectiveCorrelationId);
+    }
+
+    private static async Task<IResult> FinalizeUploadAsync(
+        Guid evidenceSetReference,
+        Guid evidenceItemReference,
+        StatutoryEvidenceUploadFinalizationRequest request,
+        Guid? correlationId,
+        HttpRequest httpRequest,
+        IStatutoryEvidenceUploadService service)
+    {
+        var effectiveCorrelationId = ResolveCorrelation(correlationId, httpRequest);
+        var result = await service.FinalizeUploadAsync(
+            new StatutoryEvidenceUploadFinalizationCommand(
+                evidenceSetReference,
+                evidenceItemReference,
+                request.UploadAuthorizationReference,
+                request.IdempotencyScope,
+                request.IdempotencyKey,
+                effectiveCorrelationId,
+                ResolveActor(httpRequest, request.SourceChannel)),
+            httpRequest.HttpContext.RequestAborted);
+        return ToUploadFinalizationResult(result, effectiveCorrelationId);
+    }
+
     private static async Task<IResult> GetSetAsync(Guid evidenceSetReference, Guid? correlationId, HttpRequest httpRequest, IStatutoryEvidenceMetadataService service)
     {
         var effectiveCorrelationId = ResolveCorrelation(correlationId, httpRequest);
@@ -162,6 +228,16 @@ public static class StatutoryEvidenceMetadataEndpoints
             ? Results.BadRequest(new StatutoryEvidenceOperationResponse(result.Classification, result.Retryable, result.ErrorCode, correlationId, ToResponse(result.EvidenceSet), ToItemResponse(result.EvidenceItem)))
             : Results.Ok(new StatutoryEvidenceOperationResponse(result.Classification, result.Retryable, result.ErrorCode, correlationId, ToResponse(result.EvidenceSet), ToItemResponse(result.EvidenceItem)));
 
+    private static IResult ToUploadAuthorizationResult(StatutoryEvidenceUploadAuthorizationOutcome result, Guid correlationId) =>
+        result.Classification is "REJECTED" or "SEMANTIC_CONFLICT"
+            ? Results.BadRequest(new StatutoryEvidenceUploadAuthorizationResponse(result.Classification, result.Retryable, result.ErrorCode, correlationId, ToUploadAuthorizationResponse(result.UploadAuthorization), ToItemResponse(result.EvidenceItem)))
+            : Results.Ok(new StatutoryEvidenceUploadAuthorizationResponse(result.Classification, result.Retryable, result.ErrorCode, correlationId, ToUploadAuthorizationResponse(result.UploadAuthorization), ToItemResponse(result.EvidenceItem)));
+
+    private static IResult ToUploadFinalizationResult(StatutoryEvidenceUploadFinalizationOutcome result, Guid correlationId) =>
+        result.Classification is "REJECTED" or "SEMANTIC_CONFLICT"
+            ? Results.BadRequest(new StatutoryEvidenceUploadFinalizationResponse(result.Classification, result.Retryable, result.ErrorCode, correlationId, ToItemResponse(result.EvidenceItem)))
+            : Results.Ok(new StatutoryEvidenceUploadFinalizationResponse(result.Classification, result.Retryable, result.ErrorCode, correlationId, ToItemResponse(result.EvidenceItem)));
+
     private static Guid ResolveCorrelation(Guid? correlationId, HttpRequest request) =>
         correlationId ?? (Guid.TryParse(request.Headers["X-Correlation-Id"], out var parsed) ? parsed : Guid.NewGuid());
 
@@ -184,6 +260,9 @@ public static class StatutoryEvidenceMetadataEndpoints
 
     private static StatutoryEvidenceItemResponse? ToItemResponse(StatutoryEvidenceItemReadModel? model) =>
         model is null ? null : ToResponse(model);
+
+    private static StatutoryEvidenceUploadAuthorizationDetailsResponse? ToUploadAuthorizationResponse(StatutoryEvidenceUploadAuthorizationReadModel? model) =>
+        model is null ? null : new StatutoryEvidenceUploadAuthorizationDetailsResponse(model.UploadAuthorizationReference, model.UploadUrl, model.UploadMethod, model.RequiredHeaders, model.ExpiresAt, model.MaxContentLengthBytes, model.AcceptedContentType);
 
     private static StatutoryEvidenceItemResponse ToResponse(StatutoryEvidenceItemReadModel model) =>
         new(model.EvidenceItemReference, model.DocumentType, model.ItemRole, model.UploadStatus, model.ValidationStatus, model.ScanStatus, model.ReviewabilityStatus, model.BindingStatus, model.RetentionStatus, model.DeletionStatus, model.HoldActive, model.ExpectedMediaClass, model.DeclaredContentType, model.ProfileCode, model.ValidationResultClassification, model.ScanResultClassification, model.CreatedAt, model.UpdatedAt);

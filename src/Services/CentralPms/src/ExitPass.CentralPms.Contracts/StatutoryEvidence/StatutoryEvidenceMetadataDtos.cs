@@ -37,6 +37,22 @@ public sealed record StatutoryEvidenceTransitionRequest(
     string IdempotencyKey,
     string SourceChannel);
 
+public sealed record StatutoryEvidenceUploadAuthorizationRequest(
+    string DeclaredContentType,
+    long DeclaredContentLength,
+    string MediaClass,
+    string ChecksumAlgorithm,
+    string DeclaredChecksumSha256,
+    string IdempotencyScope,
+    string IdempotencyKey,
+    string SourceChannel);
+
+public sealed record StatutoryEvidenceUploadFinalizationRequest(
+    Guid UploadAuthorizationReference,
+    string IdempotencyScope,
+    string IdempotencyKey,
+    string SourceChannel);
+
 public sealed record StatutoryEvidenceOperationResponse(
     string Classification,
     bool Retryable,
@@ -44,6 +60,30 @@ public sealed record StatutoryEvidenceOperationResponse(
     Guid CorrelationId,
     StatutoryEvidenceSetResponse? EvidenceSet,
     StatutoryEvidenceItemResponse? EvidenceItem);
+
+public sealed record StatutoryEvidenceUploadAuthorizationResponse(
+    string Classification,
+    bool Retryable,
+    string? ErrorCode,
+    Guid CorrelationId,
+    StatutoryEvidenceUploadAuthorizationDetailsResponse? UploadAuthorization,
+    StatutoryEvidenceItemResponse? EvidenceItem);
+
+public sealed record StatutoryEvidenceUploadFinalizationResponse(
+    string Classification,
+    bool Retryable,
+    string? ErrorCode,
+    Guid CorrelationId,
+    StatutoryEvidenceItemResponse? EvidenceItem);
+
+public sealed record StatutoryEvidenceUploadAuthorizationDetailsResponse(
+    Guid UploadAuthorizationReference,
+    Uri UploadUrl,
+    string Method,
+    IReadOnlyDictionary<string, string> RequiredHeaders,
+    DateTimeOffset ExpiresAt,
+    long MaximumContentLength,
+    string AcceptedContentType);
 
 public sealed record StatutoryEvidenceSetResponse(
     Guid EvidenceSetReference,
