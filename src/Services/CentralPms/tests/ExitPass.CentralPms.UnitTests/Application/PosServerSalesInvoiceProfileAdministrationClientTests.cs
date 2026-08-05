@@ -158,6 +158,59 @@ public sealed class PosServerSalesInvoiceProfileAdministrationClientTests
     }
 
     [Fact]
+    public async Task PosServerSalesInvoiceProfile_ReadinessResourceEnvelope_MapsCurrentPosServerContract()
+    {
+        var handler = new RecordingHandler();
+        handler.Enqueue(JsonResponse(HttpStatusCode.OK, new
+        {
+            succeeded = true,
+            code = "sales_invoice_header_profile_readiness_reported",
+            httpStatusCode = 200,
+            correlationId = ResponseCorrelationId,
+            resource = new
+            {
+                siteId = SiteId,
+                sitePosServerId = SitePosServerId,
+                effectiveAt = "2026-07-18T09:00:00Z",
+                resolutionStatus = "READY",
+                salesInvoiceHeaderProfileId = ProfileId,
+                profileVersion = "i016-proof-v1",
+                fiscalIdentityId = FiscalIdentityId,
+                lifecycleStatus = "APPROVED",
+                isComplete = true,
+                enforcementRequired = true,
+                failureCodes = Array.Empty<string>(),
+                birAccreditationPosture = "expired",
+                ptuPosture = "complete",
+                supportedVersionPosture = "supported",
+                overlapPosture = "clear",
+                lastUpdatedAt = "2026-07-18T06:00:00Z"
+            },
+            errors = Array.Empty<object>()
+        }));
+        var client = CreateClient(handler);
+
+        var result = await client.GetEffectiveReadinessAsync(
+            new ManagementPlatformSalesInvoiceHeaderProfileReadinessRequest(SiteId, SitePosServerId, DateTimeOffset.Parse("2026-07-18T09:00:00Z")),
+            Context(),
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Value!.SiteId.Should().Be(SiteId);
+        result.Value.SitePosServerId.Should().Be(SitePosServerId);
+        result.Value.ResolutionStatus.Should().Be("READY");
+        result.Value.EffectiveProfileId.Should().Be(ProfileId);
+        result.Value.ProfileVersion.Should().BeNull("current POS Server profileVersion is an opaque string in readiness readback");
+        result.Value.LifecycleState.Should().Be("APPROVED");
+        result.Value.IsComplete.Should().BeTrue();
+        result.Value.EnforcementRequired.Should().BeTrue();
+        result.Value.BirAccreditationValidityPosture.Should().Be("expired");
+        result.Value.PtuCompletenessPosture.Should().Be("complete");
+        result.Value.OverlapOrAmbiguityPosture.Should().Be("clear");
+        result.Value.CorrelationId.Should().Be(ResponseCorrelationId);
+    }
+
+    [Fact]
     public async Task PosServerSalesInvoiceProfile_UsageResponse_MapsImmutableSnapshotUsageOnly()
     {
         var handler = new RecordingHandler();

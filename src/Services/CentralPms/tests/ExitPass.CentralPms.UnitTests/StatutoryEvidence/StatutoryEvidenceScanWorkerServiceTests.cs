@@ -322,6 +322,9 @@ public sealed class StatutoryEvidenceScanWorkerServiceTests
         public Task<StatutoryEvidenceObjectUploadAuthorization> CreateUploadAuthorizationAsync(StatutoryEvidenceObjectUploadAuthorizationRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
+        public Task<StatutoryEvidenceObjectUploadResult> UploadObjectAsync(StatutoryEvidenceObjectUploadRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
         public Task<StatutoryEvidenceObjectMetadata?> GetObjectMetadataAsync(StatutoryEvidenceObjectMetadataRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 

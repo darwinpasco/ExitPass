@@ -671,6 +671,9 @@ public sealed class StatutoryEvidenceScanRepositoryIntegrationTests
                     ["x-amz-checksum-sha256"] = request.ChecksumSha256
                 }));
 
+        public Task<StatutoryEvidenceObjectUploadResult> UploadObjectAsync(StatutoryEvidenceObjectUploadRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult(new StatutoryEvidenceObjectUploadResult("ACCEPTED", false));
+
         public Task<StatutoryEvidenceObjectMetadata?> GetObjectMetadataAsync(StatutoryEvidenceObjectMetadataRequest request, CancellationToken cancellationToken) =>
             Task.FromResult<StatutoryEvidenceObjectMetadata?>(new("image/jpeg", 1024, Hash, "v1", "AES256"));
 

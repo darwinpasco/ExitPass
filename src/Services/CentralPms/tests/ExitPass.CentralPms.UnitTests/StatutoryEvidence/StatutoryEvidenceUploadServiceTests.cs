@@ -72,6 +72,16 @@ public sealed class StatutoryEvidenceUploadServiceTests
     }
 
     [Fact]
+    public async Task AuthorizeUpload_WhenChecksumIsMissing_RejectsWithoutThrowing()
+    {
+        var result = await _sut.AuthorizeUploadAsync(Authorize() with { DeclaredChecksumSha256 = null! }, CancellationToken.None);
+
+        result.Classification.Should().Be("REJECTED");
+        result.ErrorCode.Should().Be(StatutoryEvidenceUploadConstants.ChecksumMismatch);
+        _repository.Authorizations.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task AuthorizeUpload_WhenSameKeyAndSameSemantics_ReplaysOriginalAuthorization()
     {
         var first = await _sut.AuthorizeUploadAsync(Authorize(), CancellationToken.None);
@@ -93,6 +103,32 @@ public sealed class StatutoryEvidenceUploadServiceTests
         conflict.ErrorCode.Should().Be("IDEMPOTENCY_SEMANTIC_CONFLICT");
         _repository.Authorizations.Should().HaveCount(1);
         _repository.ConflictEvents.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task AuthorizeUpload_WhenAnotherSessionIsActive_RejectsWithoutCreatingAnotherAuthorization()
+    {
+        await _sut.AuthorizeUploadAsync(Authorize(), CancellationToken.None);
+
+        var result = await _sut.AuthorizeUploadAsync(Authorize() with { IdempotencyKey = "another-session" }, CancellationToken.None);
+
+        result.Classification.Should().Be("REJECTED");
+        result.ErrorCode.Should().Be("ACTIVE_UPLOAD_SESSION_EXISTS");
+        _repository.Authorizations.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task AuthorizeUpload_WhenPriorSessionExpired_ExpiresItAndIssuesReplacement()
+    {
+        var first = await _sut.AuthorizeUploadAsync(Authorize(), CancellationToken.None);
+        _repository.SetExpiration(first.UploadAuthorization!.UploadAuthorizationReference, DateTimeOffset.UtcNow.AddSeconds(-1));
+
+        var replacement = await _sut.AuthorizeUploadAsync(Authorize() with { IdempotencyKey = "replacement" }, CancellationToken.None);
+
+        replacement.Classification.Should().Be("ACCEPTED");
+        replacement.UploadAuthorization!.UploadAuthorizationReference.Should().NotBe(first.UploadAuthorization.UploadAuthorizationReference);
+        _repository.Authorizations.Should().Contain(auth => auth.UploadAuthorizationReference == first.UploadAuthorization.UploadAuthorizationReference && auth.AuthorizationStatus == "EXPIRED");
+        _repository.ExpiredEvents.Should().Be(1);
     }
 
     [Fact]
@@ -305,6 +341,9 @@ public sealed class StatutoryEvidenceUploadServiceTests
                     ["x-amz-checksum-sha256"] = request.ChecksumSha256
                 }));
 
+        public Task<StatutoryEvidenceObjectUploadResult> UploadObjectAsync(StatutoryEvidenceObjectUploadRequest request, CancellationToken cancellationToken) =>
+            Task.FromResult(new StatutoryEvidenceObjectUploadResult("ACCEPTED", false));
+
         public Task<StatutoryEvidenceObjectMetadata?> GetObjectMetadataAsync(StatutoryEvidenceObjectMetadataRequest request, CancellationToken cancellationToken)
         {
             MetadataLookups++;
@@ -330,9 +369,42 @@ public sealed class StatutoryEvidenceUploadServiceTests
         public int DeniedEvents { get; private set; }
         public int ConflictEvents { get; private set; }
         public int VerificationFailures { get; private set; }
+        public int ExpiredEvents { get; private set; }
 
         public Task<StatutoryEvidenceUploadTarget?> GetUploadTargetAsync(Guid evidenceSetReference, Guid evidenceItemReference, CancellationToken cancellationToken) =>
             Task.FromResult(Target.EvidenceSet.EvidenceSetReference == evidenceSetReference && Target.EvidenceItem.EvidenceItemReference == evidenceItemReference ? Target : null);
+
+        public Task<StatutoryEvidenceUploadSession?> GetUploadSessionAsync(Guid uploadAuthorizationReference, CancellationToken cancellationToken)
+        {
+            var authorization = Authorizations.SingleOrDefault(auth => auth.UploadAuthorizationReference == uploadAuthorizationReference);
+            return Task.FromResult<StatutoryEvidenceUploadSession?>(authorization is null ? null : new StatutoryEvidenceUploadSession(Target, authorization));
+        }
+
+        public Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> FindActiveUploadAuthorizationAsync(Guid evidenceSetId, Guid evidenceItemId, DateTimeOffset evaluatedAt, CancellationToken cancellationToken) =>
+            Task.FromResult(Authorizations.SingleOrDefault(auth => auth.EvidenceSetId == evidenceSetId && auth.EvidenceItemId == evidenceItemId && auth.AuthorizationStatus == "ISSUED" && auth.ExpiresAt > evaluatedAt));
+
+        public Task<int> ExpireUploadAuthorizationsAsync(StatutoryEvidenceUploadTarget target, DateTimeOffset evaluatedAt, Guid correlationId, StatutoryEvidenceActor actor, CancellationToken cancellationToken)
+        {
+            var count = 0;
+            for (var index = 0; index < Authorizations.Count; index++)
+            {
+                var authorization = Authorizations[index];
+                if (authorization.EvidenceSetId == target.EvidenceSetId && authorization.EvidenceItemId == target.EvidenceItemId && authorization.AuthorizationStatus == "ISSUED" && authorization.ExpiresAt <= evaluatedAt)
+                {
+                    Authorizations[index] = authorization with { AuthorizationStatus = "EXPIRED", FailureClassification = "AUTHORIZATION_EXPIRED" };
+                    count++;
+                }
+            }
+
+            ExpiredEvents += count > 0 ? 1 : 0;
+            return Task.FromResult(count);
+        }
+
+        public void SetExpiration(Guid reference, DateTimeOffset expiresAt)
+        {
+            var index = Authorizations.FindIndex(auth => auth.UploadAuthorizationReference == reference);
+            Authorizations[index] = Authorizations[index] with { ExpiresAt = expiresAt };
+        }
 
         public Task<bool> ActorHasScopeAsync(StatutoryEvidenceActor actor, string operation, Guid siteId, Guid siteGroupId, CancellationToken cancellationToken) =>
             Task.FromResult(ScopeAllowed &&
@@ -347,13 +419,13 @@ public sealed class StatutoryEvidenceUploadServiceTests
         public Task<bool> HasSemanticConflictAsync(string idempotencyScope, string idempotencyKey, string semanticRequestHash, CancellationToken cancellationToken) =>
             Task.FromResult(_operations.TryGetValue((idempotencyScope, idempotencyKey), out var replay) && replay.Hash != semanticRequestHash);
 
-        public Task<StatutoryEvidenceUploadAuthorizationStorageRecord> CreateUploadAuthorizationAsync(StatutoryEvidenceUploadAuthorizationCommand command, StatutoryEvidenceUploadTarget target, string semanticRequestHash, string providerType, string bucketReference, string internalObjectKey, DateTimeOffset expiresAt, CancellationToken cancellationToken)
+        public Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> CreateUploadAuthorizationAsync(StatutoryEvidenceUploadAuthorizationCommand command, StatutoryEvidenceUploadTarget target, string semanticRequestHash, string providerType, string bucketReference, string internalObjectKey, DateTimeOffset expiresAt, CancellationToken cancellationToken)
         {
             var authorization = new StatutoryEvidenceUploadAuthorizationStorageRecord(Guid.NewGuid(), Guid.NewGuid(), target.EvidenceSetId, target.EvidenceItemId, Guid.NewGuid(), providerType, bucketReference, internalObjectKey, "PUT", command.DeclaredContentType, command.DeclaredContentLength, "SHA256", command.DeclaredChecksumSha256, "ISSUED", DateTimeOffset.UtcNow, expiresAt, null, null, null, null, null, null, null);
             Authorizations.Add(authorization);
             _operations[(command.IdempotencyScope, command.IdempotencyKey)] = (semanticRequestHash, authorization);
             Target = target with { EvidenceItem = target.EvidenceItem with { UploadStatus = "AUTHORIZED", DeclaredContentType = command.DeclaredContentType } };
-            return Task.FromResult(authorization);
+            return Task.FromResult<StatutoryEvidenceUploadAuthorizationStorageRecord?>(authorization);
         }
 
         public Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> GetUploadAuthorizationAsync(Guid authorizationReference, Guid evidenceSetId, Guid evidenceItemId, CancellationToken cancellationToken) =>

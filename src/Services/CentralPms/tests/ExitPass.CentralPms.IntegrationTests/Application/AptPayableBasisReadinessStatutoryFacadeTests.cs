@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.TerminalCashPayments;
 using ExitPass.CentralPms.Application.VendorParking;
@@ -173,6 +174,72 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         context.TerminalCashEligibility.LastRequest.ExpectedAmountMinorUnits.Should().Be(8000);
     }
 
+    [Theory]
+    [InlineData("REQUIRED_NOT_STARTED", "STATUTORY_EVIDENCE_REQUIRED_NOT_STARTED", false, false)]
+    [InlineData("ITEM_CREATED", "STATUTORY_EVIDENCE_NOT_READY", false, false)]
+    [InlineData("UPLOAD_SESSION_AVAILABLE", "STATUTORY_EVIDENCE_UPLOAD_PENDING", false, false)]
+    [InlineData("UPLOAD_IN_PROGRESS", "STATUTORY_EVIDENCE_UPLOAD_PENDING", false, false)]
+    [InlineData("VALIDATION_PENDING", "STATUTORY_EVIDENCE_VALIDATION_PENDING", false, false)]
+    [InlineData("VALIDATION_FAILED", "STATUTORY_EVIDENCE_VALIDATION_FAILED", false, false)]
+    [InlineData("SCAN_PENDING", "STATUTORY_EVIDENCE_SCAN_PENDING", false, false)]
+    [InlineData("SCAN_RETRYABLE", "STATUTORY_EVIDENCE_SCAN_RETRYABLE", false, true)]
+    [InlineData("SCAN_FAILED", "STATUTORY_EVIDENCE_SCAN_FAILED", false, false)]
+    [InlineData("MALWARE_DETECTED", "STATUTORY_EVIDENCE_MALWARE_DETECTED", false, false)]
+    [InlineData("NOT_REVIEWABLE", "STATUTORY_EVIDENCE_NOT_READY", false, false)]
+    [InlineData("REVIEWABLE", "STATUTORY_EVIDENCE_NOT_READY", false, false)]
+    [InlineData("REVIEW_PENDING", "STATUTORY_EVIDENCE_REVIEW_PENDING", false, false)]
+    [InlineData("APPROVED", "STATUTORY_EVIDENCE_APPROVED_NOT_APPLIED", false, false)]
+    [InlineData("REJECTED", "STATUTORY_EVIDENCE_REJECTED", false, false)]
+    [InlineData("UNKNOWN_FAIL_CLOSED", "STATUTORY_EVIDENCE_CONTEXT_UNAVAILABLE", false, false)]
+    [InlineData("NOT_REQUIRED", null, true, false)]
+    [InlineData("APPLIED", null, true, false)]
+    public async Task Resolve_CombinesCanonicalEvidenceReadinessWithEveryExistingCashDimension(
+        string classification,
+        string? blockingReason,
+        bool evidenceReady,
+        bool retryable)
+    {
+        var evidence = new StatutoryEvidenceChannelReadiness(
+            classification,
+            classification != "NOT_REQUIRED",
+            evidenceReady,
+            retryable,
+            blockingReason,
+            evidenceReady ? "Statutory evidence readiness passed." : "Statutory evidence is not ready for cash acceptance.");
+        var context = CreateContext(Applied(), evidenceReadiness: evidence);
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.ReadyForCashAcceptance.Should().Be(evidenceReady);
+        var dimension = result.Response.ReadinessDimensions.Single(value => value.Name == "statutoryEvidenceReadiness");
+        dimension.Ready.Should().Be(evidenceReady);
+        dimension.Status.Should().Be(evidenceReady ? AptPayableBasisReadinessStatuses.Ready : AptPayableBasisReadinessStatuses.Blocked);
+        dimension.BlockingReasonCode.Should().Be(blockingReason);
+        dimension.Retryable.Should().Be(retryable);
+        if (!evidenceReady)
+        {
+            result.Response.BlockingReasonCodes.Should().Contain(blockingReason!);
+        }
+    }
+
+    [Fact]
+    public async Task Resolve_WhenVendorRediscoveryReturnsActiveAppliedSnapshot_RemainsCashReady()
+    {
+        var context = CreateContext(Applied(), vendorReturnsAppliedTariff: true);
+
+        var result = await context.Sut.ResolveAsync(ResolveRequest(DecisionCommandId), CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        result.Response.Should().NotBeNull();
+        result.Response!.ReadyForCashAcceptance.Should().BeTrue();
+        result.Response.TariffSnapshotId.Should().Be(AppliedTariffSnapshotId);
+        result.Response.AuthoritativeAmountMinorUnits.Should().Be(8000);
+        result.Response.StatutoryDiscountReadiness!.Ready.Should().BeTrue();
+        result.Response.StatutoryDiscountReadiness.BlockingReasonCode.Should().BeNull();
+    }
+
     [Fact]
     public async Task Resolve_WhenAppliedFactsMissFinalAmount_BlocksWithoutZeroSubstitution()
     {
@@ -271,6 +338,21 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     }
 
     [Fact]
+    public async Task Revalidate_WithExplicitTicket_DoesNotReplaceItWithStoredPlate()
+    {
+        var context = CreateContext(Applied());
+
+        var result = await context.Sut.RevalidateAsync(
+            RevalidateRequest(AppliedTariffSnapshotId, expectedAmountMinorUnits: 8000),
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue();
+        context.VendorResolution.LastCommand.Should().NotBeNull();
+        context.VendorResolution.LastCommand!.TicketReference.Should().Be("TICKET-001");
+        context.VendorResolution.LastCommand.PlateNumber.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Revalidate_WhenAppliedAmountDiffersFromExpected_ReturnsAmountChangedWithStatutoryFacts()
     {
         var context = CreateContext(Applied(netPayableAmountMinorUnits: 7500));
@@ -307,7 +389,10 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         result.Response.BlockingReasonCodes.Should().NotContain("AMOUNT_CHANGED");
     }
 
-    private static TestContext CreateContext(StatutoryDiscountDecisionResult? statutoryReadback = null)
+    private static TestContext CreateContext(
+        StatutoryDiscountDecisionResult? statutoryReadback = null,
+        bool vendorReturnsAppliedTariff = false,
+        StatutoryEvidenceChannelReadiness? evidenceReadiness = null)
     {
         var session = ParkingSession.Rehydrate(
             ParkingSessionId,
@@ -325,16 +410,21 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
         var terminalCashEligibility = new RecordingTerminalCashEligibilityReader();
         var statutoryDiscounts = new RecordingStatutoryDiscountFacadeService(statutoryReadback);
 
+        var vendorResolution = new FixedVendorResolution(
+            session,
+            vendorReturnsAppliedTariff ? appliedTariff : originalTariff);
         return new TestContext(
             new AptPayableBasisReadinessService(
-                new FixedVendorResolution(session, originalTariff),
+                vendorResolution,
                 new FixedParkingSessionReadRepository(session),
                 new FixedTariffSnapshotReadRepository(originalTariff, appliedTariff),
                 terminalCashEligibility,
                 new ReadySalesInvoiceProfileAdministrationService(),
-                statutoryDiscounts),
+                statutoryDiscounts,
+                new FixedStatutoryEvidenceChannelService(evidenceReadiness)),
             terminalCashEligibility,
-            statutoryDiscounts);
+            statutoryDiscounts,
+            vendorResolution);
     }
 
     private static AptPayableBasisResolveRequest ResolveRequest(Guid? statutoryDecisionCommandId) =>
@@ -539,7 +629,8 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
     private sealed record TestContext(
         AptPayableBasisReadinessService Sut,
         RecordingTerminalCashEligibilityReader TerminalCashEligibility,
-        RecordingStatutoryDiscountFacadeService StatutoryDiscounts);
+        RecordingStatutoryDiscountFacadeService StatutoryDiscounts,
+        FixedVendorResolution VendorResolution);
 
     private sealed class FixedVendorResolution : IResolveVendorParkingUseCase
     {
@@ -552,10 +643,14 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             _tariff = tariff;
         }
 
+        public ResolveVendorParkingCommand? LastCommand { get; private set; }
+
         public Task<ResolveVendorParkingResult> ExecuteAsync(
             ResolveVendorParkingCommand command,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(ResolveVendorParkingResult.Resolved(
+            CancellationToken cancellationToken)
+        {
+            LastCommand = command;
+            return Task.FromResult(ResolveVendorParkingResult.Resolved(
                 _session,
                 _tariff,
                 CorrelationId,
@@ -564,6 +659,7 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
                 "Site",
                 "Not Started",
                 effectivePayableBasis: null));
+        }
     }
 
     private sealed class FixedParkingSessionReadRepository : IParkingSessionReadRepository
@@ -670,6 +766,32 @@ public sealed class AptPayableBasisReadinessStatutoryFacadeTests
             GetCallCount++;
             return Task.FromResult(_readback);
         }
+    }
+
+    private sealed class FixedStatutoryEvidenceChannelService : IStatutoryEvidenceChannelService
+    {
+        private readonly StatutoryEvidenceChannelReadiness _readiness;
+
+        public FixedStatutoryEvidenceChannelService(StatutoryEvidenceChannelReadiness? readiness) =>
+            _readiness = readiness ?? new StatutoryEvidenceChannelReadiness("NOT_REQUIRED", false, true, false, null, "No statutory evidence is required.");
+
+        public Task<StatutoryEvidenceChannelResponse> BootstrapAsync(StatutoryEvidenceChannelBootstrapCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StatutoryEvidenceChannelResponse> GetStatusAsync(StatutoryEvidenceChannelStatusQuery query, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StatutoryEvidenceChannelReadiness> GetAptEvidenceReadinessAsync(Guid? statutoryDiscountDecisionCommandId, StatutoryEvidenceActor actor, Guid correlationId, CancellationToken cancellationToken) =>
+            Task.FromResult(_readiness);
+
+        public Task<StatutoryEvidenceOpaqueUploadSessionResponse> CreateUploadSessionAsync(StatutoryEvidenceChannelUploadSessionCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StatutoryEvidenceOpaqueUploadSessionResponse> UploadAsync(StatutoryEvidenceChannelUploadCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<StatutoryEvidenceChannelResponse> FinalizeUploadSessionAsync(StatutoryEvidenceChannelFinalizeCommand command, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class ReadySalesInvoiceProfileAdministrationService : ISalesInvoiceProfileAdministrationService

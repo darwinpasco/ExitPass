@@ -179,12 +179,14 @@ public sealed record StatutoryEvidenceCreatedItem(
 public interface IStatutoryEvidenceMetadataRepository
 {
     Task<bool> ApprovedRetentionPolicyExistsAsync(string retentionClassCode, string retentionPolicyVersion, string environmentScope, CancellationToken cancellationToken);
+    Task<StatutoryEvidenceRetentionPolicySelection?> FindApprovedRetentionPolicyAsync(string environmentScope, CancellationToken cancellationToken);
     Task<StatutoryEvidenceDurableRequestBinding?> ResolveRequestBindingAsync(Guid statutoryDiscountDecisionCommandId, CancellationToken cancellationToken);
     Task<bool> ActorHasScopeAsync(StatutoryEvidenceActor actor, string operation, Guid siteId, Guid siteGroupId, CancellationToken cancellationToken);
     Task<StatutoryEvidenceOperationReplay?> FindOperationAsync(string idempotencyScope, string idempotencyKey, CancellationToken cancellationToken);
     Task<StatutoryEvidenceCreatedSet> CreateEvidenceSetAsync(StatutoryEvidenceCreateSetCommand command, string semanticRequestHash, CancellationToken cancellationToken);
     Task<StatutoryEvidenceCreatedItem?> AddEvidenceItemAsync(StatutoryEvidenceAddItemCommand command, string semanticRequestHash, CancellationToken cancellationToken);
     Task<StatutoryEvidenceSetReadModel?> GetEvidenceSetAsync(Guid evidenceSetReference, CancellationToken cancellationToken);
+    Task<StatutoryEvidenceSetReadModel?> GetEvidenceSetByDecisionCommandIdAsync(Guid statutoryDiscountDecisionCommandId, CancellationToken cancellationToken);
     Task<StatutoryEvidenceSetReadModel?> GetEvidenceSetByIdAsync(Guid evidenceSetId, CancellationToken cancellationToken);
     Task<StatutoryEvidenceSetReadModel?> LockForReviewAsync(StatutoryEvidenceLockForReviewCommand command, string semanticRequestHash, CancellationToken cancellationToken);
     Task<StatutoryEvidenceSetReadModel?> PlaceHoldAsync(StatutoryEvidenceHoldCommand command, string semanticRequestHash, CancellationToken cancellationToken);
@@ -193,6 +195,11 @@ public interface IStatutoryEvidenceMetadataRepository
     Task RecordSemanticConflictAsync(string operationType, string idempotencyScope, string idempotencyKey, Guid correlationId, StatutoryEvidenceActor actor, CancellationToken cancellationToken);
     Task RecordAccessDeniedAsync(Guid? evidenceSetReference, Guid? siteId, Guid? siteGroupId, Guid? parkingSessionId, Guid correlationId, StatutoryEvidenceActor actor, string reasonCode, CancellationToken cancellationToken);
 }
+
+public sealed record StatutoryEvidenceRetentionPolicySelection(
+    string RetentionClassCode,
+    string RetentionPolicyVersion,
+    string EnvironmentScope);
 
 public interface IStatutoryEvidenceMetadataService
 {

@@ -131,6 +131,18 @@ public sealed record StatutoryEvidenceObjectUploadAuthorization(
     Uri UploadUrl,
     IReadOnlyDictionary<string, string> RequiredHeaders);
 
+public sealed record StatutoryEvidenceObjectUploadRequest(
+    string BucketName,
+    string InternalObjectKey,
+    string ContentType,
+    long ContentLength,
+    string ChecksumSha256,
+    Stream Content);
+
+public sealed record StatutoryEvidenceObjectUploadResult(
+    string Classification,
+    bool Retryable);
+
 public sealed record StatutoryEvidenceObjectMetadataRequest(
     string BucketName,
     string InternalObjectKey);
@@ -148,6 +160,10 @@ public interface IStatutoryEvidenceProtectedObjectStorageAdapter
         StatutoryEvidenceObjectUploadAuthorizationRequest request,
         CancellationToken cancellationToken);
 
+    Task<StatutoryEvidenceObjectUploadResult> UploadObjectAsync(
+        StatutoryEvidenceObjectUploadRequest request,
+        CancellationToken cancellationToken);
+
     Task<StatutoryEvidenceObjectMetadata?> GetObjectMetadataAsync(
         StatutoryEvidenceObjectMetadataRequest request,
         CancellationToken cancellationToken);
@@ -160,16 +176,23 @@ public interface IStatutoryEvidenceProtectedObjectStorageAdapter
 public interface IStatutoryEvidenceUploadRepository
 {
     Task<StatutoryEvidenceUploadTarget?> GetUploadTargetAsync(Guid evidenceSetReference, Guid evidenceItemReference, CancellationToken cancellationToken);
+    Task<StatutoryEvidenceUploadSession?> GetUploadSessionAsync(Guid uploadAuthorizationReference, CancellationToken cancellationToken);
+    Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> FindActiveUploadAuthorizationAsync(Guid evidenceSetId, Guid evidenceItemId, DateTimeOffset evaluatedAt, CancellationToken cancellationToken);
+    Task<int> ExpireUploadAuthorizationsAsync(StatutoryEvidenceUploadTarget target, DateTimeOffset evaluatedAt, Guid correlationId, StatutoryEvidenceActor actor, CancellationToken cancellationToken);
     Task<bool> ActorHasScopeAsync(StatutoryEvidenceActor actor, string operation, Guid siteId, Guid siteGroupId, CancellationToken cancellationToken);
     Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> FindUploadAuthorizationByOperationAsync(string idempotencyScope, string idempotencyKey, string semanticRequestHash, CancellationToken cancellationToken);
     Task<bool> HasSemanticConflictAsync(string idempotencyScope, string idempotencyKey, string semanticRequestHash, CancellationToken cancellationToken);
-    Task<StatutoryEvidenceUploadAuthorizationStorageRecord> CreateUploadAuthorizationAsync(StatutoryEvidenceUploadAuthorizationCommand command, StatutoryEvidenceUploadTarget target, string semanticRequestHash, string providerType, string bucketReference, string internalObjectKey, DateTimeOffset expiresAt, CancellationToken cancellationToken);
+    Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> CreateUploadAuthorizationAsync(StatutoryEvidenceUploadAuthorizationCommand command, StatutoryEvidenceUploadTarget target, string semanticRequestHash, string providerType, string bucketReference, string internalObjectKey, DateTimeOffset expiresAt, CancellationToken cancellationToken);
     Task<StatutoryEvidenceUploadAuthorizationStorageRecord?> GetUploadAuthorizationAsync(Guid authorizationReference, Guid evidenceSetId, Guid evidenceItemId, CancellationToken cancellationToken);
     Task<StatutoryEvidenceItemReadModel?> FinalizeUploadAsync(StatutoryEvidenceUploadFinalizationCommand command, StatutoryEvidenceUploadTarget target, StatutoryEvidenceUploadAuthorizationStorageRecord authorization, StatutoryEvidenceObjectMetadata metadata, string semanticRequestHash, CancellationToken cancellationToken);
     Task RecordUploadDeniedAsync(Guid? evidenceSetReference, Guid? evidenceItemReference, Guid? siteId, Guid? siteGroupId, Guid? parkingSessionId, Guid correlationId, StatutoryEvidenceActor actor, string reasonCode, CancellationToken cancellationToken);
     Task RecordUploadConflictAsync(string operationType, string idempotencyScope, string idempotencyKey, Guid correlationId, StatutoryEvidenceActor actor, CancellationToken cancellationToken);
     Task RecordUploadVerificationFailureAsync(StatutoryEvidenceUploadFinalizationCommand command, StatutoryEvidenceUploadTarget target, StatutoryEvidenceUploadAuthorizationStorageRecord authorization, string reasonCode, CancellationToken cancellationToken);
 }
+
+public sealed record StatutoryEvidenceUploadSession(
+    StatutoryEvidenceUploadTarget Target,
+    StatutoryEvidenceUploadAuthorizationStorageRecord Authorization);
 
 public interface IStatutoryEvidenceUploadService
 {

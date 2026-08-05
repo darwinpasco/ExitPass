@@ -372,6 +372,13 @@ public sealed class HttpPosServerSalesInvoiceProfileAdminClient : IPosServerSale
             using var document = JsonDocument.Parse(responseBody);
             var root = document.RootElement;
             var data = TryGetPayloadElement(root);
+            if (typeof(T) == typeof(ManagementPlatformSalesInvoiceHeaderProfileReadiness) &&
+                TryMapSalesInvoiceReadiness(data, root, out var readiness))
+            {
+                value = (T)(object)readiness;
+                return true;
+            }
+
             value = JsonSerializer.Deserialize<T>(data.GetRawText(), JsonOptions);
             return value is not null;
         }
@@ -385,7 +392,7 @@ public sealed class HttpPosServerSalesInvoiceProfileAdminClient : IPosServerSale
     {
         if (root.ValueKind == JsonValueKind.Object)
         {
-            foreach (var propertyName in new[] { "data", "fiscalIdentity", "profile", "validation", "readiness", "usage", "profiles" })
+            foreach (var propertyName in new[] { "data", "resource", "fiscalIdentity", "profile", "validation", "readiness", "usage", "profiles" })
             {
                 if (root.TryGetProperty(propertyName, out var nested))
                 {
@@ -395,6 +402,50 @@ public sealed class HttpPosServerSalesInvoiceProfileAdminClient : IPosServerSale
         }
 
         return root;
+    }
+
+    private static bool TryMapSalesInvoiceReadiness(
+        JsonElement data,
+        JsonElement root,
+        out ManagementPlatformSalesInvoiceHeaderProfileReadiness readiness)
+    {
+        readiness = null!;
+        if (data.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var siteId = TryGetGuid(data, "siteId");
+        var sitePosServerId = TryGetGuid(data, "sitePosServerId");
+        var effectiveAt = TryGetDateTimeOffset(data, "effectiveAt");
+        var resolutionStatus = TryGetString(data, "resolutionStatus");
+        if (siteId is null ||
+            sitePosServerId is null ||
+            effectiveAt is null ||
+            string.IsNullOrWhiteSpace(resolutionStatus))
+        {
+            return false;
+        }
+
+        readiness = new ManagementPlatformSalesInvoiceHeaderProfileReadiness(
+            siteId.Value,
+            sitePosServerId.Value,
+            effectiveAt.Value,
+            resolutionStatus,
+            TryGetGuid(data, "effectiveProfileId") ?? TryGetGuid(data, "salesInvoiceHeaderProfileId"),
+            TryGetInt32(data, "profileVersion"),
+            TryGetGuid(data, "fiscalIdentityId"),
+            TryGetString(data, "lifecycleState") ?? TryGetString(data, "lifecycleStatus"),
+            TryGetBoolean(data, "isComplete"),
+            TryGetBoolean(data, "enforcementRequired"),
+            TryGetStringArray(data, "missingOrInvalidFieldCodes") ?? TryGetStringArray(data, "failureCodes") ?? Array.Empty<string>(),
+            TryGetString(data, "birAccreditationValidityPosture") ?? TryGetString(data, "birAccreditationPosture") ?? "unknown",
+            TryGetString(data, "ptuCompletenessPosture") ?? TryGetString(data, "ptuPosture") ?? "unknown",
+            TryGetString(data, "supportedVersionPosture") ?? "unknown",
+            TryGetString(data, "overlapOrAmbiguityPosture") ?? TryGetString(data, "overlapPosture") ?? "unknown",
+            TryGetDateTimeOffset(data, "lastUpdatedAt"),
+            TryGetGuid(root, "correlationId"));
+        return true;
     }
 
     private static PosServerErrorEnvelope TryDeserializeError(string responseBody)
@@ -509,6 +560,54 @@ public sealed class HttpPosServerSalesInvoiceProfileAdminClient : IPosServerSale
         TryGetString(root, propertyName) is { } value && Guid.TryParse(value, out var parsed)
             ? parsed
             : null;
+
+    private static DateTimeOffset? TryGetDateTimeOffset(JsonElement root, string propertyName) =>
+        TryGetString(root, propertyName) is { } value && DateTimeOffset.TryParse(value, out var parsed)
+            ? parsed
+            : null;
+
+    private static bool TryGetBoolean(JsonElement root, string propertyName) =>
+        root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty(propertyName, out var property) &&
+        property.ValueKind == JsonValueKind.True;
+
+    private static int? TryGetInt32(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number when property.TryGetInt32(out var parsed) => parsed,
+            JsonValueKind.String when int.TryParse(property.GetString(), out var parsed) => parsed,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<string>? TryGetStringArray(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var values = new List<string>();
+        foreach (var element in property.EnumerateArray())
+        {
+            if (element.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(element.GetString()))
+            {
+                values.Add(element.GetString()!);
+            }
+        }
+
+        return values;
+    }
 
     private sealed record PosServerErrorEnvelope(string? Code, string? Message);
 }

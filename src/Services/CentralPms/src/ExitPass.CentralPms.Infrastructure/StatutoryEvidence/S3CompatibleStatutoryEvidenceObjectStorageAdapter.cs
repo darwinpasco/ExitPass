@@ -53,6 +53,50 @@ public sealed class S3CompatibleStatutoryEvidenceObjectStorageAdapter : IStatuto
         return Task.FromResult(new StatutoryEvidenceObjectUploadAuthorization(url, headers));
     }
 
+    public async Task<StatutoryEvidenceObjectUploadResult> UploadObjectAsync(
+        StatutoryEvidenceObjectUploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = ResolveEndpoint(publicEndpoint: false);
+        var uri = BuildObjectUri(endpoint, request.BucketName, request.InternalObjectKey);
+        using var message = new HttpRequestMessage(HttpMethod.Put, uri);
+        var providerChecksum = ToS3ChecksumHeader(request.ChecksumSha256);
+        message.Content = new StreamContent(request.Content);
+        message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(request.ContentType);
+        message.Content.Headers.ContentLength = request.ContentLength;
+        SignHeaderAuthorization(
+            message,
+            request.BucketName,
+            request.InternalObjectKey,
+            new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["content-type"] = request.ContentType,
+                ["x-amz-checksum-sha256"] = providerChecksum,
+                ["x-amz-content-sha256"] = "UNSIGNED-PAYLOAD"
+            });
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new InvalidOperationException("Protected storage upload failed.", exception);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("Protected storage upload failed.", exception);
+        }
+
+        using (response)
+        {
+            return response.IsSuccessStatusCode
+                ? new StatutoryEvidenceObjectUploadResult("ACCEPTED", false)
+                : new StatutoryEvidenceObjectUploadResult("PROVIDER_UNAVAILABLE", true);
+        }
+    }
+
     public async Task<StatutoryEvidenceObjectMetadata?> GetObjectMetadataAsync(
         StatutoryEvidenceObjectMetadataRequest request,
         CancellationToken cancellationToken)
@@ -252,6 +296,23 @@ public sealed class S3CompatibleStatutoryEvidenceObjectStorageAdapter : IStatuto
 
     private void SignHeaderAuthorization(HttpRequestMessage message, string bucketName, string objectKey)
     {
+        SignHeaderAuthorization(
+            message,
+            bucketName,
+            objectKey,
+            new SortedDictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["x-amz-checksum-mode"] = "ENABLED",
+                ["x-amz-content-sha256"] = "UNSIGNED-PAYLOAD"
+            });
+    }
+
+    private void SignHeaderAuthorization(
+        HttpRequestMessage message,
+        string bucketName,
+        string objectKey,
+        SortedDictionary<string, string> signedHeaders)
+    {
         var now = DateTimeOffset.UtcNow;
         var region = string.IsNullOrWhiteSpace(_options.Region) ? "us-east-1" : _options.Region!;
         var date = now.UtcDateTime.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
@@ -259,17 +320,35 @@ public sealed class S3CompatibleStatutoryEvidenceObjectStorageAdapter : IStatuto
         var scope = $"{date}/{region}/{ServiceName}/aws4_request";
         var host = message.RequestUri!.IsDefaultPort ? message.RequestUri.Host : $"{message.RequestUri.Host}:{message.RequestUri.Port}";
         message.Headers.TryAddWithoutValidation("x-amz-date", amzDate);
-        message.Headers.TryAddWithoutValidation("x-amz-checksum-mode", "ENABLED");
-        message.Headers.TryAddWithoutValidation("x-amz-content-sha256", "UNSIGNED-PAYLOAD");
+        foreach (var header in signedHeaders)
+        {
+            if (header.Key.Equals("content-type", StringComparison.Ordinal))
+            {
+                continue;
+            }
 
-        var canonicalHeaders = $"host:{host}\nx-amz-checksum-mode:ENABLED\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:{amzDate}\n";
+            message.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        var canonicalHeaders = new SortedDictionary<string, string>(signedHeaders, StringComparer.Ordinal)
+        {
+            ["host"] = host,
+            ["x-amz-date"] = amzDate
+        };
+        var canonicalHeadersBuilder = new StringBuilder();
+        foreach (var header in canonicalHeaders)
+        {
+            canonicalHeadersBuilder.Append(header.Key).Append(':').Append(header.Value.Trim()).Append('\n');
+        }
+
+        var signedHeaderNames = string.Join(';', canonicalHeaders.Keys);
         var canonicalRequest = string.Join('\n',
         [
             message.Method.Method,
             CanonicalPath(bucketName, objectKey),
             string.Empty,
-            canonicalHeaders,
-            "host;x-amz-checksum-mode;x-amz-content-sha256;x-amz-date",
+            canonicalHeadersBuilder.ToString(),
+            signedHeaderNames,
             "UNSIGNED-PAYLOAD"
         ]);
         var stringToSign = string.Join('\n',
@@ -282,7 +361,7 @@ public sealed class S3CompatibleStatutoryEvidenceObjectStorageAdapter : IStatuto
         var signature = ToHex(Hmac(SigningKey(date, region), stringToSign));
         message.Headers.TryAddWithoutValidation(
             "Authorization",
-            $"{Algorithm} Credential={Require(_options.AccessKeyId, "Evidence storage access key is not configured.")}/{scope}, SignedHeaders=host;x-amz-checksum-mode;x-amz-content-sha256;x-amz-date, Signature={signature}");
+            $"{Algorithm} Credential={Require(_options.AccessKeyId, "Evidence storage access key is not configured.")}/{scope}, SignedHeaders={signedHeaderNames}, Signature={signature}");
     }
 
     private Uri ResolveEndpoint(bool publicEndpoint)

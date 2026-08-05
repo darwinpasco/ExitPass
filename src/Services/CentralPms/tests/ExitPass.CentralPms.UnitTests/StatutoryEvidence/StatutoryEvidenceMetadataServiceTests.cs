@@ -391,6 +391,11 @@ public sealed class StatutoryEvidenceMetadataServiceTests
         public Task<bool> ApprovedRetentionPolicyExistsAsync(string retentionClassCode, string retentionPolicyVersion, string environmentScope, CancellationToken cancellationToken) =>
             Task.FromResult(RetentionPolicyApproved);
 
+        public Task<StatutoryEvidenceRetentionPolicySelection?> FindApprovedRetentionPolicyAsync(string environmentScope, CancellationToken cancellationToken) =>
+            Task.FromResult<StatutoryEvidenceRetentionPolicySelection?>(RetentionPolicyApproved
+                ? new StatutoryEvidenceRetentionPolicySelection("PH_STATUTORY_PARKING_STANDARD", "2026-07-28", environmentScope)
+                : null);
+
         public Task<StatutoryEvidenceDurableRequestBinding?> ResolveRequestBindingAsync(Guid statutoryDiscountDecisionCommandId, CancellationToken cancellationToken) =>
             Task.FromResult(RequestBinding?.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId ? RequestBinding : null);
 
@@ -438,6 +443,9 @@ public sealed class StatutoryEvidenceMetadataServiceTests
 
         public Task<StatutoryEvidenceSetReadModel?> GetEvidenceSetAsync(Guid evidenceSetReference, CancellationToken cancellationToken) =>
             Task.FromResult(_sets.TryGetValue(evidenceSetReference, out var set) ? set.Model : null);
+
+        public Task<StatutoryEvidenceSetReadModel?> GetEvidenceSetByDecisionCommandIdAsync(Guid statutoryDiscountDecisionCommandId, CancellationToken cancellationToken) =>
+            Task.FromResult(_sets.Values.Select(set => set.Model).SingleOrDefault(set => set.StatutoryDiscountDecisionCommandId == statutoryDiscountDecisionCommandId));
 
         public Task<StatutoryEvidenceSetReadModel?> GetEvidenceSetByIdAsync(Guid evidenceSetId, CancellationToken cancellationToken) =>
             Task.FromResult(_sets.Values.SingleOrDefault(set => set.Id == evidenceSetId).Model);

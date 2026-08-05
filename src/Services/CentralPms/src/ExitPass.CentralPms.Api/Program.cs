@@ -166,6 +166,7 @@ app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapStatutoryDiscountDecisionEndpoints();
 app.MapStatutoryEvidenceMetadataEndpoints();
+app.MapStatutoryEvidenceChannelEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
@@ -672,6 +673,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryEvidenceMetadataService, StatutoryEvidenceMetadataService>();
     builder.Services.Configure<StatutoryEvidenceUploadOptions>(
         builder.Configuration.GetSection(StatutoryEvidenceUploadOptions.SectionName));
+    builder.Services.Configure<StatutoryEvidenceChannelOptions>(
+        builder.Configuration.GetSection(StatutoryEvidenceChannelOptions.SectionName));
     builder.Services.Configure<StatutoryEvidenceScanWorkerOptions>(
         builder.Configuration.GetSection(StatutoryEvidenceScanWorkerOptions.SectionName));
     builder.Services.AddScoped<IStatutoryEvidenceUploadRepository>(_ =>
@@ -688,6 +691,17 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IStatutoryEvidenceUploadRepository>(),
             serviceProvider.GetRequiredService<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value));
+    builder.Services.AddScoped<IStatutoryEvidenceChannelService>(serviceProvider =>
+        new StatutoryEvidenceChannelService(
+            serviceProvider.GetRequiredService<IStatutoryEvidenceMetadataRepository>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceMetadataService>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceUploadRepository>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceUploadService>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
+            serviceProvider.GetRequiredService<IStatutoryDiscountDecisionFacadeService>(),
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceChannelOptions>>().Value,
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value,
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceScanWorkerOptions>>().Value));
     builder.Services.AddScoped<IStatutoryEvidenceScanWorkerService>(serviceProvider =>
         new StatutoryEvidenceScanWorkerService(
             serviceProvider.GetRequiredService<IStatutoryEvidenceScanRepository>(),

@@ -77,6 +77,13 @@ public sealed class StatutoryEvidenceUploadService : IStatutoryEvidenceUploadSer
                 target.EvidenceItem);
         }
 
+        await _repository.ExpireUploadAuthorizationsAsync(target, DateTimeOffset.UtcNow, command.CorrelationId, command.Actor, cancellationToken);
+
+        if (await _repository.FindActiveUploadAuthorizationAsync(target.EvidenceSetId, target.EvidenceItemId, DateTimeOffset.UtcNow, cancellationToken) is not null)
+        {
+            return AuthorizationRejected(command.CorrelationId, "ACTIVE_UPLOAD_SESSION_EXISTS");
+        }
+
         var expiresAt = DateTimeOffset.UtcNow.AddSeconds(_options.AuthorizationTtlSeconds);
         var internalObjectKey = GenerateInternalObjectKey(target.EvidenceItemId);
         var lease = await CreateStorageAuthorizationAsync(command, internalObjectKey, expiresAt, cancellationToken);
@@ -89,6 +96,11 @@ public sealed class StatutoryEvidenceUploadService : IStatutoryEvidenceUploadSer
             internalObjectKey,
             expiresAt,
             cancellationToken);
+
+        if (stored is null)
+        {
+            return AuthorizationRejected(command.CorrelationId, "ACTIVE_UPLOAD_SESSION_EXISTS");
+        }
 
         return new StatutoryEvidenceUploadAuthorizationOutcome(
             "ACCEPTED",
@@ -387,8 +399,8 @@ public sealed class StatutoryEvidenceUploadService : IStatutoryEvidenceUploadSer
     private string ResolveBucketReference() =>
         !string.IsNullOrWhiteSpace(_options.BucketReference) ? _options.BucketReference : throw new InvalidOperationException("Evidence upload storage bucket reference is not configured.");
 
-    private static bool IsSha256Hex(string value) =>
-        value.Length == 64 && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
+    private static bool IsSha256Hex(string? value) =>
+        value is { Length: 64 } && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F');
 
     private static bool IsLocalEndpoint(string endpoint) =>
         Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) &&
