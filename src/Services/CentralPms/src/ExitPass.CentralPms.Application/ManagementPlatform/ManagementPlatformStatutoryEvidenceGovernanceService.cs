@@ -9,15 +9,18 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceService
 
     private readonly IManagementPlatformStatutoryEvidenceGovernanceRepository _repository;
     private readonly StatutoryEvidenceUploadOptions _uploadOptions;
+    private readonly StatutoryEvidenceScanWorkerOptions _scanWorkerOptions;
     private readonly TimeProvider _timeProvider;
 
     public ManagementPlatformStatutoryEvidenceGovernanceService(
         IManagementPlatformStatutoryEvidenceGovernanceRepository repository,
         StatutoryEvidenceUploadOptions uploadOptions,
+        StatutoryEvidenceScanWorkerOptions scanWorkerOptions,
         TimeProvider timeProvider)
     {
         _repository = repository;
         _uploadOptions = uploadOptions;
+        _scanWorkerOptions = scanWorkerOptions;
         _timeProvider = timeProvider;
     }
 
@@ -154,7 +157,12 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceService
         }
 
         warnings.Add(ManagementPlatformStatutoryEvidenceGovernanceValues.WarningStoragePrivacyUnverified);
-        warnings.Add(ManagementPlatformStatutoryEvidenceGovernanceValues.WarningMalwareScanningNotImplemented);
+        var scanWorkerReadiness = _scanWorkerOptions.Readiness();
+        if (scanWorkerReadiness is not ManagementPlatformStatutoryEvidenceGovernanceValues.Ready)
+        {
+            warnings.Add(ManagementPlatformStatutoryEvidenceGovernanceValues.WarningMalwareScanningNotImplemented);
+        }
+
         warnings.Add(ManagementPlatformStatutoryEvidenceGovernanceValues.WarningSecurePreviewNotImplemented);
         warnings.Add(ManagementPlatformStatutoryEvidenceGovernanceValues.WarningRetentionWorkerNotImplemented);
         warnings.Add(ManagementPlatformStatutoryEvidenceGovernanceValues.WarningDeletionWorkerNotImplemented);
@@ -212,7 +220,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceService
             Capability(configuration.HasMetadataTables),
             Capability(configuration.HasMetadataTables),
             Capability(configuration.HasMetadataTables),
-            ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented,
+            scanWorkerReadiness,
             ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented,
             Capability(retentionReady),
             ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented,

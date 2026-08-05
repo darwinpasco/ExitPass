@@ -69,7 +69,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceDatabaseIntegra
         site.EvidenceCaptureEnabled.Should().BeTrue();
         site.UploadAuthorizationReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
         site.UploadFinalizationReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
-        site.MalwareScanningExecutionReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
+        site.MalwareScanningExecutionReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Disabled);
         site.SecurePreviewReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
         site.RetentionWorkerReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
         site.DeletionWorkerReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);

@@ -106,6 +106,92 @@ public sealed class S3CompatibleStatutoryEvidenceObjectStorageAdapter : IStatuto
         }
     }
 
+    public async Task<StatutoryEvidenceObjectContent> GetObjectContentAsync(
+        StatutoryEvidenceObjectContentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = ResolveEndpoint(publicEndpoint: false);
+        var uri = BuildObjectUri(endpoint, request.BucketName, request.InternalObjectKey);
+        using var message = new HttpRequestMessage(HttpMethod.Get, uri);
+        SignHeaderAuthorization(message, request.BucketName, request.InternalObjectKey);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new InvalidOperationException("Protected storage object retrieval failed.", exception);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("Protected storage object retrieval failed.", exception);
+        }
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            response.Dispose();
+            throw new InvalidOperationException("Protected storage object is unavailable.");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            response.Dispose();
+            throw new InvalidOperationException("Protected storage object retrieval failed.");
+        }
+
+        var contentLength = response.Content.Headers.ContentLength ?? 0;
+        if (contentLength <= 0 || contentLength > request.MaxContentLengthBytes)
+        {
+            response.Dispose();
+            throw new InvalidOperationException("Protected storage object length is outside the configured limit.");
+        }
+
+        response.Content.Headers.TryGetValues("x-amz-checksum-sha256", out var checksumValues);
+        if (checksumValues is null)
+        {
+            response.Headers.TryGetValues("x-amz-checksum-sha256", out checksumValues);
+        }
+
+        response.Headers.TryGetValues("x-amz-version-id", out var versionValues);
+        response.Headers.TryGetValues("x-amz-server-side-encryption", out var encryptionValues);
+
+        var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+        await using var providerStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var memory = new MemoryStream(capacity: (int)Math.Min(contentLength, int.MaxValue));
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await providerStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+            if (total > request.MaxContentLengthBytes)
+            {
+                response.Dispose();
+                await memory.DisposeAsync();
+                throw new InvalidOperationException("Protected storage object length is outside the configured limit.");
+            }
+
+            await memory.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+
+        memory.Position = 0;
+        response.Dispose();
+        return new StatutoryEvidenceObjectContent(
+            memory,
+            contentType,
+            total,
+            NormalizeS3ChecksumHeader(checksumValues?.FirstOrDefault()),
+            versionValues?.FirstOrDefault(),
+            encryptionValues?.FirstOrDefault());
+    }
+
     private Uri BuildPresignedUrl(
         string method,
         Uri endpoint,

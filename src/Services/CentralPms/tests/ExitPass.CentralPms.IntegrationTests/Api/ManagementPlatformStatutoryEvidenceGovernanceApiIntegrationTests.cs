@@ -54,7 +54,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceApiIntegrationT
         site.ReadinessStatus.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.PartiallyReady);
         site.UploadAuthorizationReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
         site.UploadFinalizationReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
-        site.MalwareScanningExecutionReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
+        site.MalwareScanningExecutionReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Disabled);
         site.SecurePreviewReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
         site.RetentionWorkerReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
         site.DeletionWorkerReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
@@ -305,7 +305,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceApiIntegrationT
                             ManagementPlatformStatutoryEvidenceGovernanceValues.Ready,
                             ManagementPlatformStatutoryEvidenceGovernanceValues.Ready,
                             ManagementPlatformStatutoryEvidenceGovernanceValues.Ready,
-                            ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented,
+                            ManagementPlatformStatutoryEvidenceGovernanceValues.Disabled,
                             ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented,
                             ManagementPlatformStatutoryEvidenceGovernanceValues.Ready,
                             ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented,

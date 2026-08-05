@@ -151,6 +151,10 @@ public interface IStatutoryEvidenceProtectedObjectStorageAdapter
     Task<StatutoryEvidenceObjectMetadata?> GetObjectMetadataAsync(
         StatutoryEvidenceObjectMetadataRequest request,
         CancellationToken cancellationToken);
+
+    Task<StatutoryEvidenceObjectContent> GetObjectContentAsync(
+        StatutoryEvidenceObjectContentRequest request,
+        CancellationToken cancellationToken);
 }
 
 public interface IStatutoryEvidenceUploadRepository
