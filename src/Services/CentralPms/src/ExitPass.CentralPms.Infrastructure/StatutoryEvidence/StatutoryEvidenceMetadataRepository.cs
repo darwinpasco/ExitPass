@@ -656,6 +656,7 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
         var operationId = await InsertOperationAsync(connection, transaction, "FINALIZE_UPLOAD", "ACCEPTED", command.IdempotencyScope, command.IdempotencyKey, semanticRequestHash, target.EvidenceSetId, target.EvidenceItemId, "ACCEPTED", command.CorrelationId, command.Actor, cancellationToken);
         await InsertEventAsync(connection, transaction, "UPLOAD_VERIFICATION_STARTED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
 
+        long uploadAuthorizationRowVersion;
         await using (var updateAuthorization = new NpgsqlCommand(
             """
             UPDATE discounts.statutory_evidence_upload_authorizations
@@ -671,7 +672,8 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
                    updated_by_service_identity_id = @service_identity_id,
                    row_version = row_version + 1
              WHERE statutory_evidence_upload_authorization_id = @authorization_id
-               AND authorization_status = 'ISSUED';
+               AND authorization_status = 'ISSUED'
+             RETURNING row_version;
             """,
             connection,
             transaction))
@@ -684,17 +686,23 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
             updateAuthorization.Parameters.AddWithValue("provider_encryption", (object?)metadata.EncryptionClassification ?? DBNull.Value);
             updateAuthorization.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.UserId ?? DBNull.Value;
             updateAuthorization.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.ServiceIdentityId ?? DBNull.Value;
-            if (await updateAuthorization.ExecuteNonQueryAsync(cancellationToken) != 1)
+            var result = await updateAuthorization.ExecuteScalarAsync(cancellationToken);
+            if (result is null)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return null;
             }
+
+            uploadAuthorizationRowVersion = (long)result;
         }
 
+        long itemRowVersion;
         await using (var updateItem = new NpgsqlCommand(
             """
             UPDATE discounts.statutory_evidence_items
                SET upload_status = 'UPLOADED'::discounts.statutory_evidence_upload_status_enum,
+                   validation_status = 'PENDING'::discounts.statutory_evidence_validation_status_enum,
+                   scan_status = 'PENDING'::discounts.statutory_evidence_scan_status_enum,
                    internal_storage_locator_ref = @storage_locator_ref,
                    internal_checksum_sha256 = @checksum,
                    uploaded_at = now(),
@@ -707,7 +715,8 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
                AND validation_status = 'NOT_STARTED'::discounts.statutory_evidence_validation_status_enum
                AND scan_status = 'NOT_STARTED'::discounts.statutory_evidence_scan_status_enum
                AND reviewability_status = 'NOT_REVIEWABLE'::discounts.statutory_evidence_reviewability_status_enum
-               AND deletion_status <> 'DELETED'::discounts.statutory_evidence_deletion_status_enum;
+               AND deletion_status <> 'DELETED'::discounts.statutory_evidence_deletion_status_enum
+             RETURNING row_version;
             """,
             connection,
             transaction))
@@ -717,15 +726,72 @@ public sealed class StatutoryEvidenceMetadataRepository : IStatutoryEvidenceMeta
             updateItem.Parameters.AddWithValue("checksum", metadata.ChecksumSha256!.ToLowerInvariant());
             updateItem.Parameters.Add("user_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.UserId ?? DBNull.Value;
             updateItem.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = (object?)command.Actor.ServiceIdentityId ?? DBNull.Value;
-            if (await updateItem.ExecuteNonQueryAsync(cancellationToken) != 1)
+            var result = await updateItem.ExecuteScalarAsync(cancellationToken);
+            if (result is null)
             {
                 await transaction.RollbackAsync(cancellationToken);
                 return null;
             }
+
+            itemRowVersion = (long)result;
+        }
+
+        await using (var insertScanAttempt = new NpgsqlCommand(
+            """
+            INSERT INTO discounts.statutory_evidence_scan_attempts (
+                scan_work_identity,
+                statutory_evidence_set_id,
+                statutory_evidence_item_id,
+                statutory_evidence_upload_authorization_id,
+                attempt_number,
+                attempt_status,
+                validation_status,
+                validation_result,
+                malware_scan_status,
+                malware_scan_result,
+                scanner_provider,
+                expected_item_row_version,
+                expected_upload_authorization_row_version,
+                provider_object_version,
+                max_attempts,
+                correlation_id)
+            VALUES (
+                @scan_work_identity,
+                @set_id,
+                @item_id,
+                @authorization_id,
+                1,
+                'PENDING'::discounts.statutory_evidence_scan_attempt_status_enum,
+                'PENDING'::discounts.statutory_evidence_validation_status_enum,
+                'NOT_RUN'::discounts.statutory_evidence_validation_result_enum,
+                'PENDING'::discounts.statutory_evidence_scan_status_enum,
+                'NOT_RUN'::discounts.statutory_evidence_malware_scan_result_enum,
+                'CLAMAV_COMPATIBLE',
+                @item_row_version,
+                @authorization_row_version,
+                @provider_object_version,
+                3,
+                @correlation_id)
+            ON CONFLICT DO NOTHING;
+            """,
+            connection,
+            transaction))
+        {
+            insertScanAttempt.Parameters.AddWithValue("scan_work_identity", Guid.NewGuid());
+            insertScanAttempt.Parameters.AddWithValue("set_id", target.EvidenceSetId);
+            insertScanAttempt.Parameters.AddWithValue("item_id", target.EvidenceItemId);
+            insertScanAttempt.Parameters.AddWithValue("authorization_id", authorization.UploadAuthorizationId);
+            insertScanAttempt.Parameters.AddWithValue("item_row_version", itemRowVersion);
+            insertScanAttempt.Parameters.AddWithValue("authorization_row_version", uploadAuthorizationRowVersion);
+            insertScanAttempt.Parameters.AddWithValue("provider_object_version", (object?)metadata.ObjectVersion ?? DBNull.Value);
+            insertScanAttempt.Parameters.AddWithValue("correlation_id", command.CorrelationId);
+            await insertScanAttempt.ExecuteNonQueryAsync(cancellationToken);
         }
 
         await InsertEventAsync(connection, transaction, "UPLOAD_VERIFIED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
         await InsertEventAsync(connection, transaction, "UPLOAD_FINALIZED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+        await InsertEventAsync(connection, transaction, "VALIDATION_REQUESTED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
+        await InsertEventAsync(connection, transaction, "SCAN_REQUESTED", "ACCEPTED", target.EvidenceSetId, target.EvidenceItemId, operationId, null, command.Actor.SourceChannel, target.EvidenceSet.SiteId, target.EvidenceSet.SiteGroupId, target.EvidenceSet.ParkingSessionId, command.Actor, command.CorrelationId, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         var set = await GetEvidenceSetByIdAsync(target.EvidenceSetId, cancellationToken);

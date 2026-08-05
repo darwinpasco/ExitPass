@@ -64,7 +64,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceServiceTests
     }
 
     [Fact]
-    public async Task ReadGovernanceAsync_WhenUploadStorageRetentionAndCaptureConfigured_ReturnsPartialReadyBecauseWorkersAreNotImplemented()
+    public async Task ReadGovernanceAsync_WhenUploadStorageRetentionAndCaptureConfigured_ReturnsPartialReadyBecauseScanWorkerIsDisabled()
     {
         var repository = new FakeRepository()
             .WithScope(Scope(Site()))
@@ -82,7 +82,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceServiceTests
         site.ProtectedStorageReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
         site.ChecksumVerificationReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
         site.MalwareScanLifecycleReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.Ready);
-        site.MalwareScanningExecutionReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
+        site.MalwareScanningExecutionReadiness.Should().Be(StatutoryEvidenceScanConstants.WorkerDisabled);
         site.SecurePreviewReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
         site.RetentionWorkerReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
         site.DeletionWorkerReadiness.Should().Be(ManagementPlatformStatutoryEvidenceGovernanceValues.NotImplemented);
@@ -168,7 +168,7 @@ public sealed class ManagementPlatformStatutoryEvidenceGovernanceServiceTests
     private static ManagementPlatformStatutoryEvidenceGovernanceService CreateService(
         FakeRepository repository,
         StatutoryEvidenceUploadOptions options) =>
-        new(repository, options, new FixedTimeProvider(Now));
+        new(repository, options, new StatutoryEvidenceScanWorkerOptions(), new FixedTimeProvider(Now));
 
     private static ManagementPlatformStatutoryEvidenceGovernanceQuery Query(bool includeStale = true) =>
         new(

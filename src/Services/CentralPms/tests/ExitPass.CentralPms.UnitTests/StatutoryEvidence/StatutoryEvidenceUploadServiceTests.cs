@@ -315,6 +315,9 @@ public sealed class StatutoryEvidenceUploadServiceTests
 
             return Task.FromResult(Metadata);
         }
+
+        public Task<StatutoryEvidenceObjectContent> GetObjectContentAsync(StatutoryEvidenceObjectContentRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
     }
 
     private sealed class FakeUploadRepository : IStatutoryEvidenceUploadRepository

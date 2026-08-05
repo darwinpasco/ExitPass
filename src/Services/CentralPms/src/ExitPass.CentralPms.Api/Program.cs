@@ -672,17 +672,31 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IStatutoryEvidenceMetadataService, StatutoryEvidenceMetadataService>();
     builder.Services.Configure<StatutoryEvidenceUploadOptions>(
         builder.Configuration.GetSection(StatutoryEvidenceUploadOptions.SectionName));
+    builder.Services.Configure<StatutoryEvidenceScanWorkerOptions>(
+        builder.Configuration.GetSection(StatutoryEvidenceScanWorkerOptions.SectionName));
     builder.Services.AddScoped<IStatutoryEvidenceUploadRepository>(_ =>
         new StatutoryEvidenceMetadataRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryEvidenceScanRepository>(_ =>
+        new StatutoryEvidenceScanRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryEvidenceProtectedObjectStorageAdapter>(serviceProvider =>
         new S3CompatibleStatutoryEvidenceObjectStorageAdapter(
             new HttpClient(),
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>()));
+    builder.Services.AddScoped<IStatutoryEvidenceScanner, ClamAvStatutoryEvidenceScanner>();
     builder.Services.AddScoped<IStatutoryEvidenceUploadService>(serviceProvider =>
         new StatutoryEvidenceUploadService(
             serviceProvider.GetRequiredService<IStatutoryEvidenceUploadRepository>(),
             serviceProvider.GetRequiredService<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value));
+    builder.Services.AddScoped<IStatutoryEvidenceScanWorkerService>(serviceProvider =>
+        new StatutoryEvidenceScanWorkerService(
+            serviceProvider.GetRequiredService<IStatutoryEvidenceScanRepository>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceProtectedObjectStorageAdapter>(),
+            serviceProvider.GetRequiredService<IStatutoryEvidenceScanner>(),
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value,
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceScanWorkerOptions>>().Value,
+            serviceProvider.GetRequiredService<TimeProvider>()));
+    builder.Services.AddHostedService<StatutoryEvidenceScanWorkerHostedService>();
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandRepository>(_ =>
         new PostgresStatutoryDiscountStagedCommandRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryDiscountStagedCommandService, StatutoryDiscountStagedCommandService>();
@@ -708,6 +722,7 @@ static void ConfigureApplicationServices(
         new ManagementPlatformStatutoryEvidenceGovernanceService(
             serviceProvider.GetRequiredService<IManagementPlatformStatutoryEvidenceGovernanceRepository>(),
             serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceUploadOptions>>().Value,
+            serviceProvider.GetRequiredService<IOptions<StatutoryEvidenceScanWorkerOptions>>().Value,
             serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddScoped<IAptStatutoryOrdinanceAvailabilityService, AptStatutoryOrdinanceAvailabilityService>();
     builder.Services.Configure<PosServerSalesInvoiceProfileAdministrationOptions>(

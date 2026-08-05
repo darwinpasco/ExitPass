@@ -205,47 +205,88 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
         string sqlPath,
         string phase)
     {
+        var containerPath = $"/tmp/exitpass-fixture-{Guid.NewGuid():N}.sql";
+        await RunProcessAsync(
+            "docker",
+            [
+                "cp",
+                sqlPath,
+                $"{options.DockerContainer}:{containerPath}"
+            ],
+            phase,
+            "copy SQL into PostgreSQL container");
+
+        try
+        {
+            await RunProcessAsync(
+                "docker",
+                [
+                    "exec",
+                    options.DockerContainer,
+                    "psql",
+                    "-X",
+                    "-q",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-U",
+                    options.DockerUser,
+                    "-d",
+                    databaseName,
+                    "-f",
+                    containerPath
+                ],
+                phase,
+                "execute SQL inside PostgreSQL container");
+        }
+        finally
+        {
+            await RunProcessAsync(
+                "docker",
+                [
+                    "exec",
+                    options.DockerContainer,
+                    "rm",
+                    "-f",
+                    containerPath
+                ],
+                phase,
+                "remove temporary SQL from PostgreSQL container",
+                throwOnFailure: false);
+        }
+    }
+
+    private static async Task RunProcessAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string phase,
+        string operation,
+        bool throwOnFailure = true)
+    {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "docker",
-            RedirectStandardInput = true,
+            FileName = fileName,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
         };
 
-        startInfo.ArgumentList.Add("exec");
-        startInfo.ArgumentList.Add("-i");
-        startInfo.ArgumentList.Add(options.DockerContainer);
-        startInfo.ArgumentList.Add("psql");
-        startInfo.ArgumentList.Add("-X");
-        startInfo.ArgumentList.Add("-q");
-        startInfo.ArgumentList.Add("-v");
-        startInfo.ArgumentList.Add("ON_ERROR_STOP=1");
-        startInfo.ArgumentList.Add("-U");
-        startInfo.ArgumentList.Add(options.DockerUser);
-        startInfo.ArgumentList.Add("-d");
-        startInfo.ArgumentList.Add(databaseName);
-
-        using var process = Process.Start(startInfo)
-            ?? throw new InvalidOperationException($"Configuration phase failed: unable to start Docker psql for {phase}.");
-
-        await using (var input = File.OpenRead(sqlPath))
+        foreach (var argument in arguments)
         {
-            await input.CopyToAsync(process.StandardInput.BaseStream);
+            startInfo.ArgumentList.Add(argument);
         }
 
-        process.StandardInput.Close();
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Configuration phase failed: unable to start {operation} for {phase}.");
         var stdoutTask = process.StandardOutput.ReadToEndAsync();
         var stderrTask = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
 
-        if (process.ExitCode != 0)
+        if (process.ExitCode != 0 && throwOnFailure)
         {
             throw new InvalidOperationException(
-                $"{phase} phase failed with exit code {process.ExitCode}. Docker psql output: {TrimForError(stdout)} {TrimForError(stderr)}");
+                $"{phase} phase failed while trying to {operation}; exit code {process.ExitCode}. Output: {TrimForError(stdout)} {TrimForError(stderr)}");
         }
     }
 
