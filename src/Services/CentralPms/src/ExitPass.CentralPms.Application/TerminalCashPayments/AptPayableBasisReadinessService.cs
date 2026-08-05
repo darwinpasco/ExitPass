@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Contracts.TerminalCashPayments;
@@ -23,6 +24,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
     private readonly ITerminalCashPayableBasisEligibilityReader _terminalCashEligibility;
     private readonly ISalesInvoiceProfileAdministrationService _salesInvoiceReadiness;
     private readonly IStatutoryDiscountDecisionFacadeService _statutoryDiscounts;
+    private readonly IStatutoryEvidenceChannelService _statutoryEvidence;
 
     public AptPayableBasisReadinessService(
         IResolveVendorParkingUseCase vendorResolution,
@@ -30,7 +32,8 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         ITariffSnapshotReadRepository tariffSnapshots,
         ITerminalCashPayableBasisEligibilityReader terminalCashEligibility,
         ISalesInvoiceProfileAdministrationService salesInvoiceReadiness,
-        IStatutoryDiscountDecisionFacadeService statutoryDiscounts)
+        IStatutoryDiscountDecisionFacadeService statutoryDiscounts,
+        IStatutoryEvidenceChannelService statutoryEvidence)
     {
         _vendorResolution = vendorResolution;
         _parkingSessions = parkingSessions;
@@ -38,6 +41,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         _terminalCashEligibility = terminalCashEligibility;
         _salesInvoiceReadiness = salesInvoiceReadiness;
         _statutoryDiscounts = statutoryDiscounts;
+        _statutoryEvidence = statutoryEvidence;
     }
 
     public async Task<AptPayableBasisReadinessResult> ResolveAsync(
@@ -101,8 +105,13 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             return Failure("SESSION_NOT_FOUND", "Parking session was not found.", 404, false, correlationId);
         }
 
-        var ticketReference = Normalize(request.TicketReference) ?? storedSession.TicketNumber;
-        var plateNumber = Normalize(request.PlateNumber) ?? storedSession.PlateNumber;
+        var requestedTicketReference = Normalize(request.TicketReference);
+        var requestedPlateNumber = Normalize(request.PlateNumber);
+        var ticketReference = requestedPlateNumber is null
+            ? requestedTicketReference ?? storedSession.TicketNumber
+            : null;
+        var plateNumber = requestedPlateNumber ??
+            (ticketReference is null ? storedSession.PlateNumber : null);
         if (string.IsNullOrWhiteSpace(ticketReference) && string.IsNullOrWhiteSpace(plateNumber))
         {
             return Failure(
@@ -128,7 +137,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
                     ? storedSession.VendorSystemCode
                     : request.VendorSystemId.Trim(),
                 PlateNumber = plateNumber,
-                TicketReference = string.IsNullOrWhiteSpace(plateNumber) ? ticketReference : null,
+                TicketReference = ticketReference,
                 CorrelationId = correlationId
             },
             cancellationToken);
@@ -212,6 +221,12 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
         var sessionDimension = SessionReadiness(session);
         var tariffDimension = TariffReadiness(effectiveTariff);
         var statutoryDimension = ToStatutoryDimension(statutory.Readiness);
+        var evidenceReadiness = await _statutoryEvidence.GetAptEvidenceReadinessAsync(
+            requestedStatutoryDecisionCommandId ?? resolved.EffectivePayableBasis?.StatutoryDiscountDecisionCommandId,
+            new StatutoryEvidenceActor(null, null, StatutoryEvidenceChannelConstants.AssistedPaymentTerminal),
+            correlationId,
+            cancellationToken);
+        var evidenceDimension = ToEvidenceDimension(evidenceReadiness);
         var terminalCash = await _terminalCashEligibility.EvaluateAsync(
             new TerminalCashPayableBasisEligibilityRequest(
                 session.ParkingSessionId,
@@ -237,6 +252,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             sessionDimension,
             tariffDimension,
             statutoryDimension,
+            evidenceDimension,
             paymentDimension,
             terminalCashDimension,
             salesInvoiceDimension,
@@ -506,6 +522,7 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
 
             if (readback.OriginalTariffSnapshotId is { } originalTariffSnapshotId &&
                 originalTariffSnapshotId != originalTariff.TariffSnapshotId &&
+                readback.AppliedTariffSnapshotId != originalTariff.TariffSnapshotId &&
                 originalTariff.SupersedesTariffSnapshotId != originalTariffSnapshotId)
             {
                 return FromStatutoryReadback(
@@ -669,6 +686,15 @@ public sealed class AptPayableBasisReadinessService : IAptPayableBasisReadinessS
             : Blocked(
                 "statutoryDiscountReadiness",
                 readiness.BlockingReasonCode ?? "STATUTORY_DISCOUNT_STATE_INCONSISTENT",
+                readiness.Message,
+                readiness.Retryable);
+
+    private static AptReadinessDimensionDto ToEvidenceDimension(StatutoryEvidenceChannelReadiness readiness) =>
+        readiness.Ready
+            ? Ready("statutoryEvidenceReadiness", readiness.Message)
+            : Blocked(
+                "statutoryEvidenceReadiness",
+                readiness.BlockingReasonCode ?? "STATUTORY_EVIDENCE_NOT_READY",
                 readiness.Message,
                 readiness.Retryable);
 

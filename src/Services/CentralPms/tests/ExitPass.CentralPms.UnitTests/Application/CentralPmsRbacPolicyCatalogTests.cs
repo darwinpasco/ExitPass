@@ -39,6 +39,8 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("OperatorConsoleStatutoryDiscountPolicyResolve", "statutory-discounts.policy.resolve")]
     [InlineData("OperatorConsoleStatutoryDiscountAuditRead", "statutory-discounts.audit.read")]
     [InlineData("WebPayStatutoryDiscountPendingLifecycleRediscover", "statutory-discounts.pending-lifecycle.rediscover.webpay")]
+    [InlineData("WebPayStatutoryEvidenceCapture", "statutory-discounts.evidence.capture.webpay")]
+    [InlineData("AptStatutoryEvidenceCapture", "statutory-discounts.evidence.capture.assisted-payment-terminal")]
     [InlineData("AptStatutoryOrdinanceAvailabilityRead", "statutory-discounts.ordinance-availability.read.apt")]
     [InlineData("CentralPmsStatutoryEvidenceCaptureMetadata", "statutory-discounts.evidence.capture")]
     [InlineData("CentralPmsStatutoryEvidenceViewMetadata", "statutory-discounts.evidence.view")]
@@ -103,6 +105,27 @@ public sealed class CentralPmsRbacPolicyCatalogTests
             .ToArray();
 
         policyImportPermissions.Should().NotContain(permission => permission.StartsWith("statutory-discounts.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ResolvePermissions_KeepsChannelEvidenceCaptureSeparateFromInternalEvidenceAuthorities()
+    {
+        var webPay = CentralPmsRbacPolicyCatalog.ResolvePermissions("WebPayStatutoryEvidenceCapture");
+        var apt = CentralPmsRbacPolicyCatalog.ResolvePermissions("AptStatutoryEvidenceCapture");
+        var internalAuthorities = new[]
+        {
+            "CentralPmsStatutoryEvidenceCaptureMetadata",
+            "CentralPmsStatutoryEvidenceViewMetadata",
+            "CentralPmsStatutoryEvidenceHoldManage",
+            "CentralPmsStatutoryEvidenceDeletionRequest",
+            "StatutoryEvidenceGovernanceView",
+            "StatutoryEvidenceScanExecute"
+        }.SelectMany(CentralPmsRbacPolicyCatalog.ResolvePermissions).ToArray();
+
+        webPay.Should().ContainSingle().Which.Should().Be("statutory-discounts.evidence.capture.webpay");
+        apt.Should().ContainSingle().Which.Should().Be("statutory-discounts.evidence.capture.assisted-payment-terminal");
+        internalAuthorities.Should().NotContain(webPay);
+        internalAuthorities.Should().NotContain(apt);
     }
 
     [Fact]

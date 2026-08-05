@@ -198,6 +198,14 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "statutory-discounts.pending-lifecycle.rediscover.webpay"
             ],
+            ["WebPayStatutoryEvidenceCapture"] =
+            [
+                "statutory-discounts.evidence.capture.webpay"
+            ],
+            ["AptStatutoryEvidenceCapture"] =
+            [
+                "statutory-discounts.evidence.capture.assisted-payment-terminal"
+            ],
             ["CentralPmsStatutoryEvidenceCaptureMetadata"] =
             [
                 "statutory-discounts.evidence.capture"
