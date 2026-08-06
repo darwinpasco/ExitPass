@@ -21,6 +21,9 @@ import {
   resolveParkingSession,
   submitStatutoryDiscountDecision,
   toStatutoryDiscountMessage,
+  toStatutoryDiscountAvailabilityMessage,
+  toStatutoryPendingLifecycleRediscoveryMessage,
+  toReceiptPresentationMessage,
   toFriendlyError
 } from "./webpay";
 
@@ -612,7 +615,7 @@ describe("WebPay QR and payment intent helpers", () => {
         ...statutoryDecisionRequest(),
         maskedIdReference: "123456789012"
       })
-    ).toThrow(/masked ID reference/i);
+    ).toThrow(/let WebPay mask it automatically/i);
 
     const body = buildStatutoryDiscountDecisionBody({
       ...statutoryDecisionRequest(),
@@ -1001,6 +1004,23 @@ describe("WebPay QR and payment intent helpers", () => {
     expect(toFriendlyError("WEBPAY_PAYMENT_INTENT_FAILED")).toContain("could not start payment");
     expect(toFriendlyError("PAYABLE_BASIS_REFRESH_REQUIRED")).toContain("expired");
     expect(toFriendlyError("PAYABLE_BASIS_LOCKED")).toContain("payment has already started");
+  });
+
+  it("WebPay_WhenUnknownBackendErrorsContainTechnicalIdentifiers_DoesNotReflectThem", () => {
+    const raw = "HttpRequestException for 11111111-1111-4111-8111-111111111111 at http://central-pms.internal/v1";
+    const messages = [
+      toFriendlyError("UNEXPECTED", raw),
+      toStatutoryDiscountMessage("UNEXPECTED", raw),
+      toStatutoryDiscountAvailabilityMessage("UNEXPECTED", raw),
+      toStatutoryPendingLifecycleRediscoveryMessage("UNEXPECTED", raw),
+      toReceiptPresentationMessage("UNEXPECTED", raw)
+    ];
+
+    for (const message of messages) {
+      expect(message).not.toContain("11111111-1111-4111-8111-111111111111");
+      expect(message).not.toContain("central-pms.internal");
+      expect(message).not.toContain("HttpRequestException");
+    }
   });
 });
 

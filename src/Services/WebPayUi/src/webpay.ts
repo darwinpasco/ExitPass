@@ -362,7 +362,6 @@ export async function createPaymentIntent(
       throw new ActivePaymentAttemptError({
         kind: "active-payment-attempt",
         message:
-          error.message?.trim() ||
           "You already have an active payment for this parking session. Continue your existing payment or check its status.",
         correlationId: error.correlationId,
         parkingSessionId: error.parkingSessionId,
@@ -539,7 +538,7 @@ export function buildStatutoryDiscountDecisionBody(
 
   const maskedIdReference = request.maskedIdReference.trim();
   if (!maskedIdReference || !isMaskedIdReference(maskedIdReference)) {
-    throw new Error("Enter a masked ID reference, such as SC-****-1234. Do not enter the full ID number.");
+    throw new Error("Enter the ID reference normally and let WebPay mask it automatically.");
   }
 
   if (!request.requesterAttestation) {
@@ -677,7 +676,7 @@ export async function applyStatutoryDiscountPayableBasis(
   return readStatutoryDiscountDecisionResponse(response);
 }
 
-export function toFriendlyError(errorCode?: string, message?: string): string {
+export function toFriendlyError(errorCode?: string, _message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "INVALID_TICKET":
     case "INVALID_PLATE":
@@ -724,11 +723,11 @@ export function toFriendlyError(errorCode?: string, message?: string): string {
     case "PAYMENT_ALREADY_INITIATED":
       return "Payment has already been initiated for this payable amount.";
     default:
-      return message?.trim() || "Payment intent creation failed. Please try again.";
+      return "Payment intent creation failed. Please try again.";
   }
 }
 
-export function toStatutoryDiscountMessage(errorCode?: string, message?: string): string {
+export function toStatutoryDiscountMessage(errorCode?: string, _message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "IDEMPOTENCY_KEY_REQUIRED":
     case "WEBPAY_STATUTORY_DISCOUNT_REQUEST_INVALID":
@@ -748,6 +747,7 @@ export function toStatutoryDiscountMessage(errorCode?: string, message?: string)
     case "APPLICATION_PROCESSING":
       return "The approved statutory discount is still being applied.";
     case "STATUTORY_DISCOUNT_PAYABLE_BASIS_APPLICATION_TEMPORARILY_UNAVAILABLE":
+    case "STATUTORY_DISCOUNT_DECISION_TEMPORARILY_UNAVAILABLE":
     case "WEBPAY_STATUTORY_REQUEST_TEMPORARILY_UNAVAILABLE":
       return "Statutory discount status is temporarily unavailable. Refresh status shortly.";
     case "WEBPAY_STATUTORY_SERVICE_UNAVAILABLE":
@@ -762,11 +762,11 @@ export function toStatutoryDiscountMessage(errorCode?: string, message?: string)
     case "NOT_FOUND":
       return "The statutory discount request could not be found.";
     default:
-      return message?.trim() || "Statutory discount status is unavailable. Please try again shortly.";
+      return "Statutory discount status is unavailable. Please try again shortly.";
   }
 }
 
-export function toStatutoryDiscountAvailabilityMessage(errorCode?: string, message?: string): string {
+export function toStatutoryDiscountAvailabilityMessage(errorCode?: string, _message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "WEBPAY_STATUTORY_PRIVILEGE_NOT_AVAILABLE":
     case "STATUTORY_DISCOUNT_LOCAL_ORDINANCE_UNAVAILABLE":
@@ -788,11 +788,11 @@ export function toStatutoryDiscountAvailabilityMessage(errorCode?: string, messa
     case "TEMPORARILY_UNAVAILABLE":
       return "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
     default:
-      return message?.trim() || "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
+      return "Parking privilege availability is temporarily unavailable. You may continue with the regular parking amount or try again shortly.";
   }
 }
 
-export function toStatutoryPendingLifecycleRediscoveryMessage(errorCode?: string, message?: string): string {
+export function toStatutoryPendingLifecycleRediscoveryMessage(errorCode?: string, _message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "WEBPAY_STATUTORY_PENDING_LIFECYCLE_REDISCOVERY_REQUEST_INVALID":
     case "VALIDATION_FAILED":
@@ -806,7 +806,7 @@ export function toStatutoryPendingLifecycleRediscoveryMessage(errorCode?: string
     case "ACCESS_DENIED":
       return "Parking-privilege requests are temporarily unavailable. Please try again later or ask a parking attendant for assistance.";
     default:
-      return message?.trim() || "The parking privilege request could not be checked right now. Please try again.";
+      return "The parking privilege request could not be checked right now. Please try again.";
   }
 }
 
@@ -824,7 +824,7 @@ export class ReceiptPresentationError extends Error {
   }
 }
 
-export function toReceiptPresentationMessage(errorCode?: string, message?: string): string {
+export function toReceiptPresentationMessage(errorCode?: string, _message?: string): string {
   switch ((errorCode ?? "").toUpperCase()) {
     case "WEBPAY_FISCAL_ISSUANCE_NOT_FOUND":
     case "WEBPAY_RECEIPT_PRESENTATION_NOT_READY":
@@ -836,11 +836,13 @@ export function toReceiptPresentationMessage(errorCode?: string, message?: strin
       return "Sales Invoice retrieval is temporarily unavailable. Please try again shortly.";
     case "POS_FISCAL_DOCUMENT_PRESENTATION_INCONSISTENT":
       return "Sales Invoice retrieval needs support review.";
+    case "WEBPAY_FISCAL_ISSUANCE_FAILED":
+      return "Sales Invoice issuance failed. Please contact support.";
     case "INVALID_REQUEST":
     case "PAYMENT_ATTEMPT_ID_REQUIRED":
       return "Payment reference is missing. Please check your payment confirmation link.";
     default:
-      return message?.trim() || "Sales Invoice retrieval is temporarily unavailable. Please try again shortly.";
+      return "Sales Invoice retrieval is temporarily unavailable. Please try again shortly.";
   }
 }
 

@@ -302,7 +302,6 @@ export function StatutoryEvidenceCapture({ statutoryDiscountDecisionCommandId }:
           {captureState === "loading" ? "Checking evidence status..." : "Refresh evidence status"}
         </button>
       </div>
-      {channel?.correlationId && <p className="support-reference">Support reference: {channel.correlationId}</p>}
     </section>
   );
 }
