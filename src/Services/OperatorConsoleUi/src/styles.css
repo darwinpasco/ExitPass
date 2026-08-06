@@ -49,6 +49,7 @@ textarea {
   border-radius: 6px;
   color: #1b252f;
   font: inherit;
+  max-width: 100%;
   min-height: 40px;
   padding: 8px 10px;
 }
@@ -750,6 +751,13 @@ dd {
   gap: 8px;
   margin-top: 16px;
   max-width: 360px;
+  min-width: 0;
+  width: 100%;
+}
+
+.reasonField select {
+  min-width: 0;
+  width: 100%;
 }
 
 .attestationField {
@@ -1173,6 +1181,171 @@ dd {
   gap: 7px;
 }
 
+.panelIntro {
+  color: #5b6a76;
+  margin: 4px 0 0;
+}
+
+.evidenceRefreshButton {
+  align-self: start;
+}
+
+.evidenceLoadError {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.evidenceReviewSummary,
+.evidenceLifecycleGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 16px 0 0;
+}
+
+.evidenceReviewSummary div,
+.evidenceLifecycleGrid div {
+  background: #f7fafb;
+  border: 1px solid #dfe7eb;
+  border-radius: 6px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.evidenceReviewSummary dt,
+.evidenceLifecycleGrid dt {
+  color: #5b6a76;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.evidenceReviewSummary dd,
+.evidenceLifecycleGrid dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.secureEvidenceList {
+  display: grid;
+  gap: 14px;
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0;
+}
+
+.secureEvidenceItem {
+  border: 1px solid #d9e3e8;
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.secureEvidenceItemHeader,
+.evidencePreviewHeader,
+.evidencePreviewToolbar {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.secureEvidenceItemHeader h4,
+.secureEvidenceItemHeader p,
+.evidencePreviewHeader h3,
+.evidencePreviewHeader p {
+  margin: 0;
+}
+
+.secureEvidenceItem > button {
+  justify-self: start;
+}
+
+.evidencePreviewBackdrop {
+  align-items: center;
+  background: rgb(20 34 42 / 72%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 1000;
+}
+
+.evidencePreviewDialog {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 28%);
+  display: grid;
+  gap: 16px;
+  max-height: calc(100vh - 48px);
+  max-width: 1040px;
+  overflow: hidden;
+  padding: 18px;
+  width: min(94vw, 1040px);
+}
+
+.evidencePreviewState {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  min-height: 260px;
+  padding: 24px;
+  text-align: center;
+}
+
+.evidencePreviewToolbar {
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.evidencePreviewToolbar span {
+  min-width: 48px;
+  text-align: center;
+}
+
+.evidencePreviewViewport {
+  align-items: center;
+  background: #eef3f5;
+  display: flex;
+  justify-content: center;
+  min-height: 260px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.evidencePreviewViewport img {
+  display: block;
+  height: auto;
+  max-height: calc(100vh - 230px);
+  max-width: 100%;
+  object-fit: contain;
+  transform-origin: center;
+  transition: transform 120ms ease;
+}
+
+.evidencePreviewViewport img.isDecoding {
+  visibility: hidden;
+}
+
+.evidencePreviewDecodeStatus {
+  color: #43515a;
+  text-align: center;
+}
+
+.srOnly {
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
 .policyImportForm,
 .policyReviewDecisionControls {
   display: grid;
@@ -1240,11 +1413,43 @@ dd {
     grid-template-columns: 1fr;
   }
 
+  .evidenceReviewSummary,
+  .evidenceLifecycleGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .auditFilterGrid .wideFilterField {
     grid-column: auto;
   }
 
   .operatorStatus {
     min-width: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .evidenceReviewSummary,
+  .evidenceLifecycleGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .secureEvidenceItemHeader,
+  .evidencePreviewHeader {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .evidencePreviewBackdrop {
+    padding: 8px;
+  }
+
+  .evidencePreviewDialog {
+    max-height: calc(100vh - 16px);
+    padding: 12px;
+    width: calc(100vw - 16px);
+  }
+
+  .evidencePreviewViewport img {
+    max-height: calc(100vh - 290px);
   }
 }

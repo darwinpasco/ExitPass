@@ -28,8 +28,36 @@ const scenarioIds = {
   unsupported: "unsupported-effect",
   paranaque: "paranaque-operational",
   approved: "approved-request",
-  rejected: "rejected-request"
+  rejected: "rejected-request",
+  evidenceJpeg: "evidence-eligible-jpeg",
+  evidencePng: "evidence-eligible-png",
+  evidencePdf: "evidence-unsupported-pdf",
+  evidenceValidationPending: "evidence-validation-pending",
+  evidenceValidationFailed: "evidence-validation-failed",
+  evidenceScanPending: "evidence-scan-pending",
+  evidenceScannerOutage: "evidence-scanner-outage",
+  evidenceMalware: "evidence-malware-detected",
+  evidenceNotReviewable: "evidence-not-reviewable",
+  evidenceStale: "evidence-stale",
+  evidenceReplaced: "evidence-replaced",
+  evidenceDeleted: "evidence-deleted",
+  evidencePendingDeletion: "evidence-pending-deletion",
+  evidenceHold: "evidence-hold-active",
+  evidenceReplacementAllowed: "evidence-replacement-allowed",
+  evidenceReplacementDenied: "evidence-replacement-denied",
+  evidencePermissionDenied: "evidence-permission-denied",
+  evidenceMetadataNotFound: "evidence-metadata-not-found",
+  evidencePreviewNotFound: "evidence-preview-not-found",
+  evidenceStorageOutage: "evidence-preview-storage-outage",
+  evidenceCrossSite: "evidence-cross-site-denied",
+  evidenceCrossSiteGroup: "evidence-cross-site-group-denied",
+  evidenceDecisionSwitch: "evidence-decision-switch"
 };
+
+const evidenceScenarioIds = Object.values(scenarioIds).filter((id) => id.startsWith("evidence-"));
+const scenarioDecisionIds = new Map(
+  evidenceScenarioIds.map((id, index) => [id, `61000000-0000-0000-0000-${String(index + 1).padStart(12, "0")}`])
+);
 
 const scenarioParkingSessionIds = {
   [scenarioIds.seniorRepresentative]: "20000000-0000-0000-0000-000000000101",
@@ -159,6 +187,7 @@ function governingPolicy(overrides = {}) {
 function baseDraft(id, overrides = {}) {
   return {
     draftId: id,
+    statutoryDiscountDecisionCommandId: scenarioDecisionIds.get(id),
     parkingSessionId: scenarioParkingSessionIds[id] ?? "20000000-0000-0000-0000-000000000199",
     ticketReference: `OC-ORD-${id.toUpperCase()}`,
     plateNumber: "ORD 2026",
@@ -432,7 +461,19 @@ const drafts = new Map([
       decisionReasonCode: "ID_NOT_VALID",
       activity: ["Decision rejected by reviewer."]
     })
-  ]
+  ],
+  ...evidenceScenarioIds.map((id) => [
+    id,
+    baseDraft(id, {
+      ticketReference: `OC-EVIDENCE-${id.replace("evidence-", "").toUpperCase()}`,
+      plateNumber: "SAFE 005",
+      siteName: "Synthetic Evidence Review Site",
+      policyName: "Synthetic statutory evidence review fixture",
+      requiredEvidenceTypes: ["PWD_ID"],
+      evidenceCount: 1,
+      activity: ["Synthetic evidence review fixture created for browser validation."]
+    })
+  ])
 ]);
 
 function evidenceList(draft) {
@@ -458,6 +499,125 @@ function evidenceList(draft) {
   };
 }
 
+function reviewEvidence(draft) {
+  const scenario = draft.draftId;
+  const item = reviewEvidenceItem(scenario);
+  return {
+    statutoryDiscountDecisionCommandId: draft.statutoryDiscountDecisionCommandId,
+    evidenceSetReference: "62000000-0000-0000-0000-000000000001",
+    sourceChannel: "WEBPAY",
+    decisionResultStatus: draft.validationStatus,
+    reviewStatus: "PENDING",
+    evidenceRequired: true,
+    evidenceRecorded: true,
+    setStatus: scenario === scenarioIds.evidenceStale ? "STALE" : "CURRENT",
+    retentionStatus: "ACTIVE",
+    deletionStatus:
+      scenario === scenarioIds.evidenceDeleted
+        ? "DELETED"
+        : scenario === scenarioIds.evidencePendingDeletion
+          ? "PENDING_DELETION"
+          : "NONE",
+    holdActive: scenario === scenarioIds.evidenceHold,
+    replacementPosture:
+      scenario === scenarioIds.evidenceReplaced
+        ? "REPLACED"
+        : scenario === scenarioIds.evidenceReplacementAllowed
+          ? "REPLACEMENT_ALLOWED"
+          : scenario === scenarioIds.evidenceReplacementDenied
+            ? "REPLACEMENT_PROHIBITED"
+            : "CURRENT",
+    items: [item],
+    correlationId: "63000000-0000-0000-0000-000000000001"
+  };
+}
+
+function reviewEvidenceItem(scenario) {
+  const item = {
+    evidenceItemReference: "64000000-0000-0000-0000-000000000001",
+    documentType: "PWD_ID",
+    itemRole: "PRIMARY_IDENTITY_DOCUMENT",
+    declaredContentType: "image/png",
+    authoritativeContentType: scenario === scenarioIds.evidenceJpeg ? "image/jpeg" : "image/png",
+    contentLength: scenario === scenarioIds.evidenceJpeg
+      ? syntheticJpegPreviewBytes.length
+      : syntheticPngPreviewBytes.length,
+    uploadStatus: "FINALIZED",
+    validationStatus: "VALID",
+    scanStatus: "CLEAN",
+    reviewabilityStatus: "REVIEWABLE",
+    bindingStatus: "BOUND",
+    retentionStatus: "ACTIVE",
+    deletionStatus: "NONE",
+    holdActive: scenario === scenarioIds.evidenceHold,
+    uploadedAt: "2026-08-01T08:00:00+08:00",
+    finalizedAt: "2026-08-01T08:01:00+08:00",
+    validatedAt: "2026-08-01T08:02:00+08:00",
+    scannedAt: "2026-08-01T08:03:00+08:00",
+    reviewableAt: "2026-08-01T08:04:00+08:00",
+    previewPermitted: true,
+    previewDenialReason: null
+  };
+
+  const denied = (previewDenialReason, overrides = {}) => ({
+    ...item,
+    previewPermitted: false,
+    previewDenialReason,
+    ...overrides
+  });
+
+  switch (scenario) {
+    case scenarioIds.evidencePdf:
+      return denied("STATUTORY_EVIDENCE_PREVIEW_UNSUPPORTED_MEDIA", {
+        declaredContentType: "application/pdf",
+        authoritativeContentType: "application/pdf"
+      });
+    case scenarioIds.evidenceValidationPending:
+      return denied("STATUTORY_EVIDENCE_VALIDATION_PENDING", { validationStatus: "PENDING" });
+    case scenarioIds.evidenceValidationFailed:
+      return denied("STATUTORY_EVIDENCE_VALIDATION_FAILED", { validationStatus: "FAILED" });
+    case scenarioIds.evidenceScanPending:
+      return denied("STATUTORY_EVIDENCE_SCAN_PENDING", { scanStatus: "PENDING" });
+    case scenarioIds.evidenceScannerOutage:
+      return denied("STATUTORY_EVIDENCE_SCANNER_UNAVAILABLE", { scanStatus: "UNAVAILABLE" });
+    case scenarioIds.evidenceMalware:
+      return denied("STATUTORY_EVIDENCE_MALWARE_DETECTED", { scanStatus: "MALWARE_DETECTED" });
+    case scenarioIds.evidenceNotReviewable:
+      return denied("STATUTORY_EVIDENCE_NOT_REVIEWABLE", { reviewabilityStatus: "NOT_REVIEWABLE" });
+    case scenarioIds.evidenceStale:
+      return denied("STATUTORY_EVIDENCE_STALE", { bindingStatus: "STALE" });
+    case scenarioIds.evidenceReplaced:
+      return denied("REPLACED", { bindingStatus: "REPLACED" });
+    case scenarioIds.evidenceDeleted:
+      return denied("DELETED", { deletionStatus: "DELETED" });
+    case scenarioIds.evidencePendingDeletion:
+      return denied("STATUTORY_EVIDENCE_DELETION_IN_PROGRESS", { deletionStatus: "PENDING_DELETION" });
+    default:
+      return item;
+  }
+}
+
+const syntheticJpegPreviewBytes = await readFile(
+  join(root, "e2e", "fixtures", "assets", "synthetic-evidence-landscape.jpg")
+);
+const syntheticPngPreviewBytes = await readFile(
+  join(root, "e2e", "fixtures", "assets", "synthetic-evidence-portrait.png")
+);
+
+function writePreview(response, contentType) {
+  const content = contentType === "image/jpeg" ? syntheticJpegPreviewBytes : syntheticPngPreviewBytes;
+  response.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Length": content.length,
+    "Cache-Control": "no-store, private, max-age=0",
+    Pragma: "no-cache",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Disposition": "inline",
+    "Referrer-Policy": "no-referrer"
+  });
+  response.end(content);
+}
+
 async function serveStatic(pathname, response) {
   const requestedPath = pathname === "/" ? "/index.html" : pathname;
   const candidate = normalize(join(distRoot, requestedPath));
@@ -474,6 +634,8 @@ async function serveStatic(pathname, response) {
     response.end(index);
   }
 }
+
+const previewAttempts = new Map();
 
 const server = createServer(async (request, response) => {
   try {
@@ -509,6 +671,65 @@ const server = createServer(async (request, response) => {
       }
 
       writeJson(response, 200, draft);
+      return;
+    }
+
+    const reviewPreviewMatch = url.pathname.match(
+      /^\/v1\/ops\/operator-console\/statutory-discounts\/reviews\/([^/]+)\/evidence\/([^/]+)\/preview$/
+    );
+    if (reviewPreviewMatch && request.method === "GET") {
+      const decisionId = decodeURIComponent(reviewPreviewMatch[1]);
+      const draft = Array.from(drafts.values()).find((item) => item.statutoryDiscountDecisionCommandId === decisionId);
+      if (!draft || draft.draftId === scenarioIds.evidencePreviewNotFound) {
+        writeJson(response, 404, { errorCode: "NOT_FOUND", detail: "Synthetic object key must not be rendered." });
+        return;
+      }
+      if (draft.draftId === scenarioIds.evidenceCrossSite || draft.draftId === scenarioIds.evidenceCrossSiteGroup) {
+        writeJson(response, 404, { errorCode: "NOT_FOUND", detail: "Scope detail must not be rendered." });
+        return;
+      }
+      if (draft.draftId === scenarioIds.evidenceStorageOutage) {
+        const attempts = previewAttempts.get(decisionId) ?? 0;
+        previewAttempts.set(decisionId, attempts + 1);
+        if (attempts === 0) {
+          writeJson(response, 503, {
+            errorCode: "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STORAGE_UNAVAILABLE",
+            detail: "Synthetic provider endpoint and bucket must not be rendered."
+          });
+          return;
+        }
+      }
+      if (draft.draftId === scenarioIds.evidenceDecisionSwitch) {
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+
+      writePreview(response, draft.draftId === scenarioIds.evidenceJpeg ? "image/jpeg" : "image/png");
+      return;
+    }
+
+    const reviewMetadataMatch = url.pathname.match(
+      /^\/v1\/ops\/operator-console\/statutory-discounts\/reviews\/([^/]+)\/evidence$/
+    );
+    if (reviewMetadataMatch && request.method === "GET") {
+      const decisionId = decodeURIComponent(reviewMetadataMatch[1]);
+      const draft = Array.from(drafts.values()).find((item) => item.statutoryDiscountDecisionCommandId === decisionId);
+      if (!draft || draft.draftId === scenarioIds.evidenceMetadataNotFound) {
+        writeJson(response, 404, { errorCode: "NOT_FOUND", detail: "Synthetic database row must not be rendered." });
+        return;
+      }
+      if (draft.draftId === scenarioIds.evidencePermissionDenied) {
+        writeJson(response, 403, {
+          errorCode: "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_FORBIDDEN",
+          detail: "Synthetic permission diagnostic must not be rendered."
+        });
+        return;
+      }
+      if (draft.draftId === scenarioIds.evidenceCrossSite || draft.draftId === scenarioIds.evidenceCrossSiteGroup) {
+        writeJson(response, 404, { errorCode: "NOT_FOUND", detail: "Synthetic scope diagnostic must not be rendered." });
+        return;
+      }
+
+      writeJson(response, 200, reviewEvidence(draft));
       return;
     }
 

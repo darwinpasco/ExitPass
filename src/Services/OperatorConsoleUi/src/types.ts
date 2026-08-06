@@ -64,6 +64,7 @@ export interface StatutoryDiscountQueueItem {
 }
 
 export interface StatutoryDiscountDraftDetail extends StatutoryDiscountQueueItem {
+  statutoryDiscountDecisionCommandId?: string;
   laneName: string;
   parkingStartedAt: string;
   originalTariffAmount: string;
@@ -739,6 +740,51 @@ export interface StatutoryDiscountEvidenceList {
   evidenceCount: number;
   latestEvidenceStatus?: string;
   items: StatutoryDiscountEvidenceItem[];
+}
+
+export interface StatutoryEvidenceReviewItem {
+  evidenceItemReference: string;
+  documentType: string;
+  itemRole: string;
+  declaredContentType?: string;
+  authoritativeContentType?: string;
+  contentLength?: number;
+  uploadStatus: string;
+  validationStatus: string;
+  scanStatus: string;
+  reviewabilityStatus: string;
+  bindingStatus: string;
+  retentionStatus: string;
+  deletionStatus: string;
+  holdActive: boolean;
+  uploadedAt?: string;
+  finalizedAt?: string;
+  validatedAt?: string;
+  scannedAt?: string;
+  reviewableAt?: string;
+  previewPermitted: boolean;
+  previewDenialReason?: string;
+}
+
+export interface StatutoryEvidenceReview {
+  statutoryDiscountDecisionCommandId: string;
+  evidenceSetReference?: string;
+  sourceChannel: string;
+  decisionResultStatus: string;
+  reviewStatus: string;
+  evidenceRequired: boolean;
+  evidenceRecorded: boolean;
+  setStatus?: string;
+  retentionStatus?: string;
+  deletionStatus?: string;
+  holdActive: boolean;
+  replacementPosture: string;
+  items: StatutoryEvidenceReviewItem[];
+}
+
+export interface StatutoryEvidencePreview {
+  blob: Blob;
+  contentType: "image/jpeg" | "image/png";
 }
 
 export interface StatutoryDiscountEvidenceCaptureInput {

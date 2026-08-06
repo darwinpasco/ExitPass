@@ -31,6 +31,9 @@ import type {
   StatutoryDiscountEvidenceCaptureResult,
   StatutoryDiscountEvidenceItem,
   StatutoryDiscountEvidenceList,
+  StatutoryEvidencePreview,
+  StatutoryEvidenceReview,
+  StatutoryEvidenceReviewItem,
   StatutoryDiscountGoverningPolicy,
   StatutoryDiscountPolicyContext,
   StatutoryDiscountQueueItem,
@@ -61,6 +64,12 @@ export interface OperatorConsoleApiClient {
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
+  getStatutoryEvidenceReview(decisionId: string, signal?: AbortSignal): Promise<StatutoryEvidenceReview>;
+  getStatutoryEvidencePreview(
+    decisionId: string,
+    evidenceItemReference: string,
+    signal?: AbortSignal
+  ): Promise<StatutoryEvidencePreview>;
   captureStatutoryDiscountEvidence(input: StatutoryDiscountEvidenceCaptureInput): Promise<StatutoryDiscountEvidenceCaptureResult>;
   submitStatutoryDiscountDecision(input: StatutoryDiscountDecisionInput): Promise<StatutoryDiscountDecisionResult>;
   dryRunProductionPolicyImport(input: ProductionPolicyImportDryRunInput): Promise<ProductionPolicyImportDryRunResult>;
@@ -75,6 +84,7 @@ export interface OperatorConsoleApiClient {
   getVendorSessionProjectionHealthSummary(): Promise<VendorSessionProjectionHealthSummary>;
   canApproveStatutoryDiscount?(): boolean;
   canRejectStatutoryDiscount?(): boolean;
+  canReviewStatutoryEvidence?(): boolean;
   canDecideProductionPolicyImportReview?(): boolean;
   canVoidFiscalDocument?(): boolean;
 }
@@ -117,6 +127,7 @@ interface QueueItemDto {
 }
 
 interface DetailDto extends QueueItemDto {
+  statutoryDiscountDecisionCommandId?: string | null;
   siteGroupId: string;
   evidenceCaptured: boolean;
   requiredEvidenceTypes?: string[] | null;
@@ -151,6 +162,47 @@ interface DetailDto extends QueueItemDto {
   finalPayableAmountMinorUnits?: number | null;
   governingPolicy?: GoverningPolicyDto | null;
   activity: string[];
+}
+
+interface StatutoryEvidenceReviewDto {
+  statutoryDiscountDecisionCommandId: string;
+  evidenceSetReference?: string | null;
+  sourceChannel: string;
+  decisionResultStatus: string;
+  reviewStatus: string;
+  evidenceRequired: boolean;
+  evidenceRecorded: boolean;
+  setStatus?: string | null;
+  retentionStatus?: string | null;
+  deletionStatus?: string | null;
+  holdActive: boolean;
+  replacementPosture: string;
+  items: StatutoryEvidenceReviewItemDto[];
+  correlationId?: string | null;
+}
+
+interface StatutoryEvidenceReviewItemDto {
+  evidenceItemReference: string;
+  documentType: string;
+  itemRole: string;
+  declaredContentType?: string | null;
+  authoritativeContentType?: string | null;
+  contentLength?: number | null;
+  uploadStatus: string;
+  validationStatus: string;
+  scanStatus: string;
+  reviewabilityStatus: string;
+  bindingStatus: string;
+  retentionStatus: string;
+  deletionStatus: string;
+  holdActive: boolean;
+  uploadedAt?: string | null;
+  finalizedAt?: string | null;
+  validatedAt?: string | null;
+  scannedAt?: string | null;
+  reviewableAt?: string | null;
+  previewPermitted: boolean;
+  previewDenialReason?: string | null;
 }
 
 interface GoverningPolicyDto {
@@ -495,6 +547,7 @@ const reviewDecisionPermissions = new Set([
 
 const statutoryDiscountApprovePermission = "statutory-discounts.decision.approve";
 const statutoryDiscountRejectPermission = "statutory-discounts.decision.reject";
+export const statutoryEvidenceReviewPermission = "statutory-discounts.evidence.review.view";
 const fiscalVoidPermissions = new Set(["fiscal-issuance.void.command", "reconciliation.manage"]);
 
 const defaultOperatorPermissions = localFallback(
@@ -509,6 +562,7 @@ const defaultOperatorPermissions = localFallback(
     "operator-console.policy-import-review.approve.db",
     statutoryDiscountApprovePermission,
     statutoryDiscountRejectPermission,
+    statutoryEvidenceReviewPermission,
     "operator-console.vendor-projection-health.view",
     "fiscal-issuance.status.read",
     "fiscal-issuance.void.command",
@@ -533,6 +587,10 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
 
     canRejectStatutoryDiscount() {
       return permissions.includes(statutoryDiscountRejectPermission);
+    },
+
+    canReviewStatutoryEvidence() {
+      return permissions.includes(statutoryEvidenceReviewPermission);
     },
 
     canDecideProductionPolicyImportReview() {
@@ -756,6 +814,47 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         { headers: operatorConsoleHeaders(correlationId) }
       );
       return toEvidenceList(await parseResponse<EvidenceListDto>(response));
+    },
+
+    async getStatutoryEvidenceReview(decisionId, signal) {
+      const response = await fetch(
+        `/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}/evidence`,
+        {
+          method: "GET",
+          headers: operatorConsoleHeaders(newCorrelationId()),
+          cache: "no-store",
+          signal
+        }
+      );
+
+      return parseStatutoryEvidenceReviewResponse(response);
+    },
+
+    async getStatutoryEvidencePreview(decisionId, evidenceItemReference, signal) {
+      const response = await fetch(
+        `/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}/evidence/${encodeURIComponent(evidenceItemReference)}/preview`,
+        {
+          method: "GET",
+          headers: operatorConsoleHeaders(newCorrelationId()),
+          cache: "no-store",
+          signal
+        }
+      );
+
+      if (!response.ok) {
+        throw await toStatutoryEvidenceSafeError(response);
+      }
+
+      const contentType = response.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase();
+      if (contentType !== "image/jpeg" && contentType !== "image/png") {
+        throw safeStatutoryEvidenceError(
+          "error",
+          "STATUTORY_EVIDENCE_PREVIEW_UNSUPPORTED_MEDIA",
+          "This file type cannot be previewed."
+        );
+      }
+
+      return { blob: await response.blob(), contentType };
     },
 
     async captureStatutoryDiscountEvidence(input) {
@@ -1049,6 +1148,10 @@ export function createMockOperatorConsoleApiClient(
     detailError?: OperatorConsoleApiError;
     decisionError?: OperatorConsoleApiError;
     evidenceError?: OperatorConsoleApiError;
+    statutoryEvidenceReview?: StatutoryEvidenceReview;
+    statutoryEvidenceReviewError?: OperatorConsoleApiError;
+    statutoryEvidencePreview?: StatutoryEvidencePreview;
+    statutoryEvidencePreviewError?: OperatorConsoleApiError;
     ticketLookupError?: OperatorConsoleApiError;
     ticketLookupResults?: OperatorTicketLookupResult[];
     fiscalStatusError?: OperatorConsoleApiError;
@@ -1083,6 +1186,7 @@ export function createMockOperatorConsoleApiClient(
     statutoryDiscountDecisionAuthorized?: boolean;
     statutoryDiscountApproveAuthorized?: boolean;
     statutoryDiscountRejectAuthorized?: boolean;
+    statutoryEvidenceReviewAuthorized?: boolean;
     productionPolicyReviewDecisionAuthorized?: boolean;
   } = {}
 ): OperatorConsoleApiClient {
@@ -1105,6 +1209,10 @@ export function createMockOperatorConsoleApiClient(
 
     canRejectStatutoryDiscount() {
       return options.statutoryDiscountRejectAuthorized ?? options.statutoryDiscountDecisionAuthorized ?? true;
+    },
+
+    canReviewStatutoryEvidence() {
+      return options.statutoryEvidenceReviewAuthorized ?? true;
     },
 
     canDecideProductionPolicyImportReview() {
@@ -1353,6 +1461,31 @@ export function createMockOperatorConsoleApiClient(
         evidenceCount: items.length,
         latestEvidenceStatus: items[0]?.verificationStatus,
         items
+      };
+    },
+
+    async getStatutoryEvidenceReview(decisionId, signal) {
+      await delay();
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      if (options.statutoryEvidenceReviewError) {
+        throw options.statutoryEvidenceReviewError;
+      }
+      return options.statutoryEvidenceReview ?? mockStatutoryEvidenceReview(decisionId);
+    },
+
+    async getStatutoryEvidencePreview(_decisionId, _evidenceItemReference, signal) {
+      await delay();
+      if (signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      if (options.statutoryEvidencePreviewError) {
+        throw options.statutoryEvidencePreviewError;
+      }
+      return options.statutoryEvidencePreview ?? {
+        blob: new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" }),
+        contentType: "image/png"
       };
     },
 
@@ -1871,6 +2004,7 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
   const queueItem = toQueueItem(item);
   return {
     ...queueItem,
+    statutoryDiscountDecisionCommandId: item.statutoryDiscountDecisionCommandId ?? undefined,
     siteGroupId: item.siteGroupId,
     laneName: "Not available",
     parkingStartedAt: item.requestedAt,
@@ -1895,6 +2029,205 @@ function toDraftDetail(item: DetailDto): StatutoryDiscountDraftDetail {
     decisionReasonCode: item.decisionReasonCode ?? undefined,
     governingPolicy: item.governingPolicy ? toGoverningPolicy(item.governingPolicy) : undefined,
     auditActivity: item.activity.length > 0 ? item.activity : ["No activity history is available yet."]
+  };
+}
+
+function mockStatutoryEvidenceReview(decisionId: string): StatutoryEvidenceReview {
+  return {
+    statutoryDiscountDecisionCommandId: decisionId,
+    sourceChannel: "OPERATOR_CONSOLE",
+    decisionResultStatus: "PENDING_OPERATOR_REVIEW",
+    reviewStatus: "PENDING",
+    evidenceRequired: true,
+    evidenceRecorded: true,
+    setStatus: "CURRENT",
+    retentionStatus: "ACTIVE",
+    deletionStatus: "NONE",
+    holdActive: false,
+    replacementPosture: "CURRENT",
+    items: [
+      {
+        evidenceItemReference: "57000000-0000-0000-0000-000000000001",
+        documentType: "PWD_ID",
+        itemRole: "PRIMARY_IDENTITY_DOCUMENT",
+        declaredContentType: "image/png",
+        authoritativeContentType: "image/png",
+        contentLength: 24_576,
+        uploadStatus: "FINALIZED",
+        validationStatus: "VALID",
+        scanStatus: "CLEAN",
+        reviewabilityStatus: "REVIEWABLE",
+        bindingStatus: "BOUND",
+        retentionStatus: "ACTIVE",
+        deletionStatus: "NONE",
+        holdActive: false,
+        finalizedAt: "2026-08-01T08:30:00+08:00",
+        validatedAt: "2026-08-01T08:31:00+08:00",
+        scannedAt: "2026-08-01T08:32:00+08:00",
+        reviewableAt: "2026-08-01T08:32:00+08:00",
+        previewPermitted: true
+      }
+    ]
+  };
+}
+
+async function parseStatutoryEvidenceReviewResponse(response: Response): Promise<StatutoryEvidenceReview> {
+  if (!response.ok) {
+    throw await toStatutoryEvidenceSafeError(response);
+  }
+
+  let body: unknown;
+  try {
+    body = JSON.parse(await response.text());
+  } catch {
+    throw safeStatutoryEvidenceError(
+      "error",
+      "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_MALFORMED",
+      "Evidence details are temporarily unavailable. Try again."
+    );
+  }
+
+  if (!isStatutoryEvidenceReviewDto(body)) {
+    throw safeStatutoryEvidenceError(
+      "error",
+      "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_MALFORMED",
+      "Evidence details are temporarily unavailable. Try again."
+    );
+  }
+
+  return toStatutoryEvidenceReview(body);
+}
+
+async function toStatutoryEvidenceSafeError(response: Response): Promise<OperatorConsoleApiError> {
+  let errorCode: string | undefined;
+  try {
+    const body = JSON.parse(await response.text()) as unknown;
+    if (isRecord(body) && typeof body.errorCode === "string" && /^[A-Z0-9_]{1,120}$/.test(body.errorCode)) {
+      errorCode = body.errorCode;
+    }
+  } catch {
+    // The UI deliberately ignores malformed and unapproved backend detail.
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return safeStatutoryEvidenceError(
+      "access-denied",
+      errorCode ?? "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_FORBIDDEN",
+      "You no longer have access to this evidence."
+    );
+  }
+
+  if (response.status === 404) {
+    return safeStatutoryEvidenceError(
+      "not-found",
+      errorCode ?? "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_NOT_FOUND",
+      "The evidence could not be found."
+    );
+  }
+
+  return safeStatutoryEvidenceError(
+    "error",
+    errorCode ?? "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_REVIEW_UNAVAILABLE",
+    "Evidence preview is temporarily unavailable. Try again."
+  );
+}
+
+function safeStatutoryEvidenceError(
+  status: OperatorConsoleApiError["status"],
+  errorCode: string,
+  message: string
+): OperatorConsoleApiError {
+  return { status, errorCode, message };
+}
+
+function isStatutoryEvidenceReviewDto(value: unknown): value is StatutoryEvidenceReviewDto {
+  if (!isRecord(value) || !Array.isArray(value.items)) {
+    return false;
+  }
+
+  return (
+    isString(value.statutoryDiscountDecisionCommandId) &&
+    isString(value.sourceChannel) &&
+    isString(value.decisionResultStatus) &&
+    isString(value.reviewStatus) &&
+    typeof value.evidenceRequired === "boolean" &&
+    typeof value.evidenceRecorded === "boolean" &&
+    typeof value.holdActive === "boolean" &&
+    isString(value.replacementPosture) &&
+    value.items.every(isStatutoryEvidenceReviewItemDto)
+  );
+}
+
+function isStatutoryEvidenceReviewItemDto(value: unknown): value is StatutoryEvidenceReviewItemDto {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    isString(value.evidenceItemReference) &&
+    isString(value.documentType) &&
+    isString(value.itemRole) &&
+    isString(value.uploadStatus) &&
+    isString(value.validationStatus) &&
+    isString(value.scanStatus) &&
+    isString(value.reviewabilityStatus) &&
+    isString(value.bindingStatus) &&
+    isString(value.retentionStatus) &&
+    isString(value.deletionStatus) &&
+    typeof value.holdActive === "boolean" &&
+    typeof value.previewPermitted === "boolean"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function toStatutoryEvidenceReview(dto: StatutoryEvidenceReviewDto): StatutoryEvidenceReview {
+  return {
+    statutoryDiscountDecisionCommandId: dto.statutoryDiscountDecisionCommandId,
+    evidenceSetReference: dto.evidenceSetReference ?? undefined,
+    sourceChannel: dto.sourceChannel,
+    decisionResultStatus: dto.decisionResultStatus,
+    reviewStatus: dto.reviewStatus,
+    evidenceRequired: dto.evidenceRequired,
+    evidenceRecorded: dto.evidenceRecorded,
+    setStatus: dto.setStatus ?? undefined,
+    retentionStatus: dto.retentionStatus ?? undefined,
+    deletionStatus: dto.deletionStatus ?? undefined,
+    holdActive: dto.holdActive,
+    replacementPosture: dto.replacementPosture,
+    items: dto.items.map(toStatutoryEvidenceReviewItem)
+  };
+}
+
+function toStatutoryEvidenceReviewItem(dto: StatutoryEvidenceReviewItemDto): StatutoryEvidenceReviewItem {
+  return {
+    evidenceItemReference: dto.evidenceItemReference,
+    documentType: dto.documentType,
+    itemRole: dto.itemRole,
+    declaredContentType: dto.declaredContentType ?? undefined,
+    authoritativeContentType: dto.authoritativeContentType ?? undefined,
+    contentLength: dto.contentLength ?? undefined,
+    uploadStatus: dto.uploadStatus,
+    validationStatus: dto.validationStatus,
+    scanStatus: dto.scanStatus,
+    reviewabilityStatus: dto.reviewabilityStatus,
+    bindingStatus: dto.bindingStatus,
+    retentionStatus: dto.retentionStatus,
+    deletionStatus: dto.deletionStatus,
+    holdActive: dto.holdActive,
+    uploadedAt: dto.uploadedAt ?? undefined,
+    finalizedAt: dto.finalizedAt ?? undefined,
+    validatedAt: dto.validatedAt ?? undefined,
+    scannedAt: dto.scannedAt ?? undefined,
+    reviewableAt: dto.reviewableAt ?? undefined,
+    previewPermitted: dto.previewPermitted,
+    previewDenialReason: dto.previewDenialReason ?? undefined
   };
 }
 

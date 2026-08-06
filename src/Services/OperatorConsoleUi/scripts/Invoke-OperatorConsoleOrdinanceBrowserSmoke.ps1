@@ -67,6 +67,18 @@ try {
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/paranaque-operational"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/approved-request"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/rejected-request"
+        Write-Host "H-005 secure evidence-review scenarios:"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-eligible-jpeg"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-eligible-png"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-unsupported-pdf"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-validation-pending"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-malware-detected"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-replaced"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-preview-storage-outage"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-permission-denied"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-cross-site-denied"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-cross-site-group-denied"
+        Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/evidence-decision-switch"
         Read-Host "Press Enter to stop the fixture server"
         return
     }
