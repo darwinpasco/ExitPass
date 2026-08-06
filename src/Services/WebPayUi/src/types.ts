@@ -345,6 +345,60 @@ export type WebPayStatutoryDiscountDecisionResponse = {
   appliedAt?: string | null;
 };
 
+export type WebPayStatutoryEvidenceLifecycleState =
+  | "NOT_REQUIRED"
+  | "REQUIRED_NOT_STARTED"
+  | "ITEM_CREATED"
+  | "UPLOAD_SESSION_AVAILABLE"
+  | "UPLOAD_IN_PROGRESS"
+  | "VALIDATION_PENDING"
+  | "VALIDATION_FAILED"
+  | "SCAN_PENDING"
+  | "SCAN_RETRYABLE"
+  | "SCAN_FAILED"
+  | "MALWARE_DETECTED"
+  | "NOT_REVIEWABLE"
+  | "REVIEWABLE"
+  | "REVIEW_PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "APPLIED"
+  | "UNKNOWN_FAIL_CLOSED";
+
+export type WebPayStatutoryEvidenceChannelResponse = {
+  classification: string;
+  retryable: boolean;
+  errorCode?: string | null;
+  correlationId: string;
+  evidenceRequired: boolean;
+  evidenceSetReference?: string | null;
+  evidenceItemReference?: string | null;
+  allowedContentTypes: string[];
+  maximumContentLengthBytes: number;
+  maximumImageWidth?: number | null;
+  maximumImageHeight?: number | null;
+  maximumImagePixelCount?: number | null;
+  requiredDocumentType?: string | null;
+  requiredItemRole?: string | null;
+  lifecycleClassification: WebPayStatutoryEvidenceLifecycleState | string;
+  replacementPosture: string;
+  readyForReview: boolean;
+  blockingReasonCode?: string | null;
+  evaluatedAt?: string | null;
+};
+
+export type WebPayStatutoryEvidenceUploadSessionResponse = {
+  classification: string;
+  retryable: boolean;
+  errorCode?: string | null;
+  correlationId: string;
+  opaqueUploadSessionReference?: string | null;
+  method?: string | null;
+  expiresAt?: string | null;
+  acceptedContentType?: string | null;
+  maximumContentLengthBytes?: number | null;
+};
+
 export type ActivePaymentAttemptState = {
   kind: "active-payment-attempt";
   message: string;

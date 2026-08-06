@@ -1,5 +1,7 @@
 param(
-    [switch] $Headed
+    [switch] $Headed,
+    [switch] $EvidenceOnly,
+    [string] $Grep
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,7 +58,16 @@ try {
         throw "WebPay browser-smoke fixture server did not become ready on port $port."
     }
 
-    $arguments = @("playwright", "test", "e2e/webpay-authoritative-sales-invoice.spec.ts", "--config", "playwright.config.ts")
+    $specifications = if ($EvidenceOnly) {
+        @("e2e/webpay-statutory-evidence.spec.ts")
+    }
+    else {
+        @("e2e/webpay-authoritative-sales-invoice.spec.ts", "e2e/webpay-statutory-evidence.spec.ts")
+    }
+    $arguments = @("playwright", "test") + $specifications + @("--config", "playwright.config.ts")
+    if ($Grep) {
+        $arguments += @("--grep", $Grep)
+    }
     if ($Headed) {
         $arguments += "--headed"
     }

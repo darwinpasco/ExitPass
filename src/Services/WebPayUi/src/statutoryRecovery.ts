@@ -111,17 +111,48 @@ export function saveStatutoryRecoveryRecord(
   record: WebPayStatutoryRecoveryRecord,
   storage: BrowserStorage | null = getBrowserStorage()
 ): { saved: boolean; unavailable: boolean; record: WebPayStatutoryRecoveryRecord } {
-  const sanitized = sanitizeRecord(record);
+  let sanitized = sanitizeRecord(record);
   if (!storage) {
     return { saved: false, unavailable: true, record: sanitized };
   }
 
   try {
+    const current = loadStatutoryRecoveryRecord(storage, new Date(sanitized.updatedAt)).record;
+    sanitized = preserveConcurrentPaymentStage(current, sanitized);
     storage.setItem(statutoryRecoveryStorageKey, JSON.stringify(sanitized));
     return { saved: true, unavailable: false, record: sanitized };
   } catch {
     return { saved: false, unavailable: true, record: sanitized };
   }
+}
+
+function preserveConcurrentPaymentStage(
+  current: WebPayStatutoryRecoveryRecord | null,
+  next: WebPayStatutoryRecoveryRecord
+): WebPayStatutoryRecoveryRecord {
+  if (!current || current.parkingSessionId !== next.parkingSessionId) {
+    return next;
+  }
+
+  if (current.stage === "PAYMENT_SUBMITTING" && next.stage !== "PAYMENT_HANDOFF" && next.stage !== "TERMINAL") {
+    return sanitizeRecord({
+      ...next,
+      stage: current.stage,
+      paymentIntentCorrelationId: current.paymentIntentCorrelationId ?? next.paymentIntentCorrelationId,
+      paymentAttemptId: current.paymentAttemptId ?? next.paymentAttemptId
+    });
+  }
+
+  if (current.stage === "PAYMENT_HANDOFF" && next.stage !== "TERMINAL") {
+    return sanitizeRecord({
+      ...next,
+      stage: current.stage,
+      paymentIntentCorrelationId: current.paymentIntentCorrelationId ?? next.paymentIntentCorrelationId,
+      paymentAttemptId: current.paymentAttemptId ?? next.paymentAttemptId
+    });
+  }
+
+  return current.stage === "TERMINAL" ? current : next;
 }
 
 export function updateStatutoryRecoveryRecord(

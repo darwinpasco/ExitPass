@@ -679,6 +679,181 @@ public sealed class CentralPmsWebPayClientTests
         Assert.Equal(CorrelationId, result.Error.CorrelationId);
     }
 
+    [Fact]
+    public async Task BootstrapStatutoryEvidenceAsync_UsesI016RouteAndCapturePermission()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceChannelResponse())
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.BootstrapAsync(
+            new CentralPmsStatutoryEvidenceBootstrapRequest(StatutoryDecisionCommandId, "webpay-evidence-bootstrap:test"),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("REQUIRED_NOT_STARTED", result.Value!.LifecycleClassification);
+        Assert.Equal("/v1/webpay/statutory-discounts/evidence/bootstrap", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal(WebPayServiceIdentityId.ToString("D"), handler.LastRequest.Headers.GetValues("X-ExitPass-Service-Identity-Id").Single());
+        Assert.Equal("statutory-discounts.evidence.capture.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
+        Assert.Equal(CorrelationId.ToString("D"), handler.LastRequest.Headers.GetValues("X-Correlation-Id").Single());
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal(StatutoryDecisionCommandId, body.RootElement.GetProperty("statutoryDiscountDecisionCommandId").GetGuid());
+        Assert.False(body.RootElement.TryGetProperty("siteId", out _));
+        Assert.False(body.RootElement.TryGetProperty("siteGroupId", out _));
+    }
+
+    [Fact]
+    public async Task GetStatutoryEvidenceStatusAsync_UsesDecisionScopedReadOnlyRoute()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceChannelResponse(lifecycleClassification: "SCAN_PENDING"))
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.GetStatusAsync(StatutoryDecisionCommandId, null, CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("SCAN_PENDING", result.Value!.LifecycleClassification);
+        Assert.Equal("/v1/webpay/statutory-discounts/evidence/status", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal($"?statutoryDiscountDecisionCommandId={StatutoryDecisionCommandId:D}", handler.LastRequest.RequestUri.Query);
+        Assert.Equal(HttpMethod.Get, handler.LastRequest.Method);
+        Assert.Equal("statutory-discounts.evidence.capture.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
+    }
+
+    [Fact]
+    public async Task CreateStatutoryEvidenceUploadSessionAsync_MapsOpaqueContractWithoutProviderInternals()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceUploadSessionResponse())
+        });
+        var client = CreateClient(handler);
+        var evidenceSetReference = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+        var evidenceItemReference = Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        var checksum = new string('a', 64);
+
+        var result = await client.CreateUploadSessionAsync(
+            new CentralPmsStatutoryEvidenceUploadSessionRequest(
+                evidenceSetReference, evidenceItemReference, "image/jpeg", 1024, checksum, "webpay-evidence-upload:test"),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Value!.OpaqueUploadSessionReference);
+        Assert.Equal("/v1/webpay/statutory-discounts/evidence/upload-sessions", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal("statutory-discounts.evidence.capture.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.Equal(checksum, body.RootElement.GetProperty("declaredChecksumSha256").GetString());
+        Assert.False(body.RootElement.TryGetProperty("objectKey", out _));
+        Assert.False(body.RootElement.TryGetProperty("bucket", out _));
+        Assert.False(body.RootElement.TryGetProperty("providerUrl", out _));
+        Assert.False(body.RootElement.TryGetProperty("credential", out _));
+    }
+
+    [Fact]
+    public async Task UploadStatutoryEvidenceAsync_StreamsBytesThroughOpaqueI016Route()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceUploadSessionResponse())
+        });
+        var client = CreateClient(handler);
+        var uploadSessionReference = Guid.Parse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+        await using var stream = new MemoryStream(new byte[] { 1, 2, 3, 4 });
+
+        var result = await client.UploadAsync(
+            uploadSessionReference, "image/png", stream.Length, stream, CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal($"/v1/webpay/statutory-discounts/evidence/upload-sessions/{uploadSessionReference:D}", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Put, handler.LastRequest.Method);
+        Assert.Equal("image/png", handler.LastRequest.Content!.Headers.ContentType!.MediaType);
+        Assert.Equal(4, handler.LastRequest.Content.Headers.ContentLength);
+        Assert.Equal("statutory-discounts.evidence.capture.webpay", handler.LastRequest.Headers.GetValues("X-ExitPass-Permissions").Single());
+        Assert.Equal(Convert.ToBase64String(new byte[] { 1, 2, 3, 4 }), Convert.ToBase64String(Encoding.Latin1.GetBytes(handler.LastRequestBody!)));
+    }
+
+    [Fact]
+    public async Task FinalizeStatutoryEvidenceAsync_UsesOpaqueRouteAndPreservesCorrelation()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceChannelResponse(lifecycleClassification: "VALIDATION_PENDING"))
+        });
+        var client = CreateClient(handler);
+        var uploadSessionReference = Guid.Parse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
+        var result = await client.FinalizeAsync(
+            uploadSessionReference, "webpay-evidence-finalize:test", CorrelationId, CancellationToken.None);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("VALIDATION_PENDING", result.Value!.LifecycleClassification);
+        Assert.Equal($"/v1/webpay/statutory-discounts/evidence/upload-sessions/{uploadSessionReference:D}/finalize", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Equal(CorrelationId, result.Value.CorrelationId);
+    }
+
+    [Fact]
+    public async Task BootstrapStatutoryEvidenceAsync_WhenServiceIdentityMissing_FailsClosedWithoutHttpRequest()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(StatutoryEvidenceChannelResponse())
+        });
+        var client = CreateClient(handler, configureStatutoryServiceIdentity: false);
+
+        var result = await client.BootstrapAsync(
+            new CentralPmsStatutoryEvidenceBootstrapRequest(StatutoryDecisionCommandId, null),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("CENTRAL_PMS_AUTH_CONFIGURATION_MISSING", result.Error!.ErrorCode);
+        Assert.Equal(0, handler.SendCount);
+    }
+
+    [Fact]
+    public async Task BootstrapStatutoryEvidenceAsync_WhenSuccessPayloadIsIncomplete_FailsClosed()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new { classification = "FOUND" })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.BootstrapAsync(
+            new CentralPmsStatutoryEvidenceBootstrapRequest(StatutoryDecisionCommandId, null),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("MALFORMED_STATUTORY_EVIDENCE_RESPONSE", result.Error!.ErrorCode);
+        Assert.True(result.Error.Retryable);
+    }
+
+    [Fact]
+    public async Task CreateStatutoryEvidenceUploadSessionAsync_WhenOpaqueAuthorizationIsIncomplete_FailsClosed()
+    {
+        var handler = new CapturingHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent(new { classification = "UPLOAD_AUTHORIZED", correlationId = CorrelationId })
+        });
+        var client = CreateClient(handler);
+
+        var result = await client.CreateUploadSessionAsync(
+            new CentralPmsStatutoryEvidenceUploadSessionRequest(
+                Guid.NewGuid(), Guid.NewGuid(), "image/jpeg", 1, new string('a', 64), null),
+            CorrelationId,
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("MALFORMED_STATUTORY_EVIDENCE_UPLOAD_RESPONSE", result.Error!.ErrorCode);
+        Assert.True(result.Error.Retryable);
+    }
+
     private static CentralPmsWebPayClient CreateClient(
         HttpMessageHandler handler,
         bool configureStatutoryServiceIdentity = true)
@@ -806,6 +981,50 @@ public sealed class CentralPmsWebPayClientTests
             submittedAt = "2026-07-30T08:00:30Z",
             decidedAt = (string?)null,
             reviewedAt = (string?)null
+        };
+    }
+
+    private static object StatutoryEvidenceChannelResponse(string lifecycleClassification = "REQUIRED_NOT_STARTED")
+    {
+        return new
+        {
+            classification = "FOUND",
+            retryable = false,
+            errorCode = (string?)null,
+            correlationId = CorrelationId,
+            sourceChannel = "WEBPAY",
+            evidenceRequired = true,
+            evidenceSetReference = Guid.Parse("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+            evidenceItemReference = Guid.Parse("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+            allowedContentTypes = new[] { "image/jpeg", "image/png" },
+            maximumContentLengthBytes = 5_000_000,
+            maximumImageWidth = 1920,
+            maximumImageHeight = 1080,
+            maximumImagePixelCount = 2_073_600,
+            requiredDocumentType = "STATUTORY_ID",
+            requiredItemRole = "ENTITLEMENT_ID_FRONT",
+            lifecycleClassification,
+            replacementPosture = "REPLACEMENT_ALLOWED",
+            readyForReview = false,
+            readyForAptPreCash = false,
+            blockingReasonCode = "EVIDENCE_REQUIRED",
+            evaluatedAt = "2026-08-05T09:00:00Z"
+        };
+    }
+
+    private static object StatutoryEvidenceUploadSessionResponse()
+    {
+        return new
+        {
+            classification = "UPLOAD_AUTHORIZED",
+            retryable = false,
+            errorCode = (string?)null,
+            correlationId = CorrelationId,
+            opaqueUploadSessionReference = Guid.Parse("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+            method = "PUT",
+            expiresAt = "2026-08-05T09:05:00Z",
+            acceptedContentType = "image/jpeg",
+            maximumContentLengthBytes = 5_000_000
         };
     }
 

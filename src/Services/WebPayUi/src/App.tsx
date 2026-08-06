@@ -1,5 +1,6 @@
-import { FormEvent, KeyboardEvent, RefObject, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { QrScanner } from "./QrScanner";
+import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
 import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
@@ -258,7 +259,7 @@ export function App() {
     setStatutoryRecoveryRecord(result.record);
     if (result.unavailable) {
       setStatutoryRecoveryMessage("Durable statutory discount recovery is unavailable in this browser. This page remains safe, but refresh recovery may not work.");
-    } else if (result.record.stage === "PAYMENT_HANDOFF") {
+    } else if (hasKnownInFlightStatutoryRecoveryStage(result.record) || result.record.stage === "PAYMENT_HANDOFF") {
       setStatutoryRecoveryMessage(getCrossTabRecoveryMessage(result.record));
     }
 
@@ -761,7 +762,7 @@ export function App() {
       issuingAuthority: statutoryDiscountForm.issuingAuthority,
       expiryDate: statutoryDiscountForm.expiryDate || null,
       maskedIdReference: statutoryDiscountForm.maskedIdReference,
-      evidenceCaptureRequested: false,
+      evidenceCaptureRequested: statutoryAvailabilityRequiresEvidence(statutoryAvailabilityState.availability),
       requesterAttestation: statutoryDiscountForm.requesterAttestation,
       attestationNotes: statutoryDiscountForm.attestationNotes || null,
       originalTariffSnapshotId: resolvedSession.tariffSnapshotId
@@ -1026,7 +1027,7 @@ export function App() {
     };
   }, [statutoryDiscountState.decision?.statutoryDiscountDecisionCommandId, statutoryDiscountState.isPolling, statutoryDiscountState.correlationId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     return subscribeStatutoryRecoveryRecord((record) => {
       statutoryRecoveryRecordRef.current = record;
       setStatutoryRecoveryRecord(record);
@@ -1712,10 +1713,11 @@ function StatutoryDiscountRequestPanel({
             </label>
           </fieldset>
 
-          <p className="statutory-copy">
-            Evidence upload is not available in WebPay yet. If evidence is needed, the parking site operator will review
-            the request using approved tools.
-          </p>
+          {statutoryAvailabilityRequiresEvidence(availabilityState.availability) && (
+            <p className="statutory-copy">
+              A photo is required after this request is created. The photo does not approve or apply the statutory privilege.
+            </p>
+          )}
 
           {state.isSubmitting && <p role="status">Submitting statutory discount request...</p>}
           {state.error && <div className="form-error" role="alert">{state.error}</div>}
@@ -1795,6 +1797,9 @@ function StatutoryDiscountRequestPanel({
             </p>
           )}
           {state.error && <div className="form-error" role="alert">{state.error}</div>}
+          <StatutoryEvidenceCapture
+            statutoryDiscountDecisionCommandId={decision.statutoryDiscountDecisionCommandId}
+          />
           <div className="statutory-actions">
             {showApplyAction && (
               <button type="button" className="primary-button" onClick={onApply} disabled={state.isApplying || state.isPolling}>
@@ -2583,6 +2588,16 @@ function getCoveredStatutoryEntitlementTypes(
 
   return availability.coveredEntitlementTypes.filter(
     (entitlement): entitlement is StatutoryDiscountEntitlementType => entitlement === "SENIOR_CITIZEN" || entitlement === "PWD"
+  );
+}
+
+function statutoryAvailabilityRequiresEvidence(
+  availability: WebPayStatutoryDiscountAvailabilityResponse | null
+): boolean {
+  return Boolean(
+    availability?.requiredEvidenceTypes.some(
+      (requirement) => requirement.requirementStatus.trim().toUpperCase() === "REQUIRED"
+    )
   );
 }
 

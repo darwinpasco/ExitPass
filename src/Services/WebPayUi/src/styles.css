@@ -768,6 +768,125 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.statutory-evidence {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid rgba(16, 24, 40, 0.12);
+  padding-top: 14px;
+}
+
+.statutory-evidence-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidence-state {
+  flex: 0 0 auto;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #344054;
+  background: #f9fafb;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.evidence-state.is-pending {
+  border-color: #fedf89;
+  color: #93370d;
+  background: #fffaeb;
+}
+
+.evidence-state.is-success {
+  border-color: #abefc6;
+  color: #067647;
+  background: #ecfdf3;
+}
+
+.evidence-state.is-warning,
+.evidence-state.is-error {
+  border-color: #fecdca;
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.evidence-rules {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.evidence-rules div {
+  display: grid;
+  gap: 2px;
+  border: 0;
+  padding: 0;
+}
+
+.evidence-rules dt {
+  color: #667085;
+  font-size: 0.86rem;
+}
+
+.evidence-rules dd {
+  margin: 0;
+  text-align: left;
+}
+
+.evidence-capture-controls,
+.upload-progress {
+  display: grid;
+  gap: 10px;
+}
+
+.evidence-file-field input[type="file"] {
+  max-width: 100%;
+  border: 1px solid #98a2b3;
+  border-radius: 4px;
+  padding: 8px;
+  background: #ffffff;
+}
+
+.evidence-file-field input[type="file"]:focus-visible {
+  outline: 3px solid rgba(19, 167, 107, 0.28);
+  outline-offset: 2px;
+}
+
+.selected-file,
+.support-reference {
+  margin: 0;
+  color: #475467;
+  overflow-wrap: anywhere;
+}
+
+.upload-progress progress {
+  width: 100%;
+  min-height: 12px;
+  accent-color: #13a76b;
+}
+
+@media (max-width: 540px) {
+  .statutory-evidence-header,
+  .statutory-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .statutory-evidence-header {
+    display: grid;
+  }
+
+  .evidence-state {
+    justify-self: start;
+  }
+
+  .evidence-rules {
+    grid-template-columns: 1fr;
+  }
+}
+
 .exit-instruction-panel {
   border-color: #fedf89;
   background: #fffbeb;

@@ -34,6 +34,21 @@ let paymentIntentRequestLog = [];
 let paymentIntentResponseLog = [];
 let fixtureLifecycleState = null;
 let providerHandoffIdentities = new Set();
+let evidenceScenario = "validation-pending";
+const fixtureTicketReference = "WEBPAY-EVIDENCE-G006";
+const fixtureSiteGroupId = "40000000-0000-4000-8000-000000000001";
+const fixtureSiteId = "50000000-0000-4000-8000-000000000001";
+const fixtureVendorSystemId = "60000000-0000-4000-8000-000000000001";
+let evidenceLifecycleClassification = "REQUIRED_NOT_STARTED";
+let evidenceBootstrapCount = 0;
+let evidenceStatusCount = 0;
+let evidenceUploadSessionCount = 0;
+let evidenceUploadCount = 0;
+let evidenceFinalizeCount = 0;
+let evidenceUploadedByteCount = 0;
+let evidenceLastDeclaredContentType = null;
+let evidenceLastDeclaredContentLength = null;
+let evidenceActiveForCurrentDecision = false;
 const statutoryDecisionCommandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const statutoryDecisionId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const statutoryRequestReference = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -70,6 +85,17 @@ function resetState() {
   paymentIntentResponseLog = [];
   fixtureLifecycleState = null;
   providerHandoffIdentities = new Set();
+  evidenceScenario = "validation-pending";
+  evidenceLifecycleClassification = "REQUIRED_NOT_STARTED";
+  evidenceBootstrapCount = 0;
+  evidenceStatusCount = 0;
+  evidenceUploadSessionCount = 0;
+  evidenceUploadCount = 0;
+  evidenceFinalizeCount = 0;
+  evidenceUploadedByteCount = 0;
+  evidenceLastDeclaredContentType = null;
+  evidenceLastDeclaredContentLength = null;
+  evidenceActiveForCurrentDecision = false;
 }
 
 function writeJson(response, statusCode, body) {
@@ -183,7 +209,7 @@ function isLoopbackAddress(address) {
 }
 
 function paymentStatusForTicket(ticketReference) {
-  if (ticketReference.startsWith("WEBPAY-STAT-")) {
+  if (ticketReference.startsWith("WEBPAY-STAT-") || ticketReference.startsWith("WEBPAY-EVIDENCE-")) {
     return "Not Started";
   }
 
@@ -195,7 +221,7 @@ function paymentStatusForTicket(ticketReference) {
 }
 
 function parkingStatusForTicket(ticketReference) {
-  if (ticketReference.startsWith("WEBPAY-STAT-")) {
+  if (ticketReference.startsWith("WEBPAY-STAT-") || ticketReference.startsWith("WEBPAY-EVIDENCE-")) {
     return "PaymentRequired";
   }
 
@@ -229,9 +255,9 @@ function buildSessionResponse(ticketReference, correlationId, plateNumber = "SMK
     paymentAttemptId: paymentAttemptIds.available,
     parkingSessionId: "20000000-0000-4000-8000-000000000001",
     tariffSnapshotId: amountChanged ? "30000000-0000-4000-8000-000000000099" : "30000000-0000-4000-8000-000000000001",
-    siteGroupId: "40000000-0000-4000-8000-000000000001",
-    siteId: "50000000-0000-4000-8000-000000000001",
-    vendorSystemId: "60000000-0000-4000-8000-000000000001",
+    siteGroupId: fixtureSiteGroupId,
+    siteId: fixtureSiteId,
+    vendorSystemId: fixtureVendorSystemId,
     siteGroupName: "Browser Smoke Site Group",
     siteName: "Browser Smoke Site",
     amountMinorUnits: amountChanged ? 15900 : 12900,
@@ -265,6 +291,8 @@ function buildSessionResponse(ticketReference, correlationId, plateNumber = "SMK
 }
 
 function buildStatutoryAvailabilityResponse(body, correlationId) {
+  const ticketReference = lastTicketReferenceByParkingSessionId[body.parkingSessionId] ?? "";
+  const evidenceRequired = ticketReference.startsWith("WEBPAY-EVIDENCE-") && evidenceScenario !== "not-required";
   return {
     requestReference: body.requestReference ?? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     parkingSessionId: body.parkingSessionId ?? "20000000-0000-4000-8000-000000000001",
@@ -277,8 +305,50 @@ function buildStatutoryAvailabilityResponse(body, correlationId) {
     safeReasonCode: null,
     retryable: false,
     remediationAction: "CONTINUE_WITH_ORDINARY_PAYMENT",
-    requiredEvidenceTypes: [],
+    requiredEvidenceTypes: evidenceRequired
+      ? [{
+          evidenceType: "STATUTORY_ID",
+          requirementStatus: "REQUIRED",
+          safeRequirementLabel: "Entitlement photo",
+          safeRequirementNotes: "Choose a clear JPEG or PNG photo."
+        }]
+      : [],
     correlationId
+  };
+}
+
+async function readBytes(request) {
+  const chunks = [];
+  for await (const chunk of request) {
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+function buildEvidenceChannelResponse(correlationId) {
+  const evidenceRequired = evidenceActiveForCurrentDecision && evidenceScenario !== "not-required";
+  const replacementAllowed = evidenceScenario !== "replacement-denied" &&
+    !["REVIEW_PENDING", "APPROVED", "REJECTED", "APPLIED"].includes(evidenceLifecycleClassification);
+  return {
+    classification: "FOUND",
+    retryable: false,
+    errorCode: null,
+    correlationId,
+    evidenceRequired,
+    evidenceSetReference: evidenceRequired ? "71000000-0000-4000-8000-000000000001" : null,
+    evidenceItemReference: evidenceRequired ? "72000000-0000-4000-8000-000000000001" : null,
+    allowedContentTypes: ["image/jpeg", "image/png"],
+    maximumContentLengthBytes: 1048576,
+    maximumImageWidth: 1920,
+    maximumImageHeight: 1080,
+    maximumImagePixelCount: 2073600,
+    requiredDocumentType: evidenceRequired ? "STATUTORY_ID" : null,
+    requiredItemRole: evidenceRequired ? "ENTITLEMENT_ID_FRONT" : null,
+    lifecycleClassification: evidenceRequired ? evidenceLifecycleClassification : "NOT_REQUIRED",
+    replacementPosture: replacementAllowed ? "REPLACEMENT_ALLOWED" : "REPLACEMENT_NOT_ALLOWED",
+    readyForReview: evidenceLifecycleClassification === "REVIEWABLE",
+    blockingReasonCode: evidenceRequired && evidenceLifecycleClassification !== "REVIEWABLE" ? "EVIDENCE_PROCESSING" : null,
+    evaluatedAt: "2026-08-05T09:00:00Z"
   };
 }
 
@@ -752,6 +822,24 @@ async function handleApi(request, response, url) {
     recordRequest(request, body);
 
     const ticketReference = ticketReferenceForLookup(body);
+    if (ticketReference === fixtureTicketReference && typeof body.vendorSystemId !== "string") {
+      writeJson(response, 400, errorResponse(
+        "WEBPAY_FIXTURE_VENDOR_CONFIGURATION_MISSING",
+        "The local WebPay fixture vendor context is unavailable.",
+        false,
+        body.correlationId
+      ));
+      return;
+    }
+    if (ticketReference === fixtureTicketReference && body.vendorSystemId !== fixtureVendorSystemId) {
+      writeJson(response, 409, errorResponse(
+        "WEBPAY_FIXTURE_VENDOR_CONFIGURATION_MISMATCH",
+        "The local WebPay fixture vendor context does not match the synthetic parking session.",
+        false,
+        body.correlationId
+      ));
+      return;
+    }
     if (ticketReference === "WEBPAY-SMOKE-EXPIRED") {
       writeJson(response, 404, errorResponse("SESSION_NOT_FOUND", "The transaction reference is invalid or expired.", false, body.correlationId));
       return;
@@ -866,6 +954,141 @@ async function handleApi(request, response, url) {
     recordRequest(request, body);
     const correlationId = typeof request.headers["x-correlation-id"] === "string" ? request.headers["x-correlation-id"] : body.correlationId ?? "";
     writeJson(response, 200, buildStatutoryAvailabilityResponse(body, correlationId));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/webpay/statutory-discounts/evidence/bootstrap") {
+    const body = await readJson(request);
+    recordRequest(request, body);
+    evidenceBootstrapCount += 1;
+    const storedTicketReference = statutoryScenarioByDecisionId[body.statutoryDiscountDecisionCommandId]?.body?.ticketReference ?? "";
+    evidenceActiveForCurrentDecision = storedTicketReference.startsWith("WEBPAY-EVIDENCE-");
+    const correlationId = request.headers["x-correlation-id"] ?? "";
+    if (evidenceScenario === "service-unavailable") {
+      writeJson(response, 503, errorResponse(
+        "WEBPAY_STATUTORY_EVIDENCE_SERVICE_UNAVAILABLE",
+        "Evidence upload is temporarily unavailable. Please try again later or ask a parking attendant for assistance.",
+        true,
+        correlationId));
+      return;
+    }
+    if (evidenceScenario === "access-denied") {
+      writeJson(response, 503, errorResponse(
+        "WEBPAY_STATUTORY_EVIDENCE_SERVICE_UNAVAILABLE",
+        "Evidence upload is temporarily unavailable. Please try again later or ask a parking attendant for assistance.",
+        true,
+        correlationId));
+      return;
+    }
+    if (evidenceScenario === "malformed-response") {
+      writeJson(response, 200, { classification: "FOUND" });
+      return;
+    }
+    writeJson(response, 200, buildEvidenceChannelResponse(correlationId));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/webpay/statutory-discounts/evidence/status") {
+    recordRequest(request, null);
+    evidenceStatusCount += 1;
+    writeJson(response, 200, buildEvidenceChannelResponse(request.headers["x-correlation-id"] ?? ""));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/webpay/statutory-discounts/evidence/upload-sessions") {
+    const body = await readJson(request);
+    recordRequest(request, { ...body, declaredChecksumSha256: "[redacted]" });
+    evidenceUploadSessionCount += 1;
+    evidenceLastDeclaredContentType = body.declaredContentType ?? null;
+    evidenceLastDeclaredContentLength = body.declaredContentLength ?? null;
+    const correlationId = request.headers["x-correlation-id"] ?? "";
+    if (evidenceScenario === "replacement-denied") {
+      writeJson(response, 409, errorResponse(
+        "WEBPAY_STATUTORY_EVIDENCE_CONFLICT",
+        "This evidence is already under review and cannot be replaced.",
+        false,
+        correlationId));
+      return;
+    }
+    writeJson(response, 200, {
+      classification: "UPLOAD_AUTHORIZED",
+      retryable: false,
+      errorCode: null,
+      correlationId,
+      opaqueUploadSessionReference: "73000000-0000-4000-8000-000000000001",
+      method: "PUT",
+      expiresAt: "2026-08-05T09:05:00Z",
+      acceptedContentType: body.declaredContentType,
+      maximumContentLengthBytes: 1048576
+    });
+    evidenceLifecycleClassification = "UPLOAD_SESSION_AVAILABLE";
+    return;
+  }
+
+  if (request.method === "PUT" && url.pathname === "/v1/webpay/statutory-discounts/evidence/upload-sessions/73000000-0000-4000-8000-000000000001") {
+    const bytes = await readBytes(request);
+    recordRequest(request, { evidenceBytes: "[not retained]", contentLength: bytes.length });
+    evidenceUploadCount += 1;
+    evidenceUploadedByteCount += bytes.length;
+    const correlationId = request.headers["x-correlation-id"] ?? "";
+    if (evidenceScenario === "provider-unavailable") {
+      writeJson(response, 503, errorResponse(
+        "WEBPAY_STATUTORY_EVIDENCE_TEMPORARILY_UNAVAILABLE",
+        "We could not process the photo right now. Please try again.",
+        true,
+        correlationId));
+      return;
+    }
+    if (evidenceScenario === "expired-session") {
+      writeJson(response, 409, errorResponse(
+        "WEBPAY_STATUTORY_EVIDENCE_UPLOAD_EXPIRED",
+        "The photo upload expired. Request a new upload and try again.",
+        true,
+        correlationId));
+      return;
+    }
+    evidenceLifecycleClassification = "UPLOAD_IN_PROGRESS";
+    if (evidenceScenario === "upload-delayed") {
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+    }
+    writeJson(response, 200, {
+      classification: "UPLOADED",
+      retryable: false,
+      errorCode: null,
+      correlationId,
+      opaqueUploadSessionReference: "73000000-0000-4000-8000-000000000001",
+      method: "PUT",
+      expiresAt: "2026-08-05T09:05:00Z",
+      acceptedContentType: request.headers["content-type"] ?? "image/jpeg",
+      maximumContentLengthBytes: 1048576
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/webpay/statutory-discounts/evidence/upload-sessions/73000000-0000-4000-8000-000000000001/finalize") {
+    const body = await readJson(request);
+    recordRequest(request, body);
+    evidenceFinalizeCount += 1;
+    evidenceLifecycleClassification = evidenceScenario === "reviewable"
+      ? "REVIEWABLE"
+      : evidenceScenario === "malware"
+        ? "MALWARE_DETECTED"
+        : evidenceScenario === "review-pending"
+          ? "REVIEW_PENDING"
+          : evidenceScenario === "approved"
+            ? "APPROVED"
+            : evidenceScenario === "rejected"
+              ? "REJECTED"
+              : evidenceScenario === "applied"
+                ? "APPLIED"
+                : evidenceScenario === "validation-failed"
+                  ? "VALIDATION_FAILED"
+                  : evidenceScenario === "scan-pending"
+                    ? "SCAN_PENDING"
+                    : evidenceScenario === "scan-retryable"
+                      ? "SCAN_RETRYABLE"
+                      : "VALIDATION_PENDING";
+    writeJson(response, 200, buildEvidenceChannelResponse(request.headers["x-correlation-id"] ?? ""));
     return;
   }
 
@@ -1055,7 +1278,18 @@ const server = createServer(async (request, response) => {
 
   try {
     if (url.pathname === "/__fixture/health") {
-      writeJson(response, 200, { ok: true });
+      const fixtureBaseUrl = `http://127.0.0.1:${server.address().port}`;
+      writeJson(response, 200, {
+        ok: true,
+        contract: {
+          webPayBaseUrl: fixtureBaseUrl,
+          paymentOrchestratorBaseUrl: fixtureBaseUrl,
+          ticketReference: fixtureTicketReference,
+          siteGroupId: fixtureSiteGroupId,
+          siteId: fixtureSiteId,
+          vendorSystemId: fixtureVendorSystemId
+        }
+      });
       return;
     }
 
@@ -1088,6 +1322,32 @@ const server = createServer(async (request, response) => {
         requestReference: statutoryRequestReference
       });
       writeJson(response, 200, { ok: true, decisionId, scenario });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/__fixture/evidence-scenario") {
+      const body = await readJson(request).catch(() => ({}));
+      if (!isLoopbackAddress(request.socket.remoteAddress)) {
+        writeJson(response, 403, { ok: false, errorCode: "FIXTURE_LOOPBACK_REQUIRED" });
+        return;
+      }
+      const allowedScenarios = new Set([
+        "validation-pending", "reviewable", "malware", "review-pending", "approved", "rejected", "applied",
+        "validation-failed", "scan-pending", "scan-retryable", "not-required", "replacement-denied",
+        "provider-unavailable", "expired-session", "upload-delayed", "service-unavailable", "access-denied",
+        "malformed-response"
+      ]);
+      if (!allowedScenarios.has(body.scenario)) {
+        writeJson(response, 400, { ok: false, errorCode: "FIXTURE_EVIDENCE_SCENARIO_INVALID" });
+        return;
+      }
+      evidenceScenario = body.scenario;
+      evidenceLifecycleClassification = body.scenario === "not-required"
+        ? "NOT_REQUIRED"
+        : body.scenario === "replacement-denied"
+          ? "REVIEW_PENDING"
+          : "REQUIRED_NOT_STARTED";
+      writeJson(response, 200, { ok: true, scenario: evidenceScenario });
       return;
     }
 
@@ -1197,7 +1457,20 @@ const server = createServer(async (request, response) => {
         latestPaymentIntentResponse,
         latestValidationPaymentIntentReplay,
         validationPaymentIntentReplayCount,
-        fixtureLifecycleState
+        fixtureLifecycleState,
+        evidence: {
+          scenario: evidenceScenario,
+          lifecycleClassification: evidenceLifecycleClassification,
+          bootstrapCount: evidenceBootstrapCount,
+          statusCount: evidenceStatusCount,
+          uploadSessionCount: evidenceUploadSessionCount,
+          uploadCount: evidenceUploadCount,
+          finalizeCount: evidenceFinalizeCount,
+          uploadedByteCount: evidenceUploadedByteCount,
+          lastDeclaredContentType: evidenceLastDeclaredContentType,
+          lastDeclaredContentLength: evidenceLastDeclaredContentLength,
+          activeForCurrentDecision: evidenceActiveForCurrentDecision
+        }
       });
       return;
     }
