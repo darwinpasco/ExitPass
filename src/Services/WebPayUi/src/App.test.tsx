@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { formatCustomerSupportReference } from "./customerSafeReference";
 import { createStatutoryRecoveryRecord, statutoryRecoveryStorageKey } from "./statutoryRecovery";
 
 vi.mock("@zxing/browser", () => ({
@@ -333,10 +334,23 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
     await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    await userEvent.type(screen.getByLabelText(/masked id reference/i), "SC-****-1234");
+    await userEvent.type(screen.getByLabelText(/^id reference$/i), "SC00001234");
     await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
   }
+
+  it("WebPay_WhenStatutoryFormOpens_ExplainsAutomaticMaskingWithoutManualAsteriskInstructions", async () => {
+    stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-104");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+
+    expect(screen.getByLabelText(/^id reference$/i)).toBeInTheDocument();
+    expect(screen.getByText(/automatically shows only the first 2 and last 4 characters/i)).toBeInTheDocument();
+    expect(screen.queryByText(/use a masked reference with asterisks/i)).not.toBeInTheDocument();
+  });
 
   it("WebPay_WhenEnterPressedInTicketInput_ResolvesSessionOnly", async () => {
     const fetchMock = stubWebPayFetch();
@@ -573,7 +587,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.selectOptions(screen.getByLabelText(/entitlement type/i), "SENIOR_CITIZEN");
     await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
     await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    await userEvent.type(screen.getByLabelText(/masked id reference/i), "SC-****-1234");
+    await userEvent.type(screen.getByLabelText(/^id reference$/i), "SC00001234");
     await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
@@ -589,7 +603,7 @@ describe("ExitPass WebPay UI", () => {
     expect(body.entitlementType).toBe("SENIOR_CITIZEN");
     expect(body.parkingSessionId).toBe(successResponse.parkingSessionId);
     expect(body.originalTariffSnapshotId).toBe(successResponse.tariffSnapshotId);
-    expect(body.maskedIdReference).toBe("SC-****-1234");
+    expect(body.maskedIdReference).toBe("SC****1234");
     expect(body.evidenceCaptureRequested).toBe(false);
     expect(body).not.toHaveProperty("sourceChannel");
     expect(body).not.toHaveProperty("reviewerUserId");
@@ -657,8 +671,13 @@ describe("ExitPass WebPay UI", () => {
 
     expect(await screen.findByRole("heading", { name: /awaiting review/i })).toBeInTheDocument();
     expect(screen.getAllByText(/parking privilege request was received and is awaiting review/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/i)).toBeInTheDocument();
-    expect(screen.getByText(/11111111-1111-4111-8111-111111111111/i)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(document.body).not.toHaveTextContent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    expect(document.body).not.toHaveTextContent("11111111-1111-4111-8111-111111111111");
+    expect(document.body).not.toHaveTextContent(successResponse.parkingSessionId);
+    expect(document.body).not.toHaveTextContent(successResponse.siteId);
+    expect(document.body).not.toHaveTextContent(successResponse.siteGroupId);
+    expect(screen.getByText(formatCustomerSupportReference("11111111-1111-4111-8111-111111111111")!)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /refresh status/i }, { timeout: 6000 })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /status temporarily unavailable/i })).not.toBeInTheDocument();
     expect(screen.queryByText(/statutory discount status is temporarily unavailable/i)).not.toBeInTheDocument();
@@ -892,7 +911,7 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.selectOptions(screen.getByLabelText(/entitlement type/i), "PWD");
     await userEvent.type(screen.getByLabelText(/id document type/i), "PWD ID");
     await userEvent.type(screen.getByLabelText(/issuing authority/i), "Cebu City");
-    await userEvent.type(screen.getByLabelText(/masked id reference/i), "PWD-****-5678");
+    await userEvent.type(screen.getByLabelText(/^id reference$/i), "PW00005678");
     await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
     const submit = screen.getByRole("button", { name: /submit for review/i });
     await userEvent.dblClick(submit);
@@ -906,7 +925,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
   });
 
-  it("WebPay_WhenFullIdLikeMaskedReferenceEntered_BlocksBeforeApiCall", async () => {
+  it("WebPay_WhenFullIdReferenceEntered_AutomaticallyMasksBeforeApiCall", async () => {
     const fetchMock = stubWebPayFetch();
 
     render(<App />);
@@ -915,11 +934,36 @@ describe("ExitPass WebPay UI", () => {
     await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
     await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
     await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
-    await userEvent.type(screen.getByLabelText(/masked id reference/i), "123456789012");
+    const idInput = screen.getByLabelText(/^id reference$/i);
+    await userEvent.type(idInput, "123456789012");
     await userEvent.click(screen.getByLabelText(/i confirm these entitlement details/i));
     await userEvent.click(screen.getByRole("button", { name: /submit for review/i }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/masked ID reference/i);
+    await screen.findByRole("heading", { name: /awaiting review/i });
+    const statutoryPosts = fetchMock.mock.calls.filter((call) => String(call[0]).endsWith("/statutory-discounts/decisions"));
+    expect(statutoryPosts).toHaveLength(1);
+    const body = JSON.parse((statutoryPosts[0][1] as RequestInit).body as string);
+    expect(body.maskedIdReference).toBe("12******9012");
+    expect(document.body.innerHTML).not.toContain("123456789012");
+    expect(JSON.stringify(localStorage)).not.toContain("123456789012");
+  });
+
+  it("WebPay_WhenIdReferenceTooShort_BlocksBeforeApiCallAndClearsTheValue", async () => {
+    const fetchMock = stubWebPayFetch();
+
+    render(<App />);
+
+    await resolveTicket("TICKET-STAT-103");
+    await userEvent.click(screen.getByRole("button", { name: /request statutory discount/i }));
+    await userEvent.type(screen.getByLabelText(/id document type/i), "OSCA");
+    await userEvent.type(screen.getByLabelText(/issuing authority/i), "Quezon City");
+    const idInput = screen.getByLabelText(/^id reference$/i);
+    await userEvent.type(idInput, "AB1234");
+    await userEvent.tab();
+
+    expect(idInput).toHaveValue("");
+    expect(await screen.findByRole("alert")).toHaveTextContent(/at least 7 characters/i);
+    expect(document.body.innerHTML).not.toContain("AB1234");
     expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/statutory-discounts/decisions"))).toHaveLength(0);
   });
 
@@ -2143,7 +2187,7 @@ describe("ExitPass WebPay UI", () => {
     expect(screen.queryByText("PAYMONGO")).not.toBeInTheDocument();
   });
 
-  it("WebPay_WhenActivePaymentAttemptConflict_ShowsCorrelationIdInSupportDetails", async () => {
+  it("WebPay_WhenActivePaymentAttemptConflict_ShowsOnlyCustomerSafeSupportReference", async () => {
     stubWebPayFetch({
       intentOk: false,
       intentStatus: 409,
@@ -2154,10 +2198,10 @@ describe("ExitPass WebPay UI", () => {
 
     await resolveTicket("TICKET-001");
     await continueToPayment();
-    await userEvent.click(await screen.findByText(/support details/i));
-
-    expect(screen.getByText("77777777-7777-7777-7777-777777777777")).toBeInTheDocument();
-    expect(screen.queryByText("55555555-5555-5555-5555-555555555555")).not.toBeInTheDocument();
+    expect(await screen.findByText(formatCustomerSupportReference("77777777-7777-7777-7777-777777777777")!)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("77777777-7777-7777-7777-777777777777");
+    expect(document.body).not.toHaveTextContent("55555555-5555-5555-5555-555555555555");
+    expect(document.body).not.toHaveTextContent("44444444-4444-4444-4444-444444444444");
   });
 
   it("WebPay_WhenCameraUnavailable_ShowsManualFallback", async () => {

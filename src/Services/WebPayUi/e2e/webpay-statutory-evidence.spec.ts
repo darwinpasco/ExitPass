@@ -59,6 +59,7 @@ test.describe("WebPay statutory evidence I-016 browser consumer", () => {
       vendorSystemId: "60000000-0000-4000-8000-000000000001"
     });
     expect(state.evidence.bootstrapCount).toBe(1);
+    await expectCustomerVisibleReferencesSafe(page);
   });
 
   test("evidence not required remains authoritative and exposes no capture control", async ({ page }) => {
@@ -99,6 +100,7 @@ test.describe("WebPay statutory evidence I-016 browser consumer", () => {
       expect(state.requestLog.filter((entry) => entry.path.includes("/evidence/upload-sessions"))).toHaveLength(3);
       await expectEvidenceStorageSafe(page);
       await expectSafeBrowserBoundary(requests);
+      await expectCustomerVisibleReferencesSafe(page);
     });
   }
 
@@ -216,6 +218,7 @@ test.describe("WebPay statutory evidence I-016 browser consumer", () => {
       await expect(page.getByText(label).first()).toBeVisible();
       await expect(page.getByText(message)).toBeVisible();
       await expect(page.getByText(/^Statutory discount applied$/i)).toHaveCount(0);
+      await expectCustomerVisibleReferencesSafe(page);
     });
   }
 
@@ -228,6 +231,7 @@ test.describe("WebPay statutory evidence I-016 browser consumer", () => {
     await expect(page.getByRole("button", { name: /pay regular amount/i })).toBeVisible();
     const state = await getFixtureState();
     expect(state.evidence.uploadSessionCount).toBe(0);
+    await expectCustomerVisibleReferencesSafe(page);
   });
 
   test("narrow layout and keyboard controls remain usable without hidden authority", async ({ page }) => {
@@ -263,7 +267,7 @@ async function submitStatutoryRequest(page: Page) {
   await page.getByRole("button", { name: /request statutory discount/i }).click();
   await page.getByLabel(/ID document type/i).fill("OSCA");
   await page.getByLabel(/Issuing authority/i).fill("Synthetic City");
-  await page.getByLabel(/Masked ID reference/i).fill("SC-****-0001");
+  await page.getByLabel(/^ID reference$/i).fill("SC00000001");
   await page.getByLabel(/I confirm these entitlement details/i).check();
   await page.getByRole("button", { name: /submit for review/i }).click();
   await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
@@ -308,6 +312,16 @@ async function expectEvidenceStorageSafe(page: Page) {
   }));
   const serialized = JSON.stringify(storage);
   expect(serialized).not.toMatch(/synthetic-g006|restart\.png|proof\.pdf|opaque|upload.?session|evidenceSetReference|evidenceItemReference|checksum|base64/i);
+}
+
+async function expectCustomerVisibleReferencesSafe(page: Page) {
+  const customerDom = await page.locator("body").evaluate((element) => element.outerHTML);
+  expect(customerDom).not.toMatch(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/i);
+
+  const supportReferences = page.locator(".support-reference");
+  await expect(supportReferences).toHaveCount(1);
+  await expect(supportReferences).toHaveText(/Support reference:\s*[0-9A-F]{4}-[0-9A-F]{4}/);
+  expect(await supportReferences.getAttribute("aria-label")).toBeNull();
 }
 
 async function getFixtureState(): Promise<EvidenceFixtureState> {

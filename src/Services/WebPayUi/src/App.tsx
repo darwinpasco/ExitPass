@@ -1,6 +1,8 @@
 import { FormEvent, KeyboardEvent, RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { QrScanner } from "./QrScanner";
 import { StatutoryEvidenceCapture } from "./StatutoryEvidenceCapture";
+import { AutomaticMaskedIdInput } from "./AutomaticMaskedIdInput";
+import { formatCustomerSupportReference } from "./customerSafeReference";
 import {
   ActivePaymentAttemptError,
   PayableBasisRefreshRequiredError,
@@ -1205,9 +1207,6 @@ export function App() {
               {isRestoringStatutoryRecovery ? "Restoring request" : "Saved request status"}
             </h2>
             <p>{statutoryRecoveryMessage}</p>
-            {statutoryRecoveryRecord?.paymentAttemptId && (
-              <p>Payment attempt reference: {statutoryRecoveryRecord.paymentAttemptId}</p>
-            )}
           </div>
           <button
             type="button"
@@ -1333,6 +1332,7 @@ export function App() {
             onPayRegular={() => openRegularPaymentConfirmation()}
             regularPaymentButtonRef={regularPaymentButtonRef}
             canPayRegularWhilePending={canPayRegularWhilePending}
+            showSupportReference={!activePaymentAttempt && !result}
           />
         )}
 
@@ -1411,29 +1411,7 @@ export function App() {
             >
                 Check Status
             </button>
-            <details className="support-details">
-              <summary>Support details</summary>
-              <dl>
-                {activePaymentAttempt.correlationId && (
-                  <div>
-                    <dt>Correlation ID</dt>
-                    <dd>{activePaymentAttempt.correlationId}</dd>
-                  </div>
-                )}
-                {activePaymentAttempt.parkingSessionId && (
-                  <div>
-                    <dt>Parking session ID</dt>
-                    <dd>{activePaymentAttempt.parkingSessionId}</dd>
-                  </div>
-                )}
-                {activePaymentAttempt.paymentAttemptId && (
-                  <div>
-                    <dt>Payment attempt ID</dt>
-                    <dd>{activePaymentAttempt.paymentAttemptId}</dd>
-                  </div>
-                )}
-              </dl>
-            </details>
+            <CustomerSupportReference value={activePaymentAttempt.correlationId} />
           </section>
         )}
 
@@ -1508,33 +1486,7 @@ export function App() {
                 <code>{handoff.qrCodeUrl}</code>
               </div>
             )}
-            <details className="support-details">
-              <summary>Support details</summary>
-              <dl>
-                <div>
-                  <dt>Correlation ID</dt>
-                  <dd>{result.correlationId}</dd>
-                </div>
-                {result.selectedProviderCode && (
-                  <div>
-                    <dt>Routing provider</dt>
-                    <dd>{result.selectedProviderCode}</dd>
-                  </div>
-                )}
-                {result.fallbackProviderCode && (
-                  <div>
-                    <dt>Fallback provider</dt>
-                    <dd>{result.fallbackProviderCode}</dd>
-                  </div>
-                )}
-                {result.routingReason && (
-                  <div>
-                    <dt>Routing reason</dt>
-                    <dd>{result.routingReason}</dd>
-                  </div>
-                )}
-              </dl>
-            </details>
+            <CustomerSupportReference value={result.correlationId} />
           </div>
         </section>
       )}
@@ -1560,7 +1512,8 @@ function StatutoryDiscountRequestPanel({
   onRefreshAvailability,
   onPayRegular,
   regularPaymentButtonRef,
-  canPayRegularWhilePending
+  canPayRegularWhilePending,
+  showSupportReference
 }: {
   session: ParkingSessionResolveResponse;
   form: StatutoryDiscountFormState;
@@ -1580,6 +1533,7 @@ function StatutoryDiscountRequestPanel({
   onPayRegular: () => void;
   regularPaymentButtonRef: RefObject<HTMLButtonElement | null>;
   canPayRegularWhilePending: boolean;
+  showSupportReference: boolean;
 }) {
   const decision = state.decision;
   const copy = decision ? getStatutoryDiscountStatusCopy(decision) : null;
@@ -1607,14 +1561,7 @@ function StatutoryDiscountRequestPanel({
             <h3>{availabilityCopy.heading}</h3>
             <p>{availabilityCopy.body}</p>
           </div>
-          {availabilityState.availability?.correlationId && (
-            <dl>
-              <div>
-                <dt>Support reference</dt>
-                <dd>{availabilityState.availability.correlationId}</dd>
-              </div>
-            </dl>
-          )}
+          {showSupportReference && <CustomerSupportReference value={availabilityState.availability?.correlationId} />}
           {(availabilityState.isLoading || availabilityState.error || availabilityState.availability?.retryable) && (
             <button type="button" className="secondary-button" onClick={onRefreshAvailability} disabled={availabilityState.isLoading}>
               {availabilityState.isLoading ? "Checking availability..." : "Check availability"}
@@ -1679,17 +1626,11 @@ function StatutoryDiscountRequestPanel({
               />
             </label>
 
-            <label className="field">
-              <span>Masked ID reference</span>
-              <input
-                name="maskedIdReference"
-                value={form.maskedIdReference}
-                onChange={(event) => onFormChange({ ...form, maskedIdReference: event.target.value })}
-                placeholder="SC-****-1234"
-                autoComplete="off"
-              />
-              <small>Do not enter the full ID number. Use a masked reference with asterisks.</small>
-            </label>
+            <AutomaticMaskedIdInput
+              value={form.maskedIdReference}
+              disabled={state.isSubmitting || state.isApplying}
+              onChange={(maskedIdReference) => onFormChange({ ...form, maskedIdReference })}
+            />
 
             <label className="checkbox-field">
               <input
@@ -1741,10 +1682,6 @@ function StatutoryDiscountRequestPanel({
           </div>
           <dl>
             <div>
-              <dt>Request reference</dt>
-              <dd>{decision.requestReference}</dd>
-            </div>
-            <div>
               <dt>Decision status</dt>
               <dd>{displayValue(decision.decisionResultStatus ?? decision.decisionCommandStatus)}</dd>
             </div>
@@ -1752,11 +1689,8 @@ function StatutoryDiscountRequestPanel({
               <dt>Payable-basis status</dt>
               <dd>{displayValue(decision.payableBasisReadinessStatus)}</dd>
             </div>
-            <div>
-              <dt>Support reference</dt>
-              <dd>{displayValue(decision.correlationId)}</dd>
-            </div>
           </dl>
+          {showSupportReference && <CustomerSupportReference value={decision.correlationId} />}
 
           {getAppliedStatutoryPaymentBasis(decision) && (
             <dl className="payable-breakdown">
@@ -2189,10 +2123,6 @@ function PaymentStatusPanel({
               <dt>Plate</dt>
               <dd>{displayValue(summary.plateNumber)}</dd>
             </div>
-            <div>
-              <dt>Correlation ID</dt>
-              <dd>{summary.correlationId}</dd>
-            </div>
           </dl>
         </section>
         <ExitInstructionPanel summary={summary} />
@@ -2244,7 +2174,7 @@ function SalesInvoicePresentationPanel({
         <div className="invoice-status is-pending" role="status">
           <strong>Fiscal document recorded status is pending</strong>
           <span>{message || "The Sales Invoice is still being prepared."}</span>
-          {correlationId && <small>Support reference: {correlationId}</small>}
+          <CustomerSupportReference value={correlationId} compact />
         </div>
       )}
 
@@ -2252,7 +2182,7 @@ function SalesInvoicePresentationPanel({
         <div className="invoice-status is-error" role="alert">
           <strong>Sales Invoice unavailable</strong>
           <span>{message || "Sales Invoice retrieval is temporarily unavailable. Please try again shortly."}</span>
-          {correlationId && <small>Support reference: {correlationId}</small>}
+          <CustomerSupportReference value={correlationId} compact />
         </div>
       )}
 
@@ -3076,6 +3006,18 @@ function formatAdjustment(amountMinorUnits?: number | null, currency?: string | 
   }
 
   return `-${formatCurrencyAmount(amount, currency)}`;
+}
+
+function CustomerSupportReference({ value, compact = false }: { value?: string | null; compact?: boolean }) {
+  const supportReference = formatCustomerSupportReference(value);
+  if (!supportReference) {
+    return null;
+  }
+
+  const content = <>Support reference: <strong>{supportReference}</strong></>;
+  return compact
+    ? <small className="support-reference">{content}</small>
+    : <p className="support-reference">{content}</p>;
 }
 
 function displayValue(value?: string | number | null): string {

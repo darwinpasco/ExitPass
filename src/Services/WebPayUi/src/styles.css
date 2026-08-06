@@ -388,6 +388,29 @@ textarea {
   line-height: 1.35;
 }
 
+.automatic-mask-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.automatic-mask-control input[readonly] {
+  background: #f9fafb;
+}
+
+.automatic-mask-change {
+  min-width: 88px;
+}
+
+.field-error {
+  margin: 0;
+  color: #b42318;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
 .method-section {
   margin-bottom: 16px;
 }
@@ -860,6 +883,11 @@ textarea {
   margin: 0;
   color: #475467;
   overflow-wrap: anywhere;
+}
+
+.support-reference strong {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 .upload-progress progress {

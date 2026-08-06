@@ -88,6 +88,7 @@ test.afterEach(async ({}, testInfo) => {
   expect(serialized).not.toContain("api key");
   expect(serialized).not.toContain("SC-****-1234");
   expect(serialized).not.toContain("PWD-****-5678");
+  expect(serialized).not.toContain("123456789012");
 });
 
 test.describe("WebPay authoritative Sales Invoice browser smoke", () => {
@@ -232,12 +233,13 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
   test("Senior Citizen request enters pending review, disables payment, and polls with GET", async ({ page }) => {
     const apiRequests = collectApiRequests(page);
 
-    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-SC", "Senior Citizen", "SC-****-1234");
+    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-SC", "Senior Citizen", "SC00001234");
 
     await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
     await expect(page.getByText(/parking privilege request was received and is awaiting review/i).first()).toBeVisible();
     await expect(page.getByText(/status temporarily unavailable/i)).toHaveCount(0);
+    await expectCustomerVisibleReferencesSafe(page);
 
     const state = await getFixtureState();
     expect(state.requestLog.filter((request) => request.method === "POST" && request.path === "/v1/webpay/statutory-discounts/decisions")).toHaveLength(1);
@@ -249,7 +251,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
   });
 
   test("PWD request enters pending review without raw identity or reviewer fields", async ({ page }) => {
-    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-PWD", "PWD", "PWD-****-5678");
+    await submitStatutoryRequest(page, "WEBPAY-STAT-PENDING-PWD", "PWD", "PW00005678");
 
     await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
     const state = await getFixtureState();
@@ -267,6 +269,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await expect(page.getByText(/Discount application is pending/i).first()).toBeVisible();
     await expect(page.getByRole("button", { name: /apply approved discount/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
+    await expectCustomerVisibleReferencesSafe(page);
 
     const state = await getFixtureState();
     expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
@@ -278,6 +281,7 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await expect(page.getByRole("heading", { name: /entitlement not approved/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /statutory discount pending/i })).toBeDisabled();
     await expect(page.getByText(/reviewer|stack trace|internal exception/i)).toHaveCount(0);
+    await expectCustomerVisibleReferencesSafe(page);
 
     await fetch(`${baseFixtureUrl}/__fixture/reset`, { method: "POST", body: "{}" });
     await submitStatutoryRequest(page, "WEBPAY-STAT-RETRYABLE", "Senior Citizen", "SC-****-1234");
@@ -303,24 +307,36 @@ test.describe("WebPay statutory discount pending-review browser smoke", () => {
     await expect(page.getByText("PHP 11.06")).toBeVisible();
     await expect(page.getByText("-PHP 25.80")).toBeVisible();
     await expect(page.getByText("PHP 103.20")).toBeVisible();
+    await expectCustomerVisibleReferencesSafe(page);
 
     const state = await getFixtureState();
     expect(state.requestLog.some((request) => request.path.includes("/apply-payable-basis"))).toBe(false);
     expect(state.requestLog.some((request) => request.path.includes("/payment-intents"))).toBe(false);
   });
 
-  test("unsafe full ID is blocked before statutory API call", async ({ page }) => {
+  test("full ID entry is automatically masked before the statutory API call", async ({ page }) => {
     await resolveTicketOnStartPage(page, "WEBPAY-STAT-UNSAFE-ID");
     await page.getByRole("button", { name: /request statutory discount/i }).click();
     await page.getByLabel(/ID document type/i).fill("OSCA");
     await page.getByLabel(/Issuing authority/i).fill("Quezon City");
-    await page.getByLabel(/Masked ID reference/i).fill("123456789012");
+    await page.getByLabel(/^ID reference$/i).fill("123456789012");
     await page.getByLabel(/I confirm these entitlement details/i).check();
     await page.getByRole("button", { name: /submit for review/i }).click();
 
-    await expect(page.getByRole("alert")).toContainText(/masked ID reference/i);
+    await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
     const state = await getFixtureState();
-    expect(state.requestLog.some((request) => request.path.includes("/statutory-discounts/decisions"))).toBe(false);
+    const decisionRequest = state.requestLog.find((request) => request.path.includes("/statutory-discounts/decisions"));
+    expect(decisionRequest).toBeDefined();
+    expect(decisionRequest?.body).toMatchObject({ maskedIdReference: "12******9012" });
+    const customerMarkup = await page.locator("body").evaluate((body) => body.outerHTML);
+    expect(customerMarkup).not.toContain("123456789012");
+    expect(customerMarkup).not.toMatch(/(?:aria-label|aria-description|title)=["'][^"']*123456789012/i);
+    const browserStorage = await page.evaluate(() => ({
+      localStorage: JSON.stringify(localStorage),
+      sessionStorage: JSON.stringify(sessionStorage)
+    }));
+    expect(browserStorage.localStorage).not.toContain("123456789012");
+    expect(browserStorage.sessionStorage).not.toContain("123456789012");
   });
 
   test("ticket re-lookup with no browser recovery restores the same pending decision and continuation by rediscovery", async ({ page }) => {
@@ -574,6 +590,7 @@ test.describe("WebPay statutory discount applied payment browser smoke", () => {
     await expect(page.getByText("-PHP 10.00")).toBeVisible();
     await expect(page.getByText("PHP 40.00")).toBeVisible();
     await expect(page.getByText(/Payment is available using the Central PMS-approved statutory payable basis/i)).toBeVisible();
+    await expectCustomerVisibleReferencesSafe(page);
 
     await page.getByRole("button", { name: /continue to payment/i }).click();
 
@@ -854,7 +871,7 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
     await page.getByRole("button", { name: /request statutory discount/i }).click();
     await page.getByLabel(/ID document type/i).fill("OSCA");
     await page.getByLabel(/Issuing authority/i).fill("Quezon City");
-    await page.getByLabel(/Masked ID reference/i).fill("SC-****-1234");
+    await page.getByLabel(/^ID reference$/i).fill("SC00001234");
     await page.getByLabel(/I confirm these entitlement details/i).check();
     await page.getByRole("button", { name: /submit for review/i }).click();
     await expect(page.getByRole("alert")).toContainText(/temporarily unavailable/i);
@@ -1074,13 +1091,13 @@ async function resolveTicketOnStartPage(page: Page, ticketReference: string) {
   await expect(page.getByText("Parking Session Summary")).toBeVisible();
 }
 
-async function submitStatutoryRequest(page: Page, ticketReference: string, entitlementLabel: string, maskedIdReference: string) {
+async function submitStatutoryRequest(page: Page, ticketReference: string, entitlementLabel: string, idReference: string) {
   await resolveTicketOnStartPage(page, ticketReference);
   await page.getByRole("button", { name: /request statutory discount/i }).click();
   await page.getByLabel(/Entitlement type/i).selectOption({ label: entitlementLabel });
   await page.getByLabel(/ID document type/i).fill(entitlementLabel === "PWD" ? "PWD ID" : "OSCA");
   await page.getByLabel(/Issuing authority/i).fill("Quezon City");
-  await page.getByLabel(/Masked ID reference/i).fill(maskedIdReference);
+  await page.getByLabel(/^ID reference$/i).fill(idReference.replaceAll("*", "0"));
   await page.getByLabel(/I confirm these entitlement details/i).check();
   await page.getByRole("button", { name: /submit for review/i }).click();
 }
@@ -1094,6 +1111,15 @@ function collectApiRequests(page: Page): Request[] {
     }
   });
   return requests;
+}
+
+async function expectCustomerVisibleReferencesSafe(page: Page) {
+  const customerDom = await page.locator("body").evaluate((element) => element.outerHTML);
+  expect(customerDom).not.toMatch(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/i);
+
+  const supportReferences = page.locator(".support-reference");
+  await expect(supportReferences).toHaveCount(1);
+  await expect(supportReferences).toHaveText(/Support reference:\s*[0-9A-F]{4}-[0-9A-F]{4}/);
 }
 
 async function expectApiBoundary(requests: Request[]) {

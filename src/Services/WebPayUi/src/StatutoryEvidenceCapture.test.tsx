@@ -73,6 +73,9 @@ describe("StatutoryEvidenceCapture", () => {
     expect(input).not.toHaveAttribute("multiple");
     expect(screen.getByText(/4.8 MB/i)).toBeInTheDocument();
     expect(screen.getByText(/Entitlement id front/i)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(decisionId);
+    expect(document.body).not.toHaveTextContent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    expect(document.body).not.toHaveTextContent("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   });
 
   it("rejects PDF before requesting an upload session", async () => {

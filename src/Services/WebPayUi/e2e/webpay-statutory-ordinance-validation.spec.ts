@@ -167,7 +167,7 @@ test.describe("WebPay statutory ordinance eligibility browser validation", () =>
     const apiRequests = collectApiRequests(page);
     await setScenario("displayThenNoCoverage");
     await resolveTicket(page);
-    await submitVisibleStatutoryRequest(page, "Senior Citizen", "OSCA", "SC-****-0001");
+    await submitVisibleStatutoryRequest(page, "Senior Citizen", "OSCA", "SC00000001");
 
     await expect(page.getByText(/Parking privilege requests are not available/i)).toBeVisible();
     const state = await getValidationState();
@@ -185,7 +185,7 @@ test.describe("WebPay statutory ordinance eligibility browser validation", () =>
     const apiRequests = collectApiRequests(page);
     await setScenario("selectedRemovedBeforeSubmit");
     await resolveTicket(page);
-    await submitVisibleStatutoryRequest(page, "PWD", "PWD ID", "PWD-****-0002");
+    await submitVisibleStatutoryRequest(page, "PWD", "PWD ID", "PW00000002");
 
     await expect(page.getByText(/Parking privilege requests are not available/i)).toBeVisible();
     const state = await getValidationState();
@@ -220,7 +220,7 @@ test.describe("WebPay statutory ordinance eligibility browser validation", () =>
     const apiRequests = collectApiRequests(page);
     await setScenario("pendingReview");
     await resolveTicket(page);
-    await submitVisibleStatutoryRequest(page, "Senior Citizen", "OSCA", "SC-****-0003");
+    await submitVisibleStatutoryRequest(page, "Senior Citizen", "OSCA", "SC00000003");
 
     await expect(page.getByRole("heading", { name: /awaiting review/i })).toBeVisible();
     await expectSavedDecisionRecovery(page);
@@ -267,7 +267,7 @@ test.describe("WebPay statutory ordinance eligibility browser validation", () =>
     const apiRequests = collectApiRequests(page);
     await setScenario("rejected");
     await resolveTicket(page);
-    await submitVisibleStatutoryRequest(page, "Senior Citizen", "OSCA", "SC-****-0004");
+    await submitVisibleStatutoryRequest(page, "Senior Citizen", "OSCA", "SC00000004");
 
     await expect(page.getByRole("heading", { name: /entitlement not approved/i })).toBeVisible();
     await expect(page.getByText(expectedAmount).first()).toBeVisible();
@@ -363,16 +363,16 @@ async function expectOrdinaryPaymentAvailable(page: Page) {
 async function expectNoStatutoryFormFields(page: Page) {
   await expect(page.getByLabel(/entitlement type/i)).toHaveCount(0);
   await expect(page.getByLabel(/ID document type/i)).toHaveCount(0);
-  await expect(page.getByLabel(/Masked ID reference/i)).toHaveCount(0);
+  await expect(page.getByLabel(/^ID reference$/i)).toHaveCount(0);
   await expect(page.getByText(/evidence|capture|upload/i)).toHaveCount(0);
 }
 
-async function submitVisibleStatutoryRequest(page: Page, entitlementLabel: string, documentType: string, maskedIdReference: string) {
+async function submitVisibleStatutoryRequest(page: Page, entitlementLabel: string, documentType: string, idReference: string) {
   await page.getByRole("button", { name: /request statutory discount/i }).click();
   await page.getByLabel(/Entitlement type/i).selectOption({ label: entitlementLabel });
   await page.getByLabel(/ID document type/i).fill(documentType);
   await page.getByLabel(/Issuing authority/i).fill("Quezon City");
-  await page.getByLabel(/Masked ID reference/i).fill(maskedIdReference);
+  await page.getByLabel(/^ID reference$/i).fill(idReference);
   await page.getByLabel(/I confirm these entitlement details/i).check();
   await page.getByRole("button", { name: /submit for review/i }).click();
 }
