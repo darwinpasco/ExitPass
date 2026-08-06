@@ -67,6 +67,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       ),
       getStatutoryDiscountDraft: vi.fn(),
       listStatutoryDiscountEvidence: vi.fn(),
+      getStatutoryEvidenceReview: vi.fn(),
+      getStatutoryEvidencePreview: vi.fn(),
       captureStatutoryDiscountEvidence: vi.fn(),
       submitStatutoryDiscountDecision: vi.fn(),
       dryRunProductionPolicyImport: vi.fn(),

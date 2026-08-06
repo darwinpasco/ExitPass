@@ -43,6 +43,7 @@ import type {
   VendorSessionProjectionHealthTargetDetail,
   VendorSessionProjectionHealthTargetsResponse
 } from "./types";
+import { StatutoryEvidenceReviewPanel } from "./StatutoryEvidenceReviewPanel";
 
 const routes = {
   home: "/operator-console",
@@ -3643,6 +3644,13 @@ function DraftDetail({
       </section>
 
       <StatutoryReviewEligibilityPanel detail={detail} />
+
+      <StatutoryEvidenceReviewPanel
+        client={client}
+        decisionId={detail.statutoryDiscountDecisionCommandId}
+        authorityContextKey={`${detail.siteGroupId}:${detail.siteId}`}
+        entitlementLabel={plainEntitlementLabel(detail.entitlementType)}
+      />
 
       <CompactEvidencePanel
         detail={detail}
