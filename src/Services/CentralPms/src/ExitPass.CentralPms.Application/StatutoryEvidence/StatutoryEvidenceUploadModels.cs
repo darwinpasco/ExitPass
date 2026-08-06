@@ -171,6 +171,11 @@ public interface IStatutoryEvidenceProtectedObjectStorageAdapter
     Task<StatutoryEvidenceObjectContent> GetObjectContentAsync(
         StatutoryEvidenceObjectContentRequest request,
         CancellationToken cancellationToken);
+
+    Task<StatutoryEvidenceObjectContent> OpenObjectContentStreamAsync(
+        StatutoryEvidenceObjectContentRequest request,
+        CancellationToken cancellationToken) =>
+        GetObjectContentAsync(request, cancellationToken);
 }
 
 public interface IStatutoryEvidenceUploadRepository

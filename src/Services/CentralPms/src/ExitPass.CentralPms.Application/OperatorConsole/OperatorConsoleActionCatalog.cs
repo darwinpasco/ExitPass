@@ -16,6 +16,7 @@ public sealed class OperatorConsoleActionCatalog
         Write(OperatorConsoleActionCodes.DecideStatutoryDiscount, roleExpectation: "OPERATOR_APPROVER_OR_SUPERVISOR", auditClassification: "CONTROLLED_DECISION"),
         Write(OperatorConsoleActionCodes.CaptureEvidence, roleExpectation: "OPERATOR_OR_SUPERVISOR", auditClassification: "SENSITIVE_WRITE"),
         Read(OperatorConsoleActionCodes.ViewEvidence, roleExpectation: "OPERATOR_SUPERVISOR_OR_COMPLIANCE", auditClassification: "SENSITIVE_READ"),
+        Read(OperatorConsoleActionCodes.ReviewEvidence, roleExpectation: "AUTHORIZED_REVIEWER_OR_SUPERVISOR", auditClassification: "RESTRICTED_EVIDENCE_READ"),
         Write(OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis, roleExpectation: "OPERATOR_APPROVER_OR_SUPERVISOR", auditClassification: "CONTROLLED_WRITE"),
         Read(OperatorConsoleActionCodes.ViewPolicyResolution, roleExpectation: "OPERATOR_SUPERVISOR_OR_AUDITOR", auditClassification: "POLICY_READ"),
         Read(OperatorConsoleActionCodes.SupervisorReview, roleExpectation: "SUPERVISOR", auditClassification: "SUPERVISOR_REVIEW"),

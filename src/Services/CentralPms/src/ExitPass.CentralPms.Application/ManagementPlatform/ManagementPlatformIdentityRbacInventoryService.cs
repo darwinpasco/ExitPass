@@ -93,6 +93,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
             [
                 "statutory-discounts.draft.view",
                 "statutory-discounts.evidence.view",
+                "statutory-discounts.evidence.review.view",
                 "statutory-discounts.review.queue.read",
                 "statutory-discounts.review.detail.read",
                 "statutory-discounts.decision.review",
@@ -302,6 +303,7 @@ public sealed class ManagementPlatformIdentityRbacInventoryService : IManagement
         ("statutory-discounts.draft.view", "Statutory discount draft view", "Statutory discount"),
         ("statutory-discounts.draft.create", "Statutory discount draft create", "Statutory discount"),
         ("statutory-discounts.evidence.view", "Statutory discount evidence view", "Statutory discount"),
+        ("statutory-discounts.evidence.review.view", "Statutory evidence review preview", "Statutory discount"),
         ("statutory-discounts.evidence.capture", "Statutory discount evidence capture", "Statutory discount"),
         ("statutory-discounts.review.queue.read", "Statutory discount review queue read", "Statutory discount"),
         ("statutory-discounts.review.detail.read", "Statutory discount review detail read", "Statutory discount"),

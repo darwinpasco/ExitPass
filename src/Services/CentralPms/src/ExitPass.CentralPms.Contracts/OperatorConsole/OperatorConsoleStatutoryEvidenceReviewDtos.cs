@@ -1,0 +1,40 @@
+namespace ExitPass.CentralPms.Contracts.OperatorConsole;
+
+public sealed record OperatorConsoleStatutoryEvidenceReviewResponse(
+    Guid StatutoryDiscountDecisionCommandId,
+    Guid? EvidenceSetReference,
+    string SourceChannel,
+    string DecisionResultStatus,
+    string ReviewStatus,
+    bool EvidenceRequired,
+    bool EvidenceRecorded,
+    string? SetStatus,
+    string? RetentionStatus,
+    string? DeletionStatus,
+    bool HoldActive,
+    string ReplacementPosture,
+    IReadOnlyList<OperatorConsoleStatutoryEvidenceReviewItem> Items,
+    Guid CorrelationId);
+
+public sealed record OperatorConsoleStatutoryEvidenceReviewItem(
+    Guid EvidenceItemReference,
+    string DocumentType,
+    string ItemRole,
+    string? DeclaredContentType,
+    string? AuthoritativeContentType,
+    long? ContentLength,
+    string UploadStatus,
+    string ValidationStatus,
+    string ScanStatus,
+    string ReviewabilityStatus,
+    string BindingStatus,
+    string RetentionStatus,
+    string DeletionStatus,
+    bool HoldActive,
+    DateTimeOffset? UploadedAt,
+    DateTimeOffset? FinalizedAt,
+    DateTimeOffset? ValidatedAt,
+    DateTimeOffset? ScannedAt,
+    DateTimeOffset? ReviewableAt,
+    bool PreviewPermitted,
+    string? PreviewDenialReason);

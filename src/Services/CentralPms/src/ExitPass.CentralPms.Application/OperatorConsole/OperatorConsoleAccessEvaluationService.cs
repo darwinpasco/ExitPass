@@ -25,6 +25,7 @@ public sealed class OperatorConsoleAccessEvaluationService : IOperatorConsoleAcc
         OperatorConsoleActionCodes.DecideStatutoryDiscount,
         OperatorConsoleActionCodes.CaptureEvidence,
         OperatorConsoleActionCodes.ViewEvidence,
+        OperatorConsoleActionCodes.ReviewEvidence,
         OperatorConsoleActionCodes.ApplyStatutoryDiscountPayableBasis,
         OperatorConsoleActionCodes.ViewPolicyResolution,
         OperatorConsoleActionCodes.ViewAuditReport,
