@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request, type Route } from "@playwright/test";
 
 const baseFixtureUrl = `http://127.0.0.1:${process.env.WEBPAY_BROWSER_SMOKE_PORT ?? 5196}`;
 const ids = {
@@ -928,6 +928,17 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
     await secondPage.getByRole("button", { name: /^continue$/i }).click();
     await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeEnabled();
 
+    let releaseAuthoritativeReadback = () => undefined;
+    const authoritativeReadbackGate = new Promise<void>((resolve) => {
+      releaseAuthoritativeReadback = resolve;
+    });
+    const decisionReadPattern = "**/v1/webpay/statutory-discounts/decisions/**";
+    const gateDecisionRead = async (route: Route) => {
+      await authoritativeReadbackGate;
+      await route.continue();
+    };
+    await secondPage.route(decisionReadPattern, gateDecisionRead);
+
     await page.evaluate(({ key, value }) => {
       localStorage.setItem(key, JSON.stringify({ ...value, stage: "PAYMENT_SUBMITTING", updatedAt: new Date().toISOString() }));
     }, {
@@ -937,6 +948,8 @@ test.describe("WebPay statutory discount browser recovery smoke", () => {
 
     await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
     await expect(secondPage.getByRole("button", { name: /continue to payment/i })).toBeDisabled();
+    releaseAuthoritativeReadback();
+    await secondPage.unroute(decisionReadPattern, gateDecisionRead);
     await secondPage.reload();
     await expect(secondPage.getByText(/Another page may be starting payment/i)).toBeVisible();
     await secondPage.getByRole("button", { name: /^continue$/i }).click();

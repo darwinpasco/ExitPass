@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ExitPass.PaymentOrchestrator.Application.Abstractions.Integrations;
@@ -10,7 +11,7 @@ namespace ExitPass.PaymentOrchestrator.Infrastructure.Integrations;
 /// <summary>
 /// HTTP client for Central PMS APIs composed by the WebPay payment intent flow.
 /// </summary>
-public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
+public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient, ICentralPmsWebPayStatutoryEvidenceClient
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -27,6 +28,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private readonly Uri _statutoryDiscountPendingLifecycleRediscoveryUri;
     private readonly Uri _statutoryDiscountDecisionsUri;
     private readonly Uri _statutoryDiscountDecisionsBaseUri;
+    private readonly Uri _statutoryEvidenceBaseUri;
     private readonly bool _statutoryDiscountServiceIdentityConfigured;
     private readonly Guid _statutoryDiscountWebPayServiceIdentityId;
 
@@ -35,6 +37,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
     private const string StatutoryDiscountSubmitWebPayPermission = "statutory-discounts.decision.submit.webpay";
     private const string StatutoryDiscountDecisionReadPermission = "statutory-discounts.decision.read";
     private const string StatutoryDiscountPendingLifecycleRediscoverWebPayPermission = "statutory-discounts.pending-lifecycle.rediscover.webpay";
+    private const string StatutoryEvidenceCaptureWebPayPermission = "statutory-discounts.evidence.capture.webpay";
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsWebPayClient"/> class.
@@ -68,6 +71,7 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         _statutoryDiscountPendingLifecycleRediscoveryUri = new Uri(normalizedBaseUrl, "v1/webpay/statutory-discounts/pending-lifecycle/rediscover");
         _statutoryDiscountDecisionsUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions");
         _statutoryDiscountDecisionsBaseUri = new Uri(normalizedBaseUrl, "v1/statutory-discounts/decisions/");
+        _statutoryEvidenceBaseUri = new Uri(normalizedBaseUrl, "v1/webpay/statutory-discounts/evidence/");
 
         var serviceIdentityValue = configuration["Integrations:CentralPms:StatutoryDiscounts:WebPayServiceIdentityId"];
         _statutoryDiscountServiceIdentityConfigured =
@@ -492,6 +496,219 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
             applyPayableBasis: true,
             cancellationToken);
     }
+
+    /// <inheritdoc />
+    public Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> BootstrapAsync(
+        CentralPmsStatutoryEvidenceBootstrapRequest request,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        SendEvidenceChannelJsonAsync(
+            HttpMethod.Post,
+            new Uri(_statutoryEvidenceBaseUri, "bootstrap"),
+            new StatutoryEvidenceBootstrapRequest(request.StatutoryDiscountDecisionCommandId, request.ClientOperationKey),
+            "bootstrap",
+            correlationId,
+            cancellationToken);
+
+    /// <inheritdoc />
+    public Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> GetStatusAsync(
+        Guid? statutoryDiscountDecisionCommandId,
+        Guid? evidenceSetReference,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var query = statutoryDiscountDecisionCommandId is Guid decisionId
+            ? $"status?statutoryDiscountDecisionCommandId={decisionId:D}"
+            : $"status?evidenceSetReference={evidenceSetReference:D}";
+
+        return SendEvidenceChannelJsonAsync<object?>(
+            HttpMethod.Get,
+            new Uri(_statutoryEvidenceBaseUri, query),
+            null,
+            "status",
+            correlationId,
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>> CreateUploadSessionAsync(
+        CentralPmsStatutoryEvidenceUploadSessionRequest request,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post, new Uri(_statutoryEvidenceBaseUri, "upload-sessions"))
+        {
+            Content = JsonContent.Create(new StatutoryEvidenceUploadSessionRequest(
+                request.EvidenceSetReference,
+                request.EvidenceItemReference,
+                request.DeclaredContentType,
+                request.DeclaredContentLength,
+                request.DeclaredChecksumSha256,
+                request.ClientOperationKey), options: JsonOptions)
+        };
+
+        return await SendEvidenceUploadSessionAsync(message, "upload-session", correlationId, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>> UploadAsync(
+        Guid opaqueUploadSessionReference,
+        string contentType,
+        long contentLength,
+        Stream content,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var streamContent = new StreamContent(content);
+        streamContent.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        streamContent.Headers.ContentLength = contentLength;
+        using var message = new HttpRequestMessage(HttpMethod.Put, new Uri(_statutoryEvidenceBaseUri, $"upload-sessions/{opaqueUploadSessionReference:D}"))
+        {
+            Content = streamContent
+        };
+
+        return await SendEvidenceUploadSessionAsync(message, "upload", correlationId, cancellationToken, HttpCompletionOption.ResponseHeadersRead);
+    }
+
+    /// <inheritdoc />
+    public Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> FinalizeAsync(
+        Guid opaqueUploadSessionReference,
+        string? clientOperationKey,
+        Guid correlationId,
+        CancellationToken cancellationToken) =>
+        SendEvidenceChannelJsonAsync(
+            HttpMethod.Post,
+            new Uri(_statutoryEvidenceBaseUri, $"upload-sessions/{opaqueUploadSessionReference:D}/finalize"),
+            new StatutoryEvidenceFinalizeRequest(clientOperationKey),
+            "finalize",
+            correlationId,
+            cancellationToken);
+
+    private async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>> SendEvidenceChannelJsonAsync<TRequest>(
+        HttpMethod method,
+        Uri uri,
+        TRequest requestBody,
+        string operation,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, uri);
+        if (requestBody is not null)
+        {
+            request.Content = JsonContent.Create(requestBody, options: JsonOptions);
+        }
+
+        if (!TryAddStatutoryDiscountServiceHeaders(request, StatutoryEvidenceCaptureWebPayPermission, correlationId, out var authError))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>.Failure(authError!);
+        }
+
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString("D"));
+        using var response = await SendStatutoryDiscountAsync(request, $"evidence-{operation}", correlationId, cancellationToken);
+        if (response is null)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>.Failure(BuildTransientStatutoryDiscountError(correlationId));
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>.Failure(
+                ReadError((int)response.StatusCode, responseBody, "STATUTORY_EVIDENCE_REQUEST_FAILED"));
+        }
+
+        var payload = JsonSerializer.Deserialize<StatutoryEvidenceChannelResponse>(responseBody, JsonOptions);
+        return !IsValidStatutoryEvidenceChannel(payload)
+            ? CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>.Failure(new CentralPmsWebPayError(
+                502, "MALFORMED_STATUTORY_EVIDENCE_RESPONSE", "Central PMS evidence response could not be parsed.", true, correlationId))
+            : CentralPmsWebPayResult<CentralPmsStatutoryEvidenceChannel>.Success(ToStatutoryEvidenceChannel(payload!));
+    }
+
+    private async Task<CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>> SendEvidenceUploadSessionAsync(
+        HttpRequestMessage request,
+        string operation,
+        Guid correlationId,
+        CancellationToken cancellationToken,
+        HttpCompletionOption completionOption = HttpCompletionOption.ResponseContentRead)
+    {
+        if (!TryAddStatutoryDiscountServiceHeaders(request, StatutoryEvidenceCaptureWebPayPermission, correlationId, out var authError))
+        {
+            return CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Failure(authError!);
+        }
+
+        request.Headers.Add("X-Correlation-Id", correlationId.ToString("D"));
+        HttpResponseMessage? response;
+        try
+        {
+            response = await _httpClient.SendAsync(request, completionOption, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Central PMS statutory evidence {Operation} timed out. CorrelationId {CorrelationId}", operation, correlationId);
+            response = null;
+        }
+        catch (HttpRequestException)
+        {
+            _logger.LogWarning("Central PMS statutory evidence {Operation} failed before a response was received. CorrelationId {CorrelationId}", operation, correlationId);
+            response = null;
+        }
+
+        using (response)
+        {
+            if (response is null)
+            {
+                return CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Failure(BuildTransientStatutoryDiscountError(correlationId));
+            }
+
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Failure(
+                    ReadError((int)response.StatusCode, responseBody, "STATUTORY_EVIDENCE_UPLOAD_FAILED"));
+            }
+
+            var payload = JsonSerializer.Deserialize<StatutoryEvidenceUploadSessionResponse>(responseBody, JsonOptions);
+            return !IsValidStatutoryEvidenceUploadSession(payload)
+                ? CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Failure(new CentralPmsWebPayError(
+                    502, "MALFORMED_STATUTORY_EVIDENCE_UPLOAD_RESPONSE", "Central PMS evidence upload response could not be parsed.", true, correlationId))
+                : CentralPmsWebPayResult<CentralPmsStatutoryEvidenceUploadSession>.Success(ToStatutoryEvidenceUploadSession(payload!));
+        }
+    }
+
+    private static bool IsValidStatutoryEvidenceChannel(StatutoryEvidenceChannelResponse? payload) =>
+        payload is not null &&
+        !string.IsNullOrWhiteSpace(payload.Classification) &&
+        payload.CorrelationId != Guid.Empty &&
+        string.Equals(payload.SourceChannel, "WEBPAY", StringComparison.Ordinal) &&
+        payload.AllowedContentTypes is not null &&
+        payload.MaximumContentLengthBytes >= 0 &&
+        !string.IsNullOrWhiteSpace(payload.LifecycleClassification) &&
+        !string.IsNullOrWhiteSpace(payload.ReplacementPosture) &&
+        payload.EvaluatedAt != default;
+
+    private static bool IsValidStatutoryEvidenceUploadSession(StatutoryEvidenceUploadSessionResponse? payload) =>
+        payload is not null &&
+        !string.IsNullOrWhiteSpace(payload.Classification) &&
+        payload.CorrelationId != Guid.Empty &&
+        payload.OpaqueUploadSessionReference is Guid reference && reference != Guid.Empty &&
+        string.Equals(payload.Method, HttpMethod.Put.Method, StringComparison.Ordinal) &&
+        payload.ExpiresAt is not null &&
+        !string.IsNullOrWhiteSpace(payload.AcceptedContentType) &&
+        payload.MaximumContentLengthBytes > 0;
+
+    private static CentralPmsStatutoryEvidenceChannel ToStatutoryEvidenceChannel(StatutoryEvidenceChannelResponse payload) =>
+        new(payload.Classification, payload.Retryable, payload.ErrorCode, payload.CorrelationId, payload.SourceChannel,
+            payload.EvidenceRequired, payload.EvidenceSetReference, payload.EvidenceItemReference,
+            payload.AllowedContentTypes ?? Array.Empty<string>(), payload.MaximumContentLengthBytes,
+            payload.MaximumImageWidth, payload.MaximumImageHeight, payload.MaximumImagePixelCount,
+            payload.RequiredDocumentType, payload.RequiredItemRole, payload.LifecycleClassification,
+            payload.ReplacementPosture, payload.ReadyForReview, payload.ReadyForAptPreCash,
+            payload.BlockingReasonCode, payload.EvaluatedAt);
+
+    private static CentralPmsStatutoryEvidenceUploadSession ToStatutoryEvidenceUploadSession(StatutoryEvidenceUploadSessionResponse payload) =>
+        new(payload.Classification, payload.Retryable, payload.ErrorCode, payload.CorrelationId,
+            payload.OpaqueUploadSessionReference, payload.Method, payload.ExpiresAt,
+            payload.AcceptedContentType, payload.MaximumContentLengthBytes);
 
     private async Task<CentralPmsWebPayResult<CentralPmsStatutoryDiscountDecision>> SendStatutoryDiscountDecisionAsync(
         CentralPmsStatutoryDiscountDecisionRequest request,
@@ -1116,6 +1333,54 @@ public sealed class CentralPmsWebPayClient : ICentralPmsWebPayClient
         bool PayableBasisReady = false,
         string PayableBasisReadinessStatus = "NOT_READY",
         string? PayableBasisReadinessAction = null);
+
+    private sealed record StatutoryEvidenceBootstrapRequest(
+        Guid StatutoryDiscountDecisionCommandId,
+        string? ClientOperationKey);
+
+    private sealed record StatutoryEvidenceUploadSessionRequest(
+        Guid EvidenceSetReference,
+        Guid EvidenceItemReference,
+        string DeclaredContentType,
+        long DeclaredContentLength,
+        string DeclaredChecksumSha256,
+        string? ClientOperationKey);
+
+    private sealed record StatutoryEvidenceFinalizeRequest(string? ClientOperationKey);
+
+    private sealed record StatutoryEvidenceChannelResponse(
+        string Classification,
+        bool Retryable,
+        string? ErrorCode,
+        Guid CorrelationId,
+        string SourceChannel,
+        bool EvidenceRequired,
+        Guid? EvidenceSetReference,
+        Guid? EvidenceItemReference,
+        IReadOnlyList<string>? AllowedContentTypes,
+        long MaximumContentLengthBytes,
+        int? MaximumImageWidth,
+        int? MaximumImageHeight,
+        long? MaximumImagePixelCount,
+        string? RequiredDocumentType,
+        string? RequiredItemRole,
+        string? LifecycleClassification,
+        string ReplacementPosture,
+        bool ReadyForReview,
+        bool ReadyForAptPreCash,
+        string? BlockingReasonCode,
+        DateTimeOffset EvaluatedAt);
+
+    private sealed record StatutoryEvidenceUploadSessionResponse(
+        string Classification,
+        bool Retryable,
+        string? ErrorCode,
+        Guid CorrelationId,
+        Guid? OpaqueUploadSessionReference,
+        string Method,
+        DateTimeOffset? ExpiresAt,
+        string AcceptedContentType,
+        long MaximumContentLengthBytes);
 
     private sealed record ErrorResponse(
         string? ErrorCode,

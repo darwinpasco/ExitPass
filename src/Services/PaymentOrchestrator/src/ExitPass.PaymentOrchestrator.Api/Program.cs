@@ -241,6 +241,10 @@ static void RegisterInfrastructureServices(IServiceCollection services, IConfigu
     {
         client.Timeout = TimeSpan.FromSeconds(30);
     });
+    services.AddHttpClient<ICentralPmsWebPayStatutoryEvidenceClient, CentralPmsWebPayClient>(static client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
 
     services.AddHttpClient<PayMongoClient>();
     services.AddScoped<IProviderSessionRepository, ProviderSessionRepository>();
@@ -333,6 +337,7 @@ static void ConfigureEndpoints(WebApplication app)
     app.MapProviderWebhookEndpoints();
     app.MapInternalPaymentEndpoints();
     app.MapWebPayPaymentIntentEndpoints();
+    app.MapWebPayStatutoryEvidenceEndpoints();
 
     app.MapGet("/", static () => Results.Ok("ExitPass Payment Orchestrator API"));
 }

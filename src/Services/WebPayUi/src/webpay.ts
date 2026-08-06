@@ -553,7 +553,7 @@ export function buildStatutoryDiscountDecisionBody(
     idDocumentType,
     issuingAuthority,
     maskedIdReference,
-    evidenceCaptureRequested: false,
+    evidenceCaptureRequested: Boolean(request.evidenceCaptureRequested),
     requesterAttestation: true
   };
 

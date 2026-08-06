@@ -152,4 +152,30 @@ describe("statutory recovery storage", () => {
     expect(hasKnownInFlightStatutoryRecoveryStage({ ...validRecord(), stage: "PAYMENT_SUBMITTING" })).toBe(true);
     expect(hasKnownInFlightStatutoryRecoveryStage({ ...validRecord(), stage: "PAYABLE_READY" })).toBe(false);
   });
+
+  it("does not let stale readback overwrite a concurrent payment submission or handoff", () => {
+    const storage = new MemoryStorage();
+    const ready = { ...validRecord(), stage: "PAYABLE_READY" as const };
+    const submitting = updateStatutoryRecoveryRecord(ready, {
+      stage: "PAYMENT_SUBMITTING",
+      paymentIntentCorrelationId: "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    }, new Date("2026-07-28T08:01:00.000Z"));
+    saveStatutoryRecoveryRecord(submitting, storage);
+
+    const staleReadback = updateStatutoryRecoveryRecord(ready, { stage: "PAYABLE_READY" }, new Date("2026-07-28T08:02:00.000Z"));
+    expect(saveStatutoryRecoveryRecord(staleReadback, storage).record).toMatchObject({
+      stage: "PAYMENT_SUBMITTING",
+      paymentIntentCorrelationId: "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    });
+
+    const handoff = updateStatutoryRecoveryRecord(submitting, {
+      stage: "PAYMENT_HANDOFF",
+      paymentAttemptId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    }, new Date("2026-07-28T08:03:00.000Z"));
+    saveStatutoryRecoveryRecord(handoff, storage);
+    expect(saveStatutoryRecoveryRecord(staleReadback, storage).record).toMatchObject({
+      stage: "PAYMENT_HANDOFF",
+      paymentAttemptId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+    });
+  });
 });
