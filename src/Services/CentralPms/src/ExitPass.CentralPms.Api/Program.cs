@@ -163,6 +163,7 @@ app.MapTicketSessionSummaryEndpoints();
 app.MapVendorPaymentAcknowledgmentOpsEndpoints();
 app.MapVendorSessionProjectionHealthEndpoints();
 app.MapOperatorConsoleStatutoryDiscountDraftEndpoints();
+app.MapOperatorConsoleStatutoryEvidenceReviewEndpoints();
 app.MapOperatorConsoleStatutoryDiscountPolicyResolutionEndpoints();
 app.MapStatutoryDiscountDecisionEndpoints();
 app.MapStatutoryEvidenceMetadataEndpoints();
@@ -266,6 +267,7 @@ static void ConfigureOpenTelemetry(
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountRead")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDecision")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleServiceChannelStatutoryDiscountReview")
+                .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryEvidenceReview")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountPolicyResolution")
                 .AddSource("ExitPass.CentralPms.Api.OperatorConsoleProductionPolicyImport")
                 .AddSource("ExitPass.CentralPms.Api.ReconciliationOutboxDispatcher")
@@ -720,6 +722,9 @@ static void ConfigureApplicationServices(
         new PostgresStatutoryDiscountParkingEligibilityRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IStatutoryDiscountParkingEligibilityResolver, StatutoryDiscountParkingEligibilityResolver>();
     builder.Services.AddScoped<IOperatorConsoleServiceChannelStatutoryDiscountReviewService, OperatorConsoleServiceChannelStatutoryDiscountReviewService>();
+    builder.Services.AddScoped<IOperatorConsoleStatutoryEvidenceReviewRepository>(_ =>
+        new OperatorConsoleStatutoryEvidenceReviewRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IOperatorConsoleStatutoryEvidenceReviewService, OperatorConsoleStatutoryEvidenceReviewService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportService, OperatorConsoleProductionPolicyImportService>();
     builder.Services.AddScoped<IOperatorConsoleProductionPolicyImportReviewQueue>(_ =>
         new OperatorConsoleProductionPolicyImportReviewQueueRepository(mainDatabaseConnectionString));

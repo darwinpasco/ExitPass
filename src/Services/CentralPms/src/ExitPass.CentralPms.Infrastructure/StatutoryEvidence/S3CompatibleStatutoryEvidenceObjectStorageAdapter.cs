@@ -236,6 +236,125 @@ public sealed class S3CompatibleStatutoryEvidenceObjectStorageAdapter : IStatuto
             encryptionValues?.FirstOrDefault());
     }
 
+    public async Task<StatutoryEvidenceObjectContent> OpenObjectContentStreamAsync(
+        StatutoryEvidenceObjectContentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var endpoint = ResolveEndpoint(publicEndpoint: false);
+        var uri = BuildObjectUri(endpoint, request.BucketName, request.InternalObjectKey);
+        using var message = new HttpRequestMessage(HttpMethod.Get, uri);
+        SignHeaderAuthorization(message, request.BucketName, request.InternalObjectKey);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new InvalidOperationException("Protected storage object retrieval failed.", exception);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("Protected storage object retrieval failed.", exception);
+        }
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            response.Dispose();
+            throw new InvalidOperationException("Protected storage object is unavailable.");
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            response.Dispose();
+            throw new InvalidOperationException("Protected storage object retrieval failed.");
+        }
+
+        var contentLength = response.Content.Headers.ContentLength ?? 0;
+        if (contentLength <= 0 || contentLength > request.MaxContentLengthBytes)
+        {
+            response.Dispose();
+            throw new InvalidOperationException("Protected storage object length is outside the configured limit.");
+        }
+
+        response.Content.Headers.TryGetValues("x-amz-checksum-sha256", out var checksumValues);
+        if (checksumValues is null)
+        {
+            response.Headers.TryGetValues("x-amz-checksum-sha256", out checksumValues);
+        }
+
+        response.Headers.TryGetValues("x-amz-version-id", out var versionValues);
+        response.Headers.TryGetValues("x-amz-server-side-encryption", out var encryptionValues);
+
+        try
+        {
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            return new StatutoryEvidenceObjectContent(
+                new ResponseOwnedReadStream(stream, response),
+                response.Content.Headers.ContentType?.MediaType ?? string.Empty,
+                contentLength,
+                NormalizeS3ChecksumHeader(checksumValues?.FirstOrDefault()),
+                versionValues?.FirstOrDefault(),
+                encryptionValues?.FirstOrDefault());
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+    }
+
+    private sealed class ResponseOwnedReadStream(Stream inner, HttpResponseMessage response) : Stream
+    {
+        private bool _disposed;
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position
+        {
+            get => inner.CanSeek ? inner.Position : throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+        public override int Read(Span<byte> buffer) => inner.Read(buffer);
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            inner.ReadAsync(buffer, offset, count, cancellationToken);
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_disposed)
+            {
+                _disposed = true;
+                inner.Dispose();
+                response.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+                await inner.DisposeAsync();
+                response.Dispose();
+            }
+
+            GC.SuppressFinalize(this);
+        }
+    }
+
     private Uri BuildPresignedUrl(
         string method,
         Uri endpoint,

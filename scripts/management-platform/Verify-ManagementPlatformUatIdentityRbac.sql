@@ -127,6 +127,7 @@ expected_role_permissions(role_code, permission_code) AS (
     ('PLATFORM_ADMINISTRATOR', 'uat-fixture.manage'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.draft.view'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.evidence.view'),
+    ('OPERATIONS_SUPERVISOR', 'statutory-discounts.evidence.review.view'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.review.queue.read'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.review.detail.read'),
     ('OPERATIONS_SUPERVISOR', 'statutory-discounts.decision.review'),

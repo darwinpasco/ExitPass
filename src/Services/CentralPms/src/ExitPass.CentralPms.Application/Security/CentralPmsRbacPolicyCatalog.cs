@@ -133,6 +133,10 @@ public static class CentralPmsRbacPolicyCatalog
                 "statutory-discounts.evidence.view",
                 "reconciliation.manage"
             ],
+            ["OperatorConsoleStatutoryEvidenceReviewView"] =
+            [
+                "statutory-discounts.evidence.review.view"
+            ],
             ["OperatorConsoleStatutoryDiscountEvidenceCapture"] =
             [
                 "statutory-discounts.evidence.capture",

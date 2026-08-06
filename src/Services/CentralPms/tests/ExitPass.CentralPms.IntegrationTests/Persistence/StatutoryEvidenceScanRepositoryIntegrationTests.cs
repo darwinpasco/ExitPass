@@ -1,5 +1,9 @@
 using ExitPass.CentralPms.Application.StatutoryEvidence;
+using ExitPass.CentralPms.Application.OperatorConsole;
+using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Infrastructure.OperatorConsole;
 using ExitPass.CentralPms.Infrastructure.StatutoryEvidence;
+using ExitPass.CentralPms.Infrastructure.StatutoryDiscounts;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
@@ -15,6 +19,111 @@ public sealed class StatutoryEvidenceScanRepositoryIntegrationTests
 
     private static string ConnectionString =>
         CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
+
+    [Fact]
+    public async Task ReviewProjection_CurrentCleanItemReadsAndAudits_ThenVersionChangeInvalidatesTarget()
+    {
+        await EnsureScanSchemaPresentAsync();
+        var context = PaymentTestContext.Create(nameof(ReviewProjection_CurrentCleanItemReadsAndAudits_ThenVersionChangeInvalidatesTarget));
+        var seed = EvidenceSeed.Create(context);
+        await PaymentTestDataHelper.ResetAndSeedAsync(ConnectionString, context, "Seed statutory evidence review-read repository test data.");
+        await SeedEvidencePrerequisitesAsync(context, seed);
+
+        try
+        {
+            var (itemReference, _) = await CreateFinalizedEvidenceItemAsync(context, seed);
+            var scanRepository = new StatutoryEvidenceScanRepository(ConnectionString);
+            var claim = await scanRepository.ClaimDueWorkAsync("review-read-worker", seed.ActorServiceIdentityId, 1, TimeSpan.FromMinutes(2), DateTimeOffset.UtcNow, CancellationToken.None);
+            claim.Should().ContainSingle();
+            await scanRepository.CompleteAttemptAsync(
+                claim[0],
+                new StatutoryEvidenceScanCompletion("COMPLETED", "PASSED", "PASSED", "CLEAN", "CLEAN", null, false, true),
+                seed.ActorServiceIdentityId,
+                DateTimeOffset.UtcNow,
+                CancellationToken.None);
+            await new PostgresStatutoryDiscountServiceChannelReviewRepository(ConnectionString).UpsertIntakeAsync(
+                new StatutoryDiscountServiceChannelReviewIntakeCommand(
+                    seed.DecisionCommandId,
+                    seed.RequestReference,
+                    context.ParkingSessionId,
+                    "WEBPAY",
+                    context.SiteId,
+                    context.SiteGroupId,
+                    null,
+                    null,
+                    "SENIOR_CITIZEN",
+                    null,
+                    null,
+                    null,
+                    null,
+                    [],
+                    true,
+                    null,
+                    "I017_REVIEW_READ_TEST",
+                    null,
+                    seed.CorrelationId,
+                    DateTimeOffset.UtcNow),
+                CancellationToken.None);
+
+            var repository = new OperatorConsoleStatutoryEvidenceReviewRepository(ConnectionString);
+            var review = await repository.ReadAsync(seed.DecisionCommandId, CancellationToken.None);
+
+            review.Should().NotBeNull();
+            review!.SiteId.Should().Be(context.SiteId);
+            review.SiteGroupId.Should().Be(context.SiteGroupId);
+            review.Items.Should().ContainSingle(item =>
+                item.EvidenceItemReference == itemReference &&
+                item.ValidationStatus == "PASSED" &&
+                item.ScanStatus == "CLEAN" &&
+                item.ReviewabilityStatus == "REVIEWABLE");
+            var item = review.Items.Single();
+            var target = new OperatorConsoleStatutoryEvidencePreviewTarget(
+                review.StatutoryDiscountDecisionCommandId,
+                review.ParkingSessionId,
+                review.SiteId,
+                review.SiteGroupId,
+                review.EvidenceSetId!.Value,
+                review.EvidenceSetReference!.Value,
+                review.SetRowVersion!.Value,
+                item.EvidenceItemId,
+                item.EvidenceItemReference,
+                item.ItemRowVersion,
+                item.UploadAuthorizationId!.Value,
+                item.UploadAuthorizationReference!.Value,
+                item.UploadAuthorizationRowVersion!.Value,
+                item.InternalObjectKey!,
+                item.VerifiedContentType!,
+                item.VerifiedContentLength!.Value,
+                item.VerifiedChecksumSha256!,
+                item.ProviderObjectVersion,
+                seed.CorrelationId,
+                context.RequestedByUserId);
+            (await repository.IsCurrentPreviewTargetAsync(target, CancellationToken.None)).Should().BeTrue();
+
+            await repository.RecordAccessEventAsync(
+                new OperatorConsoleStatutoryEvidenceAccessEvent(
+                    "ACCESS_ALLOWED",
+                    "ALLOWED",
+                    "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STARTED",
+                    review.EvidenceSetId,
+                    item.EvidenceItemId,
+                    review.SiteId,
+                    review.SiteGroupId,
+                    review.ParkingSessionId,
+                    seed.CorrelationId,
+                    new StatutoryEvidenceActor(context.RequestedByUserId, null, "OPERATOR_CONSOLE")),
+                CancellationToken.None);
+            (await CountAccessEventsAsync(seed.CorrelationId, "OPERATOR_CONSOLE_EVIDENCE_PREVIEW_STARTED")).Should().Be(1);
+
+            await AdvanceItemVersionAsync(itemReference);
+            (await repository.IsCurrentPreviewTargetAsync(target, CancellationToken.None)).Should().BeFalse();
+        }
+        finally
+        {
+            await CleanupEvidenceRowsAsync(context, seed);
+            await PaymentTestDataHelper.CleanupAsync(ConnectionString, context);
+        }
+    }
 
     [Fact]
     public async Task FinalizedUpload_CreatesOneClaimableScanWork_AndCompletionUpdatesLifecycle()
@@ -538,6 +647,9 @@ public sealed class StatutoryEvidenceScanRepositoryIntegrationTests
             WHERE actor_service_identity_id = @actor_service_identity_id
               AND reason_code = 'I015_SCAN_TEST';
 
+            DELETE FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE statutory_discount_decision_command_id = @decision_command_id;
+
             DELETE FROM discounts.statutory_discount_decision_commands
             WHERE statutory_discount_decision_command_id = @decision_command_id;
 
@@ -653,6 +765,18 @@ public sealed class StatutoryEvidenceScanRepositoryIntegrationTests
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("parking_session_id", parkingSessionId);
+        return (long)(await command.ExecuteScalarAsync() ?? 0L);
+    }
+
+    private static async Task<long> CountAccessEventsAsync(Guid correlationId, string reasonCode)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT COUNT(*) FROM discounts.statutory_evidence_events WHERE correlation_id = @correlation_id AND safe_reason_code = @reason_code;",
+            connection);
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+        command.Parameters.AddWithValue("reason_code", reasonCode);
         return (long)(await command.ExecuteScalarAsync() ?? 0L);
     }
 

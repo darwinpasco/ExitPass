@@ -29,6 +29,9 @@ public static class OperatorConsoleActionCodes
     /// <summary>View statutory discount evidence metadata.</summary>
     public const string ViewEvidence = "VIEW_EVIDENCE";
 
+    /// <summary>Review current statutory evidence metadata and inline preview.</summary>
+    public const string ReviewEvidence = "REVIEW_EVIDENCE";
+
     /// <summary>Apply an approved statutory discount validation to payable basis.</summary>
     public const string ApplyStatutoryDiscountPayableBasis = "APPLY_STATUTORY_DISCOUNT_PAYABLE_BASIS";
 
