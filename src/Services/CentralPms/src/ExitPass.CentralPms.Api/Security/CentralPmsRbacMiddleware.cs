@@ -34,6 +34,7 @@ public sealed class CentralPmsRbacMiddleware
         HttpContext context,
         IOptions<CentralPmsRbacOptions> options,
         ICentralPmsRbacRepository repository,
+        IWebHostEnvironment environment,
         ILogger<CentralPmsRbacMiddleware> logger)
     {
         var metadata = context.GetEndpoint()?.Metadata.GetMetadata<ReconciliationPolicyMetadata>();
@@ -46,10 +47,27 @@ public sealed class CentralPmsRbacMiddleware
         var policyName = metadata.PolicyName;
         var requiredPermissions = CentralPmsRbacPolicyCatalog.ResolvePermissions(policyName);
         var correlationId = ResolveCorrelationId(context);
-        var userId = ResolveGuid(context, CentralPmsRbacPolicyCatalog.UserIdHeaderName, ClaimTypes.NameIdentifier, "sub", "user_id");
+        var fixtureHeadersAllowed = (environment.IsDevelopment() || environment.IsEnvironment("SecureDevelopment") || environment.IsEnvironment("Test")) && options.Value.AllowFixtureIdentityHeaders;
+        var userId = ResolveGuid(context, fixtureHeadersAllowed ? CentralPmsRbacPolicyCatalog.UserIdHeaderName : null, ClaimTypes.NameIdentifier, "sub", "user_id");
         var serviceIdentityId = ResolveGuid(context, CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, "service_identity_id", "client_id");
 
-        if (userId is null && serviceIdentityId is null && !HasAnyPermissionHeader(context, requiredPermissions, options.Value.AllowPermissionHeader))
+        var restrictedHumanSession =
+            context.User.Identity?.IsAuthenticated == true &&
+            (string.Equals(context.User.FindFirst("password_change_required")?.Value, "true", StringComparison.OrdinalIgnoreCase) ||
+             (string.Equals(context.User.FindFirst("exitpass_audience")?.Value, "MANAGEMENT_PLATFORM", StringComparison.OrdinalIgnoreCase) &&
+              string.Equals(context.User.FindFirst("privileged_account")?.Value, "true", StringComparison.OrdinalIgnoreCase) &&
+              !string.Equals(context.User.FindFirst("mfa_satisfied")?.Value, "true", StringComparison.OrdinalIgnoreCase)));
+
+        if (restrictedHumanSession)
+        {
+            await DenyAsync(context, repository, logger, StatusCodes.Status403Forbidden,
+                "HUMAN_SESSION_ASSURANCE_REQUIRED",
+                "The current human session does not satisfy the required authentication assurance.",
+                policyName, userId, serviceIdentityId, correlationId);
+            return;
+        }
+
+        if (userId is null && serviceIdentityId is null && !HasAnyPermissionHeader(context, requiredPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
         {
             await DenyAsync(
                 context,
@@ -66,7 +84,7 @@ public sealed class CentralPmsRbacMiddleware
         }
 
         if (HasAnyClaimPermission(context.User, requiredPermissions) ||
-            HasAnyPermissionHeader(context, requiredPermissions, options.Value.AllowPermissionHeader))
+            HasAnyPermissionHeader(context, requiredPermissions, fixtureHeadersAllowed && options.Value.AllowPermissionHeader))
         {
             await _next(context);
             return;
@@ -185,9 +203,9 @@ public sealed class CentralPmsRbacMiddleware
             ? correlationId
             : null;
 
-    private static Guid? ResolveGuid(HttpContext context, string headerName, params string[] claimTypes)
+    private static Guid? ResolveGuid(HttpContext context, string? headerName, params string[] claimTypes)
     {
-        if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
+        if (headerName is not null && context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
             Guid.TryParse(headerValue.ToString(), out var headerGuid))
         {
             return headerGuid;

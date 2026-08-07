@@ -28,6 +28,7 @@ using ExitPass.CentralPms.Application.Abstractions.Persistence;
 using ExitPass.CentralPms.Application.Eventing;
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Gates;
+using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Application.Observability;
 using ExitPass.CentralPms.Application.OperatorConsole;
@@ -49,6 +50,7 @@ using ExitPass.CentralPms.Infrastructure.Common;
 using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.Gates;
+using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
 using ExitPass.CentralPms.Infrastructure.PaymentAttempts;
 using ExitPass.CentralPms.Infrastructure.Payments;
@@ -94,6 +96,7 @@ ConfigureLogging(builder, otlpEndpoint, serviceVersion);
 ConfigureOpenTelemetry(builder, otlpEndpoint, serviceVersion);
 ConfigureHealthChecks(builder);
 ConfigureInternalSecurity(builder);
+ConfigureHumanAuthentication(builder, mainDatabaseConnectionString);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
 ConfigureOperatorConsoleLocalCors(builder);
 
@@ -116,6 +119,8 @@ if (IsLocalDevelopment(app.Environment))
     app.UseCors(OperatorConsoleLocalCorsPolicyName);
 }
 
+app.UseMiddleware<ProductionFixtureIdentityHeaderGuardMiddleware>();
+app.UseAuthentication();
 app.UseMiddleware<InternalMtlsMiddleware>();
 app.UseMiddleware<CentralPmsRbacMiddleware>();
 app.UseAuthorization();
@@ -178,6 +183,7 @@ app.MapAptStatutoryOrdinanceAvailabilityEndpoints();
 app.MapTerminalCashPaymentEndpoints();
 app.MapWebPayReceiptPresentationEndpoints();
 app.MapWebPayStatutoryDiscountPendingLifecycleRediscoveryEndpoints();
+app.MapHumanAuthenticationEndpoints();
 
 app.MapGet("/", () => Results.Ok(new
 {
@@ -343,6 +349,45 @@ static void ConfigureInternalSecurity(WebApplicationBuilder builder)
     builder.Services.Configure<CentralPmsRbacOptions>(
         builder.Configuration.GetSection("CentralPms:Rbac"));
     builder.Services.AddSingleton<IInternalClientCertificateAccessor, HttpContextInternalClientCertificateAccessor>();
+}
+
+static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string mainDatabaseConnectionString)
+{
+    builder.Services.AddOptions<HumanAuthenticationOptions>()
+        .Bind(builder.Configuration.GetSection(HumanAuthenticationOptions.SectionName))
+        .Validate(options => options.CentralPmsServiceIdentityId != Guid.Empty, "Central PMS service identity is required.")
+        .Validate(options => options.WebIdleMinutes > 0 && options.WebAbsoluteHours > 0 && options.AptIdleMinutes > 0 && options.AptAbsoluteHours > 0, "Human session expiry values must be positive.")
+        .ValidateOnStart();
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddSingleton<IHumanSessionTokenService, HumanSessionTokenService>();
+    builder.Services.AddSingleton<IHumanPasswordHasher, Argon2idHumanPasswordHasher>();
+    builder.Services.AddSingleton<ITotpProvider, TotpProvider>();
+    builder.Services.AddSingleton<ITotpSecretProtector, AesGcmTotpSecretProtector>();
+    builder.Services.AddSingleton<IExternalHumanAuthenticationAdapter, DisabledExternalHumanAuthenticationAdapter>();
+    builder.Services.AddSingleton<ICredentialChallengeDelivery, DisabledCredentialChallengeDelivery>();
+    builder.Services.AddScoped<IHumanAuthenticationRepository>(services =>
+        new PostgresHumanAuthenticationRepository(mainDatabaseConnectionString, services.GetRequiredService<IHumanSessionTokenService>()));
+    builder.Services.AddScoped<HumanAuthenticationService>();
+    builder.Services.AddScoped<IHumanAuthenticationService>(services => services.GetRequiredService<HumanAuthenticationService>());
+    builder.Services.AddScoped<IHumanMfaAdministrationService>(services => services.GetRequiredService<HumanAuthenticationService>());
+    builder.Services.AddSingleton<IHumanAuthenticationOriginValidator, HumanAuthenticationOriginValidator>();
+    builder.Services.AddAntiforgery(options =>
+    {
+        options.Cookie.Name = "__Host-ExitPass-Csrf";
+        options.Cookie.HttpOnly = false;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.Path = "/";
+        options.HeaderName = "X-CSRF-Token";
+    });
+    builder.Services.AddAuthentication(HumanSessionAuthenticationHandler.SchemeName)
+        .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, HumanSessionAuthenticationHandler>(HumanSessionAuthenticationHandler.SchemeName, _ => { });
+    builder.Services.AddAuthorization();
+    builder.Services.AddHealthChecks().Add(new HealthCheckRegistration(
+        "human-authentication",
+        services => new HumanAuthenticationHealthCheck(mainDatabaseConnectionString, services.GetRequiredService<ITotpSecretProtector>()),
+        failureStatus: HealthStatus.Unhealthy,
+        tags: ["ready"]));
 }
 
 static void ConfigureApplicationServices(
@@ -829,7 +874,8 @@ static void ConfigureOperatorConsoleLocalCors(WebApplicationBuilder builder)
             policy
                 .WithOrigins(allowedOrigins)
                 .WithMethods(allowedMethods)
-                .WithHeaders(allowedHeaders);
+                .WithHeaders(allowedHeaders.Concat(["X-CSRF-Token"]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray())
+                .AllowCredentials();
         });
     });
 }
