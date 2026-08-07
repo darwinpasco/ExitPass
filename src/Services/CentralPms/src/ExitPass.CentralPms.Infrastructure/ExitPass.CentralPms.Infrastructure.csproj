@@ -3,9 +3,11 @@
     <RootNamespace>ExitPass.CentralPms.Infrastructure</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Npgsql" />
+    <PackageReference Include="Otp.NET" />
     <PackageReference Include="RabbitMQ.Client" />
   </ItemGroup>
   <ItemGroup>
