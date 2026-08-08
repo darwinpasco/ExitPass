@@ -170,6 +170,7 @@ app.MapStatutoryEvidenceMetadataEndpoints();
 app.MapStatutoryEvidenceChannelEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
+app.MapManagementPlatformIdentityAdministrationEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
@@ -732,6 +733,12 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryRepository>(_ =>
         new ManagementPlatformIdentityRbacInventoryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<IIdentityAdministrationActorAccessor, HttpContextIdentityAdministrationActorAccessor>();
+    builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
+        new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, PendingHumanAuthenticationAdministrationGateway>();
+    builder.Services.AddScoped<IManagementPlatformIdentityAdministrationService, ManagementPlatformIdentityAdministrationService>();
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
         new ManagementPlatformStatutoryDiscountPolicyCoverageRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageService, ManagementPlatformStatutoryDiscountPolicyCoverageService>();
