@@ -9,6 +9,8 @@ This slice extends the existing APT-facing payable-basis resolve and revalidate 
 
 The facade remains a thin Central PMS surface over the shared vendor parking, tariff, terminal-cash eligibility, Sales Invoice readiness, fiscal readiness, and statutory-discount readback services. It does not add an APT-specific statutory decision route, a statutory calculation path, a HikCentral client, payment mutation, fiscal issuance, receipt retrieval, ExitAuthorization mutation, or gate behavior.
 
+The `TerminalCashPayableBasisRead` policy continues to require only `terminal-cash.payable-basis.read`. That permission is read-only and does not authorize APT application access (`apt.access`), shift operation (`cashier-shifts.operate`), custody operation (`cash-custody.operate`), cash receipt (`terminal-cash.receive`), supervisor handover, or `CASH_RECEIVED`. The response field `readyForCashAcceptance` is authoritative readiness information, not human cash-receipt authorization.
+
 ## Authority Boundary
 
 Operator Console remains the human entitlement-review surface. The shared statutory-discount backend remains authoritative for canonical decision state, payable-basis application state, applied tariff snapshot identity, final statutory payable amount, VAT facts, discount facts, retryability, and recovery posture.

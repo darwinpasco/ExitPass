@@ -16,7 +16,7 @@ On `401`, the consumer locks the protected workspace and requires login/continua
 |---|---|---|---|---|---|---|---|---|---|
 | Management Platform | Required; privileged administrators add TOTP | `INTERNAL_ADMIN`, approved support/finance/compliance/security users | App access plus operation-specific admin/read permission | Required for scoped administration and views | Explicit eligible central roles only | Secure same-origin web session | User/role/scope changes, policy/config changes, session revocation | Authenticated `user_id` plus service identity | Lock UI; deny mutation; reauthenticate and re-resolve |
 | Operator Console | Username/password; no mandatory v1.3 MFA | `OPERATIONS_USER`, `SITE_OPERATOR`, approved reviewers/supervisors | Operator Console access plus workflow-specific permission | Required; shift/device constraints may narrow | Exceptional central review roles only | Secure same-origin web session | Approval/rejection, evidence preview/review, void, takeover | Authenticated reviewer/operator `user_id` | Lock UI; deny decisions; preserve draft only as non-authoritative client state |
-| Windows APT | Trusted device/service identity, then cashier username/password; no mandatory v1.3 MFA | `SITE_OPERATOR` or approved cashier/supervisor type | APT login, shift/custody/payment permissions | Required and terminal-bound | Not eligible for cashier operation | Device-bound opaque desktop session | Shift/custody open/close/handover, cash receipt, supervisor action | Authenticated cashier `user_id` and device service identity | Block new cash; retain custody recovery state; reauthenticate/handover |
+| Windows APT | Trusted device/service identity, then cashier username/password; no mandatory v1.3 MFA | `SITE_OPERATOR` is the baseline cashier role; supervisors receive no cashier authority by role name | `apt.access`, own-shift `cashier-shifts.operate`, own-custody `cash-custody.operate`, and `terminal-cash.receive`; payable-basis read is separate | Required and terminal-bound; GLOBAL is prohibited | Not eligible for GLOBAL operation | Device-bound opaque desktop session | Own shift/custody operation and cash receipt; handover remains deferred | Authenticated cashier `user_id` and device service identity | Block new cash; retain custody recovery state; require online reauthentication or a separately approved future recovery workflow |
 | WebPay | Not applicable | Customer channel, not staff identity | Existing customer-safe transaction contract | Server-derived transaction scope | Not applicable | Existing customer/channel flow | No staff administration | Existing service/customer-safe attribution | No staff login introduced |
 
 ## 3. Management Platform
@@ -79,26 +79,42 @@ Ordinary statutory approval, rejection, or evidence review does not require TOTP
 1. Desktop host establishes terminal device/service trust separately.
 2. React shell displays safe terminal readiness and login state but receives no service secret.
 3. Desktop host sends cashier username/password credentials to Central PMS over TLS.
-4. Central PMS authenticates the human and resolves APT permission, Site/Site Group, terminal binding, and current status.
+4. Central PMS authenticates the human and resolves the operation-specific APT permissions, Site/Site Group scope, terminal binding, and current status.
 5. Desktop host holds the opaque device-bound human session outside React and SQLite.
 6. Cashier opens or resumes only their own authorized shift, then opens/resumes their own custody.
 
 The configured `APT_CASHIER_ID`, display name, shift ID, and development session references remain fixture-only. Windows login is not ExitPass login. A device service identity may call an APT endpoint but may not act as a cashier without the separately authenticated human. Device trust is not MFA and does not replace username/password.
 
-### 5.2 Shift and custody invariants
+### 5.2 Operational permission contract
+
+Central PMS and every APT consumer must keep these authorities separate:
+
+| Capability | Permission | Exact boundary |
+|---|---|---|
+| Enter and use the APT application | `apt.access` | Requires a current APT-audience human session, device binding, active account, and Site/Site Group scope. It authorizes no shift, custody, cash, or `CASH_RECEIVED` operation. |
+| Open, resume, or close the authenticated cashier's own shift | `cashier-shifts.operate` | Own-shift authority only. It authorizes no other cashier's shift, custody, cash receipt, or supervisor handover. |
+| Open, resume, or close the authenticated cashier's own custody | `cash-custody.operate` | Own-custody authority only. It authorizes no other cashier's custody, cash receipt, or supervisor handover. |
+| Participate in cash acceptance immediately before `CASH_RECEIVED` | `terminal-cash.receive` | Must be re-evaluated with the current human session, account, device, Site/Site Group scope, own shift, own custody, payable basis, POS/fiscal readiness, and every existing cash-readiness dimension. The permission alone never authorizes `CASH_RECEIVED`. |
+| Resolve or revalidate payable-basis readiness | `terminal-cash.payable-basis.read` | Read-only facade authority. It authorizes none of the four operational capabilities above and causes no payment, shift, custody, fiscal, or `CASH_RECEIVED` side effect. |
+
+`SITE_OPERATOR` is the intended v1.3 baseline cashier role for the four operational permissions. The canonical catalog and bindings are an I-021B database dependency. `OPERATIONS_SUPERVISOR` receives none of them automatically; a supervisor who also performs cashier duties must separately hold an effective, scoped `SITE_OPERATOR` assignment. No role-name check is authority.
+
+All four operational permissions require online Central PMS re-evaluation, current device/service binding, and an effective Site or Site Group grant. Null Site fields never mean global access, and no GLOBAL APT operation is permitted. The desktop may display permissions but cannot author or cache them as authority.
+
+### 5.3 Shift and custody invariants
 
 - Human session, shift, and custody have separate IDs and lifecycles.
 - A shift binds cashier, authentication session reference, terminal, Site, Site Group, POS Server, and open/close evidence.
 - Custody additionally binds the shift and opening/closing cash evidence.
 - A valid session is required to open/resume and to start new payment work. A stale reference in encrypted SQLite is recovery linkage only.
-- One cashier cannot inherit another's shift/custody. Supervisor handover is an explicit online operation: the supervisor supplies their own fresh username/password credentials, Central PMS authenticates that supervisor, re-evaluates current permission and Site scope, and attributes the operation to that supervisor. TOTP is not mandatory for APT supervisors in v1.3.
+- One cashier cannot inherit another's shift/custody. Full governed supervisor handover remains deferred pending DR-08/DR-09; no current role name or v1.3 MVP APT permission authorizes it.
 - Logout does not close shift or custody. Normal logout with open custody is denied. Forced expiry/revocation locks transaction initiation while retaining physical-custody records.
 - Same-cashier resume requires online reauthentication and current authorization.
 - No offline login or offline permission grant exists in v1.3.
 
-### 5.3 Cash operation boundary
+### 5.4 Cash operation boundary
 
-Before shift open, custody open, tender start, and `CASH_RECEIVED`, Central PMS or the approved online authority revalidates the human session and relevant permissions/scope. Session expiry during custody blocks new payments. If `CASH_RECEIVED` was already durably recorded, recovery preserves and reconciles the physical event; another cashier cannot assume it through login.
+Before shift open, custody open, tender start, and `CASH_RECEIVED`, Central PMS revalidates the human session and the corresponding operation-specific permission and scope. Immediately before `CASH_RECEIVED`, `terminal-cash.receive` is required together with the current device binding, own shift, own custody, payable-basis revalidation, POS/fiscal readiness, and all other existing terminal-cash readiness conditions. Session expiry during custody blocks new payments. If `CASH_RECEIVED` was already durably recorded, recovery preserves and reconciles the physical event; another cashier cannot assume it through login.
 
 The POS Server receives a privacy-safe human actor reference where fiscal/audit contracts require it and a separate Central PMS/APT service identity. POS Server does not validate human passwords or determine ExitPass roles.
 
@@ -153,7 +169,7 @@ Login returns safe session/profile status and sets the cookie; it does not retur
 - `POST /v1/apt/cashier-shifts`
 - `POST /v1/apt/cashier-shifts/{shiftReference}/resume`
 - `POST /v1/apt/cashier-shifts/{shiftReference}/close`
-- governed custody/handover routes in J-008 scope.
+- governed custody routes in J-008 scope; supervisor handover routes remain deferred pending DR-08/DR-09.
 
 APT requests require both authenticated device/service identity and the device-bound human session. Public references remain opaque.
 

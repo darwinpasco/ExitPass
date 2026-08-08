@@ -24,7 +24,7 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 public sealed class AptPayableBasisReadinessApiIntegrationTests
 {
     private const string Route = "/v1/terminal-cash-payments/payable-basis";
-    private const string ReadPermission = "terminal-cash.payable-basis.read";
+    private const string ReadPermission = AptHumanPermissionCatalog.PayableBasisRead;
     private static readonly Guid SitePosServerId = Guid.Parse("30000000-0000-0000-0000-000000000001");
 
     [Fact]

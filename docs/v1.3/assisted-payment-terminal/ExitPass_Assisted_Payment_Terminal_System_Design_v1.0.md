@@ -577,7 +577,7 @@ Exact packaging, infrastructure, scaling, MDM/kiosk tooling, certificate/key pro
 | APT-SD-OQ-012 | Final degraded tariff basis and owner. |
 | APT-SD-OQ-013 | Final manual release policy. |
 | APT-SD-OQ-014 | Final fiscal exception release policy. |
-| APT-SD-OQ-015 | Final permission matrix/RBAC. |
+| APT-SD-OQ-015 | The v1.3 MVP operational split is frozen as `apt.access`, `cashier-shifts.operate`, `cash-custody.operate`, and `terminal-cash.receive`; `terminal-cash.payable-basis.read` remains read-only. Broader APT permission-matrix details and supervisor handover authority remain deferred. |
 | APT-SD-OQ-016 | Whether cash payment is supported in Cashier-Assisted Terminal v1.0. |
 | APT-SD-OQ-017 | Whether card/eWallet/QR payments are hosted checkout only or terminal-integrated. |
 | APT-SD-OQ-018 | Fiscal reprint/display behavior from terminal. |

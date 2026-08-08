@@ -164,10 +164,22 @@ Required flow:
 
 `terminal start -> device/service trust -> cashier login -> Central PMS authorization/scope -> shift open/resume -> custody open/resume -> transactions -> custody close -> shift close -> logout`
 
+The v1.3 MVP APT human permissions are operation-specific:
+
+| Permission | Authority | Explicit exclusions |
+|---|---|---|
+| `apt.access` | Enter/use APT after human authentication, device binding, and Site/Site Group authorization. | Shift, custody, cash acceptance, and `CASH_RECEIVED`. |
+| `cashier-shifts.operate` | Open/resume/close the authenticated cashier's own shift. | Another cashier's shift, custody, `CASH_RECEIVED`, and handover. |
+| `cash-custody.operate` | Open/resume/close the authenticated cashier's own custody. | Another cashier's custody, `CASH_RECEIVED`, and handover. |
+| `terminal-cash.receive` | Human-permission dimension for cash acceptance and the immediate pre-`CASH_RECEIVED` boundary. | It is never sufficient without current session/account/device/scope, own shift/custody, payable-basis, POS/fiscal, and all other readiness checks. |
+| `terminal-cash.payable-basis.read` | Read-only payable-basis resolve/revalidate facade. | APT access, shift, custody, cash acceptance, `CASH_RECEIVED`, fiscal mutation, and handover. |
+
+`SITE_OPERATOR` is the intended baseline cashier role for the four operational permissions after I-021B adds the canonical permission catalog and role bindings. `OPERATIONS_SUPERVISOR` does not inherit cashier authority. A supervisor acting as cashier must separately hold an effective, scoped `SITE_OPERATOR` assignment. No GLOBAL APT operation is permitted, null Site fields are never global authority, and no role name substitutes for current canonical permission evaluation.
+
 Rules:
 
 - A cashier may resume only their own open shift and custody after online reauthentication and current Site/terminal authorization.
-- Another cashier cannot inherit or resume another cashier's custody. A governed supervisor handover/takeover is a distinct online operation with both identities, reason, count/reconciliation evidence, the supervisor's fresh username/password authentication, current permission and scope, and audit. TOTP is not required for an APT supervisor under the v1.3 baseline.
+- Another cashier cannot inherit or resume another cashier's custody. Full supervisor handover/takeover remains deferred pending DR-08/DR-09. No current role name, `cash-custody.operate`, or `terminal-cash.receive` grants handover authority.
 - A second cashier may authenticate for a supervisor action, but cannot become the transaction actor while another custody remains active without completed handover.
 - Normal logout is denied while custody is open. Logout never automatically closes custody or shift.
 - Forced revocation or session expiry leaves physical custody records open for reconciliation but locks new tender and new `CASH_RECEIVED` operations. The same cashier must reauthenticate or a supervisor must complete governed handover.

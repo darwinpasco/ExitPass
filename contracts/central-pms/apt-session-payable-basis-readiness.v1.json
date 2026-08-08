@@ -20,6 +20,13 @@
   "authorization": {
     "policy": "TerminalCashPayableBasisRead",
     "permission": "terminal-cash.payable-basis.read",
+    "semanticBoundary": "READ_ONLY_PAYABLE_BASIS",
+    "doesNotAuthorize": [
+      "apt.access",
+      "cashier-shifts.operate",
+      "cash-custody.operate",
+      "terminal-cash.receive"
+    ],
     "siteScopeHeader": "X-Site-Id",
     "allowAnonymous": false
   },

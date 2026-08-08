@@ -107,7 +107,7 @@ public sealed class AptStatutoryOrdinanceAvailabilityApiIntegrationTests
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("X-Site-Id", SiteId.ToString("D"));
         client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.ServiceIdentityIdHeaderName, ServiceIdentityId.ToString("D"));
-        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, "terminal-cash.payable-basis.read");
+        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, AptHumanPermissionCatalog.PayableBasisRead);
 
         using var response = await client.PostAsJsonAsync($"{Route}/resolve", Request());
 
