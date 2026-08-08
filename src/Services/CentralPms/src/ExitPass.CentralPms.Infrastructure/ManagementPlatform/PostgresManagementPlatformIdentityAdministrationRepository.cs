@@ -22,12 +22,16 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
     private const string MfaResetPermission = "human-authentication.mfa.reset";
     private const string MfaRemovePermission = "human-authentication.mfa.remove";
     private readonly string _connectionString;
+    private readonly int _freshAuthenticationMinutes;
 
-    public PostgresManagementPlatformIdentityAdministrationRepository(string connectionString)
+    public PostgresManagementPlatformIdentityAdministrationRepository(string connectionString, int freshAuthenticationMinutes = 5)
     {
         _connectionString = !string.IsNullOrWhiteSpace(connectionString)
             ? connectionString
             : throw new ArgumentException("A database connection string is required.", nameof(connectionString));
+        _freshAuthenticationMinutes = freshAuthenticationMinutes is >= 1 and <= 60
+            ? freshAuthenticationMinutes
+            : throw new ArgumentOutOfRangeException(nameof(freshAuthenticationMinutes));
     }
 
     public async Task<IdentityAdministrationResult<IReadOnlyList<IdentityUserSummary>>> ListUsersAsync(
@@ -1028,7 +1032,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         return IdentityAdministrationResult<IReadOnlyList<IdentityAuditEntry>>.Succeeded(events, correlationId);
     }
 
-    private static async Task<bool> IsAuthorizedAsync(
+    private async Task<bool> IsAuthorizedAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         IdentityAdministrationActor actor,
@@ -1036,7 +1040,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         CancellationToken cancellationToken) =>
         await IsAuthorizedAnyAsync(connection, transaction, actor, [permission], cancellationToken);
 
-    private static async Task<bool> IsAuthorizedAnyAsync(
+    private async Task<bool> IsAuthorizedAnyAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         IdentityAdministrationActor actor,
@@ -1058,6 +1062,7 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND hs.session_status = 'ACTIVE'
                   AND hs.idle_expires_at > now()
                   AND hs.absolute_expires_at > now()
+                  AND hs.authenticated_at >= now() - make_interval(mins => @fresh_minutes)
                   AND hs.authorization_epoch_snapshot = u.authorization_epoch
                   AND u.user_status = 'ACTIVE'
                   AND u.effective_from <= now()
@@ -1073,12 +1078,29 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND (rp.effective_to IS NULL OR rp.effective_to > now())
                   AND p.permission_status = 'ACTIVE'
                   AND p.permission_code = ANY(@permissions)
+                  AND (
+                      NOT EXISTS (
+                          SELECT 1
+                          FROM identity.user_roles privileged_assignment
+                          JOIN identity.roles privileged_role ON privileged_role.role_id = privileged_assignment.role_id
+                          WHERE privileged_assignment.user_id = u.user_id
+                            AND privileged_assignment.assignment_status = 'ACTIVE'
+                            AND privileged_assignment.effective_from <= now()
+                            AND (privileged_assignment.effective_to IS NULL OR privileged_assignment.effective_to > now())
+                            AND privileged_role.role_status = 'ACTIVE'
+                            AND privileged_role.is_privileged
+                            AND privileged_role.effective_from <= now()
+                            AND (privileged_role.effective_to IS NULL OR privileged_role.effective_to > now())
+                      )
+                      OR (hs.mfa_requirement_satisfied AND hs.assurance_context_code = 'PASSWORD_TOTP')
+                  )
             );
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("human_session_id", actor.HumanSessionId);
         command.Parameters.AddWithValue("user_id", actor.UserId);
         command.Parameters.AddWithValue("permissions", permissions.ToArray());
+        command.Parameters.AddWithValue("fresh_minutes", _freshAuthenticationMinutes);
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 

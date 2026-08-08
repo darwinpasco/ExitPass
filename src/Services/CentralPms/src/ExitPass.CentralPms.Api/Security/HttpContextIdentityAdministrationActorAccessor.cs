@@ -5,7 +5,7 @@ namespace ExitPass.CentralPms.Api.Security;
 
 public sealed class HttpContextIdentityAdministrationActorAccessor : IIdentityAdministrationActorAccessor
 {
-    public const string HumanSessionIdClaimType = "exitpass_human_session_id";
+    public const string HumanSessionIdClaimType = HumanSessionAuthenticationHandler.InternalHumanSessionIdClaimType;
     private readonly IHttpContextAccessor _httpContextAccessor;
 
     public HttpContextIdentityAdministrationActorAccessor(IHttpContextAccessor httpContextAccessor)

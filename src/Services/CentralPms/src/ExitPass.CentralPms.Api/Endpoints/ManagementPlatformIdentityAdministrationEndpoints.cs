@@ -1,5 +1,7 @@
+using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.ManagementPlatform;
 using ExitPass.CentralPms.Contracts.ManagementPlatform;
+using Microsoft.AspNetCore.Antiforgery;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
 
@@ -9,7 +11,10 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
 
     public static IEndpointRouteBuilder MapManagementPlatformIdentityAdministrationEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup(RoutePrefix).WithTags("ManagementPlatformIdentityAdministration");
+        var group = app.MapGroup(RoutePrefix)
+            .WithTags("ManagementPlatformIdentityAdministration")
+            .RequireAuthorization()
+            .AddEndpointFilter(ValidateWebMutationAsync);
 
         group.MapGet("/users", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, string? status, string? query, int? offset, int? limit, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListUsersAsync(actor, new(offset ?? 0, limit ?? 50, status, query), correlation, ct)));
@@ -123,6 +128,39 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
 
     private static IResult Error(int status, string classification, string message, Guid correlationId, bool retryable = false) =>
         Results.Json(new IdentityAdministrationErrorResponse(classification, message, correlationId, retryable), statusCode: status);
+
+    private static async ValueTask<object?> ValidateWebMutationAsync(
+        EndpointFilterInvocationContext context,
+        EndpointFilterDelegate next)
+    {
+        var request = context.HttpContext.Request;
+        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method) ||
+            HttpMethods.IsOptions(request.Method) || HttpMethods.IsTrace(request.Method))
+        {
+            return await next(context);
+        }
+
+        var correlationId = ResolveCorrelationId(request);
+        var originValidator = context.HttpContext.RequestServices.GetRequiredService<IHumanAuthenticationOriginValidator>();
+        if (!originValidator.IsAllowed(request))
+        {
+            return Error(StatusCodes.Status403Forbidden, "IDENTITY_ADMIN_ORIGIN_NOT_ALLOWED",
+                "The identity administration request origin is not allowed.", correlationId);
+        }
+
+        var antiforgery = context.HttpContext.RequestServices.GetRequiredService<IAntiforgery>();
+        try
+        {
+            await antiforgery.ValidateRequestAsync(context.HttpContext);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Error(StatusCodes.Status400BadRequest, "IDENTITY_ADMIN_CSRF_VALIDATION_FAILED",
+                "The identity administration request could not be validated.", correlationId);
+        }
+
+        return await next(context);
+    }
 
     private static Guid ResolveCorrelationId(HttpRequest request) =>
         request.Headers.TryGetValue("X-Correlation-Id", out var value) && Guid.TryParse(value.ToString(), out var parsed) && parsed != Guid.Empty

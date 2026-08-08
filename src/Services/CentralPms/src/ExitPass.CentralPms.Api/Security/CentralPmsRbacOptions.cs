@@ -13,5 +13,10 @@ public sealed class CentralPmsRbacOptions
     /// <summary>
     /// Allows test/operator permission headers to satisfy policy checks.
     /// </summary>
-    public bool AllowPermissionHeader { get; init; } = true;
+    public bool AllowPermissionHeader { get; init; }
+
+    /// <summary>
+    /// Allows caller-authored human identity headers only in explicit Development/Test composition.
+    /// </summary>
+    public bool AllowFixtureIdentityHeaders { get; init; }
 }

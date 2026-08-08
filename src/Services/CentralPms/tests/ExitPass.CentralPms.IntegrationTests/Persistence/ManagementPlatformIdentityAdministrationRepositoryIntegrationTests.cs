@@ -1,9 +1,12 @@
+using ExitPass.CentralPms.Application.HumanAuthentication;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.Infrastructure.ManagementPlatform;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Npgsql;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Persistence;
@@ -241,12 +244,96 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         ceiling.Classification.Should().Be("MFA_PRIVILEGE_CEILING_EXCEEDED");
     }
 
+    [Fact]
+    public async Task CombinedAuthorization_EnforcesFreshnessPrivilegedTotpAndAuthorizationEpoch()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString, 5);
+
+        (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
+            .Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+
+        await UpdateSessionAssuranceAsync(seed.Actor.HumanSessionId, "PASSWORD", false, authenticatedMinutesAgo: 1);
+        (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
+            .Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+
+        await ConvertToNonSystemUserManagerAsync(seed);
+        (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
+            .Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+
+        await UpdateSessionAssuranceAsync(seed.Actor.HumanSessionId, "PASSWORD", false, authenticatedMinutesAgo: 10);
+        (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
+            .Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+
+        await UpdateSessionAssuranceAsync(seed.Actor.HumanSessionId, "PASSWORD", false, authenticatedMinutesAgo: 1);
+        await IncrementAuthorizationEpochAsync(seed.Actor.UserId);
+        (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
+            .Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+    }
+
+    [Fact]
+    public async Task CombinedServices_UseRealChallengeMfaAndSessionRevocationRuntime()
+    {
+        var actor = await SeedAdministratorAsync();
+        var target = await SeedAdministratorAsync();
+        var options = Options.Create(new HumanAuthenticationOptions
+        {
+            TotpProtectionKeyBase64 = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            TotpProtectionKeyReference = "i021-disposable",
+            TotpProtectionKeyVersion = "1"
+        });
+        var tokens = new HumanSessionTokenService();
+        var authenticationRepository = new PostgresHumanAuthenticationRepository(_database.ConnectionString, tokens);
+        var delivery = new CapturingCredentialChallengeDelivery();
+        var authentication = new HumanAuthenticationService(
+            authenticationRepository,
+            new Argon2idHumanPasswordHasher(options),
+            new TotpProvider(options),
+            new AesGcmTotpSecretProtector(options),
+            tokens,
+            delivery,
+            TimeProvider.System,
+            options);
+        var administrationRepository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var gateway = new HumanAuthenticationAdministrationGateway(
+            authenticationRepository, authentication, delivery, administrationRepository, options, TimeProvider.System);
+        var service = new ManagementPlatformIdentityAdministrationService(administrationRepository, gateway);
+
+        var challengeCorrelation = Guid.NewGuid();
+        var challenge = await service.IssueCredentialChallengeAsync(actor.Actor,
+            new(target.Actor.UserId, "PASSWORD_RESET", DateTimeOffset.UtcNow.AddMinutes(10),
+                "I021_ADMIN_RESET", challengeCorrelation), CancellationToken.None);
+        challenge.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        delivery.DeliveredReference.Should().Be(challenge.Value!.ChallengeReference);
+
+        var revokeCorrelation = Guid.NewGuid();
+        (await service.RevokeSessionsAsync(actor.Actor,
+            new(target.Actor.UserId, target.PublicSessionReference, "I021_ADMIN_REVOKE", revokeCorrelation),
+            CancellationToken.None)).Outcome.Should().Be(IdentityAdministrationOutcome.Success);
+        (await GetSessionStatusAsync(target.PublicSessionReference)).Should().Be("REVOKED");
+
+        var reset = await service.ChangeMfaAsync(actor.Actor,
+            new(target.Actor.UserId, "RESET", target.MfaRowVersion, "I021_MFA_RESET", Guid.NewGuid()),
+            CancellationToken.None);
+        reset.Value!.Status.Should().Be("RESET_REQUIRED");
+
+        var remove = await service.ChangeMfaAsync(actor.Actor,
+            new(target.Actor.UserId, "REMOVE", reset.Value.RowVersion!.Value, "I021_MFA_REMOVE", Guid.NewGuid()),
+            CancellationToken.None);
+        remove.Value!.Status.Should().Be("REVOKED");
+        remove.Value.Enrolled.Should().BeFalse();
+
+        (await CountSecurityEventsAsync("SESSION_REVOKED", revokeCorrelation)).Should().Be(1);
+    }
+
     private async Task<SeedContext> SeedAdministratorAsync()
     {
         var actorUserId = Guid.NewGuid();
         var localCredentialId = Guid.NewGuid();
+        var mfaAuthenticatorId = Guid.NewGuid();
         var userRoleId = Guid.NewGuid();
         var sessionId = Guid.NewGuid();
+        var sessionReference = Guid.NewGuid();
         var siteGroupId = Guid.NewGuid();
         var siteId = Guid.NewGuid();
         var roleId = Guid.NewGuid();
@@ -276,6 +363,16 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
                 'ARGON2ID', 1, 3, 65536, 1, now(), now(),
                 @actor_user_id, @actor_user_id);
 
+            INSERT INTO identity.user_mfa_authenticators (
+                user_mfa_authenticator_id, user_id, authenticator_type, authenticator_status,
+                protected_secret_envelope, protection_key_reference, protection_key_version,
+                envelope_format_version, enrollment_started_at, activated_at,
+                created_by_user_id, updated_by_user_id)
+            VALUES (@mfa_authenticator_id, @actor_user_id, 'TOTP', 'ACTIVE',
+                decode(repeat('ef', 48), 'hex'), 'i021-disposable-envelope', '1', 1,
+                now() - interval '1 day', now() - interval '1 minute',
+                @actor_user_id, @actor_user_id);
+
             INSERT INTO identity.user_roles (
                 user_role_id, user_id, role_id, assignment_status, assignment_reason_code,
                 assigned_by_user_id, effective_from, created_by_user_id, updated_by_user_id)
@@ -292,10 +389,12 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             INSERT INTO identity.human_sessions (
                 human_session_id, session_reference, session_secret_hash, user_id, authentication_provider,
                 local_credential_id, session_audience, session_status, assurance_context_code,
-                mfa_requirement_satisfied, authenticated_at, last_seen_at, idle_expires_at, absolute_expires_at,
+                mfa_requirement_satisfied, mfa_authenticator_id, mfa_verified_at,
+                authenticated_at, last_seen_at, idle_expires_at, absolute_expires_at,
                 credential_version_snapshot, authorization_epoch_snapshot, correlation_id)
-            VALUES (@session_id, gen_random_uuid(), @session_hash, @actor_user_id, 'LOCAL', @credential_id,
-                'MANAGEMENT_PLATFORM', 'ACTIVE', 'I021_TEST_ASSURANCE', false,
+            VALUES (@session_id, @session_reference, @session_hash, @actor_user_id, 'LOCAL', @credential_id,
+                'MANAGEMENT_PLATFORM', 'ACTIVE', 'PASSWORD_TOTP', true,
+                @mfa_authenticator_id, now() - interval '1 minute',
                 now() - interval '1 minute', now() - interval '1 minute', now() + interval '1 hour', now() + interval '8 hours',
                 1, 1, gen_random_uuid());
 
@@ -334,15 +433,17 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         command.Parameters.AddWithValue("actor_user_id", actorUserId);
         command.Parameters.AddWithValue("username", $"i021.admin.{Guid.NewGuid():N}");
         command.Parameters.AddWithValue("credential_id", localCredentialId);
+        command.Parameters.AddWithValue("mfa_authenticator_id", mfaAuthenticatorId);
         command.Parameters.AddWithValue("user_role_id", userRoleId);
         command.Parameters.AddWithValue("session_id", sessionId);
+        command.Parameters.AddWithValue("session_reference", sessionReference);
         command.Parameters.AddWithValue("session_hash", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Guid.NewGuid().ToByteArray())).ToLowerInvariant());
         command.Parameters.AddWithValue("role_id", roleId);
         command.Parameters.AddWithValue("role_code", $"I021_ROLE_{Guid.NewGuid():N}"[..32]);
         await command.ExecuteNonQueryAsync();
 
         var systemRoleId = await new NpgsqlCommand("SELECT role_id FROM identity.roles WHERE role_code = 'SYSTEM_RBAC_ADMINISTRATOR';", connection).ExecuteScalarAsync();
-        return new(new(actorUserId, sessionId), (Guid)systemRoleId!, roleId, siteId, siteGroupId);
+        return new(new(actorUserId, sessionId), sessionReference, 1, (Guid)systemRoleId!, roleId, siteId, siteGroupId);
     }
 
     private async Task<long> CountAuditEventsAsync(Guid correlationId)
@@ -352,6 +453,28 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await using var command = new NpgsqlCommand("SELECT count(*) FROM audit.audit_events WHERE correlation_id = @correlation_id;", connection);
         command.Parameters.AddWithValue("correlation_id", correlationId);
         return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<long> CountSecurityEventsAsync(string eventType, Guid correlationId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT count(*) FROM audit.security_events WHERE security_event_type = @event_type AND correlation_id = @correlation_id;",
+            connection);
+        command.Parameters.AddWithValue("event_type", eventType);
+        command.Parameters.AddWithValue("correlation_id", correlationId);
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<string> GetSessionStatusAsync(Guid sessionReference)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT session_status::text FROM identity.human_sessions WHERE session_reference = @reference;", connection);
+        command.Parameters.AddWithValue("reference", sessionReference);
+        return (string)(await command.ExecuteScalarAsync())!;
     }
 
     private async Task ConvertToNonSystemUserManagerAsync(SeedContext manager)
@@ -367,7 +490,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             SELECT gen_random_uuid(), @role_id, p.permission_id, 'ACTIVE', 'I021_TEST',
                    @user_id, now() - interval '1 day', @user_id, @user_id
             FROM identity.permissions p
-            WHERE p.permission_code IN ('user.manage', 'human-authentication.mfa.remove')
+            WHERE p.permission_code IN ('user.view', 'user.manage', 'human-authentication.mfa.remove')
             ON CONFLICT DO NOTHING;
             """;
         await using var connection = new NpgsqlConnection(_database.ConnectionString);
@@ -375,6 +498,45 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("role_id", manager.DelegableRoleId);
         command.Parameters.AddWithValue("user_id", manager.Actor.UserId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task UpdateSessionAssuranceAsync(
+        Guid humanSessionId,
+        string assurance,
+        bool mfaSatisfied,
+        int authenticatedMinutesAgo)
+    {
+        const string sql = """
+            UPDATE identity.human_sessions
+            SET assurance_context_code = @assurance,
+                mfa_requirement_satisfied = @mfa_satisfied,
+                mfa_authenticator_id = CASE WHEN @mfa_satisfied THEN mfa_authenticator_id ELSE NULL END,
+                mfa_verified_at = CASE WHEN @mfa_satisfied THEN now() - make_interval(mins => @minutes) ELSE NULL END,
+                authenticated_at = now() - make_interval(mins => @minutes),
+                last_seen_at = now(),
+                updated_at = now(),
+                row_version = row_version + 1
+            WHERE human_session_id = @session_id;
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("session_id", humanSessionId);
+        command.Parameters.AddWithValue("assurance", assurance);
+        command.Parameters.AddWithValue("mfa_satisfied", mfaSatisfied);
+        command.Parameters.AddWithValue("minutes", authenticatedMinutesAgo);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task IncrementAuthorizationEpochAsync(Guid userId)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "UPDATE identity.users SET authorization_epoch = authorization_epoch + 1, row_version = row_version + 1 WHERE user_id = @user_id;",
+            connection);
+        command.Parameters.AddWithValue("user_id", userId);
         await command.ExecuteNonQueryAsync();
     }
 
@@ -425,8 +587,22 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
 
     private sealed record SeedContext(
         IdentityAdministrationActor Actor,
+        Guid PublicSessionReference,
+        long MfaRowVersion,
         Guid SystemAdministratorRoleId,
         Guid DelegableRoleId,
         Guid SiteId,
         Guid SiteGroupId);
+
+    private sealed class CapturingCredentialChallengeDelivery : ICredentialChallengeDelivery
+    {
+        public bool Enabled => true;
+        public Guid? DeliveredReference { get; private set; }
+
+        public Task DeliverAsync(CredentialChallengeDeliveryRequest request, CancellationToken cancellationToken)
+        {
+            DeliveredReference = request.ChallengeReference;
+            return Task.CompletedTask;
+        }
+    }
 }

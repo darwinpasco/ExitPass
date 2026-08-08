@@ -31,9 +31,11 @@ All routes are under `/v1/management-platform/identity`.
 
 Pagination is optional and server bounded. Responses use opaque UUID references, masked email/mobile data, safe lifecycle classifications, and correlation references. Request contracts contain no actor, permission, role-authority, password, TOTP, session-secret, token, or ciphertext fields.
 
+Every route requires the I-020 authenticated Management Platform human session. Unsafe methods also require an allowed same-origin request and a valid antiforgery token; validation failures return bounded public classifications without invoking administration services.
+
 ## 3. Authority and scope
 
-Every repository operation validates the durable I-020 human session, Management Platform audience, active/effective user, session expiry, authorization-epoch snapshot, current active/effective role assignment, current role-permission binding, and current permission. Target operations additionally apply the actor's canonical `identity.user_role_scope_grants`.
+Every repository operation validates the durable I-020 human session, Management Platform audience, active/effective user, session expiry, configured authentication-freshness window, authorization-epoch snapshot, current active/effective role assignment, current role-permission binding, and current permission. A session exercising an active privileged role must also carry the I-020 `PASSWORD_TOTP` assurance and satisfied-MFA state. Ordinary authorized administrators are not subjected to a universal TOTP requirement. Target operations additionally apply the actor's canonical `identity.user_role_scope_grants`.
 
 `SITE` and `SITE_GROUP` scopes are assignment-scoped and effective-dated. A Site Group grant includes Sites canonically belonging to that group. `GLOBAL` is explicit; null Site fields never imply global access. Because DR-11 is unresolved, I-021 rejects direct GLOBAL grants with `GLOBAL_SCOPE_POLICY_NOT_APPROVED` and creates no default global authority.
 
@@ -55,7 +57,7 @@ Privileged or elevated-approval roles cannot be assigned directly. I-021 records
 
 Access review reuses I-019 review fields on role assignments and scope grants. I-021 records bounded confirmation evidence and does not create review campaigns or silently renew expired access.
 
-## 6. Authentication administration and I-020 seam
+## 6. Authentication administration and I-020 integration
 
 I-021 performs dedicated permission, target-scope, self-administration, and MFA privilege-ceiling checks before invoking `IHumanAuthenticationAdministrationGateway`:
 
@@ -64,9 +66,13 @@ I-021 performs dedicated permission, target-scope, self-administration, and MFA 
 - `human-authentication.mfa.reset`
 - `human-authentication.mfa.remove`
 
-MFA reset/removal for a target with active privileged authority additionally requires the acting administrator to hold the active `SYSTEM_RBAC_ADMINISTRATOR` role. I-020 remains responsible for fresh-authentication enforcement, challenge creation, actual session revocation, authenticator mutation, and corresponding authentication/security events.
+MFA reset/removal for a target with active privileged authority additionally requires the acting administrator to hold the active `SYSTEM_RBAC_ADMINISTRATOR` role. The production `HumanAuthenticationAdministrationGateway` delegates to I-020 for challenge creation, actual session revocation, authenticator mutation, affected-session invalidation, and corresponding authentication/security events.
 
-Until I-020 is integrated, the production registration is `PendingHumanAuthenticationAdministrationGateway`. It fails credential reset, session revoke, revoke-all, MFA reset, and MFA remove closed with HTTP 503. It does not mutate canonical state. I-020 must replace this registration and supply the authenticated ClaimsPrincipal/session middleware before authoritative I-021 mutations are merge-ready.
+Credential reset and activation use I-020's canonical hashed, one-time challenge runtime. The gateway creates no challenge while DR-05 delivery is disabled, and it revokes a created challenge if configured delivery fails. A successful administrative response exposes only the opaque challenge reference and expiry, never the delivery secret.
+
+Session revoke and revoke-all use I-020's durable revocation primitives. Session state and the privacy-safe security event commit in one PostgreSQL transaction. MFA reset/removal uses I-020's TOTP lifecycle primitive and revokes affected MFA-satisfied sessions; reset/removal never reads back a seed, code, provisioning URI, protected envelope, or key reference. The former pending gateway has been removed and is not selectable in Production or test composition.
+
+The authenticated actor comes from the internal human-session identifier claim emitted only after I-020 validates the opaque cookie-backed session. The public session reference, fixture headers, permission arrays, role/scope headers, and body actor values cannot become the administration actor.
 
 Session reads expose only reference, audience, status, assurance, safe device/service reference, activity/expiry timestamps, and row version. MFA reads expose only required/enrolled/lifecycle posture and safe timestamps. Neither surface returns tokens, hashes, protected envelopes, provisioning material, TOTP codes, or key references.
 
@@ -78,19 +84,16 @@ Audit history is target scoped and privacy safe. It exposes event reference/type
 
 ## 8. Validation
 
-Validation uses the canonical I-019 full generated DDL against a disposable PostgreSQL 16 container. Focused proof covers application validation, production-header rejection, safe DTO shape, user invitation and masked metadata, optimistic concurrency, role assignment, Site scope, duplicate-scope replay, explicit GLOBAL denial, lifecycle transitions, credential/session/MFA administration preauthorization, no MFA secret readback, independent privileged decisions, no implicit activation, atomic audit, and concurrent last-active-admin protection.
+Validation uses the canonical I-019 full generated DDL against a disposable PostgreSQL 16 container. Focused proof covers application validation, production-header rejection, actual I-020 principal construction, safe DTO shape, user invitation and masked metadata, optimistic concurrency, role assignment, Site and Site Group scope, immediate authorization-epoch enforcement, authentication freshness, privileged TOTP assurance, duplicate-scope replay, explicit GLOBAL denial, lifecycle transitions, real credential challenge issuance, real session revoke/revoke-all, real TOTP reset/removal, no MFA secret readback, independent privileged decisions, no implicit activation, atomic administration audit and authentication security events, and concurrent last-active-admin protection.
+
+A disposable Production-hosted combined proof performs real Argon2id login, obtains the I-020 Secure HttpOnly session cookie and antiforgery token, reads and reversibly updates an I-021 user through server-derived authority, administratively revokes the session, confirms the revoked session can no longer call I-021, and confirms fixture identity headers cannot impersonate an administrator.
 
 The I-021 source adds no SQL, migrations, package changes, generated artifacts, or shadow identity persistence. Final validation also includes the Release API build, complete Central PMS unit suite, focused PostgreSQL/API integration tests, security text scans, and `git diff --check`.
 
-## 9. H-007 and integration handoff
+## 9. H-007 handoff
 
-H-007 may consume the route and DTO contracts after I-021 merges with I-020. The UI must treat all permissions, scope, row versions, MFA posture, and lifecycle state as server-authoritative. It must not author actor identity or retain authentication secrets.
+H-007 may consume the route and DTO contracts after I-021 merges. The UI must treat all permissions, scope, row versions, MFA posture, and lifecycle state as server-authoritative. It must not author actor identity or retain authentication secrets.
 
-Required integration order:
-
-1. Integrate latest I-020 authenticated principal and session-revocation/authentication-administration gateway.
-2. Rerun I-020 and I-021 authorization, session, freshness, MFA, and PostgreSQL suites together.
-3. Merge I-021 only after the pending fail-closed gateway is replaced and production authentication middleware supplies the canonical human actor.
-4. Implement H-007 against the integrated API.
+I-020 integration is complete: the canonical human session supplies the actor, freshness and privileged TOTP assurance are revalidated server-side, and challenge/MFA/session administration delegates to the shared authentication runtime. H-007 remains responsible only for consuming these contracts and presenting governed administration workflows.
 
 Controlled UAT remains unauthorized until I-020, I-021, the staff consumers, and I-022 integration proof are merged and approved.

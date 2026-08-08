@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.ManagementPlatform;
+using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using ExitPass.CentralPms.Contracts.ManagementPlatform;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -15,18 +16,38 @@ public sealed class IdentityAdministrationSecurityBoundaryTests
     public void ActorAccessor_UsesAuthenticatedSessionClaims()
     {
         var userId = Guid.NewGuid();
-        var sessionId = Guid.NewGuid();
+        var publicSessionReference = Guid.NewGuid();
+        var internalSessionId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var context = new DefaultHttpContext
+        {
+            User = HumanSessionAuthenticationHandler.CreatePrincipal(new HumanSessionDto(
+                publicSessionReference, userId, "admin", "Administrator", "MANAGEMENT_PLATFORM",
+                "PASSWORD_TOTP", true, false, true, true, now, now, now.AddMinutes(15), now.AddHours(8),
+                ["user.manage"], [], [], false, null, Guid.NewGuid()), internalSessionId)
+        };
+        var accessor = new HttpContextIdentityAdministrationActorAccessor(new HttpContextAccessor { HttpContext = context });
+
+        accessor.Current.Should().Be(new IdentityAdministrationActor(userId, internalSessionId));
+        context.User.FindFirst("human_session_id")!.Value.Should().Be(publicSessionReference.ToString("D"));
+    }
+
+    [Fact]
+    public void ActorAccessor_RejectsPublicSessionReferenceWithoutServerInternalSessionClaim()
+    {
+        var userId = Guid.NewGuid();
         var context = new DefaultHttpContext
         {
             User = new ClaimsPrincipal(new ClaimsIdentity(
             [
                 new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
-                new Claim(HttpContextIdentityAdministrationActorAccessor.HumanSessionIdClaimType, sessionId.ToString())
-            ], "I020Session"))
+                new Claim("human_session_id", Guid.NewGuid().ToString())
+            ], HumanSessionAuthenticationHandler.SchemeName))
         };
+
         var accessor = new HttpContextIdentityAdministrationActorAccessor(new HttpContextAccessor { HttpContext = context });
 
-        accessor.Current.Should().Be(new IdentityAdministrationActor(userId, sessionId));
+        accessor.Current.Should().BeNull();
     }
 
     [Fact]
