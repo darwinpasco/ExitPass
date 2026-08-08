@@ -125,7 +125,8 @@ public sealed record SessionIssue(
 public sealed record HumanAuthenticationResult(
     int HttpStatusCode,
     HumanAuthenticationResponse Response,
-    SessionCredential? Credential = null);
+    SessionCredential? Credential = null,
+    Guid? InternalHumanSessionId = null);
 
 public sealed record TotpEnrollmentResult(
     int HttpStatusCode,

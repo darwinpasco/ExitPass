@@ -10,6 +10,7 @@ namespace ExitPass.CentralPms.Api.Security;
 public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
     public const string SchemeName = "ExitPassHumanSession";
+    public const string InternalHumanSessionIdClaimType = "exitpass_human_session_id";
     private readonly IHumanAuthenticationService _service;
     private readonly IHumanSessionTokenService _tokens;
     private readonly HumanAuthenticationOptions _humanOptions;
@@ -43,11 +44,11 @@ public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<Au
         }
 
         var session = result.Response.Session;
-        var principal = CreatePrincipal(session);
+        var principal = CreatePrincipal(session, result.InternalHumanSessionId);
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
-    public static ClaimsPrincipal CreatePrincipal(HumanSessionDto session)
+    public static ClaimsPrincipal CreatePrincipal(HumanSessionDto session, Guid? internalHumanSessionId = null)
     {
         var claims = new List<Claim>
         {
@@ -64,6 +65,10 @@ public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<Au
         if (session.DeviceServiceIdentityReference.HasValue)
         {
             claims.Add(new Claim("device_service_identity_id", session.DeviceServiceIdentityReference.Value.ToString("D")));
+        }
+        if (internalHumanSessionId.HasValue)
+        {
+            claims.Add(new Claim(InternalHumanSessionIdClaimType, internalHumanSessionId.Value.ToString("D")));
         }
         return new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
     }
