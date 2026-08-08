@@ -56,6 +56,12 @@ try {
     if ($ServerOnly) {
         Write-Host "Operator Console ordinance browser-smoke fixture is ready at http://127.0.0.1:$port"
         Write-Host "Open these deterministic scenario URLs:"
+        Write-Host "H-008 human-authentication scenarios:"
+        Write-Host "  http://127.0.0.1:$port/operator-console?auth=logged-out"
+        Write-Host "  http://127.0.0.1:$port/operator-console?auth=expired"
+        Write-Host "  http://127.0.0.1:$port/operator-console?auth=revoked"
+        Write-Host "  Synthetic login: review.operator / operator-password"
+        Write-Host "  Synthetic throttling username: throttled.operator"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/senior-representative-optional"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/pwd-representative-unspecified"
         Write-Host "  http://127.0.0.1:$port/operator-console/statutory-discounts/residency-required"

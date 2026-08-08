@@ -74,13 +74,101 @@ const scenarioParkingSessionIds = {
   [scenarioIds.rejected]: "20000000-0000-0000-0000-000000000112"
 };
 
-function writeJson(response, statusCode, body) {
+function writeJson(response, statusCode, body, headers = {}) {
   const payload = JSON.stringify(body);
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(payload)
+    "Content-Length": Buffer.byteLength(payload),
+    "Cache-Control": "no-store, private",
+    "X-Content-Type-Options": "nosniff",
+    ...headers
   });
   response.end(payload);
+}
+
+const fixtureSessionCookie = "operator_console_fixture_session";
+const fixtureCsrfToken = "operator-console-fixture-csrf";
+const fixturePermissions = [
+  "statutory-discounts.session.lookup",
+  "statutory-discounts.request.create",
+  "statutory-discounts.review.queue.view",
+  "statutory-discounts.review.detail.view",
+  "statutory-discounts.decision.approve",
+  "statutory-discounts.decision.reject",
+  "statutory-discounts.evidence.review.view",
+  "operator-console.policy-import-review.submit",
+  "operator-console.policy-import-review.view-own",
+  "operator-console.policy-import-review.review",
+  "operator-console.policy-import-review.approve.legal",
+  "operator-console.policy-import-review.approve.ops",
+  "operator-console.policy-import-review.approve.qa",
+  "operator-console.policy-import-review.approve.db",
+  "operator-console.vendor-projection-health.view",
+  "fiscal-issuance.status.read",
+  "fiscal-issuance.void.command",
+  "fiscal-issuance.void.audit.read"
+];
+
+function fixtureAuthMode(request) {
+  const cookies = Object.fromEntries(
+    (request.headers.cookie ?? "")
+      .split(";")
+      .map((part) => part.trim().split("=", 2))
+      .filter(([name, value]) => name && value)
+  );
+  return cookies[fixtureSessionCookie] ?? "authenticated";
+}
+
+function sessionResponse() {
+  return {
+    outcome: "AUTHENTICATED",
+    authenticated: true,
+    session: {
+      sessionReference: "71000000-0000-0000-0000-000000000001",
+      userReference: "72000000-0000-0000-0000-000000000001",
+      username: "review.operator",
+      displayName: "Review Operator",
+      audience: "OPERATOR_CONSOLE",
+      assurance: "PASSWORD",
+      privilegedAccount: false,
+      passwordChangeRequired: false,
+      mfaRequired: false,
+      mfaSatisfied: false,
+      authenticatedAt: "2026-08-08T08:00:00+08:00",
+      lastSeenAt: "2026-08-08T08:05:00+08:00",
+      idleExpiresAt: "2099-08-08T08:35:00+08:00",
+      absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
+      permissions: fixturePermissions,
+      siteReferences: ["73000000-0000-0000-0000-000000000001"],
+      siteGroupReferences: ["74000000-0000-0000-0000-000000000001"],
+      hasGlobalScope: false,
+      deviceServiceIdentityReference: null,
+      correlationId: "75000000-0000-0000-0000-000000000001"
+    },
+    aptSessionToken: null,
+    errorCode: null,
+    retryable: false,
+    correlationId: "75000000-0000-0000-0000-000000000001"
+  };
+}
+
+function sessionFailure(mode) {
+  return {
+    outcome: "REJECTED",
+    authenticated: false,
+    session: null,
+    aptSessionToken: null,
+    errorCode: mode === "expired" ? "SESSION_EXPIRED" : mode === "revoked" ? "SESSION_REVOKED" : "SESSION_REQUIRED",
+    retryable: false,
+    correlationId: "75000000-0000-0000-0000-000000000001"
+  };
+}
+
+function setFixtureSession(response, mode) {
+  response.setHeader(
+    "Set-Cookie",
+    `${fixtureSessionCookie}=${mode}; HttpOnly; SameSite=Strict; Path=/`
+  );
 }
 
 async function readJson(request) {
@@ -641,6 +729,14 @@ const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
 
+    if (url.searchParams.has("auth")) {
+      const mode = url.searchParams.get("auth") ?? "logged-out";
+      setFixtureSession(response, mode);
+      response.writeHead(302, { Location: url.pathname });
+      response.end();
+      return;
+    }
+
     if (url.pathname === "/__fixture/health") {
       writeJson(response, 200, { status: "READY", scenarios: Object.values(scenarioIds) });
       return;
@@ -648,6 +744,55 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === "/__fixture/scenarios") {
       writeJson(response, 200, { scenarios: Object.values(scenarioIds) });
+      return;
+    }
+
+    if (url.pathname === "/v1/human-authentication/session" && request.method === "GET") {
+      const mode = fixtureAuthMode(request);
+      writeJson(
+        response,
+        mode === "authenticated" ? 200 : 401,
+        mode === "authenticated" ? sessionResponse() : sessionFailure(mode),
+        { "X-CSRF-Token": fixtureCsrfToken }
+      );
+      return;
+    }
+
+    if (url.pathname === "/v1/human-authentication/login" && request.method === "POST") {
+      const body = await readJson(request);
+      if (body.audience !== "OPERATOR_CONSOLE") {
+        writeJson(response, 400, sessionFailure("logged-out"));
+        return;
+      }
+      if (body.username === "throttled.operator") {
+        writeJson(response, 429, { ...sessionFailure("logged-out"), errorCode: "AUTHENTICATION_THROTTLED", retryable: true });
+        return;
+      }
+      if (body.username !== "review.operator" || body.password !== "operator-password") {
+        writeJson(response, 401, { ...sessionFailure("logged-out"), errorCode: "INVALID_CREDENTIALS" });
+        return;
+      }
+      setFixtureSession(response, "authenticated");
+      writeJson(response, 200, sessionResponse(), { "X-CSRF-Token": fixtureCsrfToken });
+      return;
+    }
+
+    if (url.pathname === "/v1/human-authentication/logout" && request.method === "POST") {
+      if (request.headers["x-csrf-token"] !== fixtureCsrfToken) {
+        writeJson(response, 400, { ...sessionFailure("logged-out"), errorCode: "CSRF_VALIDATION_FAILED" });
+        return;
+      }
+      setFixtureSession(response, "logged-out");
+      writeJson(response, 200, {
+        ...sessionFailure("logged-out"),
+        outcome: "LOGGED_OUT",
+        errorCode: null
+      });
+      return;
+    }
+
+    if (url.pathname.startsWith("/v1/ops/operator-console/") && fixtureAuthMode(request) !== "authenticated") {
+      writeJson(response, 401, sessionFailure(fixtureAuthMode(request)));
       return;
     }
 
