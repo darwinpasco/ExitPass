@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "typecheck": "tsc -b",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "test:authentication": "vitest run src/humanAuthentication.test.ts src/apiClient.authentication.test.ts src/OperatorConsoleAuthenticationShell.test.tsx",
+    "proof:authentication": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleHumanAuthenticationProof.ps1",
     "test:browser-smoke": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1",
     "test:browser-smoke:headed": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1 -Headed",
     "test:browser-smoke:server": "powershell -ExecutionPolicy Bypass -File ./scripts/Invoke-OperatorConsoleOrdinanceBrowserSmoke.ps1 -ServerOnly",

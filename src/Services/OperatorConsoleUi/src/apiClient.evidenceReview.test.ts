@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("Operator Console I-017 API client", () => {
-  it("uses the same-origin review-safe metadata GET route and established operator context", async () => {
+  it("uses the same-origin review-safe metadata GET route without browser-authored authority", async () => {
     const fetchMock = vi.fn(async () => jsonResponse(reviewResponse()));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -20,12 +20,16 @@ describe("Operator Console I-017 API client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0];
     expect(url).toBe(`/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence`);
-    expect(init).toMatchObject({ method: "GET", cache: "no-store" });
+    expect(init).toMatchObject({ method: "GET", cache: "no-store", credentials: "same-origin" });
     const headers = init?.headers as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
     expect(headers["X-ExitPass-Service-Identity-Id"]).toBeUndefined();
     expect(headers["X-Object-Key"]).toBeUndefined();
-    expect(headers["X-ExitPass-Permissions"]).toContain("statutory-discounts.evidence.review.view");
+    expect(headers["X-ExitPass-Permissions"]).toBeUndefined();
+    expect(headers["X-Operator-User-Id"]).toBeUndefined();
+    expect(headers["X-ExitPass-User-Id"]).toBeUndefined();
+    expect(headers["X-Site-Id"]).toBeUndefined();
+    expect(headers["X-Site-Group-Id"]).toBeUndefined();
   });
 
   it("uses the same-origin preview GET route and accepts only JPEG or PNG", async () => {
@@ -45,7 +49,7 @@ describe("Operator Console I-017 API client", () => {
     expect(url).toBe(
       `/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence/${itemReference}/preview`
     );
-    expect(init).toMatchObject({ method: "GET", cache: "no-store" });
+    expect(init).toMatchObject({ method: "GET", cache: "no-store", credentials: "same-origin" });
   });
 
   it("fails safely for malformed metadata and never reflects backend diagnostics", async () => {

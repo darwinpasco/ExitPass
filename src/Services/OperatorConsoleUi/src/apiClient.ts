@@ -518,23 +518,22 @@ interface VendorPaymentAcknowledgmentDiagnosticDto {
 }
 
 export interface OperatorConsoleOperatorContext {
-  userId: string;
-  operatorDeviceBindingId: string;
-  operatorShiftId: string;
-  siteId: string;
-  siteGroupId: string;
+  operatorDeviceBindingId?: string;
+  operatorShiftId?: string;
+  siteId?: string;
+  siteGroupId?: string;
 }
 
 const defaultOperatorContext: OperatorConsoleOperatorContext = {
-  userId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID, "77000000-0000-0000-0000-000000000010"),
-  operatorDeviceBindingId: localFallback(
-    import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID,
-    "77000000-0000-0000-0000-000000000030"
-  ),
-  operatorShiftId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID, "77000000-0000-0000-0000-000000000050"),
-  siteId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID, "77000000-0000-0000-0000-000000000002"),
-  siteGroupId: localFallback(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_GROUP_ID, "77000000-0000-0000-0000-000000000001")
+  operatorDeviceBindingId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID),
+  operatorShiftId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID),
+  siteId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID),
+  siteGroupId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_GROUP_ID)
 };
+
+const mockOperatorUserId = "mock-operator-user";
+const mockSiteId = "mock-site";
+const mockSiteGroupId = "mock-site-group";
 
 const reviewDecisionPermissions = new Set([
   "operator-console.policy-import-review.manage",
@@ -550,35 +549,34 @@ const statutoryDiscountRejectPermission = "statutory-discounts.decision.reject";
 export const statutoryEvidenceReviewPermission = "statutory-discounts.evidence.review.view";
 const fiscalVoidPermissions = new Set(["fiscal-issuance.void.command", "reconciliation.manage"]);
 
-const defaultOperatorPermissions = localFallback(
-  import.meta.env.VITE_OPERATOR_CONSOLE_PERMISSIONS,
-  [
-    "operator-console.policy-import-review.submit",
-    "operator-console.policy-import-review.view-own",
-    "operator-console.policy-import-review.review",
-    "operator-console.policy-import-review.approve.legal",
-    "operator-console.policy-import-review.approve.ops",
-    "operator-console.policy-import-review.approve.qa",
-    "operator-console.policy-import-review.approve.db",
-    statutoryDiscountApprovePermission,
-    statutoryDiscountRejectPermission,
-    statutoryEvidenceReviewPermission,
-    "operator-console.vendor-projection-health.view",
-    "fiscal-issuance.status.read",
-    "fiscal-issuance.void.command",
-    "fiscal-issuance.void.audit.read"
-  ].join(",")
-);
+export interface OperatorConsoleApiClientOptions {
+  baseUrl?: string;
+  permissions?: readonly string[];
+  onAuthenticationRequired?: () => void;
+}
 
-export function createOperatorConsoleApiClient(): OperatorConsoleApiClient {
+export function createOperatorConsoleApiClient(
+  options: Omit<OperatorConsoleApiClientOptions, "baseUrl"> = {}
+): OperatorConsoleApiClient {
   return createHttpOperatorConsoleApiClient({
-    baseUrl: import.meta.env.VITE_CENTRAL_PMS_BASE_URL ?? ""
+    ...options,
+    baseUrl: ""
   });
 }
 
-export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string } = {}): OperatorConsoleApiClient {
+export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiClientOptions = {}): OperatorConsoleApiClient {
   const baseUrl = options.baseUrl?.replace(/\/$/, "") ?? "";
-  const permissions = parsePermissions(defaultOperatorPermissions);
+  const permissions = normalizePermissions(options.permissions ?? []);
+  const fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const response = await globalThis.fetch(input, {
+      ...init,
+      credentials: "same-origin"
+    });
+    if (response.status === 401) {
+      options.onAuthenticationRequired?.();
+    }
+    return response;
+  };
 
   return {
     canApproveStatutoryDiscount() {
@@ -607,7 +605,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          operatorUserId: input.operatorUserId ?? defaultOperatorContext.userId,
           operatorDeviceBindingId: input.operatorDeviceBindingId ?? defaultOperatorContext.operatorDeviceBindingId,
           operatorShiftId: input.operatorShiftId ?? defaultOperatorContext.operatorShiftId,
           siteId: input.siteId ?? null,
@@ -632,7 +629,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          userId: defaultOperatorContext.userId,
           operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
           siteId: defaultOperatorContext.siteId,
           siteGroupId: defaultOperatorContext.siteGroupId,
@@ -762,7 +758,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          userId: defaultOperatorContext.userId,
           operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
           siteId: input.siteId ?? defaultOperatorContext.siteId,
           siteGroupId: input.siteGroupId ?? defaultOperatorContext.siteGroupId,
@@ -865,7 +860,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
           method: "POST",
           headers: operatorConsoleHeaders(correlationId, { json: true }),
           body: JSON.stringify({
-            userId: defaultOperatorContext.userId,
             operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
             siteId: input.siteId ?? null,
             siteGroupId: input.siteGroupId ?? null,
@@ -905,7 +899,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
           method: "POST",
           headers: operatorConsoleHeaders(correlationId, { json: true }),
           body: JSON.stringify({
-            userId: defaultOperatorContext.userId,
             operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
             siteId: input.siteId ?? null,
             siteGroupId: input.siteGroupId ?? null,
@@ -939,7 +932,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
           body: JSON.stringify({
             csvContent: input.csvContent,
             fileName: input.fileName ?? null,
-            submittedByOperatorId: defaultOperatorContext.userId,
             correlationId
           })
         }
@@ -958,7 +950,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
           body: JSON.stringify({
             dryRunResult: input.dryRunResult,
             fileName: input.fileName ?? null,
-            submittedByOperatorId: defaultOperatorContext.userId,
             correlationId
           })
         }
@@ -977,7 +968,6 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
           body: JSON.stringify({
             action: input.action,
             reason: input.reason ?? null,
-            reviewerOperatorId: defaultOperatorContext.userId,
             correlationId
           })
         }
@@ -1090,33 +1080,25 @@ export function createHttpOperatorConsoleApiClient(options: { baseUrl?: string }
 function operatorConsoleHeaders(correlationId: string, options: { json?: boolean } = {}) {
   return {
     ...(options.json ? { "Content-Type": "application/json" } : {}),
-    "X-Correlation-Id": correlationId,
-    "X-Operator-User-Id": defaultOperatorContext.userId,
-    "X-ExitPass-User-Id": defaultOperatorContext.userId,
-    "X-ExitPass-Permissions": defaultOperatorPermissions,
-    "X-Operator-Device-Binding-Id": defaultOperatorContext.operatorDeviceBindingId,
-    "X-Operator-Shift-Id": defaultOperatorContext.operatorShiftId,
-    ...(defaultOperatorContext.siteId ? { "X-Site-Id": defaultOperatorContext.siteId } : {}),
-    ...(defaultOperatorContext.siteGroupId ? { "X-Site-Group-Id": defaultOperatorContext.siteGroupId } : {})
+    "X-Correlation-Id": correlationId
   };
 }
 
-function parsePermissions(value: string) {
+function normalizePermissions(value: readonly string[]) {
   return value
-    .split(/[,\s]+/)
     .map((permission) => permission.trim().toLowerCase())
     .filter((permission) => permission.length > 0);
 }
 
-function localFallback(value: string | undefined, fallback: string) {
-  return value && value.trim().length > 0 ? value : fallback;
+function configuredValue(value: string | undefined) {
+  return value && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function blankToNull(value: string | undefined) {
   return value && value.trim().length > 0 ? value.trim() : null;
 }
 
-export function getDefaultOperatorConsoleContext() {
+export function getDefaultOperatorConsoleOperatingContext() {
   return { ...defaultOperatorContext };
 }
 
@@ -1129,7 +1111,6 @@ export function defaultDevModeContext() {
 
 function isUsingLocalFallbackContext() {
   return (
-    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_USER_ID) ||
     !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID) ||
     !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID) ||
     !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID)
@@ -1277,8 +1258,8 @@ export function createMockOperatorConsoleApiClient(
         parkingSessionId: input.parkingSessionId,
         ticketReference: input.ticketReference ?? "UAT-TICKET",
         plateNumber: input.plateNumber ?? "Unknown",
-        siteId: input.siteId ?? defaultOperatorContext.siteId,
-        siteGroupId: input.siteGroupId ?? defaultOperatorContext.siteGroupId,
+        siteId: input.siteId ?? mockSiteId,
+        siteGroupId: input.siteGroupId ?? mockSiteGroupId,
         entitlementType: input.entitlementType === "PWD" ? "PWD" : "Senior Citizen",
         status: "Requested" as DraftStatus,
         maskedIdReference: input.maskedIdReference,
@@ -1502,7 +1483,7 @@ export function createMockOperatorConsoleApiClient(
         evidenceType: input.evidenceType,
         captureMethod: input.captureMethod,
         storageReference: input.captureMethod === "MANUAL_REFERENCE" ? "manual-reference:****1234" : "operator-confirmed",
-        capturedByUserId: defaultOperatorContext.userId,
+        capturedByUserId: mockOperatorUserId,
         capturedAt: new Date().toISOString(),
         redactionStatus: "NOT_REDACTED",
         verificationStatus: "CAPTURED"
@@ -1592,7 +1573,7 @@ export function createMockOperatorConsoleApiClient(
         message: "Review submission created. No policies were imported.",
         submission: {
           reviewId: "99000000-0000-0000-0000-000000000001",
-          makerOperatorId: defaultOperatorContext.userId,
+          makerOperatorId: mockOperatorUserId,
           fileName: input.fileName,
           status: "LEGAL_REVIEW_PENDING",
           dryRunSummary: input.dryRunResult.summary,
@@ -1601,7 +1582,7 @@ export function createMockOperatorConsoleApiClient(
             {
               action: "SUBMIT_FOR_REVIEW",
               status: "LEGAL_REVIEW_PENDING",
-              actorOperatorId: defaultOperatorContext.userId,
+              actorOperatorId: mockOperatorUserId,
               occurredAt: new Date().toISOString(),
               correlationId: input.dryRunResult.correlationId
             }
@@ -1635,7 +1616,7 @@ export function createMockOperatorConsoleApiClient(
                 {
                   reviewerRole: reviewerRole ?? "LEGAL",
                   action: input.action,
-                  reviewerOperatorId: defaultOperatorContext.userId,
+                  reviewerOperatorId: mockOperatorUserId,
                   reason: input.reason,
                   decidedAt: new Date().toISOString(),
                   correlationId: current.correlationId
@@ -1647,7 +1628,7 @@ export function createMockOperatorConsoleApiClient(
             {
               action: input.action,
               status,
-              actorOperatorId: defaultOperatorContext.userId,
+              actorOperatorId: mockOperatorUserId,
               reviewerRole,
               reason: input.reason,
               occurredAt: new Date().toISOString(),
@@ -2563,7 +2544,7 @@ function mockAccessReadiness(input: AccessReadinessRequest): AccessReadinessResp
     ],
     denialReasons: [],
     operatorReadiness: {
-      operatorUserId: input.operatorUserId ?? defaultOperatorContext.userId,
+      operatorUserId: input.operatorUserId ?? mockOperatorUserId,
       status: "READY",
       ready: true
     },
@@ -2853,7 +2834,7 @@ function mockProductionPolicyReview(): ProductionPolicyImportReviewResult {
     message: "Review submission created. No policies were imported.",
     submission: {
       reviewId: "99000000-0000-0000-0000-000000000001",
-      makerOperatorId: defaultOperatorContext.userId,
+      makerOperatorId: mockOperatorUserId,
       fileName: "candidate.csv",
       status: "LEGAL_REVIEW_PENDING",
       dryRunSummary: {
@@ -2872,7 +2853,7 @@ function mockProductionPolicyReview(): ProductionPolicyImportReviewResult {
         {
           action: "SUBMIT_FOR_REVIEW",
           status: "LEGAL_REVIEW_PENDING",
-          actorOperatorId: defaultOperatorContext.userId,
+          actorOperatorId: mockOperatorUserId,
           occurredAt: now,
           correlationId: "99000000-0000-0000-0000-000000000099"
         }
@@ -3286,9 +3267,9 @@ function mockFiscalVoidActionAuditReport(): FiscalVoidActionAuditReportResponse 
         actionTimestamp: "2026-07-10T06:00:00Z",
         actionCode: "VOID_FISCAL_DOCUMENT",
         resultClass: "SUCCEEDED",
-        operatorUserId: defaultOperatorContext.userId,
-        siteId: defaultOperatorContext.siteId,
-        siteGroupId: defaultOperatorContext.siteGroupId,
+        operatorUserId: mockOperatorUserId,
+        siteId: mockSiteId,
+        siteGroupId: mockSiteGroupId,
         fiscalIssuanceReferenceId: "7f4a7d36-2e6e-4f2c-aad6-2d98e8e1b501",
         fiscalDocumentNumber: "SI-OCVOID-0001-UAT",
         posServerFiscalDocumentId: "3cddbc8e-28f8-49d2-93cf-b4a28a947501",
@@ -3325,7 +3306,7 @@ function mockFiscalStatusViewAuditReport(): FiscalStatusViewAuditReportResponse 
         actionTimestamp: "2026-07-08T01:30:00Z",
         actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
         resultClass: "SUCCEEDED",
-        operatorUserId: defaultOperatorContext.userId,
+        operatorUserId: mockOperatorUserId,
         siteId: "77000000-0000-0000-0000-000000000002",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
         fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000001",
@@ -3337,7 +3318,7 @@ function mockFiscalStatusViewAuditReport(): FiscalStatusViewAuditReportResponse 
         actionTimestamp: "2026-07-08T01:20:00Z",
         actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
         resultClass: "DENIED",
-        operatorUserId: defaultOperatorContext.userId,
+        operatorUserId: mockOperatorUserId,
         siteId: "77000000-0000-0000-0000-000000000002",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
         fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000002",
@@ -3350,7 +3331,7 @@ function mockFiscalStatusViewAuditReport(): FiscalStatusViewAuditReportResponse 
         actionTimestamp: "2026-07-08T01:10:00Z",
         actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
         resultClass: "NOT_FOUND",
-        operatorUserId: defaultOperatorContext.userId,
+        operatorUserId: mockOperatorUserId,
         siteId: "77000000-0000-0000-0000-000000000002",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
         fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000003",
@@ -3363,7 +3344,7 @@ function mockFiscalStatusViewAuditReport(): FiscalStatusViewAuditReportResponse 
         actionTimestamp: "2026-07-08T01:00:00Z",
         actionCode: "VIEW_FISCAL_ISSUANCE_STATUS",
         resultClass: "FAILED_SAFELY",
-        operatorUserId: defaultOperatorContext.userId,
+        operatorUserId: mockOperatorUserId,
         siteId: "77000000-0000-0000-0000-000000000002",
         siteGroupId: "77000000-0000-0000-0000-000000000001",
         fiscalIssuanceReferenceId: "5f000000-0000-0000-0000-000000000004",

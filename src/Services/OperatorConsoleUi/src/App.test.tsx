@@ -27,6 +27,7 @@ import type {
   VendorSessionProjectionHealthTargetsResponse,
   VendorSessionProjectionHealthSummary
 } from "./types";
+import type { OperatorConsoleHumanSession } from "./humanAuthentication";
 
 const firstDraftId = "47000000-0000-0000-0000-000000000008";
 const verifiedLocalDraftId = "47000000-0000-0000-0000-000000000009";
@@ -308,6 +309,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       <App
         apiClient={createMockOperatorConsoleApiClient({ drafts: [ownDraft], onDecision })}
         initialPath={`/operator-console/statutory-discounts/${ownDraft.draftId}`}
+        session={operatorSession(ownDraft.requestedBy)}
       />
     );
 
@@ -1835,15 +1837,13 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     const requestBody = JSON.parse(requestOptions?.body as string);
     expect(requestBody).toEqual(expect.objectContaining({
-      operatorUserId: "77000000-0000-0000-0000-000000000010",
-      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
-      operatorShiftId: "77000000-0000-0000-0000-000000000050",
       requestedAction: "SESSION_LOOKUP",
       devModeContext: expect.objectContaining({
         usesLocalDevFallbackContext: true,
         environmentName: "test"
       })
     }));
+    expect(requestBody).not.toHaveProperty("operatorUserId");
   });
 
   it("OperatorConsoleApi_LoadsAuditReportThroughFetch", async () => {
@@ -1953,12 +1953,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     const requestBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
     expect(requestBody).toEqual(expect.objectContaining({
-      userId: "77000000-0000-0000-0000-000000000010",
-      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
-      operatorShiftId: "77000000-0000-0000-0000-000000000050",
       evidenceType: "SENIOR_CITIZEN_ID",
       captureMethod: "OPERATOR_CONFIRMED"
     }));
+    expect(requestBody).not.toHaveProperty("userId");
   });
 
   it("OperatorConsoleApi_SubmitsDecisionThroughFetchWithOperatorHeadersAndIdempotencyKey", async () => {
@@ -1992,11 +1990,9 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     const requestBody = JSON.parse(requestOptions?.body as string);
     expect(requestBody).toEqual(expect.objectContaining({
-      userId: "77000000-0000-0000-0000-000000000010",
-      operatorDeviceBindingId: "77000000-0000-0000-0000-000000000030",
-      operatorShiftId: "77000000-0000-0000-0000-000000000050",
       decision: "APPROVE"
     }));
+    expect(requestBody).not.toHaveProperty("userId");
     expect(requestBody.idempotencyKey).toMatch(`operator-console-ui-approve-${firstDraftId}-`);
   });
 
@@ -3367,13 +3363,43 @@ function jsonResponse(body: unknown, status = 200) {
 
 function expectOperatorContextHeaders(headers: unknown) {
   expect(headers).toEqual(expect.objectContaining({
-    "X-Correlation-Id": expect.any(String),
-    "X-Operator-User-Id": "77000000-0000-0000-0000-000000000010",
-    "X-ExitPass-User-Id": "77000000-0000-0000-0000-000000000010",
-    "X-ExitPass-Permissions": expect.stringContaining("operator-console.policy-import-review.view-own"),
-    "X-Operator-Device-Binding-Id": "77000000-0000-0000-0000-000000000030",
-    "X-Operator-Shift-Id": "77000000-0000-0000-0000-000000000050"
+    "X-Correlation-Id": expect.any(String)
   }));
-  expect((headers as Record<string, string>)["X-ExitPass-Permissions"]).toContain("fiscal-issuance.status.read");
-  expect((headers as Record<string, string>)["X-ExitPass-Permissions"]).toContain("fiscal-issuance.void.audit.read");
+  const record = headers as Record<string, string>;
+  expect(record.Authorization).toBeUndefined();
+  expect(record["X-Operator-User-Id"]).toBeUndefined();
+  expect(record["X-ExitPass-User-Id"]).toBeUndefined();
+  expect(record["X-ExitPass-Permissions"]).toBeUndefined();
+  expect(record["X-Operator-Device-Binding-Id"]).toBeUndefined();
+  expect(record["X-Operator-Shift-Id"]).toBeUndefined();
+  expect(record["X-Site-Id"]).toBeUndefined();
+  expect(record["X-Site-Group-Id"]).toBeUndefined();
+}
+
+function operatorSession(userReference: string): OperatorConsoleHumanSession {
+  return {
+    sessionReference: "11000000-0000-0000-0000-000000000001",
+    userReference,
+    username: "review.operator",
+    displayName: "Review Operator",
+    audience: "OPERATOR_CONSOLE",
+    assurance: "PASSWORD",
+    privilegedAccount: false,
+    passwordChangeRequired: false,
+    mfaRequired: false,
+    mfaSatisfied: false,
+    authenticatedAt: "2026-08-08T08:00:00+08:00",
+    lastSeenAt: "2026-08-08T08:05:00+08:00",
+    idleExpiresAt: "2099-08-08T08:35:00+08:00",
+    absoluteExpiresAt: "2099-08-08T16:00:00+08:00",
+    permissions: [
+      "statutory-discounts.decision.approve",
+      "statutory-discounts.decision.reject",
+      "statutory-discounts.evidence.review.view"
+    ],
+    siteReferences: ["13000000-0000-0000-0000-000000000001"],
+    siteGroupReferences: ["14000000-0000-0000-0000-000000000001"],
+    hasGlobalScope: false,
+    correlationId: "15000000-0000-0000-0000-000000000001"
+  };
 }

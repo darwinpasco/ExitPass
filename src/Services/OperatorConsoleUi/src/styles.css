@@ -18,6 +18,68 @@ body {
   overflow-x: hidden;
 }
 
+:focus-visible {
+  outline: 3px solid #d7a51e;
+  outline-offset: 2px;
+}
+
+.authenticationShell {
+  align-items: center;
+  background: #eef2f5;
+  display: grid;
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.authenticationPanel {
+  background: #ffffff;
+  border: 1px solid #d7e0e6;
+  border-radius: 8px;
+  box-shadow: 0 18px 42px rgb(25 39 52 / 12%);
+  margin: 0 auto;
+  max-width: 440px;
+  padding: 28px;
+  width: 100%;
+}
+
+.authenticationPanel h1 {
+  font-size: 1.75rem;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.authenticationPanel > p:not(.eyebrow) {
+  color: #344756;
+  line-height: 1.5;
+}
+
+.authenticationForm {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.authenticationForm label {
+  display: grid;
+  font-weight: 700;
+  gap: 6px;
+}
+
+.authenticationForm input {
+  width: 100%;
+}
+
+.authenticationError {
+  background: #fff4f1;
+  border-left: 4px solid #a83924;
+  color: #752615 !important;
+  padding: 12px;
+}
+
+.supportReference {
+  overflow-wrap: anywhere;
+}
+
 button {
   background: #245b74;
   border: 1px solid #245b74;
@@ -130,6 +192,17 @@ code {
   font-size: 0.78rem;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.operatorStatus .secondaryButton {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.operatorStatus .authenticationInlineError {
+  color: #8b1e1e;
+  font-weight: 650;
+  max-width: 28rem;
 }
 
 .platformShell {

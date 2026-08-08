@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   createOperatorConsoleApiClient,
   defaultDevModeContext,
-  getDefaultOperatorConsoleContext,
+  getDefaultOperatorConsoleOperatingContext,
   mapApiError,
   type OperatorConsoleApiClient
 } from "./apiClient";
+import type { OperatorConsoleHumanSession } from "./humanAuthentication";
 import type {
   AccessReadinessResponse,
   AuditReportItem,
@@ -62,14 +63,26 @@ const routes = {
 interface AppProps {
   apiClient?: OperatorConsoleApiClient;
   initialPath?: string;
+  session?: OperatorConsoleHumanSession;
+  logoutPending?: boolean;
+  logoutMessage?: string;
+  onLogout?: () => void;
 }
 
-export function App({ apiClient, initialPath }: AppProps) {
+export function App({ apiClient, initialPath, session, logoutPending = false, logoutMessage, onLogout }: AppProps) {
   const client = useMemo(() => apiClient ?? createOperatorConsoleApiClient(), [apiClient]);
   const [path, setPath] = useState(initialPath ?? normalizePath(window.location.pathname));
   const [readinessState, setReadinessState] = useState<LoadState<AccessReadinessResponse>>({ status: "idle" });
-  const operatorContext = useMemo(() => getDefaultOperatorConsoleContext(), []);
+  const operatorContext = useMemo(() => getDefaultOperatorConsoleOperatingContext(), []);
   const devModeContext = useMemo(() => defaultDevModeContext(), []);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialPath) {
@@ -93,7 +106,6 @@ export function App({ apiClient, initialPath }: AppProps) {
     void client
       .evaluateAccessReadiness({
         ...operatorContext,
-        operatorUserId: operatorContext.userId,
         requestedAction,
         clientContext: {
           uiModule: "OperatorConsoleUi",
@@ -101,8 +113,12 @@ export function App({ apiClient, initialPath }: AppProps) {
         },
         devModeContext
       })
-      .then((readiness) => setReadinessState({ status: "loaded", data: readiness }))
-      .catch((error) => setReadinessState({ status: "error", message: mapApiError(error).message }));
+      .then((readiness) => {
+        if (mountedRef.current) setReadinessState({ status: "loaded", data: readiness });
+      })
+      .catch((error) => {
+        if (mountedRef.current) setReadinessState({ status: "error", message: mapApiError(error).message });
+      });
   }
 
   useEffect(() => {
@@ -125,7 +141,15 @@ export function App({ apiClient, initialPath }: AppProps) {
         </div>
         <div className="operatorStatus" aria-label="Operator identity">
           <span>Operator</span>
-          <strong>shift-console-placeholder</strong>
+          <strong>{session?.displayName ?? "Authenticated session"}</strong>
+          {session?.username && <span>{session.username}</span>}
+          {session && <span>{scopeSummary(session)}</span>}
+          {logoutMessage && <span className="authenticationInlineError" role="alert">{logoutMessage}</span>}
+          {onLogout && (
+            <button type="button" className="secondaryButton" onClick={onLogout} disabled={logoutPending}>
+              {logoutPending ? "Signing out" : "Sign out"}
+            </button>
+          )}
         </div>
       </header>
 
@@ -206,9 +230,9 @@ export function App({ apiClient, initialPath }: AppProps) {
           </nav>
 
           <div className="statusStack">
-            <span className="statusPill">Local shell</span>
+            <span className="statusPill">Authenticated session</span>
             <span className="statusPill">Live read model</span>
-            {devModeContext.usesLocalDevFallbackContext && <span className="statusPill warningPill">Sandbox/local context</span>}
+            {devModeContext.usesLocalDevFallbackContext && <span className="statusPill warningPill">Operating context incomplete</span>}
           </div>
         </aside>
 
@@ -226,6 +250,7 @@ export function App({ apiClient, initialPath }: AppProps) {
               draftId={draftId}
               navigate={navigate}
               readinessBlockReason={readinessBlockReason}
+              currentOperatorUserId={session?.userReference ?? ""}
             />
           ) : path === routes.ticketLookup ? (
             <TicketLookupPage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
@@ -3497,17 +3522,17 @@ function StatutoryDiscountDetailPage({
   client,
   draftId,
   navigate,
-  readinessBlockReason
+  readinessBlockReason,
+  currentOperatorUserId
 }: {
   client: OperatorConsoleApiClient;
   draftId: string;
   navigate: (path: string) => void;
   readinessBlockReason: string | null;
+  currentOperatorUserId: string;
 }) {
   const [detailState, setDetailState] = useState<LoadState<StatutoryDiscountDraftDetail>>({ status: "loading" });
   const [refreshToken, setRefreshToken] = useState(0);
-  const operatorContext = useMemo(() => getDefaultOperatorConsoleContext(), []);
-
   useEffect(() => {
     let active = true;
     setDetailState((current) => (current.status === "loaded" ? current : { status: "loading" }));
@@ -3555,7 +3580,7 @@ function StatutoryDiscountDetailPage({
           client={client}
           refreshDetail={() => setRefreshToken((value) => value + 1)}
           readinessBlockReason={readinessBlockReason}
-          currentOperatorUserId={operatorContext.userId}
+          currentOperatorUserId={currentOperatorUserId}
         />
       )}
     </>
@@ -4478,6 +4503,20 @@ function readinessBlockedActionReason(readiness: AccessReadinessResponse) {
 
 function readinessLabel(ready: boolean, status: string) {
   return `${ready ? "Ready" : "Not ready"} (${status})`;
+}
+
+function scopeSummary(session: OperatorConsoleHumanSession) {
+  if (session.hasGlobalScope) {
+    return "Global operating scope";
+  }
+
+  const siteCount = session.siteReferences.length;
+  const siteGroupCount = session.siteGroupReferences.length;
+  if (siteCount === 0 && siteGroupCount === 0) {
+    return "No operating scope";
+  }
+
+  return `${siteCount} Site${siteCount === 1 ? "" : "s"}, ${siteGroupCount} Site Group${siteGroupCount === 1 ? "" : "s"}`;
 }
 
 function sameIdentity(left?: string | null, right?: string | null) {
