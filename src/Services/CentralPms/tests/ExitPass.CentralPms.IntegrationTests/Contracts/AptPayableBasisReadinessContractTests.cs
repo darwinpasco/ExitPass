@@ -132,7 +132,10 @@ public sealed class AptPayableBasisReadinessContractTests
         AptPayableBasisEndpoints.ReadPolicy.Should().Be("TerminalCashPayableBasisRead");
         CentralPmsRbacPolicyCatalog.ResolvePermissions(AptPayableBasisEndpoints.ReadPolicy)
             .Should()
-            .BeEquivalentTo(["terminal-cash.payable-basis.read"]);
+            .BeEquivalentTo([AptHumanPermissionCatalog.PayableBasisRead]);
+        CentralPmsRbacPolicyCatalog.ResolvePermissions(AptPayableBasisEndpoints.ReadPolicy)
+            .Should()
+            .NotContain(AptHumanPermissionCatalog.OperationalPermissions);
     }
 
     [Fact]
@@ -155,6 +158,14 @@ public sealed class AptPayableBasisReadinessContractTests
         root.GetProperty("authorization").GetProperty("policy").GetString()
             .Should()
             .Be("TerminalCashPayableBasisRead");
+        root.GetProperty("authorization").GetProperty("semanticBoundary").GetString()
+            .Should()
+            .Be("READ_ONLY_PAYABLE_BASIS");
+        root.GetProperty("authorization").GetProperty("doesNotAuthorize")
+            .EnumerateArray()
+            .Select(value => value.GetString())
+            .Should()
+            .BeEquivalentTo(AptHumanPermissionCatalog.OperationalPermissions);
         root.GetProperty("authorityBoundaries").GetProperty("noDirectHikCentralAccess").GetBoolean()
             .Should()
             .BeTrue();

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
@@ -56,6 +57,42 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
             HumanSessionAudiences.OperatorConsole, null, context, false, CancellationToken.None);
         suspended.Response.Authenticated.Should().BeFalse();
         suspended.Response.ErrorCode.Should().Be("SESSION_REVOKED");
+    }
+
+    [Fact]
+    public async Task Apt_operational_permissions_flow_from_canonical_role_bindings_without_role_name_authority()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var user = await SeedUserAsync(runtime.Passwords, "I021AAptPermissions", "correct horse battery staple");
+        var (siteId, siteGroupId) = await GrantSeededRoleAndScopesAsync(user);
+        await GrantCanonicalPermissionsAsync(user, AptHumanPermissionCatalog.OperationalPermissions);
+        var (deviceId, deviceSiteId) = await SeedAptDeviceAsync();
+        deviceSiteId.Should().Be(siteId);
+        var context = Context() with { DeviceServiceIdentityId = deviceId, SiteId = siteId };
+
+        var login = await runtime.Service.LoginAsync("i021aaptpermissions", "correct horse battery staple",
+            HumanSessionAudiences.Apt, null, context, CancellationToken.None);
+
+        login.Response.Authenticated.Should().BeTrue();
+        login.Response.Session!.Permissions.Should().Contain(AptHumanPermissionCatalog.OperationalPermissions);
+        login.Response.Session.SiteReferences.Should().Contain(siteId);
+        login.Response.Session.SiteGroupReferences.Should().Contain(siteGroupId);
+        login.Response.Session.HasGlobalScope.Should().BeFalse();
+
+        await ExecuteAsync("""
+            UPDATE identity.role_permissions rp
+            SET binding_status='REVOKED', revoked_at=now(), revocation_reason_code='I021A_TEST', row_version=rp.row_version+1
+            FROM identity.permissions p, identity.user_roles ur
+            WHERE rp.permission_id=p.permission_id AND rp.role_id=ur.role_id
+              AND ur.user_id=@user_id AND p.permission_code=@permission_code
+              AND rp.binding_status='ACTIVE';
+            """, user, ("permission_code", AptHumanPermissionCatalog.TerminalCashReceive));
+
+        var refreshed = await runtime.Service.ResolveSessionAsync(login.Credential!.SerializedToken,
+            HumanSessionAudiences.Apt, deviceId, context, false, CancellationToken.None);
+        refreshed.Response.Authenticated.Should().BeTrue();
+        refreshed.Response.Session!.Permissions.Should().NotContain(AptHumanPermissionCatalog.TerminalCashReceive);
+        refreshed.Response.Session.Permissions.Should().Contain(AptHumanPermissionCatalog.Access);
     }
 
     [Fact]
@@ -323,6 +360,38 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
         await command.ExecuteNonQueryAsync();
         return (siteId, siteGroupId);
+    }
+
+    private async Task GrantCanonicalPermissionsAsync(Guid userId, IReadOnlyList<string> permissionCodes)
+    {
+        const string sql = """
+            INSERT INTO identity.permissions (
+                permission_id, permission_code, permission_name, permission_description,
+                permission_domain, permission_action, permission_status, is_sensitive, requires_audit,
+                created_by_service_identity_id, updated_by_service_identity_id)
+            SELECT gen_random_uuid(), code, code, 'I-021A disposable canonical permission binding proof.',
+                   'APT', 'OPERATE', 'ACTIVE', true, true, @service_id, @service_id
+            FROM unnest(@permission_codes::varchar[]) AS code
+            ON CONFLICT (permission_code) DO NOTHING;
+
+            INSERT INTO identity.role_permissions (
+                role_permission_id, role_id, permission_id, binding_status, binding_reason_code,
+                assigned_by_service_identity_id, effective_from,
+                created_by_service_identity_id, updated_by_service_identity_id)
+            SELECT gen_random_uuid(), ur.role_id, p.permission_id, 'ACTIVE', 'I021A_TEST',
+                   @service_id, now()-interval '1 day', @service_id, @service_id
+            FROM identity.user_roles ur
+            JOIN identity.permissions p ON p.permission_code=ANY(@permission_codes::varchar[])
+            WHERE ur.user_id=@user_id AND ur.assignment_status='ACTIVE'
+            ON CONFLICT DO NOTHING;
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("permission_codes", permissionCodes.ToArray());
+        command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
+        await command.ExecuteNonQueryAsync();
     }
 
     private async Task AssignPrivilegedRoleAsync(Guid userId)

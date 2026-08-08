@@ -106,7 +106,7 @@ public static class CentralPmsRbacPolicyCatalog
             ],
             ["TerminalCashPayableBasisRead"] =
             [
-                "terminal-cash.payable-basis.read"
+                AptHumanPermissionCatalog.PayableBasisRead
             ],
             ["AptStatutoryOrdinanceAvailabilityRead"] =
             [

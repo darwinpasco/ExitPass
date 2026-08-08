@@ -149,4 +149,37 @@ public sealed class CentralPmsRbacPolicyCatalogTests
             .Should()
             .Contain("management-platform.identity-rbac.inventory.read");
     }
+
+    [Fact]
+    public void AptHumanPermissionCatalog_DefinesOperationSpecificAuthoritiesWithoutRoleOrGlobalShortcuts()
+    {
+        AptHumanPermissionCatalog.Access.Should().Be("apt.access");
+        AptHumanPermissionCatalog.CashierShiftOperate.Should().Be("cashier-shifts.operate");
+        AptHumanPermissionCatalog.CashCustodyOperate.Should().Be("cash-custody.operate");
+        AptHumanPermissionCatalog.TerminalCashReceive.Should().Be("terminal-cash.receive");
+
+        AptHumanPermissionCatalog.OperationalPermissions.Should().OnlyHaveUniqueItems().And.HaveCount(4);
+        AptHumanPermissionCatalog.OperationalPermissions.Should().NotContain(AptHumanPermissionCatalog.PayableBasisRead);
+        AptHumanPermissionCatalog.OperationalPermissions.Should().NotContain(permission =>
+            permission.Contains("GLOBAL", StringComparison.OrdinalIgnoreCase) ||
+            permission.Contains("HANDOVER", StringComparison.OrdinalIgnoreCase) ||
+            permission.Contains("SUPERVISOR", StringComparison.OrdinalIgnoreCase) ||
+            permission.Contains("SITE_OPERATOR", StringComparison.OrdinalIgnoreCase));
+
+        CentralPmsRbacPolicyCatalog.ListPolicyMappings().Values
+            .SelectMany(permissions => permissions)
+            .Should()
+            .NotContain(AptHumanPermissionCatalog.OperationalPermissions);
+    }
+
+    [Fact]
+    public void TerminalCashPayableBasisRead_RemainsReadOnlyAndDoesNotSatisfyAptOperationalAuthorities()
+    {
+        var payableBasis = CentralPmsRbacPolicyCatalog.ResolvePermissions("TerminalCashPayableBasisRead");
+
+        payableBasis.Should().ContainSingle().Which.Should().Be(AptHumanPermissionCatalog.PayableBasisRead);
+        payableBasis.Should().NotContain(AptHumanPermissionCatalog.OperationalPermissions);
+        AptHumanPermissionCatalog.ReadOnlyPermissions.Should().ContainSingle()
+            .Which.Should().Be(AptHumanPermissionCatalog.PayableBasisRead);
+    }
 }
