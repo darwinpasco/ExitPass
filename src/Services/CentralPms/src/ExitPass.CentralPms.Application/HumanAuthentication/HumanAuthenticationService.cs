@@ -479,6 +479,28 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         await RecordSecurityAsync("TOTP_RESET", "ALLOWED", reasonCode, targetUserId, actorUserId, context, now, cancellationToken);
     }
 
+    public async Task<bool> ChangeTotpAsync(
+        Guid targetUserId,
+        long expectedRowVersion,
+        string action,
+        Guid actorUserId,
+        string reasonCode,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        var normalizedAction = action.Trim().ToUpperInvariant();
+        if (normalizedAction is not ("RESET" or "REMOVE"))
+        {
+            throw new ArgumentException("The TOTP administration action is invalid.", nameof(action));
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        var changed = await _repository.ChangeTotpAuthenticatorAsync(
+            targetUserId, expectedRowVersion, normalizedAction, actorUserId, reasonCode, correlationId,
+            _options.CentralPmsServiceIdentityId, now, cancellationToken);
+        return changed;
+    }
+
     private async Task<HumanAuthenticationResult> IssueSessionAsync(HumanLoginRecord login, LocalCredentialRecord credential, string audience, HumanAuthenticationContext context, DateTimeOffset now, bool passwordChangeRequired, bool mfaRequired, bool mfaSatisfied, Guid? mfaAuthenticatorId, DateTimeOffset? mfaVerifiedAt, string outcome, CancellationToken cancellationToken)
     {
         var token = _tokens.Create();
@@ -502,7 +524,7 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
             restricted ? [] : authorization.SiteGroupIds, !restricted && authorization.HasGlobalScope,
             record.DeviceServiceIdentityId, correlationId);
         return new HumanAuthenticationResult(200, new HumanAuthenticationResponse(outcome, true, dto,
-            record.Audience == HumanSessionAudiences.Apt ? credential.SerializedToken : null, null, false, correlationId), credential);
+            record.Audience == HumanSessionAudiences.Apt ? credential.SerializedToken : null, null, false, correlationId), credential, record.HumanSessionId);
     }
 
     private async Task<(HumanSessionRecord? Record, SessionCredential? Credential, HumanAuthenticationResult? Failure)> ValidateSessionAsync(string token, string? expectedAudience, Guid? expectedDeviceServiceIdentityId, HumanAuthenticationContext context, bool touch, CancellationToken cancellationToken)

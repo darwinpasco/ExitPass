@@ -28,6 +28,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
     private readonly IReadOnlyDictionary<string, string?> _configurationOverrides;
     private readonly IInternalClientCertificateAccessor? _certificateAccessor;
     private readonly Action<IServiceCollection>? _configureServices;
+    private readonly string _environmentName;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CustomWebApplicationFactory"/> class.
@@ -36,18 +37,21 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         : this(
             new Dictionary<string, string?>(),
             certificateAccessor: null,
-            configureServices: null)
+            configureServices: null,
+            environmentName: "Development")
     {
     }
 
     private CustomWebApplicationFactory(
         IReadOnlyDictionary<string, string?> configurationOverrides,
         IInternalClientCertificateAccessor? certificateAccessor,
-        Action<IServiceCollection>? configureServices)
+        Action<IServiceCollection>? configureServices,
+        string environmentName)
     {
         _configurationOverrides = configurationOverrides;
         _certificateAccessor = certificateAccessor;
         _configureServices = configureServices;
+        _environmentName = environmentName;
     }
 
     /// <summary>
@@ -76,7 +80,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             index++;
         }
 
-        return new CustomWebApplicationFactory(overrides, certificateAccessor, _configureServices);
+        return new CustomWebApplicationFactory(overrides, certificateAccessor, _configureServices, _environmentName);
     }
 
     /// <summary>
@@ -91,7 +95,8 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         return new CustomWebApplicationFactory(
             _configurationOverrides,
             _certificateAccessor,
-            configureServices);
+            configureServices,
+            _environmentName);
     }
 
     /// <summary>
@@ -107,8 +112,12 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             merged[pair.Key] = pair.Value;
         }
 
-        return new CustomWebApplicationFactory(merged, _certificateAccessor, _configureServices);
+        return new CustomWebApplicationFactory(merged, _certificateAccessor, _configureServices, _environmentName);
     }
+
+    public CustomWebApplicationFactory WithEnvironment(string environmentName) =>
+        new(_configurationOverrides, _certificateAccessor, _configureServices,
+            !string.IsNullOrWhiteSpace(environmentName) ? environmentName : throw new ArgumentException("An environment name is required.", nameof(environmentName)));
 
     /// <summary>
     /// Configures the in-memory API host for integration testing.
@@ -119,7 +128,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         var integrationDbConnectionString =
             CentralPmsIntegrationTestConfiguration.PublishResolvedDatabaseConnectionString();
 
-        builder.UseEnvironment("Development");
+        builder.UseEnvironment(_environmentName);
 
         builder.ConfigureAppConfiguration((_, configBuilder) =>
         {

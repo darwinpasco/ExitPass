@@ -175,6 +175,7 @@ app.MapStatutoryEvidenceMetadataEndpoints();
 app.MapStatutoryEvidenceChannelEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
+app.MapManagementPlatformIdentityAdministrationEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
@@ -358,7 +359,6 @@ static void ConfigureHumanAuthentication(WebApplicationBuilder builder, string m
         .Validate(options => options.CentralPmsServiceIdentityId != Guid.Empty, "Central PMS service identity is required.")
         .Validate(options => options.WebIdleMinutes > 0 && options.WebAbsoluteHours > 0 && options.AptIdleMinutes > 0 && options.AptAbsoluteHours > 0, "Human session expiry values must be positive.")
         .ValidateOnStart();
-    builder.Services.AddSingleton(TimeProvider.System);
     builder.Services.AddSingleton<IHumanSessionTokenService, HumanSessionTokenService>();
     builder.Services.AddSingleton<IHumanPasswordHasher, Argon2idHumanPasswordHasher>();
     builder.Services.AddSingleton<ITotpProvider, TotpProvider>();
@@ -777,6 +777,14 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryRepository>(_ =>
         new ManagementPlatformIdentityRbacInventoryRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
+    builder.Services.AddHttpContextAccessor();
+    builder.Services.AddScoped<IIdentityAdministrationActorAccessor, HttpContextIdentityAdministrationActorAccessor>();
+    builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(services =>
+        new PostgresManagementPlatformIdentityAdministrationRepository(
+            mainDatabaseConnectionString,
+            services.GetRequiredService<IOptions<HumanAuthenticationOptions>>().Value.FreshAuthenticationMinutes));
+    builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();
+    builder.Services.AddScoped<IManagementPlatformIdentityAdministrationService, ManagementPlatformIdentityAdministrationService>();
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
         new ManagementPlatformStatutoryDiscountPolicyCoverageRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageService, ManagementPlatformStatutoryDiscountPolicyCoverageService>();

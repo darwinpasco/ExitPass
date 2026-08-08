@@ -42,7 +42,7 @@ public static class HumanAuthenticationEndpoints
         if (result.Response.Authenticated && result.Credential is not null)
         {
             SetWebSessionCookie(response, result.Credential.SerializedToken, options.Value);
-            httpRequest.HttpContext.User = HumanSessionAuthenticationHandler.CreatePrincipal(result.Response.Session!);
+            httpRequest.HttpContext.User = HumanSessionAuthenticationHandler.CreatePrincipal(result.Response.Session!, result.InternalHumanSessionId);
             SetAntiforgeryResponseToken(httpRequest.HttpContext, response, antiforgery);
         }
         SetNoStore(response);

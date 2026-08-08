@@ -376,6 +376,72 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
               AND (@except_session_id='00000000-0000-0000-0000-000000000000'::uuid OR human_session_id<>@except_session_id);
             """, cancellationToken, ("user_id", userId), ("actor_user_id", actorUserId), ("reason_code", reasonCode), ("now", now), ("except_session_id", exceptHumanSessionId ?? Guid.Empty));
 
+    public async Task<bool> RevokeSessionAdministrativelyAsync(
+        Guid humanSessionId,
+        Guid targetUserId,
+        Guid actorUserId,
+        string reasonCode,
+        Guid correlationId,
+        Guid serviceIdentityId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            UPDATE identity.human_sessions
+            SET session_status='REVOKED', revoked_at=@now, revoked_by_user_id=@actor_user_id,
+                revocation_reason_code=@reason_code, updated_at=@now,
+                updated_by_user_id=@actor_user_id, row_version=row_version+1
+            WHERE human_session_id=@session_id AND user_id=@target_user_id AND session_status='ACTIVE';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("session_id", humanSessionId);
+        command.Parameters.AddWithValue("target_user_id", targetUserId);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        command.Parameters.AddWithValue("reason_code", reasonCode);
+        command.Parameters.AddWithValue("now", now);
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+        if (changed)
+        {
+            await InsertSecurityEventAsync(connection, transaction, "SESSION_REVOKED", "ALLOWED", reasonCode,
+                targetUserId, actorUserId, null, null, correlationId, serviceIdentityId, now, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return changed;
+    }
+
+    public async Task<int> RevokeAllUserSessionsAdministrativelyAsync(
+        Guid userId,
+        Guid actorUserId,
+        string reasonCode,
+        Guid correlationId,
+        Guid serviceIdentityId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand("""
+            UPDATE identity.human_sessions
+            SET session_status='REVOKED', revoked_at=@now, revoked_by_user_id=@actor_user_id,
+                revocation_reason_code=@reason_code, updated_at=@now,
+                updated_by_user_id=@actor_user_id, row_version=row_version+1
+            WHERE user_id=@user_id AND session_status='ACTIVE';
+            """, connection, transaction);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        command.Parameters.AddWithValue("reason_code", reasonCode);
+        command.Parameters.AddWithValue("now", now);
+        var changed = await command.ExecuteNonQueryAsync(cancellationToken);
+        if (changed > 0)
+        {
+            await InsertSecurityEventAsync(connection, transaction, "SESSION_REVOKED", "ALLOWED", reasonCode,
+                userId, actorUserId, null, null, correlationId, serviceIdentityId, now, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return changed;
+    }
+
     public async Task<bool> IsActiveDeviceServiceAtSiteAsync(Guid serviceIdentityId, Guid siteId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         const string sql = """
@@ -500,6 +566,71 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
         command.Parameters.AddWithValue("now", now);
         await command.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    public async Task<bool> ChangeTotpAuthenticatorAsync(
+        Guid userId,
+        long expectedRowVersion,
+        string action,
+        Guid actorUserId,
+        string reasonCode,
+        Guid correlationId,
+        Guid serviceIdentityId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            WITH changed AS (
+                UPDATE identity.user_mfa_authenticators
+                SET authenticator_status = CASE WHEN @action = 'RESET' THEN 'RESET_REQUIRED' ELSE 'REVOKED' END::identity.mfa_authenticator_status_enum,
+                    reset_at = CASE WHEN @action = 'RESET' THEN @now ELSE NULL END,
+                    revoked_at = CASE WHEN @action = 'REMOVE' THEN @now ELSE NULL END,
+                    reset_or_revoked_by_user_id = @actor_user_id,
+                    status_reason_code = @reason_code,
+                    updated_at = @now,
+                    updated_by_user_id = @actor_user_id,
+                    row_version = row_version + 1
+                WHERE user_id = @user_id
+                  AND authenticator_type = 'TOTP'
+                  AND row_version = @row_version
+                  AND ((@action = 'RESET' AND authenticator_status = 'ACTIVE')
+                    OR (@action = 'REMOVE' AND authenticator_status IN ('PENDING_ENROLLMENT','ACTIVE','SUSPENDED','RESET_REQUIRED')))
+                RETURNING user_mfa_authenticator_id
+            ), revoked_sessions AS (
+                UPDATE identity.human_sessions
+                SET session_status = 'REVOKED',
+                    revoked_at = @now,
+                    revoked_by_user_id = @actor_user_id,
+                    revocation_reason_code = CASE WHEN @action = 'RESET' THEN 'MFA_RESET' ELSE 'MFA_REMOVED' END,
+                    updated_at = @now,
+                    updated_by_user_id = @actor_user_id,
+                    row_version = row_version + 1
+                WHERE user_id = @user_id
+                  AND session_status = 'ACTIVE'
+                  AND mfa_requirement_satisfied
+                  AND EXISTS (SELECT 1 FROM changed)
+                RETURNING human_session_id
+            )
+            SELECT EXISTS (SELECT 1 FROM changed);
+            """;
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("row_version", expectedRowVersion);
+        command.Parameters.AddWithValue("action", action);
+        command.Parameters.AddWithValue("actor_user_id", actorUserId);
+        command.Parameters.AddWithValue("reason_code", reasonCode);
+        command.Parameters.AddWithValue("now", now);
+        var changed = (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
+        if (changed)
+        {
+            await InsertSecurityEventAsync(connection, transaction,
+                action == "RESET" ? "TOTP_RESET" : "TOTP_REMOVED", "ALLOWED", reasonCode,
+                userId, actorUserId, null, null, correlationId, serviceIdentityId, now, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return changed;
     }
 
     public Task ChangePasswordAsync(Guid userId, Guid localCredentialId, long expectedCredentialRowVersion, PasswordHashMaterial material, DateTimeOffset now, Guid actorUserId, CancellationToken cancellationToken) =>
@@ -689,6 +820,26 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
 
     public async Task RecordSecurityEventAsync(string eventType, string result, string reasonCode, Guid? targetEntityId, Guid? actorUserId, string? sourceIpHash, string? userAgentHash, Guid correlationId, Guid serviceIdentityId, DateTimeOffset now, CancellationToken cancellationToken)
     {
+        await using var connection = await OpenAsync(cancellationToken);
+        await InsertSecurityEventAsync(connection, null, eventType, result, reasonCode, targetEntityId,
+            actorUserId, sourceIpHash, userAgentHash, correlationId, serviceIdentityId, now, cancellationToken);
+    }
+
+    private static async Task InsertSecurityEventAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        string eventType,
+        string result,
+        string reasonCode,
+        Guid? targetEntityId,
+        Guid? actorUserId,
+        string? sourceIpHash,
+        string? userAgentHash,
+        Guid correlationId,
+        Guid serviceIdentityId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
         const string sql = """
             WITH audit_entry AS (
                 INSERT INTO audit.audit_events (
@@ -720,8 +871,7 @@ public sealed class PostgresHumanAuthenticationRepository : IHumanAuthentication
                 @now,@now,@correlation_id,@now,@service_identity_id
             FROM audit_entry;
             """;
-        await using var connection = await OpenAsync(cancellationToken);
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("event_type", eventType);
         command.Parameters.AddWithValue("result", result);
         command.Parameters.AddWithValue("reason_code", reasonCode);
