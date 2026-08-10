@@ -54,7 +54,12 @@ $minioContainerName = "exitpass-webpay-statutory-minio"
 $clamAvContainerName = "exitpass-webpay-statutory-clamav"
 $networkName = "exitpass-webpay-statutory-walkthrough"
 $bucketName = "exitpass-webpay-statutory-evidence"
+$stateSchemaVersion = 1
+$walkthroughIdentity = "ExitPass.WebPay.StatutoryDiscount.LocalWalkthrough"
+$ownershipLabelName = "exitpass.walkthrough"
+$ownershipLabelValue = "webpay-statutory-discount"
 $ownershipLabel = "exitpass.walkthrough=webpay-statutory-discount"
+$allowedWalkthroughContainerNames = @($minioContainerName, $clamAvContainerName)
 
 function Assert-SafeDatabaseName([string]$Name) {
     if ($Name -notmatch '^exitpass_webpay_local_walkthrough_statutory(_[a-z0-9_]+)?$') {
@@ -161,6 +166,345 @@ function Assert-CryptographicRuntimeCompatibility {
         if ($null -ne $hashBytes) {
             [System.Array]::Clear($hashBytes, 0, $hashBytes.Length)
         }
+    }
+}
+
+function Get-CanonicalPath([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "A canonical path value is required."
+    }
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+}
+
+function Test-CanonicalPathEqual([string]$Left, [string]$Right) {
+    return [string]::Equals(
+        (Get-CanonicalPath $Left),
+        (Get-CanonicalPath $Right),
+        [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-OwnedPath([string]$Path, [string]$ExpectedRoot, [string]$Description, [switch]$RequireExact) {
+    $canonicalPath = Get-CanonicalPath $Path
+    $canonicalRoot = Get-CanonicalPath $ExpectedRoot
+    $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    if ($RequireExact) {
+        if (-not [string]::Equals($canonicalPath, $canonicalRoot, $comparison)) {
+            throw "STATE_OWNERSHIP_MISMATCH: $Description does not match the walkthrough-owned path."
+        }
+        return
+    }
+
+    $prefix = $canonicalRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (-not [string]::Equals($canonicalPath, $canonicalRoot, $comparison) -and
+        -not $canonicalPath.StartsWith($prefix, $comparison)) {
+        throw "STATE_PATH_ESCAPE: $Description is outside the walkthrough-owned root."
+    }
+}
+
+function Get-RequiredStateProperty($Object, [string]$Name, [string]$Context) {
+    if ($null -eq $Object -or $null -eq $Object.PSObject.Properties[$Name]) {
+        throw "STATE_MALFORMED: $Context is missing required property '$Name'."
+    }
+    return $Object.PSObject.Properties[$Name].Value
+}
+
+function Assert-StateTimestamp([string]$Value, [string]$Name) {
+    $parsed = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+        $Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind,
+        [ref]$parsed)) {
+        throw "STATE_MALFORMED: $Name is not a valid round-trip timestamp."
+    }
+    return $parsed
+}
+
+function Assert-ProcessRecordStructure($Record, [string[]]$AllowedNames) {
+    $name = [string](Get-RequiredStateProperty $Record 'Name' 'process record')
+    if ($AllowedNames -notcontains $name) {
+        throw "STATE_OWNERSHIP_MISMATCH: process '$name' is not in the walkthrough allowlist."
+    }
+    $id = [int](Get-RequiredStateProperty $Record 'Id' "process '$name'")
+    if ($id -le 0) { throw "STATE_MALFORMED: process '$name' has an invalid PID." }
+    $executablePath = [string](Get-RequiredStateProperty $Record 'ExecutablePath' "process '$name'")
+    if ([string]::IsNullOrWhiteSpace($executablePath) -or -not [System.IO.Path]::IsPathRooted($executablePath)) {
+        throw "STATE_MALFORMED: process '$name' lacks an absolute executable identity."
+    }
+    [void](Assert-StateTimestamp ([string](Get-RequiredStateProperty $Record 'StartTimeUtc' "process '$name'")) "process '$name' StartTimeUtc")
+    $markers = @((Get-RequiredStateProperty $Record 'CommandLineMarkers' "process '$name'"))
+    if ($markers.Count -eq 0 -or @($markers | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
+        throw "STATE_MALFORMED: process '$name' lacks bounded command-line ownership markers."
+    }
+}
+
+function Assert-WalkthroughStateContract(
+    $State,
+    [string]$ExpectedRepositoryRoot,
+    [string]$ExpectedStatePath,
+    [string]$ExpectedDatabaseName,
+    [string]$ExpectedDatabaseHost,
+    [int]$ExpectedDatabasePort,
+    [string]$ExpectedPostgresContainerName,
+    [string]$ExpectedEvidenceRoot,
+    [string]$ExpectedSyntheticEvidencePath,
+    [string]$ExpectedNetworkName,
+    [string[]]$ExpectedContainerNames
+) {
+    if ([int](Get-RequiredStateProperty $State 'StateSchemaVersion' 'walkthrough state') -ne $stateSchemaVersion) {
+        throw "STATE_UNSUPPORTED_SCHEMA: walkthrough state schema is not supported."
+    }
+    if ([string](Get-RequiredStateProperty $State 'WalkthroughIdentity' 'walkthrough state') -cne $walkthroughIdentity) {
+        throw "STATE_OWNERSHIP_MISMATCH: walkthrough identity does not match."
+    }
+    Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'RepositoryRoot' 'walkthrough state')) $ExpectedRepositoryRoot 'repository root' -RequireExact
+    Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'StatePath' 'walkthrough state')) $ExpectedStatePath 'state path' -RequireExact
+    Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'EvidenceRoot' 'walkthrough state')) $ExpectedEvidenceRoot 'evidence root' -RequireExact
+    Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'SyntheticEvidencePath' 'walkthrough state')) $ExpectedEvidenceRoot 'synthetic evidence path'
+    Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'SyntheticEvidencePath' 'walkthrough state')) $ExpectedSyntheticEvidencePath 'synthetic evidence path' -RequireExact
+
+    $runId = [guid]::Empty
+    if (-not [guid]::TryParse([string](Get-RequiredStateProperty $State 'RunId' 'walkthrough state'), [ref]$runId) -or $runId -eq [guid]::Empty) {
+        throw "STATE_MALFORMED: RunId is not a non-empty GUID."
+    }
+    if ([string](Get-RequiredStateProperty $State 'StartupMode' 'walkthrough state') -cne 'FRESH') {
+        throw "STATE_MALFORMED: StartupMode is not supported."
+    }
+    if ([string](Get-RequiredStateProperty $State 'LifecycleStatus' 'walkthrough state') -cne 'READY') {
+        throw "STATE_NOT_RESTARTABLE: lifecycle status is not restartable."
+    }
+    $createdAt = Assert-StateTimestamp ([string](Get-RequiredStateProperty $State 'CreatedAtUtc' 'walkthrough state')) 'CreatedAtUtc'
+    $updatedAt = Assert-StateTimestamp ([string](Get-RequiredStateProperty $State 'LastValidUpdateAtUtc' 'walkthrough state')) 'LastValidUpdateAtUtc'
+    if ($updatedAt -lt $createdAt) { throw "STATE_MALFORMED: last valid update precedes creation." }
+
+    Assert-SafeDatabaseName ([string](Get-RequiredStateProperty $State 'DatabaseName' 'walkthrough state'))
+    if ([string]$State.DatabaseName -cne $ExpectedDatabaseName -or
+        [string](Get-RequiredStateProperty $State 'DatabaseHost' 'walkthrough state') -cne $ExpectedDatabaseHost -or
+        [int](Get-RequiredStateProperty $State 'DatabasePort' 'walkthrough state') -ne $ExpectedDatabasePort -or
+        [string](Get-RequiredStateProperty $State 'PostgresContainerName' 'walkthrough state') -cne $ExpectedPostgresContainerName) {
+        throw "STATE_DATABASE_MISMATCH: recorded database identity does not match this walkthrough invocation."
+    }
+    if ([string]::IsNullOrWhiteSpace([string](Get-RequiredStateProperty $State 'PostgresContainerId' 'walkthrough state'))) {
+        throw "STATE_MALFORMED: PostgreSQL container identity is missing."
+    }
+
+    $network = Get-RequiredStateProperty $State 'Network' 'walkthrough state'
+    if ([string](Get-RequiredStateProperty $network 'Name' 'network record') -cne $ExpectedNetworkName -or
+        [string](Get-RequiredStateProperty $network 'OwnershipLabel' 'network record') -cne $ownershipLabelValue -or
+        [string]::IsNullOrWhiteSpace([string](Get-RequiredStateProperty $network 'Id' 'network record'))) {
+        throw "STATE_OWNERSHIP_MISMATCH: network identity does not match the walkthrough allowlist."
+    }
+
+    $containers = @((Get-RequiredStateProperty $State 'Containers' 'walkthrough state'))
+    if ($containers.Count -ne $ExpectedContainerNames.Count) {
+        throw "STATE_OWNERSHIP_MISMATCH: recorded container set does not match the walkthrough allowlist."
+    }
+    foreach ($expectedName in $ExpectedContainerNames) {
+        $matches = @($containers | Where-Object { [string]$_.Name -ceq $expectedName })
+        if ($matches.Count -ne 1 -or [string]$matches[0].OwnershipLabel -cne $ownershipLabelValue -or
+            [string]::IsNullOrWhiteSpace([string]$matches[0].Id)) {
+            throw "STATE_OWNERSHIP_MISMATCH: container '$expectedName' lacks exact identity and ownership metadata."
+        }
+    }
+
+    $processNames = @('central-pms', 'payment-orchestrator', 'webpay-ui', 'operator-console-ui')
+    $launcherNames = @('central-pms-launcher', 'payment-orchestrator-launcher', 'webpay-ui-launcher', 'operator-console-ui-launcher')
+    $processRecords = @((Get-RequiredStateProperty $State 'Processes' 'walkthrough state'))
+    $launcherRecords = @((Get-RequiredStateProperty $State 'Launchers' 'walkthrough state'))
+    if ($processRecords.Count -ne $processNames.Count -or $launcherRecords.Count -ne $launcherNames.Count) {
+        throw "STATE_NOT_RESTARTABLE: recorded process set is incomplete or ambiguous."
+    }
+    foreach ($record in $processRecords) {
+        Assert-ProcessRecordStructure $record $processNames
+    }
+    foreach ($record in $launcherRecords) {
+        Assert-ProcessRecordStructure $record $launcherNames
+    }
+    foreach ($name in $processNames) {
+        if (@($processRecords | Where-Object { [string]$_.Name -ceq $name }).Count -ne 1) { throw "STATE_NOT_RESTARTABLE: process '$name' is missing or duplicated." }
+    }
+    foreach ($name in $launcherNames) {
+        if (@($launcherRecords | Where-Object { [string]$_.Name -ceq $name }).Count -ne 1) { throw "STATE_NOT_RESTARTABLE: launcher '$name' is missing or duplicated." }
+    }
+
+    [void](Get-RequiredStateProperty $State 'Fixture' 'walkthrough state')
+    [void](Get-RequiredStateProperty $State 'Urls' 'walkthrough state')
+
+    $json = $State | ConvertTo-Json -Depth 10 -Compress
+    if ($json -match '(?i)"[^"\\]*(password|secret|token|connection.?string|provisioning|upload.?url)[^"\\]*"\s*:') {
+        throw "STATE_SECRET_FIELD_PROHIBITED: state contains a prohibited secret-shaped property."
+    }
+    return $State
+}
+
+function Read-ValidatedWalkthroughState(
+    [string]$Path,
+    [string]$ExpectedRepositoryRoot,
+    [string]$ExpectedDatabaseName,
+    [string]$ExpectedDatabaseHost,
+    [int]$ExpectedDatabasePort,
+    [string]$ExpectedPostgresContainerName,
+    [string]$ExpectedEvidenceRoot,
+    [string]$ExpectedSyntheticEvidencePath,
+    [string]$ExpectedNetworkName,
+    [string[]]$ExpectedContainerNames
+) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "STATE_NOT_FOUND: validated restart requires state at $Path."
+    }
+    try {
+        $raw = [System.IO.File]::ReadAllText($Path)
+        $state = $raw | ConvertFrom-Json
+    }
+    catch {
+        throw "STATE_MALFORMED: state at $Path is not readable valid JSON."
+    }
+    return Assert-WalkthroughStateContract $state $ExpectedRepositoryRoot $Path $ExpectedDatabaseName $ExpectedDatabaseHost $ExpectedDatabasePort $ExpectedPostgresContainerName $ExpectedEvidenceRoot $ExpectedSyntheticEvidencePath $ExpectedNetworkName $ExpectedContainerNames
+}
+
+function Assert-FreshStateAbsent([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        throw "EXISTING_STATE_CONFLICT: fresh startup refused because walkthrough state exists at $Path. Use validated restart or separately governed cleanup; the file was not read or changed."
+    }
+}
+
+function Write-WalkthroughStateAtomically($State, [string]$Path, [scriptblock]$BeforeAtomicCommit) {
+    Assert-FreshStateAbsent $Path
+    $parent = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        throw "ATOMIC_STATE_CREATE_FAILED: the validated state directory does not exist."
+    }
+    $runId = [string](Get-RequiredStateProperty $State 'RunId' 'walkthrough state')
+    $temporaryPath = Join-Path $parent (".state.{0}.tmp" -f $runId)
+    $stream = $null
+    $writer = $null
+    $temporaryCreated = $false
+    try {
+        $json = $State | ConvertTo-Json -Depth 10
+        $stream = [System.IO.File]::Open($temporaryPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $temporaryCreated = $true
+        $writer = New-Object System.IO.StreamWriter($stream, (New-Object System.Text.UTF8Encoding($false)))
+        $writer.Write($json)
+        $writer.Flush()
+        $stream.Flush()
+        $writer.Dispose()
+        $writer = $null
+        $stream = $null
+        if ($null -ne $BeforeAtomicCommit) { & $BeforeAtomicCommit $Path }
+        [System.IO.File]::Move($temporaryPath, $Path)
+        $temporaryCreated = $false
+    }
+    catch {
+        if ($null -ne $writer) { $writer.Dispose() }
+        elseif ($null -ne $stream) { $stream.Dispose() }
+        if ($temporaryCreated -and (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
+        throw "ATOMIC_STATE_CREATE_FAILED: state was not committed at $Path because create-if-absent ownership could not be established. Existing state was not overwritten."
+    }
+}
+
+function Get-StateFileHash([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $hash = $null
+    try {
+        $hash = Get-Sha256HashBytes $bytes
+        return ConvertTo-LowercaseHex $hash
+    }
+    finally {
+        if ($null -ne $hash) { [System.Array]::Clear($hash, 0, $hash.Length) }
+        if ($null -ne $bytes) { [System.Array]::Clear($bytes, 0, $bytes.Length) }
+    }
+}
+
+function Update-WalkthroughStateAtomically($State, [string]$Path, [string]$ExpectedHash) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-StateFileHash $Path) -cne $ExpectedHash) {
+        throw "ATOMIC_STATE_UPDATE_FAILED: validated state changed before restart metadata could be committed."
+    }
+    $parent = Split-Path -Parent $Path
+    $runId = [string](Get-RequiredStateProperty $State 'RunId' 'walkthrough state')
+    $temporaryPath = Join-Path $parent (".state.{0}.update.tmp" -f $runId)
+    $backupPath = Join-Path $parent (".state.{0}.backup.tmp" -f $runId)
+    $stream = $null
+    $writer = $null
+    $temporaryCreated = $false
+    $backupCreated = $false
+    try {
+        if ((Test-Path -LiteralPath $temporaryPath) -or (Test-Path -LiteralPath $backupPath)) {
+            throw "walkthrough-owned atomic update paths are not available"
+        }
+        $json = $State | ConvertTo-Json -Depth 10
+        $stream = [System.IO.File]::Open($temporaryPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $temporaryCreated = $true
+        $writer = New-Object System.IO.StreamWriter($stream, (New-Object System.Text.UTF8Encoding($false)))
+        $writer.Write($json)
+        $writer.Flush()
+        $stream.Flush()
+        $writer.Dispose()
+        $writer = $null
+        $stream = $null
+        if ((Get-StateFileHash $Path) -cne $ExpectedHash) {
+            throw "validated state changed during restart"
+        }
+        [System.IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)
+        $temporaryCreated = $false
+        $backupCreated = Test-Path -LiteralPath $backupPath -PathType Leaf
+        if ($backupCreated) {
+            Remove-Item -LiteralPath $backupPath -Force
+            $backupCreated = $false
+        }
+    }
+    catch {
+        if ($null -ne $writer) { $writer.Dispose() }
+        elseif ($null -ne $stream) { $stream.Dispose() }
+        if ($temporaryCreated -and (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) { Remove-Item -LiteralPath $temporaryPath -Force }
+        if ($backupCreated -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) { Remove-Item -LiteralPath $backupPath -Force }
+        throw "ATOMIC_STATE_UPDATE_FAILED: restart metadata was not committed safely; preserve resources and use governed diagnosis."
+    }
+}
+
+function Assert-RecordedProcessRestartable($Record) {
+    $runtime = Get-Process -Id ([int]$Record.Id) -ErrorAction SilentlyContinue
+    if ($null -eq $runtime) { return }
+    $details = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$Record.Id)" -ErrorAction SilentlyContinue
+    if ($null -eq $details -or [string]::IsNullOrWhiteSpace([string]$details.ExecutablePath) -or
+        [string]::IsNullOrWhiteSpace([string]$details.CommandLine)) {
+        throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) cannot be reconciled safely."
+    }
+    $recordedStart = [DateTimeOffset]::Parse([string]$Record.StartTimeUtc).UtcDateTime
+    if ([math]::Abs(($runtime.StartTime.ToUniversalTime() - $recordedStart).TotalSeconds) -gt 2 -or
+        -not (Test-CanonicalPathEqual ([string]$details.ExecutablePath) ([string]$Record.ExecutablePath))) {
+        throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) was reused or changed identity."
+    }
+    foreach ($marker in @($Record.CommandLineMarkers)) {
+        if ($details.CommandLine -notlike "*$marker*") {
+            throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) no longer has its ownership markers."
+        }
+    }
+    throw "STATE_NOT_RESTARTABLE: recorded process '$($Record.Name)' is still running; validated shutdown is required before restart."
+}
+
+function Assert-RestartResourceOwnership($State) {
+    $postgresId = docker inspect --format '{{.Id}}' $State.PostgresContainerName 2>$null
+    if ($LASTEXITCODE -ne 0 -or $postgresId -cne [string]$State.PostgresContainerId) {
+        throw "STATE_RESOURCE_MISMATCH: PostgreSQL container identity cannot be reconciled."
+    }
+    foreach ($record in @($State.Containers)) {
+        $currentId = docker inspect --format '{{.Id}}' $record.Name 2>$null
+        $currentLabel = docker inspect --format '{{index .Config.Labels "exitpass.walkthrough"}}' $record.Name 2>$null
+        $running = docker inspect --format '{{.State.Running}}' $record.Name 2>$null
+        if ($LASTEXITCODE -ne 0 -or $currentId -cne [string]$record.Id -or
+            $currentLabel -cne $ownershipLabelValue -or $running -cne 'true') {
+            throw "STATE_RESOURCE_MISMATCH: container '$($record.Name)' cannot be reconciled as running walkthrough-owned state."
+        }
+    }
+    $networkId = docker network inspect --format '{{.Id}}' $State.Network.Name 2>$null
+    $networkLabel = docker network inspect --format '{{index .Labels "exitpass.walkthrough"}}' $State.Network.Name 2>$null
+    if ($LASTEXITCODE -ne 0 -or $networkId -cne [string]$State.Network.Id -or $networkLabel -cne $ownershipLabelValue) {
+        throw "STATE_RESOURCE_MISMATCH: Docker network identity cannot be reconciled."
+    }
+    foreach ($record in @($State.Processes) + @($State.Launchers)) {
+        Assert-RecordedProcessRestartable $record
     }
 }
 
@@ -312,6 +656,18 @@ function New-SyntheticEvidenceImage([string]$Path) {
 }
 
 Assert-SafeDatabaseName $DatabaseName
+$databaseHost = '127.0.0.1'
+$previousState = $null
+$previousStateHash = $null
+$freshStateConflict = Test-Path -LiteralPath $statePath
+if ($RestartServicesOnly) {
+    $previousState = Read-ValidatedWalkthroughState $statePath $RepositoryRoot $DatabaseName $databaseHost $PostgresPort $PostgresContainerName $evidenceRoot $syntheticEvidencePath $networkName $allowedWalkthroughContainerNames
+    $previousStateHash = Get-StateFileHash $statePath
+}
+elseif ($freshStateConflict -and -not $DryRun) {
+    Assert-FreshStateAbsent $statePath
+}
+
 Assert-Tool docker
 Assert-Tool dotnet
 Assert-Tool npm
@@ -324,8 +680,24 @@ Assert-CryptographicRuntimeCompatibility
 if ($DryRun) {
     Write-Host "DRY RUN: cryptographic runtime compatibility validation passed."
     Write-Host "DRY RUN: current paths, database guard, tools, ports, configuration names, and composition were validated."
+    if ($RestartServicesOnly) {
+        Write-Host "DRY_RUN_STATE=VALID_RESTARTABLE_STATE"
+        Write-Host "DRY RUN: restart state schema, identity, database, resources, and owned paths validated without restart mutation."
+    }
+    elseif ($freshStateConflict) {
+        Write-Host "DRY_RUN_STATE=BLOCKED_EXISTING_STATE"
+        Write-Host "DRY RUN: fresh startup is blocked because state exists at $statePath. Use validated restart or separately governed cleanup."
+    }
+    else {
+        Write-Host "DRY_RUN_STATE=ABSENT_READY_FOR_FRESH_START"
+        Write-Host "DRY RUN: the state path is absent and fresh startup may proceed to the mutation boundary after operator approval."
+    }
     Write-Host "DRY RUN: no container, database, service, credential, evidence, or state mutation was performed."
     return
+}
+
+if ($RestartServicesOnly) {
+    Assert-RestartResourceOwnership $previousState
 }
 
 $dbPassword = Get-RequiredEnvironmentValue 'EXITPASS_WEBPAY_STATUTORY_DB_PASSWORD'
@@ -348,13 +720,7 @@ $activationReference = $null
 $activationSecret = $null
 
 if ($RestartServicesOnly) {
-    if (-not (Test-Path -LiteralPath $statePath)) { throw "Restart requires existing state at $statePath." }
-    $previousState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
-    if ($previousState.DatabaseName -ne $DatabaseName) { throw "Restart database does not match recorded walkthrough state." }
     $fixtureContext = $previousState.Fixture
-    foreach ($container in @($minioContainerName, $clamAvContainerName)) {
-        if ((docker inspect --format '{{.State.Running}}' $container) -ne 'true') { throw "Restart requires running walkthrough container '$container'." }
-    }
 }
 else {
     foreach ($port in @($MinioApiPort, $MinioConsolePort, $ClamAvPort)) { Assert-PortAvailable $port "walkthrough dependency" }
@@ -586,25 +952,58 @@ $launcherRecords = @($launcherProcesses | ForEach-Object {
 })
 
 $containerRecords = foreach ($name in @($minioContainerName, $clamAvContainerName)) {
-    [pscustomobject]@{ Name = $name; Id = (docker inspect --format '{{.Id}}' $name); OwnershipLabel = 'webpay-statutory-discount' }
+    [pscustomobject]@{ Name = $name; Id = (docker inspect --format '{{.Id}}' $name); OwnershipLabel = $ownershipLabelValue }
 }
 
+$now = (Get-Date).ToUniversalTime().ToString('o')
+$runId = if ($RestartServicesOnly) { [string]$previousState.RunId } else { [guid]::NewGuid().ToString('D') }
+$createdAt = if ($RestartServicesOnly) { [string]$previousState.CreatedAtUtc } else { $now }
+$restartCount = if ($RestartServicesOnly) { [int]$previousState.RestartCount + 1 } else { 0 }
 $state = [pscustomobject]@{
+    StateSchemaVersion = $stateSchemaVersion
+    WalkthroughIdentity = $walkthroughIdentity
+    RepositoryRoot = $RepositoryRoot
+    StatePath = $statePath
+    RunId = $runId
+    StartupMode = 'FRESH'
+    LifecycleStatus = 'READY'
+    CreatedAtUtc = $createdAt
+    LastValidUpdateAtUtc = $now
+    RestartCount = $restartCount
     DatabaseName = $DatabaseName
+    DatabaseHost = $databaseHost
+    DatabasePort = $PostgresPort
     PostgresContainerName = $PostgresContainerName
-    StartedAt = (Get-Date).ToUniversalTime().ToString('o')
+    PostgresContainerId = (docker inspect --format '{{.Id}}' $PostgresContainerName)
     ProductionHosted = $true
     FixtureHeaderProbeStatus = $fixtureHeaderStatus
     Processes = $listenerRecords
     Launchers = $launcherRecords
     Containers = $containerRecords
-    Network = $networkName
+    Network = [pscustomobject]@{
+        Name = $networkName
+        Id = (docker network inspect --format '{{.Id}}' $networkName)
+        OwnershipLabel = $ownershipLabelValue
+    }
     EvidenceRoot = $evidenceRoot
     SyntheticEvidencePath = $syntheticEvidencePath
     Fixture = $fixtureContext
     Urls = [pscustomobject]@{ CentralPms = $centralPmsUrl; PaymentOrchestrator = $paymentOrchestratorUrl; WebPay = $webPayUrl; OperatorConsole = $operatorConsoleUrl }
 }
-$state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $statePath -Encoding UTF8
+Assert-WalkthroughStateContract $state $RepositoryRoot $statePath $DatabaseName $databaseHost $PostgresPort $PostgresContainerName $evidenceRoot $syntheticEvidencePath $networkName $allowedWalkthroughContainerNames | Out-Null
+if ($RestartServicesOnly) {
+    Update-WalkthroughStateAtomically $state $statePath $previousStateHash
+}
+else {
+    try {
+        Write-WalkthroughStateAtomically $state $statePath
+    }
+    catch {
+        $ownedProcesses = @($listenerRecords + $launcherRecords | ForEach-Object { "$($_.Name):PID=$($_.Id)" }) -join ', '
+        $ownedContainers = @($containerRecords | ForEach-Object { "$($_.Name):$($_.Id)" }) -join ', '
+        throw "$($_.Exception.Message) RunId=$runId. Governed shutdown is required for startup-owned processes [$ownedProcesses], containers [$ownedContainers], and network '$networkName'; no name-only cleanup is authorized."
+    }
+}
 
 Write-Host "WebPay statutory-discount walkthrough is ready for manual local execution." -ForegroundColor Green
 Write-Host "WebPay:          $webPayUrl/?ticketReference=$($fixtureContext.ticketReference)"

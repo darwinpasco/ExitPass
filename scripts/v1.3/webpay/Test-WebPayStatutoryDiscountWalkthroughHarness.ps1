@@ -69,6 +69,17 @@ function Assert-PowerShellParses {
     }
 }
 
+function Assert-ThrowsClassification {
+    param([scriptblock]$Action, [string]$Classification, [string]$Context)
+    $caught = $null
+    try { & $Action }
+    catch { $caught = $_ }
+    if ($null -eq $caught -or $caught.Exception.Message -notlike "*$Classification*") {
+        $actual = if ($null -eq $caught) { 'no exception' } else { $caught.Exception.Message }
+        throw "$Context did not fail with $Classification. Actual: $actual"
+    }
+}
+
 $startPath = Join-Path $PSScriptRoot "Start-WebPayStatutoryDiscountWalkthrough.ps1"
 $powerShellPaths = @(
     $startPath,
@@ -143,6 +154,192 @@ finally {
     }
 }
 
+$stateSchemaVersion = 1
+$walkthroughIdentity = "ExitPass.WebPay.StatutoryDiscount.LocalWalkthrough"
+$ownershipLabelValue = "webpay-statutory-discount"
+$requiredStateHelpers = @(
+    "Assert-SafeDatabaseName",
+    "Get-CanonicalPath",
+    "Test-CanonicalPathEqual",
+    "Assert-OwnedPath",
+    "Get-RequiredStateProperty",
+    "Assert-StateTimestamp",
+    "Assert-ProcessRecordStructure",
+    "Assert-WalkthroughStateContract",
+    "Read-ValidatedWalkthroughState",
+    "Assert-FreshStateAbsent",
+    "Write-WalkthroughStateAtomically",
+    "Get-StateFileHash",
+    "Update-WalkthroughStateAtomically"
+)
+foreach ($helperName in $requiredStateHelpers) {
+    $definition = @($functionDefinitions | Where-Object { $_.Name -ceq $helperName })
+    if ($definition.Count -ne 1) { throw "Startup script must define exactly one $helperName state-ownership helper." }
+    Invoke-Expression $definition[0].Extent.Text
+}
+
+function New-SyntheticStateFixture {
+    param(
+        [string]$SyntheticRepositoryRoot,
+        [string]$SyntheticStatePath,
+        [string]$SyntheticEvidenceRoot,
+        [string]$SyntheticEvidencePath
+    )
+    $executablePath = (Get-Command powershell.exe -ErrorAction Stop).Source
+    $processNames = @('central-pms', 'payment-orchestrator', 'webpay-ui', 'operator-console-ui')
+    $launcherNames = @('central-pms-launcher', 'payment-orchestrator-launcher', 'webpay-ui-launcher', 'operator-console-ui-launcher')
+    $nextId = 41000
+    $processes = @($processNames | ForEach-Object {
+        $nextId++
+        [pscustomobject]@{ Name = $_; Id = $nextId; Port = 0; ExecutablePath = $executablePath; CommandLineMarkers = @("synthetic-$_"); StartTimeUtc = '2026-08-11T00:00:00.0000000Z' }
+    })
+    $launchers = @($launcherNames | ForEach-Object {
+        $nextId++
+        [pscustomobject]@{ Name = $_; Id = $nextId; Port = 0; ExecutablePath = $executablePath; CommandLineMarkers = @("synthetic-$_"); StartTimeUtc = '2026-08-11T00:00:00.0000000Z' }
+    })
+    return [pscustomobject]@{
+        StateSchemaVersion = 1
+        WalkthroughIdentity = $walkthroughIdentity
+        RepositoryRoot = $SyntheticRepositoryRoot
+        StatePath = $SyntheticStatePath
+        RunId = '11111111-2222-4333-8444-555555555555'
+        StartupMode = 'FRESH'
+        LifecycleStatus = 'READY'
+        CreatedAtUtc = '2026-08-11T00:00:00.0000000Z'
+        LastValidUpdateAtUtc = '2026-08-11T00:01:00.0000000Z'
+        RestartCount = 0
+        DatabaseName = 'exitpass_webpay_local_walkthrough_statutory_harness'
+        DatabaseHost = '127.0.0.1'
+        DatabasePort = 5433
+        PostgresContainerName = 'exitpass-postgres'
+        PostgresContainerId = 'synthetic-postgres-container-id'
+        ProductionHosted = $true
+        FixtureHeaderProbeStatus = 403
+        Processes = $processes
+        Launchers = $launchers
+        Containers = @(
+            [pscustomobject]@{ Name = 'exitpass-webpay-statutory-minio'; Id = 'synthetic-minio-id'; OwnershipLabel = $ownershipLabelValue },
+            [pscustomobject]@{ Name = 'exitpass-webpay-statutory-clamav'; Id = 'synthetic-clamav-id'; OwnershipLabel = $ownershipLabelValue }
+        )
+        Network = [pscustomobject]@{ Name = 'exitpass-webpay-statutory-walkthrough'; Id = 'synthetic-network-id'; OwnershipLabel = $ownershipLabelValue }
+        EvidenceRoot = $SyntheticEvidenceRoot
+        SyntheticEvidencePath = $SyntheticEvidencePath
+        Fixture = [pscustomobject]@{ ticketReference = 'SYNTHETIC-HARNESS' }
+        Urls = [pscustomobject]@{ CentralPms = 'http://127.0.0.1:8080' }
+    }
+}
+
+function Copy-SyntheticState($State) {
+    return ($State | ConvertTo-Json -Depth 10 | ConvertFrom-Json)
+}
+
+function Assert-StateFileRejectedUnchanged {
+    param(
+        $BaseState,
+        [string]$CaseName,
+        [scriptblock]$Mutator,
+        [string]$Classification,
+        [string]$SyntheticStateRoot,
+        [string]$SyntheticRepositoryRoot,
+        [string]$ExpectedDatabaseName,
+        [string]$SyntheticEvidenceRoot,
+        [string]$SyntheticEvidencePath,
+        [string[]]$ExpectedContainers
+    )
+    $casePath = Join-Path $SyntheticStateRoot "$CaseName.json"
+    $caseState = Copy-SyntheticState $BaseState
+    $caseState.StatePath = $casePath
+    & $Mutator $caseState
+    [System.IO.File]::WriteAllText($casePath, ($caseState | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+    $fixedTimestamp = [DateTime]::SpecifyKind([DateTime]'2026-08-11T02:03:04', [DateTimeKind]::Utc)
+    [System.IO.File]::SetLastWriteTimeUtc($casePath, $fixedTimestamp)
+    $before = Get-Item -LiteralPath $casePath
+    $beforeHash = (Get-FileHash -LiteralPath $casePath -Algorithm SHA256).Hash
+    Assert-ThrowsClassification {
+        Read-ValidatedWalkthroughState $casePath $SyntheticRepositoryRoot $ExpectedDatabaseName '127.0.0.1' 5433 'exitpass-postgres' $SyntheticEvidenceRoot $SyntheticEvidencePath 'exitpass-webpay-statutory-walkthrough' $ExpectedContainers
+    } $Classification "$CaseName state guard"
+    $after = Get-Item -LiteralPath $casePath
+    if ((Get-FileHash -LiteralPath $casePath -Algorithm SHA256).Hash -cne $beforeHash -or
+        $after.Length -ne $before.Length -or $after.LastWriteTimeUtc -ne $before.LastWriteTimeUtc) {
+        throw "$CaseName state guard changed state bytes, length, or timestamp."
+    }
+}
+
+$stateHarnessRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ExitPass\webpay-statutory-state-harness-{0}" -f [guid]::NewGuid().ToString('N'))
+$syntheticRepositoryRoot = Join-Path $stateHarnessRoot 'repository'
+$syntheticStateRoot = Join-Path $syntheticRepositoryRoot '.local\webpay-statutory-discount-walkthrough'
+$syntheticStatePath = Join-Path $syntheticStateRoot 'state.json'
+$syntheticEvidenceRoot = Join-Path $stateHarnessRoot 'evidence'
+$syntheticEvidencePath = Join-Path $syntheticEvidenceRoot 'synthetic-senior-citizen-id.png'
+$expectedContainers = @('exitpass-webpay-statutory-minio', 'exitpass-webpay-statutory-clamav')
+[void][System.IO.Directory]::CreateDirectory($syntheticStateRoot)
+try {
+    $validState = New-SyntheticStateFixture $syntheticRepositoryRoot $syntheticStatePath $syntheticEvidenceRoot $syntheticEvidencePath
+    Assert-FreshStateAbsent $syntheticStatePath
+    Assert-WalkthroughStateContract $validState $syntheticRepositoryRoot $syntheticStatePath $validState.DatabaseName '127.0.0.1' 5433 'exitpass-postgres' $syntheticEvidenceRoot $syntheticEvidencePath 'exitpass-webpay-statutory-walkthrough' $expectedContainers | Out-Null
+
+    Write-WalkthroughStateAtomically $validState $syntheticStatePath
+    $firstBytes = [System.IO.File]::ReadAllBytes($syntheticStatePath)
+    if ($firstBytes.Length -ge 3 -and $firstBytes[0] -eq 0xEF -and $firstBytes[1] -eq 0xBB -and $firstBytes[2] -eq 0xBF) {
+        throw 'Atomic state creation emitted an unexpected UTF-8 BOM.'
+    }
+    $restartState = Copy-SyntheticState $validState
+    $restartState.RestartCount = 1
+    $restartState.LastValidUpdateAtUtc = '2026-08-11T00:02:00.0000000Z'
+    Update-WalkthroughStateAtomically $restartState $syntheticStatePath (Get-StateFileHash $syntheticStatePath)
+    $restartReadback = Read-ValidatedWalkthroughState $syntheticStatePath $syntheticRepositoryRoot $validState.DatabaseName '127.0.0.1' 5433 'exitpass-postgres' $syntheticEvidenceRoot $syntheticEvidencePath 'exitpass-webpay-statutory-walkthrough' $expectedContainers
+    if ([int]$restartReadback.RestartCount -ne 1) { throw 'Atomic restart-state update did not persist validated restart metadata.' }
+    $fixedTimestamp = [DateTime]::SpecifyKind([DateTime]'2026-08-11T01:02:03', [DateTimeKind]::Utc)
+    [System.IO.File]::SetLastWriteTimeUtc($syntheticStatePath, $fixedTimestamp)
+    $existingHash = (Get-FileHash -LiteralPath $syntheticStatePath -Algorithm SHA256).Hash
+    $existingTimestamp = (Get-Item -LiteralPath $syntheticStatePath).LastWriteTimeUtc
+    Assert-ThrowsClassification { Assert-FreshStateAbsent $syntheticStatePath } 'EXISTING_STATE_CONFLICT' 'existing valid state fresh-start guard'
+    if ((Get-FileHash -LiteralPath $syntheticStatePath -Algorithm SHA256).Hash -cne $existingHash -or
+        (Get-Item -LiteralPath $syntheticStatePath).LastWriteTimeUtc -ne $existingTimestamp) {
+        throw 'Existing-state guard changed state bytes or timestamp.'
+    }
+    Read-ValidatedWalkthroughState $syntheticStatePath $syntheticRepositoryRoot $validState.DatabaseName '127.0.0.1' 5433 'exitpass-postgres' $syntheticEvidenceRoot $syntheticEvidencePath 'exitpass-webpay-statutory-walkthrough' $expectedContainers | Out-Null
+
+    $malformedPath = Join-Path $syntheticStateRoot 'malformed.json'
+    [System.IO.File]::WriteAllText($malformedPath, '{not-json', (New-Object System.Text.UTF8Encoding($false)))
+    $malformedHash = (Get-FileHash -LiteralPath $malformedPath -Algorithm SHA256).Hash
+    Assert-ThrowsClassification { Read-ValidatedWalkthroughState $malformedPath $syntheticRepositoryRoot $validState.DatabaseName '127.0.0.1' 5433 'exitpass-postgres' $syntheticEvidenceRoot $syntheticEvidencePath 'exitpass-webpay-statutory-walkthrough' $expectedContainers } 'STATE_MALFORMED' 'malformed state restart guard'
+    if ((Get-FileHash -LiteralPath $malformedPath -Algorithm SHA256).Hash -cne $malformedHash) { throw 'Malformed-state guard changed the file.' }
+
+    $fileCaseArguments = @($syntheticStateRoot, $syntheticRepositoryRoot, $validState.DatabaseName, $syntheticEvidenceRoot, $syntheticEvidencePath, $expectedContainers)
+    Assert-StateFileRejectedUnchanged $validState 'unsupported' { param($s) $s.StateSchemaVersion = 99 } 'STATE_UNSUPPORTED_SCHEMA' @fileCaseArguments
+    Assert-StateFileRejectedUnchanged $validState 'identity-mismatch' { param($s) $s.WalkthroughIdentity = 'another-walkthrough' } 'STATE_OWNERSHIP_MISMATCH' @fileCaseArguments
+    Assert-StateFileRejectedUnchanged $validState 'repository-mismatch' { param($s) $s.RepositoryRoot = (Join-Path $stateHarnessRoot 'other-repository') } 'STATE_OWNERSHIP_MISMATCH' @fileCaseArguments
+    Assert-StateFileRejectedUnchanged $validState 'database-mismatch' { param($s) $s.DatabaseName = 'exitpass_webpay_local_walkthrough_statutory_other' } 'STATE_DATABASE_MISMATCH' @fileCaseArguments
+    Assert-StateFileRejectedUnchanged $validState 'unsafe-path' { param($s) $s.SyntheticEvidencePath = (Join-Path $stateHarnessRoot 'escaped\evidence.png') } 'STATE_PATH_ESCAPE' @fileCaseArguments
+    Assert-StateFileRejectedUnchanged $validState 'stale' { param($s) $s.LifecycleStatus = 'UNKNOWN' } 'STATE_NOT_RESTARTABLE' @fileCaseArguments
+
+    $preexistingTemporaryPath = Join-Path $syntheticStateRoot ('.state.{0}.tmp' -f $validState.RunId)
+    [System.IO.File]::WriteAllText($preexistingTemporaryPath, 'preexisting-temporary-file', (New-Object System.Text.UTF8Encoding($false)))
+    $preexistingTargetPath = Join-Path $syntheticStateRoot 'preexisting-temp-target.json'
+    $preexistingTargetState = Copy-SyntheticState $validState
+    $preexistingTargetState.StatePath = $preexistingTargetPath
+    Assert-ThrowsClassification { Write-WalkthroughStateAtomically $preexistingTargetState $preexistingTargetPath } 'ATOMIC_STATE_CREATE_FAILED' 'pre-existing atomic temporary path'
+    if ([System.IO.File]::ReadAllText($preexistingTemporaryPath) -cne 'preexisting-temporary-file') {
+        throw 'Atomic state failure removed or changed a temporary file it did not create.'
+    }
+    Remove-Item -LiteralPath $preexistingTemporaryPath -Force
+
+    $racePath = Join-Path $syntheticStateRoot 'race-state.json'
+    $raceState = Copy-SyntheticState $validState
+    $raceState.StatePath = $racePath
+    $competingBytes = [System.Text.Encoding]::UTF8.GetBytes('competing-state-must-survive')
+    Assert-ThrowsClassification {
+        Write-WalkthroughStateAtomically $raceState $racePath { param($target) [System.IO.File]::WriteAllBytes($target, $competingBytes) }
+    } 'ATOMIC_STATE_CREATE_FAILED' 'atomic state create race'
+    if ([System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($racePath)) -cne 'competing-state-must-survive') {
+        throw 'Atomic state creation overwrote the competing state file.'
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $stateHarnessRoot) { Remove-Item -LiteralPath $stateHarnessRoot -Recurse -Force }
+}
+
 $start = $assets["scripts\v1.3\webpay\Start-WebPayStatutoryDiscountWalkthrough.ps1"]
 $stop = $assets["scripts\v1.3\webpay\Stop-WebPayStatutoryDiscountWalkthrough.ps1"]
 $seed = $assets["scripts\v1.3\webpay\Seed-WebPayStatutoryDiscountWalkthrough.sql"]
@@ -179,6 +376,11 @@ if (-not $compatibilityInvocation.Success -or -not $dryRunBranch.Success -or
     throw "Cryptographic runtime compatibility must be validated before the DryRun return path."
 }
 
+$actualStatePath = Join-Path $RepositoryRoot '.local\webpay-statutory-discount-walkthrough\state.json'
+$actualStateBefore = if (Test-Path -LiteralPath $actualStatePath -PathType Leaf) {
+    $item = Get-Item -LiteralPath $actualStatePath
+    [pscustomobject]@{ Hash = (Get-FileHash -LiteralPath $actualStatePath -Algorithm SHA256).Hash; Length = $item.Length; Timestamp = $item.LastWriteTimeUtc }
+} else { $null }
 $dryRunOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startPath `
     -RepositoryRoot $RepositoryRoot `
     -CanonicalDatabaseRepository $CanonicalDatabaseRepository `
@@ -190,6 +392,18 @@ $dryRunText = $dryRunOutput -join "`n"
 Assert-Contains -Text $dryRunText `
     -Literal "DRY RUN: cryptographic runtime compatibility validation passed." `
     -Context "startup DryRun runtime validation"
+if ($null -eq $actualStateBefore) {
+    Assert-Contains -Text $dryRunText -Literal 'DRY_RUN_STATE=ABSENT_READY_FOR_FRESH_START' -Context 'startup DryRun absent-state classification'
+}
+else {
+    Assert-Contains -Text $dryRunText -Literal 'DRY_RUN_STATE=BLOCKED_EXISTING_STATE' -Context 'startup DryRun existing-state classification'
+    $actualStateAfter = Get-Item -LiteralPath $actualStatePath
+    if ((Get-FileHash -LiteralPath $actualStatePath -Algorithm SHA256).Hash -cne $actualStateBefore.Hash -or
+        $actualStateAfter.Length -ne $actualStateBefore.Length -or $actualStateAfter.LastWriteTimeUtc -ne $actualStateBefore.Timestamp) {
+        throw 'Startup DryRun changed the pre-existing walkthrough state file.'
+    }
+}
+Assert-Contains -Text $dryRunText -Literal 'no container, database, service, credential, evidence, or state mutation was performed' -Context 'startup DryRun non-mutation result'
 
 # Current tracked composition and source references.
 $trackedReferences = @(
@@ -396,6 +610,16 @@ foreach ($staleColumn in @("provider_status_code", "recovery_action")) {
 foreach ($literal in @(
     "exitpass_webpay_local_walkthrough_statutory",
     "exitpass.walkthrough=webpay-statutory-discount",
+    "StateSchemaVersion",
+    "WalkthroughIdentity",
+    "EXISTING_STATE_CONFLICT",
+    "STATE_UNSUPPORTED_SCHEMA",
+    "STATE_OWNERSHIP_MISMATCH",
+    "STATE_PATH_ESCAPE",
+    "STATE_NOT_RESTARTABLE",
+    "Write-WalkthroughStateAtomically",
+    "FileMode]::CreateNew",
+    "File]::Move",
     "Get-NetTCPConnection",
     "ExecutablePath",
     "CommandLineMarkers",
@@ -405,6 +629,11 @@ foreach ($literal in @(
     Assert-Contains -Text $start -Literal $literal -Context "startup ownership/recovery"
 }
 foreach ($literal in @(
+    "StateSchemaVersion",
+    "WalkthroughIdentity",
+    "Read-ValidatedWalkthroughState",
+    "STATE_OWNERSHIP_MISMATCH",
+    "STATE_PATH_ESCAPE",
     "ExecutablePath",
     "CommandLineMarkers",
     "StartTimeUtc",
@@ -419,6 +648,33 @@ Assert-NotContains -Text $operationalText -Literal "infra\docker\docker-compose.
 Assert-NotContains -Text $executableText -Literal "git clean" -Context "walkthrough executable assets"
 Assert-NotContains -Text $executableText -Literal "DROP DATABASE IF EXISTS exitpass_v12_dev" -Context "walkthrough executable assets"
 Assert-NotContains -Text $start -Literal 'Invoke-PostgresFile $DatabaseName $rbacSource' -Context "startup fixture-guard handling"
+Assert-NotContains -Text $start -Literal 'Set-Content -LiteralPath $statePath' -Context "final state persistence"
+Assert-NotContains -Text $start -Literal 'Out-File -FilePath $statePath' -Context "final state persistence"
+
+$lastFunctionEnd = ($functionDefinitions | ForEach-Object { $_.Extent.EndOffset } | Measure-Object -Maximum).Maximum
+$startupMain = $start.Substring([int]$lastFunctionEnd)
+$guardIndex = $startupMain.IndexOf('$freshStateConflict = Test-Path -LiteralPath $statePath', [StringComparison]::Ordinal)
+if ($guardIndex -lt 0) { throw 'Fresh-start state inspection is missing from startup main flow.' }
+foreach ($mutationBoundary in @(
+    "Get-RequiredEnvironmentValue 'EXITPASS_WEBPAY_STATUTORY_DB_PASSWORD'",
+    'New-Item -ItemType Directory -Force -Path $stateRoot, $logsRoot',
+    'Ensure-SharedContainerRunning $PostgresContainerName',
+    'Invoke-PostgresSql postgres',
+    'docker network create',
+    'New-SyntheticEvidenceImage $syntheticEvidencePath',
+    'Start-WalkthroughProcess'
+)) {
+    $mutationIndex = $startupMain.IndexOf($mutationBoundary, [StringComparison]::Ordinal)
+    if ($mutationIndex -lt 0 -or $guardIndex -ge $mutationIndex) {
+        throw "Fresh-start state inspection must precede mutation boundary: $mutationBoundary"
+    }
+}
+
+foreach ($prohibitedStateProperty in @('Password', 'Secret', 'Token', 'ConnectionString', 'ProvisioningUri', 'UploadUrl')) {
+    if ($start -match ("(?m)^\s+{0}\s*=" -f [regex]::Escape($prohibitedStateProperty))) {
+        throw "State schema contains prohibited secret-shaped property: $prohibitedStateProperty"
+    }
+}
 
 # Secret-shaped values and unsafe credential transport. Environment-variable names
 # and documentation about prohibited secrets are allowed; literal values are not.
