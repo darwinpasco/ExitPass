@@ -82,6 +82,88 @@ function Get-RequiredEnvironmentValue([string]$Name) {
     return $value
 }
 
+function New-CryptographicRandomBytes([int]$Length) {
+    if ($Length -le 0) {
+        throw "Cryptographic random byte length must be greater than zero."
+    }
+
+    $bytes = New-Object byte[] $Length
+    $generator = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $generator.GetBytes($bytes)
+        return ,$bytes
+    }
+    finally {
+        $generator.Dispose()
+    }
+}
+
+function Get-Sha256HashBytes([byte[]]$Bytes) {
+    if ($null -eq $Bytes) {
+        throw "SHA-256 input is required."
+    }
+
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $algorithm.ComputeHash($Bytes)
+        return ,$hash
+    }
+    finally {
+        $algorithm.Dispose()
+    }
+}
+
+function ConvertTo-LowercaseHex([byte[]]$Bytes) {
+    if ($null -eq $Bytes) {
+        throw "Hexadecimal input is required."
+    }
+
+    return ([System.BitConverter]::ToString($Bytes) -replace '-', '').ToLowerInvariant()
+}
+
+function New-CryptographicRandomLowercaseHex([int]$Length) {
+    $bytes = New-CryptographicRandomBytes $Length
+    try {
+        return ConvertTo-LowercaseHex $bytes
+    }
+    finally {
+        [System.Array]::Clear($bytes, 0, $bytes.Length)
+    }
+}
+
+function Assert-CryptographicRuntimeCompatibility {
+    $randomBytes = $null
+    $hashBytes = $null
+    try {
+        $randomBytes = New-CryptographicRandomBytes 32
+        if ($randomBytes.Length -ne 32) {
+            throw "Cryptographic random generation returned an unexpected byte length."
+        }
+
+        $hexProbe = ConvertTo-LowercaseHex ([byte[]](0, 15, 16, 171, 255))
+        if ($hexProbe -cne '000f10abff') {
+            throw "Lowercase hexadecimal conversion did not match the required format."
+        }
+
+        $hashBytes = Get-Sha256HashBytes ([System.Text.Encoding]::ASCII.GetBytes('abc'))
+        $hashHex = ConvertTo-LowercaseHex $hashBytes
+        if ($hashHex -cne 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') {
+            throw "SHA-256 runtime validation did not match the expected test vector."
+        }
+    }
+    catch {
+        throw "Cryptographic runtime compatibility validation failed safely: $($_.Exception.Message)"
+    }
+    finally {
+        if ($null -ne $randomBytes) {
+            [System.Array]::Clear($randomBytes, 0, $randomBytes.Length)
+        }
+        if ($null -ne $hashBytes) {
+            [System.Array]::Clear($hashBytes, 0, $hashBytes.Length)
+        }
+    }
+}
+
 function Test-PortOpen([int]$Port) {
     return $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
@@ -237,7 +319,10 @@ foreach ($path in @($canonicalSql, $canonicalValidator, $paymentRoutingPatch, $p
     Assert-PathExists $path "Required current walkthrough dependency"
 }
 
+Assert-CryptographicRuntimeCompatibility
+
 if ($DryRun) {
+    Write-Host "DRY RUN: cryptographic runtime compatibility validation passed."
     Write-Host "DRY RUN: current paths, database guard, tools, ports, configuration names, and composition were validated."
     Write-Host "DRY RUN: no container, database, service, credential, evidence, or state mutation was performed."
     return
@@ -294,11 +379,24 @@ else {
     # The bounded statutory seed carries only its exact reviewer permissions.
 
     $activationReference = [guid]::NewGuid()
-    $activationBytes = [System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
-    $activationSecret = [Convert]::ToBase64String($activationBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-    $activationHash = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($activationSecret))).ToLowerInvariant()
-    $placeholderVerifier = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
-    $placeholderSalt = [Convert]::ToHexString([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(16)).ToLowerInvariant()
+    $activationBytes = New-CryptographicRandomBytes 32
+    try {
+        $activationSecret = [Convert]::ToBase64String($activationBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    }
+    finally {
+        [System.Array]::Clear($activationBytes, 0, $activationBytes.Length)
+        $activationBytes = $null
+    }
+    $activationHashBytes = Get-Sha256HashBytes ([Text.Encoding]::UTF8.GetBytes($activationSecret))
+    try {
+        $activationHash = ConvertTo-LowercaseHex $activationHashBytes
+    }
+    finally {
+        [System.Array]::Clear($activationHashBytes, 0, $activationHashBytes.Length)
+        $activationHashBytes = $null
+    }
+    $placeholderVerifier = New-CryptographicRandomLowercaseHex 32
+    $placeholderSalt = New-CryptographicRandomLowercaseHex 16
     Invoke-StatutorySeed $activationReference $activationHash $placeholderVerifier $placeholderSalt
 
     $contextSql = @"

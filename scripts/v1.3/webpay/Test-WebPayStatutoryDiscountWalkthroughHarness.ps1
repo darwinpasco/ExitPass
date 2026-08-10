@@ -44,6 +44,20 @@ function Assert-NotContains {
     }
 }
 
+function Assert-NoPowerShell51IncompatibleCryptographicApi {
+    param([string]$Text)
+    foreach ($unsupportedPattern in @(
+        '(?i)\[System\.Security\.Cryptography\.RandomNumberGenerator\]\s*::\s*GetBytes\s*\(',
+        '(?i)\[System\.Convert\]\s*::\s*ToHexString\s*\(',
+        '(?i)\[Convert\]\s*::\s*ToHexString\s*\(',
+        '(?i)\[System\.Security\.Cryptography\.SHA256\]\s*::\s*HashData\s*\('
+    )) {
+        if ($Text -match $unsupportedPattern) {
+            throw "PowerShell 5.1-incompatible static cryptographic API detected."
+        }
+    }
+}
+
 function Assert-PowerShellParses {
     param([string]$Path)
     $tokens = $null
@@ -55,13 +69,78 @@ function Assert-PowerShellParses {
     }
 }
 
+$startPath = Join-Path $PSScriptRoot "Start-WebPayStatutoryDiscountWalkthrough.ps1"
 $powerShellPaths = @(
-    (Join-Path $PSScriptRoot "Start-WebPayStatutoryDiscountWalkthrough.ps1"),
+    $startPath,
     (Join-Path $PSScriptRoot "Stop-WebPayStatutoryDiscountWalkthrough.ps1"),
     (Join-Path $PSScriptRoot "Test-WebPayStatutoryDiscountWalkthroughHarness.ps1")
 )
 foreach ($path in $powerShellPaths) {
     Assert-PowerShellParses -Path $path
+}
+
+$startTokens = $null
+$startErrors = $null
+$startAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $startPath,
+    [ref]$startTokens,
+    [ref]$startErrors)
+if ($startErrors.Count -gt 0) {
+    throw "Startup script cannot be inspected for runtime compatibility because it does not parse."
+}
+
+$requiredCompatibilityHelpers = @(
+    "New-CryptographicRandomBytes",
+    "Get-Sha256HashBytes",
+    "ConvertTo-LowercaseHex",
+    "New-CryptographicRandomLowercaseHex",
+    "Assert-CryptographicRuntimeCompatibility"
+)
+$functionDefinitions = @($startAst.FindAll({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst]
+}, $true))
+foreach ($helperName in $requiredCompatibilityHelpers) {
+    $definition = @($functionDefinitions | Where-Object { $_.Name -ceq $helperName })
+    if ($definition.Count -ne 1) {
+        throw "Startup script must define exactly one $helperName compatibility helper."
+    }
+    Invoke-Expression $definition[0].Extent.Text
+}
+
+$randomProbe = $null
+$hashProbe = $null
+try {
+    $randomProbe = New-CryptographicRandomBytes 32
+    if ($randomProbe.Length -ne 32) {
+        throw "Compatibility helper returned an unexpected random-byte length."
+    }
+
+    $lowercaseHexProbe = ConvertTo-LowercaseHex ([byte[]](0, 15, 16, 171, 255))
+    if ($lowercaseHexProbe -cne "000f10abff") {
+        throw "Compatibility helper did not produce deterministic lowercase hexadecimal output."
+    }
+
+    $hashProbe = Get-Sha256HashBytes ([System.Text.Encoding]::ASCII.GetBytes("abc"))
+    $hashHexProbe = ConvertTo-LowercaseHex $hashProbe
+    if ($hashHexProbe -cne "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+        throw "Compatibility helper failed the SHA-256 abc test vector."
+    }
+
+    $randomHexProbe = New-CryptographicRandomLowercaseHex 16
+    if ($randomHexProbe -cnotmatch '^[0-9a-f]{32}$') {
+        throw "Random hexadecimal helper did not preserve the required lowercase format and length."
+    }
+
+    Assert-CryptographicRuntimeCompatibility
+}
+finally {
+    if ($null -ne $randomProbe) {
+        [System.Array]::Clear($randomProbe, 0, $randomProbe.Length)
+    }
+    if ($null -ne $hashProbe) {
+        [System.Array]::Clear($hashProbe, 0, $hashProbe.Length)
+    }
 }
 
 $start = $assets["scripts\v1.3\webpay\Start-WebPayStatutoryDiscountWalkthrough.ps1"]
@@ -71,6 +150,46 @@ $verify = $assets["scripts\v1.3\webpay\Verify-WebPayStatutoryDiscountWalkthrough
 $runbook = $assets["docs\v1.3\webpay\runbooks\ExitPass_WebPay_Statutory_Discount_Local_Walkthrough_v1.0.md"]
 $operationalText = @($start, $stop, $seed, $verify, $runbook) -join "`n"
 $executableText = @($start, $stop, $seed, $verify) -join "`n"
+
+Assert-NoPowerShell51IncompatibleCryptographicApi -Text $start
+foreach ($unsupportedExample in @(
+    '[System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32)',
+    '[System.Convert]::ToHexString($bytes)',
+    '[Convert]::ToHexString($bytes)',
+    '[System.Security.Cryptography.SHA256]::HashData($bytes)'
+)) {
+    $rejected = $false
+    try {
+        Assert-NoPowerShell51IncompatibleCryptographicApi -Text $unsupportedExample
+    }
+    catch {
+        $rejected = $true
+    }
+    if (-not $rejected) {
+        throw "Harness failed to reject a synthetic PowerShell 5.1-incompatible cryptographic API."
+    }
+}
+
+$compatibilityInvocation = [regex]::Match(
+    $start,
+    '(?m)^\s*Assert-CryptographicRuntimeCompatibility\s*$')
+$dryRunBranch = [regex]::Match($start, '(?m)^\s*if\s*\(\$DryRun\)\s*\{')
+if (-not $compatibilityInvocation.Success -or -not $dryRunBranch.Success -or
+    $compatibilityInvocation.Index -ge $dryRunBranch.Index) {
+    throw "Cryptographic runtime compatibility must be validated before the DryRun return path."
+}
+
+$dryRunOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $startPath `
+    -RepositoryRoot $RepositoryRoot `
+    -CanonicalDatabaseRepository $CanonicalDatabaseRepository `
+    -DryRun 2>&1)
+if ($LASTEXITCODE -ne 0) {
+    throw "Startup DryRun failed during executable compatibility validation: $($dryRunOutput -join '; ')"
+}
+$dryRunText = $dryRunOutput -join "`n"
+Assert-Contains -Text $dryRunText `
+    -Literal "DRY RUN: cryptographic runtime compatibility validation passed." `
+    -Context "startup DryRun runtime validation"
 
 # Current tracked composition and source references.
 $trackedReferences = @(
