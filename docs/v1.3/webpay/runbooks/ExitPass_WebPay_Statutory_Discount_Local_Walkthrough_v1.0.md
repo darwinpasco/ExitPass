@@ -120,6 +120,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Test-W
 
 Expected: `WebPay statutory-discount walkthrough static validation passed.` No service, database, upload, or external request is made.
 
+Run the startup preflight without supplying secrets or mutating local state:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Start-WebPayStatutoryDiscountWalkthrough.ps1 -DryRun
+```
+
+Expected: the script reports that cryptographic runtime compatibility and current composition validation passed, followed by confirmation that no container, database, service, credential, evidence, or state mutation was performed. This check exercises secure random generation, lowercase hexadecimal conversion, and the deterministic SHA-256 implementation used during a real start.
+
 ## 6. Secret and configuration preparation
 
 Open a dedicated local-development PowerShell shell for this walkthrough. Retrieve each non-production value from an approved local secret source, then enter it only at the matching masked prompt below. Do not paste secret values into a command line, transcript, issue, screenshot, committed file, or any command that prints or dumps the environment.
