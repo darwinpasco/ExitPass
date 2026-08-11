@@ -126,7 +126,13 @@ Run the startup preflight without supplying secrets or mutating local state:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Start-WebPayStatutoryDiscountWalkthrough.ps1 -DryRun
 ```
 
-Expected: the script reports that cryptographic runtime compatibility and current composition validation passed, followed by confirmation that no container, database, service, credential, evidence, or state mutation was performed. This check exercises secure random generation, lowercase hexadecimal conversion, and the deterministic SHA-256 implementation used during a real start.
+Expected: the script reports that cryptographic runtime compatibility and current composition validation passed, followed by one machine-readable state classification and confirmation that no container, database, service, credential, evidence, or state mutation was performed. This check exercises secure random generation, lowercase hexadecimal conversion, and the deterministic SHA-256 implementation used during a real start.
+
+- State absent: `DRY_RUN_STATE=ABSENT_READY_FOR_FRESH_START`. Fresh startup may proceed only after the normal operator confirmation.
+- State present during a fresh-start dry run: `DRY_RUN_STATE=BLOCKED_EXISTING_STATE`. This is a successful safety detection, not a ready-to-start result. The file is not read, rewritten, timestamped, adopted, or deleted.
+- State malformed, unsupported, or ownership-mismatched during `-DryRun -RestartServicesOnly`: restart fails with `STATE_MALFORMED`, `STATE_UNSUPPORTED_SCHEMA`, or `STATE_OWNERSHIP_MISMATCH` before any restart mutation.
+- Valid restartable state during `-DryRun -RestartServicesOnly`: `DRY_RUN_STATE=VALID_RESTARTABLE_STATE`. This validates the persisted schema, ownership envelope, and current resource identities; no process or container is restarted.
+- Concurrent startup, restart, stop, or cleanup: the command fails with `STATE_LOCK_CONTENDED` after a bounded wait. The walkthrough-specific named mutex is held continuously through state inspection and any permitted state replacement or deletion.
 
 ## 6. Secret and configuration preparation
 
@@ -202,18 +208,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Start-
 
 The script:
 
-1. validates exact source paths and tools;
-2. refuses a database name outside `exitpass_webpay_local_walkthrough_statutory...`;
-3. rebuilds only the guarded disposable database from current canonical DDL;
-4. applies current payment-routing compatibility assets and tracked local fixtures;
-5. seeds prerequisites, not workflow outcomes;
-6. creates the synthetic reviewer's credential through the real activation runtime;
-7. starts a walkthrough-owned private MinIO and ClamAV-compatible scanner;
-8. generates one synthetic PNG under a restricted temporary directory;
-9. starts Central PMS and Payment Orchestrator with `ASPNETCORE_ENVIRONMENT=Production`;
-10. starts the real WebPay and Operator Console browser consumers;
-11. probes readiness and confirms a fixture identity header is rejected;
-12. records bounded process/container identity metadata for safe shutdown.
+1. inspects the exact target state path before secret reads or any mutating operation;
+2. refuses fresh startup with `EXISTING_STATE_CONFLICT` when `state.json` already exists;
+3. validates exact source paths and tools;
+4. refuses a database name outside `exitpass_webpay_local_walkthrough_statutory...`;
+5. rebuilds only the guarded disposable database from current canonical DDL;
+6. applies current payment-routing compatibility assets and tracked local fixtures;
+7. seeds prerequisites, not workflow outcomes;
+8. creates the synthetic reviewer's credential through the real activation runtime;
+9. starts a walkthrough-owned private MinIO and ClamAV-compatible scanner;
+10. generates one synthetic PNG under a restricted temporary directory;
+11. starts Central PMS and Payment Orchestrator with `ASPNETCORE_ENVIRONMENT=Production`;
+12. starts the real WebPay and Operator Console browser consumers;
+13. probes readiness and confirms a fixture identity header is rejected;
+14. atomically creates a versioned state record with bounded process/container identity metadata for safe restart and shutdown.
+
+Fresh startup never removes, overwrites, archives, renames, adopts, migrates, or reinterprets an existing state file. There is no force bypass. An existing file requires either the validated restart path or separately governed cleanup after its ownership can be proven.
+
+State schema version 2 records only non-secret ownership metadata: walkthrough identity, canonical repository, state, logs, and evidence paths, run ID, lifecycle timestamps, loopback database host/port/name and PostgreSQL container ID, exact private container and network IDs/labels, and recorded process executable/start-time/command-marker identities. It does not contain passwords, tokens, private keys, credential-bearing connection strings, upload URLs, or evidence bytes. Earlier state versions are unsupported and are never silently migrated or reinterpreted. Reconciliation or retirement of a legacy state record is a separate future, explicitly governed task; this walkthrough does not adopt or clean it. The final path is committed with create-if-absent semantics; a late competing state file is never overwritten.
+
+Startup, validated restart, shutdown, and cleanup cooperate through one repository-bound exclusive named mutex. Restart holds that lock from state read and complete contract/resource validation through construction of the updated state, creation of a cryptographically unpredictable same-directory temporary file, immediate source/destination identity and SHA-256 verification, atomic replacement, backup handling, and invocation-owned temporary cleanup. The temporary file uses create-new semantics, exclusive sharing while written, and a restrictive current-user ACL. A replacement backup is deleted only when it contains the exact previously validated state; a post-commit backup-cleanup failure reports that replacement succeeded and preserves the backup for reconciliation.
+
+The named mutex is a cooperative lock. It prevents concurrent merged walkthrough commands from replacing or deleting state, but it cannot prevent an unrelated privileged process from directly changing files or operating-system resources. Immediate path, reparse-point, metadata, identity, and SHA-256 checks reduce that residual race and fail closed when a mismatch is observed.
 
 Expected terminal output includes the WebPay URL, Operator Console URL, reviewer username, and synthetic evidence path. It does not print the reviewer password or infrastructure secrets.
 
@@ -445,7 +461,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Stop-W
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Start-WebPayStatutoryDiscountWalkthrough.ps1 -RestartServicesOnly
 ```
 
-The default stop preserves the disposable database, private dependency containers, generated synthetic evidence, logs, and state needed for restart. Expected after restart:
+The default stop preserves the disposable database, private dependency containers, generated synthetic evidence, logs, and state needed for restart. `-RestartServicesOnly` first acquires the exclusive walkthrough lock and validates the supported state schema, walkthrough/repository/state identity, exact local database identity, exact container and network IDs plus ownership labels, bounded evidence paths, and complete process metadata. PID alone and resource name alone are never accepted as ownership. A recorded process that is still running must match its start time, executable, and command markers and still blocks restart until validated shutdown completes. Missing, reused, malformed, mismatched, escaping, ambiguous, or non-restartable state fails closed before restart mutation. State age alone does not make a record stale.
+
+Expected after a validated restart:
 
 - Production fixture-header rejection still passes;
 - the reviewer can log in through a new real human session;
@@ -503,6 +521,9 @@ Do not retain screenshots containing evidence pixels unless separately approved.
 
 | Symptom | Safe action |
 |---|---|
+| Fresh startup reports `EXISTING_STATE_CONFLICT` | Do not move or delete `state.json`. Use `-RestartServicesOnly -DryRun` to test whether it is valid and restartable, or perform separately approved cleanup after ownership is proven. |
+| Restart reports malformed or unsupported state | Preserve the state unchanged. Do not repair, migrate, replace, or reinterpret it; investigate its owning run. |
+| Restart reports ownership/resource mismatch or non-restartable state | Preserve state and resources. Reconcile recorded IDs, labels, paths, executable identity, start time, and command markers before any governed cleanup. |
 | Startup reports a missing shared container | Prepare the current ordinary local-integration dependencies; do not edit container names blindly. |
 | Database-name guard rejects the name | Use `exitpass_webpay_local_walkthrough_statutory` or a permitted suffixed disposable name. |
 | Reviewer activation fails | Rebuild the disposable database; do not edit credential tables after workflow state exists. |
@@ -523,7 +544,7 @@ Stop only recorded walkthrough-owned listeners. Preserve proof state by default:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Stop-WebPayStatutoryDiscountWalkthrough.ps1
 ```
 
-The script revalidates PID start time, executable path, and command markers. It refuses to terminate a process if ownership cannot be confirmed. It does not stop shared PostgreSQL, RabbitMQ, or mock-provider containers.
+The script acquires the same bounded exclusive walkthrough lock before reading state and retains it through shutdown. It validates the complete versioned state contract, then retains a process handle and revalidates PID, start time, executable path, and command markers immediately before calling `Kill()` on that validated process object. Only the operating system's explicit no-such-PID result is treated as confirmed process absence. Access denial, lookup failure, and ambiguous process identity block cleanup. Retaining the process object and handle is the strongest binding available to this Windows PowerShell 5.1 implementation, but Windows process lifecycle behavior still leaves a narrow operating-system race; the script fails closed when exit or identity change is observable and does not claim complete elimination of that OS limitation. It does not stop shared PostgreSQL, RabbitMQ, or mock-provider containers.
 
 ## 21. Explicit cleanup
 
@@ -536,7 +557,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\v1.3\webpay\Stop-W
   -RemoveGeneratedState
 ```
 
-Cleanup is guarded by exact ownership labels, exact temporary paths, and the disposable database-name pattern. It preserves unrelated services and developer data. Do not use broad recursive deletion or `git clean`.
+Before invoking cleanup, show the operator the exact database, PostgreSQL container identity, private container IDs, network ID, process records, evidence path, logs, and state path proposed for removal. Obtain explicit approval. Cleanup is guarded immediately before each destructive action by the versioned state identity, exact IDs and ownership labels, exact temporary paths, process executable/start-time/command-marker identity, and disposable database-name pattern. Containers and the network are revalidated by name, immutable ID, type, and ownership label, then mutation targets the validated immutable ID. A missing resource is accepted only when a successful independent Docker inventory confirms that its exact name is absent; daemon, access, transport, timeout, malformed-output, and other ambiguous inspection failures block cleanup. PostgreSQL container identity is revalidated immediately before connection termination and again before database deletion; both commands use its immutable ID, and the loopback host, port, and disposable database guard are renewed before deletion.
+
+`-RemoveGeneratedState` requires the governed container and disposable-database cleanup flags in the same invocation and runs last. Cleanup order is validated processes, private containers, private network, disposable database, generated evidence and logs, fixture context, `state.json`, then the empty non-reparse-point state directory. Evidence and logs are traversed and removed as individually governed non-reparse paths; `fixture-context.json` is captured by canonical path, metadata, and SHA-256 during cleanup planning and revalidated before generated cleanup and immediately before its individual deletion. The state root is never recursively deleted. Immediately before deleting `state.json`, the script rechecks the exclusive lock, exact canonical path, non-reparse parent chain, metadata, and SHA-256 against the state snapshot. State is deleted last, and its directory is removed only when empty.
+
+If any governed cleanup step fails, `state.json` and remaining reconciliation evidence are preserved and the command reports `PARTIAL_CLEANUP_BLOCKED_STATE_PRESERVED`. A state file whose identity changed is never deleted. Failure to prove ownership blocks cleanup; there is no best-effort recursive fallback.
+
+Fresh startup cannot perform cleanup. Do not use a force option, broad recursive deletion, wildcard destruction, PID-only termination, name-only container termination, or `git clean`. The stop script removes only the exact walkthrough roots recorded by a validated state and preserves unrelated services and developer data.
 
 After cleanup, clear caller-owned environment values from the current shell:
 
