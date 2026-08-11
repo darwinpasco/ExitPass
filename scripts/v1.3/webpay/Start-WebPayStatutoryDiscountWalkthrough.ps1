@@ -54,7 +54,7 @@ $minioContainerName = "exitpass-webpay-statutory-minio"
 $clamAvContainerName = "exitpass-webpay-statutory-clamav"
 $networkName = "exitpass-webpay-statutory-walkthrough"
 $bucketName = "exitpass-webpay-statutory-evidence"
-$stateSchemaVersion = 1
+$stateSchemaVersion = 2
 $walkthroughIdentity = "ExitPass.WebPay.StatutoryDiscount.LocalWalkthrough"
 $ownershipLabelName = "exitpass.walkthrough"
 $ownershipLabelValue = "webpay-statutory-discount"
@@ -169,11 +169,147 @@ function Assert-CryptographicRuntimeCompatibility {
     }
 }
 
+function Get-WalkthroughOperationLockName([string]$CanonicalRepositoryRoot) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-CanonicalPath $CanonicalRepositoryRoot).ToUpperInvariant())
+    $hash = $null
+    try {
+        $hash = Get-Sha256HashBytes $bytes
+        return "Local\ExitPass.WebPay.StatutoryDiscount.$((ConvertTo-LowercaseHex $hash).Substring(0, 32))"
+    }
+    finally {
+        if ($null -ne $hash) { [System.Array]::Clear($hash, 0, $hash.Length) }
+        [System.Array]::Clear($bytes, 0, $bytes.Length)
+    }
+}
+
+function Enter-WalkthroughOperationLock([string]$CanonicalRepositoryRoot, [int]$TimeoutMilliseconds = 5000) {
+    if ($TimeoutMilliseconds -lt 0 -or $TimeoutMilliseconds -gt 30000) {
+        throw "STATE_LOCK_INVALID_TIMEOUT: lock timeout must be between 0 and 30000 milliseconds."
+    }
+    $name = Get-WalkthroughOperationLockName $CanonicalRepositoryRoot
+    $mutex = New-Object System.Threading.Mutex($false, $name)
+    $acquired = $false
+    try {
+        try { $acquired = $mutex.WaitOne($TimeoutMilliseconds) }
+        catch [System.Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) {
+            throw "STATE_LOCK_CONTENDED: another cooperating walkthrough startup, restart, or stop operation holds the exclusive lock."
+        }
+        return [pscustomobject]@{ Name = $name; Mutex = $mutex; IsHeld = $true; OwnerThreadId = [System.Threading.Thread]::CurrentThread.ManagedThreadId }
+    }
+    catch {
+        if (-not $acquired) { $mutex.Dispose() }
+        throw
+    }
+}
+
+function Assert-WalkthroughOperationLockHeld($Lock) {
+    if ($null -eq $Lock -or -not [bool]$Lock.IsHeld -or $null -eq $Lock.Mutex -or
+        [int]$Lock.OwnerThreadId -ne [System.Threading.Thread]::CurrentThread.ManagedThreadId) {
+        throw "STATE_LOCK_NOT_HELD: the exclusive walkthrough operation lock is not held by this execution thread."
+    }
+}
+
+function Exit-WalkthroughOperationLock($Lock) {
+    if ($null -eq $Lock) { return }
+    try {
+        if ([bool]$Lock.IsHeld) {
+            $Lock.Mutex.ReleaseMutex()
+            $Lock.IsHeld = $false
+        }
+    }
+    finally { $Lock.Mutex.Dispose() }
+}
+
 function Get-CanonicalPath([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) {
         throw "A canonical path value is required."
     }
     return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+}
+
+function Assert-NoReparsePoint([string]$Path, [string]$GovernedRoot, [switch]$AllowMissingLeaf) {
+    $canonicalPath = Get-CanonicalPath $Path
+    $canonicalRoot = Get-CanonicalPath $GovernedRoot
+    Assert-OwnedPath $canonicalPath $canonicalRoot 'governed path'
+    $cursor = $canonicalPath
+    while ($true) {
+        if (Test-Path -LiteralPath $cursor) {
+            $item = Get-Item -LiteralPath $cursor -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "STATE_REPARSE_POINT_REJECTED: governed path contains a reparse point: $cursor"
+            }
+        }
+        elseif (-not $AllowMissingLeaf -and [string]::Equals($cursor, $canonicalPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "STATE_PATH_NOT_FOUND: governed path does not exist: $canonicalPath"
+        }
+        if ([string]::Equals($cursor, $canonicalRoot, [System.StringComparison]::OrdinalIgnoreCase)) { break }
+        $parent = Split-Path -Parent $cursor
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $cursor) {
+            throw "STATE_PATH_ESCAPE: governed path parent chain did not reach its root."
+        }
+        $cursor = Get-CanonicalPath $parent
+    }
+    return $canonicalPath
+}
+
+function Get-GovernedFileIdentity([string]$Path, [string]$ExpectedPath, [string]$GovernedRoot) {
+    $canonicalPath = Get-CanonicalPath $Path
+    if (-not (Test-CanonicalPathEqual $canonicalPath $ExpectedPath)) {
+        throw "STATE_FILE_IDENTITY_MISMATCH: file path is not the exact expected path."
+    }
+    [void](Assert-NoReparsePoint $canonicalPath $GovernedRoot)
+    $item = Get-Item -LiteralPath $canonicalPath -Force
+    if ($item.PSIsContainer) { throw "STATE_FILE_IDENTITY_MISMATCH: expected a file but found a directory." }
+    return [pscustomobject]@{
+        Path = $canonicalPath
+        Length = [long]$item.Length
+        CreationTimeUtcTicks = [long]$item.CreationTimeUtc.Ticks
+        LastWriteTimeUtcTicks = [long]$item.LastWriteTimeUtc.Ticks
+        Sha256 = (Get-StateFileHash $canonicalPath)
+    }
+}
+
+function Test-FileIdentityEqual($Left, $Right) {
+    return $null -ne $Left -and $null -ne $Right -and
+        (Test-CanonicalPathEqual ([string]$Left.Path) ([string]$Right.Path)) -and
+        [long]$Left.Length -eq [long]$Right.Length -and
+        [long]$Left.CreationTimeUtcTicks -eq [long]$Right.CreationTimeUtcTicks -and
+        [long]$Left.LastWriteTimeUtcTicks -eq [long]$Right.LastWriteTimeUtcTicks -and
+        [string]$Left.Sha256 -ceq [string]$Right.Sha256
+}
+
+function Assert-FileIdentityEqual($Actual, $Expected, [string]$Classification) {
+    if (-not (Test-FileIdentityEqual $Actual $Expected)) {
+        throw "${Classification}: governed file identity or content changed."
+    }
+}
+
+function Test-ByteArrayEqual([byte[]]$Left, [byte[]]$Right) {
+    if ($null -eq $Left -or $null -eq $Right -or $Left.Length -ne $Right.Length) { return $false }
+    for ($index = 0; $index -lt $Left.Length; $index++) {
+        if ($Left[$index] -ne $Right[$index]) { return $false }
+    }
+    return $true
+}
+
+function Protect-WalkthroughFileAcl([string]$Path) {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $security = New-Object System.Security.AccessControl.FileSecurity
+    $security.SetAccessRuleProtection($true, $false)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $identity.User,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Allow)
+    [void]$security.AddAccessRule($rule)
+    [System.IO.File]::SetAccessControl($Path, $security)
+}
+
+function Remove-InvocationOwnedFile($Identity, [string]$GovernedRoot) {
+    if ($null -eq $Identity -or -not (Test-Path -LiteralPath $Identity.Path -PathType Leaf)) { return }
+    $current = Get-GovernedFileIdentity $Identity.Path $Identity.Path $GovernedRoot
+    Assert-FileIdentityEqual $current $Identity 'STATE_TEMPORARY_IDENTITY_MISMATCH'
+    [System.IO.File]::Delete($Identity.Path)
 }
 
 function Test-CanonicalPathEqual([string]$Left, [string]$Right) {
@@ -246,6 +382,7 @@ function Assert-WalkthroughStateContract(
     [string]$ExpectedDatabaseHost,
     [int]$ExpectedDatabasePort,
     [string]$ExpectedPostgresContainerName,
+    [string]$ExpectedLogsRoot,
     [string]$ExpectedEvidenceRoot,
     [string]$ExpectedSyntheticEvidencePath,
     [string]$ExpectedNetworkName,
@@ -259,6 +396,7 @@ function Assert-WalkthroughStateContract(
     }
     Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'RepositoryRoot' 'walkthrough state')) $ExpectedRepositoryRoot 'repository root' -RequireExact
     Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'StatePath' 'walkthrough state')) $ExpectedStatePath 'state path' -RequireExact
+    Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'LogsRoot' 'walkthrough state')) $ExpectedLogsRoot 'logs root' -RequireExact
     Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'EvidenceRoot' 'walkthrough state')) $ExpectedEvidenceRoot 'evidence root' -RequireExact
     Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'SyntheticEvidencePath' 'walkthrough state')) $ExpectedEvidenceRoot 'synthetic evidence path'
     Assert-OwnedPath ([string](Get-RequiredStateProperty $State 'SyntheticEvidencePath' 'walkthrough state')) $ExpectedSyntheticEvidencePath 'synthetic evidence path' -RequireExact
@@ -339,27 +477,36 @@ function Assert-WalkthroughStateContract(
 
 function Read-ValidatedWalkthroughState(
     [string]$Path,
+    $Lock,
     [string]$ExpectedRepositoryRoot,
     [string]$ExpectedDatabaseName,
     [string]$ExpectedDatabaseHost,
     [int]$ExpectedDatabasePort,
     [string]$ExpectedPostgresContainerName,
+    [string]$ExpectedLogsRoot,
     [string]$ExpectedEvidenceRoot,
     [string]$ExpectedSyntheticEvidencePath,
     [string]$ExpectedNetworkName,
     [string[]]$ExpectedContainerNames
 ) {
+    Assert-WalkthroughOperationLockHeld $Lock
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "STATE_NOT_FOUND: validated restart requires state at $Path."
     }
+    [void](Assert-NoReparsePoint $Path $ExpectedRepositoryRoot)
+    $identityBefore = Get-GovernedFileIdentity $Path $Path $ExpectedRepositoryRoot
     try {
-        $raw = [System.IO.File]::ReadAllText($Path)
-        $state = $raw | ConvertFrom-Json
+        $raw = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
     }
     catch {
-        throw "STATE_MALFORMED: state at $Path is not readable valid JSON."
+        throw "STATE_READ_FAILED: state at $Path could not be read safely."
     }
-    return Assert-WalkthroughStateContract $state $ExpectedRepositoryRoot $Path $ExpectedDatabaseName $ExpectedDatabaseHost $ExpectedDatabasePort $ExpectedPostgresContainerName $ExpectedEvidenceRoot $ExpectedSyntheticEvidencePath $ExpectedNetworkName $ExpectedContainerNames
+    $identityAfter = Get-GovernedFileIdentity $Path $Path $ExpectedRepositoryRoot
+    Assert-FileIdentityEqual $identityAfter $identityBefore 'STATE_READ_RACE'
+    try { $state = $raw | ConvertFrom-Json }
+    catch { throw "STATE_MALFORMED: state at $Path is not valid JSON." }
+    $validated = Assert-WalkthroughStateContract $state $ExpectedRepositoryRoot $Path $ExpectedDatabaseName $ExpectedDatabaseHost $ExpectedDatabasePort $ExpectedPostgresContainerName $ExpectedLogsRoot $ExpectedEvidenceRoot $ExpectedSyntheticEvidencePath $ExpectedNetworkName $ExpectedContainerNames
+    return [pscustomobject]@{ State = $validated; Identity = $identityAfter }
 }
 
 function Assert-FreshStateAbsent([string]$Path) {
@@ -368,37 +515,77 @@ function Assert-FreshStateAbsent([string]$Path) {
     }
 }
 
-function Write-WalkthroughStateAtomically($State, [string]$Path, [scriptblock]$BeforeAtomicCommit) {
+function New-InvocationOwnedStateFile([byte[]]$Bytes, [string]$Parent, [string]$RunId, [string]$Purpose) {
+    $stream = $null
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        $identity = $null
+        $createdByInvocation = $false
+        $random = New-CryptographicRandomLowercaseHex 16
+        $path = Join-Path $Parent (".state.{0}.{1}.{2}.tmp" -f $RunId, $random, $Purpose)
+        try {
+            $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            $createdByInvocation = $true
+            $stream.Write($Bytes, 0, $Bytes.Length)
+            $stream.Flush()
+            $stream.Dispose()
+            $stream = $null
+            Protect-WalkthroughFileAcl $path
+            $identity = Get-GovernedFileIdentity $path $path $Parent
+            $readback = [System.IO.File]::ReadAllBytes($path)
+            if (-not (Test-ByteArrayEqual $readback $Bytes)) {
+                throw "STATE_TEMPORARY_CONTENT_MISMATCH: temporary state bytes do not match validated serialization."
+            }
+            return [pscustomobject]@{ Path = $path; Identity = $identity; Bytes = $Bytes; CreatedByInvocation = $true }
+        }
+        catch [System.IO.IOException] {
+            if ($null -ne $stream) { $stream.Dispose(); $stream = $null }
+            if (-not $createdByInvocation -and (Test-Path -LiteralPath $path)) { continue }
+            throw
+        }
+        catch {
+            if ($null -ne $stream) { $stream.Dispose(); $stream = $null }
+            if (Test-Path -LiteralPath $path -PathType Leaf) {
+                try {
+                    $candidateIdentity = Get-GovernedFileIdentity $path $path $Parent
+                    if ($null -ne $identity -and (Test-FileIdentityEqual $candidateIdentity $identity)) { [System.IO.File]::Delete($path) }
+                }
+                catch { }
+            }
+            throw
+        }
+    }
+    throw "STATE_TEMPORARY_CREATE_FAILED: could not reserve an unpredictable invocation-owned temporary state file."
+}
+
+function Write-WalkthroughStateAtomically($State, [string]$Path, $Lock, [scriptblock]$BeforeAtomicCommit) {
+    Assert-WalkthroughOperationLockHeld $Lock
     Assert-FreshStateAbsent $Path
     $parent = Split-Path -Parent $Path
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
         throw "ATOMIC_STATE_CREATE_FAILED: the validated state directory does not exist."
     }
+    $governedRoot = [string](Get-RequiredStateProperty $State 'RepositoryRoot' 'walkthrough state')
+    [void](Assert-NoReparsePoint $parent $governedRoot)
     $runId = [string](Get-RequiredStateProperty $State 'RunId' 'walkthrough state')
-    $temporaryPath = Join-Path $parent (".state.{0}.tmp" -f $runId)
-    $stream = $null
-    $writer = $null
-    $temporaryCreated = $false
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($State | ConvertTo-Json -Depth 10))
+    $temporary = $null
     try {
-        $json = $State | ConvertTo-Json -Depth 10
-        $stream = [System.IO.File]::Open($temporaryPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        $temporaryCreated = $true
-        $writer = New-Object System.IO.StreamWriter($stream, (New-Object System.Text.UTF8Encoding($false)))
-        $writer.Write($json)
-        $writer.Flush()
-        $stream.Flush()
-        $writer.Dispose()
-        $writer = $null
-        $stream = $null
+        $temporary = New-InvocationOwnedStateFile $bytes $parent $runId 'create'
         if ($null -ne $BeforeAtomicCommit) { & $BeforeAtomicCommit $Path }
-        [System.IO.File]::Move($temporaryPath, $Path)
-        $temporaryCreated = $false
+        Assert-WalkthroughOperationLockHeld $Lock
+        Assert-FreshStateAbsent $Path
+        [void](Assert-NoReparsePoint $parent $governedRoot)
+        $currentTemporary = Get-GovernedFileIdentity $temporary.Path $temporary.Path $parent
+        Assert-FileIdentityEqual $currentTemporary $temporary.Identity 'STATE_TEMPORARY_IDENTITY_MISMATCH'
+        if (-not (Test-ByteArrayEqual ([System.IO.File]::ReadAllBytes($temporary.Path)) $bytes)) {
+            throw "STATE_TEMPORARY_CONTENT_MISMATCH: temporary state changed before atomic creation."
+        }
+        [System.IO.File]::Move($temporary.Path, $Path)
+        $temporary.CreatedByInvocation = $false
     }
     catch {
-        if ($null -ne $writer) { $writer.Dispose() }
-        elseif ($null -ne $stream) { $stream.Dispose() }
-        if ($temporaryCreated -and (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
-            Remove-Item -LiteralPath $temporaryPath -Force
+        if ($null -ne $temporary -and $temporary.CreatedByInvocation) {
+            Remove-InvocationOwnedFile $temporary.Identity $parent
         }
         throw "ATOMIC_STATE_CREATE_FAILED: state was not committed at $Path because create-if-absent ownership could not be established. Existing state was not overwritten."
     }
@@ -417,71 +604,123 @@ function Get-StateFileHash([string]$Path) {
     }
 }
 
-function Update-WalkthroughStateAtomically($State, [string]$Path, [string]$ExpectedHash) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-StateFileHash $Path) -cne $ExpectedHash) {
-        throw "ATOMIC_STATE_UPDATE_FAILED: validated state changed before restart metadata could be committed."
-    }
+function Update-WalkthroughStateAtomically(
+    $State,
+    [string]$Path,
+    $ExpectedDestinationIdentity,
+    $Lock,
+    [scriptblock]$BeforeFinalVerification,
+    [scriptblock]$BeforeReplace,
+    [scriptblock]$BeforeBackupCleanup
+) {
+    Assert-WalkthroughOperationLockHeld $Lock
     $parent = Split-Path -Parent $Path
     $runId = [string](Get-RequiredStateProperty $State 'RunId' 'walkthrough state')
-    $temporaryPath = Join-Path $parent (".state.{0}.update.tmp" -f $runId)
-    $backupPath = Join-Path $parent (".state.{0}.backup.tmp" -f $runId)
-    $stream = $null
-    $writer = $null
-    $temporaryCreated = $false
-    $backupCreated = $false
+    if (-not (Test-CanonicalPathEqual ([string]$State.StatePath) $Path)) {
+        throw "ATOMIC_STATE_UPDATE_FAILED: validated state is not bound to the expected destination."
+    }
+    $governedRoot = [string](Get-RequiredStateProperty $State 'RepositoryRoot' 'walkthrough state')
+    [void](Assert-NoReparsePoint $parent $governedRoot)
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes(($State | ConvertTo-Json -Depth 10))
+    $temporary = $null
+    $backupIdentity = $null
+    $replacementSucceeded = $false
+    $backupPath = Join-Path $parent (".state.{0}.{1}.backup.tmp" -f $runId, (New-CryptographicRandomLowercaseHex 16))
     try {
-        if ((Test-Path -LiteralPath $temporaryPath) -or (Test-Path -LiteralPath $backupPath)) {
-            throw "walkthrough-owned atomic update paths are not available"
+        if (Test-Path -LiteralPath $backupPath) { throw "ATOMIC_STATE_UPDATE_FAILED: unpredictable backup path is unexpectedly occupied." }
+        $temporary = New-InvocationOwnedStateFile $bytes $parent $runId 'update'
+        if ($null -ne $BeforeFinalVerification) {
+            & $BeforeFinalVerification $Path $temporary.Path $backupPath
         }
-        $json = $State | ConvertTo-Json -Depth 10
-        $stream = [System.IO.File]::Open($temporaryPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
-        $temporaryCreated = $true
-        $writer = New-Object System.IO.StreamWriter($stream, (New-Object System.Text.UTF8Encoding($false)))
-        $writer.Write($json)
-        $writer.Flush()
-        $stream.Flush()
-        $writer.Dispose()
-        $writer = $null
-        $stream = $null
-        if ((Get-StateFileHash $Path) -cne $ExpectedHash) {
-            throw "validated state changed during restart"
+        Assert-WalkthroughOperationLockHeld $Lock
+        [void](Assert-NoReparsePoint $Path $governedRoot)
+        [void](Assert-NoReparsePoint $temporary.Path $parent)
+        $destinationNow = Get-GovernedFileIdentity $Path $ExpectedDestinationIdentity.Path $governedRoot
+        Assert-FileIdentityEqual $destinationNow $ExpectedDestinationIdentity 'ATOMIC_STATE_DESTINATION_CHANGED'
+        $sourceNow = Get-GovernedFileIdentity $temporary.Path $temporary.Identity.Path $parent
+        Assert-FileIdentityEqual $sourceNow $temporary.Identity 'STATE_TEMPORARY_IDENTITY_MISMATCH'
+        if (-not (Test-ByteArrayEqual ([System.IO.File]::ReadAllBytes($temporary.Path)) $bytes)) {
+            throw "STATE_TEMPORARY_CONTENT_MISMATCH: temporary state changed before replacement."
         }
-        [System.IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)
-        $temporaryCreated = $false
-        $backupCreated = Test-Path -LiteralPath $backupPath -PathType Leaf
-        if ($backupCreated) {
-            Remove-Item -LiteralPath $backupPath -Force
-            $backupCreated = $false
+        if ($null -ne $BeforeReplace) {
+            & $BeforeReplace $Path $temporary.Path $backupPath
         }
+        Assert-WalkthroughOperationLockHeld $Lock
+        [void](Assert-NoReparsePoint $Path $governedRoot)
+        [void](Assert-NoReparsePoint $temporary.Path $parent)
+        $destinationFinal = Get-GovernedFileIdentity $Path $ExpectedDestinationIdentity.Path $governedRoot
+        Assert-FileIdentityEqual $destinationFinal $ExpectedDestinationIdentity 'ATOMIC_STATE_DESTINATION_CHANGED'
+        $sourceFinal = Get-GovernedFileIdentity $temporary.Path $temporary.Identity.Path $parent
+        Assert-FileIdentityEqual $sourceFinal $temporary.Identity 'STATE_TEMPORARY_IDENTITY_MISMATCH'
+        if (-not (Test-ByteArrayEqual ([System.IO.File]::ReadAllBytes($temporary.Path)) $bytes)) {
+            throw "STATE_TEMPORARY_CONTENT_MISMATCH: temporary state changed immediately before replacement."
+        }
+        if (Test-Path -LiteralPath $backupPath) {
+            throw "ATOMIC_STATE_BACKUP_PATH_OCCUPIED: replacement backup path became occupied."
+        }
+        Assert-WalkthroughOperationLockHeld $Lock
+        [System.IO.File]::Replace($temporary.Path, $Path, $backupPath, $true)
+        $replacementSucceeded = $true
+        $temporary.CreatedByInvocation = $false
     }
     catch {
-        if ($null -ne $writer) { $writer.Dispose() }
-        elseif ($null -ne $stream) { $stream.Dispose() }
-        if ($temporaryCreated -and (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) { Remove-Item -LiteralPath $temporaryPath -Force }
-        if ($backupCreated -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) { Remove-Item -LiteralPath $backupPath -Force }
+        if ($null -ne $temporary -and $temporary.CreatedByInvocation) {
+            Remove-InvocationOwnedFile $temporary.Identity $parent
+        }
         throw "ATOMIC_STATE_UPDATE_FAILED: restart metadata was not committed safely; preserve resources and use governed diagnosis."
     }
+
+    $committed = Get-GovernedFileIdentity $Path $Path $governedRoot
+    $expectedCommittedHash = ConvertTo-LowercaseHex (Get-Sha256HashBytes $bytes)
+    if ([string]$committed.Sha256 -cne $expectedCommittedHash) {
+        throw "ATOMIC_STATE_UPDATE_POSTCOMMIT_VERIFICATION_FAILED: replacement completed but committed bytes differ from validated state."
+    }
+    if ($replacementSucceeded -and (Test-Path -LiteralPath $backupPath -PathType Leaf)) {
+        try {
+            if ($null -ne $BeforeBackupCleanup) { & $BeforeBackupCleanup $backupPath }
+            Protect-WalkthroughFileAcl $backupPath
+            $backupIdentity = Get-GovernedFileIdentity $backupPath $backupPath $parent
+            if ([string]$backupIdentity.Sha256 -cne [string]$ExpectedDestinationIdentity.Sha256) {
+                throw "backup content does not match the validated previous state"
+            }
+            Remove-InvocationOwnedFile $backupIdentity $parent
+        }
+        catch {
+            Write-Warning "STATE_REPLACEMENT_COMMITTED_BACKUP_PRESERVED: replacement succeeded; backup cleanup did not complete and the backup remains at $backupPath."
+        }
+    }
+    return [pscustomobject]@{ ReplacementCommitted = $true; BackupPath = if (Test-Path -LiteralPath $backupPath) { $backupPath } else { $null } }
+}
+
+function Get-RuntimeProcessById([int]$Id) {
+    try { return [System.Diagnostics.Process]::GetProcessById($Id) }
+    catch [System.ArgumentException] { return $null }
+    catch { throw "PROCESS_LOOKUP_FAILED: process $Id could not be queried safely." }
 }
 
 function Assert-RecordedProcessRestartable($Record) {
-    $runtime = Get-Process -Id ([int]$Record.Id) -ErrorAction SilentlyContinue
+    $runtime = Get-RuntimeProcessById ([int]$Record.Id)
     if ($null -eq $runtime) { return }
-    $details = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$Record.Id)" -ErrorAction SilentlyContinue
-    if ($null -eq $details -or [string]::IsNullOrWhiteSpace([string]$details.ExecutablePath) -or
-        [string]::IsNullOrWhiteSpace([string]$details.CommandLine)) {
-        throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) cannot be reconciled safely."
-    }
-    $recordedStart = [DateTimeOffset]::Parse([string]$Record.StartTimeUtc).UtcDateTime
-    if ([math]::Abs(($runtime.StartTime.ToUniversalTime() - $recordedStart).TotalSeconds) -gt 2 -or
-        -not (Test-CanonicalPathEqual ([string]$details.ExecutablePath) ([string]$Record.ExecutablePath))) {
-        throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) was reused or changed identity."
-    }
-    foreach ($marker in @($Record.CommandLineMarkers)) {
-        if ($details.CommandLine -notlike "*$marker*") {
-            throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) no longer has its ownership markers."
+    try {
+        try { $details = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$Record.Id)" -ErrorAction Stop }
+        catch { throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) cannot be queried safely." }
+        if ($null -eq $details -or [string]::IsNullOrWhiteSpace([string]$details.ExecutablePath) -or
+            [string]::IsNullOrWhiteSpace([string]$details.CommandLine)) {
+            throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) cannot be reconciled safely."
         }
+        $recordedStart = [DateTimeOffset]::Parse([string]$Record.StartTimeUtc).UtcDateTime
+        if ([math]::Abs(($runtime.StartTime.ToUniversalTime() - $recordedStart).TotalSeconds) -gt 2 -or
+            -not (Test-CanonicalPathEqual ([string]$details.ExecutablePath) ([string]$Record.ExecutablePath))) {
+            throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) was reused or changed identity."
+        }
+        foreach ($marker in @($Record.CommandLineMarkers)) {
+            if ($details.CommandLine -notlike "*$marker*") {
+                throw "STATE_RESOURCE_MISMATCH: recorded PID $($Record.Id) no longer has its ownership markers."
+            }
+        }
+        throw "STATE_NOT_RESTARTABLE: recorded process '$($Record.Name)' is still running; validated shutdown is required before restart."
     }
-    throw "STATE_NOT_RESTARTABLE: recorded process '$($Record.Name)' is still running; validated shutdown is required before restart."
+    finally { $runtime.Dispose() }
 }
 
 function Assert-RestartResourceOwnership($State) {
@@ -505,6 +744,38 @@ function Assert-RestartResourceOwnership($State) {
     }
     foreach ($record in @($State.Processes) + @($State.Launchers)) {
         Assert-RecordedProcessRestartable $record
+    }
+}
+
+function Assert-StateRuntimeOwnershipCurrent($State) {
+    $postgresId = docker container inspect --format '{{.Id}}' $State.PostgresContainerName 2>$null
+    if ($LASTEXITCODE -ne 0 -or $postgresId -cne [string]$State.PostgresContainerId) {
+        throw "STATE_RESOURCE_MISMATCH: PostgreSQL container changed before state commit."
+    }
+    foreach ($record in @($State.Containers)) {
+        $byName = docker container inspect --format '{{.Id}}|{{.Name}}|{{index .Config.Labels "exitpass.walkthrough"}}' $record.Name 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "STATE_RESOURCE_MISMATCH: container '$($record.Name)' disappeared before state commit." }
+        $parts = ([string]$byName).Trim() -split '\|', 3
+        if ($parts.Count -ne 3 -or $parts[0] -cne [string]$record.Id -or $parts[1].TrimStart('/') -cne [string]$record.Name -or $parts[2] -cne $ownershipLabelValue) {
+            throw "STATE_RESOURCE_MISMATCH: container '$($record.Name)' changed before state commit."
+        }
+        $byId = docker container inspect --format '{{.Id}}|{{.Name}}|{{index .Config.Labels "exitpass.walkthrough"}}' $record.Id 2>$null
+        if ($LASTEXITCODE -ne 0 -or [string]$byId -cne [string]$byName) { throw "STATE_RESOURCE_MISMATCH: immutable container identity changed before state commit." }
+    }
+    $networkByName = docker network inspect --format '{{.Id}}|{{.Name}}|{{index .Labels "exitpass.walkthrough"}}' $State.Network.Name 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "STATE_RESOURCE_MISMATCH: network disappeared before state commit." }
+    $networkParts = ([string]$networkByName).Trim() -split '\|', 3
+    if ($networkParts.Count -ne 3 -or $networkParts[0] -cne [string]$State.Network.Id -or
+        $networkParts[1] -cne [string]$State.Network.Name -or $networkParts[2] -cne $ownershipLabelValue) {
+        throw "STATE_RESOURCE_MISMATCH: network changed before state commit."
+    }
+    $networkById = docker network inspect --format '{{.Id}}|{{.Name}}|{{index .Labels "exitpass.walkthrough"}}' $State.Network.Id 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]$networkById -cne [string]$networkByName) { throw "STATE_RESOURCE_MISMATCH: immutable network identity changed before state commit." }
+    foreach ($record in @($State.Processes) + @($State.Launchers)) {
+        $current = Get-ProcessRecord $record.Name ([int]$record.Id) @($record.CommandLineMarkers) ([int]$record.Port)
+        if (-not (Test-CanonicalPathEqual $current.ExecutablePath $record.ExecutablePath) -or $current.StartTimeUtc -cne [string]$record.StartTimeUtc) {
+            throw "STATE_RESOURCE_MISMATCH: process '$($record.Name)' changed before state commit."
+        }
     }
 }
 
@@ -655,14 +926,17 @@ function New-SyntheticEvidenceImage([string]$Path) {
     finally { $bitmap.Dispose() }
 }
 
+$operationLock = Enter-WalkthroughOperationLock $RepositoryRoot
+try {
 Assert-SafeDatabaseName $DatabaseName
 $databaseHost = '127.0.0.1'
 $previousState = $null
-$previousStateHash = $null
+$previousStateIdentity = $null
 $freshStateConflict = Test-Path -LiteralPath $statePath
 if ($RestartServicesOnly) {
-    $previousState = Read-ValidatedWalkthroughState $statePath $RepositoryRoot $DatabaseName $databaseHost $PostgresPort $PostgresContainerName $evidenceRoot $syntheticEvidencePath $networkName $allowedWalkthroughContainerNames
-    $previousStateHash = Get-StateFileHash $statePath
+    $previousSnapshot = Read-ValidatedWalkthroughState $statePath $operationLock $RepositoryRoot $DatabaseName $databaseHost $PostgresPort $PostgresContainerName $logsRoot $evidenceRoot $syntheticEvidencePath $networkName $allowedWalkthroughContainerNames
+    $previousState = $previousSnapshot.State
+    $previousStateIdentity = $previousSnapshot.Identity
 }
 elseif ($freshStateConflict -and -not $DryRun) {
     Assert-FreshStateAbsent $statePath
@@ -676,6 +950,10 @@ foreach ($path in @($canonicalSql, $canonicalValidator, $paymentRoutingPatch, $p
 }
 
 Assert-CryptographicRuntimeCompatibility
+
+if ($RestartServicesOnly) {
+    Assert-RestartResourceOwnership $previousState
+}
 
 if ($DryRun) {
     Write-Host "DRY RUN: cryptographic runtime compatibility validation passed."
@@ -694,10 +972,6 @@ if ($DryRun) {
     }
     Write-Host "DRY RUN: no container, database, service, credential, evidence, or state mutation was performed."
     return
-}
-
-if ($RestartServicesOnly) {
-    Assert-RestartResourceOwnership $previousState
 }
 
 $dbPassword = Get-RequiredEnvironmentValue 'EXITPASS_WEBPAY_STATUTORY_DB_PASSWORD'
@@ -985,18 +1259,20 @@ $state = [pscustomobject]@{
         Id = (docker network inspect --format '{{.Id}}' $networkName)
         OwnershipLabel = $ownershipLabelValue
     }
+    LogsRoot = $logsRoot
     EvidenceRoot = $evidenceRoot
     SyntheticEvidencePath = $syntheticEvidencePath
     Fixture = $fixtureContext
     Urls = [pscustomobject]@{ CentralPms = $centralPmsUrl; PaymentOrchestrator = $paymentOrchestratorUrl; WebPay = $webPayUrl; OperatorConsole = $operatorConsoleUrl }
 }
-Assert-WalkthroughStateContract $state $RepositoryRoot $statePath $DatabaseName $databaseHost $PostgresPort $PostgresContainerName $evidenceRoot $syntheticEvidencePath $networkName $allowedWalkthroughContainerNames | Out-Null
+Assert-WalkthroughStateContract $state $RepositoryRoot $statePath $DatabaseName $databaseHost $PostgresPort $PostgresContainerName $logsRoot $evidenceRoot $syntheticEvidencePath $networkName $allowedWalkthroughContainerNames | Out-Null
+Assert-StateRuntimeOwnershipCurrent $state
 if ($RestartServicesOnly) {
-    Update-WalkthroughStateAtomically $state $statePath $previousStateHash
+    [void](Update-WalkthroughStateAtomically $state $statePath $previousStateIdentity $operationLock)
 }
 else {
     try {
-        Write-WalkthroughStateAtomically $state $statePath
+        Write-WalkthroughStateAtomically $state $statePath $operationLock
     }
     catch {
         $ownedProcesses = @($listenerRecords + $launcherRecords | ForEach-Object { "$($_.Name):PID=$($_.Id)" }) -join ', '
@@ -1012,3 +1288,7 @@ Write-Host "Reviewer username: $($fixtureContext.reviewerUsername)"
 Write-Host "Synthetic evidence: $syntheticEvidencePath"
 Write-Host "The reviewer password and all infrastructure secrets remain in the caller-owned environment and were not printed or stored."
 Write-Host "This startup is local-development preparation only. It is not walkthrough execution, Controlled UAT, compliance evidence, or production authorization."
+}
+finally {
+    Exit-WalkthroughOperationLock $operationLock
+}
