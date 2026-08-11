@@ -13,12 +13,26 @@ public interface IVendorSessionProjectionRepository
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Atomically creates or updates a complete successful projection batch.
+    /// </summary>
+    Task<IReadOnlyList<VendorSessionProjection>> UpsertBatchAsync(
+        IReadOnlyList<VendorSessionProjection> projections,
+        CancellationToken cancellationToken);
+
+    /// <summary>
     /// Finds the latest known projection by card/ticket or optional plate within a scope.
     /// </summary>
-    Task<VendorSessionProjection?> FindLatestAsync(
+    Task<VendorSessionProjectionReadResult?> FindLatestAsync(
         VendorSessionProjectionLookupQuery query,
         CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Projection row plus the authoritative timestamp of its target's last completed successful cycle.
+/// </summary>
+public sealed record VendorSessionProjectionReadResult(
+    VendorSessionProjection Projection,
+    DateTimeOffset? LastSuccessfulProjectionAt);
 
 /// <summary>
 /// Persistence boundary for site-scoped vendor session projection sync targets.
@@ -46,6 +60,39 @@ public interface IVendorSessionProjectionSyncTargetRepository
     Task UpdateHealthAsync(
         VendorSessionProjectionSyncTargetHealthUpdate update,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records a deferred cycle caused by target-scoped distributed lock contention.
+    /// </summary>
+    Task RecordLockContentionAsync(
+        Guid projectionSyncTargetId,
+        DateTimeOffset contendedAt,
+        Guid correlationId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Target-scoped cross-instance projection execution lock.
+/// </summary>
+public interface IVendorSessionProjectionExecutionLock
+{
+    /// <summary>
+    /// Attempts to acquire an exclusive lease for one projection target.
+    /// </summary>
+    Task<IAsyncDisposable?> TryAcquireAsync(
+        Guid projectionSyncTargetId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Fail-closed activation boundary shared by every live HikCentral adapter path.
+/// </summary>
+public interface IHikCentralLiveActivationGate
+{
+    /// <summary>
+    /// Verifies the dedicated local profile, process configuration, acknowledgement, and target scope.
+    /// </summary>
+    Task EnsureActivatedAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>

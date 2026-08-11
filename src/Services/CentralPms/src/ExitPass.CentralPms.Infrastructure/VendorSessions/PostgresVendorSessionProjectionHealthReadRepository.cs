@@ -60,6 +60,8 @@ public sealed class PostgresVendorSessionProjectionHealthReadRepository
                 target.failure_count,
                 target.last_error_code,
                 target.last_error_message,
+                target.last_lock_contention_at,
+                target.lock_contention_count,
                 COALESCE(rollup.latest_projection_last_refreshed_at, NULL) AS latest_projection_last_refreshed_at,
                 COALESCE(rollup.total_projection_count, 0) AS total_projection_count,
                 COALESCE(rollup.active_projection_count, 0) AS active_projection_count,
@@ -132,6 +134,8 @@ public sealed class PostgresVendorSessionProjectionHealthReadRepository
                 target.failure_count,
                 target.last_error_code,
                 target.last_error_message,
+                target.last_lock_contention_at,
+                target.lock_contention_count,
                 COALESCE(rollup.latest_projection_last_refreshed_at, NULL) AS latest_projection_last_refreshed_at,
                 COALESCE(rollup.total_projection_count, 0) AS total_projection_count,
                 COALESCE(rollup.active_projection_count, 0) AS active_projection_count,
@@ -227,6 +231,8 @@ public sealed class PostgresVendorSessionProjectionHealthReadRepository
             reader.GetInt32(reader.GetOrdinal("failure_count")),
             GetNullableString(reader, "last_error_code"),
             GetNullableString(reader, "last_error_message"),
+            GetNullableTimestamp(reader, "last_lock_contention_at"),
+            reader.GetInt32(reader.GetOrdinal("lock_contention_count")),
             reader.GetInt32(reader.GetOrdinal("poll_interval_seconds")),
             reader.GetInt32(reader.GetOrdinal("lookback_window_minutes")),
             reader.GetInt32(reader.GetOrdinal("page_size")),
@@ -246,6 +252,7 @@ public sealed class PostgresVendorSessionProjectionHealthReadRepository
             "DEGRADED" => VendorSessionProjectionHealthStatus.Degraded,
             "FAILING" => VendorSessionProjectionHealthStatus.Failing,
             "DISABLED" => VendorSessionProjectionHealthStatus.Disabled,
+            "DEFERRED" => VendorSessionProjectionHealthStatus.Deferred,
             _ => VendorSessionProjectionHealthStatus.Unknown
         };
     }

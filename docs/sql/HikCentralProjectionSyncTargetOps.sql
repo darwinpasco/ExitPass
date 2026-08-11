@@ -26,7 +26,7 @@
 -- \set vendor_system_id '<vendor system uuid>'
 -- \set parking_lot_index_code '<hikcentral parking lot index code>'
 -- \set parking_lot_name '<hikcentral parking lot name>'
--- \set poll_interval_seconds 300
+-- \set poll_interval_seconds 60
 -- \set lookback_window_minutes 180
 -- \set page_size 100
 

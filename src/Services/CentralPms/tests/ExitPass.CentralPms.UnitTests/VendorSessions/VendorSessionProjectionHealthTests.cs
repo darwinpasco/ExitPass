@@ -20,7 +20,7 @@ public sealed class VendorSessionProjectionHealthTests
                     "LOT-1",
                     enabled: true,
                     healthStatus: VendorSessionProjectionHealthStatus.Healthy,
-                    latestProjectionLastRefreshedAt: Now.AddMinutes(-30),
+                    latestProjectionLastRefreshedAt: Now.AddSeconds(-30),
                     activeCount: 3,
                     exitedCount: 1,
                     cardCount: 2,
@@ -29,7 +29,7 @@ public sealed class VendorSessionProjectionHealthTests
                     "LOT-2",
                     enabled: true,
                     healthStatus: VendorSessionProjectionHealthStatus.Degraded,
-                    latestProjectionLastRefreshedAt: Now.AddMinutes(-90)),
+                    latestProjectionLastRefreshedAt: Now.AddSeconds(-90)),
                 Target(
                     "LOT-3",
                     enabled: false,
@@ -47,7 +47,7 @@ public sealed class VendorSessionProjectionHealthTests
                 target.ExitedProjectionCount == 1 &&
                 target.CardNumProjectionCount == 2 &&
                 target.PlateLicenseProjectionCount == 1 &&
-                target.FreshnessAge == TimeSpan.FromMinutes(30));
+                target.FreshnessAge == TimeSpan.FromSeconds(30));
         targets.Single(target => target.ParkingLotIndexCode == "LOT-2").IsStale.Should().BeTrue();
         targets.Single(target => target.ParkingLotIndexCode == "LOT-3").Should().Match<VendorSessionProjectionHealthTarget>(
             target => !target.Enabled &&
@@ -60,10 +60,10 @@ public sealed class VendorSessionProjectionHealthTests
     {
         var repository = new RecordingHealthRepository(
             [
-                Target("HEALTHY", true, VendorSessionProjectionHealthStatus.Healthy, Now.AddMinutes(-10), activeCount: 2, exitedCount: 1, lastSuccessAt: Now.AddMinutes(-9)),
-                Target("DEGRADED", true, VendorSessionProjectionHealthStatus.Degraded, Now.AddHours(-2), activeCount: 4, exitedCount: 2, lastFailureAt: Now.AddMinutes(-5)),
+                Target("HEALTHY", true, VendorSessionProjectionHealthStatus.Healthy, Now.AddSeconds(-10), activeCount: 2, exitedCount: 1, lastSuccessAt: Now.AddSeconds(-9)),
+                Target("DEGRADED", true, VendorSessionProjectionHealthStatus.Degraded, Now.AddMinutes(-2), activeCount: 4, exitedCount: 2, lastFailureAt: Now.AddSeconds(-5)),
                 Target("FAILING", true, VendorSessionProjectionHealthStatus.Failing, null),
-                Target("UNKNOWN", true, VendorSessionProjectionHealthStatus.Unknown, Now.AddMinutes(-15)),
+                Target("UNKNOWN", true, VendorSessionProjectionHealthStatus.Unknown, Now.AddSeconds(-15)),
                 Target("DISABLED", false, VendorSessionProjectionHealthStatus.Disabled, Now.AddDays(-2))
             ]);
         var sut = CreateSut(repository);
@@ -79,7 +79,7 @@ public sealed class VendorSessionProjectionHealthTests
         summary.UnknownTargets.Should().Be(1);
         summary.StaleTargets.Should().Be(2);
         summary.TargetsWithLastFailure.Should().Be(1);
-        summary.LatestSuccessfulProjectionSyncAt.Should().Be(Now.AddMinutes(-9));
+        summary.LatestSuccessfulProjectionSyncAt.Should().Be(Now.AddSeconds(-9));
         summary.TotalActiveProjections.Should().Be(6);
         summary.TotalExitedProjections.Should().Be(3);
     }
@@ -106,8 +106,10 @@ public sealed class VendorSessionProjectionHealthTests
 
         detail.Should().NotBeNull();
         detail!.Target.ParkingLotIndexCode.Should().Be("LOT-DETAIL");
-        detail.LatestProjectedRecords.Should().ContainSingle()
-            .Which.CardNum.Should().Be("3519278781100");
+        var record = detail.LatestProjectedRecords.Should().ContainSingle().Which;
+        record.VendorRecordGuid.Should().BeNull();
+        record.CardNum.Should().BeNull();
+        record.PlateLicense.Should().BeNull();
     }
 
     [Fact]
@@ -119,7 +121,7 @@ public sealed class VendorSessionProjectionHealthTests
             {
                 SchedulerEnabled = true,
                 DegradedResolveFallbackEnabled = false,
-                MaxProjectionAgeMinutes = 45,
+                MaxProjectionAgeMinutes = 1,
                 MaxParallelSiteJobs = 3,
                 SchedulerScanIntervalSeconds = 60
             });
@@ -128,7 +130,7 @@ public sealed class VendorSessionProjectionHealthTests
 
         summary.Config.SchedulerEnabled.Should().BeTrue();
         summary.Config.DegradedResolveFallbackEnabled.Should().BeFalse();
-        summary.Config.MaxProjectionAgeMinutes.Should().Be(45);
+        summary.Config.MaxProjectionAgeMinutes.Should().Be(1);
         summary.Config.MaxParallelSiteJobs.Should().Be(3);
         summary.Config.SchedulerScanIntervalSeconds.Should().Be(60);
         summary.Config.GetType().GetProperties()
@@ -137,6 +139,76 @@ public sealed class VendorSessionProjectionHealthTests
                 propertyName.Contains("Secret", StringComparison.OrdinalIgnoreCase) ||
                 propertyName.Contains("AppKey", StringComparison.OrdinalIgnoreCase) ||
                 propertyName.Contains("BaseUrl", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ListTargetsAsync_ClassifiesCompletedSuccessFreshnessAndOperationalStates()
+    {
+        var sut = CreateSut(new RecordingHealthRepository([
+            Target("CURRENT", true, VendorSessionProjectionHealthStatus.Healthy, Now.AddSeconds(-30)),
+            Target("STALE", true, VendorSessionProjectionHealthStatus.Healthy, Now.AddSeconds(-61)),
+            Target("NEVER", true, VendorSessionProjectionHealthStatus.Unknown, null),
+            Target("FAILED", true, VendorSessionProjectionHealthStatus.Failing, Now.AddSeconds(-30),
+                lastSuccessAt: Now.AddSeconds(-30), lastFailureAt: Now.AddSeconds(-10)),
+            Target("TRANSIENT-FAILED", true, VendorSessionProjectionHealthStatus.Degraded, Now.AddSeconds(-30),
+                lastSuccessAt: Now.AddSeconds(-30), lastFailureAt: Now.AddSeconds(-10)),
+            Target("DISABLED", false, VendorSessionProjectionHealthStatus.Disabled, null),
+            Target("DEFERRED", true, VendorSessionProjectionHealthStatus.Deferred, Now.AddSeconds(-30),
+                lastSuccessAt: Now.AddSeconds(-30), lastLockContentionAt: Now.AddSeconds(-5))
+        ]));
+
+        var targets = await sut.ListTargetsAsync(CancellationToken.None);
+
+        targets.Single(target => target.ParkingLotIndexCode == "CURRENT").FreshnessClassification.Should().Be("CURRENT");
+        targets.Single(target => target.ParkingLotIndexCode == "STALE").FreshnessClassification.Should().Be("STALE");
+        targets.Single(target => target.ParkingLotIndexCode == "NEVER").FreshnessClassification.Should().Be("NEVER_SYNCHRONIZED");
+        targets.Single(target => target.ParkingLotIndexCode == "FAILED").FreshnessClassification.Should().Be("FAILED");
+        targets.Single(target => target.ParkingLotIndexCode == "TRANSIENT-FAILED").FreshnessClassification.Should().Be("FAILED");
+        targets.Single(target => target.ParkingLotIndexCode == "DISABLED").FreshnessClassification.Should().Be("DISABLED");
+        targets.Single(target => target.ParkingLotIndexCode == "DEFERRED").FreshnessClassification.Should().Be("LOCK_CONTENDED_DEFERRED");
+    }
+
+    [Fact]
+    public async Task ListTargetsAsync_WhenExplicitMaximumExceedsNormalTarget_ClassifiesDelayed()
+    {
+        var sut = CreateSut(
+            new RecordingHealthRepository([
+                Target("DELAYED", true, VendorSessionProjectionHealthStatus.Degraded, Now.AddSeconds(-90))
+            ]),
+            new VendorSessionProjectionOptions
+            {
+                NormalFreshnessTargetSeconds = 60,
+                MaxProjectionAgeMinutes = 2
+            });
+
+        var target = Assert.Single(await sut.ListTargetsAsync(CancellationToken.None));
+
+        target.FreshnessClassification.Should().Be("DELAYED");
+        target.IsStale.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ListTargetsAsync_SanitizesHistoricalFailureDetails()
+    {
+        var unsafeTarget = Target(
+            "UNSAFE-HISTORY",
+            true,
+            VendorSessionProjectionHealthStatus.Failing,
+            Now.AddSeconds(-30),
+            lastFailureAt: Now.AddSeconds(-5)) with
+        {
+            LastErrorCode = "HttpRequestException: https://internal.example/path?token=secret",
+            LastErrorMessage = "raw upstream response and credential-shaped detail"
+        };
+        var sut = CreateSut(new RecordingHealthRepository([unsafeTarget]));
+
+        var target = Assert.Single(await sut.ListTargetsAsync(CancellationToken.None));
+
+        target.LastErrorCode.Should().Be("PROJECTION_FAILURE");
+        target.LastErrorMessage.Should().Be(
+            "Projection synchronization failed. Review the classified operational event.");
+        target.LastErrorMessage.Should().NotContain("credential");
+        target.LastErrorMessage.Should().NotContain("upstream response");
     }
 
     [Fact]
@@ -170,7 +242,7 @@ public sealed class VendorSessionProjectionHealthTests
             new FixedClock(Now),
             Options.Create(options ?? new VendorSessionProjectionOptions
             {
-                MaxProjectionAgeMinutes = 60,
+                MaxProjectionAgeMinutes = 1,
                 SchedulerScanIntervalSeconds = 30,
                 MaxParallelSiteJobs = 2
             }));
@@ -186,8 +258,10 @@ public sealed class VendorSessionProjectionHealthTests
         long cardCount = 0,
         long plateCount = 0,
         DateTimeOffset? lastSuccessAt = null,
-        DateTimeOffset? lastFailureAt = null)
+        DateTimeOffset? lastFailureAt = null,
+        DateTimeOffset? lastLockContentionAt = null)
     {
+        var effectiveLastSuccessAt = lastSuccessAt ?? (enabled ? latestProjectionLastRefreshedAt : null);
         return new VendorSessionProjectionHealthTargetReadModel(
             Guid.NewGuid(),
             Guid.Parse("bbbbbbbb-0000-0000-0000-000000000001"),
@@ -197,16 +271,18 @@ public sealed class VendorSessionProjectionHealthTests
             $"{parkingLotIndexCode} Name",
             enabled,
             healthStatus,
-            LastAttemptAt: lastSuccessAt ?? lastFailureAt,
-            LastSuccessAt: lastSuccessAt,
+            LastAttemptAt: effectiveLastSuccessAt ?? lastFailureAt,
+            LastSuccessAt: effectiveLastSuccessAt,
             LastFailureAt: lastFailureAt,
             FailureCount: lastFailureAt.HasValue ? 1 : 0,
             LastErrorCode: lastFailureAt.HasValue ? "SYNTHETIC_FAILURE" : null,
             LastErrorMessage: lastFailureAt.HasValue ? "Synthetic failure." : null,
-            PollIntervalSeconds: 300,
+            LastLockContentionAt: lastLockContentionAt,
+            LockContentionCount: lastLockContentionAt.HasValue ? 1 : 0,
+            PollIntervalSeconds: 60,
             LookbackWindowMinutes: 180,
             PageSize: 100,
-            latestProjectionLastRefreshedAt,
+            LatestProjectionLastRefreshedAt: latestProjectionLastRefreshedAt,
             TotalProjectionCount: activeCount + exitedCount,
             ActiveProjectionCount: activeCount,
             ExitedProjectionCount: exitedCount,

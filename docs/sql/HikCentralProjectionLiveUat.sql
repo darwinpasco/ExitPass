@@ -125,7 +125,7 @@ WITH desired AS (
         '1'::text AS parking_lot_index_code,
         'TEST SITE'::text AS parking_lot_name,
         true::boolean AS enabled_flag,
-        300::integer AS poll_interval_seconds,
+        60::integer AS poll_interval_seconds,
         180::integer AS lookback_window_minutes,
         100::integer AS page_size,
         'UNKNOWN'::text AS health_status

@@ -176,6 +176,104 @@ public sealed class HikCentralPassagewayRecordClientTests
         Assert.Equal("1", record.AllowResult);
     }
 
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_GenuineZeroRows_ReturnsSuccessfulEmptyPage()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse(
+            """{ "code": "0", "msg": "Success", "data": { "total": 0, "list": [] } }""")));
+
+        var page = await client.GetPassagewayRecordsAsync(Request(), CancellationToken.None);
+
+        Assert.Equal("0", page.Code);
+        Assert.Equal(0, page.Total);
+        Assert.Empty(page.Records);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "HIKCENTRAL_ACCESS_DENIED", false)]
+    [InlineData(HttpStatusCode.Forbidden, "HIKCENTRAL_ACCESS_DENIED", false)]
+    [InlineData(HttpStatusCode.BadGateway, "HIKCENTRAL_HTTP_FAILURE", true)]
+    public async Task GetPassagewayRecordsAsync_NonSuccessHttp_FailsSafely(
+        HttpStatusCode statusCode,
+        string classification,
+        bool retryable)
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => new HttpResponseMessage(statusCode)));
+
+        var error = await Assert.ThrowsAsync<HikCentralPassagewayException>(
+            () => client.GetPassagewayRecordsAsync(Request(), CancellationToken.None));
+
+        Assert.Equal(classification, error.Classification);
+        Assert.Equal(retryable, error.Retryable);
+    }
+
+    [Theory]
+    [InlineData("not-json")]
+    [InlineData("{}")]
+    [InlineData("{ \"code\": \"0\" }")]
+    [InlineData("{ \"code\": \"0\", \"data\": {} }")]
+    public async Task GetPassagewayRecordsAsync_MalformedOrIncompleteResponse_FailsClosed(string body)
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse(body)));
+
+        var error = await Assert.ThrowsAsync<HikCentralPassagewayException>(
+            () => client.GetPassagewayRecordsAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_MALFORMED_RESPONSE", error.Classification);
+    }
+
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_ApplicationError_FailsClosedWithoutRawMessage()
+    {
+        const string secretShapedMessage = "credential=test-secret";
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse(
+            $$"""{ "code": "1001", "msg": "{{secretShapedMessage}}", "data": { "list": [] } }""")));
+
+        var error = await Assert.ThrowsAsync<HikCentralPassagewayException>(
+            () => client.GetPassagewayRecordsAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_APPLICATION_FAILURE", error.Classification);
+        Assert.False(error.Retryable);
+        Assert.DoesNotContain(secretShapedMessage, error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_TransportFailure_FailsSafely()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => throw new HttpRequestException("secret transport detail")));
+
+        var error = await Assert.ThrowsAsync<HikCentralPassagewayException>(
+            () => client.GetPassagewayRecordsAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_TRANSPORT_FAILURE", error.Classification);
+        Assert.DoesNotContain("secret", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_Timeout_FailsSafely()
+    {
+        var signer = new HikCentralRequestSigner(
+            new HikCentralCredentialOptions("test-ak", "test-secret"));
+        var client = new HikCentralPassagewayRecordClient(
+            new HttpClient(new TimeoutHandler()) { BaseAddress = new Uri("https://hikcentral.fake") },
+            signer);
+
+        var error = await Assert.ThrowsAsync<HikCentralPassagewayException>(
+            () => client.GetPassagewayRecordsAsync(Request(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_TIMEOUT", error.Classification);
+        Assert.True(error.Retryable);
+    }
+
+    private static HikCentralPassagewayRecordRequest Request() =>
+        new(
+            "LOT-1",
+            DateTimeOffset.Parse("2026-06-17T00:00:00Z"),
+            DateTimeOffset.Parse("2026-06-17T01:00:00Z"),
+            1,
+            50,
+            Guid.NewGuid());
+
     private static HikCentralPassagewayRecordClient CreateClient(FakeHikCentralHandler handler)
     {
         var signer = new HikCentralRequestSigner(
@@ -214,5 +312,13 @@ public sealed class HikCentralPassagewayRecordClientTests
                 : await request.Content.ReadAsStringAsync(cancellationToken);
             return responseFactory(request);
         }
+    }
+
+    private sealed class TimeoutHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(new TaskCanceledException("synthetic timeout"));
     }
 }

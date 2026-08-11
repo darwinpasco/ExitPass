@@ -25,14 +25,15 @@ Central PMS safe defaults are:
 | --- | ---: | --- |
 | `CentralPms__VendorSessionProjections__SchedulerEnabled` | `false` | Enable only in the single Central PMS instance assigned to run projection jobs. |
 | `CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled` | `false` | Keep disabled unless a guarded fallback test or operations-approved degraded mode is active. |
-| `DefaultPollIntervalSeconds` | `300` | Must be between `30` and `86400`. |
+| `DefaultPollIntervalSeconds` | `60` | Enabled targets must use the v1.3 60-second operating target. |
+| `NormalFreshnessTargetSeconds` | `60` | Age is measured from the last completed successful cycle. |
 | `DefaultLookbackWindowMinutes` | `180` | Must be between `1` and `10080`. |
 | `DefaultPageSize` | `100` | Must be between `1` and `500`. |
 | `MaxParallelSiteJobs` | `2` | Must be between `1` and `16`. |
 | `StartupDelaySeconds` | `30` | Must be between `0` and `3600`. |
 | `SchedulerScanIntervalSeconds` | `30` | Must be between `15` and `3600`. |
 | `MaxPagesPerRun` | `20` | Must be between `1` and `100`. |
-| `MaxProjectionAgeMinutes` | `60` | Must be between `1` and `10080`. |
+| `MaxProjectionAgeMinutes` | `1` | Fail-closed default; a wider degraded threshold requires a separate approved decision. |
 | `FailingFailureCountThreshold` | `3` | Must be between `1` and `100`. |
 
 Central PMS validates these values at scheduler startup and before manual projection sync orchestration. Invalid values fail clearly with a `CentralPms:VendorSessionProjections` configuration error.
@@ -50,14 +51,15 @@ CentralPms__VendorPms__HikCentral__UserId=exitpass-adapter
 
 CentralPms__VendorSessionProjections__SchedulerEnabled=false
 CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled=false
-CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds=300
+CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds=60
+CentralPms__VendorSessionProjections__NormalFreshnessTargetSeconds=60
 CentralPms__VendorSessionProjections__DefaultLookbackWindowMinutes=180
 CentralPms__VendorSessionProjections__DefaultPageSize=100
 CentralPms__VendorSessionProjections__MaxParallelSiteJobs=2
 CentralPms__VendorSessionProjections__StartupDelaySeconds=30
 CentralPms__VendorSessionProjections__SchedulerScanIntervalSeconds=30
 CentralPms__VendorSessionProjections__MaxPagesPerRun=20
-CentralPms__VendorSessionProjections__MaxProjectionAgeMinutes=60
+CentralPms__VendorSessionProjections__MaxProjectionAgeMinutes=1
 CentralPms__VendorSessionProjections__FailingFailureCountThreshold=3
 ```
 
@@ -74,7 +76,7 @@ Only one Central PMS instance per environment should run the scheduler loop. In 
 - Keep all instances capable of serving the manual internal sync endpoint if internal auth allows it.
 - Verify enabled sync targets are site scoped and parking-lot scoped before enabling the scheduler instance.
 
-There is no distributed scheduler lock in the current implementation. Do not run multiple scheduler-enabled Central PMS instances for the same environment unless a future advisory-lock control is added and tested.
+Each target run now acquires a deterministic target-scoped PostgreSQL advisory lock. Contention defers that cycle and is reported separately from adapter failure. Continue designating one scheduler instance to reduce avoidable contention; the lock is the cross-instance safety boundary, not a reason to enable every API replica.
 
 ## Sync Target Operations
 

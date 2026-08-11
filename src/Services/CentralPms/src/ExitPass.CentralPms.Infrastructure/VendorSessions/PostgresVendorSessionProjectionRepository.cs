@@ -32,6 +32,45 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
     {
         ArgumentNullException.ThrowIfNull(projection);
 
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        return await UpsertAsync(connection, transaction: null, projection, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<VendorSessionProjection>> UpsertBatchAsync(
+        IReadOnlyList<VendorSessionProjection> projections,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(projections);
+
+        if (projections.Count == 0)
+        {
+            return [];
+        }
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var results = new List<VendorSessionProjection>(projections.Count);
+
+        foreach (var projection in projections)
+        {
+            ArgumentNullException.ThrowIfNull(projection);
+            results.Add(await UpsertAsync(connection, transaction, projection, cancellationToken));
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return results;
+    }
+
+    private static async Task<VendorSessionProjection> UpsertAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        VendorSessionProjection projection,
+        CancellationToken cancellationToken)
+    {
+
         const string sql = """
             INSERT INTO sessions.vendor_session_projections (
                 vendor_session_projection_id,
@@ -174,9 +213,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 updated_at;
             """;
 
-        await using var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         AddProjectionParameters(command, projection);
 
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
@@ -189,7 +226,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
     }
 
     /// <inheritdoc />
-    public async Task<VendorSessionProjection?> FindLatestAsync(
+    public async Task<VendorSessionProjectionReadResult?> FindLatestAsync(
         VendorSessionProjectionLookupQuery query,
         CancellationToken cancellationToken)
     {
@@ -197,58 +234,64 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
 
         const string sql = """
             SELECT
-                vendor_session_projection_id,
-                vendor_system_id,
-                site_id,
-                site_group_id,
-                parking_lot_index_code,
-                parking_lot_name,
-                passageway_index_code,
-                passageway_name,
-                lane_index_code,
-                lane_name,
-                lane_direction,
-                vendor_record_guid,
-                card_num,
-                plate_license,
-                enter_time,
-                exit_time,
-                allow_type,
-                allow_result,
-                image_url,
-                source_api,
-                source_payload_hash,
-                source_payload_reference,
-                source_event_at,
-                stable_identity_type,
-                stable_identity_key,
-                first_seen_at,
-                last_seen_at,
-                last_refreshed_at,
-                projection_status,
-                correlation_id,
-                created_at,
-                updated_at
-            FROM sessions.vendor_session_projections
-            WHERE (@site_id IS NULL OR site_id = @site_id)
-              AND (@site_group_id IS NULL OR site_group_id = @site_group_id)
-              AND (@parking_lot_index_code IS NULL OR parking_lot_index_code = @parking_lot_index_code)
+                projection.vendor_session_projection_id,
+                projection.vendor_system_id,
+                projection.site_id,
+                projection.site_group_id,
+                projection.parking_lot_index_code,
+                projection.parking_lot_name,
+                projection.passageway_index_code,
+                projection.passageway_name,
+                projection.lane_index_code,
+                projection.lane_name,
+                projection.lane_direction,
+                projection.vendor_record_guid,
+                projection.card_num,
+                projection.plate_license,
+                projection.enter_time,
+                projection.exit_time,
+                projection.allow_type,
+                projection.allow_result,
+                projection.image_url,
+                projection.source_api,
+                projection.source_payload_hash,
+                projection.source_payload_reference,
+                projection.source_event_at,
+                projection.stable_identity_type,
+                projection.stable_identity_key,
+                projection.first_seen_at,
+                projection.last_seen_at,
+                projection.last_refreshed_at,
+                projection.projection_status,
+                projection.correlation_id,
+                projection.created_at,
+                projection.updated_at,
+                CASE WHEN target.enabled_flag THEN target.last_success_at ELSE NULL END AS target_last_success_at
+            FROM sessions.vendor_session_projections projection
+            LEFT JOIN sessions.vendor_session_projection_sync_targets target
+              ON target.site_id = projection.site_id
+             AND target.site_group_id = projection.site_group_id
+             AND target.vendor_system_id = projection.vendor_system_id
+             AND target.parking_lot_index_code = projection.parking_lot_index_code
+            WHERE (@site_id IS NULL OR projection.site_id = @site_id)
+              AND (@site_group_id IS NULL OR projection.site_group_id = @site_group_id)
+              AND (@parking_lot_index_code IS NULL OR projection.parking_lot_index_code = @parking_lot_index_code)
               AND (
-                    (@card_num IS NOT NULL AND card_num = @card_num)
-                 OR (@card_num IS NULL AND @plate_license IS NOT NULL AND plate_license = @plate_license)
+                    (@card_num IS NOT NULL AND projection.card_num = @card_num)
+                 OR (@card_num IS NULL AND @plate_license IS NOT NULL AND projection.plate_license = @plate_license)
               )
-              AND projection_status <> 'INVALIDATED'
+              AND projection.projection_status <> 'INVALIDATED'
             ORDER BY
-                CASE projection_status
+                CASE projection.projection_status
                     WHEN 'ACTIVE' THEN 0
                     WHEN 'UNKNOWN' THEN 1
                     WHEN 'STALE' THEN 2
                     WHEN 'EXITED' THEN 3
                     ELSE 4
                 END,
-                last_refreshed_at DESC,
-                enter_time DESC NULLS LAST,
-                created_at DESC
+                projection.last_refreshed_at DESC,
+                projection.enter_time DESC NULLS LAST,
+                projection.created_at DESC
             LIMIT 1;
             """;
 
@@ -262,7 +305,14 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         command.Parameters.Add("plate_license", NpgsqlDbType.Text).Value = DbValue(query.PlateLicense);
 
         await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
-        return await reader.ReadAsync(cancellationToken) ? MapProjection(reader) : null;
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        return new VendorSessionProjectionReadResult(
+            MapProjection(reader),
+            GetNullableTimestamp(reader, "target_last_success_at"));
     }
 
     private static void AddProjectionParameters(NpgsqlCommand command, VendorSessionProjection projection)

@@ -9,6 +9,7 @@ namespace ExitPass.CentralPms.Infrastructure.VendorSessions;
 /// On-demand HikCentral projection sync service.
 /// </summary>
 public sealed class HikCentralVendorSessionProjectionSyncService(
+    IHikCentralLiveActivationGate activationGate,
     IHikCentralPassagewayRecordClient passagewayClient,
     HikCentralPassagewayProjectionNormalizer normalizer,
     IVendorSessionProjectionRepository repository,
@@ -37,60 +38,119 @@ public sealed class HikCentralVendorSessionProjectionSyncService(
             throw new ArgumentOutOfRangeException(nameof(command), "MaxPages must be at least 1.");
         }
 
+        await activationGate.EnsureActivatedAsync(cancellationToken);
+
         var recordsSeen = 0;
-        var recordsProjected = 0;
-        var recordsSkipped = 0;
+        var projections = new List<VendorSessionProjection>();
         var pagesPulled = 0;
+        var completedPagination = false;
 
         for (var pageIndex = 1; pageIndex <= command.MaxPages; pageIndex++)
         {
-            var page = await passagewayClient.GetPassagewayRecordsAsync(
-                new HikCentralPassagewayRecordRequest(
-                    command.ParkingLotIndexCode,
-                    command.BeginTime,
-                    command.EndTime,
-                    pageIndex,
-                    command.PageSize,
-                    command.CorrelationId),
-                cancellationToken);
-            pagesPulled++;
-
-            if (page.Code is not null && page.Code is not "0")
+            HikCentralPassagewayRecordPage page;
+            try
             {
-                logger.LogWarning(
-                    "HikCentral passageway projection sync stopped on non-success vendor code. correlation_id={CorrelationId} page_index={PageIndex} hikcentral_code={HikCentralCode} hikcentral_message={HikCentralMessage}",
-                    command.CorrelationId,
-                    pageIndex,
-                    page.Code,
-                    page.Message);
-                break;
+                page = await passagewayClient.GetPassagewayRecordsAsync(
+                    new HikCentralPassagewayRecordRequest(
+                        command.ParkingLotIndexCode,
+                        command.BeginTime,
+                        command.EndTime,
+                        pageIndex,
+                        command.PageSize,
+                        command.CorrelationId),
+                    cancellationToken);
+            }
+            catch (HikCentralPassagewayException ex)
+            {
+                throw new VendorSessionProjectionException(ex.Classification, ex.Retryable);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                throw new VendorSessionProjectionException(
+                    "HIKCENTRAL_ADAPTER_FAILURE",
+                    retryable: false);
             }
 
+            pagesPulled++;
             foreach (var record in page.Records)
             {
-                recordsSeen++;
-                var observedAt = clock.UtcNow;
-                if (!normalizer.TryNormalize(
-                    record,
-                    command.VendorSystemId,
-                    command.SiteId,
-                    command.SiteGroupId,
-                    command.CorrelationId,
-                    observedAt,
-                    out var projection))
+                try
                 {
-                    recordsSkipped++;
-                    continue;
+                    recordsSeen++;
+                    if (!normalizer.TryNormalize(
+                        record,
+                        command.VendorSystemId,
+                        command.SiteId,
+                        command.SiteGroupId,
+                        command.CorrelationId,
+                        clock.UtcNow,
+                        out var projection))
+                    {
+                        throw new VendorSessionProjectionException(
+                            "HIKCENTRAL_MAPPING_FAILURE",
+                            retryable: false);
+                    }
+
+                    projections.Add(projection!);
+                }
+                catch (VendorSessionProjectionException)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    throw new VendorSessionProjectionException(
+                        "HIKCENTRAL_MAPPING_FAILURE",
+                        retryable: false);
+                }
+            }
+
+            if (page.Total.HasValue)
+            {
+                if (recordsSeen >= page.Total.Value)
+                {
+                    completedPagination = true;
+                    break;
                 }
 
-                await repository.UpsertAsync(projection!, cancellationToken);
-                recordsProjected++;
+                if (page.Records.Count < command.PageSize)
+                {
+                    throw new VendorSessionProjectionException(
+                        "HIKCENTRAL_PAGINATION_INCOMPLETE",
+                        retryable: true);
+                }
             }
-
-            if (page.Records.Count < command.PageSize)
+            else if (page.Records.Count < command.PageSize)
             {
+                completedPagination = true;
                 break;
             }
+        }
+
+        if (!completedPagination)
+        {
+            throw new VendorSessionProjectionException(
+                "HIKCENTRAL_PAGINATION_INCOMPLETE",
+                retryable: true);
+        }
+
+        try
+        {
+            await repository.UpsertBatchAsync(projections, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw new VendorSessionProjectionException(
+                "PROJECTION_PERSISTENCE_FAILURE",
+                retryable: true);
         }
 
         logger.LogInformation(
@@ -99,14 +159,14 @@ public sealed class HikCentralVendorSessionProjectionSyncService(
             command.ParkingLotIndexCode,
             pagesPulled,
             recordsSeen,
-            recordsProjected,
-            recordsSkipped);
+            projections.Count,
+            0);
 
         return new SyncVendorSessionProjectionsResult(
             pagesPulled,
             recordsSeen,
-            recordsProjected,
-            recordsSkipped,
+            projections.Count,
+            0,
             command.CorrelationId);
     }
 }

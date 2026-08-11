@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Common;
+using ExitPass.CentralPms.Application.Observability;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -65,7 +66,8 @@ public sealed class VendorSessionProjectionSchedulerTests
         result.TargetsSucceeded.Should().Be(1);
         result.TargetsFailed.Should().Be(1);
         repository.HealthUpdates.Should().Contain(update => update.Succeeded);
-        repository.HealthUpdates.Should().Contain(update => !update.Succeeded && update.ErrorCode == nameof(InvalidOperationException));
+        repository.HealthUpdates.Should().Contain(update =>
+            !update.Succeeded && update.ErrorCode == "PROJECTION_UNEXPECTED_FAILURE");
     }
 
     [Fact]
@@ -131,15 +133,85 @@ public sealed class VendorSessionProjectionSchedulerTests
         ddl.Should().Contain("ux_vendor_session_projection_sync_targets__scope");
         ddl.Should().Contain("ix_vendor_session_projection_sync_targets__enabled_due");
         ddl.Should().Contain("ix_vendor_session_projection_sync_targets__health");
+        ddl.Should().Contain("enabled_flag boolean DEFAULT false NOT NULL");
+        ddl.Should().Contain("poll_interval_seconds integer DEFAULT 60 NOT NULL");
+        ddl.Should().Contain("health_status text DEFAULT 'DISABLED' NOT NULL");
+    }
+
+    [Fact]
+    public async Task RunDueTargetsOnceAsync_WhenTargetLockContended_DefersWithoutSyncOrFailure()
+    {
+        var repository = new InMemoryTargetRepository([Target("LOT-LOCKED")]);
+        var sync = new RecordingSyncService();
+        var executionLock = new RecordingExecutionLock(acquired: false);
+        var sut = CreateSut(repository, sync, executionLock: executionLock);
+
+        var result = await sut.RunDueTargetsOnceAsync(CancellationToken.None);
+
+        result.TargetsDeferred.Should().Be(1);
+        result.TargetsFailed.Should().Be(0);
+        sync.Commands.Should().BeEmpty();
+        repository.LockContentions.Should().ContainSingle();
+        repository.HealthUpdates.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RunDueTargetsOnceAsync_ReleasesTargetLockAfterFailure()
+    {
+        var executionLock = new RecordingExecutionLock(acquired: true);
+        var sync = new RecordingSyncService { ThrowForParkingLot = "LOT-FAIL" };
+        var sut = CreateSut(
+            new InMemoryTargetRepository([Target("LOT-FAIL")]),
+            sync,
+            executionLock: executionLock);
+
+        await sut.RunDueTargetsOnceAsync(CancellationToken.None);
+
+        executionLock.LeaseDisposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunDueTargetsOnceAsync_ReleasesTargetLockAfterCancellation()
+    {
+        var executionLock = new RecordingExecutionLock(acquired: true);
+        var sync = new RecordingSyncService { CancelForParkingLot = "LOT-CANCEL" };
+        var sut = CreateSut(
+            new InMemoryTargetRepository([Target("LOT-CANCEL")]),
+            sync,
+            executionLock: executionLock);
+
+        var act = () => sut.RunDueTargetsOnceAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        executionLock.LeaseDisposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task RunDueTargetsOnceAsync_SanitizesUntrustedFailureClassification()
+    {
+        var repository = new InMemoryTargetRepository([Target("LOT-UNSAFE")]);
+        var sync = new RecordingSyncService
+        {
+            ProjectionFailureForParkingLot = "LOT-UNSAFE",
+            ProjectionFailureClassification = "secret=https://internal.example/path?token=value"
+        };
+        var sut = CreateSut(repository, sync);
+
+        var result = await sut.RunDueTargetsOnceAsync(CancellationToken.None);
+
+        result.TargetResults.Should().ContainSingle().Which.ErrorCode.Should().Be("PROJECTION_FAILURE");
+        repository.HealthUpdates.Should().ContainSingle().Which.ErrorCode.Should().Be("PROJECTION_FAILURE");
     }
 
     private static VendorSessionProjectionSyncOrchestrator CreateSut(
         IVendorSessionProjectionSyncTargetRepository repository,
         IVendorSessionProjectionSyncService syncService,
-        VendorSessionProjectionOptions? options = null)
+        VendorSessionProjectionOptions? options = null,
+        IVendorSessionProjectionExecutionLock? executionLock = null)
     {
         return new VendorSessionProjectionSyncOrchestrator(
             repository,
+            executionLock ?? new AlwaysAcquiredExecutionLock(),
             syncService,
             new FixedClock(Now),
             Options.Create(options ?? new VendorSessionProjectionOptions
@@ -150,6 +222,7 @@ public sealed class VendorSessionProjectionSchedulerTests
                 MaxParallelSiteJobs = 2,
                 FailingFailureCountThreshold = 3
             }),
+            new CentralPmsMetrics(),
             NullLogger<VendorSessionProjectionSyncOrchestrator>.Instance);
     }
 
@@ -163,7 +236,7 @@ public sealed class VendorSessionProjectionSchedulerTests
             parkingLotIndexCode,
             $"{parkingLotIndexCode} Name",
             enabled,
-            PollIntervalSeconds: 300,
+            PollIntervalSeconds: 60,
             LookbackWindowMinutes: 180,
             PageSize: 100,
             LastSuccessAt: null,
@@ -173,6 +246,8 @@ public sealed class VendorSessionProjectionSchedulerTests
             FailureCount: 0,
             LastErrorCode: null,
             LastErrorMessage: null,
+            LastLockContentionAt: null,
+            LockContentionCount: 0,
             CreatedAt: Now,
             UpdatedAt: Now);
     }
@@ -199,6 +274,7 @@ public sealed class VendorSessionProjectionSchedulerTests
     {
         private readonly object _gate = new();
         private readonly List<VendorSessionProjectionSyncTargetHealthUpdate> _healthUpdates = new();
+        private readonly List<Guid> _lockContentions = new();
 
         public IReadOnlyList<VendorSessionProjectionSyncTargetHealthUpdate> HealthUpdates
         {
@@ -244,6 +320,18 @@ public sealed class VendorSessionProjectionSchedulerTests
 
             return Task.CompletedTask;
         }
+
+        public IReadOnlyList<Guid> LockContentions => _lockContentions.ToArray();
+
+        public Task RecordLockContentionAsync(
+            Guid projectionSyncTargetId,
+            DateTimeOffset contendedAt,
+            Guid correlationId,
+            CancellationToken cancellationToken)
+        {
+            _lockContentions.Add(projectionSyncTargetId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingSyncService : IVendorSessionProjectionSyncService
@@ -252,11 +340,29 @@ public sealed class VendorSessionProjectionSchedulerTests
 
         public string? ThrowForParkingLot { get; set; }
 
+        public string? CancelForParkingLot { get; set; }
+
+        public string? ProjectionFailureForParkingLot { get; set; }
+
+        public string ProjectionFailureClassification { get; set; } = "PROJECTION_FAILURE";
+
         public Task<SyncVendorSessionProjectionsResult> SyncAsync(
             SyncVendorSessionProjectionsCommand command,
             CancellationToken cancellationToken)
         {
             Commands.Add(command);
+            if (command.ParkingLotIndexCode == CancelForParkingLot)
+            {
+                throw new OperationCanceledException("Synthetic target cancellation.");
+            }
+
+            if (command.ParkingLotIndexCode == ProjectionFailureForParkingLot)
+            {
+                throw new VendorSessionProjectionException(
+                    ProjectionFailureClassification,
+                    retryable: false);
+            }
+
             if (command.ParkingLotIndexCode == ThrowForParkingLot)
             {
                 throw new InvalidOperationException("Synthetic target failure.");
@@ -274,5 +380,37 @@ public sealed class VendorSessionProjectionSchedulerTests
     private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock
     {
         public DateTimeOffset UtcNow { get; } = utcNow;
+    }
+
+    private sealed class AlwaysAcquiredExecutionLock : IVendorSessionProjectionExecutionLock
+    {
+        public Task<IAsyncDisposable?> TryAcquireAsync(
+            Guid projectionSyncTargetId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IAsyncDisposable?>(new Lease());
+
+        private sealed class Lease : IAsyncDisposable
+        {
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingExecutionLock(bool acquired) : IVendorSessionProjectionExecutionLock
+    {
+        public bool LeaseDisposed { get; private set; }
+
+        public Task<IAsyncDisposable?> TryAcquireAsync(
+            Guid projectionSyncTargetId,
+            CancellationToken cancellationToken) => Task.FromResult<IAsyncDisposable?>(
+                acquired ? new RecordingLease(this) : null);
+
+        private sealed class RecordingLease(RecordingExecutionLock owner) : IAsyncDisposable
+        {
+            public ValueTask DisposeAsync()
+            {
+                owner.LeaseDisposed = true;
+                return ValueTask.CompletedTask;
+            }
+        }
     }
 }

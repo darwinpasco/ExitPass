@@ -45,6 +45,32 @@ public sealed record HikCentralPassagewayRecordPage(
     IReadOnlyList<HikCentralPassagewayRecord> Records);
 
 /// <summary>
+/// Privacy-safe failure returned by the HikCentral passageway transport boundary.
+/// </summary>
+public sealed class HikCentralPassagewayException : Exception
+{
+    /// <summary>
+    /// Creates a bounded passageway failure classification.
+    /// </summary>
+    public HikCentralPassagewayException(string classification, bool retryable)
+        : base("HikCentral passageway request failed safely.")
+    {
+        Classification = classification;
+        Retryable = retryable;
+    }
+
+    /// <summary>
+    /// Gets the bounded failure classification.
+    /// </summary>
+    public string Classification { get; }
+
+    /// <summary>
+    /// Gets whether a later attempt may safely retry.
+    /// </summary>
+    public bool Retryable { get; }
+}
+
+/// <summary>
 /// HikCentral passageway record fields relevant to an ExitPass continuity projection.
 /// </summary>
 public sealed record HikCentralPassagewayRecord(
@@ -202,23 +228,49 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
         httpRequest.Headers.TryAddWithoutValidation("userId", _userId);
         await _requestSigner.SignAsync(httpRequest, cancellationToken);
 
-        using var response = await _httpClient.SendAsync(httpRequest, cancellationToken);
-        var responseBody = response.Content is null
-            ? string.Empty
-            : await response.Content.ReadAsStringAsync(cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(httpRequest, cancellationToken);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new HikCentralPassagewayException("HIKCENTRAL_TIMEOUT", retryable: true);
+        }
+        catch (HttpRequestException)
+        {
+            throw new HikCentralPassagewayException("HIKCENTRAL_TRANSPORT_FAILURE", retryable: true);
+        }
 
-        var page = MapResponse(response.StatusCode, responseBody, request.PageIndex, request.PageSize);
-        _logger.LogInformation(
-            "HikCentral passageway projection pull completed. endpoint={EndpointPath} correlation_id={CorrelationId} page_index={PageIndex} page_size={PageSize} http_status={HttpStatus} hikcentral_code={HikCentralCode} item_count={ItemCount}",
-            PassagewayRecordPath,
-            request.CorrelationId,
-            request.PageIndex,
-            request.PageSize,
-            (int)response.StatusCode,
-            page.Code,
-            page.Records.Count);
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                var classification = response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                    ? "HIKCENTRAL_ACCESS_DENIED"
+                    : "HIKCENTRAL_HTTP_FAILURE";
+                var retryable = response.StatusCode is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) &&
+                    (int)response.StatusCode >= 500;
+                throw new HikCentralPassagewayException(classification, retryable);
+            }
 
-        return page;
+            var responseBody = response.Content is null
+                ? string.Empty
+                : await response.Content.ReadAsStringAsync(cancellationToken);
+
+            var page = MapResponse(response.StatusCode, responseBody, request.PageIndex, request.PageSize);
+            _logger.LogInformation(
+                "HikCentral passageway projection pull completed. endpoint={EndpointPath} correlation_id={CorrelationId} page_index={PageIndex} page_size={PageSize} http_status={HttpStatus} hikcentral_code={HikCentralCode} item_count={ItemCount}",
+                PassagewayRecordPath,
+                request.CorrelationId,
+                request.PageIndex,
+                request.PageSize,
+                (int)response.StatusCode,
+                page.Code,
+                page.Records.Count);
+
+            return page;
+        }
     }
 
     private static HikCentralPassagewayRecordPage MapResponse(
@@ -229,22 +281,80 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
     {
         if (string.IsNullOrWhiteSpace(body))
         {
-            return new HikCentralPassagewayRecordPage(statusCode, null, null, pageIndex, pageSize, null, []);
+            throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
         }
 
-        using var document = JsonDocument.Parse(body);
-        var root = document.RootElement;
-        var code = TryGetString(root, "code");
-        var message = TryGetString(root, "msg");
-        var data = root.TryGetProperty("data", out var dataElement) ? dataElement : root;
-        var total = TryGetInt32(data, "total") ?? TryGetInt32(data, "totalCount");
-        var records = ExtractRecords(data)
-            .Select(record => record.Deserialize<HikCentralPassagewayRecord>(JsonOptions))
-            .Where(record => record is not null)
-            .Cast<HikCentralPassagewayRecord>()
-            .ToArray();
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(body);
+        }
+        catch (JsonException)
+        {
+            throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+        }
 
-        return new HikCentralPassagewayRecordPage(statusCode, code, message, pageIndex, pageSize, total, records);
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind is not JsonValueKind.Object)
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            var code = TryGetString(root, "code");
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            if (!string.Equals(code, "0", StringComparison.Ordinal))
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_APPLICATION_FAILURE", retryable: false);
+            }
+
+            var message = TryGetString(root, "msg");
+            if (!root.TryGetProperty("data", out var data))
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            var total = TryGetInt32(data, "total") ?? TryGetInt32(data, "totalCount");
+            if (total is < 0)
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            IReadOnlyList<JsonElement> recordElements;
+            try
+            {
+                recordElements = ExtractRecords(data);
+            }
+            catch (InvalidOperationException)
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            HikCentralPassagewayRecord[] records;
+            try
+            {
+                records = recordElements
+                    .Select(record => record.Deserialize<HikCentralPassagewayRecord>(JsonOptions))
+                    .Select(record => record ?? throw new JsonException())
+                    .ToArray();
+            }
+            catch (JsonException)
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            if (total.HasValue && records.Length > total.Value)
+            {
+                throw new HikCentralPassagewayException("HIKCENTRAL_MALFORMED_RESPONSE", retryable: true);
+            }
+
+            return new HikCentralPassagewayRecordPage(statusCode, code, message, pageIndex, pageSize, total, records);
+        }
     }
 
     private static IReadOnlyList<JsonElement> ExtractRecords(JsonElement data)
@@ -256,7 +366,7 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
 
         if (data.ValueKind is not JsonValueKind.Object)
         {
-            return [];
+            throw new InvalidOperationException("HIKCENTRAL_RECORD_COLLECTION_MISSING");
         }
 
         foreach (var propertyName in new[] { "list", "records", "rows" })
@@ -268,7 +378,7 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
             }
         }
 
-        return [data.Clone()];
+        throw new InvalidOperationException("HIKCENTRAL_RECORD_COLLECTION_MISSING");
     }
 
     private static int? TryGetInt32(JsonElement element, string propertyName)

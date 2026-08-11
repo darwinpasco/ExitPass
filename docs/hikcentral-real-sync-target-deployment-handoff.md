@@ -161,7 +161,7 @@ Checklist:
 - Review target `poll_interval_seconds`, `lookback_window_minutes`, and `page_size`.
 - Start the scheduler instance and watch the first run.
 
-There is no distributed scheduler lock in the current implementation. Do not run multiple scheduler-enabled Central PMS instances for the same environment.
+Target-scoped PostgreSQL advisory locking now prevents overlapping projection of the same target. Continue assigning one scheduler instance per environment to avoid unnecessary deferred cycles; lock contention is reported separately and never counts as successful projection.
 
 ## First Sync Validation Checklist
 

@@ -340,7 +340,11 @@ static void ConfigureHealthChecks(WebApplicationBuilder builder)
 {
     builder.Services
         .AddHealthChecks()
-        .AddCheck("self", () => HealthCheckResult.Healthy("Central PMS Service is alive."));
+        .AddCheck("self", () => HealthCheckResult.Healthy("Central PMS Service is alive."))
+        .AddCheck<VendorSessionProjectionReadinessHealthCheck>(
+            "vendor-session-projection",
+            failureStatus: HealthStatus.Unhealthy,
+            tags: ["ready"]);
 }
 
 static void ConfigureInternalSecurity(WebApplicationBuilder builder)
@@ -397,19 +401,30 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
     builder.Services.AddCentralPmsVendorPmsAdapter(builder.Configuration);
-    builder.Services.Configure<VendorSessionProjectionOptions>(
-        builder.Configuration.GetSection(VendorSessionProjectionOptions.SectionName));
+    builder.Services.AddOptions<VendorSessionProjectionOptions>()
+        .Bind(builder.Configuration.GetSection(VendorSessionProjectionOptions.SectionName))
+        .Validate(
+            options => options.Validate().Count == 0,
+            "Vendor session projection timing and freshness configuration is invalid.")
+        .ValidateOnStart();
     builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionRepository>(_ =>
         new PostgresVendorSessionProjectionRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionSyncTargetRepository>(_ =>
         new PostgresVendorSessionProjectionSyncTargetRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IVendorSessionProjectionExecutionLock>(_ =>
+        new PostgresVendorSessionProjectionExecutionLock(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionHealthReadRepository>(_ =>
         new PostgresVendorSessionProjectionHealthReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionLookupService, VendorSessionProjectionLookupService>();
     builder.Services.AddScoped<IVendorSessionProjectionHealthService, VendorSessionProjectionHealthService>();
     builder.Services.AddScoped<IVendorSessionProjectionSyncOrchestrator, VendorSessionProjectionSyncOrchestrator>();
+    builder.Services.AddSingleton<VendorSessionProjectionStartupValidationHostedService>();
+    builder.Services.AddSingleton<IHikCentralLiveActivationGate>(serviceProvider =>
+        serviceProvider.GetRequiredService<VendorSessionProjectionStartupValidationHostedService>());
+    builder.Services.AddHostedService(serviceProvider =>
+        serviceProvider.GetRequiredService<VendorSessionProjectionStartupValidationHostedService>());
     builder.Services.AddHostedService<VendorSessionProjectionSchedulerHostedService>();
     builder.Services.AddScoped<IProviderHandoffFactory, ProviderHandoffFactory>();
     builder.Services.AddScoped<IPaymentAttemptCreationPolicy, PaymentAttemptCreationPolicy>();

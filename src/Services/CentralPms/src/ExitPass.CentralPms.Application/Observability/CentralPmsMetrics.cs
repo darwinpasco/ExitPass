@@ -24,6 +24,12 @@ public sealed class CentralPmsMetrics : IDisposable
     private readonly Counter<long> _exitAuthorizationConsumeOutcomesTotal;
     private readonly Counter<long> _durableEventPersistenceTotal;
     private readonly Counter<long> _exceptionsTotal;
+    private readonly Counter<long> _projectionAttemptsTotal;
+    private readonly Counter<long> _projectionCompletionsTotal;
+    private readonly Counter<long> _projectionFailuresTotal;
+    private readonly Counter<long> _projectionLockContentionsTotal;
+    private readonly Histogram<double> _projectionDurationMilliseconds;
+    private readonly Histogram<long> _projectionRecords;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CentralPmsMetrics"/> class.
@@ -86,6 +92,31 @@ public sealed class CentralPmsMetrics : IDisposable
             name: "exitpass_exceptions_total",
             unit: "{exception}",
             description: "Total number of bounded application exceptions observed by Central PMS.");
+
+        _projectionAttemptsTotal = _meter.CreateCounter<long>(
+            "exitpass_vendor_session_projection_attempts_total",
+            unit: "{attempt}",
+            description: "Total target-scoped vendor projection attempts.");
+        _projectionCompletionsTotal = _meter.CreateCounter<long>(
+            "exitpass_vendor_session_projection_completions_total",
+            unit: "{completion}",
+            description: "Total successful vendor projection completions, including genuine zero-row results.");
+        _projectionFailuresTotal = _meter.CreateCounter<long>(
+            "exitpass_vendor_session_projection_failures_total",
+            unit: "{failure}",
+            description: "Total vendor projection failures by bounded classification.");
+        _projectionLockContentionsTotal = _meter.CreateCounter<long>(
+            "exitpass_vendor_session_projection_lock_contentions_total",
+            unit: "{contention}",
+            description: "Total target cycles deferred by distributed-lock contention.");
+        _projectionDurationMilliseconds = _meter.CreateHistogram<double>(
+            "exitpass_vendor_session_projection_duration_milliseconds",
+            unit: "ms",
+            description: "Duration of completed target projection operations.");
+        _projectionRecords = _meter.CreateHistogram<long>(
+            "exitpass_vendor_session_projection_records",
+            unit: "{record}",
+            description: "Records committed by successful target projection operations.");
     }
 
     /// <summary>
@@ -194,6 +225,39 @@ public sealed class CentralPmsMetrics : IDisposable
             new KeyValuePair<string, object?>("exception_type", Normalize(exceptionType)),
             new KeyValuePair<string, object?>("operation", Normalize(operation)));
     }
+
+    /// <summary>
+    /// Records the start of a target-scoped projection attempt.
+    /// </summary>
+    public void VendorSessionProjectionAttempted() => _projectionAttemptsTotal.Add(1);
+
+    /// <summary>
+    /// Records a committed projection completion.
+    /// </summary>
+    public void VendorSessionProjectionCompleted(long records, TimeSpan duration)
+    {
+        _projectionCompletionsTotal.Add(
+            1,
+            new KeyValuePair<string, object?>("result", records == 0 ? "ZERO_ROWS" : "RECORDS_COMMITTED"));
+        _projectionRecords.Record(records);
+        _projectionDurationMilliseconds.Record(Math.Max(0, duration.TotalMilliseconds));
+    }
+
+    /// <summary>
+    /// Records a bounded projection failure.
+    /// </summary>
+    public void VendorSessionProjectionFailed(string classification, bool retryable)
+    {
+        _projectionFailuresTotal.Add(
+            1,
+            new KeyValuePair<string, object?>("classification", Normalize(classification)),
+            new KeyValuePair<string, object?>("retryable", retryable));
+    }
+
+    /// <summary>
+    /// Records a target cycle deferred by lock contention.
+    /// </summary>
+    public void VendorSessionProjectionLockContended() => _projectionLockContentionsTotal.Add(1);
 
     /// <summary>
     /// Records durable event persistence success or failure.

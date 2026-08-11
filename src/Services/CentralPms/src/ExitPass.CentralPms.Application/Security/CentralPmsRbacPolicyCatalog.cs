@@ -76,6 +76,10 @@ public static class CentralPmsRbacPolicyCatalog
                 "reconciliation.view",
                 "reconciliation.manage"
             ],
+            ["VendorSessionProjectionSyncOperator"] =
+            [
+                "ops.vendor-session-projection-sync.execute"
+            ],
             ["ManagementPlatformIdentityRbacInventoryRead"] =
             [
                 "management-platform.identity-rbac.inventory.read"

@@ -45,19 +45,20 @@ public sealed class VendorSessionProjectionSchedulerHostedService(
             var result = await orchestrator.RunDueTargetsOnceAsync(stoppingToken);
 
             logger.LogInformation(
-                "Vendor session projection scheduler pass completed. targets_loaded={TargetsLoaded} targets_run={TargetsRun} targets_succeeded={TargetsSucceeded} targets_failed={TargetsFailed}",
+                "Vendor session projection scheduler pass completed. targets_loaded={TargetsLoaded} targets_run={TargetsRun} targets_succeeded={TargetsSucceeded} targets_failed={TargetsFailed} targets_deferred={TargetsDeferred}",
                 result.TargetsLoaded,
                 result.TargetsRun,
                 result.TargetsSucceeded,
-                result.TargetsFailed);
+                result.TargetsFailed,
+                result.TargetsDeferred);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            logger.LogError(ex, "Vendor session projection scheduler pass failed before target isolation.");
+            logger.LogError("Vendor session projection scheduler pass failed safely before target isolation.");
         }
     }
 }

@@ -7,6 +7,15 @@
         "ASPNETCORE_ENVIRONMENT": "Development"
       },
       "applicationUrl": "https://localhost:56064;http://localhost:56065"
+    },
+    "HikCentralLocal": {
+      "commandName": "Project",
+      "launchBrowser": false,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "HikCentralLocal",
+        "EXITPASS_HIKCENTRAL_LAUNCH_PROFILE": "HikCentralLocal"
+      },
+      "applicationUrl": "https://localhost:56064;http://localhost:56065"
     }
   }
 }

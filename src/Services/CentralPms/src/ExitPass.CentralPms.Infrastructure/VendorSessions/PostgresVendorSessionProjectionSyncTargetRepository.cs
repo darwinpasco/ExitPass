@@ -45,6 +45,8 @@ public sealed class PostgresVendorSessionProjectionSyncTargetRepository : IVendo
                 failure_count,
                 last_error_code,
                 last_error_message,
+                last_lock_contention_at,
+                lock_contention_count,
                 created_at,
                 updated_at
             FROM sessions.vendor_session_projection_sync_targets
@@ -96,6 +98,8 @@ public sealed class PostgresVendorSessionProjectionSyncTargetRepository : IVendo
                 failure_count,
                 last_error_code,
                 last_error_message,
+                last_lock_contention_at,
+                lock_contention_count,
                 created_at,
                 updated_at
             FROM sessions.vendor_session_projection_sync_targets
@@ -166,6 +170,35 @@ public sealed class PostgresVendorSessionProjectionSyncTargetRepository : IVendo
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <inheritdoc />
+    public async Task RecordLockContentionAsync(
+        Guid projectionSyncTargetId,
+        DateTimeOffset contendedAt,
+        Guid correlationId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            UPDATE sessions.vendor_session_projection_sync_targets
+            SET
+                last_attempt_at = @contended_at,
+                last_lock_contention_at = @contended_at,
+                lock_contention_count = lock_contention_count + 1,
+                health_status = 'DEFERRED',
+                updated_at = @contended_at,
+                correlation_id = @correlation_id,
+                row_version = row_version + 1
+            WHERE projection_sync_target_id = @projection_sync_target_id;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.Add("projection_sync_target_id", NpgsqlDbType.Uuid).Value = projectionSyncTargetId;
+        command.Parameters.Add("contended_at", NpgsqlDbType.TimestampTz).Value = contendedAt;
+        command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = correlationId;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static VendorSessionProjectionSyncTarget MapTarget(NpgsqlDataReader reader)
     {
         return new VendorSessionProjectionSyncTarget(
@@ -186,6 +219,8 @@ public sealed class PostgresVendorSessionProjectionSyncTargetRepository : IVendo
             reader.GetInt32(reader.GetOrdinal("failure_count")),
             GetNullableString(reader, "last_error_code"),
             GetNullableString(reader, "last_error_message"),
+            GetNullableTimestamp(reader, "last_lock_contention_at"),
+            reader.GetInt32(reader.GetOrdinal("lock_contention_count")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")));
     }
@@ -198,6 +233,7 @@ public sealed class PostgresVendorSessionProjectionSyncTargetRepository : IVendo
             "DEGRADED" => VendorSessionProjectionHealthStatus.Degraded,
             "FAILING" => VendorSessionProjectionHealthStatus.Failing,
             "DISABLED" => VendorSessionProjectionHealthStatus.Disabled,
+            "DEFERRED" => VendorSessionProjectionHealthStatus.Deferred,
             _ => VendorSessionProjectionHealthStatus.Unknown
         };
     }
