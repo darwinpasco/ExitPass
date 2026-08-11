@@ -170,6 +170,21 @@ public sealed class VendorSessionProjectionTests
     }
 
     [Fact]
+    public async Task SchedulerDisabledManualSync_WhenLiveActivationGateRejects_DoesNotCallHikCentralOrPersist()
+    {
+        var repository = new InMemoryVendorSessionProjectionRepository();
+        var client = new FakePassagewayClient([]);
+        var service = CreateSyncService(client, repository, new RejectingActivationGate());
+
+        var act = () => service.SyncAsync(SyncCommand(), CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(act);
+        Assert.Equal("HIKCENTRAL_LIVE_ACTIVATION_REQUIRED", exception.Message);
+        Assert.Equal(0, client.Calls);
+        Assert.Equal(0, repository.BatchCalls);
+    }
+
+    [Fact]
     public async Task SyncAsync_RepeatedVendorRecord_IsIdempotent()
     {
         var repository = new InMemoryVendorSessionProjectionRepository();
@@ -206,6 +221,100 @@ public sealed class VendorSessionProjectionTests
         Assert.Equal("3519278781100", projection.CardNum);
         Assert.Equal(VendorSessionProjectionStatus.Active, projection.ProjectionStatus);
         Assert.Equal("VENDOR_RECORD_GUID", projection.StableIdentityType);
+    }
+
+    [Fact]
+    public async Task SyncAsync_GenuineZeroRows_CommitsSuccessfulEmptyBatch()
+    {
+        var repository = new InMemoryVendorSessionProjectionRepository();
+        var service = CreateSyncService(new FakePassagewayClient([]), repository);
+
+        var result = await service.SyncAsync(SyncCommand(), CancellationToken.None);
+
+        Assert.Equal(0, result.RecordsSeen);
+        Assert.Equal(0, result.RecordsProjected);
+        Assert.Equal(1, repository.BatchCalls);
+    }
+
+    [Fact]
+    public async Task SyncAsync_MappingFailure_DoesNotPersistPartialBatch()
+    {
+        var repository = new InMemoryVendorSessionProjectionRepository();
+        var invalidRecord = ActiveRecord(guid: null, cardNum: "", plateLicense: null, enterTime: "");
+        var service = CreateSyncService(
+            new FakePassagewayClient([
+                ActiveRecord("REC-VALID", "CARD-VALID", null),
+                invalidRecord
+            ]),
+            repository);
+
+        var error = await Assert.ThrowsAsync<VendorSessionProjectionException>(
+            () => service.SyncAsync(SyncCommand(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_MAPPING_FAILURE", error.Classification);
+        Assert.Empty(repository.Items);
+        Assert.Equal(0, repository.BatchCalls);
+    }
+
+    [Fact]
+    public async Task SyncAsync_PersistenceFailure_IsSanitized()
+    {
+        var service = CreateSyncService(
+            new FakePassagewayClient([ActiveRecord("REC-1", "CARD-1", null)]),
+            new FailingBatchRepository());
+
+        var error = await Assert.ThrowsAsync<VendorSessionProjectionException>(
+            () => service.SyncAsync(SyncCommand(), CancellationToken.None));
+
+        Assert.Equal("PROJECTION_PERSISTENCE_FAILURE", error.Classification);
+        Assert.DoesNotContain("constraint", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SyncAsync_PassagewayFailure_PreservesBoundedClassification()
+    {
+        var service = CreateSyncService(
+            new ThrowingPassagewayClient(new HikCentralPassagewayException("HIKCENTRAL_ACCESS_DENIED", false)),
+            new InMemoryVendorSessionProjectionRepository());
+
+        var error = await Assert.ThrowsAsync<VendorSessionProjectionException>(
+            () => service.SyncAsync(SyncCommand(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_ACCESS_DENIED", error.Classification);
+        Assert.False(error.Retryable);
+    }
+
+    [Fact]
+    public async Task SyncAsync_UnexpectedAdapterFailure_IsNotMisclassifiedAsPersistence()
+    {
+        var service = CreateSyncService(
+            new ThrowingPassagewayClient(new InvalidOperationException("credential-shaped adapter detail")),
+            new InMemoryVendorSessionProjectionRepository());
+
+        var error = await Assert.ThrowsAsync<VendorSessionProjectionException>(
+            () => service.SyncAsync(SyncCommand(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_ADAPTER_FAILURE", error.Classification);
+        Assert.False(error.Retryable);
+        Assert.DoesNotContain("credential", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task SyncAsync_ShortPageBeforeDeclaredTotal_FailsWithoutPersistence()
+    {
+        var repository = new InMemoryVendorSessionProjectionRepository();
+        var service = CreateSyncService(
+            new FakePassagewayClient(
+                [ActiveRecord("REC-1", "CARD-1", null)],
+                totalOverride: 2),
+            repository);
+
+        var error = await Assert.ThrowsAsync<VendorSessionProjectionException>(
+            () => service.SyncAsync(SyncCommand(), CancellationToken.None));
+
+        Assert.Equal("HIKCENTRAL_PAGINATION_INCOMPLETE", error.Classification);
+        Assert.True(error.Retryable);
+        Assert.Equal(0, repository.BatchCalls);
     }
 
     [Fact]
@@ -298,6 +407,41 @@ public sealed class VendorSessionProjectionTests
     }
 
     [Fact]
+    public async Task LookupAsync_FreshRowWithoutCompletedTargetSuccess_HasNoUsableFreshness()
+    {
+        var repository = new InMemoryVendorSessionProjectionRepository
+        {
+            OmitSuccessfulProjectionCompletion = true
+        };
+        var normalizer = new HikCentralPassagewayProjectionNormalizer();
+        Assert.True(normalizer.TryNormalize(
+            ActiveRecord(guid: "REC-INCOMPLETE", cardNum: "CARD-INCOMPLETE", plateLicense: null),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            ObservedAt,
+            out var projection));
+        await repository.UpsertAsync(projection!, CancellationToken.None);
+        var lookup = new VendorSessionProjectionLookupService(repository);
+
+        var result = await lookup.LookupAsync(
+            new VendorSessionProjectionLookupQuery(
+                "CARD-INCOMPLETE",
+                null,
+                projection!.SiteId,
+                projection.SiteGroupId,
+                projection.ParkingLotIndexCode,
+                ObservedAt.AddSeconds(10),
+                Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.True(result.Found);
+        Assert.Null(result.FreshnessAge);
+        Assert.Null(result.LastRefreshedAt);
+    }
+
+    [Fact]
     public void FullDdl_IncludesVendorSessionProjectionTableIndexesAndAuthorityComment()
     {
         var ddl = File.ReadAllText(FindRepoFile("ExitPass_Full_Database_Creation_DDL_v1.2.sql"));
@@ -368,9 +512,11 @@ public sealed class VendorSessionProjectionTests
 
     private static HikCentralVendorSessionProjectionSyncService CreateSyncService(
         IHikCentralPassagewayRecordClient client,
-        IVendorSessionProjectionRepository repository)
+        IVendorSessionProjectionRepository repository,
+        IHikCentralLiveActivationGate? activationGate = null)
     {
         return new HikCentralVendorSessionProjectionSyncService(
+            activationGate ?? new AllowedActivationGate(),
             client,
             new HikCentralPassagewayProjectionNormalizer(),
             repository,
@@ -568,22 +714,38 @@ public sealed class VendorSessionProjectionTests
             updatedAt);
     }
 
-    private sealed class FakePassagewayClient(IReadOnlyList<HikCentralPassagewayRecord> records)
+    private sealed class FakePassagewayClient(
+        IReadOnlyList<HikCentralPassagewayRecord> records,
+        int? totalOverride = null)
         : IHikCentralPassagewayRecordClient
     {
+        public int Calls { get; private set; }
+
         public Task<HikCentralPassagewayRecordPage> GetPassagewayRecordsAsync(
             HikCentralPassagewayRecordRequest request,
             CancellationToken cancellationToken)
         {
+            Calls++;
             return Task.FromResult(new HikCentralPassagewayRecordPage(
                 System.Net.HttpStatusCode.OK,
                 Code: "0",
                 Message: "Success",
                 request.PageIndex,
                 request.PageSize,
-                Total: records.Count,
+                Total: totalOverride ?? records.Count,
                 records));
         }
+    }
+
+    private sealed class AllowedActivationGate : IHikCentralLiveActivationGate
+    {
+        public Task EnsureActivatedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RejectingActivationGate : IHikCentralLiveActivationGate
+    {
+        public Task EnsureActivatedAsync(CancellationToken cancellationToken) =>
+            Task.FromException(new InvalidOperationException("HIKCENTRAL_LIVE_ACTIVATION_REQUIRED"));
     }
 
     private sealed class InMemoryVendorSessionProjectionRepository : IVendorSessionProjectionRepository
@@ -593,6 +755,10 @@ public sealed class VendorSessionProjectionTests
         public IReadOnlyList<VendorSessionProjection> Items => _items.Values.ToArray();
 
         public Dictionary<string, int> UpsertCounts { get; } = new(StringComparer.Ordinal);
+
+        public int BatchCalls { get; private set; }
+
+        public bool OmitSuccessfulProjectionCompletion { get; init; }
 
         public Task<VendorSessionProjection> UpsertAsync(
             VendorSessionProjection projection,
@@ -615,7 +781,21 @@ public sealed class VendorSessionProjectionTests
             return Task.FromResult(projection);
         }
 
-        public Task<VendorSessionProjection?> FindLatestAsync(
+        public async Task<IReadOnlyList<VendorSessionProjection>> UpsertBatchAsync(
+            IReadOnlyList<VendorSessionProjection> projections,
+            CancellationToken cancellationToken)
+        {
+            BatchCalls++;
+            var results = new List<VendorSessionProjection>(projections.Count);
+            foreach (var projection in projections)
+            {
+                results.Add(await UpsertAsync(projection, cancellationToken));
+            }
+
+            return results;
+        }
+
+        public Task<VendorSessionProjectionReadResult?> FindLatestAsync(
             VendorSessionProjectionLookupQuery query,
             CancellationToken cancellationToken)
         {
@@ -632,8 +812,36 @@ public sealed class VendorSessionProjectionTests
                 .ThenByDescending(item => item.EnterTime)
                 .FirstOrDefault();
 
-            return Task.FromResult(projection);
+            return Task.FromResult<VendorSessionProjectionReadResult?>(projection is null
+                ? null
+                : new VendorSessionProjectionReadResult(
+                    projection,
+                    OmitSuccessfulProjectionCompletion ? null : projection.LastRefreshedAt));
         }
+    }
+
+    private sealed class ThrowingPassagewayClient(Exception exception) : IHikCentralPassagewayRecordClient
+    {
+        public Task<HikCentralPassagewayRecordPage> GetPassagewayRecordsAsync(
+            HikCentralPassagewayRecordRequest request,
+            CancellationToken cancellationToken) => Task.FromException<HikCentralPassagewayRecordPage>(exception);
+    }
+
+    private sealed class FailingBatchRepository : IVendorSessionProjectionRepository
+    {
+        public Task<VendorSessionProjection> UpsertAsync(
+            VendorSessionProjection projection,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<VendorSessionProjection>> UpsertBatchAsync(
+            IReadOnlyList<VendorSessionProjection> projections,
+            CancellationToken cancellationToken) =>
+            Task.FromException<IReadOnlyList<VendorSessionProjection>>(
+                new InvalidOperationException("database constraint secret"));
+
+        public Task<VendorSessionProjectionReadResult?> FindLatestAsync(
+            VendorSessionProjectionLookupQuery query,
+            CancellationToken cancellationToken) => Task.FromResult<VendorSessionProjectionReadResult?>(null);
     }
 
     private sealed class FixedClock(DateTimeOffset utcNow) : ISystemClock

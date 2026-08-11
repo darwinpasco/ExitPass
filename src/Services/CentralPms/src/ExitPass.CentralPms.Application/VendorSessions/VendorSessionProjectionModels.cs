@@ -57,9 +57,14 @@ public enum VendorSessionProjectionHealthStatus
     Disabled = 3,
 
     /// <summary>
+    /// The latest due cycle was safely deferred because another instance owned the target lock.
+    /// </summary>
+    Deferred = 4,
+
+    /// <summary>
     /// Health has not yet been established.
     /// </summary>
-    Unknown = 4
+    Unknown = 5
 }
 
 /// <summary>
@@ -121,6 +126,8 @@ public sealed record VendorSessionProjectionSyncTarget(
     int FailureCount,
     string? LastErrorCode,
     string? LastErrorMessage,
+    DateTimeOffset? LastLockContentionAt,
+    int LockContentionCount,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt);
 
@@ -184,7 +191,13 @@ public sealed record VendorSessionProjectionTargetRunResult(
     DateTimeOffset CompletedAt,
     string? ErrorCode,
     string? ErrorMessage,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    /// <summary>
+    /// Gets whether this run was safely deferred rather than attempted.
+    /// </summary>
+    public bool Deferred { get; init; }
+}
 
 /// <summary>
 /// Result for one scheduler pass across due site-scoped projection targets.
@@ -196,7 +209,41 @@ public sealed record VendorSessionProjectionSchedulerRunResult(
     int TargetsFailed,
     DateTimeOffset StartedAt,
     DateTimeOffset CompletedAt,
-    IReadOnlyList<VendorSessionProjectionTargetRunResult> TargetResults);
+    IReadOnlyList<VendorSessionProjectionTargetRunResult> TargetResults)
+{
+    /// <summary>
+    /// Gets the number of target cycles deferred by distributed-lock contention.
+    /// </summary>
+    public int TargetsDeferred => TargetResults.Count(result => result.Deferred);
+}
+
+/// <summary>
+/// Bounded, privacy-safe projection failure classification.
+/// </summary>
+public sealed class VendorSessionProjectionException : Exception
+{
+    /// <summary>
+    /// Creates a safe projection failure.
+    /// </summary>
+    public VendorSessionProjectionException(string classification, bool retryable)
+        : base("Vendor session projection failed safely.")
+    {
+        Classification = string.IsNullOrWhiteSpace(classification)
+            ? "PROJECTION_UNEXPECTED_FAILURE"
+            : classification.Trim().ToUpperInvariant();
+        Retryable = retryable;
+    }
+
+    /// <summary>
+    /// Gets the bounded operational classification.
+    /// </summary>
+    public string Classification { get; }
+
+    /// <summary>
+    /// Gets whether a later scheduler cycle may safely retry.
+    /// </summary>
+    public bool Retryable { get; }
+}
 
 /// <summary>
 /// Manual internal command to run a scoped projection sync.
@@ -240,6 +287,7 @@ public sealed record VendorSessionProjectionLookupResult(
     /// </summary>
     public static VendorSessionProjectionLookupResult FoundProjection(
         VendorSessionProjection projection,
+        DateTimeOffset? lastSuccessfulProjectionAt,
         DateTimeOffset requestedAt,
         Guid correlationId)
     {
@@ -250,8 +298,12 @@ public sealed record VendorSessionProjectionLookupResult(
             IsAuthoritativeForParkingSession: false,
             IsAuthoritativeForTariff: false,
             IsAuthoritativeForPayment: false,
-            requestedAt >= projection.LastRefreshedAt ? requestedAt - projection.LastRefreshedAt : TimeSpan.Zero,
-            projection.LastRefreshedAt,
+            lastSuccessfulProjectionAt.HasValue
+                ? (requestedAt >= lastSuccessfulProjectionAt.Value
+                    ? requestedAt - lastSuccessfulProjectionAt.Value
+                    : TimeSpan.Zero)
+                : null,
+            lastSuccessfulProjectionAt,
             correlationId);
     }
 

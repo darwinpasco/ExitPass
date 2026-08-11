@@ -1129,17 +1129,19 @@ CREATE TABLE IF NOT EXISTS sessions.vendor_session_projection_sync_targets (
     vendor_system_id uuid NOT NULL,
     parking_lot_index_code text NOT NULL,
     parking_lot_name text NULL,
-    enabled_flag boolean DEFAULT true NOT NULL,
-    poll_interval_seconds integer DEFAULT 300 NOT NULL,
+    enabled_flag boolean DEFAULT false NOT NULL,
+    poll_interval_seconds integer DEFAULT 60 NOT NULL,
     lookback_window_minutes integer DEFAULT 180 NOT NULL,
     page_size integer DEFAULT 100 NOT NULL,
     last_success_at timestamptz NULL,
     last_failure_at timestamptz NULL,
     last_attempt_at timestamptz NULL,
-    health_status text DEFAULT 'UNKNOWN' NOT NULL,
+    health_status text DEFAULT 'DISABLED' NOT NULL,
     failure_count integer DEFAULT 0 NOT NULL,
     last_error_code text NULL,
     last_error_message text NULL,
+    last_lock_contention_at timestamptz NULL,
+    lock_contention_count integer DEFAULT 0 NOT NULL,
     correlation_id uuid NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
@@ -1164,6 +1166,8 @@ COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.health_status 
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.failure_count IS 'Consecutive failure count for this target.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_error_code IS 'Last sync error code, when failed.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_error_message IS 'Last sync error message, when failed.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_lock_contention_at IS 'Last cycle deferred because another scheduler held the target-scoped advisory lock.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.lock_contention_count IS 'Cumulative target-scoped advisory lock contention count.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.correlation_id IS 'Correlation identifier for the last scheduler/manual attempt.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.created_at IS 'Record creation timestamp.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.updated_at IS 'Last update timestamp.';
@@ -4653,12 +4657,13 @@ ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session_projections__stable_identity_required CHECK (length(btrim(stable_identity_type)) > 0 AND length(btrim(stable_identity_key)) > 0);
 ALTER TABLE sessions.vendor_session_projections ADD CONSTRAINT ck_vendor_session_projections__seen_window CHECK (last_seen_at >= first_seen_at AND last_refreshed_at >= first_seen_at);
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__row_version_positive CHECK (row_version > 0);
-ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__health_status CHECK (health_status IN ('HEALTHY', 'DEGRADED', 'FAILING', 'DISABLED', 'UNKNOWN'));
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__health_status CHECK (health_status IN ('HEALTHY', 'DEGRADED', 'FAILING', 'DISABLED', 'DEFERRED', 'UNKNOWN'));
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__parking_lot_required CHECK (length(btrim(parking_lot_index_code)) > 0);
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__poll_interval_positive CHECK (poll_interval_seconds > 0);
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__lookback_positive CHECK (lookback_window_minutes > 0);
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__page_size_bounds CHECK (page_size BETWEEN 1 AND 500);
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_session_projection_sync_targets__failure_count_non_negative CHECK (failure_count >= 0);
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD CONSTRAINT ck_vendor_projection_targets__lock_contention_non_negative CHECK (lock_contention_count >= 0);
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT ck_session_identifier_indexes__row_version_positive CHECK (row_version > 0);
 ALTER TABLE sessions.session_identifier_indexes ADD CONSTRAINT ck_session_identifier_indexes__effective_window CHECK (effective_to IS NULL OR effective_to > effective_from);
 ALTER TABLE coupons.coupons ADD CONSTRAINT ck_coupons__row_version_positive CHECK (row_version > 0);

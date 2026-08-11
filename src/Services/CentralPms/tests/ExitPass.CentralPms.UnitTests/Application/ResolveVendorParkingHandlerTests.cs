@@ -264,7 +264,7 @@ public sealed class ResolveVendorParkingHandlerTests
             new VendorSessionProjectionOptions
             {
                 DegradedResolveFallbackEnabled = true,
-                MaxProjectionAgeMinutes = 60
+                MaxProjectionAgeMinutes = 1
             },
             new FixedClock(Now));
 
@@ -299,7 +299,7 @@ public sealed class ResolveVendorParkingHandlerTests
             projectionOptions: new VendorSessionProjectionOptions
             {
                 DegradedResolveFallbackEnabled = true,
-                MaxProjectionAgeMinutes = 30
+                MaxProjectionAgeMinutes = 1
             },
             clock: new FixedClock(Now));
 
@@ -309,6 +309,27 @@ public sealed class ResolveVendorParkingHandlerTests
         result.ProjectionFallback.Should().BeNull();
         result.ParkingSession.Should().BeNull();
         result.TariffSnapshot.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ResolveVendorSession_WhenTargetHasNoCompletedSuccessfulCycle_FailsClosed()
+    {
+        var sut = CreateSut(
+            FakeVendorPmsParkingResolutionClient.Unavailable(),
+            projectionLookup: new RecordingProjectionLookupService(
+                FreshProjection(),
+                hasSuccessfulCompletion: false),
+            projectionOptions: new VendorSessionProjectionOptions
+            {
+                DegradedResolveFallbackEnabled = true,
+                MaxProjectionAgeMinutes = 1
+            },
+            clock: new FixedClock(Now));
+
+        var result = await sut.ExecuteAsync(TicketCommand(), CancellationToken.None);
+
+        result.Outcome.Should().Be(ResolveVendorParkingOutcome.RetryableUnavailable);
+        result.ProjectionFallback.Should().BeNull();
     }
 
     /// <summary>
@@ -606,9 +627,9 @@ public sealed class ResolveVendorParkingHandlerTests
             SourceEventAt: Now.AddHours(-1),
             StableIdentityType: "VENDOR_RECORD_GUID",
             StableIdentityKey: "HIKCENTRAL|GUID|REC-FALLBACK",
-            FirstSeenAt: Now.AddMinutes(-5),
-            LastSeenAt: Now.AddMinutes(-5),
-            LastRefreshedAt: Now.AddMinutes(-5),
+            FirstSeenAt: Now.AddSeconds(-30),
+            LastSeenAt: Now.AddSeconds(-30),
+            LastRefreshedAt: Now.AddSeconds(-30),
             ProjectionStatus: VendorSessionProjectionStatus.Active,
             CorrelationId: CorrelationId,
             CreatedAt: Now.AddMinutes(-5),
@@ -734,7 +755,9 @@ public sealed class ResolveVendorParkingHandlerTests
         }
     }
 
-    private sealed class RecordingProjectionLookupService(VendorSessionProjection? projection)
+    private sealed class RecordingProjectionLookupService(
+        VendorSessionProjection? projection,
+        bool hasSuccessfulCompletion = true)
         : IVendorSessionProjectionLookupService
     {
         public int Calls { get; private set; }
@@ -746,7 +769,11 @@ public sealed class ResolveVendorParkingHandlerTests
             Calls++;
             return Task.FromResult(projection is null
                 ? VendorSessionProjectionLookupResult.NotFound(query.CorrelationId)
-                : VendorSessionProjectionLookupResult.FoundProjection(projection, query.RequestedAt, query.CorrelationId));
+                : VendorSessionProjectionLookupResult.FoundProjection(
+                    projection,
+                    hasSuccessfulCompletion ? projection.LastRefreshedAt : null,
+                    query.RequestedAt,
+                    query.CorrelationId));
         }
     }
 

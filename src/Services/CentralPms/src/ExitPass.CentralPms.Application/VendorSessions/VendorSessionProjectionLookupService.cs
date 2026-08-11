@@ -18,11 +18,12 @@ public sealed class VendorSessionProjectionLookupService(
             return VendorSessionProjectionLookupResult.NotFound(query.CorrelationId);
         }
 
-        var projection = await repository.FindLatestAsync(query, cancellationToken);
-        return projection is null
+        var result = await repository.FindLatestAsync(query, cancellationToken);
+        return result is null
             ? VendorSessionProjectionLookupResult.NotFound(query.CorrelationId)
             : VendorSessionProjectionLookupResult.FoundProjection(
-                projection,
+                result.Projection,
+                result.LastSuccessfulProjectionAt,
                 query.RequestedAt,
                 query.CorrelationId);
     }

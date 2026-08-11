@@ -68,7 +68,7 @@ These values are required before live UAT can run:
 | `site_id` | `c9000000-0000-0000-0000-000000000001` | No | Existing `sites.sites` row |
 | `site_group_id` | `ce000000-0000-0000-0000-000000000001` | No | Existing `sites.site_groups` row |
 | `vendor_system_id` | `31bde78a-5dfc-45c3-a1f3-e48abaf90927` | No | Existing `integration.vendor_systems` row |
-| Poll interval | `poll_interval_seconds` | No | UAT choice; suggested `300` |
+| Poll interval | `poll_interval_seconds` | No | Required operating value: `60` |
 | Lookback window | `lookback_window_minutes` | No | UAT choice; suggested `180` |
 | Page size | `page_size` | No | UAT choice; suggested `100` |
 | Scheduler flag | `CentralPms__VendorSessionProjections__SchedulerEnabled` | No | UAT runtime config |
@@ -88,7 +88,8 @@ $env:CentralPms__VendorPms__HikCentral__AppSecret = "<secret>"
 $env:CentralPms__VendorPms__HikCentral__UserId = "exitpass-adapter"
 
 $env:CentralPms__VendorSessionProjections__SchedulerEnabled = "true"
-$env:CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds = "300"
+$env:CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds = "60"
+$env:CentralPms__VendorSessionProjections__NormalFreshnessTargetSeconds = "60"
 $env:CentralPms__VendorSessionProjections__DefaultLookbackWindowMinutes = "180"
 $env:CentralPms__VendorSessionProjections__DefaultPageSize = "100"
 $env:CentralPms__VendorSessionProjections__MaxParallelSiteJobs = "2"

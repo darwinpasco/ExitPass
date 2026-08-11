@@ -7,7 +7,9 @@ namespace ExitPass.CentralPms.Application.VendorSessions;
 /// </summary>
 public sealed record VendorSessionProjectionHealthConfig(
     bool SchedulerEnabled,
+    bool RequiredForEnvironment,
     bool DegradedResolveFallbackEnabled,
+    int NormalFreshnessTargetSeconds,
     int MaxProjectionAgeMinutes,
     int MaxParallelSiteJobs,
     int SchedulerScanIntervalSeconds);
@@ -30,11 +32,14 @@ public sealed record VendorSessionProjectionHealthTarget(
     int FailureCount,
     string? LastErrorCode,
     string? LastErrorMessage,
+    DateTimeOffset? LastLockContentionAt,
+    int LockContentionCount,
     int PollIntervalSeconds,
     int LookbackWindowMinutes,
     int PageSize,
     DateTimeOffset? LatestProjectionLastRefreshedAt,
     TimeSpan? FreshnessAge,
+    string FreshnessClassification,
     bool IsStale,
     long TotalProjectionCount,
     long ActiveProjectionCount,
@@ -127,6 +132,8 @@ public sealed record VendorSessionProjectionHealthTargetReadModel(
     int FailureCount,
     string? LastErrorCode,
     string? LastErrorMessage,
+    DateTimeOffset? LastLockContentionAt,
+    int LockContentionCount,
     int PollIntervalSeconds,
     int LookbackWindowMinutes,
     int PageSize,
@@ -197,7 +204,9 @@ public sealed class VendorSessionProjectionHealthService(
             Math.Clamp(latestRecordLimit, 1, 100),
             cancellationToken);
 
-        return new VendorSessionProjectionHealthDetail(ToTarget(target), latestRecords);
+        return new VendorSessionProjectionHealthDetail(
+            ToTarget(target),
+            latestRecords.Select(RemovePersonalIdentifiers).ToArray());
     }
 
     /// <inheritdoc />
@@ -227,14 +236,16 @@ public sealed class VendorSessionProjectionHealthService(
     private VendorSessionProjectionHealthTarget ToTarget(VendorSessionProjectionHealthTargetReadModel readModel)
     {
         var now = clock.UtcNow;
-        var freshnessAge = readModel.LatestProjectionLastRefreshedAt.HasValue
-            ? (now >= readModel.LatestProjectionLastRefreshedAt.Value
-                ? now - readModel.LatestProjectionLastRefreshedAt.Value
+        var freshnessAge = readModel.LastSuccessAt.HasValue
+            ? (now >= readModel.LastSuccessAt.Value
+                ? now - readModel.LastSuccessAt.Value
                 : TimeSpan.Zero)
             : (TimeSpan?)null;
+        var normalAge = options.Value.EffectiveNormalFreshnessTarget();
         var maxAge = options.Value.EffectiveMaxProjectionAge();
         var isStale = readModel.Enabled &&
             (freshnessAge is null || freshnessAge > maxAge);
+        var freshnessClassification = ClassifyFreshness(readModel, freshnessAge, normalAge, maxAge);
 
         return new VendorSessionProjectionHealthTarget(
             readModel.ProjectionSyncTargetId,
@@ -249,13 +260,16 @@ public sealed class VendorSessionProjectionHealthService(
             readModel.LastSuccessAt,
             readModel.LastFailureAt,
             readModel.FailureCount,
-            readModel.LastErrorCode,
-            readModel.LastErrorMessage,
+            SanitizeFailureCode(readModel.LastErrorCode),
+            readModel.LastErrorCode is null ? null : "Projection synchronization failed. Review the classified operational event.",
+            readModel.LastLockContentionAt,
+            readModel.LockContentionCount,
             readModel.PollIntervalSeconds,
             readModel.LookbackWindowMinutes,
             readModel.PageSize,
             readModel.LatestProjectionLastRefreshedAt,
             freshnessAge,
+            freshnessClassification,
             isStale,
             readModel.TotalProjectionCount,
             readModel.ActiveProjectionCount,
@@ -269,9 +283,68 @@ public sealed class VendorSessionProjectionHealthService(
         var value = options.Value;
         return new VendorSessionProjectionHealthConfig(
             value.SchedulerEnabled,
+            value.RequiredForEnvironment,
             value.DegradedResolveFallbackEnabled,
+            value.NormalFreshnessTargetSeconds,
             value.MaxProjectionAgeMinutes,
             value.MaxParallelSiteJobs,
             value.SchedulerScanIntervalSeconds);
     }
+
+    private static string ClassifyFreshness(
+        VendorSessionProjectionHealthTargetReadModel target,
+        TimeSpan? age,
+        TimeSpan normalAge,
+        TimeSpan maxAge)
+    {
+        if (!target.Enabled)
+        {
+            return "DISABLED";
+        }
+
+        if (target.LastFailureAt >= target.LastSuccessAt)
+        {
+            return "FAILED";
+        }
+
+        if (age is null)
+        {
+            return "NEVER_SYNCHRONIZED";
+        }
+
+        if (age > maxAge)
+        {
+            return "STALE";
+        }
+
+        if (target.HealthStatus == VendorSessionProjectionHealthStatus.Deferred &&
+            target.LastLockContentionAt >= target.LastSuccessAt)
+        {
+            return "LOCK_CONTENDED_DEFERRED";
+        }
+
+        return age <= normalAge ? "CURRENT" : "DELAYED";
+    }
+
+    private static string? SanitizeFailureCode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var normalized = value.Trim().ToUpperInvariant();
+        return normalized.Length <= 64 && normalized.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character == '_')
+                ? normalized
+                : "PROJECTION_FAILURE";
+    }
+
+    private static VendorSessionProjectionHealthLatestRecord RemovePersonalIdentifiers(
+        VendorSessionProjectionHealthLatestRecord record) => record with
+        {
+            VendorRecordGuid = null,
+            CardNum = null,
+            PlateLicense = null
+        };
 }

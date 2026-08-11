@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Domain.Common;
+using ExitPass.CentralPms.Application.Observability;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -9,9 +10,11 @@ namespace ExitPass.CentralPms.Application.VendorSessions;
 /// </summary>
 public sealed class VendorSessionProjectionSyncOrchestrator(
     IVendorSessionProjectionSyncTargetRepository targetRepository,
+    IVendorSessionProjectionExecutionLock executionLock,
     IVendorSessionProjectionSyncService syncService,
     ISystemClock clock,
     IOptions<VendorSessionProjectionOptions> options,
+    CentralPmsMetrics metrics,
     ILogger<VendorSessionProjectionSyncOrchestrator> logger) : IVendorSessionProjectionSyncOrchestrator
 {
     /// <inheritdoc />
@@ -50,7 +53,7 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
             TargetsLoaded: targets.Count,
             TargetsRun: results.Count,
             TargetsSucceeded: results.Count(result => result.Succeeded),
-            TargetsFailed: results.Count(result => !result.Succeeded),
+            TargetsFailed: results.Count(result => !result.Succeeded && !result.Deferred),
             startedAt,
             completedAt,
             results.OrderBy(result => result.StartedAt).ToArray());
@@ -94,6 +97,45 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
         CancellationToken cancellationToken)
     {
         var startedAt = clock.UtcNow;
+        await using var lease = await executionLock.TryAcquireAsync(
+            target.ProjectionSyncTargetId,
+            cancellationToken);
+        if (lease is null)
+        {
+            await targetRepository.RecordLockContentionAsync(
+                target.ProjectionSyncTargetId,
+                startedAt,
+                correlationId,
+                cancellationToken);
+            metrics.VendorSessionProjectionLockContended();
+            logger.LogWarning(
+                "Vendor session projection target cycle deferred by distributed lock contention. projection_sync_target_id={ProjectionSyncTargetId} site_id={SiteId} parking_lot_index_code={ParkingLotIndexCode}",
+                target.ProjectionSyncTargetId,
+                target.SiteId,
+                target.ParkingLotIndexCode);
+
+            return new VendorSessionProjectionTargetRunResult(
+                target.ProjectionSyncTargetId,
+                target.SiteId,
+                target.SiteGroupId,
+                target.VendorSystemId,
+                target.ParkingLotIndexCode,
+                Succeeded: false,
+                RecordsRead: 0,
+                RecordsUpserted: 0,
+                RecordsSkipped: 0,
+                PagesPulled: 0,
+                startedAt,
+                startedAt,
+                ErrorCode: "PROJECTION_LOCK_CONTENDED",
+                ErrorMessage: "Projection was deferred because another scheduler owns this target.",
+                correlationId)
+            {
+                Deferred = true
+            };
+        }
+
+        metrics.VendorSessionProjectionAttempted();
         try
         {
             var lookbackMinutes = options.Value.EffectiveLookbackWindowMinutes(
@@ -125,12 +167,15 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
                 cancellationToken);
 
             logger.LogInformation(
-                "Vendor session projection target sync succeeded. projection_sync_target_id={ProjectionSyncTargetId} site_id={SiteId} parking_lot_index_code={ParkingLotIndexCode} records_seen={RecordsSeen} records_upserted={RecordsUpserted}",
+                "Vendor session projection target sync succeeded. projection_sync_target_id={ProjectionSyncTargetId} site_id={SiteId} parking_lot_index_code={ParkingLotIndexCode} result={Result} records_seen={RecordsSeen} records_upserted={RecordsUpserted} duration_ms={DurationMilliseconds}",
                 target.ProjectionSyncTargetId,
                 target.SiteId,
                 target.ParkingLotIndexCode,
+                syncResult.RecordsUpserted == 0 ? "ZERO_ROWS" : "RECORDS_COMMITTED",
                 syncResult.RecordsSeen,
-                syncResult.RecordsUpserted);
+                syncResult.RecordsUpserted,
+                Math.Max(0, (completedAt - startedAt).TotalMilliseconds));
+            metrics.VendorSessionProjectionCompleted(syncResult.RecordsUpserted, completedAt - startedAt);
 
             return new VendorSessionProjectionTargetRunResult(
                 target.ProjectionSyncTargetId,
@@ -152,23 +197,29 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             var completedAt = clock.UtcNow;
+            var classification = ex is VendorSessionProjectionException projectionException
+                ? SanitizeClassification(projectionException.Classification)
+                : "PROJECTION_UNEXPECTED_FAILURE";
+            var retryable = ex is not VendorSessionProjectionException bounded || bounded.Retryable;
             await targetRepository.UpdateHealthAsync(
                 new VendorSessionProjectionSyncTargetHealthUpdate(
                     target.ProjectionSyncTargetId,
                     completedAt,
                     Succeeded: false,
-                    ErrorCode: ex.GetType().Name,
-                    ErrorMessage: Truncate(ex.Message, 500),
+                    ErrorCode: classification,
+                    ErrorMessage: "Projection failed safely; retry according to the bounded classification.",
                     options.Value.FailingFailureCountThreshold,
                     correlationId),
                 cancellationToken);
 
+            metrics.VendorSessionProjectionFailed(classification, retryable);
             logger.LogError(
-                ex,
-                "Vendor session projection target sync failed. projection_sync_target_id={ProjectionSyncTargetId} site_id={SiteId} parking_lot_index_code={ParkingLotIndexCode}",
+                "Vendor session projection target sync failed safely. projection_sync_target_id={ProjectionSyncTargetId} site_id={SiteId} parking_lot_index_code={ParkingLotIndexCode} failure_classification={FailureClassification} retryable={Retryable}",
                 target.ProjectionSyncTargetId,
                 target.SiteId,
-                target.ParkingLotIndexCode);
+                target.ParkingLotIndexCode,
+                classification,
+                retryable);
 
             return new VendorSessionProjectionTargetRunResult(
                 target.ProjectionSyncTargetId,
@@ -183,8 +234,8 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
                 PagesPulled: 0,
                 startedAt,
                 completedAt,
-                ErrorCode: ex.GetType().Name,
-                ErrorMessage: Truncate(ex.Message, 500),
+                ErrorCode: classification,
+                ErrorMessage: "Projection failed safely; retry according to the bounded classification.",
                 correlationId);
         }
     }
@@ -192,6 +243,18 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string Truncate(string value, int maxLength) =>
-        value.Length <= maxLength ? value : value[..maxLength];
+    private static string SanitizeClassification(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "PROJECTION_FAILURE";
+        }
+
+        var normalized = value.Trim().ToUpperInvariant();
+        return normalized.Length <= 64 && normalized.All(character =>
+            char.IsAsciiLetterOrDigit(character) || character == '_')
+                ? normalized
+                : "PROJECTION_FAILURE";
+    }
+
 }

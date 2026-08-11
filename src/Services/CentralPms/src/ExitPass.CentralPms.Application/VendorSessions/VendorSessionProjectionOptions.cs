@@ -114,7 +114,12 @@ public sealed class VendorSessionProjectionOptions
     /// <summary>
     /// Default poll interval for targets missing an explicit interval.
     /// </summary>
-    public int DefaultPollIntervalSeconds { get; set; } = 300;
+    public int DefaultPollIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Normal operating target for age since the last completed successful cycle.
+    /// </summary>
+    public int NormalFreshnessTargetSeconds { get; set; } = 60;
 
     /// <summary>
     /// Default lookback window for passageway pulls.
@@ -149,7 +154,47 @@ public sealed class VendorSessionProjectionOptions
     /// <summary>
     /// Projection freshness threshold used by degraded resolve fallback.
     /// </summary>
-    public int MaxProjectionAgeMinutes { get; set; } = 60;
+    public int MaxProjectionAgeMinutes { get; set; } = 1;
+
+    /// <summary>
+    /// Declares that projection is required for this runtime environment.
+    /// </summary>
+    public bool RequiredForEnvironment { get; set; }
+
+    /// <summary>
+    /// Environment name that is explicitly authorized to run this scheduler configuration.
+    /// </summary>
+    public string? ActivationEnvironment { get; set; }
+
+    /// <summary>
+    /// Explicit acknowledgement that a local endpoint is non-Production.
+    /// </summary>
+    public bool LocalNonProductionEndpointAcknowledged { get; set; }
+
+    /// <summary>
+    /// Expected local development database name used to prevent ambiguous activation.
+    /// </summary>
+    public string? ExpectedDatabaseName { get; set; }
+
+    /// <summary>
+    /// Expected site for the single local development target.
+    /// </summary>
+    public Guid? ExpectedTargetSiteId { get; set; }
+
+    /// <summary>
+    /// Expected site group for the single local development target.
+    /// </summary>
+    public Guid? ExpectedTargetSiteGroupId { get; set; }
+
+    /// <summary>
+    /// Expected vendor system for the single local development target.
+    /// </summary>
+    public Guid? ExpectedTargetVendorSystemId { get; set; }
+
+    /// <summary>
+    /// Expected HikCentral parking-lot mapping for the single local development target.
+    /// </summary>
+    public string? ExpectedTargetParkingLotIndexCode { get; set; }
 
     /// <summary>
     /// Consecutive failure count at which target health becomes FAILING.
@@ -211,6 +256,15 @@ public sealed class VendorSessionProjectionOptions
             MaxProjectionAgeMinutesLimit));
 
     /// <summary>
+    /// Returns the normal successful-cycle freshness target.
+    /// </summary>
+    public TimeSpan EffectiveNormalFreshnessTarget() =>
+        TimeSpan.FromSeconds(Math.Clamp(
+            NormalFreshnessTargetSeconds,
+            MinPollIntervalSeconds,
+            MaxPollIntervalSeconds));
+
+    /// <summary>
     /// Returns a bounded consecutive failure threshold.
     /// </summary>
     public int EffectiveFailingFailureCountThreshold() =>
@@ -226,6 +280,7 @@ public sealed class VendorSessionProjectionOptions
     {
         var errors = new List<string>();
         AddRangeError(errors, nameof(DefaultPollIntervalSeconds), DefaultPollIntervalSeconds, MinPollIntervalSeconds, MaxPollIntervalSeconds);
+        AddRangeError(errors, nameof(NormalFreshnessTargetSeconds), NormalFreshnessTargetSeconds, MinPollIntervalSeconds, MaxPollIntervalSeconds);
         AddRangeError(errors, nameof(DefaultLookbackWindowMinutes), DefaultLookbackWindowMinutes, MinLookbackWindowMinutes, MaxLookbackWindowMinutes);
         AddRangeError(errors, nameof(DefaultPageSize), DefaultPageSize, MinPageSize, MaxPageSize);
         AddRangeError(errors, nameof(MaxParallelSiteJobs), MaxParallelSiteJobs, MinParallelSiteJobs, MaxParallelSiteJobsLimit);
@@ -234,6 +289,15 @@ public sealed class VendorSessionProjectionOptions
         AddRangeError(errors, nameof(MaxPagesPerRun), MaxPagesPerRun, MinPagesPerRun, MaxPagesPerRunLimit);
         AddRangeError(errors, nameof(MaxProjectionAgeMinutes), MaxProjectionAgeMinutes, MinProjectionAgeMinutes, MaxProjectionAgeMinutesLimit);
         AddRangeError(errors, nameof(FailingFailureCountThreshold), FailingFailureCountThreshold, MinFailingFailureCountThreshold, MaxFailingFailureCountThreshold);
+        if (EffectiveMaxProjectionAge() < EffectiveNormalFreshnessTarget())
+        {
+            errors.Add("MaxProjectionAgeMinutes must not be shorter than NormalFreshnessTargetSeconds");
+        }
+
+        if (RequiredForEnvironment && !SchedulerEnabled)
+        {
+            errors.Add("RequiredForEnvironment requires SchedulerEnabled");
+        }
         return errors;
     }
 

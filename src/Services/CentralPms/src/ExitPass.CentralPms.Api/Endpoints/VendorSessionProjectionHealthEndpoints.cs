@@ -164,11 +164,14 @@ public static class VendorSessionProjectionHealthEndpoints
             target.FailureCount,
             target.LastErrorCode,
             target.LastErrorMessage,
+            target.LastLockContentionAt,
+            target.LockContentionCount,
             target.PollIntervalSeconds,
             target.LookbackWindowMinutes,
             target.PageSize,
             target.LatestProjectionLastRefreshedAt,
             target.FreshnessAge?.TotalSeconds,
+            target.FreshnessClassification,
             target.IsStale,
             target.TotalProjectionCount,
             target.ActiveProjectionCount,
@@ -210,7 +213,9 @@ public static class VendorSessionProjectionHealthEndpoints
     private static VendorSessionProjectionHealthConfigDto ToConfigContract(VendorSessionProjectionOptions options) =>
         new(
             options.SchedulerEnabled,
+            options.RequiredForEnvironment,
             options.DegradedResolveFallbackEnabled,
+            options.NormalFreshnessTargetSeconds,
             options.MaxProjectionAgeMinutes,
             options.MaxParallelSiteJobs,
             options.SchedulerScanIntervalSeconds);
@@ -218,7 +223,9 @@ public static class VendorSessionProjectionHealthEndpoints
     private static VendorSessionProjectionHealthConfigDto ToContract(VendorSessionProjectionHealthConfig config) =>
         new(
             config.SchedulerEnabled,
+            config.RequiredForEnvironment,
             config.DegradedResolveFallbackEnabled,
+            config.NormalFreshnessTargetSeconds,
             config.MaxProjectionAgeMinutes,
             config.MaxParallelSiteJobs,
             config.SchedulerScanIntervalSeconds);

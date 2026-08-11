@@ -5,7 +5,9 @@ namespace ExitPass.CentralPms.Contracts.Operations;
 /// </summary>
 public sealed record VendorSessionProjectionHealthConfigDto(
     bool SchedulerEnabled,
+    bool RequiredForEnvironment,
     bool DegradedResolveFallbackEnabled,
+    int NormalFreshnessTargetSeconds,
     int MaxProjectionAgeMinutes,
     int MaxParallelSiteJobs,
     int SchedulerScanIntervalSeconds);
@@ -28,11 +30,14 @@ public sealed record VendorSessionProjectionHealthTargetDto(
     int FailureCount,
     string? LastErrorCode,
     string? LastErrorMessage,
+    DateTimeOffset? LastLockContentionAt,
+    int LockContentionCount,
     int PollIntervalSeconds,
     int LookbackWindowMinutes,
     int PageSize,
     DateTimeOffset? LatestProjectionLastRefreshedAt,
     double? FreshnessAgeSeconds,
+    string FreshnessClassification,
     bool IsStale,
     long TotalProjectionCount,
     long ActiveProjectionCount,

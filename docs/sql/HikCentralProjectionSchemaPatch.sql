@@ -154,17 +154,19 @@ CREATE TABLE IF NOT EXISTS sessions.vendor_session_projection_sync_targets (
     vendor_system_id uuid NOT NULL,
     parking_lot_index_code text NOT NULL,
     parking_lot_name text NULL,
-    enabled_flag boolean DEFAULT true NOT NULL,
-    poll_interval_seconds integer DEFAULT 300 NOT NULL,
+    enabled_flag boolean DEFAULT false NOT NULL,
+    poll_interval_seconds integer DEFAULT 60 NOT NULL,
     lookback_window_minutes integer DEFAULT 180 NOT NULL,
     page_size integer DEFAULT 100 NOT NULL,
     last_success_at timestamptz NULL,
     last_failure_at timestamptz NULL,
     last_attempt_at timestamptz NULL,
-    health_status text DEFAULT 'UNKNOWN' NOT NULL,
+    health_status text DEFAULT 'DISABLED' NOT NULL,
     failure_count integer DEFAULT 0 NOT NULL,
     last_error_code text NULL,
     last_error_message text NULL,
+    last_lock_contention_at timestamptz NULL,
+    lock_contention_count integer DEFAULT 0 NOT NULL,
     correlation_id uuid NULL,
     created_at timestamptz DEFAULT now() NOT NULL,
     updated_at timestamptz DEFAULT now() NOT NULL,
@@ -178,17 +180,20 @@ ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EX
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS vendor_system_id uuid NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS parking_lot_index_code text NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS parking_lot_name text NULL;
-ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS enabled_flag boolean DEFAULT true NOT NULL;
-ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS poll_interval_seconds integer DEFAULT 300 NOT NULL;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS enabled_flag boolean DEFAULT false NOT NULL;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS poll_interval_seconds integer DEFAULT 60 NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS lookback_window_minutes integer DEFAULT 180 NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS page_size integer DEFAULT 100 NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS last_success_at timestamptz NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS last_failure_at timestamptz NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS last_attempt_at timestamptz NULL;
-ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS health_status text DEFAULT 'UNKNOWN' NOT NULL;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS health_status text DEFAULT 'DISABLED' NOT NULL;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ALTER COLUMN health_status SET DEFAULT 'DISABLED';
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS failure_count integer DEFAULT 0 NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS last_error_code text NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS last_error_message text NULL;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS last_lock_contention_at timestamptz NULL;
+ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS lock_contention_count integer DEFAULT 0 NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS correlation_id uuid NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now() NOT NULL;
 ALTER TABLE sessions.vendor_session_projection_sync_targets ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now() NOT NULL;
@@ -212,6 +217,8 @@ COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.health_status 
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.failure_count IS 'Consecutive failure count for this target.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_error_code IS 'Last sync error code, when failed.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_error_message IS 'Last sync error message, when failed.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_lock_contention_at IS 'Last cycle deferred because another scheduler held the target-scoped advisory lock.';
+COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.lock_contention_count IS 'Cumulative target-scoped advisory lock contention count.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.correlation_id IS 'Correlation identifier for the last scheduler/manual attempt.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.created_at IS 'Record creation timestamp.';
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.updated_at IS 'Last update timestamp.';
@@ -403,7 +410,7 @@ BEGIN
     ) THEN
         ALTER TABLE sessions.vendor_session_projection_sync_targets
             ADD CONSTRAINT ck_vendor_session_projection_sync_targets__health_status
-            CHECK (health_status IN ('HEALTHY', 'DEGRADED', 'FAILING', 'DISABLED', 'UNKNOWN'));
+            CHECK (health_status IN ('HEALTHY', 'DEGRADED', 'FAILING', 'DISABLED', 'DEFERRED', 'UNKNOWN'));
     END IF;
 
     IF NOT EXISTS (
@@ -454,6 +461,16 @@ BEGIN
         ALTER TABLE sessions.vendor_session_projection_sync_targets
             ADD CONSTRAINT ck_vendor_session_projection_sync_targets__failure_count_non_negative
             CHECK (failure_count >= 0);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_vendor_projection_targets__lock_contention_non_negative'
+          AND conrelid = 'sessions.vendor_session_projection_sync_targets'::regclass
+    ) THEN
+        ALTER TABLE sessions.vendor_session_projection_sync_targets
+            ADD CONSTRAINT ck_vendor_projection_targets__lock_contention_non_negative
+            CHECK (lock_contention_count >= 0);
     END IF;
 END $$;
 
@@ -582,11 +599,12 @@ WHERE conrelid IN (
       'ck_vendor_session_projection_sync_targets__lookback_positive',
       'ck_vendor_session_projection_sync_targets__page_size_bounds',
       'ck_vendor_session_projection_sync_targets__failure_count_non_negative',
+      'ck_vendor_projection_targets__lock_contention_non_negative',
       'uq_vendor_session_projections__stable_identity_key'
   )
 ORDER BY table_name, contype, conname;
 
--- Expected: 23 rows.
+-- Expected: 24 rows.
 
 -- 3. Confirm expected indexes exist.
 SELECT schemaname, tablename, indexname

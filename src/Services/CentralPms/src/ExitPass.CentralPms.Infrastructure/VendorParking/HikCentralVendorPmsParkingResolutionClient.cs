@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.VendorPmsAdapter.Application.Parking;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
 
@@ -14,29 +15,33 @@ namespace ExitPass.CentralPms.Infrastructure.VendorParking;
 /// Invariant: HikCentral lookup/tariff evidence is not payment finality and cannot issue exit authorization.
 /// </remarks>
 public sealed class HikCentralVendorPmsParkingResolutionClient(
+    IHikCentralLiveActivationGate activationGate,
     IVendorParkingDataClient vendorParkingDataClient) : IVendorPmsParkingResolutionClient
 {
     /// <inheritdoc />
-    public Task<VendorParkingSessionLookupResponse> ResolveSessionAsync(
+    public async Task<VendorParkingSessionLookupResponse> ResolveSessionAsync(
         VendorParkingSessionLookupRequest request,
         CancellationToken cancellationToken)
     {
-        return vendorParkingDataClient.ResolveSessionAsync(request, cancellationToken);
+        await activationGate.EnsureActivatedAsync(cancellationToken);
+        return await vendorParkingDataClient.ResolveSessionAsync(request, cancellationToken);
     }
 
     /// <inheritdoc />
-    public Task<VendorTariffQuoteResponse> ResolveTariffAsync(
+    public async Task<VendorTariffQuoteResponse> ResolveTariffAsync(
         VendorTariffQuoteRequest request,
         CancellationToken cancellationToken)
     {
-        return vendorParkingDataClient.ResolveTariffAsync(request, cancellationToken);
+        await activationGate.EnsureActivatedAsync(cancellationToken);
+        return await vendorParkingDataClient.ResolveTariffAsync(request, cancellationToken);
     }
 
     /// <inheritdoc />
-    public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
+    public async Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
         VendorParkingFeeConfirmationRequest request,
         CancellationToken cancellationToken)
     {
-        return vendorParkingDataClient.ConfirmParkingFeeAsync(request, cancellationToken);
+        await activationGate.EnsureActivatedAsync(cancellationToken);
+        return await vendorParkingDataClient.ConfirmParkingFeeAsync(request, cancellationToken);
     }
 }
