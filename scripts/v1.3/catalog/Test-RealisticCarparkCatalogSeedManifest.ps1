@@ -137,6 +137,83 @@ function Import-ManifestCsv {
     return @(Import-Csv -LiteralPath $Path -Encoding UTF8)
 }
 
+function Get-UniqueManifestIds {
+    param([object[]]$IdentityRecords)
+    $ids = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($record in $IdentityRecords) {
+        Assert-True (-not [string]::IsNullOrWhiteSpace([string]$record.Id)) "Missing $($record.Kind) UUID for $($record.Code)"
+        Assert-True ($ids.Add([string]$record.Id)) "Duplicate manifest UUID $($record.Id) at $($record.Kind) '$($record.Code)'"
+    }
+    return ,$ids
+}
+
+function Select-ExternalUuidOccurrences {
+    param([object[]]$Occurrences, [string[]]$ManifestInputPaths)
+    $excluded = New-Object Collections.Generic.HashSet[string] ([StringComparer]::Ordinal)
+    foreach ($path in $ManifestInputPaths) { [void]$excluded.Add($path.Replace('\','/')) }
+    return @($Occurrences | Where-Object { -not $excluded.Contains(([string]$_.Path).Replace('\','/')) })
+}
+
+function Get-TrackedUuidOccurrences {
+    param([string]$Root)
+    $pattern = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}'
+    $lines = @(& git -C $Root grep -I -n -o -E $pattern HEAD -- . 2>$null)
+    $exitCode = $LASTEXITCODE
+    Assert-True ($exitCode -in @(0,1)) "Tracked UUID inventory failed with git exit code $exitCode"
+    $occurrences = @()
+    foreach ($line in $lines) {
+        $match = [regex]::Match([string]$line, '^HEAD:(.*?):\d+:([0-9a-fA-F-]{36})$')
+        Assert-True $match.Success "Malformed tracked UUID inventory output"
+        $occurrences += [pscustomobject]@{ Path=$match.Groups[1].Value.Replace('\','/'); Id=$match.Groups[2].Value }
+    }
+    return $occurrences
+}
+
+function Assert-NoExternalUuidCollisions {
+    param($ManifestIds, [object[]]$ExternalOccurrences)
+    foreach ($occurrence in $ExternalOccurrences) {
+        Assert-True (-not $ManifestIds.Contains([string]$occurrence.Id)) "Manifest UUID collides with external tracked identity $($occurrence.Id) at $($occurrence.Path)"
+    }
+}
+
+function Assert-ExpectedManifestFailure {
+    param([scriptblock]$Action, [string]$ExpectedPattern, [string]$Scenario)
+    $observed = $null
+    try { & $Action } catch { $observed = $_.Exception.Message }
+    Assert-True ($null -ne $observed) "Negative validator scenario did not fail: $Scenario"
+    Assert-True ($observed -match $ExpectedPattern) "Negative validator scenario '$Scenario' failed for the wrong reason"
+}
+
+function Invoke-ValidatorNegativeTests {
+    param([Guid]$Namespace)
+    $id = 'aaaaaaaa-aaaa-5aaa-8aaa-aaaaaaaaaaaa'
+    Assert-ExpectedManifestFailure {
+        [void](Get-UniqueManifestIds @(
+            [pscustomobject]@{ Kind='Site'; Code='ONE'; Id=$id },
+            [pscustomobject]@{ Kind='Assignment'; Code='TWO'; Id=$id }
+        ))
+    } 'Duplicate manifest UUID' 'internal cross-entity duplicate'
+
+    $single = Get-UniqueManifestIds @([pscustomobject]@{ Kind='Site'; Code='ONE'; Id=$id })
+    Assert-ExpectedManifestFailure {
+        Assert-NoExternalUuidCollisions $single @([pscustomobject]@{ Path='fixtures/unrelated.json'; Id=$id })
+    } 'external tracked identity' 'external fixture collision'
+
+    Assert-ExpectedManifestFailure {
+        Assert-Equal 'bbbbbbbb-bbbb-5bbb-8bbb-bbbbbbbbbbbb' (New-UuidV5 $Namespace 'https://exitpass.ph/v1.3/carparks/sites/NEGATIVE-TEST') 'Synthetic semantic UUID mismatch'
+    } 'Synthetic semantic UUID mismatch' 'changed semantic UUID'
+
+    $filtered = @(Select-ExternalUuidOccurrences @(
+        [pscustomobject]@{ Path='docs/v1.3/central-pms/seed-manifests/data/manifest.csv'; Id=$id },
+        [pscustomobject]@{ Path='fixtures/unrelated.json'; Id=$id }
+    ) @('docs/v1.3/central-pms/seed-manifests/data/manifest.csv'))
+    Assert-Equal $filtered.Count 1 'Exact manifest exclusion must retain unrelated occurrence'
+    Assert-Equal $filtered[0].Path 'fixtures/unrelated.json' 'Unrelated collision path must survive exclusion'
+    Assert-ExpectedManifestFailure {
+        Assert-NoExternalUuidCollisions $single $filtered
+    } 'external tracked identity' 'manifest exclusion cannot conceal external collision'
+}
+
 $manifestRoot = Join-Path $RepositoryRoot 'docs\v1.3\central-pms\seed-manifests'
 $dataRoot = Join-Path $manifestRoot 'data'
 $mainDoc = Join-Path $manifestRoot 'ExitPass_Realistic_Carpark_Catalog_and_Jurisdiction_Seed_Manifest_v1.0.md'
@@ -172,9 +249,9 @@ Assert-Equal $workbookRows.Count 46 'Workbook Site count'
 $normalizedGroups = @($workbookRows | Group-Object { Normalize-WorkbookValue $_.A })
 Assert-Equal $normalizedGroups.Count 39 'Workbook normalized Site Group count'
 
-$groupHeaders = @('site_group_id','site_group_code','site_group_name','original_site_group_name','business_label','operator_entity_name','timezone_name','default_currency_code','source_workbook','source_sheet','source_rows','site_count','identity_review_status','proposed_site_group_status','public_lookup_enabled','default_payment_enabled','notes')
-$siteHeaders = @('site_id','site_code','site_name','original_site_name','site_group_id','site_group_code','source_workbook','source_sheet','source_row','original_location_label','jurisdiction_id','jurisdiction_code','jurisdiction_display_name','psgc_code','region_code','province_code','municipality_or_city_type','location_evidence_status','location_source_url','location_source_reference','hikcentral_activation_candidacy','proposed_parking_lot_index_code','identity_review_status','proposed_site_status','public_lookup_enabled','payment_enabled','timezone_name','currency_code','notes')
-$assignmentHeaders = @('site_jurisdiction_assignment_id','site_id','site_code','jurisdiction_id','jurisdiction_code','proposed_assignment_status','proposed_effective_from','effective_date_approval_status','source_reference','evidence_status','notes')
+$groupHeaders = @('site_group_id','site_group_code','site_group_name','original_site_group_name','business_label','operator_entity_name','timezone_name','default_currency_code','source_workbook','source_sheet','source_rows','site_count','identity_review_status','proposed_site_group_status','public_lookup_enabled','default_payment_enabled','effective_from','notes')
+$siteHeaders = @('site_id','site_code','site_name','original_site_name','site_group_id','site_group_code','source_workbook','source_sheet','source_row','original_location_label','jurisdiction_id','jurisdiction_code','jurisdiction_display_name','psgc_code','region_code','province_code','municipality_or_city_type','site_type','site_type_evidence_source_ids','site_type_classification_rationale','site_type_evidence_confidence','site_type_unresolved_ambiguity','location_evidence_status','location_source_url','location_source_reference','hikcentral_activation_candidacy','proposed_parking_lot_index_code','identity_review_status','proposed_site_status','public_lookup_enabled','payment_enabled','effective_from','timezone_name','currency_code','notes')
+$assignmentHeaders = @('site_jurisdiction_assignment_id','site_id','site_code','jurisdiction_id','jurisdiction_code','proposed_assignment_status','effective_from','effective_date_approval_status','source_reference','evidence_status','notes')
 $coverageHeaders = @('jurisdiction_id','jurisdiction_code','jurisdiction_display_name','entitlement_type','parking_policy_identified','benefit_type','free_period_minutes','discount_percent','residency_scope','documentary_requirements_summary','policy_effective_from','policy_effective_to','ordinance_or_authority_reference','ordinance_number_status','primary_source_url','secondary_source_url','repository_source_reference','source_quality_classification','operational_verification_status','legal_review_status','proposed_seed_eligibility','proposed_runtime_publication_eligibility','manual_review_required','conflict_summary','notes')
 $sourceHeaders = @('source_id','source_type','title','filename_or_url','repository_path','sha256','publisher','publication_date','access_date','primary_or_secondary','authority_classification','scope','limitations','rows_or_decisions_supported')
 
@@ -189,15 +266,26 @@ Assert-Equal $assignments.Count 46 'Assignment manifest count'
 Assert-Equal $coverage.Count 26 'Coverage manifest count'
 
 $uuidNamespace = [Guid]'6ba7b811-9dad-11d1-80b4-00c04fd430c8'
-$allProposedIds = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+$approvedEffectiveFrom = '2026-08-13T00:00:00+08:00'
+$parsedEffectiveFrom = [DateTimeOffset]::MinValue
+Assert-True ([DateTimeOffset]::TryParseExact($approvedEffectiveFrom, 'yyyy-MM-ddTHH:mm:sszzz', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsedEffectiveFrom)) 'Approved effective_from is not strict ISO 8601'
+Assert-Equal $parsedEffectiveFrom.UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture) '2026-08-12T16:00:00Z' 'Approved effective_from UTC instant'
+$identityRecords = @(
+    @($groups | ForEach-Object { [pscustomobject]@{ Kind='Site Group'; Code=$_.site_group_code; Id=$_.site_group_id } })
+    @($sites | ForEach-Object { [pscustomobject]@{ Kind='Site'; Code=$_.site_code; Id=$_.site_id } })
+    @($assignments | ForEach-Object { [pscustomobject]@{ Kind='Assignment'; Code=$_.site_code; Id=$_.site_jurisdiction_assignment_id } })
+)
+$allProposedIds = Get-UniqueManifestIds $identityRecords
+Assert-Equal $allProposedIds.Count 131 'Independent manifest identifier count'
+Invoke-ValidatorNegativeTests $uuidNamespace
 foreach ($g in $groups) {
     Assert-True ($g.site_group_code.Length -le 64 -and $g.site_group_code -cmatch '^[A-Z0-9]+(?:-[A-Z0-9]+)*$') "Invalid Site Group code '$($g.site_group_code)'"
     Assert-Equal $g.site_group_id (New-UuidV5 $uuidNamespace "https://exitpass.ph/v1.3/carparks/site-groups/$($g.site_group_code)") "Site Group UUIDv5 mismatch for $($g.site_group_code)"
-    Assert-True ($allProposedIds.Add($g.site_group_id)) "Duplicate proposed UUID $($g.site_group_id)"
     Assert-Equal $g.source_workbook 'Carparks.xlsx' "Site Group workbook filename for $($g.site_group_code)"
     Assert-Equal $g.proposed_site_group_status 'DRAFT' "Site Group status for $($g.site_group_code)"
     Assert-Equal $g.public_lookup_enabled 'FALSE' "Site Group public lookup for $($g.site_group_code)"
     Assert-Equal $g.default_payment_enabled 'FALSE' "Site Group payment posture for $($g.site_group_code)"
+    Assert-Equal $g.effective_from $approvedEffectiveFrom "Site Group effective_from for $($g.site_group_code)"
 }
 Assert-Equal (@($groups.site_group_code | Sort-Object -Unique).Count) $groups.Count 'Unique Site Group codes'
 Assert-Equal (@($groups.site_group_id | Sort-Object -Unique).Count) $groups.Count 'Unique Site Group IDs'
@@ -214,10 +302,12 @@ $canonical = @{
 
 $groupByCode = @{}; foreach ($g in $groups) { $groupByCode[$g.site_group_code] = $g }
 $siteByCode = @{}
+$siteTypes = @('OPEN_LOT','STRUCTURED_PARKING','MALL_PARKING','MIXED_USE_PROPERTY','TERMINAL','CAMPUS','OTHER')
+$sourceIds = New-Object Collections.Generic.HashSet[string] ([StringComparer]::Ordinal)
+foreach ($source in $sources) { Assert-True ($sourceIds.Add($source.source_id)) "Duplicate source-register ID $($source.source_id)" }
 foreach ($s in $sites) {
     Assert-True ($s.site_code.Length -le 64 -and $s.site_code -cmatch '^[A-Z0-9]+(?:-[A-Z0-9]+)*$') "Invalid Site code '$($s.site_code)'"
     Assert-Equal $s.site_id (New-UuidV5 $uuidNamespace "https://exitpass.ph/v1.3/carparks/sites/$($s.site_code)") "Site UUIDv5 mismatch for $($s.site_code)"
-    Assert-True ($allProposedIds.Add($s.site_id)) "Duplicate proposed UUID $($s.site_id)"
     Assert-True $groupByCode.ContainsKey($s.site_group_code) "Site '$($s.site_code)' references missing Site Group"
     Assert-Equal $s.site_group_id $groupByCode[$s.site_group_code].site_group_id "Site Group ID mismatch for $($s.site_code)"
     Assert-True $canonical.ContainsKey($s.jurisdiction_code) "Unknown canonical jurisdiction '$($s.jurisdiction_code)'"
@@ -235,6 +325,14 @@ foreach ($s in $sites) {
     Assert-Equal $s.proposed_site_status 'DRAFT' "Site status for $($s.site_code)"
     Assert-Equal $s.public_lookup_enabled 'FALSE' "Site public lookup for $($s.site_code)"
     Assert-Equal $s.payment_enabled 'FALSE' "Site payment posture for $($s.site_code)"
+    Assert-Equal $s.effective_from $approvedEffectiveFrom "Site effective_from for $($s.site_code)"
+    Assert-True ($s.site_type -cin $siteTypes) "Unsupported Site type '$($s.site_type)' for $($s.site_code)"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($s.site_type_classification_rationale)) "Site type rationale is missing for $($s.site_code)"
+    Assert-True ($s.site_type_evidence_confidence -cin @('HIGH','MEDIUM','LOW')) "Invalid Site type confidence for $($s.site_code)"
+    Assert-Equal $s.site_type_unresolved_ambiguity '' "Unresolved Site type ambiguity for $($s.site_code)"
+    $classificationSources = @($s.site_type_evidence_source_ids -split ';')
+    Assert-True ($classificationSources.Count -ge 1) "Site type evidence source is missing for $($s.site_code)"
+    foreach ($sourceId in $classificationSources) { Assert-True $sourceIds.Contains($sourceId) "Unknown Site type source '$sourceId' for $($s.site_code)" }
     $siteByCode[$s.site_code] = $s
 }
 Assert-Equal (@($sites.site_code | Sort-Object -Unique).Count) $sites.Count 'Unique Site codes'
@@ -264,10 +362,9 @@ foreach ($a in $assignments) {
     Assert-Equal $a.jurisdiction_id $s.jurisdiction_id "Assignment jurisdiction ID for $($a.site_code)"
     Assert-Equal $a.jurisdiction_code $s.jurisdiction_code "Assignment jurisdiction code for $($a.site_code)"
     Assert-Equal $a.site_jurisdiction_assignment_id (New-UuidV5 $uuidNamespace "https://exitpass.ph/v1.3/carparks/site-jurisdiction-assignments/$($a.site_code)/$($a.jurisdiction_code)") "Assignment UUIDv5 for $($a.site_code)"
-    Assert-True ($allProposedIds.Add($a.site_jurisdiction_assignment_id)) "Duplicate proposed UUID $($a.site_jurisdiction_assignment_id)"
     Assert-Equal $a.proposed_assignment_status 'PENDING_APPROVAL' "Assignment status for $($a.site_code)"
-    Assert-Equal $a.proposed_effective_from '' "No effective date may be invented for $($a.site_code)"
-    Assert-Equal $a.effective_date_approval_status 'OPERATOR_APPROVAL_REQUIRED' "Effective-date approval for $($a.site_code)"
+    Assert-Equal $a.effective_from $approvedEffectiveFrom "Assignment effective_from for $($a.site_code)"
+    Assert-Equal $a.effective_date_approval_status 'APPROVED_CANONICAL_SEED_INPUT' "Effective-date approval for $($a.site_code)"
     Assert-True (-not $assignmentBySite.ContainsKey($a.site_code)) "Multiple current proposed assignments for $($a.site_code)"
     $assignmentBySite[$a.site_code] = $a
 }
@@ -284,13 +381,23 @@ foreach ($s in $mactan) {
     Assert-Equal $s.psgc_code '0731100000' "Mactan PSGC for $($s.site_code)"
     Assert-Equal $assignmentBySite[$s.site_code].jurisdiction_id '23104fc9-a144-381c-4347-ccb2aa1a2998' "Mactan assignment UUID for $($s.site_code)"
 }
+Assert-Equal $siteByCode['MACTAN-NEW-TOWN-OPEN-LOT-GRAVEL'].site_type 'OPEN_LOT' 'Mactan Open Lot Gravel physical classification'
+Assert-Equal $siteByCode['MACTAN-NEW-TOWN-AL-FRESCO'].site_type 'MIXED_USE_PROPERTY' 'Mactan Al Fresco mixed-use classification'
 $bridgetowne = @($sites | Where-Object { $_.site_group_code -eq 'BRIDGETOWNE' })
 Assert-Equal $bridgetowne.Count 2 'Bridgetowne Site count'
 Assert-Equal (($bridgetowne.source_row | Sort-Object) -join ';') '36;37' 'Bridgetowne source rows'
 foreach ($s in $bridgetowne) {
     Assert-Equal $s.jurisdiction_code 'PASIG' "Bridgetowne row-level jurisdiction for $($s.site_code)"
     Assert-True ($s.location_source_url -match 'ncr\.emb\.gov\.ph' -and $s.location_source_url -match 'pasigcity\.gov\.ph') "Bridgetowne row-level official evidence is incomplete for $($s.site_code)"
+    Assert-Equal $s.site_type 'OPEN_LOT' "Bridgetowne physical classification for $($s.site_code)"
 }
+Assert-Equal $siteByCode['PITX-LEVEL-3'].site_type 'STRUCTURED_PARKING' 'PITX Level 3 physical classification'
+Assert-Equal $siteByCode['PITX-OPEN-LOT'].site_type 'OPEN_LOT' 'PITX Open Lot physical classification'
+Assert-Equal $siteByCode['SM-MPLACE-BASEMENT'].site_type 'STRUCTURED_PARKING' 'SM MPlace Basement physical classification'
+Assert-Equal $siteByCode['TALAMBAN-TIMES-SQUARE'].jurisdiction_code 'CEBU_CITY' 'Talamban Times Square jurisdiction reconciliation'
+Assert-Equal $siteByCode['ROBINSONS-DAVAO-CITY-DELTA'].jurisdiction_code 'DAVAO_CITY' 'Cybergate Delta jurisdiction reconciliation'
+foreach ($s in @($sites | Where-Object { $_.site_name -match '(?i)Open Lot' })) { Assert-Equal $s.site_type 'OPEN_LOT' "Explicit Open Lot classification for $($s.site_code)" }
+foreach ($s in @($sites | Where-Object { $_.site_name -match '(?i)Mall$' })) { Assert-Equal $s.site_type 'MALL_PARKING' "Explicit Mall classification for $($s.site_code)" }
 
 $representedJurisdictions = @($sites.jurisdiction_code | Sort-Object -Unique)
 Assert-Equal $representedJurisdictions.Count 13 'Represented jurisdiction count'
@@ -319,6 +426,7 @@ $candidate = @($sites | Where-Object { $_.hikcentral_activation_candidacy -eq 'P
 Assert-Equal $candidate.Count 1 'Exactly one proposed HikCentral candidate'
 Assert-Equal $candidate[0].site_name 'PITX Level 3' 'HikCentral candidate identity'
 Assert-Equal $candidate[0].proposed_parking_lot_index_code '1' 'HikCentral proposed parking lot index'
+Assert-Equal $candidate[0].site_type 'STRUCTURED_PARKING' 'HikCentral candidate Site type'
 
 $workbookSource = @($sources | Where-Object { $_.source_id -eq 'SRC-WORKBOOK-CARPARKS' })
 Assert-Equal $workbookSource.Count 1 'Workbook provenance row count'
@@ -326,6 +434,10 @@ Assert-Equal $workbookSource[0].filename_or_url 'Carparks.xlsx' 'Workbook source
 Assert-Equal $workbookSource[0].sha256 $expectedWorkbookHash 'Workbook provenance SHA-256'
 $canonicalSource = @($sources | Where-Object { $_.source_id -eq 'SRC-CANONICAL-DB' })[0]
 Assert-True ($canonicalSource.repository_path -match '1e307c2bd56c2738a92cdd87571f6caeeaf07b3d') 'Source register must cite the merged canonical database commit'
+$canonicalFieldsSource = @($sources | Where-Object { $_.source_id -eq 'SRC-CANONICAL-FIELDS-DECISION' })
+Assert-Equal $canonicalFieldsSource.Count 1 'Canonical required-fields decision source count'
+Assert-Equal $canonicalFieldsSource[0].publication_date '2026-08-13' 'Canonical required-fields decision date'
+Assert-True ($canonicalFieldsSource[0].scope -match 'effective_from' -and $canonicalFieldsSource[0].scope -match 'Site type') 'Canonical required-fields decision scope'
 foreach ($row in @($groups) + @($sites)) { Assert-Equal $row.source_workbook 'Carparks.xlsx' 'Consistent workbook source filename' }
 
 $dataText = [IO.File]::ReadAllText($groupPath) + [IO.File]::ReadAllText($sitePath) + [IO.File]::ReadAllText($assignmentPath) + [IO.File]::ReadAllText($coveragePath) + [IO.File]::ReadAllText($sourcePath)
@@ -339,6 +451,10 @@ Assert-True ($mainText -match 'identity-preserving correction') 'Documentation m
 Assert-True ($mainText -match 'not recalculated when an external PSGC changes') 'Documentation must preserve internal identity across external-code correction'
 Assert-True ($mainText -match '39 Site Groups' -and $mainText -match '46 Sites') 'Documentation must state workbook-derived counts'
 Assert-True ($mainText -match '46 - 5 = 41' -and $mainText -match 'Bridgetowne') 'Documentation must resolve the 39-versus-41 discrepancy'
+Assert-True ($mainText -match '2026-08-13T00:00:00\+08:00' -and $mainText -match 'not.*activation') 'Documentation must distinguish canonical validity from activation'
+foreach ($s in $sites) {
+    Assert-True ($mainText.Contains($s.site_id) -and $mainText.Contains($s.site_type)) "Documentation classification matrix is incomplete for $($s.site_code)"
+}
 
 $statusLines = @(& git -C $RepositoryRoot status --porcelain=v1 --untracked-files=all)
 Assert-True ($LASTEXITCODE -eq 0) 'Git status failed'
@@ -354,14 +470,21 @@ Assert-True (-not (Test-Path -LiteralPath (Join-Path $RepositoryRoot 'Carparks.x
 $newXlsx = @($statusLines | Where-Object { $_ -match '(?i)\.xlsx$' })
 Assert-Equal $newXlsx.Count 0 'No source or substitute workbook may be added'
 
-$trackedGuids = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
-$gitGuids = @(& git -C $RepositoryRoot grep -I -h -o -E '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}' HEAD -- . 2>$null)
-foreach ($id in $gitGuids) { [void]$trackedGuids.Add($id) }
-foreach ($id in $allProposedIds) { Assert-True (-not $trackedGuids.Contains($id)) "Proposed UUID collides with a tracked canonical or fixture identity: $id" }
+$manifestInputPaths = @(
+    'docs/v1.3/central-pms/seed-manifests/ExitPass_Realistic_Carpark_Catalog_and_Jurisdiction_Seed_Manifest_v1.0.md',
+    'docs/v1.3/central-pms/seed-manifests/data/ExitPass_Realistic_Carpark_Site_Groups_v1.0.csv',
+    'docs/v1.3/central-pms/seed-manifests/data/ExitPass_Realistic_Carpark_Sites_v1.0.csv',
+    'docs/v1.3/central-pms/seed-manifests/data/ExitPass_Realistic_Carpark_Site_Jurisdiction_Assignments_v1.0.csv'
+)
+$trackedOccurrences = Get-TrackedUuidOccurrences $RepositoryRoot
+$externalOccurrences = Select-ExternalUuidOccurrences $trackedOccurrences $manifestInputPaths
+Assert-NoExternalUuidCollisions $allProposedIds $externalOccurrences
 
 Write-Output "PASS: realistic carpark catalog manifest validation completed ($script:Checks checks)."
 Write-Output "Workbook: Carparks.xlsx; SHA-256: $expectedWorkbookHash"
 Write-Output "Counts: 39 Site Groups; 46 Sites; 46 assignments; 26 policy rows; 13 jurisdictions."
+Write-Output "Canonical effective_from: $approvedEffectiveFrom / 2026-08-12T16:00:00Z; Site classifications: 46/46."
+Write-Output "Validator lifecycle: internal uniqueness, external tracked collisions, determinism, and negative boundary tests passed."
 Write-Output "Mactan New Town: 6/6 -> LAPU_LAPU / 0731100000 / 23104fc9-a144-381c-4347-ccb2aa1a2998."
 Write-Output "Bridgetowne: rows 36 and 37 -> PASIG with row-level evidence."
 Write-Output "HikCentral candidate: PITX Level 3 / PROPOSED_NOT_ACTIVATED / parking lot index 1."
