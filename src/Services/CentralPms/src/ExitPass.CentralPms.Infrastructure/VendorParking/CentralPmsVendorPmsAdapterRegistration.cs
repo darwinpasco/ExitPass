@@ -88,7 +88,8 @@ public static class CentralPmsVendorPmsAdapterRegistration
                 },
                 serviceProvider.GetRequiredService<IHikCentralRequestSigner>(),
                 hikCentralOptions.UserId ?? "exitpass-adapter",
-                serviceProvider.GetService<ILogger<HikCentralPassagewayRecordClient>>()));
+                serviceProvider.GetService<ILogger<HikCentralPassagewayRecordClient>>(),
+                hikCentralOptions.RequestTimeZoneId));
         services.AddSingleton<HikCentralPassagewayProjectionNormalizer>();
         services.AddScoped<IVendorSessionProjectionSyncService, HikCentralVendorSessionProjectionSyncService>();
 
@@ -106,7 +107,8 @@ public static class CentralPmsVendorPmsAdapterRegistration
             BaseUrl = configuration[$"{sectionName}:BaseUrl"],
             AppKey = configuration[$"{sectionName}:AppKey"],
             AppSecret = configuration[$"{sectionName}:AppSecret"],
-            UserId = configuration[$"{sectionName}:UserId"] ?? "exitpass-adapter"
+            UserId = configuration[$"{sectionName}:UserId"] ?? "exitpass-adapter",
+            RequestTimeZoneId = configuration[$"{sectionName}:RequestTimeZoneId"]
         };
     }
 }

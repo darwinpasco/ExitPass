@@ -61,6 +61,7 @@ if ($runningScheduler) {
 $env:CentralPms__VendorPms__Provider = "HIKCENTRAL"
 $env:CentralPms__VendorSessionProjections__SchedulerEnabled = "true"
 $env:CentralPms__VendorSessionProjections__RequiredForEnvironment = "true"
+$env:CentralPms__VendorSessionProjections__ActivationMode = "LOCAL_PROFILE"
 $env:CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds = "60"
 $env:CentralPms__VendorSessionProjections__NormalFreshnessTargetSeconds = "60"
 $env:CentralPms__VendorSessionProjections__MaxProjectionAgeMinutes = "1"

@@ -22,6 +22,21 @@ public sealed class HikCentralPassagewayProjectionNormalizer
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly HashSet<string> UnusablePlateValues = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-",
+        "?",
+        "N/A",
+        "NA",
+        "NONE",
+        "NO PLATE",
+        "NO_PLATE",
+        "NOT AVAILABLE",
+        "NULL",
+        "UNKNOWN",
+        "UNREADABLE"
+    };
+
     /// <summary>
     /// Attempts to normalize one HikCentral passageway record into a projection.
     /// </summary>
@@ -189,7 +204,7 @@ public sealed class HikCentralPassagewayProjectionNormalizer
     private static string? NormalizePlateLicense(string? value)
     {
         var normalized = Normalize(value);
-        return string.Equals(normalized, "Unknown", StringComparison.OrdinalIgnoreCase)
+        return normalized is null || UnusablePlateValues.Contains(normalized)
             ? null
             : normalized;
     }

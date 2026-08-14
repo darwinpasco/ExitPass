@@ -38,4 +38,52 @@ COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.last_lock_cont
 COMMENT ON COLUMN sessions.vendor_session_projection_sync_targets.lock_contention_count IS
     'Cumulative target-scoped advisory lock contention count.';
 
+ALTER TABLE sessions.vendor_session_projections
+    DROP CONSTRAINT IF EXISTS uq_vendor_session_projections__stable_identity_key;
+
+DROP INDEX IF EXISTS sessions.uq_vendor_session_projections__stable_identity_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vendor_session_projections__target_stable_identity
+ON sessions.vendor_session_projections (
+    vendor_system_id,
+    site_group_id,
+    site_id,
+    parking_lot_index_code,
+    stable_identity_key
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions.vendor_session_projections'::regclass
+          AND conname = 'uq_vendor_session_projections__target_stable_identity'
+    ) THEN
+        ALTER TABLE sessions.vendor_session_projections
+            ADD CONSTRAINT uq_vendor_session_projections__target_stable_identity
+            UNIQUE USING INDEX uq_vendor_session_projections__target_stable_identity;
+    END IF;
+END $$;
+
+DROP INDEX IF EXISTS sessions.ux_vendor_session_projections__vendor_record_guid;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vendor_session_projections__target_vendor_record_guid
+ON sessions.vendor_session_projections (
+    vendor_system_id,
+    site_group_id,
+    site_id,
+    parking_lot_index_code,
+    vendor_record_guid
+)
+WHERE vendor_system_id IS NOT NULL
+  AND site_group_id IS NOT NULL
+  AND site_id IS NOT NULL
+  AND parking_lot_index_code IS NOT NULL
+  AND vendor_record_guid IS NOT NULL;
+
+COMMENT ON CONSTRAINT uq_vendor_session_projections__target_stable_identity
+ON sessions.vendor_session_projections IS
+    'Idempotent projection identity isolated by Vendor System, Site Group, Site, and parking lot.';
+
 COMMIT;

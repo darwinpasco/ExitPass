@@ -474,29 +474,50 @@ BEGIN
     END IF;
 END $$;
 
--- Unique constraint/indexes from the full DDL. The stable identity unique
--- constraint is created as a unique index when absent, then attached as the
--- named table constraint when the constraint is absent. This avoids duplicate
--- relation-name failures on rerun.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_vendor_session_projections__stable_identity_key
-ON sessions.vendor_session_projections (stable_identity_key);
+-- Unique constraint/indexes from the full DDL. Idempotency and upstream GUID
+-- uniqueness are isolated by the complete persisted target scope.
+ALTER TABLE sessions.vendor_session_projections
+    DROP CONSTRAINT IF EXISTS uq_vendor_session_projections__stable_identity_key;
+
+DROP INDEX IF EXISTS sessions.uq_vendor_session_projections__stable_identity_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vendor_session_projections__target_stable_identity
+ON sessions.vendor_session_projections (
+    vendor_system_id,
+    site_group_id,
+    site_id,
+    parking_lot_index_code,
+    stable_identity_key
+);
 
 DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
-        WHERE conname = 'uq_vendor_session_projections__stable_identity_key'
+        WHERE conname = 'uq_vendor_session_projections__target_stable_identity'
           AND conrelid = 'sessions.vendor_session_projections'::regclass
     ) THEN
         ALTER TABLE sessions.vendor_session_projections
-            ADD CONSTRAINT uq_vendor_session_projections__stable_identity_key
-            UNIQUE USING INDEX uq_vendor_session_projections__stable_identity_key;
+            ADD CONSTRAINT uq_vendor_session_projections__target_stable_identity
+            UNIQUE USING INDEX uq_vendor_session_projections__target_stable_identity;
     END IF;
 END $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_vendor_session_projections__vendor_record_guid
-ON sessions.vendor_session_projections (vendor_record_guid)
-WHERE vendor_record_guid IS NOT NULL;
+DROP INDEX IF EXISTS sessions.ux_vendor_session_projections__vendor_record_guid;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_vendor_session_projections__target_vendor_record_guid
+ON sessions.vendor_session_projections (
+    vendor_system_id,
+    site_group_id,
+    site_id,
+    parking_lot_index_code,
+    vendor_record_guid
+)
+WHERE vendor_system_id IS NOT NULL
+  AND site_group_id IS NOT NULL
+  AND site_id IS NOT NULL
+  AND parking_lot_index_code IS NOT NULL
+  AND vendor_record_guid IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_vendor_session_projection_sync_targets__scope
 ON sessions.vendor_session_projection_sync_targets (site_id, vendor_system_id, parking_lot_index_code);
@@ -600,7 +621,7 @@ WHERE conrelid IN (
       'ck_vendor_session_projection_sync_targets__page_size_bounds',
       'ck_vendor_session_projection_sync_targets__failure_count_non_negative',
       'ck_vendor_projection_targets__lock_contention_non_negative',
-      'uq_vendor_session_projections__stable_identity_key'
+      'uq_vendor_session_projections__target_stable_identity'
   )
 ORDER BY table_name, contype, conname;
 
@@ -611,7 +632,7 @@ SELECT schemaname, tablename, indexname
 FROM pg_indexes
 WHERE schemaname = 'sessions'
   AND indexname IN (
-      'ux_vendor_session_projections__vendor_record_guid',
+      'ux_vendor_session_projections__target_vendor_record_guid',
       'ux_vendor_session_projection_sync_targets__scope',
       'ix_vendor_session_projections__card_num',
       'ix_vendor_session_projections__plate_license',

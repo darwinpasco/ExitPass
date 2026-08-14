@@ -73,4 +73,37 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'Projection lock contention count constraint is missing.';
     END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions.vendor_session_projections'::regclass
+          AND conname = 'uq_vendor_session_projections__stable_identity_key'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'sessions.vendor_session_projections'::regclass
+          AND conname = 'uq_vendor_session_projections__target_stable_identity'
+          AND pg_get_constraintdef(oid) LIKE '%vendor_system_id%'
+          AND pg_get_constraintdef(oid) LIKE '%site_group_id%'
+          AND pg_get_constraintdef(oid) LIKE '%site_id%'
+          AND pg_get_constraintdef(oid) LIKE '%parking_lot_index_code%'
+          AND pg_get_constraintdef(oid) LIKE '%stable_identity_key%'
+    ) THEN
+        RAISE EXCEPTION 'Projection idempotency is not isolated by the complete target scope.';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_indexes
+        WHERE schemaname = 'sessions'
+          AND indexname = 'ux_vendor_session_projections__target_vendor_record_guid'
+          AND indexdef LIKE '%vendor_system_id%'
+          AND indexdef LIKE '%site_group_id%'
+          AND indexdef LIKE '%site_id%'
+          AND indexdef LIKE '%parking_lot_index_code%'
+          AND indexdef LIKE '%vendor_record_guid%'
+    ) THEN
+        RAISE EXCEPTION 'Vendor record GUID uniqueness is not isolated by the complete target scope.';
+    END IF;
 END $$;

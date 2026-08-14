@@ -27,6 +27,8 @@ public sealed class VendorSessionProjectionSafetyTests
 
         options.SchedulerEnabled.Should().BeFalse();
         options.RequiredForEnvironment.Should().BeFalse();
+        options.ActivationMode.Should().Be(VendorSessionProjectionOptions.LocalProfileActivationMode);
+        options.ManagedDeploymentApproved.Should().BeFalse();
         options.DefaultPollIntervalSeconds.Should().Be(60);
         options.NormalFreshnessTargetSeconds.Should().Be(60);
         options.MaxProjectionAgeMinutes.Should().Be(1);
@@ -50,6 +52,99 @@ public sealed class VendorSessionProjectionSafetyTests
             []);
 
         errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ManagedDeployment_WithExplicitApprovalAndMultipleTargets_IsValid()
+    {
+        var first = Target(enabled: true, lastSuccessAt: Now);
+        var second = first with
+        {
+            ProjectionSyncTargetId = Guid.Parse("10000000-0000-0000-0000-000000000002"),
+            SiteId = Guid.Parse("30000000-0000-0000-0000-000000000002"),
+            ParkingLotIndexCode = "SECOND-LOT"
+        };
+        var options = ValidManagedOptions();
+
+        var errors = VendorSessionProjectionStartupValidationHostedService.ValidateEnabledConfiguration(
+            options,
+            "Development",
+            "HIKCENTRAL",
+            "https://hikcentral-uat.example",
+            "127.0.0.1",
+            "exitpass_hikcentral_local_uat",
+            [first, second],
+            []);
+
+        errors.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ManagedDeployment_WithoutApprovalOrExactEnvironment_FailsClosed()
+    {
+        var options = ValidManagedOptions();
+        options.ManagedDeploymentApproved = false;
+        options.ActivationEnvironment = "Uat";
+
+        var errors = VendorSessionProjectionStartupValidationHostedService.ValidateEnabledConfiguration(
+            options,
+            "Development",
+            "HIKCENTRAL",
+            "https://hikcentral-uat.example",
+            "127.0.0.1",
+            "exitpass_hikcentral_local_uat",
+            [Target(enabled: true, lastSuccessAt: Now)],
+            []);
+
+        errors.Should().Contain("PROJECTION_MANAGED_DEPLOYMENT_APPROVAL_REQUIRED");
+        errors.Should().Contain("PROJECTION_ACTIVATION_ENVIRONMENT_MISMATCH");
+    }
+
+    [Fact]
+    public void ManagedDeployment_RequiresExactEndpointAndExplicitInfrastructureApproval()
+    {
+        var options = ValidManagedOptions();
+
+        var errors = VendorSessionProjectionStartupValidationHostedService.ValidateEnabledConfiguration(
+            options,
+            "Development",
+            "HIKCENTRAL",
+            "https://production.hikcentral.example",
+            "postgres.internal",
+            "exitpass_hikcentral_local_uat",
+            [Target(enabled: true, lastSuccessAt: Now)],
+            []);
+
+        errors.Should().Contain("PROJECTION_NON_LOOPBACK_DATABASE_NOT_APPROVED");
+        errors.Should().Contain("PROJECTION_ENDPOINT_IDENTITY_MISMATCH");
+        errors.Should().Contain("PROJECTION_PRODUCTION_ENDPOINT_NOT_APPROVED");
+    }
+
+    [Fact]
+    public void ManagedProcessActivation_DoesNotRequireLocalProfileMarkerOrInteractiveAcknowledgement()
+    {
+        var values = ValidManagedProcessActivationValues();
+
+        var errors = VendorSessionProjectionStartupValidationHostedService
+            .ValidateManagedProcessScopedActivationConfiguration(name => values.GetValueOrDefault(name));
+
+        errors.Should().BeEmpty();
+        values.Keys.Should().NotContain(VendorSessionProjectionStartupValidationHostedService.LaunchProfileMarkerVariable);
+        values.Keys.Should().NotContain("CentralPms__VendorSessionProjections__LocalNonProductionEndpointAcknowledged");
+    }
+
+    [Fact]
+    public void ManagedProcessActivation_RequiresExplicitUserAndRequestTimeZone()
+    {
+        var values = ValidManagedProcessActivationValues();
+        values.Remove("CentralPms__VendorPms__HikCentral__UserId");
+        values.Remove("CentralPms__VendorPms__HikCentral__RequestTimeZoneId");
+
+        var errors = VendorSessionProjectionStartupValidationHostedService
+            .ValidateManagedProcessScopedActivationConfiguration(name => values.GetValueOrDefault(name));
+
+        errors.Should().Contain("PROJECTION_PROCESS_CONFIGURATION_MISSING_CENTRALPMS__VENDORPMS__HIKCENTRAL__USERID");
+        errors.Should().Contain("PROJECTION_PROCESS_CONFIGURATION_MISSING_CENTRALPMS__VENDORPMS__HIKCENTRAL__REQUESTTIMEZONEID");
     }
 
     [Fact]
@@ -209,6 +304,20 @@ public sealed class VendorSessionProjectionSafetyTests
         launchSettings.Should().Contain(VendorSessionProjectionStartupValidationHostedService.LaunchProfileMarkerVariable);
         launcher.Should().Contain("--launch-profile HikCentralLocal");
         launcher.Should().NotContain("--no-launch-profile");
+    }
+
+    [Fact]
+    public void LocalUatTargetConfiguration_IsDisabledByDefaultAndContainsNoEndpointOrSecret()
+    {
+        var sql = File.ReadAllText(FindRepoFile(Path.Combine(
+            "docs", "sql", "HikCentralProjectionTestSiteLocalUat.sql")));
+
+        sql.Should().Contain("'TEST SITE'");
+        sql.Should().Contain("false,\n    60");
+        sql.Should().Contain("exitpass_hikcentral_local_uat");
+        sql.Should().NotContain("127.0.0.1:9019");
+        sql.Should().NotContainEquivalentOf("AppSecret");
+        sql.Should().NotContainEquivalentOf("Password=");
     }
 
     [Fact]
@@ -380,6 +489,23 @@ public sealed class VendorSessionProjectionSafetyTests
         MaxProjectionAgeMinutes = 1
     };
 
+    private static VendorSessionProjectionOptions ValidManagedOptions() => new()
+    {
+        SchedulerEnabled = true,
+        RequiredForEnvironment = true,
+        ActivationMode = VendorSessionProjectionOptions.ManagedDeploymentActivationMode,
+        ActivationEnvironment = "Development",
+        ManagedDeploymentApproved = true,
+        ExpectedDatabaseName = "exitpass_hikcentral_local_uat",
+        ExpectedEndpointHost = "hikcentral-uat.example",
+        ExpectedEndpointScheme = "https",
+        ExpectedEndpointPort = 443,
+        ManagedVendorSystemId = Guid.Parse("40000000-0000-0000-0000-000000000001"),
+        DefaultPollIntervalSeconds = 60,
+        NormalFreshnessTargetSeconds = 60,
+        MaxProjectionAgeMinutes = 1
+    };
+
     private static VendorSessionProjectionOptions WithExpectedSite(
         VendorSessionProjectionOptions options,
         Guid siteId)
@@ -419,6 +545,29 @@ public sealed class VendorSessionProjectionSafetyTests
         ["CentralPms__VendorSessionProjections__ExpectedTargetSiteGroupId"] = "present",
         ["CentralPms__VendorSessionProjections__ExpectedTargetVendorSystemId"] = "present",
         ["CentralPms__VendorSessionProjections__ExpectedTargetParkingLotIndexCode"] = "present"
+    };
+
+    private static Dictionary<string, string?> ValidManagedProcessActivationValues() => new()
+    {
+        ["ConnectionStrings__MainDatabase"] = "present",
+        ["CentralPms__VendorPms__Provider"] = "HIKCENTRAL",
+        ["CentralPms__VendorPms__HikCentral__BaseUrl"] = "present",
+        ["CentralPms__VendorPms__HikCentral__AppKey"] = "present",
+        ["CentralPms__VendorPms__HikCentral__AppSecret"] = "present",
+        ["CentralPms__VendorPms__HikCentral__UserId"] = "exitpass-adapter",
+        ["CentralPms__VendorPms__HikCentral__RequestTimeZoneId"] = "Asia/Manila",
+        ["CentralPms__VendorSessionProjections__SchedulerEnabled"] = "true",
+        ["CentralPms__VendorSessionProjections__RequiredForEnvironment"] = "true",
+        ["CentralPms__VendorSessionProjections__ActivationMode"] = VendorSessionProjectionOptions.ManagedDeploymentActivationMode,
+        ["CentralPms__VendorSessionProjections__ActivationEnvironment"] = "Development",
+        ["CentralPms__VendorSessionProjections__ManagedDeploymentApproved"] = "true",
+        ["CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase"] = "false",
+        ["CentralPms__VendorSessionProjections__AllowProductionEndpoint"] = "false",
+        ["CentralPms__VendorSessionProjections__ExpectedDatabaseName"] = "exitpass_hikcentral_local_uat",
+        ["CentralPms__VendorSessionProjections__ExpectedEndpointHost"] = "hikcentral-uat.example",
+        ["CentralPms__VendorSessionProjections__ExpectedEndpointScheme"] = "https",
+        ["CentralPms__VendorSessionProjections__ExpectedEndpointPort"] = "443",
+        ["CentralPms__VendorSessionProjections__ManagedVendorSystemId"] = "40000000-0000-0000-0000-000000000001"
     };
 
     private static VendorSessionProjectionHealthTargetReadModel Target(

@@ -2,7 +2,9 @@
 
 ## Decision
 
-The current implementation is prepared for one explicitly mapped `HikCentralLocal` target. Live polling remains operator-gated because this repository contains no approved local endpoint, credentials, database identity, Site mapping, Vendor System mapping, or parking-lot index.
+The `HikCentralLocal` profile remains the interactive gate for controlled local checks. Permanent operation instead uses the same hosted scheduler with `ActivationMode=MANAGED_DEPLOYMENT`; that path is non-interactive, externally configured, exact-endpoint gated, and scoped to one persisted Vendor System per scheduler-enabled replica or worker of the one logical Central PMS.
+
+The approved local-UAT TEST SITE mapping is tracked in `docs/sql/HikCentralProjectionTestSiteLocalUat.sql` and validated by `docs/sql/ValidateHikCentralProjectionTestSiteLocalUat.sql`. The seed creates its target disabled. It never stores the endpoint or credentials and never activates polling.
 
 Production configuration is unchanged. The WebPay statutory-discount walkthrough remains on its seeded `Production`-named fixture composition and does not load `appsettings.HikCentralLocal.json`.
 

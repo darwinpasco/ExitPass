@@ -50,6 +50,47 @@ public sealed class HikCentralPassagewayRecordClientTests
     }
 
     [Fact]
+    public async Task GetPassagewayRecordsAsync_UsesConfiguredHikCentralRequestTimeZone()
+    {
+        var handler = new FakeHikCentralHandler(_ => JsonResponse("""
+            { "code": "0", "msg": "Success", "data": { "total": 0, "list": [] } }
+            """));
+        var signer = new HikCentralRequestSigner(
+            new HikCentralCredentialOptions("test-ak", "test-secret"));
+        var client = new HikCentralPassagewayRecordClient(
+            new HttpClient(handler) { BaseAddress = new Uri("https://hikcentral.fake") },
+            signer,
+            requestTimeZoneId: "Asia/Manila");
+
+        await client.GetPassagewayRecordsAsync(
+            new HikCentralPassagewayRecordRequest(
+                "LOT-1",
+                DateTimeOffset.Parse("2026-08-14T01:30:00Z"),
+                DateTimeOffset.Parse("2026-08-14T02:30:00Z"),
+                1,
+                100,
+                Guid.NewGuid()),
+            CancellationToken.None);
+
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
+        var queryInfo = body.RootElement.GetProperty("queryInfo");
+        Assert.Equal("2026-08-14T09:30:00+08:00", queryInfo.GetProperty("beginTime").GetString());
+        Assert.Equal("2026-08-14T10:30:00+08:00", queryInfo.GetProperty("endTime").GetString());
+    }
+
+    [Fact]
+    public async Task GetPassagewayRecordsAsync_MapsControlCharacterEncodedTotal()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            { "code": "0", "msg": "Success", "data": { "total": "\u000b", "list": [] } }
+            """)));
+
+        var page = await client.GetPassagewayRecordsAsync(Request(), CancellationToken.None);
+
+        Assert.Equal(11, page.Total);
+    }
+
+    [Fact]
     public async Task GetPassagewayRecordsAsync_MapsNestedRecordFields()
     {
         var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""

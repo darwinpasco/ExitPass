@@ -1,5 +1,7 @@
 # HikCentral Real Sync Target Deployment Handoff
 
+For the normal managed Central PMS startup, complete local stack commands, restart behavior, and the approved synthetic TEST SITE mapping, use `docs/hikcentral-permanent-session-projection-runbook.md`. This handoff remains the environment-specific target verification checklist; it is not a requirement to use the interactive `HikCentralLocal` profile.
+
 ## Purpose
 
 This handoff is the practical checklist for configuring HikCentral vendor session projection sync targets in a real environment and validating Operator Console health visibility.
