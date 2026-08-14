@@ -11,6 +11,16 @@ public sealed class VendorSessionProjectionOptions
     public const string SectionName = "CentralPms:VendorSessionProjections";
 
     /// <summary>
+    /// Activation mode used by the guarded, operator-driven local launch profile.
+    /// </summary>
+    public const string LocalProfileActivationMode = "LOCAL_PROFILE";
+
+    /// <summary>
+    /// Activation mode used by an approved ordinary deployment.
+    /// </summary>
+    public const string ManagedDeploymentActivationMode = "MANAGED_DEPLOYMENT";
+
+    /// <summary>
     /// Minimum accepted poll interval for projection sync targets.
     /// </summary>
     public const int MinPollIntervalSeconds = 30;
@@ -162,6 +172,48 @@ public sealed class VendorSessionProjectionOptions
     public bool RequiredForEnvironment { get; set; }
 
     /// <summary>
+    /// Selects either the guarded local launch profile or normal managed deployment controls.
+    /// </summary>
+    public string ActivationMode { get; set; } = LocalProfileActivationMode;
+
+    /// <summary>
+    /// Explicit deployment-owned approval for ordinary managed runtime activation.
+    /// </summary>
+    public bool ManagedDeploymentApproved { get; set; }
+
+    /// <summary>
+    /// Permits an approved managed deployment to use a non-loopback database host.
+    /// </summary>
+    public bool AllowNonLoopbackDatabase { get; set; }
+
+    /// <summary>
+    /// Permits an approved managed deployment to use an endpoint whose host is production-marked.
+    /// </summary>
+    public bool AllowProductionEndpoint { get; set; }
+
+    /// <summary>
+    /// Expected HikCentral host for this deployment, without scheme, path, or credentials.
+    /// </summary>
+    public string? ExpectedEndpointHost { get; set; }
+
+    /// <summary>
+    /// Expected HikCentral scheme for this deployment.
+    /// </summary>
+    public string? ExpectedEndpointScheme { get; set; }
+
+    /// <summary>
+    /// Expected HikCentral port for this deployment.
+    /// </summary>
+    public int ExpectedEndpointPort { get; set; }
+
+    /// <summary>
+    /// Vendor System owned by this managed scheduler process.
+    /// Scheduler-enabled replicas or workers of the one logical Central PMS may
+    /// safely own separate HikCentral instances without becoming separate systems.
+    /// </summary>
+    public Guid? ManagedVendorSystemId { get; set; }
+
+    /// <summary>
     /// Environment name that is explicitly authorized to run this scheduler configuration.
     /// </summary>
     public string? ActivationEnvironment { get; set; }
@@ -298,8 +350,20 @@ public sealed class VendorSessionProjectionOptions
         {
             errors.Add("RequiredForEnvironment requires SchedulerEnabled");
         }
+
+        if (!string.Equals(ActivationMode, LocalProfileActivationMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(ActivationMode, ManagedDeploymentActivationMode, StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add($"ActivationMode must be {LocalProfileActivationMode} or {ManagedDeploymentActivationMode}");
+        }
         return errors;
     }
+
+    /// <summary>
+    /// Returns whether this process uses the guarded interactive local activation posture.
+    /// </summary>
+    public bool UsesLocalProfileActivation() =>
+        string.Equals(ActivationMode, LocalProfileActivationMode, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Throws a clear configuration exception when validation fails.

@@ -38,6 +38,29 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         "CentralPms__VendorSessionProjections__ExpectedTargetParkingLotIndexCode"
     ];
 
+    private static readonly string[] RequiredManagedProcessScopedVariables =
+    [
+        "ConnectionStrings__MainDatabase",
+        "CentralPms__VendorPms__Provider",
+        "CentralPms__VendorPms__HikCentral__BaseUrl",
+        "CentralPms__VendorPms__HikCentral__AppKey",
+        "CentralPms__VendorPms__HikCentral__AppSecret",
+        "CentralPms__VendorPms__HikCentral__UserId",
+        "CentralPms__VendorPms__HikCentral__RequestTimeZoneId",
+        "CentralPms__VendorSessionProjections__SchedulerEnabled",
+        "CentralPms__VendorSessionProjections__RequiredForEnvironment",
+        "CentralPms__VendorSessionProjections__ActivationMode",
+        "CentralPms__VendorSessionProjections__ActivationEnvironment",
+        "CentralPms__VendorSessionProjections__ManagedDeploymentApproved",
+        "CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase",
+        "CentralPms__VendorSessionProjections__AllowProductionEndpoint",
+        "CentralPms__VendorSessionProjections__ExpectedDatabaseName",
+        "CentralPms__VendorSessionProjections__ExpectedEndpointHost",
+        "CentralPms__VendorSessionProjections__ExpectedEndpointScheme",
+        "CentralPms__VendorSessionProjections__ExpectedEndpointPort",
+        "CentralPms__VendorSessionProjections__ManagedVendorSystemId"
+    ];
+
     /// <inheritdoc />
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -104,6 +127,11 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         var connectionString = configuration.GetConnectionString("MainDatabase")
             ?? throw new InvalidOperationException("PROJECTION_MAIN_DATABASE_CONFIGURATION_MISSING");
         var connection = new NpgsqlConnectionStringBuilder(connectionString);
+        var processActivationErrors = projectionOptions.UsesLocalProfileActivation()
+            ? ValidateProcessScopedActivationConfiguration(
+                name => Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Process))
+            : ValidateManagedProcessScopedActivationConfiguration(
+                name => Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Process));
         var errors = ValidateEnabledConfiguration(
             projectionOptions,
             environment.EnvironmentName,
@@ -112,8 +140,7 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             connection.Host,
             connection.Database,
             targets,
-            ValidateProcessScopedActivationConfiguration(
-                name => Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Process)));
+            processActivationErrors);
 
         if (errors.Count > 0)
         {
@@ -136,6 +163,19 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         IReadOnlyList<VendorSessionProjectionHealthTargetReadModel> targets,
         IReadOnlyList<string> processActivationErrors)
     {
+        if (!options.UsesLocalProfileActivation())
+        {
+            return ValidateManagedDeploymentConfiguration(
+                options,
+                environmentName,
+                provider,
+                baseUrl,
+                databaseHost,
+                databaseName,
+                targets,
+                processActivationErrors);
+        }
+
         var errors = new List<string>(processActivationErrors);
         if (!string.Equals(provider?.Trim(), CentralPmsVendorPmsAdapterOptions.HikCentralProvider, StringComparison.OrdinalIgnoreCase))
         {
@@ -252,6 +292,186 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         }
 
         return errors;
+    }
+
+    public static IReadOnlyList<string> ValidateManagedDeploymentConfiguration(
+        VendorSessionProjectionOptions options,
+        string environmentName,
+        string? provider,
+        string? baseUrl,
+        string databaseHost,
+        string databaseName,
+        IReadOnlyList<VendorSessionProjectionHealthTargetReadModel> targets,
+        IReadOnlyList<string> processActivationErrors)
+    {
+        var errors = new List<string>(processActivationErrors);
+        if (!string.Equals(
+            options.ActivationMode,
+            VendorSessionProjectionOptions.ManagedDeploymentActivationMode,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("PROJECTION_MANAGED_ACTIVATION_MODE_REQUIRED");
+        }
+
+        if (!options.ManagedDeploymentApproved)
+        {
+            errors.Add("PROJECTION_MANAGED_DEPLOYMENT_APPROVAL_REQUIRED");
+        }
+
+        if (!options.ManagedVendorSystemId.HasValue || options.ManagedVendorSystemId == Guid.Empty)
+        {
+            errors.Add("PROJECTION_MANAGED_VENDOR_SYSTEM_REQUIRED");
+        }
+
+        if (!string.Equals(
+            provider?.Trim(),
+            CentralPmsVendorPmsAdapterOptions.HikCentralProvider,
+            StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("PROJECTION_PROVIDER_MUST_BE_HIKCENTRAL");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ActivationEnvironment) ||
+            !string.Equals(options.ActivationEnvironment.Trim(), environmentName, StringComparison.Ordinal))
+        {
+            errors.Add("PROJECTION_ACTIVATION_ENVIRONMENT_MISMATCH");
+        }
+
+        if (!options.SchedulerEnabled || !options.RequiredForEnvironment)
+        {
+            errors.Add("PROJECTION_MANAGED_SCHEDULER_REQUIRED");
+        }
+
+        if (options.DefaultPollIntervalSeconds != 60 ||
+            options.NormalFreshnessTargetSeconds != 60 ||
+            options.MaxProjectionAgeMinutes != 1)
+        {
+            errors.Add("PROJECTION_MANAGED_SIXTY_SECOND_FRESHNESS_REQUIRED");
+        }
+
+        if (string.IsNullOrWhiteSpace(options.ExpectedDatabaseName) ||
+            !string.Equals(options.ExpectedDatabaseName.Trim(), databaseName, StringComparison.Ordinal))
+        {
+            errors.Add("PROJECTION_DATABASE_IDENTITY_MISMATCH");
+        }
+
+        if (!IsLoopbackHost(databaseHost) && !options.AllowNonLoopbackDatabase)
+        {
+            errors.Add("PROJECTION_NON_LOOPBACK_DATABASE_NOT_APPROVED");
+        }
+
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var endpoint) ||
+            endpoint.Scheme is not ("http" or "https"))
+        {
+            errors.Add("PROJECTION_ENDPOINT_INVALID");
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(options.ExpectedEndpointHost) ||
+                !string.Equals(options.ExpectedEndpointHost.Trim(), endpoint.Host, StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add("PROJECTION_ENDPOINT_IDENTITY_MISMATCH");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ExpectedEndpointScheme) ||
+                !string.Equals(options.ExpectedEndpointScheme.Trim(), endpoint.Scheme, StringComparison.OrdinalIgnoreCase) ||
+                options.ExpectedEndpointPort <= 0 ||
+                options.ExpectedEndpointPort != endpoint.Port)
+            {
+                errors.Add("PROJECTION_ENDPOINT_IDENTITY_MISMATCH");
+            }
+
+            if (IsProductionMarkedHost(endpoint.Host) && !options.AllowProductionEndpoint)
+            {
+                errors.Add("PROJECTION_PRODUCTION_ENDPOINT_NOT_APPROVED");
+            }
+        }
+
+        var enabledTargets = targets.Where(target => target.Enabled).ToArray();
+        var deploymentTargets = enabledTargets
+            .Where(target => target.VendorSystemId == options.ManagedVendorSystemId)
+            .ToArray();
+        if (deploymentTargets.Length == 0)
+        {
+            errors.Add("PROJECTION_MANAGED_VENDOR_TARGET_REQUIRED");
+        }
+
+        if (enabledTargets.Any(target =>
+            target.SiteId == Guid.Empty ||
+            target.SiteGroupId == Guid.Empty ||
+            target.VendorSystemId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(target.ParkingLotIndexCode)))
+        {
+            errors.Add("PROJECTION_TARGET_SCOPE_INCOMPLETE");
+        }
+
+        if (enabledTargets.Any(target => target.PollIntervalSeconds != 60))
+        {
+            errors.Add("PROJECTION_TARGET_POLL_INTERVAL_MUST_BE_SIXTY_SECONDS");
+        }
+
+        if (enabledTargets.Select(target => target.ProjectionSyncTargetId).Distinct().Count() != enabledTargets.Length)
+        {
+            errors.Add("PROJECTION_TARGET_IDENTITY_DUPLICATE");
+        }
+
+        if (enabledTargets
+            .GroupBy(target => new
+            {
+                target.SiteId,
+                target.SiteGroupId,
+                target.VendorSystemId,
+                ParkingLotIndexCode = target.ParkingLotIndexCode.Trim().ToUpperInvariant()
+            })
+            .Any(group => group.Count() > 1))
+        {
+            errors.Add("PROJECTION_TARGET_SCOPE_DUPLICATE");
+        }
+
+        return errors.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    public static IReadOnlyList<string> ValidateManagedProcessScopedActivationConfiguration(
+        Func<string, string?> readProcessVariable)
+    {
+        ArgumentNullException.ThrowIfNull(readProcessVariable);
+        var errors = RequiredManagedProcessScopedVariables
+            .Where(name => string.IsNullOrWhiteSpace(readProcessVariable(name)))
+            .Select(name => $"PROJECTION_PROCESS_CONFIGURATION_MISSING_{NormalizeVariableName(name)}")
+            .ToList();
+
+        AddExactProcessValueError(
+            errors,
+            readProcessVariable,
+            "CentralPms__VendorPms__Provider",
+            CentralPmsVendorPmsAdapterOptions.HikCentralProvider,
+            "PROJECTION_PROCESS_PROVIDER_MUST_BE_HIKCENTRAL");
+        AddExactProcessValueError(
+            errors,
+            readProcessVariable,
+            "CentralPms__VendorSessionProjections__SchedulerEnabled",
+            "true",
+            "PROJECTION_PROCESS_SCHEDULER_ENABLEMENT_REQUIRED");
+        AddExactProcessValueError(
+            errors,
+            readProcessVariable,
+            "CentralPms__VendorSessionProjections__RequiredForEnvironment",
+            "true",
+            "PROJECTION_PROCESS_REQUIRED_ENVIRONMENT_FLAG_REQUIRED");
+        AddExactProcessValueError(
+            errors,
+            readProcessVariable,
+            "CentralPms__VendorSessionProjections__ActivationMode",
+            VendorSessionProjectionOptions.ManagedDeploymentActivationMode,
+            "PROJECTION_PROCESS_MANAGED_ACTIVATION_MODE_REQUIRED");
+        AddExactProcessValueError(
+            errors,
+            readProcessVariable,
+            "CentralPms__VendorSessionProjections__ManagedDeploymentApproved",
+            "true",
+            "PROJECTION_PROCESS_MANAGED_DEPLOYMENT_APPROVAL_REQUIRED");
+
+        return errors.Distinct(StringComparer.Ordinal).ToArray();
     }
 
     public static IReadOnlyList<string> ValidateProcessScopedActivationConfiguration(

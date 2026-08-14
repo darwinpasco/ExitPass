@@ -146,7 +146,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 @service_identity_id,
                 1
             )
-            ON CONFLICT ON CONSTRAINT uq_vendor_session_projections__stable_identity_key
+            ON CONFLICT ON CONSTRAINT uq_vendor_session_projections__target_stable_identity
             DO UPDATE SET
                 vendor_system_id = COALESCE(EXCLUDED.vendor_system_id, sessions.vendor_session_projections.vendor_system_id),
                 site_id = COALESCE(EXCLUDED.site_id, sessions.vendor_session_projections.site_id),

@@ -171,6 +171,7 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
     private readonly IHikCentralRequestSigner _requestSigner;
     private readonly string _userId;
     private readonly ILogger<HikCentralPassagewayRecordClient> _logger;
+    private readonly TimeZoneInfo? _requestTimeZone;
 
     /// <summary>
     /// Creates a signed HikCentral passageway record client.
@@ -179,12 +180,16 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
         HttpClient httpClient,
         IHikCentralRequestSigner requestSigner,
         string userId = "exitpass-adapter",
-        ILogger<HikCentralPassagewayRecordClient>? logger = null)
+        ILogger<HikCentralPassagewayRecordClient>? logger = null,
+        string? requestTimeZoneId = null)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _requestSigner = requestSigner ?? throw new ArgumentNullException(nameof(requestSigner));
         _userId = string.IsNullOrWhiteSpace(userId) ? "exitpass-adapter" : userId.Trim();
         _logger = logger ?? NullLogger<HikCentralPassagewayRecordClient>.Instance;
+        _requestTimeZone = string.IsNullOrWhiteSpace(requestTimeZoneId)
+            ? null
+            : TimeZoneInfo.FindSystemTimeZoneById(requestTimeZoneId.Trim());
     }
 
     /// <inheritdoc />
@@ -208,13 +213,15 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
             throw new ArgumentOutOfRangeException(nameof(request), "PageSize must be between 1 and 500.");
         }
 
+        var beginTime = ConvertRequestTime(request.BeginTime);
+        var endTime = ConvertRequestTime(request.EndTime);
         var body = new PassagewayRecordBody(
             request.PageIndex,
             request.PageSize,
             new PassagewayRecordQueryInfo(
                 request.ParkingLotIndexCode.Trim(),
-                HikCentralParkingTimeFormatter.Format(request.BeginTime),
-                HikCentralParkingTimeFormatter.Format(request.EndTime),
+                HikCentralParkingTimeFormatter.Format(beginTime),
+                HikCentralParkingTimeFormatter.Format(endTime),
                 DirectionType: -1,
                 AllowResult: -1,
                 SortField: "EnterTime",
@@ -388,13 +395,31 @@ public sealed class HikCentralPassagewayRecordClient : IHikCentralPassagewayReco
             return null;
         }
 
-        return value.ValueKind switch
+        if (value.ValueKind is JsonValueKind.Number && value.TryGetInt32(out var numericValue))
         {
-            JsonValueKind.Number when value.TryGetInt32(out var number) => number,
-            JsonValueKind.String when int.TryParse(value.GetString(), out var number) => number,
-            _ => null
-        };
+            return numericValue;
+        }
+
+        if (value.ValueKind is not JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var text = value.GetString();
+        if (int.TryParse(text, out var parsedValue))
+        {
+            return parsedValue;
+        }
+
+        // Some HikCentral installations encode small totals as escaped control
+        // characters whose code point is the numeric value.
+        return text is { Length: 1 } && char.IsControl(text[0])
+            ? text[0]
+            : null;
     }
+
+    private DateTimeOffset ConvertRequestTime(DateTimeOffset value) =>
+        _requestTimeZone is null ? value : TimeZoneInfo.ConvertTime(value, _requestTimeZone);
 
     private static string? TryGetString(JsonElement root, string propertyName)
     {

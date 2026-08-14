@@ -51,6 +51,46 @@ public sealed class VendorSessionProjectionSchedulerTests
     }
 
     [Fact]
+    public async Task RunDueTargetsOnceAsync_ManagedDeploymentRunsOnlyOwnedVendorTargets()
+    {
+        var owned = Target("OWNED");
+        var other = Target("OTHER") with
+        {
+            ProjectionSyncTargetId = Guid.NewGuid(),
+            VendorSystemId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002")
+        };
+        var options = new VendorSessionProjectionOptions
+        {
+            ManagedVendorSystemId = owned.VendorSystemId
+        };
+        var sync = new RecordingSyncService();
+        var sut = CreateSut(new InMemoryTargetRepository([owned, other]), sync, options);
+
+        var result = await sut.RunDueTargetsOnceAsync(CancellationToken.None);
+
+        result.TargetsLoaded.Should().Be(1);
+        sync.Commands.Should().ContainSingle(command => command.VendorSystemId == owned.VendorSystemId);
+    }
+
+    [Fact]
+    public async Task RunManualAsync_ManagedDeploymentRejectsAnotherVendorTarget()
+    {
+        var target = Target("OTHER");
+        var options = new VendorSessionProjectionOptions
+        {
+            ManagedVendorSystemId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002")
+        };
+        var sut = CreateSut(new InMemoryTargetRepository([target]), new RecordingSyncService(), options);
+
+        var act = () => sut.RunManualAsync(
+            new RunVendorSessionProjectionSyncCommand(target.SiteId, null, null, null, false, Guid.NewGuid()),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("VENDOR_SESSION_PROJECTION_SYNC_TARGET_NOT_OWNED");
+    }
+
+    [Fact]
     public async Task RunDueTargetsOnceAsync_IsolatesFailurePerTarget()
     {
         var repository = new InMemoryTargetRepository([Target("LOT-1"), Target("LOT-2")]);

@@ -47,6 +47,11 @@ public sealed class HikCentralOptions
     public string? UserId { get; set; } = "exitpass-adapter";
 
     /// <summary>
+    /// Gets or sets the IANA time-zone identifier used for HikCentral parking query windows.
+    /// </summary>
+    public string? RequestTimeZoneId { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether HikCentral parking fee confirmation is allowed.
     /// </summary>
     public bool ConfirmPaymentEnabled { get; set; }
@@ -101,6 +106,22 @@ public sealed class HikCentralOptions
             UserId.IndexOfAny(['\'', '/', '\\', ':', '*', '?', '"', '<', '>', '|']) >= 0)
         {
             errors.Add("HIKCENTRAL_USER_ID_INVALID");
+        }
+
+        if (!string.IsNullOrWhiteSpace(RequestTimeZoneId))
+        {
+            try
+            {
+                _ = TimeZoneInfo.FindSystemTimeZoneById(RequestTimeZoneId.Trim());
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                errors.Add("HIKCENTRAL_REQUEST_TIME_ZONE_INVALID");
+            }
+            catch (InvalidTimeZoneException)
+            {
+                errors.Add("HIKCENTRAL_REQUEST_TIME_ZONE_INVALID");
+            }
         }
 
         return errors;

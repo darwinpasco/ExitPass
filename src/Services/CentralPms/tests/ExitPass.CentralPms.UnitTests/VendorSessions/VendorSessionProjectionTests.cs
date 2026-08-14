@@ -149,6 +149,31 @@ public sealed class VendorSessionProjectionTests
         Assert.Equal("HIKCENTRAL|GUID|5BF30C478FE44C0D8432E549AF9FE0F7", projection.StableIdentityKey);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("Unknown")]
+    [InlineData("UNREADABLE")]
+    [InlineData("N/A")]
+    [InlineData("NO PLATE")]
+    [InlineData("-")]
+    public void Normalize_UnusablePlateValue_RetainsCardAndOmitsPlateLookup(string plateLicense)
+    {
+        var normalizer = new HikCentralPassagewayProjectionNormalizer();
+
+        var normalized = normalizer.TryNormalize(
+            ActualHikCentralRecord(cardNum: "3524357074073", plateLicense: plateLicense),
+            vendorSystemId: Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+            siteId: Guid.Parse("bbbbbbbb-0000-0000-0000-000000000001"),
+            siteGroupId: Guid.Parse("cccccccc-0000-0000-0000-000000000001"),
+            correlationId: Guid.NewGuid(),
+            ObservedAt,
+            out var projection);
+
+        Assert.True(normalized);
+        Assert.Equal("3524357074073", projection!.CardNum);
+        Assert.Null(projection.PlateLicense);
+    }
+
     [Fact]
     public void Normalize_WhenGuidMissing_UsesParkingLotCardEnterTimeStableIdentity()
     {
@@ -442,17 +467,23 @@ public sealed class VendorSessionProjectionTests
     }
 
     [Fact]
-    public void FullDdl_IncludesVendorSessionProjectionTableIndexesAndAuthorityComment()
+    public void LockedV12DdlAndV13SafetyPatch_PreserveBaselineAndApplyTargetScopedIdentity()
     {
         var ddl = File.ReadAllText(FindRepoFile("ExitPass_Full_Database_Creation_DDL_v1.2.sql"));
+        var safetyPatch = File.ReadAllText(FindRepoFile("infra/db/patches/ExitPass_HikCentralProjectionSafety_v1.3.sql"));
 
         Assert.Contains("CREATE TABLE IF NOT EXISTS sessions.vendor_session_projections", ddl, StringComparison.Ordinal);
         Assert.Contains("uq_vendor_session_projections__stable_identity_key", ddl, StringComparison.Ordinal);
+        Assert.DoesNotContain("uq_vendor_session_projections__target_stable_identity", ddl, StringComparison.Ordinal);
         Assert.Contains("ix_vendor_session_projections__card_num", ddl, StringComparison.Ordinal);
         Assert.Contains("ix_vendor_session_projections__parking_lot_card", ddl, StringComparison.Ordinal);
         Assert.Contains("ix_vendor_session_projections__site_card", ddl, StringComparison.Ordinal);
         Assert.Contains("ix_vendor_session_projections__active_open", ddl, StringComparison.Ordinal);
         Assert.Contains("not parking-session authority, tariff authority, payment finality, or exit authorization", ddl, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("DROP CONSTRAINT IF EXISTS uq_vendor_session_projections__stable_identity_key", safetyPatch, StringComparison.Ordinal);
+        Assert.Contains("uq_vendor_session_projections__target_stable_identity", safetyPatch, StringComparison.Ordinal);
+        Assert.Contains("ux_vendor_session_projections__target_vendor_record_guid", safetyPatch, StringComparison.Ordinal);
     }
 
     [Fact]

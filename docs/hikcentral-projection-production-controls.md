@@ -1,6 +1,6 @@
 # HikCentral Projection Production Controls
 
-This runbook describes the controlled production configuration for HikCentral vendor session projection sync and guarded degraded resolve fallback.
+This runbook describes the permanent, production-capable Central PMS configuration for HikCentral vendor session projection sync and guarded degraded resolve fallback. The scheduler is a normal hosted Central PMS background service; it does not depend on the `HikCentralLocal` launch profile when `ActivationMode=MANAGED_DEPLOYMENT`.
 
 Projection data is a latest-known continuity snapshot only. It is not parking-session authority, tariff authority, payment authority, payment finality, or exit authorization authority.
 
@@ -48,8 +48,20 @@ CentralPms__VendorPms__HikCentral__BaseUrl=https://<hikcentral-host-or-host:port
 CentralPms__VendorPms__HikCentral__AppKey=<secret>
 CentralPms__VendorPms__HikCentral__AppSecret=<secret>
 CentralPms__VendorPms__HikCentral__UserId=exitpass-adapter
+CentralPms__VendorPms__HikCentral__RequestTimeZoneId=<IANA-zone-for-the-HikCentral-instance>
 
 CentralPms__VendorSessionProjections__SchedulerEnabled=false
+CentralPms__VendorSessionProjections__RequiredForEnvironment=false
+CentralPms__VendorSessionProjections__ActivationMode=MANAGED_DEPLOYMENT
+CentralPms__VendorSessionProjections__ActivationEnvironment=<exact-host-environment-name>
+CentralPms__VendorSessionProjections__ManagedDeploymentApproved=false
+CentralPms__VendorSessionProjections__ManagedVendorSystemId=<vendor-system-uuid-owned-by-this-process>
+CentralPms__VendorSessionProjections__ExpectedDatabaseName=<exact-database-name>
+CentralPms__VendorSessionProjections__ExpectedEndpointScheme=<http-or-https>
+CentralPms__VendorSessionProjections__ExpectedEndpointHost=<exact-host>
+CentralPms__VendorSessionProjections__ExpectedEndpointPort=<exact-port>
+CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase=false
+CentralPms__VendorSessionProjections__AllowProductionEndpoint=false
 CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled=false
 CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds=60
 CentralPms__VendorSessionProjections__NormalFreshnessTargetSeconds=60
@@ -69,14 +81,16 @@ Production may use different numeric values within the accepted bounds. Degraded
 
 The architecture is one scheduler service, many site-scoped jobs.
 
-Only one Central PMS instance per environment should run the scheduler loop. In scaled deployments:
+ExitPass retains one logical Central PMS. Only one scheduler-enabled Central PMS replica or worker should own a given Vendor System/HikCentral credential set. A replica may poll multiple persisted site targets for that Vendor System; additional HikCentral instances use separate Vendor Systems and separately configured replicas or workers of the same logical Central PMS. They are not separate Central PMS deployments. In a scaled runtime:
 
 - Set `CentralPms__VendorSessionProjections__SchedulerEnabled=true` on exactly one designated scheduler-capable Central PMS instance.
 - Set `CentralPms__VendorSessionProjections__SchedulerEnabled=false` on all other Central PMS API instances.
-- Keep all instances capable of serving the manual internal sync endpoint if internal auth allows it.
+- Set `ManagedVendorSystemId` on every scheduler-enabled replica or worker. Scheduled and manual sync both reject targets owned by another managed Vendor System.
 - Verify enabled sync targets are site scoped and parking-lot scoped before enabling the scheduler instance.
 
 Each target run now acquires a deterministic target-scoped PostgreSQL advisory lock. Contention defers that cycle and is reported separately from adapter failure. Continue designating one scheduler instance to reduce avoidable contention; the lock is the cross-instance safety boundary, not a reason to enable every API replica.
+
+Managed startup is non-interactive but not implicit. It requires exact process-scoped provider, endpoint, user, timezone, database, deployment approval, environment, and Vendor System ownership values. Startup refuses an endpoint whose scheme, host, or port differs from the approved identity. New target rows still default disabled, and scheduler enablement never enables them.
 
 ## Sync Target Operations
 
