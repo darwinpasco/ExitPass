@@ -15,7 +15,7 @@ public sealed record HumanAuthenticationOptions
     public int FailureWindowMinutes { get; init; } = 15;
     public int MaximumFailures { get; init; } = 5;
     public int LockoutMinutes { get; init; } = 15;
-    public int WebIdleMinutes { get; init; } = 15;
+    public int WebIdleMinutes { get; init; } = 30;
     public int WebAbsoluteHours { get; init; } = 8;
     public int AptIdleMinutes { get; init; } = 15;
     public int AptAbsoluteHours { get; init; } = 12;

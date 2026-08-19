@@ -129,8 +129,8 @@ Recommended defaults pending Darwin approval:
 
 | Application | Idle timeout | Absolute timeout | Continuation |
 |---|---:|---:|---|
-| Management Platform | 15 minutes | 8 hours | Rotating server session after current validation |
-| Operator Console | 15 minutes | 8 hours | Same |
+| Management Platform | 30 minutes, sliding on authenticated activity | 8 hours | Rotating server session after current validation |
+| Operator Console | 30 minutes, sliding on authenticated activity | 8 hours | Same |
 | APT | 15 minutes | 12 hours, never beyond governed shift policy | Device-bound rotating continuation while online |
 
 Idle and absolute expiry are server-enforced. A client timer is presentation only. Selected high-risk actions require fresh authentication no older than five minutes by default, while all sensitive actions require current authorization and Site/Site Group scope re-evaluation. For a non-MFA user, fresh authentication normally means re-entering the user's password. For a privileged Management Platform administrator, fresh privileged authentication also requires the account's current TOTP MFA policy to be satisfied. Fresh authentication is not universal MFA. Open pages may remain visible only under privacy-safe lock treatment; the next API call is denied until reauthentication. Unsaved sensitive input must not silently submit after reauthentication without user confirmation.

@@ -22,16 +22,12 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
     private const string MfaResetPermission = "human-authentication.mfa.reset";
     private const string MfaRemovePermission = "human-authentication.mfa.remove";
     private readonly string _connectionString;
-    private readonly int _freshAuthenticationMinutes;
 
-    public PostgresManagementPlatformIdentityAdministrationRepository(string connectionString, int freshAuthenticationMinutes = 5)
+    public PostgresManagementPlatformIdentityAdministrationRepository(string connectionString)
     {
         _connectionString = !string.IsNullOrWhiteSpace(connectionString)
             ? connectionString
             : throw new ArgumentException("A database connection string is required.", nameof(connectionString));
-        _freshAuthenticationMinutes = freshAuthenticationMinutes is >= 1 and <= 60
-            ? freshAuthenticationMinutes
-            : throw new ArgumentOutOfRangeException(nameof(freshAuthenticationMinutes));
     }
 
     public async Task<IdentityAdministrationResult<IReadOnlyList<IdentityUserSummary>>> ListUsersAsync(
@@ -129,9 +125,43 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
     {
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        if (!await IsAuthorizedAsync(connection, transaction, actor, UserManagePermission, cancellationToken))
+        if (!await IsAuthorizedAsync(connection, transaction, actor, UserManagePermission, cancellationToken) ||
+            !await IsAuthorizedAnyAsync(connection, transaction, actor, [RoleAssignmentPermission, "assignment.manage"], cancellationToken) ||
+            !await IsAuthorizedAnyAsync(connection, transaction, actor, [ScopeAssignmentPermission, "assignment.manage"], cancellationToken))
         {
             return Forbidden<IdentityUserSummary>(command.CorrelationId);
+        }
+
+        if (!ValidScopeShape(command.InitialScopeType, command.InitialSiteReference, command.InitialSiteGroupReference))
+        {
+            return Invalid<IdentityUserSummary>(command.CorrelationId, "INVALID_SCOPE_SHAPE");
+        }
+
+        if (command.InitialScopeType == "GLOBAL")
+        {
+            return Forbidden<IdentityUserSummary>(command.CorrelationId, "GLOBAL_SCOPE_POLICY_NOT_APPROVED");
+        }
+
+        var role = await ReadRoleAsync(connection, transaction, command.InitialRoleReference, cancellationToken);
+        if (role is null || role.Status != "ACTIVE")
+        {
+            return NotFound<IdentityUserSummary>(command.CorrelationId);
+        }
+
+        if (!IsRoleCompatibleWithUserType(command.UserType, role.Code))
+        {
+            return Invalid<IdentityUserSummary>(command.CorrelationId, "USER_TYPE_ROLE_INCOMPATIBLE");
+        }
+
+        if (role.IsPrivileged || role.RequiresElevatedApproval)
+        {
+            return Forbidden<IdentityUserSummary>(command.CorrelationId, "PRIVILEGED_ACCESS_REQUEST_REQUIRED");
+        }
+
+        if (!await ActorMayDelegateRoleAsync(connection, transaction, actor.UserId, command.InitialRoleReference, cancellationToken) ||
+            !await ActorMayDelegateScopeAsync(connection, transaction, actor.UserId, command.InitialScopeType, command.InitialSiteReference, command.InitialSiteGroupReference, cancellationToken))
+        {
+            return Forbidden<IdentityUserSummary>(command.CorrelationId, "DELEGATION_CEILING_EXCEEDED");
         }
 
         const string sql = """
@@ -167,7 +197,52 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
             return Conflict<IdentityUserSummary>(command.CorrelationId, "IDENTITY_USER_ALREADY_EXISTS", "The requested user identifier conflicts with an existing identity.");
         }
 
+        const string roleSql = """
+            INSERT INTO identity.user_roles (
+                user_role_id, user_id, role_id, assignment_status, assignment_reason_code,
+                assigned_by_user_id, effective_from, effective_to,
+                created_by_user_id, updated_by_user_id)
+            VALUES (
+                gen_random_uuid(), @user_id, @role_id, 'ACTIVE', @reason_code,
+                @actor_user_id, @effective_from, @effective_to,
+                @actor_user_id, @actor_user_id)
+            RETURNING user_role_id;
+            """;
+        await using var roleInsert = new NpgsqlCommand(roleSql, connection, transaction);
+        roleInsert.Parameters.AddWithValue("user_id", userId);
+        roleInsert.Parameters.AddWithValue("role_id", command.InitialRoleReference);
+        roleInsert.Parameters.AddWithValue("reason_code", command.ReasonCode);
+        roleInsert.Parameters.AddWithValue("actor_user_id", actor.UserId);
+        roleInsert.Parameters.AddWithValue("effective_from", command.EffectiveFrom);
+        roleInsert.Parameters.Add("effective_to", NpgsqlDbType.TimestampTz).Value = Db(command.EffectiveTo);
+        var assignmentId = (Guid)(await roleInsert.ExecuteScalarAsync(cancellationToken))!;
+
+        const string scopeSql = """
+            INSERT INTO identity.user_role_scope_grants (
+                user_role_scope_grant_id, user_role_id, scope_type, site_id, site_group_id,
+                grant_status, grant_reason_code, effective_from, effective_to,
+                granted_by_user_id, created_by_user_id, updated_by_user_id)
+            VALUES (
+                gen_random_uuid(), @assignment_id, @scope_type::identity.authorization_scope_type_enum,
+                @site_id, @site_group_id, 'ACTIVE', @reason_code, @effective_from, @effective_to,
+                @actor_user_id, @actor_user_id, @actor_user_id)
+            RETURNING user_role_scope_grant_id;
+            """;
+        await using var scopeInsert = new NpgsqlCommand(scopeSql, connection, transaction);
+        scopeInsert.Parameters.AddWithValue("assignment_id", assignmentId);
+        scopeInsert.Parameters.AddWithValue("scope_type", command.InitialScopeType);
+        scopeInsert.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = Db(command.InitialSiteReference);
+        scopeInsert.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = Db(command.InitialSiteGroupReference);
+        scopeInsert.Parameters.AddWithValue("reason_code", command.ReasonCode);
+        scopeInsert.Parameters.AddWithValue("effective_from", command.EffectiveFrom);
+        scopeInsert.Parameters.Add("effective_to", NpgsqlDbType.TimestampTz).Value = Db(command.EffectiveTo);
+        scopeInsert.Parameters.AddWithValue("actor_user_id", actor.UserId);
+        var grantId = (Guid)(await scopeInsert.ExecuteScalarAsync(cancellationToken))!;
+
         await InsertAuditAsync(connection, transaction, "USER_CREATED", "SUCCESS", command.ReasonCode, "IdentityUser", userId, actor.UserId, command.CorrelationId, "A human identity was invited.", cancellationToken);
+        await InsertAuditAsync(connection, transaction, "ROLE_ASSIGNED", "SUCCESS", command.ReasonCode, "UserRole", assignmentId, actor.UserId, command.CorrelationId, "A bounded role assignment was activated.", cancellationToken);
+        var scopeEventType = command.InitialScopeType == "SITE" ? "SITE_SCOPE_GRANTED" : "SITE_GROUP_SCOPE_GRANTED";
+        await InsertAuditAsync(connection, transaction, scopeEventType, "SUCCESS", command.ReasonCode, "UserRoleScopeGrant", grantId, actor.UserId, command.CorrelationId, "An assignment-scoped authorization grant was activated.", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         var created = await ReadUserAsync(connection, null, userId, cancellationToken);
         return IdentityAdministrationResult<IdentityUserSummary>.Succeeded(created!, command.CorrelationId, "CREATED");
@@ -1062,7 +1137,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
                   AND hs.session_status = 'ACTIVE'
                   AND hs.idle_expires_at > now()
                   AND hs.absolute_expires_at > now()
-                  AND hs.authenticated_at >= now() - make_interval(mins => @fresh_minutes)
                   AND hs.authorization_epoch_snapshot = u.authorization_epoch
                   AND u.user_status = 'ACTIVE'
                   AND u.effective_from <= now()
@@ -1100,7 +1174,6 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         command.Parameters.AddWithValue("human_session_id", actor.HumanSessionId);
         command.Parameters.AddWithValue("user_id", actor.UserId);
         command.Parameters.AddWithValue("permissions", permissions.ToArray());
-        command.Parameters.AddWithValue("fresh_minutes", _freshAuthenticationMinutes);
         return (bool)(await command.ExecuteScalarAsync(cancellationToken) ?? false);
     }
 
@@ -1508,6 +1581,23 @@ public sealed class PostgresManagementPlatformIdentityAdministrationRepository :
         return new(reader.GetGuid(0), reader.GetString(1), reader.GetString(2), GetNullableString(reader, 3),
             reader.GetString(4), reader.GetString(5), reader.GetBoolean(6), reader.GetBoolean(7),
             reader.GetFieldValue<DateTimeOffset>(8), GetNullableDateTimeOffset(reader, 9), reader.GetInt64(10));
+    }
+
+    private static bool IsRoleCompatibleWithUserType(string userType, string roleCode)
+    {
+        var normalizedRoleCode = roleCode.Trim().ToUpperInvariant();
+        return userType.Trim().ToUpperInvariant() switch
+        {
+            "INTERNAL_ADMIN" => normalizedRoleCode is "PLATFORM_ADMINISTRATOR" or "SYSTEM_RBAC_ADMINISTRATOR",
+            "OPERATIONS_USER" => normalizedRoleCode is "OPERATIONS_MANAGER" or "OPERATIONS_SUPERVISOR",
+            "SITE_OPERATOR" => normalizedRoleCode is "OPERATOR_SUPPORT_STAFF" or "SITE_OPERATOR",
+            "SUPPORT_USER" => normalizedRoleCode == "SUPPORT_AGENT",
+            "FINANCE_USER" => normalizedRoleCode is "FINANCE_RECONCILIATION" or "FINANCE_RECONCILIATION_ANALYST",
+            "COMPLIANCE_USER" => normalizedRoleCode is "COMPLIANCE_REVIEWER" or "COMPLIANCE_POLICY_ADMINISTRATOR",
+            "MERCHANT_USER" => normalizedRoleCode == "MERCHANT_ADMIN",
+            "SECURITY_USER" => normalizedRoleCode == "SECURITY_REVIEWER",
+            _ => false
+        };
     }
 
     private static async Task<IdentityPrivilegedAccessRequest?> ReadPrivilegedRequestAsync(

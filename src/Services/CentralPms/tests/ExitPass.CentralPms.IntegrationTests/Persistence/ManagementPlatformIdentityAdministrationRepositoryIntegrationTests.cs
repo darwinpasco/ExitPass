@@ -33,12 +33,16 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             seed.Actor,
             new CreateIdentityUserCommand(
                 username, "I-021 User", "i021.user@example.invalid", "***0000",
-                "SITE_OPERATOR", DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_TEST_CREATE", "create-user", correlationId),
+                "SITE_OPERATOR", seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_TEST_CREATE", "create-user", correlationId),
             CancellationToken.None);
 
         created.Outcome.Should().Be(IdentityAdministrationOutcome.Success);
         created.Value!.Status.Should().Be("INVITED");
         created.Value.MaskedEmail.Should().Be("i***@example.invalid");
+        var createdDetail = await repository.GetUserAsync(seed.Actor, created.Value.UserReference, Guid.NewGuid(), CancellationToken.None);
+        createdDetail.Value!.RoleAssignments.Should().ContainSingle(item => item.RoleReference == seed.DelegableRoleId);
+        createdDetail.Value.ScopeGrants.Should().ContainSingle(item => item.ScopeType == "SITE" && item.SiteReference == seed.SiteId);
         var listed = await repository.ListUsersAsync(
             seed.Actor, new IdentityUserSearch(0, 10, "INVITED", username), Guid.NewGuid(), CancellationToken.None);
         listed.Value.Should().ContainSingle(user => user.UserReference == created.Value.UserReference);
@@ -113,7 +117,74 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             CancellationToken.None);
         revokedRole.Value!.Status.Should().Be("REVOKED");
 
-        (await CountAuditEventsAsync(correlationId)).Should().Be(1);
+        (await CountAuditEventsAsync(correlationId)).Should().Be(3);
+    }
+
+    [Fact]
+    public async Task CreateUser_WhenInitialAccessIsOutsideDelegation_CreatesNothing()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var username = $"i021.atomic.{Guid.NewGuid():N}";
+        var outsideSiteId = Guid.NewGuid();
+
+        await using (var connection = new NpgsqlConnection(_database.ConnectionString))
+        {
+            await connection.OpenAsync();
+            const string sql = """
+                UPDATE identity.user_role_scope_grants
+                SET scope_type = 'SITE', site_id = @actor_site_id, site_group_id = NULL
+                WHERE user_role_id IN (
+                    SELECT user_role_id FROM identity.user_roles WHERE user_id = @actor_user_id
+                ) AND grant_status = 'ACTIVE';
+
+                INSERT INTO sites.sites (
+                    site_id, site_group_id, site_code, site_name, site_type, timezone_name, country_code,
+                    site_status, effective_from)
+                VALUES (@outside_site_id, @site_group_id, @site_code, 'I-021 Outside Site', 'OTHER',
+                    'Asia/Manila', 'PH', 'ACTIVE', now() - interval '1 day');
+                """;
+            await using var command = new NpgsqlCommand(sql, connection);
+            command.Parameters.AddWithValue("actor_site_id", seed.SiteId);
+            command.Parameters.AddWithValue("actor_user_id", seed.Actor.UserId);
+            command.Parameters.AddWithValue("outside_site_id", outsideSiteId);
+            command.Parameters.AddWithValue("site_group_id", seed.SiteGroupId);
+            command.Parameters.AddWithValue("site_code", $"I021-OUT-{Guid.NewGuid():N}"[..32]);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var result = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                username, "I-021 Atomic Failure", null, null, "SITE_OPERATOR",
+                seed.DelegableRoleId, "SITE", outsideSiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_ATOMIC_FAILURE", "atomic-failure", Guid.NewGuid()),
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+        result.Classification.Should().Be("DELEGATION_CEILING_EXCEEDED");
+        (await CountUsersByUsernameAsync(username)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task CreateUser_WhenUserTypeAndRoleAreIncompatible_ReturnsControlledValidationAndCreatesNothing()
+    {
+        var seed = await SeedAdministratorAsync();
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
+        var username = $"i021.incompatible.{Guid.NewGuid():N}";
+
+        var result = await repository.CreateUserAsync(
+            seed.Actor,
+            new CreateIdentityUserCommand(
+                username, "I-021 Incompatible Role", null, null, "SUPPORT_USER",
+                seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_INCOMPATIBLE_ROLE", "incompatible-role", Guid.NewGuid()),
+            CancellationToken.None);
+
+        result.Outcome.Should().Be(IdentityAdministrationOutcome.Invalid);
+        result.Classification.Should().Be("USER_TYPE_ROLE_INCOMPATIBLE");
+        result.Message.Should().Be("The identity administration request is invalid.");
+        (await CountUsersByUsernameAsync(username)).Should().Be(0);
     }
 
     [Fact]
@@ -125,7 +196,8 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var target = await repository.CreateUserAsync(
             requester.Actor,
             new CreateIdentityUserCommand(
-                $"i021.priv.{Guid.NewGuid():N}", "I-021 Privileged Target", null, null, "INTERNAL_ADMIN",
+                $"i021.priv.{Guid.NewGuid():N}", "I-021 Privileged Target", null, null, "SITE_OPERATOR",
+                requester.DelegableRoleId, "SITE", requester.SiteId, null,
                 DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_PRIV_TARGET", "priv-target", Guid.NewGuid()),
             CancellationToken.None);
 
@@ -161,6 +233,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
             seed.Actor,
             new CreateIdentityUserCommand(
                 $"i021.lifecycle.{Guid.NewGuid():N}", "I-021 Lifecycle User", null, null, "SITE_OPERATOR",
+                seed.DelegableRoleId, "SITE", seed.SiteId, null,
                 DateTimeOffset.UtcNow.AddMinutes(-1), null, "I021_LIFECYCLE", "lifecycle-user", Guid.NewGuid()),
             CancellationToken.None);
 
@@ -245,10 +318,10 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
     }
 
     [Fact]
-    public async Task CombinedAuthorization_EnforcesFreshnessPrivilegedTotpAndAuthorizationEpoch()
+    public async Task CombinedAuthorization_UsesNormalSessionPrivilegedTotpAndAuthorizationEpoch()
     {
         var seed = await SeedAdministratorAsync();
-        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString, 5);
+        var repository = new PostgresManagementPlatformIdentityAdministrationRepository(_database.ConnectionString);
 
         (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
             .Outcome.Should().Be(IdentityAdministrationOutcome.Success);
@@ -263,7 +336,7 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
 
         await UpdateSessionAssuranceAsync(seed.Actor.HumanSessionId, "PASSWORD", false, authenticatedMinutesAgo: 10);
         (await repository.ListUsersAsync(seed.Actor, new(0, 1, null, null), Guid.NewGuid(), CancellationToken.None))
-            .Outcome.Should().Be(IdentityAdministrationOutcome.Forbidden);
+            .Outcome.Should().Be(IdentityAdministrationOutcome.Success);
 
         await UpdateSessionAssuranceAsync(seed.Actor.HumanSessionId, "PASSWORD", false, authenticatedMinutesAgo: 1);
         await IncrementAuthorizationEpochAsync(seed.Actor.UserId);
@@ -336,7 +409,6 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         var sessionReference = Guid.NewGuid();
         var siteGroupId = Guid.NewGuid();
         var siteId = Guid.NewGuid();
-        var roleId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
 
         const string sql = """
@@ -398,11 +470,6 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
                 now() - interval '1 minute', now() - interval '1 minute', now() + interval '1 hour', now() + interval '8 hours',
                 1, 1, gen_random_uuid());
 
-            INSERT INTO identity.roles (
-                role_id, role_code, role_name, role_type, role_status, is_privileged,
-                requires_elevated_approval, effective_from)
-            VALUES (@role_id, @role_code, 'I-021 Delegable Role', 'OTHER', 'ACTIVE', false, false, now() - interval '1 day');
-
             INSERT INTO identity.role_permissions (
                 role_permission_id, role_id, permission_id, binding_status, binding_reason_code,
                 assigned_by_user_id, effective_from, created_by_user_id, updated_by_user_id)
@@ -438,12 +505,11 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         command.Parameters.AddWithValue("session_id", sessionId);
         command.Parameters.AddWithValue("session_reference", sessionReference);
         command.Parameters.AddWithValue("session_hash", Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Guid.NewGuid().ToByteArray())).ToLowerInvariant());
-        command.Parameters.AddWithValue("role_id", roleId);
-        command.Parameters.AddWithValue("role_code", $"I021_ROLE_{Guid.NewGuid():N}"[..32]);
         await command.ExecuteNonQueryAsync();
 
         var systemRoleId = await new NpgsqlCommand("SELECT role_id FROM identity.roles WHERE role_code = 'SYSTEM_RBAC_ADMINISTRATOR';", connection).ExecuteScalarAsync();
-        return new(new(actorUserId, sessionId), sessionReference, 1, (Guid)systemRoleId!, roleId, siteId, siteGroupId);
+        var delegableRoleId = await new NpgsqlCommand("SELECT role_id FROM identity.roles WHERE role_code = 'SITE_OPERATOR';", connection).ExecuteScalarAsync();
+        return new(new(actorUserId, sessionId), sessionReference, 1, (Guid)systemRoleId!, (Guid)delegableRoleId!, siteId, siteGroupId);
     }
 
     private async Task<long> CountAuditEventsAsync(Guid correlationId)
@@ -452,6 +518,15 @@ public sealed class ManagementPlatformIdentityAdministrationRepositoryIntegratio
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand("SELECT count(*) FROM audit.audit_events WHERE correlation_id = @correlation_id;", connection);
         command.Parameters.AddWithValue("correlation_id", correlationId);
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private async Task<long> CountUsersByUsernameAsync(string username)
+    {
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT count(*) FROM identity.users WHERE username = @username;", connection);
+        command.Parameters.AddWithValue("username", username);
         return (long)(await command.ExecuteScalarAsync())!;
     }
 

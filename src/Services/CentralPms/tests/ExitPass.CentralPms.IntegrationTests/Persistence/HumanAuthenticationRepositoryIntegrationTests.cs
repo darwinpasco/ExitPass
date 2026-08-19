@@ -249,6 +249,42 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
     }
 
     [Fact]
+    public async Task Web_session_uses_thirty_minute_sliding_idle_and_fixed_eight_hour_absolute_expiry()
+    {
+        var clock = new MutableTimeProvider(DateTimeOffset.UtcNow);
+        var options = TestOptions();
+        options.WebIdleMinutes.Should().Be(30);
+        options.WebAbsoluteHours.Should().Be(8);
+        var runtime = CreateRuntime(options, clock);
+        var user = await SeedUserAsync(runtime.Passwords, "I020Sliding", "correct horse battery staple");
+        await GrantSeededRoleAndScopesAsync(user);
+        var context = Context();
+
+        var login = await runtime.Service.LoginAsync("i020sliding", "correct horse battery staple",
+            HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        var initial = login.Response.Session!;
+        initial.IdleExpiresAt.Should().Be(initial.AuthenticatedAt.AddMinutes(30));
+        initial.AbsoluteExpiresAt.Should().Be(initial.AuthenticatedAt.AddHours(8));
+
+        clock.Advance(TimeSpan.FromMinutes(16));
+        var active = await runtime.Service.ResolveSessionAsync(login.Credential!.SerializedToken,
+            HumanSessionAudiences.ManagementPlatform, null, context, true, CancellationToken.None);
+        active.Response.Authenticated.Should().BeTrue();
+        active.Response.Session!.MfaRequired.Should().Be(initial.MfaRequired);
+        active.Response.Session.MfaSatisfied.Should().Be(initial.MfaSatisfied);
+        active.Response.Session.IdleExpiresAt.Should().Be(clock.GetUtcNow().AddMinutes(30));
+        active.Response.Session.AbsoluteExpiresAt.Should().Be(initial.AbsoluteExpiresAt);
+
+        var inactiveLogin = await runtime.Service.LoginAsync("i020sliding", "correct horse battery staple",
+            HumanSessionAudiences.ManagementPlatform, null, context, CancellationToken.None);
+        clock.Advance(TimeSpan.FromMinutes(30).Add(TimeSpan.FromSeconds(1)));
+        var expired = await runtime.Service.ResolveSessionAsync(inactiveLogin.Credential!.SerializedToken,
+            HumanSessionAudiences.ManagementPlatform, null, context, false, CancellationToken.None);
+        expired.HttpStatusCode.Should().Be(401);
+        expired.Response.ErrorCode.Should().Be("SESSION_EXPIRED");
+    }
+
+    [Fact]
     public async Task Privileged_totp_enrollment_confirmation_and_governed_reset_keep_secret_protected()
     {
         var runtime = CreateRuntime(TestOptions());
