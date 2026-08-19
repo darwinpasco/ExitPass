@@ -18,6 +18,7 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
         var correlationId = Guid.NewGuid();
         var command = new CreateIdentityUserCommand(
             " Cashier01 ", " Cashier One ", null, null, " site_operator ",
+            Guid.NewGuid(), " site ", Guid.NewGuid(), null,
             DateTimeOffset.UtcNow, null, " onboarding ", " invite-1 ", correlationId);
         repository.CreateUserAsync(Actor, Arg.Any<CreateIdentityUserCommand>(), Arg.Any<CancellationToken>())
             .Returns(IdentityAdministrationResult<IdentityUserSummary>.Failed(
@@ -31,9 +32,56 @@ public sealed class ManagementPlatformIdentityAdministrationServiceTests
                 value.Username == "Cashier01" &&
                 value.DisplayName == "Cashier One" &&
                 value.UserType == "SITE_OPERATOR" &&
+                value.InitialScopeType == "SITE" &&
                 value.ReasonCode == "ONBOARDING" &&
                 value.IdempotencyKey == "invite-1"),
             Arg.Any<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("INTERNAL_ADMIN")]
+    [InlineData("OPERATIONS_USER")]
+    [InlineData("SITE_OPERATOR")]
+    [InlineData("SUPPORT_USER")]
+    [InlineData("FINANCE_USER")]
+    [InlineData("COMPLIANCE_USER")]
+    [InlineData("MERCHANT_USER")]
+    [InlineData("SECURITY_USER")]
+    [InlineData("OTHER")]
+    public async Task CreateUser_AcceptsEveryAuthoritativeUserType(string userType)
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var command = new CreateIdentityUserCommand(
+            "authoritative.user", "Authoritative User", null, null, userType.ToLowerInvariant(),
+            Guid.NewGuid(), "SITE", Guid.NewGuid(), null,
+            DateTimeOffset.UtcNow, null, "TEST", "authoritative-user-type", Guid.NewGuid());
+
+        await service.CreateUserAsync(Actor, command, CancellationToken.None);
+
+        await repository.Received(1).CreateUserAsync(
+            Actor,
+            Arg.Is<CreateIdentityUserCommand>(value => value.UserType == userType),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task CreateUser_RejectsUnsupportedUserTypeBeforePersistence()
+    {
+        var repository = Substitute.For<IManagementPlatformIdentityAdministrationRepository>();
+        var service = new ManagementPlatformIdentityAdministrationService(
+            repository, Substitute.For<IHumanAuthenticationAdministrationGateway>());
+        var command = new CreateIdentityUserCommand(
+            "unsupported.user", "Unsupported User", null, null, "HUMAN",
+            Guid.NewGuid(), "SITE", Guid.NewGuid(), null,
+            DateTimeOffset.UtcNow, null, "TEST", "unsupported-user-type", Guid.NewGuid());
+
+        var action = () => service.CreateUserAsync(Actor, command, CancellationToken.None);
+
+        var exception = await action.Should().ThrowAsync<ArgumentException>();
+        exception.Which.ParamName.Should().Be(nameof(command.UserType));
+        await repository.DidNotReceiveWithAnyArgs().CreateUserAsync(default!, default!, default);
     }
 
     [Theory]

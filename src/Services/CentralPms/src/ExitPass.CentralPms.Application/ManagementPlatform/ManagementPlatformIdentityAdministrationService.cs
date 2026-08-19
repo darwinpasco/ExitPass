@@ -2,6 +2,19 @@ namespace ExitPass.CentralPms.Application.ManagementPlatform;
 
 public sealed class ManagementPlatformIdentityAdministrationService : IManagementPlatformIdentityAdministrationService
 {
+    private static readonly HashSet<string> SupportedUserTypes = new(StringComparer.Ordinal)
+    {
+        "INTERNAL_ADMIN",
+        "OPERATIONS_USER",
+        "SITE_OPERATOR",
+        "SUPPORT_USER",
+        "FINANCE_USER",
+        "COMPLIANCE_USER",
+        "MERCHANT_USER",
+        "SECURITY_USER",
+        "OTHER"
+    };
+
     private readonly IManagementPlatformIdentityAdministrationRepository _repository;
     private readonly IHumanAuthenticationAdministrationGateway _authenticationGateway;
 
@@ -27,7 +40,9 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
         {
             Username = RequireText(command.Username, 128, nameof(command.Username)),
             DisplayName = RequireText(command.DisplayName, 128, nameof(command.DisplayName)),
-            UserType = RequireCode(command.UserType, nameof(command.UserType)),
+            UserType = RequireUserType(command.UserType, nameof(command.UserType)),
+            InitialRoleReference = RequireReference(command.InitialRoleReference),
+            InitialScopeType = RequireCode(command.InitialScopeType, nameof(command.InitialScopeType)),
             ReasonCode = RequireCode(command.ReasonCode, nameof(command.ReasonCode)),
             IdempotencyKey = RequireText(command.IdempotencyKey, 128, nameof(command.IdempotencyKey))
         }, cancellationToken);
@@ -215,6 +230,17 @@ public sealed class ManagementPlatformIdentityAdministrationService : IManagemen
 
     private static string RequireCode(string value, string parameterName) =>
         RequireText(value, 64, parameterName).ToUpperInvariant();
+
+    private static string RequireUserType(string value, string parameterName)
+    {
+        var normalized = RequireCode(value, parameterName);
+        if (!SupportedUserTypes.Contains(normalized))
+        {
+            throw new ArgumentException("The user type is not supported.", parameterName);
+        }
+
+        return normalized;
+    }
 
     private static IdentityAdministrationResult<T> Propagate<T>(IdentityAdministrationResult<bool> result) =>
         IdentityAdministrationResult<T>.Failed(result.Outcome, result.Classification, result.Message, result.CorrelationId);

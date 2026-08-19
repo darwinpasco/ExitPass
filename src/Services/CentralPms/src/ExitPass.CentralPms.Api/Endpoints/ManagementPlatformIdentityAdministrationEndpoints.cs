@@ -19,7 +19,7 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
         group.MapGet("/users", async (HttpRequest request, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, string? status, string? query, int? offset, int? limit, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.ListUsersAsync(actor, new(offset ?? 0, limit ?? 50, status, query), correlation, ct)));
         group.MapPost("/users", async (HttpRequest request, CreateIdentityUserRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
-            await ExecuteAsync(request, actors, (actor, correlation) => service.CreateUserAsync(actor, new(body.Username, body.DisplayName, body.Email, body.MaskedMobileNumber, body.UserType, body.EffectiveFrom, body.EffectiveTo, body.ReasonCode, body.IdempotencyKey, correlation), ct)));
+            await ExecuteAsync(request, actors, (actor, correlation) => service.CreateUserAsync(actor, new(body.Username, body.DisplayName, body.Email, body.MaskedMobileNumber, body.UserType, body.InitialRoleReference, body.InitialScopeType, body.InitialSiteReference, body.InitialSiteGroupReference, body.EffectiveFrom, body.EffectiveTo, body.ReasonCode, body.IdempotencyKey, correlation), ct)));
         group.MapGet("/users/{userReference:guid}", async (HttpRequest request, Guid userReference, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
             await ExecuteAsync(request, actors, (actor, correlation) => service.GetUserAsync(actor, userReference, correlation, ct)));
         group.MapPatch("/users/{userReference:guid}", async (HttpRequest request, Guid userReference, UpdateIdentityUserRequest body, IIdentityAdministrationActorAccessor actors, IManagementPlatformIdentityAdministrationService service, CancellationToken ct) =>
@@ -109,9 +109,12 @@ public static class ManagementPlatformIdentityAdministrationEndpoints
                 _ => Error(StatusCodes.Status500InternalServerError, "IDENTITY_ADMIN_FAILED", "The identity administration operation failed.", correlationId)
             };
         }
-        catch (ArgumentException)
+        catch (ArgumentException exception)
         {
-            return Error(StatusCodes.Status400BadRequest, "IDENTITY_ADMIN_INVALID_REQUEST", "The identity administration request is invalid.", correlationId);
+            var message = string.Equals(exception.ParamName, nameof(CreateIdentityUserRequest.UserType), StringComparison.Ordinal)
+                ? "The userType field contains an unsupported value."
+                : "The identity administration request is invalid.";
+            return Error(StatusCodes.Status400BadRequest, "IDENTITY_ADMIN_INVALID_REQUEST", message, correlationId);
         }
         catch (Exception exception)
         {

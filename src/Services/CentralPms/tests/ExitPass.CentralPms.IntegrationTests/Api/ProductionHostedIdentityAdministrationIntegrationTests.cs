@@ -103,6 +103,103 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         fixtureHeaderResponse.IsSuccessStatusCode.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task ProductionHost_RejectsUnsupportedUserTypeBeforePersistence()
+    {
+        var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+        var seed = await SeedOrdinaryAdministratorAsync(password);
+        using var factory = new CustomWebApplicationFactory()
+            .WithEnvironment("Production")
+            .WithConfigurationOverrides(new Dictionary<string, string?>
+            {
+                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost"
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = true,
+            AllowAutoRedirect = false
+        });
+
+        using var login = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        {
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.ManagementPlatform))
+        };
+        login.Headers.Add("Origin", "https://localhost");
+        var loginResponse = await client.SendAsync(login);
+        loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var csrf = loginResponse.Headers.GetValues("X-CSRF-Token").Single();
+        var unsupportedUsername = $"unsupported.{Guid.NewGuid():N}";
+
+        var response = await SendMutationAsync(client, HttpMethod.Post,
+            "/v1/management-platform/identity/users",
+            new CreateIdentityUserRequest(
+                unsupportedUsername,
+                "Unsupported User Type",
+                null,
+                null,
+                "HUMAN",
+                Guid.NewGuid(),
+                "SITE",
+                Guid.NewGuid(),
+                null,
+                DateTimeOffset.UtcNow,
+                null,
+                "I021_USER_TYPE_VALIDATION",
+                $"unsupported-{Guid.NewGuid():N}"),
+            csrf);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var error = await response.Content.ReadFromJsonAsync<IdentityAdministrationErrorResponse>();
+        error!.Classification.Should().Be("IDENTITY_ADMIN_INVALID_REQUEST");
+        error.Message.Should().Contain("userType");
+        error.Retryable.Should().BeFalse();
+        (await ReadUserCountByUsernameAsync(unsupportedUsername)).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ProductionHost_RejectsIncompatibleUserTypeAndRoleBeforePersistence()
+    {
+        var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
+        var seed = await SeedOrdinaryAdministratorAsync(password);
+        using var factory = new CustomWebApplicationFactory()
+            .WithEnvironment("Production")
+            .WithConfigurationOverrides(new Dictionary<string, string?>
+            {
+                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost"
+            });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("https://localhost"),
+            HandleCookies = true,
+            AllowAutoRedirect = false
+        });
+
+        using var login = new HttpRequestMessage(HttpMethod.Post, "/v1/human-authentication/login")
+        {
+            Content = JsonContent.Create(new HumanLoginRequest(seed.Username, password, HumanSessionAudiences.ManagementPlatform))
+        };
+        login.Headers.Add("Origin", "https://localhost");
+        var loginResponse = await client.SendAsync(login);
+        loginResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        var csrf = loginResponse.Headers.GetValues("X-CSRF-Token").Single();
+        var username = $"incompatible.{Guid.NewGuid():N}";
+
+        var response = await SendMutationAsync(client, HttpMethod.Post,
+            "/v1/management-platform/identity/users",
+            new CreateIdentityUserRequest(
+                username, "Incompatible User Role", null, null, "SUPPORT_USER",
+                seed.DelegableRoleId, "SITE", seed.SiteId, null,
+                DateTimeOffset.UtcNow, null, "I021_INCOMPATIBLE_ROLE", $"incompatible-{Guid.NewGuid():N}"),
+            csrf);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var error = await response.Content.ReadFromJsonAsync<IdentityAdministrationErrorResponse>();
+        error!.Classification.Should().Be("USER_TYPE_ROLE_INCOMPATIBLE");
+        error.Retryable.Should().BeFalse();
+        (await ReadUserCountByUsernameAsync(username)).Should().Be(0);
+    }
+
     private static async Task<HttpResponseMessage> SendMutationAsync<T>(
         HttpClient client,
         HttpMethod method,
@@ -124,6 +221,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         var credentialId = Guid.NewGuid();
         var roleId = Guid.NewGuid();
         var assignmentId = Guid.NewGuid();
+        var delegableAssignmentId = Guid.NewGuid();
         var username = $"i021.hosted.{Guid.NewGuid():N}";
         var displayName = "I-021 Hosted Administrator";
         const string sql = """
@@ -157,7 +255,15 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
                    now() - interval '1 minute', @user_id, @user_id
             FROM identity.permissions
             WHERE permission_code IN ('user.view', 'user.manage',
+                'identity.role-assignment.manage', 'identity.scope-assignment.manage',
                 'human-authentication.session.admin.view', 'human-authentication.session.admin.revoke');
+
+            INSERT INTO identity.user_roles (
+                user_role_id, user_id, role_id, assignment_status, assignment_reason_code,
+                assigned_by_user_id, effective_from, created_by_user_id, updated_by_user_id)
+            SELECT @delegable_assignment_id, @user_id, role_id, 'ACTIVE', 'I021_HOSTED', @user_id,
+                   now() - interval '1 minute', @user_id, @user_id
+            FROM identity.roles WHERE role_code = 'SITE_OPERATOR';
 
             INSERT INTO identity.user_role_scope_grants (
                 user_role_scope_grant_id, user_role_id, scope_type, grant_status, grant_reason_code,
@@ -172,6 +278,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         command.Parameters.AddWithValue("credential_id", credentialId);
         command.Parameters.AddWithValue("role_id", roleId);
         command.Parameters.AddWithValue("assignment_id", assignmentId);
+        command.Parameters.AddWithValue("delegable_assignment_id", delegableAssignmentId);
         command.Parameters.AddWithValue("username", username);
         command.Parameters.AddWithValue("display_name", displayName);
         command.Parameters.AddWithValue("role_code", $"I021_HOSTED_{Guid.NewGuid():N}"[..40]);
@@ -183,7 +290,9 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         command.Parameters.AddWithValue("memory_kib", material.MemoryKiB);
         command.Parameters.AddWithValue("parallelism", material.Parallelism);
         await command.ExecuteNonQueryAsync();
-        return new(userId, username, displayName);
+        var delegableRoleId = (Guid)(await new NpgsqlCommand("SELECT role_id FROM identity.roles WHERE role_code = 'SITE_OPERATOR';", connection).ExecuteScalarAsync())!;
+        var siteId = (Guid)(await new NpgsqlCommand("SELECT site_id FROM sites.sites WHERE site_status = 'ACTIVE' ORDER BY site_id LIMIT 1;", connection).ExecuteScalarAsync())!;
+        return new(userId, username, displayName, delegableRoleId, siteId);
     }
 
     private async Task<Guid?> ReadLatestProfileUpdateActorAsync(Guid userId)
@@ -203,5 +312,15 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         return (Guid?)await command.ExecuteScalarAsync();
     }
 
-    private sealed record HostedAdminSeed(Guid UserId, string Username, string DisplayName);
+    private async Task<long> ReadUserCountByUsernameAsync(string username)
+    {
+        const string sql = "SELECT count(*) FROM identity.users WHERE username = @username;";
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("username", username);
+        return (long)(await command.ExecuteScalarAsync())!;
+    }
+
+    private sealed record HostedAdminSeed(Guid UserId, string Username, string DisplayName, Guid DelegableRoleId, Guid SiteId);
 }

@@ -37,7 +37,7 @@ WebAuthn, FIDO2, and passkeys remain deferred. OIDC remains a disabled provider-
 
 ## 5. Human sessions
 
-The runtime issues a cryptographically random opaque value containing a public session reference and secret. PostgreSQL stores only the SHA-256 secret hash. Sessions are bound to user, audience, credential version, authorization epoch snapshot, assurance, idle expiry, absolute expiry, and optional device service identity.
+The runtime issues a cryptographically random opaque value containing a public session reference and secret. PostgreSQL stores only the SHA-256 secret hash. Sessions are bound to user, audience, credential version, authorization epoch snapshot, assurance, idle expiry, absolute expiry, and optional device service identity. Web sessions use a 30-minute sliding idle timeout refreshed by successful authenticated activity and a fixed eight-hour absolute limit.
 
 Supported audiences are:
 

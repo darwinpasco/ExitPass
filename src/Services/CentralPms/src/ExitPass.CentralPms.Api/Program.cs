@@ -794,10 +794,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<IIdentityAdministrationActorAccessor, HttpContextIdentityAdministrationActorAccessor>();
-    builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(services =>
-        new PostgresManagementPlatformIdentityAdministrationRepository(
-            mainDatabaseConnectionString,
-            services.GetRequiredService<IOptions<HumanAuthenticationOptions>>().Value.FreshAuthenticationMinutes));
+    builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
+        new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationService, ManagementPlatformIdentityAdministrationService>();
     builder.Services.AddScoped<IManagementPlatformStatutoryDiscountPolicyCoverageRepository>(_ =>
