@@ -244,11 +244,11 @@ Management Platform v1.3 may be declared complete only when all of the following
 
 | Policy Administration | `PARTIAL` | Policy coverage and evidence governance are read-only | Governed write lifecycle is absent |
 
-| Management Dashboard and Reporting | `NOT\_IMPLEMENTED` | Approved BRD and SDD only | Largest missing approved functional domain |
+| Management Dashboard and Reporting | `PARTIAL` | Central PMS phase-1 catalog and scoped operational-overview facade | Frontend, runtime enablement, deferred reports, and end-to-end acceptance remain |
 
 | Audit and Reconciliation | `PARTIAL` | User activity and limited governance views | Cross-domain audit and reconciliation modules are absent |
 
-| Operational Monitoring | `NOT\_IMPLEMENTED` | No Management Platform module found | Required |
+| Operational Monitoring | `PARTIAL` | Central PMS exposes scoped Site status and vendor projection-health aggregates | Management Platform module and broader monitoring sources remain |
 
 | Service Identity Administration | `NOT\_IMPLEMENTED` | No Management Platform module found | Required before production administration completion |
 
@@ -270,9 +270,9 @@ Overall conclusion: `MANAGEMENT\_PLATFORM\_V1\_3\_PARTIAL`.
 
 | `IMPLEMENTED\_NOT\_ACCEPTED` | 8 |
 
-| `PARTIAL` | 14 |
+| `PARTIAL` | 18 |
 
-| `NOT\_IMPLEMENTED` | 35 |
+| `NOT\_IMPLEMENTED` | 31 |
 
 | Total | 85 |
 
@@ -478,11 +478,11 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | --- | --- | --- | --- | --- | --- |
 
-| MP-MDR-001 | MDR-FR-001 to 004 | Role-based Site, Site Group, cross-site, and portfolio dashboard scope | No dashboard route or module | `NOT\_IMPLEMENTED` | Dashboard scope guard, landing, filters, negative tests |
+| MP-MDR-001 | MDR-FR-001 to 004 | Role-based Site, Site Group, cross-site, and portfolio dashboard scope | Central PMS catalog and operational overview enforce explicit role-assignment `SITE`/`SITE_GROUP` scope with concealed cross-scope denial | `PARTIAL` | Add permission-aware Management Platform route, scope controls, and browser acceptance |
 
-| MP-MDR-002 | MDR-FR-005 to 008 | Active sessions, active vehicles, occupancy approximation, session age, and long-stay visibility | No dashboard | `NOT\_IMPLEMENTED` | Operational read model and UI |
+| MP-MDR-002 | MDR-FR-005 to 008 | Active sessions, active vehicles, occupancy approximation, session age, and long-stay visibility | Central PMS exposes only a scoped active vendor-projection aggregate; no vehicle identifiers, age, long-stay, or occupancy view | `PARTIAL` | Approve remaining read models and add UI |
 
-| MP-MDR-003 | MDR-FR-009 to 012 | Connector health, projection freshness, Vendor PMS availability, last poll, and latency | No dashboard | `NOT\_IMPLEMENTED` | Monitoring read model and UI |
+| MP-MDR-003 | MDR-FR-009 to 012 | Connector health, projection freshness, Vendor PMS availability, last poll, and latency | Central PMS exposes scoped connector-target health and projection freshness with source/data-as-of classifications; raw diagnostics and latency are deferred | `PARTIAL` | Add approved latency/availability model and Management Platform UI |
 
 | MP-MDR-004 | MDR-FR-013 to 016 | Degraded-watch, degraded-active, Continuity Terminal, manual release, and fiscal exception visibility | No dashboard | `NOT\_IMPLEMENTED` | Continuity/exception read model and UI |
 
@@ -494,9 +494,9 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | MP-MDR-008 | MDR-FR-028 to 031 | Statutory discount, coupon, evidence access, operator, and supervisor reporting | No dashboard | `NOT\_IMPLEMENTED` | Compliance reporting API and UI |
 
-| MP-MDR-009 | MDR-FR-032 to 037 | Export control, filters, freshness, source labels, access/export audit, privacy | No dashboard/export service | `NOT\_IMPLEMENTED` | Controlled export and audit capability |
+| MP-MDR-009 | MDR-FR-032 to 037 | Export control, filters, freshness, source labels, access/export audit, privacy | Phase-1 GET APIs require explicit scope and return source/freshness/warnings with privacy-safe access, denial, and source-failure audit; export remains absent | `PARTIAL` | Add frontend filtering/acceptance and separately approve controlled export |
 
-| MP-MDR-010 | MDR-FR-038 to 042 | Preserve non-authority for payment finality, ExitAuthorization, gates, Sales Invoice issuance, and mutations | No dashboard action exists | `IMPLEMENTED\_NOT\_ACCEPTED` | Preserve and prove when dashboard is built |
+| MP-MDR-010 | MDR-FR-038 to 042 | Preserve non-authority for payment finality, ExitAuthorization, gates, Sales Invoice issuance, and mutations | Phase-1 dashboard contract exposes two GET routes only and marks projection data non-authoritative; no mutation or finality action exists | `IMPLEMENTED\_NOT\_ACCEPTED` | Preserve through frontend and end-to-end acceptance |
 
 | MP-MDR-011 | MDR-AC-001 to 020 | Satisfy the approved dashboard acceptance criteria | No implementation | `NOT\_IMPLEMENTED` | Acceptance suite and headed walkthrough |
 
