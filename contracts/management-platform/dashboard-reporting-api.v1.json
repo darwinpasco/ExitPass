@@ -1,0 +1,132 @@
+{
+  "contractId": "management-platform-dashboard-reporting:v1",
+  "owner": "Central PMS",
+  "browserConsumer": "ExitPass Management Platform",
+  "featureControl": {
+    "configurationSection": "ManagementPlatform:DashboardReporting",
+    "defaultEnabled": false,
+    "failClosed": true
+  },
+  "routes": [
+    {
+      "operationId": "GetManagementDashboardReportCatalog",
+      "method": "GET",
+      "path": "/v1/management-platform/dashboard/catalog",
+      "permission": "reports.view",
+      "policy": "ManagementPlatformDashboardCatalogRead",
+      "mutation": false
+    },
+    {
+      "operationId": "GetManagementDashboardOperationalOverview",
+      "method": "GET",
+      "path": "/v1/management-platform/dashboard/operational-overview",
+      "permission": "dashboard.view",
+      "policy": "ManagementPlatformOperationalOverviewRead",
+      "requiredQuery": ["scopeType", "scopeReference"],
+      "supportedScopeTypes": ["SITE", "SITE_GROUP"],
+      "mutation": false
+    }
+  ],
+  "availabilityClassifications": ["AVAILABLE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
+  "freshnessClassifications": ["CURRENT", "STALE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
+  "catalog": {
+    "stableReportIds": [
+      "operational-overview",
+      "payment-reconciliation-summary",
+      "fiscal-exception-summary",
+      "management-activity-summary"
+    ],
+    "operationalReportIds": ["operational-overview"],
+    "unavailableReportIds": [
+      "payment-reconciliation-summary",
+      "fiscal-exception-summary",
+      "management-activity-summary"
+    ]
+  },
+  "operationalOverview": {
+    "sections": [
+      {
+        "sectionId": "site-operational-status",
+        "sourceAuthority": "CENTRAL_PMS_SITE_REGISTRY",
+        "metrics": ["sites-total", "sites-active", "sites-suspended", "sites-payment-enabled"]
+      },
+      {
+        "sectionId": "connector-health",
+        "sourceAuthority": "CENTRAL_PMS_VENDOR_SESSION_PROJECTION",
+        "metricsWhenAvailable": [
+          "connector-targets",
+          "connector-targets-enabled",
+          "connector-targets-healthy",
+          "connector-targets-degraded",
+          "connector-targets-failing"
+        ]
+      },
+      {
+        "sectionId": "vendor-projection-freshness",
+        "sourceAuthority": "CENTRAL_PMS_VENDOR_SESSION_PROJECTION",
+        "metricsWhenAvailable": ["active-projections", "stale-projection-targets"]
+      }
+    ],
+    "requiredMetadata": [
+      "requestedScope",
+      "effectiveScope",
+      "generatedAt",
+      "dataAsOf",
+      "availability",
+      "freshness",
+      "sourceAuthority",
+      "warnings",
+      "limitations",
+      "correlationId"
+    ],
+    "missingSourceRule": "UNAVAILABLE or NOT_APPLICABLE with no fabricated metric values"
+  },
+  "authorization": {
+    "source": "authenticated H-006/I-020 server-side human session",
+    "authorizationEpochValidated": true,
+    "accountStateValidated": true,
+    "scopeSource": "effective role-assignment scope grants",
+    "implicitGlobalScope": false,
+    "clientAuthorityHeadersTrusted": false,
+    "antiEnumeration": "scope not found and scope denied use one concealed 404 response"
+  },
+  "audit": {
+    "success": true,
+    "denial": true,
+    "sourceUnavailable": true,
+    "safeMetadataOnly": true,
+    "payloadStored": false
+  },
+  "errorCodes": [
+    "CENTRAL_PMS_RBAC_UNAUTHENTICATED",
+    "CENTRAL_PMS_RBAC_FORBIDDEN",
+    "DASHBOARD_SESSION_INVALID",
+    "MANAGEMENT_DASHBOARD_REPORTING_DISABLED",
+    "INVALID_DASHBOARD_SCOPE_TYPE",
+    "INVALID_DASHBOARD_SCOPE_REFERENCE",
+    "DASHBOARD_SCOPE_NOT_FOUND_OR_DENIED",
+    "DASHBOARD_SOURCE_UNAVAILABLE",
+    "MANAGEMENT_DASHBOARD_UNEXPECTED_FAILURE"
+  ],
+  "forbiddenResponseData": [
+    "credentials",
+    "tokens",
+    "cookies",
+    "connection strings",
+    "provider secrets",
+    "raw evidence",
+    "private identity mappings",
+    "raw exceptions",
+    "filesystem paths"
+  ],
+  "nonGoals": [
+    "frontend widgets",
+    "exports",
+    "scheduled reports",
+    "report builder",
+    "payment finality",
+    "fiscal authority",
+    "settlement closure",
+    "gate or parking-session mutation"
+  ]
+}

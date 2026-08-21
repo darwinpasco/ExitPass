@@ -84,6 +84,14 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "management-platform.identity-rbac.inventory.read"
             ],
+            ["ManagementPlatformDashboardCatalogRead"] =
+            [
+                "reports.view"
+            ],
+            ["ManagementPlatformOperationalOverviewRead"] =
+            [
+                "dashboard.view"
+            ],
             ["ManagementPlatformStatutoryDiscountPolicyCoverageRead"] =
             [
                 "statutory-discount-policy.view"

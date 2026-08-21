@@ -176,6 +176,7 @@ app.MapStatutoryEvidenceChannelEndpoints();
 app.MapOperatorConsoleProductionPolicyImportEndpoints();
 app.MapManagementPlatformIdentityRbacInventoryEndpoints();
 app.MapManagementPlatformIdentityAdministrationEndpoints();
+app.MapManagementDashboardReportingEndpoints();
 app.MapManagementPlatformStatutoryDiscountPolicyCoverageEndpoints();
 app.MapManagementPlatformStatutoryEvidenceGovernanceEndpoints();
 app.MapManagementPlatformSalesInvoiceProfileAdministrationEndpoints();
@@ -794,6 +795,19 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IManagementPlatformIdentityRbacInventoryService, ManagementPlatformIdentityRbacInventoryService>();
     builder.Services.AddHttpContextAccessor();
     builder.Services.AddScoped<IIdentityAdministrationActorAccessor, HttpContextIdentityAdministrationActorAccessor>();
+    builder.Services.AddOptions<ManagementDashboardReportingOptions>()
+        .Bind(builder.Configuration.GetSection(ManagementDashboardReportingOptions.SectionName))
+        .Validate(
+            options => options.ProjectionStaleAfterMinutes > 0,
+            "Management Dashboard projection freshness threshold must be positive.")
+        .ValidateOnStart();
+    builder.Services.AddScoped<IManagementDashboardReportingRepository>(_ =>
+        new PostgresManagementDashboardReportingRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementDashboardReportingService>(serviceProvider =>
+        new ManagementDashboardReportingService(
+            serviceProvider.GetRequiredService<IManagementDashboardReportingRepository>(),
+            serviceProvider.GetRequiredService<IOptions<ManagementDashboardReportingOptions>>().Value,
+            serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
         new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();
