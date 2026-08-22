@@ -1,5 +1,7 @@
 # HikCentral Projection Safe Local Enablement
 
+> **v1.3 supersession:** The legacy launcher and `CentralPms__VendorPms__HikCentral__*` presence checks below describe the retired in-process single-HikCentral composition. They must not be used for governed multi-site deployment. Central PMS now selects a persisted Site Adapter route; each adapter owns its site-local HikCentral secrets. See the multi-site routing ADR and permanent projection runbook.
+
 ## Decision
 
 The `HikCentralLocal` profile remains the interactive gate for controlled local checks. Permanent operation instead uses the same hosted scheduler with `ActivationMode=MANAGED_DEPLOYMENT`; that path is non-interactive, externally configured, exact-endpoint gated, and scoped to one persisted Vendor System per scheduler-enabled replica or worker of the one logical Central PMS.

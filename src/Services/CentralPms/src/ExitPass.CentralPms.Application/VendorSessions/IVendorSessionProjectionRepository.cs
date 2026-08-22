@@ -34,6 +34,13 @@ public sealed record VendorSessionProjectionReadResult(
     VendorSessionProjection Projection,
     DateTimeOffset? LastSuccessfulProjectionAt);
 
+/// <summary>Stable fail-closed projection lookup rejection.</summary>
+public sealed class VendorSessionProjectionLookupException(string errorCode)
+    : Exception("Vendor session projection lookup was rejected safely.")
+{
+    public string ErrorCode { get; } = errorCode;
+}
+
 /// <summary>
 /// Persistence boundary for site-scoped vendor session projection sync targets.
 /// </summary>

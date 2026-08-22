@@ -401,7 +401,10 @@ static void ConfigureApplicationServices(
 {
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
-    builder.Services.AddCentralPmsVendorPmsAdapter(builder.Configuration);
+    builder.Services.AddCentralPmsVendorPmsAdapter(
+        builder.Configuration,
+        mainDatabaseConnectionString,
+        builder.Environment.EnvironmentName);
     builder.Services.AddOptions<VendorSessionProjectionOptions>()
         .Bind(builder.Configuration.GetSection(VendorSessionProjectionOptions.SectionName))
         .Validate(

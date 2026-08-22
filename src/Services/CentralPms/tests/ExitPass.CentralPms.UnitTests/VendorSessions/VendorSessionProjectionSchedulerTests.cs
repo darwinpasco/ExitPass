@@ -51,7 +51,7 @@ public sealed class VendorSessionProjectionSchedulerTests
     }
 
     [Fact]
-    public async Task RunDueTargetsOnceAsync_ManagedDeploymentRunsOnlyOwnedVendorTargets()
+    public async Task RunDueTargetsOnceAsync_ManagedDeploymentRunsTargetsForMultipleVendors()
     {
         var owned = Target("OWNED");
         var other = Target("OTHER") with
@@ -59,35 +59,14 @@ public sealed class VendorSessionProjectionSchedulerTests
             ProjectionSyncTargetId = Guid.NewGuid(),
             VendorSystemId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002")
         };
-        var options = new VendorSessionProjectionOptions
-        {
-            ManagedVendorSystemId = owned.VendorSystemId
-        };
         var sync = new RecordingSyncService();
-        var sut = CreateSut(new InMemoryTargetRepository([owned, other]), sync, options);
+        var sut = CreateSut(new InMemoryTargetRepository([owned, other]), sync);
 
         var result = await sut.RunDueTargetsOnceAsync(CancellationToken.None);
 
-        result.TargetsLoaded.Should().Be(1);
-        sync.Commands.Should().ContainSingle(command => command.VendorSystemId == owned.VendorSystemId);
-    }
-
-    [Fact]
-    public async Task RunManualAsync_ManagedDeploymentRejectsAnotherVendorTarget()
-    {
-        var target = Target("OTHER");
-        var options = new VendorSessionProjectionOptions
-        {
-            ManagedVendorSystemId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000002")
-        };
-        var sut = CreateSut(new InMemoryTargetRepository([target]), new RecordingSyncService(), options);
-
-        var act = () => sut.RunManualAsync(
-            new RunVendorSessionProjectionSyncCommand(target.SiteId, null, null, null, false, Guid.NewGuid()),
-            CancellationToken.None);
-
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("VENDOR_SESSION_PROJECTION_SYNC_TARGET_NOT_OWNED");
+        result.TargetsLoaded.Should().Be(2);
+        sync.Commands.Should().Contain(command => command.VendorSystemId == owned.VendorSystemId);
+        sync.Commands.Should().Contain(command => command.VendorSystemId == other.VendorSystemId);
     }
 
     [Fact]

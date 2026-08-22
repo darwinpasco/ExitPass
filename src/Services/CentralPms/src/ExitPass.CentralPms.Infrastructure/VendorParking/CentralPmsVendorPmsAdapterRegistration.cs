@@ -1,11 +1,10 @@
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.VendorParking.Routing;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
-using ExitPass.VendorPmsAdapter.Application.Parking;
-using ExitPass.VendorPmsAdapter.Infrastructure.HikCentral;
+using ExitPass.CentralPms.Infrastructure.VendorParking.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace ExitPass.CentralPms.Infrastructure.VendorParking;
 
@@ -23,7 +22,9 @@ public static class CentralPmsVendorPmsAdapterRegistration
     /// <exception cref="InvalidOperationException">Thrown when a configured adapter is unsupported or invalid.</exception>
     public static IServiceCollection AddCentralPmsVendorPmsAdapter(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        string mainDatabaseConnectionString,
+        string runtimeEnvironment)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
@@ -31,17 +32,33 @@ public static class CentralPmsVendorPmsAdapterRegistration
         var options = new CentralPmsVendorPmsAdapterOptions
         {
             Provider = configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:Provider"]
-                ?? CentralPmsVendorPmsAdapterOptions.MockProvider
+                ?? string.Empty,
+            Environment = configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:Environment"] ?? string.Empty,
+            CentralPmsServiceIdentityId = Guid.TryParse(
+                configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:CentralPmsServiceIdentityId"], out var serviceId)
+                    ? serviceId : Guid.Empty,
+            AdapterSecretMountRoot = configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:AdapterSecretMountRoot"] ?? string.Empty,
+            AllowTaskOwnedHttp = configuration.GetValue<bool>(
+                $"{CentralPmsVendorPmsAdapterOptions.SectionName}:AllowTaskOwnedHttp")
         };
 
         return options.NormalizedProvider() switch
         {
-            CentralPmsVendorPmsAdapterOptions.MockProvider => AddMockVendorPmsAdapter(services),
-            CentralPmsVendorPmsAdapterOptions.HikCentralProvider => AddHikCentralVendorPmsAdapter(services, configuration),
+            CentralPmsVendorPmsAdapterOptions.MockProvider when IsTestOnlyEnvironment(runtimeEnvironment) =>
+                AddMockVendorPmsAdapter(services),
+            CentralPmsVendorPmsAdapterOptions.MockProvider => throw new InvalidOperationException(
+                "MOCK_VENDOR_PMS_PROVIDER_NOT_ALLOWED_IN_THIS_ENVIRONMENT"),
+            CentralPmsVendorPmsAdapterOptions.SiteAdapterProvider => AddSiteVendorPmsAdapter(
+                services, mainDatabaseConnectionString, options),
             _ => throw new InvalidOperationException(
                 $"Unsupported Central PMS Vendor PMS adapter provider '{options.Provider}'.")
         };
     }
+
+    private static bool IsTestOnlyEnvironment(string value) =>
+        value.Equals("Development", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("Testing", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("IntegrationTest", StringComparison.OrdinalIgnoreCase);
 
     private static IServiceCollection AddMockVendorPmsAdapter(IServiceCollection services)
     {
@@ -50,65 +67,35 @@ public static class CentralPmsVendorPmsAdapterRegistration
         return services;
     }
 
-    private static IServiceCollection AddHikCentralVendorPmsAdapter(
-        IServiceCollection services,
-        IConfiguration configuration)
+    private static IServiceCollection AddSiteVendorPmsAdapter(
+        IServiceCollection services, string connectionString, CentralPmsVendorPmsAdapterOptions options)
     {
-        var hikCentralOptions = ReadHikCentralOptions(configuration);
-
-        var validationErrors = hikCentralOptions.Validate();
-        if (validationErrors.Count > 0)
-        {
-            throw new InvalidOperationException(
-                $"Invalid HikCentral Vendor PMS Adapter configuration: {string.Join(", ", validationErrors)}.");
-        }
-
-        services.AddSingleton(hikCentralOptions);
-        services.AddSingleton<IHikCentralRequestSigner>(_ =>
-            new HikCentralRequestSigner(
-                new HikCentralCredentialOptions(hikCentralOptions.AppKey!, hikCentralOptions.AppSecret!)));
-
-        services.AddSingleton<IVendorParkingDataClient>(serviceProvider =>
-        {
-            return new HikCentralParkingClient(
-                new HttpClient
-                {
-                    BaseAddress = new Uri(hikCentralOptions.BaseUrl!, UriKind.Absolute),
-                    Timeout = TimeSpan.FromSeconds(20)
-                },
-                serviceProvider.GetRequiredService<IHikCentralRequestSigner>(),
-                hikCentralOptions.UserId ?? "exitpass-adapter");
-        });
-        services.AddSingleton<IHikCentralPassagewayRecordClient>(serviceProvider =>
-            new HikCentralPassagewayRecordClient(
-                new HttpClient
-                {
-                    BaseAddress = new Uri(hikCentralOptions.BaseUrl!, UriKind.Absolute),
-                    Timeout = TimeSpan.FromSeconds(20)
-                },
-                serviceProvider.GetRequiredService<IHikCentralRequestSigner>(),
-                hikCentralOptions.UserId ?? "exitpass-adapter",
-                serviceProvider.GetService<ILogger<HikCentralPassagewayRecordClient>>(),
-                hikCentralOptions.RequestTimeZoneId));
-        services.AddSingleton<HikCentralPassagewayProjectionNormalizer>();
-        services.AddScoped<IVendorSessionProjectionSyncService, HikCentralVendorSessionProjectionSyncService>();
-
-        services.AddScoped<IVendorPmsParkingResolutionClient, HikCentralVendorPmsParkingResolutionClient>();
+        if (string.IsNullOrWhiteSpace(options.Environment) || options.CentralPmsServiceIdentityId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(options.AdapterSecretMountRoot))
+            throw new InvalidOperationException("SITE_ADAPTER_ROUTING_CONFIGURATION_INVALID");
+        services.AddSingleton<ISiteVendorAdapterRouteRegistry>(
+            new PostgresSiteVendorAdapterRouteRegistry(
+                connectionString, options.Environment, options.CentralPmsServiceIdentityId));
+        services.AddSingleton<ISiteAdapterCredentialResolver>(
+            new MountedFileSiteAdapterCredentialResolver(options.AdapterSecretMountRoot));
+        services.AddHttpClient(nameof(SiteVendorAdapterHttpClient), client => client.Timeout = TimeSpan.FromSeconds(30));
+        services.AddScoped<IVendorPmsParkingResolutionClient>(serviceProvider =>
+            new SiteVendorAdapterHttpClient(
+                serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(SiteVendorAdapterHttpClient)),
+                serviceProvider.GetRequiredService<ISiteVendorAdapterRouteRegistry>(),
+                serviceProvider.GetRequiredService<ISiteAdapterCredentialResolver>(),
+                options.CentralPmsServiceIdentityId,
+                options.AllowTaskOwnedHttp));
+        services.AddScoped<IVendorSessionProjectionSyncService>(serviceProvider =>
+            new SiteVendorAdapterProjectionSyncService(
+                serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(SiteVendorAdapterHttpClient)),
+                serviceProvider.GetRequiredService<ISiteVendorAdapterRouteRegistry>(),
+                serviceProvider.GetRequiredService<ISiteAdapterCredentialResolver>(),
+                serviceProvider.GetRequiredService<IVendorSessionProjectionRepository>(),
+                serviceProvider.GetRequiredService<ExitPass.CentralPms.Domain.Common.ISystemClock>(),
+                serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SiteVendorAdapterProjectionSyncService>>(),
+                options.CentralPmsServiceIdentityId,
+                options.AllowTaskOwnedHttp));
         return services;
-    }
-
-    private static HikCentralOptions ReadHikCentralOptions(IConfiguration configuration)
-    {
-        var sectionName = $"{CentralPmsVendorPmsAdapterOptions.SectionName}:HikCentral";
-
-        return new HikCentralOptions
-        {
-            Enabled = true,
-            BaseUrl = configuration[$"{sectionName}:BaseUrl"],
-            AppKey = configuration[$"{sectionName}:AppKey"],
-            AppSecret = configuration[$"{sectionName}:AppSecret"],
-            UserId = configuration[$"{sectionName}:UserId"] ?? "exitpass-adapter",
-            RequestTimeZoneId = configuration[$"{sectionName}:RequestTimeZoneId"]
-        };
     }
 }

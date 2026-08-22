@@ -24,9 +24,9 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
     [
         "ConnectionStrings__MainDatabase",
         "CentralPms__VendorPms__Provider",
-        "CentralPms__VendorPms__HikCentral__BaseUrl",
-        "CentralPms__VendorPms__HikCentral__AppKey",
-        "CentralPms__VendorPms__HikCentral__AppSecret",
+        "CentralPms__VendorPms__Environment",
+        "CentralPms__VendorPms__CentralPmsServiceIdentityId",
+        "CentralPms__VendorPms__AdapterSecretMountRoot",
         "CentralPms__VendorSessionProjections__SchedulerEnabled",
         "CentralPms__VendorSessionProjections__RequiredForEnvironment",
         "CentralPms__VendorSessionProjections__ActivationEnvironment",
@@ -42,11 +42,9 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
     [
         "ConnectionStrings__MainDatabase",
         "CentralPms__VendorPms__Provider",
-        "CentralPms__VendorPms__HikCentral__BaseUrl",
-        "CentralPms__VendorPms__HikCentral__AppKey",
-        "CentralPms__VendorPms__HikCentral__AppSecret",
-        "CentralPms__VendorPms__HikCentral__UserId",
-        "CentralPms__VendorPms__HikCentral__RequestTimeZoneId",
+        "CentralPms__VendorPms__Environment",
+        "CentralPms__VendorPms__CentralPmsServiceIdentityId",
+        "CentralPms__VendorPms__AdapterSecretMountRoot",
         "CentralPms__VendorSessionProjections__SchedulerEnabled",
         "CentralPms__VendorSessionProjections__RequiredForEnvironment",
         "CentralPms__VendorSessionProjections__ActivationMode",
@@ -54,11 +52,7 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         "CentralPms__VendorSessionProjections__ManagedDeploymentApproved",
         "CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase",
         "CentralPms__VendorSessionProjections__AllowProductionEndpoint",
-        "CentralPms__VendorSessionProjections__ExpectedDatabaseName",
-        "CentralPms__VendorSessionProjections__ExpectedEndpointHost",
-        "CentralPms__VendorSessionProjections__ExpectedEndpointScheme",
-        "CentralPms__VendorSessionProjections__ExpectedEndpointPort",
-        "CentralPms__VendorSessionProjections__ManagedVendorSystemId"
+        "CentralPms__VendorSessionProjections__ExpectedDatabaseName"
     ];
 
     /// <inheritdoc />
@@ -77,7 +71,7 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         var provider = configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:Provider"];
         var liveAdapterConfigured = string.Equals(
             provider?.Trim(),
-            CentralPmsVendorPmsAdapterOptions.HikCentralProvider,
+            CentralPmsVendorPmsAdapterOptions.SiteAdapterProvider,
             StringComparison.OrdinalIgnoreCase);
 
         if (!liveAdapterConfigured)
@@ -85,7 +79,7 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             if (projectionOptions.SchedulerEnabled)
             {
                 throw new InvalidOperationException(
-                    "HIKCENTRAL_PROJECTION_STARTUP_VALIDATION_FAILED: PROJECTION_PROVIDER_MUST_BE_HIKCENTRAL");
+                    "HIKCENTRAL_PROJECTION_STARTUP_VALIDATION_FAILED: PROJECTION_PROVIDER_MUST_BE_SITE_ADAPTER");
             }
 
             if (hasLegacyConfiguration)
@@ -136,7 +130,7 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             projectionOptions,
             environment.EnvironmentName,
             configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:Provider"],
-            configuration[$"{CentralPmsVendorPmsAdapterOptions.SectionName}:HikCentral:BaseUrl"],
+            null,
             connection.Host,
             connection.Database,
             targets,
@@ -177,9 +171,9 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
         }
 
         var errors = new List<string>(processActivationErrors);
-        if (!string.Equals(provider?.Trim(), CentralPmsVendorPmsAdapterOptions.HikCentralProvider, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(provider?.Trim(), CentralPmsVendorPmsAdapterOptions.SiteAdapterProvider, StringComparison.OrdinalIgnoreCase))
         {
-            errors.Add("PROJECTION_PROVIDER_MUST_BE_HIKCENTRAL");
+            errors.Add("PROJECTION_PROVIDER_MUST_BE_SITE_ADAPTER");
         }
 
         if (!string.Equals(environmentName, RequiredEnvironmentName, StringComparison.Ordinal))
@@ -262,16 +256,6 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors.Add("PROJECTION_LOCAL_DATABASE_MUST_BE_LOOPBACK");
         }
 
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var endpoint) ||
-            endpoint.Scheme is not ("http" or "https"))
-        {
-            errors.Add("PROJECTION_LOCAL_ENDPOINT_INVALID");
-        }
-        else if (IsProductionMarkedHost(endpoint.Host))
-        {
-            errors.Add("PROJECTION_LOCAL_PRODUCTION_ENDPOINT_REFUSED");
-        }
-
         if (enabledTargets.Length != 1)
         {
             errors.Add("PROJECTION_LOCAL_SINGLE_TARGET_REQUIRED");
@@ -318,17 +302,12 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors.Add("PROJECTION_MANAGED_DEPLOYMENT_APPROVAL_REQUIRED");
         }
 
-        if (!options.ManagedVendorSystemId.HasValue || options.ManagedVendorSystemId == Guid.Empty)
-        {
-            errors.Add("PROJECTION_MANAGED_VENDOR_SYSTEM_REQUIRED");
-        }
-
         if (!string.Equals(
             provider?.Trim(),
-            CentralPmsVendorPmsAdapterOptions.HikCentralProvider,
+            CentralPmsVendorPmsAdapterOptions.SiteAdapterProvider,
             StringComparison.OrdinalIgnoreCase))
         {
-            errors.Add("PROJECTION_PROVIDER_MUST_BE_HIKCENTRAL");
+            errors.Add("PROJECTION_PROVIDER_MUST_BE_SITE_ADAPTER");
         }
 
         if (string.IsNullOrWhiteSpace(options.ActivationEnvironment) ||
@@ -360,40 +339,10 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors.Add("PROJECTION_NON_LOOPBACK_DATABASE_NOT_APPROVED");
         }
 
-        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var endpoint) ||
-            endpoint.Scheme is not ("http" or "https"))
-        {
-            errors.Add("PROJECTION_ENDPOINT_INVALID");
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(options.ExpectedEndpointHost) ||
-                !string.Equals(options.ExpectedEndpointHost.Trim(), endpoint.Host, StringComparison.OrdinalIgnoreCase))
-            {
-                errors.Add("PROJECTION_ENDPOINT_IDENTITY_MISMATCH");
-            }
-
-            if (string.IsNullOrWhiteSpace(options.ExpectedEndpointScheme) ||
-                !string.Equals(options.ExpectedEndpointScheme.Trim(), endpoint.Scheme, StringComparison.OrdinalIgnoreCase) ||
-                options.ExpectedEndpointPort <= 0 ||
-                options.ExpectedEndpointPort != endpoint.Port)
-            {
-                errors.Add("PROJECTION_ENDPOINT_IDENTITY_MISMATCH");
-            }
-
-            if (IsProductionMarkedHost(endpoint.Host) && !options.AllowProductionEndpoint)
-            {
-                errors.Add("PROJECTION_PRODUCTION_ENDPOINT_NOT_APPROVED");
-            }
-        }
-
         var enabledTargets = targets.Where(target => target.Enabled).ToArray();
-        var deploymentTargets = enabledTargets
-            .Where(target => target.VendorSystemId == options.ManagedVendorSystemId)
-            .ToArray();
-        if (deploymentTargets.Length == 0)
+        if (enabledTargets.Length == 0)
         {
-            errors.Add("PROJECTION_MANAGED_VENDOR_TARGET_REQUIRED");
+            errors.Add("PROJECTION_MANAGED_TARGET_REQUIRED");
         }
 
         if (enabledTargets.Any(target =>
@@ -444,8 +393,8 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors,
             readProcessVariable,
             "CentralPms__VendorPms__Provider",
-            CentralPmsVendorPmsAdapterOptions.HikCentralProvider,
-            "PROJECTION_PROCESS_PROVIDER_MUST_BE_HIKCENTRAL");
+            CentralPmsVendorPmsAdapterOptions.SiteAdapterProvider,
+            "PROJECTION_PROCESS_PROVIDER_MUST_BE_SITE_ADAPTER");
         AddExactProcessValueError(
             errors,
             readProcessVariable,
@@ -493,8 +442,8 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
             errors,
             readProcessVariable,
             "CentralPms__VendorPms__Provider",
-            CentralPmsVendorPmsAdapterOptions.HikCentralProvider,
-            "PROJECTION_PROCESS_PROVIDER_MUST_BE_HIKCENTRAL");
+            CentralPmsVendorPmsAdapterOptions.SiteAdapterProvider,
+            "PROJECTION_PROCESS_PROVIDER_MUST_BE_SITE_ADAPTER");
         AddExactProcessValueError(
             errors,
             readProcessVariable,
@@ -527,11 +476,8 @@ public sealed class VendorSessionProjectionStartupValidationHostedService(
     /// Detects unsafe partial mixing of obsolete and current HikCentral configuration hierarchies.
     /// </summary>
     public static bool HasAmbiguousLegacyConfiguration(IConfiguration configuration) =>
-        configuration.GetSection("HIKCENTRAL").GetChildren().Any() &&
-        configuration
-            .GetSection($"{CentralPmsVendorPmsAdapterOptions.SectionName}:HikCentral")
-            .GetChildren()
-            .Any();
+        configuration.GetSection("HIKCENTRAL").GetChildren().Any() ||
+        configuration.GetSection($"{CentralPmsVendorPmsAdapterOptions.SectionName}:HikCentral").GetChildren().Any();
 
     private static bool IsLoopbackHost(string? host) =>
         string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||

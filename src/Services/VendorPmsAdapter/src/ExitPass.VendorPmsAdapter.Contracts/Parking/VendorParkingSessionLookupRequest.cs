@@ -1,3 +1,5 @@
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
+
 namespace ExitPass.VendorPmsAdapter.Contracts.Parking;
 
 /// <summary>
@@ -9,4 +11,5 @@ namespace ExitPass.VendorPmsAdapter.Contracts.Parking;
 public sealed record VendorParkingSessionLookupRequest(
     string? PlateNumber,
     string? TicketReference,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    VendorAdapterRequestContext? Context = null);

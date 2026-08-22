@@ -36,6 +36,7 @@ public sealed class VendorParkingResolutionPersistenceTests
             Guid.Parse("bbbbbbbb-1000-0000-0000-000000000001"),
             Guid.Parse("cccccccc-1000-0000-0000-000000000001"),
             Guid.Parse("dddddddd-1000-0000-0000-000000000001"),
+            Guid.Parse("ffffffff-1000-0000-0000-000000000001"),
             Guid.Parse("eeeeeeee-1000-0000-0000-000000000001"));
 
         Assert.Equal(entryTimestamp.ToUniversalTime(), TimestampParameter(command, "entry_at"));
@@ -72,6 +73,7 @@ public sealed class VendorParkingResolutionPersistenceTests
             tariffSnapshot,
             Guid.Parse("cccccccc-2000-0000-0000-000000000001"),
             "HIK-TARIFF-1",
+            Guid.Parse("ffffffff-2000-0000-0000-000000000001"),
             Guid.Parse("dddddddd-2000-0000-0000-000000000001"));
 
         Assert.Equal(calculatedAt.ToUniversalTime(), TimestampParameter(command, "calculated_at"));

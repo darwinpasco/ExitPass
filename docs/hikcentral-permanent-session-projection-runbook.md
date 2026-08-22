@@ -73,6 +73,10 @@ Get-Content -Raw .\infra\db\patches\ExitPass_HikCentralProjectionSafety_v1.3.sql
   docker exec -i -e PGPASSWORD exitpass-postgres psql -X -v ON_ERROR_STOP=1 -U $env:PGUSER -d exitpass_hikcentral_local_uat
 Get-Content -Raw .\infra\db\patches\validation\Validate_HikCentralProjectionSafety_v1.3.sql |
   docker exec -i -e PGPASSWORD exitpass-postgres psql -X -v ON_ERROR_STOP=1 -U $env:PGUSER -d exitpass_hikcentral_local_uat
+Get-Content -Raw .\infra\db\patches\ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql |
+  docker exec -i -e PGPASSWORD exitpass-postgres psql -X -v ON_ERROR_STOP=1 -U $env:PGUSER -d exitpass_hikcentral_local_uat
+Get-Content -Raw .\infra\db\patches\validation\Validate_MultiSiteVendorAdapterRouting_v1.3.sql |
+  docker exec -i -e PGPASSWORD exitpass-postgres psql -X -v ON_ERROR_STOP=1 -U $env:PGUSER -d exitpass_hikcentral_local_uat
 Get-Content -Raw .\docs\sql\HikCentralProjectionTestSiteLocalUat.sql |
   docker exec -i -e PGPASSWORD exitpass-postgres psql -X -v ON_ERROR_STOP=1 -U $env:PGUSER -d exitpass_hikcentral_local_uat
 Get-Content -Raw .\docs\sql\ValidateHikCentralProjectionTestSiteLocalUat.sql |
@@ -107,29 +111,24 @@ Set process-scoped deployment configuration. `MANAGED_DEPLOYMENT` is the normal 
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
 $env:ASPNETCORE_URLS = 'http://127.0.0.1:8188'
 $env:ConnectionStrings__MainDatabase = 'Host=127.0.0.1;Port=5433;Database=exitpass_hikcentral_local_uat;Username=<approved-local-database-user>;Password=<approved-local-database-password>'
-$env:CentralPms__VendorPms__Provider = 'HIKCENTRAL'
-$env:CentralPms__VendorPms__HikCentral__BaseUrl = 'http://127.0.0.1:9019'
-$env:CentralPms__VendorPms__HikCentral__AppKey = '<secret>'
-$env:CentralPms__VendorPms__HikCentral__AppSecret = '<secret>'
-$env:CentralPms__VendorPms__HikCentral__UserId = 'exitpass-adapter'
-$env:CentralPms__VendorPms__HikCentral__RequestTimeZoneId = 'Asia/Manila'
+$env:CentralPms__VendorPms__Provider = 'SITE_ADAPTER'
+$env:CentralPms__VendorPms__Environment = 'Development'
+$env:CentralPms__VendorPms__CentralPmsServiceIdentityId = '12000000-0000-0000-0000-000000000002'
+$env:CentralPms__VendorPms__AdapterSecretMountRoot = 'D:\ExitPass.local\site-adapter-secrets'
+$env:CentralPms__VendorPms__AllowTaskOwnedHttp = 'false'
 $env:CentralPms__VendorSessionProjections__SchedulerEnabled = 'true'
 $env:CentralPms__VendorSessionProjections__RequiredForEnvironment = 'true'
 $env:CentralPms__VendorSessionProjections__ActivationMode = 'MANAGED_DEPLOYMENT'
 $env:CentralPms__VendorSessionProjections__ActivationEnvironment = 'Development'
 $env:CentralPms__VendorSessionProjections__ManagedDeploymentApproved = 'true'
-$env:CentralPms__VendorSessionProjections__ManagedVendorSystemId = '31bde78a-5dfc-45c3-a1f3-e48abaf90927'
 $env:CentralPms__VendorSessionProjections__ExpectedDatabaseName = 'exitpass_hikcentral_local_uat'
-$env:CentralPms__VendorSessionProjections__ExpectedEndpointScheme = 'http'
-$env:CentralPms__VendorSessionProjections__ExpectedEndpointHost = '127.0.0.1'
-$env:CentralPms__VendorSessionProjections__ExpectedEndpointPort = '9019'
 $env:CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase = 'false'
 $env:CentralPms__VendorSessionProjections__AllowProductionEndpoint = 'false'
 $env:CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds = '60'
 $env:CentralPms__VendorSessionProjections__NormalFreshnessTargetSeconds = '60'
 $env:CentralPms__VendorSessionProjections__MaxProjectionAgeMinutes = '1'
 $env:CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled = 'false'
-$env:HIKCENTRAL_CONFIRM_PAYMENT_ENABLED = 'false'
+$env:VENDOR_PMS_CONFIRM_PAYMENT_ENABLED = 'false'
 dotnet run --project .\src\Services\CentralPms\src\ExitPass.CentralPms.Api\ExitPass.CentralPms.Api.csproj -c Release --no-launch-profile --urls http://127.0.0.1:8188
 ```
 

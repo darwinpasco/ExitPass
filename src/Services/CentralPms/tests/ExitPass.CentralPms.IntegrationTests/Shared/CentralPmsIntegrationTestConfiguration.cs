@@ -12,17 +12,11 @@ namespace ExitPass.CentralPms.IntegrationTests.Shared;
 ///
 /// Invariants Enforced:
 /// - API hosts and database seed helpers must use the same effective database target.
-/// - ExitPass v1.2 integration tests must prefer the current main test database variable.
-/// - Fallback ordering must remain deterministic across direct DB tests and API tests.
+/// - Integration tests must use the assembly-owned disposable canonical database.
+/// - Missing suite configuration must fail explicitly instead of reaching a standing database.
 /// </summary>
 public static class CentralPmsIntegrationTestConfiguration
 {
-    /// <summary>
-    /// Preferred local Docker database connection string for Central PMS integration and contract tests.
-    /// </summary>
-    public const string PreferredLocalDockerConnectionString =
-        "Host=localhost;Port=5433;Database=exitpass_v12_dev;Username=exitpass;Password=change_me;Include Error Detail=true";
-
     /// <summary>
     /// Environment variable containing the preferred current Central PMS test database connection string.
     /// </summary>
@@ -62,7 +56,10 @@ public static class CentralPmsIntegrationTestConfiguration
         return DatabaseConnectionStringEnvVars
             .Select(Environment.GetEnvironmentVariable)
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))
-            ?? PreferredLocalDockerConnectionString;
+            ?? throw new InvalidOperationException(
+                $"Integration test database connection string is missing. The assembly test framework must publish one of: " +
+                $"{MainDbConnectionStringEnvVar}, {IntegrationDbConnectionStringEnvVar}, " +
+                $"{TestDbConnectionStringEnvVar}, or {MainDatabaseConfigEnvVar}.");
     }
 
     /// <summary>
@@ -70,18 +67,7 @@ public static class CentralPmsIntegrationTestConfiguration
     /// </summary>
     public static string RequireDatabaseConnectionString()
     {
-        var connectionString = GetDatabaseConnectionString();
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                $"Integration test database connection string is missing. Set one of: " +
-                $"{MainDbConnectionStringEnvVar}, {IntegrationDbConnectionStringEnvVar}, " +
-                $"{TestDbConnectionStringEnvVar}, or {MainDatabaseConfigEnvVar}. " +
-                $"For local Docker, use {PreferredLocalDockerConnectionString} or dot-source " +
-                "scripts/dev-env/Set-CentralPmsTestDbEnv.ps1.");
-        }
-
-        return connectionString;
+        return GetDatabaseConnectionString();
     }
 
     /// <summary>

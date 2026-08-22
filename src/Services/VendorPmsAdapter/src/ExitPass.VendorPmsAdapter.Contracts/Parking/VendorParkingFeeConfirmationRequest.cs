@@ -1,3 +1,5 @@
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
+
 namespace ExitPass.VendorPmsAdapter.Contracts.Parking;
 
 /// <summary>
@@ -15,4 +17,6 @@ public sealed record VendorParkingFeeConfirmationRequest(
     int ImmediatelyLeave,
     long? AmountMinor,
     string Currency,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    VendorAdapterRequestContext? Context = null,
+    string? IdempotencyKey = null);

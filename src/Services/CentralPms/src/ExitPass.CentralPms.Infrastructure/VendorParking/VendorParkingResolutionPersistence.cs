@@ -137,6 +137,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 tariffSnapshot,
                 vendorSystemId,
                 vendorTariffRef,
+                request.SourceAdapterIdentityId,
                 request.CorrelationId,
                 cancellationToken);
         }
@@ -542,6 +543,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 site_group_id,
                 site_id,
                 vendor_system_id,
+                source_adapter_identity_id,
                 vendor_session_ref,
                 plate_number_hash,
                 plate_number_masked,
@@ -562,6 +564,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 @site_group_id,
                 @site_id,
                 @vendor_system_id,
+                @source_adapter_identity_id,
                 @vendor_session_ref,
                 @plate_number_hash,
                 @plate_number_masked,
@@ -582,7 +585,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         var session = request.ParkingSession;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
-        AddParkingSessionInsertParameters(command, session, siteGroupId, siteId, vendorSystemId, request.CorrelationId);
+        AddParkingSessionInsertParameters(command, session, siteGroupId, siteId, vendorSystemId,
+            request.SourceAdapterIdentityId, request.CorrelationId);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -593,12 +597,15 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         Guid siteGroupId,
         Guid siteId,
         Guid vendorSystemId,
+        Guid? sourceAdapterIdentityId,
         Guid correlationId)
     {
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = session.ParkingSessionId;
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = siteGroupId;
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = siteId;
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = vendorSystemId;
+        command.Parameters.Add("source_adapter_identity_id", NpgsqlDbType.Uuid).Value =
+            (object?)sourceAdapterIdentityId ?? DBNull.Value;
         command.Parameters.AddWithValue("vendor_session_ref", session.VendorSessionRef);
         command.Parameters.Add("plate_number_hash", NpgsqlDbType.Text).Value = DbValue(HashIdentifier(session.PlateNumber));
         command.Parameters.Add("plate_number_masked", NpgsqlDbType.Text).Value = DbValue(session.PlateNumber);
@@ -982,6 +989,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         TariffSnapshot tariffSnapshot,
         Guid vendorSystemId,
         string vendorTariffRef,
+        Guid? sourceAdapterIdentityId,
         Guid correlationId,
         CancellationToken cancellationToken)
     {
@@ -991,6 +999,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 parking_session_id,
                 superseded_by_tariff_snapshot_id,
                 vendor_system_id,
+                source_adapter_identity_id,
                 vendor_tariff_ref,
                 tariff_version_reference,
                 currency_code,
@@ -1016,6 +1025,7 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
                 @parking_session_id,
                 NULL,
                 @vendor_system_id,
+                @source_adapter_identity_id,
                 @vendor_tariff_ref,
                 @tariff_version_reference,
                 @currency_code,
@@ -1039,7 +1049,8 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
             """;
 
         await using var command = new NpgsqlCommand(sql, connection, transaction);
-        AddTariffSnapshotInsertParameters(command, tariffSnapshot, vendorSystemId, vendorTariffRef, correlationId);
+        AddTariffSnapshotInsertParameters(command, tariffSnapshot, vendorSystemId, vendorTariffRef,
+            sourceAdapterIdentityId, correlationId);
 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -1049,11 +1060,14 @@ public sealed class VendorParkingResolutionPersistence : IVendorParkingResolutio
         TariffSnapshot tariffSnapshot,
         Guid vendorSystemId,
         string vendorTariffRef,
+        Guid? sourceAdapterIdentityId,
         Guid correlationId)
     {
         command.Parameters.Add("tariff_snapshot_id", NpgsqlDbType.Uuid).Value = tariffSnapshot.TariffSnapshotId;
         command.Parameters.Add("parking_session_id", NpgsqlDbType.Uuid).Value = tariffSnapshot.ParkingSessionId;
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = vendorSystemId;
+        command.Parameters.Add("source_adapter_identity_id", NpgsqlDbType.Uuid).Value =
+            (object?)sourceAdapterIdentityId ?? DBNull.Value;
         command.Parameters.AddWithValue("vendor_tariff_ref", vendorTariffRef);
         command.Parameters.Add("tariff_version_reference", NpgsqlDbType.Text).Value = DbValue(tariffSnapshot.TariffVersionReference);
         command.Parameters.AddWithValue("currency_code", tariffSnapshot.CurrencyCode);

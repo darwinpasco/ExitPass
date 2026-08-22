@@ -1,6 +1,7 @@
 using FluentAssertions;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
+using ExitPass.CentralPms.IntegrationTests.Shared;
 using Npgsql;
 using Xunit;
 
@@ -8,17 +9,14 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 
 public sealed class VendorSessionProjectionDatabaseSafetyIntegrationTests
 {
-    private const string ConnectionVariable = "EXITPASS_HIKCENTRAL_PROJECTION_TEST_DB";
-
     [Fact]
     public async Task ProjectionTargetSchema_DefaultsDisabledAndSupportsDeferredHealth()
     {
-        var connectionString = Environment.GetEnvironmentVariable(ConnectionVariable)
-            ?? throw new InvalidOperationException($"{ConnectionVariable} is required.");
+        var connectionString = CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
         var parsed = new NpgsqlConnectionStringBuilder(connectionString);
         parsed.Database.Should().StartWith(
-            "exitpass_hikcentral_projection_",
-            "the test is restricted to a task-owned disposable database");
+            "exitpass_central_pms_it_",
+            "the canonical integration harness restricts the test to its task-owned disposable database");
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync();
@@ -71,12 +69,11 @@ public sealed class VendorSessionProjectionDatabaseSafetyIntegrationTests
     [Fact]
     public async Task ProjectionLookup_UsesTargetCompletionJoinWithoutSqlFailure()
     {
-        var connectionString = Environment.GetEnvironmentVariable(ConnectionVariable)
-            ?? throw new InvalidOperationException($"{ConnectionVariable} is required.");
+        var connectionString = CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
         var parsed = new NpgsqlConnectionStringBuilder(connectionString);
         parsed.Database.Should().StartWith(
-            "exitpass_hikcentral_projection_",
-            "the test is restricted to a task-owned disposable database");
+            "exitpass_central_pms_it_",
+            "the canonical integration harness restricts the test to its task-owned disposable database");
         var repository = new PostgresVendorSessionProjectionRepository(connectionString);
 
         var result = await repository.FindLatestAsync(

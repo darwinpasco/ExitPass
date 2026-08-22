@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
 
 namespace ExitPass.CentralPms.Infrastructure.VendorParking;
 
@@ -14,6 +15,7 @@ namespace ExitPass.CentralPms.Infrastructure.VendorParking;
 public sealed class MockVendorPmsParkingResolutionClient : IVendorPmsParkingResolutionClient
 {
     private static readonly DateTimeOffset FixedCalculatedAt = new(2030, 4, 1, 1, 30, 0, TimeSpan.Zero);
+    private static readonly Guid MockAdapterIdentityId = Guid.Parse("23000000-0000-0000-0000-000000000001");
 
     /// <inheritdoc />
     public Task<VendorParkingSessionLookupResponse> ResolveSessionAsync(
@@ -95,7 +97,7 @@ public sealed class MockVendorPmsParkingResolutionClient : IVendorPmsParkingReso
                 request.CorrelationId)
         };
 
-        return Task.FromResult(response);
+        return Task.FromResult(response with { AdapterContext = ResponseContext(request.Context) });
     }
 
     /// <inheritdoc />
@@ -118,7 +120,7 @@ public sealed class MockVendorPmsParkingResolutionClient : IVendorPmsParkingReso
                 false,
                 request.CorrelationId);
 
-        return Task.FromResult(response);
+        return Task.FromResult(response with { AdapterContext = ResponseContext(request.Context) });
     }
 
     /// <inheritdoc />
@@ -161,7 +163,7 @@ public sealed class MockVendorPmsParkingResolutionClient : IVendorPmsParkingReso
                     false,
                     request.CorrelationId);
 
-        return Task.FromResult(response);
+        return Task.FromResult(response with { AdapterContext = ResponseContext(request.Context) });
     }
 
     private static VendorTariffQuoteDto CreateQuote(long amountMinor, string tariffVersionReference)
@@ -178,4 +180,7 @@ public sealed class MockVendorPmsParkingResolutionClient : IVendorPmsParkingReso
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
+
+    private static VendorAdapterResponseContext ResponseContext(VendorAdapterRequestContext request) =>
+        new(request.SiteId, request.SiteGroupId, request.VendorSystemId, MockAdapterIdentityId, "MOCK", "Development");
 }

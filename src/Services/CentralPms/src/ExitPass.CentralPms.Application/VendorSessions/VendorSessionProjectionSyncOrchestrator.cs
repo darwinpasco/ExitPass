@@ -23,9 +23,7 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
     {
         var startedAt = clock.UtcNow;
         var dueTargets = await targetRepository.ListDueTargetsAsync(startedAt, cancellationToken);
-        var targets = dueTargets
-            .Where(IsOwnedByThisScheduler)
-            .ToArray();
+        var targets = dueTargets.ToArray();
         var results = new List<VendorSessionProjectionTargetRunResult>();
         var maxParallelism = options.Value.EffectiveMaxParallelSiteJobs();
 
@@ -82,11 +80,6 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
         if (target is null)
         {
             throw new InvalidOperationException("VENDOR_SESSION_PROJECTION_SYNC_TARGET_NOT_FOUND");
-        }
-
-        if (!IsOwnedByThisScheduler(target))
-        {
-            throw new InvalidOperationException("VENDOR_SESSION_PROJECTION_SYNC_TARGET_NOT_OWNED");
         }
 
         return await RunTargetAsync(
@@ -250,10 +243,6 @@ public sealed class VendorSessionProjectionSyncOrchestrator(
 
     private static string? Normalize(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-
-    private bool IsOwnedByThisScheduler(VendorSessionProjectionSyncTarget target) =>
-        !options.Value.ManagedVendorSystemId.HasValue ||
-        target.VendorSystemId == options.Value.ManagedVendorSystemId;
 
     private static string SanitizeClassification(string? value)
     {

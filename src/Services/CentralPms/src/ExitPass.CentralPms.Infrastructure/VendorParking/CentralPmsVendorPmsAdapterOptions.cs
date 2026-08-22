@@ -23,20 +23,26 @@ public sealed class CentralPmsVendorPmsAdapterOptions
     /// <summary>
     /// HikCentral adapter provider code.
     /// </summary>
-    public const string HikCentralProvider = "HIKCENTRAL";
+    public const string SiteAdapterProvider = "SITE_ADAPTER";
 
     /// <summary>
     /// Gets or sets the provider selected for Central PMS vendor parking resolution.
     /// </summary>
-    public string Provider { get; set; } = MockProvider;
+    public string Provider { get; set; } = string.Empty;
+
+    public string Environment { get; set; } = string.Empty;
+
+    public Guid CentralPmsServiceIdentityId { get; set; }
+
+    public string AdapterSecretMountRoot { get; set; } = string.Empty;
+
+    public bool AllowTaskOwnedHttp { get; set; }
 
     /// <summary>
     /// Returns the normalized configured provider code.
     /// </summary>
     public string NormalizedProvider()
     {
-        return string.IsNullOrWhiteSpace(Provider)
-            ? MockProvider
-            : Provider.Trim().ToUpperInvariant();
+        return string.IsNullOrWhiteSpace(Provider) ? string.Empty : Provider.Trim().ToUpperInvariant();
     }
 }

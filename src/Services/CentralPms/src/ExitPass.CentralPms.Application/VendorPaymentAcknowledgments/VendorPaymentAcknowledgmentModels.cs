@@ -110,7 +110,13 @@ public sealed record VendorPaymentAcknowledgmentBasis(
     string? TicketNumber,
     string? CardNum,
     long RequestFeeMinorUnits,
-    string RequestCurrencyCode);
+    string RequestCurrencyCode)
+{
+    public Guid SiteId { get; init; }
+    public Guid SiteGroupId { get; init; }
+    public Guid VendorSystemId { get; init; }
+    public Guid SourceAdapterIdentityId { get; init; }
+}
 
 /// <summary>
 /// Command to process the Vendor PMS paid-state acknowledgment after ExitPass finality.

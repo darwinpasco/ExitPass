@@ -925,7 +925,7 @@ public sealed class VendorParkingResolutionApiIntegrationTests : IClassFixture<C
         {
             SiteGroupId = CorrelatedGuid("21000000", correlationId),
             SiteId = CorrelatedGuid("22000000", correlationId),
-            VendorSystemId = "FAKE-PMS",
+            VendorSystemId = CorrelatedGuid("23000000", correlationId),
             PlateNumber = plateNumber,
             TicketReference = ticketReference,
             CorrelationId = correlationId

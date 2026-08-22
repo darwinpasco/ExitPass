@@ -79,8 +79,8 @@ public sealed class ResolveVendorParkingHandlerTests
             .Which.Should().Match<VendorParkingResolvedPayload>(payload =>
                 payload.ParkingSessionId == result.ParkingSession!.ParkingSessionId &&
                 payload.TariffSnapshotId == result.TariffSnapshot!.TariffSnapshotId &&
-                payload.SiteId == "SITE-TEST-001" &&
-                payload.SiteGroupId == "SG-TEST-001" &&
+                payload.SiteId == "35a625de-9034-4fb6-b527-0950d384e51e" &&
+                payload.SiteGroupId == "25a625de-9034-4fb6-b527-0950d384e51d" &&
                 payload.VendorSystemId == "45a625de-9034-4fb6-b527-0950d384e51f" &&
                 payload.LookupReferenceType == "plate" &&
                 payload.LookupOutcome == ResolveVendorParkingOutcome.Resolved.ToString() &&
@@ -581,8 +581,9 @@ public sealed class ResolveVendorParkingHandlerTests
     {
         return new ResolveVendorParkingCommand
         {
-            SiteGroupId = "SG-TEST-001",
-            SiteId = "SITE-TEST-001",
+            SiteGroupId = "25a625de-9034-4fb6-b527-0950d384e51d",
+            SiteId = "35a625de-9034-4fb6-b527-0950d384e51e",
+            VendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f",
             PlateNumber = "ABC1234",
             CorrelationId = CorrelationId
         };
@@ -592,8 +593,9 @@ public sealed class ResolveVendorParkingHandlerTests
     {
         return new ResolveVendorParkingCommand
         {
-            SiteGroupId = "SG-TEST-001",
-            SiteId = "SITE-TEST-001",
+            SiteGroupId = "25a625de-9034-4fb6-b527-0950d384e51d",
+            SiteId = "35a625de-9034-4fb6-b527-0950d384e51e",
+            VendorSystemId = "45a625de-9034-4fb6-b527-0950d384e51f",
             TicketReference = "TICKET-001",
             CorrelationId = CorrelationId
         };
@@ -719,15 +721,26 @@ public sealed class ResolveVendorParkingHandlerTests
             VendorParkingSessionLookupRequest request,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(_sessionResponse);
+            return Task.FromResult(_sessionResponse with
+            {
+                AdapterContext = ResponseContext(request.Context)
+            });
         }
 
         public Task<VendorTariffQuoteResponse> ResolveTariffAsync(
             VendorTariffQuoteRequest request,
             CancellationToken cancellationToken)
         {
-            return Task.FromResult(_tariffResponse);
+            return Task.FromResult(_tariffResponse with
+            {
+                AdapterContext = ResponseContext(request.Context)
+            });
         }
+
+        private static ExitPass.VendorPmsAdapter.Contracts.Routing.VendorAdapterResponseContext ResponseContext(
+            ExitPass.VendorPmsAdapter.Contracts.Routing.VendorAdapterRequestContext? context) =>
+            new(context!.SiteId, context.SiteGroupId, context.VendorSystemId,
+                Guid.Parse("55a625de-9034-4fb6-b527-0950d384e510"), "1", "UNIT_TEST");
 
         public Task<VendorParkingFeeConfirmationResponse> ConfirmParkingFeeAsync(
             VendorParkingFeeConfirmationRequest request,

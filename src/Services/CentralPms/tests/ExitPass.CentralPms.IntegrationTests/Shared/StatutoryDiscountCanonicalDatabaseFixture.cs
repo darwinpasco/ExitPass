@@ -15,11 +15,12 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
     public const string DatabasePrefixEnvVar = "EXITPASS_STATUTORY_DB_FIXTURE_PREFIX";
     public const string DockerContainerEnvVar = "EXITPASS_STATUTORY_DB_FIXTURE_POSTGRES_CONTAINER";
     public const string DockerUserEnvVar = "EXITPASS_STATUTORY_DB_FIXTURE_POSTGRES_USER";
+    public const string ApplicationPatchRootEnvVar = "EXITPASS_CENTRAL_PMS_INTEGRATION_PATCH_ROOT";
+    public const string TaskOwnedContainerIdEnvVar = "EXITPASS_CENTRAL_PMS_INTEGRATION_POSTGRES_ID";
+    public const string TaskOwnedRunIdEnvVar = "EXITPASS_CENTRAL_PMS_INTEGRATION_RUN_ID";
 
     private const string DefaultCanonicalDbRepo = @"D:\SourceCodes\exitpassdb_v1.2";
-    private const string DefaultDatabasePrefix = "exitpass_statutory_fixture_";
-    private const string DefaultDockerContainer = "exitpass-postgres";
-    private const string DefaultDockerUser = "exitpass";
+    private const string RequiredDatabasePrefix = "exitpass_central_pms_it_";
 
     private static readonly Regex SafeDatabaseNamePattern = new("^[a-z][a-z0-9_]{0,62}$", RegexOptions.Compiled);
     private static readonly HashSet<string> ProtectedDatabaseNames = new(StringComparer.OrdinalIgnoreCase)
@@ -31,8 +32,17 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
     };
 
     private readonly Dictionary<string, string?> _previousEnvironmentValues = new();
+    private readonly bool _suiteOwner;
     private string? _databaseName;
     private string? _connectionString;
+    private bool _borrowedSuiteDatabase;
+
+    public StatutoryDiscountCanonicalDatabaseFixture()
+        : this(suiteOwner: false)
+    {
+    }
+
+    internal StatutoryDiscountCanonicalDatabaseFixture(bool suiteOwner) => _suiteOwner = suiteOwner;
 
     public string ConnectionString =>
         _connectionString ?? throw new InvalidOperationException("The statutory discount canonical database fixture is not initialized.");
@@ -42,9 +52,23 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        if (!_suiteOwner)
+        {
+            if (!CentralPmsIntegrationSuiteDatabase.TryBorrow(out _databaseName, out _connectionString))
+            {
+                throw new InvalidOperationException(
+                    "Central PMS integration suite database is not initialized. The assembly test framework must create the task-owned canonical database before collection fixtures start.");
+            }
+
+            _borrowedSuiteDatabase = true;
+            await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(_connectionString!);
+            return;
+        }
+
         try
         {
             var options = StatutoryDiscountCanonicalDatabaseFixtureOptions.Load();
+            await VerifyTaskOwnedPostgresAsync(options);
             _databaseName = CreateDatabaseName(options.DatabasePrefix);
             var adminConnectionString = BuildAdminConnectionString(options.AdminConnectionString);
             _connectionString = BuildDatabaseConnectionString(options.AdminConnectionString, _databaseName);
@@ -52,8 +76,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
             await CreateDatabaseAsync(adminConnectionString, _databaseName);
             await RunPsqlFileAsync(options, _databaseName, options.CanonicalGeneratedSqlPath, "canonical SQL apply");
             await RunPsqlFileAsync(options, _databaseName, options.CanonicalAlignmentValidatorPath, "canonical alignment validation");
+            await ApplyApplicationPatchesAsync(options, _databaseName, replay: false);
+            await ApplyApplicationPatchesAsync(options, _databaseName, replay: true);
             await StatutoryDiscountCanonicalSchemaPrerequisite.EnsurePresentAsync(_connectionString);
             PublishConnectionString(_connectionString);
+            CentralPmsIntegrationSuiteDatabase.Publish(_databaseName, _connectionString);
         }
         catch (Exception exception)
         {
@@ -70,6 +97,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        if (_borrowedSuiteDatabase)
+        {
+            return;
+        }
+
         Exception? cleanupException = null;
         if (_databaseName is not null)
         {
@@ -86,12 +118,68 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
         }
 
         RestoreEnvironment();
+        CentralPmsIntegrationSuiteDatabase.Clear();
 
         if (cleanupException is not null)
         {
             throw new InvalidOperationException(
                 $"Statutory discount canonical database fixture cleanup failed for disposable database '{_databaseName}'.",
                 cleanupException);
+        }
+    }
+
+    private static async Task ApplyApplicationPatchesAsync(
+        StatutoryDiscountCanonicalDatabaseFixtureOptions options,
+        string databaseName,
+        bool replay)
+    {
+        var pass = replay ? "idempotency replay" : "initial apply";
+        foreach (var source in options.ApplicationSchemaSources)
+        {
+            await RunPsqlFileAsync(options, databaseName, source.PatchPath, $"{source.Name} patch {pass}");
+            if (source.ValidatorPath is not null)
+            {
+                await RunPsqlFileAsync(options, databaseName, source.ValidatorPath, $"{source.Name} validation {pass}");
+            }
+        }
+    }
+
+    private static async Task VerifyTaskOwnedPostgresAsync(StatutoryDiscountCanonicalDatabaseFixtureOptions options)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(options.AdminConnectionString);
+        if (!string.Equals(builder.Host, "127.0.0.1", StringComparison.Ordinal) ||
+            !string.Equals(builder.Database, "postgres", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Configuration phase failed: integration PostgreSQL must use the task-owned loopback endpoint and postgres maintenance database.");
+        }
+
+        if (!options.DatabasePrefix.StartsWith(RequiredDatabasePrefix, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Configuration phase failed: database prefix must start with '{RequiredDatabasePrefix}'.");
+        }
+
+        var inspection = await RunProcessForOutputAsync(
+            "docker",
+            [
+                "inspect",
+                "--format",
+                "{{.Id}}|{{index .Config.Labels \"exitpass.central-pms.integration-test\"}}|{{index .Config.Labels \"exitpass.central-pms.integration-run-id\"}}|{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostIp}}|{{(index (index .NetworkSettings.Ports \"5432/tcp\") 0).HostPort}}",
+                options.DockerContainer
+            ],
+            "task-owned PostgreSQL verification",
+            "inspect immutable container identity");
+        var parts = inspection.Trim().Split('|');
+        if (parts.Length != 5 ||
+            !string.Equals(parts[0], options.TaskOwnedContainerId, StringComparison.Ordinal) ||
+            !string.Equals(parts[1], "true", StringComparison.Ordinal) ||
+            !string.Equals(parts[2], options.TaskOwnedRunId, StringComparison.Ordinal) ||
+            !string.Equals(parts[3], "127.0.0.1", StringComparison.Ordinal) ||
+            !int.TryParse(parts[4], out var mappedPort) || mappedPort != builder.Port)
+        {
+            throw new InvalidOperationException(
+                "Configuration phase failed: PostgreSQL immutable identity, ownership labels, or loopback port mapping did not match the task-owned fixture configuration.");
         }
     }
 
@@ -123,7 +211,7 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
     {
         if (string.IsNullOrWhiteSpace(prefix))
         {
-            prefix = DefaultDatabasePrefix;
+            prefix = RequiredDatabasePrefix;
         }
 
         var lower = prefix.Trim().ToLowerInvariant();
@@ -290,6 +378,40 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
         }
     }
 
+    private static async Task<string> RunProcessForOutputAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string phase,
+        string operation)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Configuration phase failed: unable to start {operation} for {phase}.");
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"{phase} phase failed while trying to {operation}; exit code {process.ExitCode}. Output: {TrimForError(stdout)} {TrimForError(stderr)}");
+        }
+
+        return stdout;
+    }
+
     private void PublishConnectionString(string connectionString)
     {
         foreach (var variable in CentralPmsIntegrationTestConfiguration.DatabaseConnectionStringEnvVars)
@@ -338,9 +460,12 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
         string AdminConnectionString,
         string CanonicalGeneratedSqlPath,
         string CanonicalAlignmentValidatorPath,
+        IReadOnlyList<ApplicationSchemaSource> ApplicationSchemaSources,
         string DatabasePrefix,
         string DockerContainer,
-        string DockerUser)
+        string DockerUser,
+        string TaskOwnedContainerId,
+        string TaskOwnedRunId)
     {
         public static StatutoryDiscountCanonicalDatabaseFixtureOptions Load(bool validateFiles = true)
         {
@@ -371,16 +496,87 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
             var adminConnectionString = Environment.GetEnvironmentVariable(AdminConnectionStringEnvVar);
             if (string.IsNullOrWhiteSpace(adminConnectionString))
             {
-                adminConnectionString = CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString();
+                throw new InvalidOperationException(
+                    $"Configuration phase failed: {AdminConnectionStringEnvVar} must be supplied by the task-owned integration test framework.");
+            }
+
+
+            var patchRoot = Environment.GetEnvironmentVariable(ApplicationPatchRootEnvVar);
+            if (string.IsNullOrWhiteSpace(patchRoot))
+            {
+                patchRoot = FindRepositoryRoot();
+            }
+
+            var applicationSchemaSources = new[]
+            {
+                new ApplicationSchemaSource(
+                    "HikCentral projection schema",
+                    Path.Combine(patchRoot, "docs", "sql", "HikCentralProjectionSchemaPatch.sql"),
+                    ValidatorPath: null),
+                new ApplicationSchemaSource(
+                    "HikCentral projection safety",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_HikCentralProjectionSafety_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_HikCentralProjectionSafety_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "multi-site vendor adapter routing",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_MultiSiteVendorAdapterRouting_v1.3.sql"))
+            };
+
+            var container = RequireEnvironmentValue(DockerContainerEnvVar);
+            var user = RequireEnvironmentValue(DockerUserEnvVar);
+            var containerId = RequireEnvironmentValue(TaskOwnedContainerIdEnvVar);
+            var runId = RequireEnvironmentValue(TaskOwnedRunIdEnvVar);
+
+            if (validateFiles)
+            {
+                foreach (var source in applicationSchemaSources)
+                {
+                    RequireExistingFile(source.PatchPath, $"{source.Name} patch");
+                    if (source.ValidatorPath is not null)
+                    {
+                        RequireExistingFile(source.ValidatorPath, $"{source.Name} validator");
+                    }
+                }
             }
 
             return new StatutoryDiscountCanonicalDatabaseFixtureOptions(
                 adminConnectionString,
                 generatedSql,
                 validator,
-                Environment.GetEnvironmentVariable(DatabasePrefixEnvVar) ?? DefaultDatabasePrefix,
-                Environment.GetEnvironmentVariable(DockerContainerEnvVar) ?? DefaultDockerContainer,
-                Environment.GetEnvironmentVariable(DockerUserEnvVar) ?? DefaultDockerUser);
+                applicationSchemaSources,
+                Environment.GetEnvironmentVariable(DatabasePrefixEnvVar) ?? RequiredDatabasePrefix,
+                container,
+                user,
+                containerId,
+                runId);
+
+            static string RequireEnvironmentValue(string variable)
+            {
+                var value = Environment.GetEnvironmentVariable(variable);
+                return !string.IsNullOrWhiteSpace(value)
+                    ? value
+                    : throw new InvalidOperationException(
+                        $"Configuration phase failed: {variable} must be supplied by the task-owned integration test framework.");
+            }
+
+            static string FindRepositoryRoot()
+            {
+                var current = new DirectoryInfo(AppContext.BaseDirectory);
+                while (current is not null)
+                {
+                    if (File.Exists(Path.Combine(current.FullName, "ExitPass.sln")) &&
+                        Directory.Exists(Path.Combine(current.FullName, "infra", "db", "patches")))
+                    {
+                        return current.FullName;
+                    }
+
+                    current = current.Parent;
+                }
+
+                throw new InvalidOperationException(
+                    $"Configuration phase failed: repository root could not be resolved. Set {ApplicationPatchRootEnvVar}.");
+            }
         }
 
         private static void RequireExistingFile(string path, string description)
@@ -390,6 +586,48 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 throw new InvalidOperationException(
                     $"Configuration phase failed: {description} was not found at '{path}'. Set the appropriate statutory fixture environment variable.");
             }
+        }
+    }
+
+    internal sealed record ApplicationSchemaSource(string Name, string PatchPath, string? ValidatorPath);
+}
+
+internal static class CentralPmsIntegrationSuiteDatabase
+{
+    private static readonly object Sync = new();
+    private static string? _databaseName;
+    private static string? _connectionString;
+
+    public static void Publish(string databaseName, string connectionString)
+    {
+        lock (Sync)
+        {
+            if (_databaseName is not null || _connectionString is not null)
+            {
+                throw new InvalidOperationException("Central PMS integration suite database was initialized more than once.");
+            }
+
+            _databaseName = databaseName;
+            _connectionString = connectionString;
+        }
+    }
+
+    public static bool TryBorrow(out string? databaseName, out string? connectionString)
+    {
+        lock (Sync)
+        {
+            databaseName = _databaseName;
+            connectionString = _connectionString;
+            return databaseName is not null && connectionString is not null;
+        }
+    }
+
+    public static void Clear()
+    {
+        lock (Sync)
+        {
+            _databaseName = null;
+            _connectionString = null;
         }
     }
 }
