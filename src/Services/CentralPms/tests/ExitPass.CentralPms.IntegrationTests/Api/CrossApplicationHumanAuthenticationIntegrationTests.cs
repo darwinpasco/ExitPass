@@ -12,6 +12,8 @@ using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Xunit;
@@ -210,8 +212,14 @@ public sealed class CrossApplicationHumanAuthenticationIntegrationTests
                 ["HumanAuthentication:TotpProtectionKeyBase64"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
                 ["HumanAuthentication:TotpProtectionKeyReference"] = "i022-proof-key",
                 ["HumanAuthentication:TotpProtectionKeyVersion"] = "1",
-                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost"
-            });
+                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
+                ["CentralPms:VendorPms:Provider"] = "SITE_ADAPTER",
+                ["CentralPms:VendorPms:Environment"] = "INTEGRATION_TEST",
+                ["CentralPms:VendorPms:CentralPmsServiceIdentityId"] = CentralPmsServiceIdentityId.ToString("D"),
+                ["CentralPms:VendorPms:AdapterSecretMountRoot"] = Path.GetTempPath(),
+                ["CentralPms:VendorPms:AllowTaskOwnedHttp"] = "true"
+            })
+            .WithServiceOverrides(services => services.RemoveAll<IHostedService>());
         return certificate is null
             ? factory
             : factory.WithInternalMtls([certificate.Thumbprint], new HeaderCertificateAccessor(certificate));

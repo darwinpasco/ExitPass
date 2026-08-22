@@ -67,7 +67,7 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
         ArgumentNullException.ThrowIfNull(trustedClientThumbprints);
         ArgumentNullException.ThrowIfNull(certificateAccessor);
 
-        var overrides = new Dictionary<string, string?>
+        var overrides = new Dictionary<string, string?>(_configurationOverrides)
         {
             ["InternalSecurity:Mtls:Enabled"] = "true",
             ["InternalSecurity:Mtls:RequireClientCertificate"] = "true"
@@ -129,6 +129,12 @@ public sealed class CustomWebApplicationFactory : WebApplicationFactory<Program>
             CentralPmsIntegrationTestConfiguration.PublishResolvedDatabaseConnectionString();
 
         builder.UseEnvironment(_environmentName);
+
+        // Top-level startup validation reads these values before app configuration callbacks run.
+        foreach (var pair in _configurationOverrides)
+        {
+            builder.UseSetting(pair.Key, pair.Value);
+        }
 
         builder.ConfigureAppConfiguration((_, configBuilder) =>
         {
