@@ -89,6 +89,10 @@ services:
       SiteAdapter__MaxRetries: "0"
       SiteAdapter__ConfirmPaymentEnabled: "false"
       SiteAdapter__AllowTaskOwnedHttp: "true"
+      SiteAdapter__AllowedOperations__0: IDENTITY_READ
+      SiteAdapter__AllowedOperations__1: SESSION_RESOLUTION
+      SiteAdapter__AllowedOperations__2: TARIFF_CALCULATION
+      SiteAdapter__AllowedOperations__3: PASSAGEWAY_SYNCHRONIZATION
     volumes:
       - ${PROOF_ROOT}/secrets/adapter-a:/run/secrets/site-adapter:ro
     ports:
@@ -121,6 +125,10 @@ services:
       SiteAdapter__MaxRetries: "0"
       SiteAdapter__ConfirmPaymentEnabled: "false"
       SiteAdapter__AllowTaskOwnedHttp: "true"
+      SiteAdapter__AllowedOperations__0: IDENTITY_READ
+      SiteAdapter__AllowedOperations__1: SESSION_RESOLUTION
+      SiteAdapter__AllowedOperations__2: TARIFF_CALCULATION
+      SiteAdapter__AllowedOperations__3: PASSAGEWAY_SYNCHRONIZATION
     volumes:
       - ${PROOF_ROOT}/secrets/adapter-b:/run/secrets/site-adapter:ro
     ports:
