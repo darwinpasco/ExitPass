@@ -411,7 +411,21 @@ public sealed class ManagementDashboardReportingService : IManagementDashboardRe
             "dataAsOf is the latest canonical payment record timestamp in the half-open requested period; it is not provider-live freshness.",
             ["SETTLEMENT_STATUS_UNAVAILABLE", "PROVIDER_PAYOUT_UNAVAILABLE", "FISCAL_REMITTANCE_UNAVAILABLE"],
             ["The report proves internal Central PMS consistency only and exposes no payment or reconciliation mutation authority."]),
-        DeferredCatalogEntry(ManagementDashboardReportingValues.FiscalExceptionReportId, "Fiscal exception summary", "Fiscal"),
+        new(
+            ManagementDashboardReportingValues.FiscalExceptionReportId,
+            ManagementFiscalExceptionReportingValues.ContractVersion,
+            "Fiscal exception summary",
+            "Fiscal",
+            "Authoritative Central PMS Sales Invoice issuance lifecycle and supported exception conditions.",
+            [ManagementDashboardReportingValues.ScopeSite, ManagementDashboardReportingValues.ScopeSiteGroup],
+            ManagementFiscalExceptionReportingValues.Permission,
+            ManagementDashboardReportingValues.Partial,
+            ManagementFiscalExceptionReportingValues.SourceAuthority,
+            "INTERNAL_FISCAL_AGGREGATE",
+            ["scopeType", "scopeReference", "periodStart", "periodEnd"],
+            "dataAsOf is the latest persisted Central PMS fiscal issuance reference or linked payment-confirmation timestamp for the selected cohort; it is not live POS Server status.",
+            ["PRINT_RESULT_UNAVAILABLE", "OVERDUE_DETECTION_UNAVAILABLE", "BIR_COMPLIANCE_CERTIFICATION_UNAVAILABLE"],
+            ["The report does not synchronously query a Site POS Server and does not expose transaction-level fiscal document details."]),
         DeferredCatalogEntry(ManagementDashboardReportingValues.ManagementActivityReportId, "Management activity summary", "Audit")
     ];
 

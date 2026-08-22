@@ -20,10 +20,15 @@ No Management Platform frontend, export, scheduled report, report builder, mutat
   - permission: `reconciliation.view`
   - required query: explicit `scopeType`, `scopeReference`, `periodStart`, and `periodEnd`
   - contract: `management-platform-payment-reconciliation-reporting:v1`
+- `GET /v1/management-platform/dashboard/fiscal-exception-summary`
+  - policy: `ManagementPlatformFiscalExceptionSummaryRead`
+  - permission: `sales-invoice-report.view`
+  - required query: explicit `scopeType`, `scopeReference`, `periodStart`, and `periodEnd`
+  - contract: `management-platform-fiscal-exception-reporting:v1`
 
 Contract version: `management-platform-dashboard-reporting:v1`.
 
-The catalog identifies `operational-overview` and `payment-reconciliation-summary` as `PARTIAL`. Fiscal exception and management activity reports remain `UNAVAILABLE`; they are not advertised as operational and return no fabricated payload.
+The catalog identifies `operational-overview`, `payment-reconciliation-summary`, and `fiscal-exception-summary` as `PARTIAL`. Management activity reporting remains `UNAVAILABLE`; it is not advertised as operational and returns no fabricated payload.
 
 ## Implemented Overview
 
@@ -46,6 +51,8 @@ Only explicit `SITE` and `SITE_GROUP` requests are supported. Missing scope neve
 Typed options bind from `ManagementPlatform:DashboardReporting`. `Enabled` defaults to `false`; approved environments must enable it explicitly. `ProjectionStaleAfterMinutes` is startup-validated and defaults to 15 minutes. Production behavior outside this feature is unchanged.
 
 Payment reporting has an additional typed, default-disabled gate at `ManagementPlatform:DashboardReporting:PaymentReconciliation:Enabled`. Both gates must be enabled. The report reads no external provider or POS Server service at request time.
+
+Fiscal exception reporting has an additional typed, default-disabled gate at `ManagementPlatform:DashboardReporting:FiscalExceptions:Enabled`. The parent and report gates must both be enabled. The report reads Central PMS coordination references and recorded outcomes only; it does not query or synchronously call a Site POS Server.
 
 ## Audit
 

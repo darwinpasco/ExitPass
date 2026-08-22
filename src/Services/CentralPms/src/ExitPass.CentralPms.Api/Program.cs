@@ -828,6 +828,17 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IOptions<ManagementDashboardReportingOptions>>().Value,
             serviceProvider.GetRequiredService<IOptions<ManagementPaymentReconciliationReportingOptions>>().Value,
             serviceProvider.GetRequiredService<TimeProvider>()));
+    builder.Services.AddOptions<ManagementFiscalExceptionReportingOptions>()
+        .Bind(builder.Configuration.GetSection(ManagementFiscalExceptionReportingOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddScoped<IManagementFiscalExceptionReportingRepository>(_ =>
+        new PostgresManagementFiscalExceptionReportingRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementFiscalExceptionReportingService>(serviceProvider =>
+        new ManagementFiscalExceptionReportingService(
+            serviceProvider.GetRequiredService<IManagementFiscalExceptionReportingRepository>(),
+            serviceProvider.GetRequiredService<IOptions<ManagementDashboardReportingOptions>>().Value,
+            serviceProvider.GetRequiredService<IOptions<ManagementFiscalExceptionReportingOptions>>().Value,
+            serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
         new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();

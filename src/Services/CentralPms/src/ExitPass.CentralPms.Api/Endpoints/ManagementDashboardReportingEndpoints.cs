@@ -53,6 +53,19 @@ public static class ManagementDashboardReportingEndpoints
             .WithSummary("Get a scoped payment and reconciliation summary")
             .WithDescription("Returns canonical Central PMS payment aggregates and internally provable consistency conditions for an explicit authorized scope and half-open UTC period. It does not prove settlement, payout, cash custody, or fiscal remittance.");
 
+        group.MapGet("/fiscal-exception-summary", GetFiscalExceptionSummaryAsync)
+            .WithName("GetManagementFiscalExceptionSummary")
+            .WithMetadata(new ReconciliationPolicyMetadata(ManagementFiscalExceptionReportingValues.Policy))
+            .Produces<ManagementFiscalExceptionSummaryResponse>(StatusCodes.Status200OK)
+            .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+            .Produces<ErrorResponse>(StatusCodes.Status401Unauthorized)
+            .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+            .Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+            .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+            .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable)
+            .WithSummary("Get a scoped fiscal exception summary")
+            .WithDescription("Returns aggregate Central PMS Sales Invoice issuance lifecycle and supported exception conditions for an explicit authorized scope and half-open UTC period. It does not query a Site POS Server or certify BIR compliance.");
+
         return app;
     }
 
@@ -260,6 +273,97 @@ public static class ManagementDashboardReportingEndpoints
             result.Retryable);
     }
 
+    private static async Task<IResult> GetFiscalExceptionSummaryAsync(
+        HttpRequest request,
+        IIdentityAdministrationActorAccessor actorAccessor,
+        IManagementFiscalExceptionReportingService service,
+        ILoggerFactory loggerFactory,
+        string? scopeType,
+        Guid? scopeReference,
+        string? periodStart,
+        string? periodEnd,
+        CancellationToken cancellationToken)
+    {
+        using var activity = StartActivity("HTTP GetManagementFiscalExceptionSummary", request);
+        var correlationId = ResolveCorrelationId(request);
+        var actor = ResolveActor(actorAccessor);
+        if (actor is null)
+        {
+            return SafeError(
+                StatusCodes.Status401Unauthorized,
+                "HUMAN_SESSION_REQUIRED",
+                "An authenticated Management Platform human session is required.",
+                correlationId,
+                false);
+        }
+
+        try
+        {
+            var result = await service.GetSummaryAsync(
+                actor,
+                new ManagementFiscalExceptionQuery(scopeType, scopeReference, periodStart, periodEnd, correlationId),
+                cancellationToken);
+            if (result.Outcome == ManagementFiscalExceptionOutcome.Success && result.Value is not null)
+            {
+                activity?.SetTag("dashboard.report_id", ManagementFiscalExceptionReportingValues.ReportId);
+                activity?.SetTag("dashboard.scope_type", result.Value.EffectiveScope.ScopeType);
+                activity?.SetTag("dashboard.availability", result.Value.Availability);
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return Results.Ok(ToContract(result.Value));
+            }
+
+            return ToFiscalExceptionError(result);
+        }
+        catch (ManagementDashboardSourceUnavailableException ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Fiscal exception source unavailable.");
+            activity?.AddException(ex);
+            loggerFactory.CreateLogger("ExitPass.CentralPms.Api.ManagementDashboardReportingEndpoints")
+                .LogError(ex, "Fiscal exception reporting source unavailable. CorrelationId: {CorrelationId}", correlationId);
+            return SafeError(
+                StatusCodes.Status503ServiceUnavailable,
+                ManagementFiscalExceptionReportingValues.SourceUnavailable,
+                "The authoritative fiscal exception reporting source is temporarily unavailable.",
+                correlationId,
+                true);
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, "Unexpected fiscal exception reporting failure.");
+            activity?.AddException(ex);
+            loggerFactory.CreateLogger("ExitPass.CentralPms.Api.ManagementDashboardReportingEndpoints")
+                .LogError(ex, "Unexpected fiscal exception reporting failure. CorrelationId: {CorrelationId}", correlationId);
+            return SafeError(
+                StatusCodes.Status500InternalServerError,
+                ManagementFiscalExceptionReportingValues.UnexpectedFailure,
+                "The fiscal exception report failed unexpectedly.",
+                correlationId,
+                false);
+        }
+    }
+
+    private static IResult ToFiscalExceptionError(
+        ManagementFiscalExceptionResult<ManagementFiscalExceptionReport> result)
+    {
+        var statusCode = result.Outcome switch
+        {
+            ManagementFiscalExceptionOutcome.FeatureDisabled => StatusCodes.Status503ServiceUnavailable,
+            ManagementFiscalExceptionOutcome.InvalidScope => StatusCodes.Status400BadRequest,
+            ManagementFiscalExceptionOutcome.InvalidPeriod => StatusCodes.Status400BadRequest,
+            ManagementFiscalExceptionOutcome.SessionInvalid => StatusCodes.Status401Unauthorized,
+            ManagementFiscalExceptionOutcome.ScopeNotFoundOrDenied => StatusCodes.Status404NotFound,
+            ManagementFiscalExceptionOutcome.SourceUnavailable => StatusCodes.Status503ServiceUnavailable,
+            _ => StatusCodes.Status500InternalServerError
+        };
+
+        return SafeError(
+            statusCode,
+            result.ErrorCode ?? ManagementFiscalExceptionReportingValues.UnexpectedFailure,
+            result.ErrorMessage ?? "The fiscal exception report request failed.",
+            result.CorrelationId,
+            result.Retryable);
+    }
+
     private static IResult ToError<T>(ManagementDashboardReportingResult<T> result)
     {
         var statusCode = result.Outcome switch
@@ -394,6 +498,52 @@ public static class ManagementDashboardReportingEndpoints
                 summary.Limitations)).ToArray(),
             report.Warnings,
             report.Limitations,
+            report.SourceAuthority);
+
+    private static ManagementFiscalExceptionSummaryResponse ToContract(
+        ManagementFiscalExceptionReport report) =>
+        new(
+            report.ContractVersion,
+            report.ReportId,
+            ToContract(report.RequestedScope),
+            ToContract(report.EffectiveScope),
+            report.PeriodStart,
+            report.PeriodEnd,
+            report.TimeBasis,
+            report.GeneratedAt,
+            report.DataAsOf,
+            report.Availability,
+            report.Freshness,
+            report.CorrelationId,
+            report.SourceCoverage.Select(source => new ManagementFiscalSourceCoverageDto(
+                source.SourceId,
+                source.Availability,
+                source.DataAsOf,
+                source.Description,
+                source.Limitations)).ToArray(),
+            report.LifecycleSummaries.Select(summary => new ManagementFiscalLifecycleSummaryDto(
+                summary.LifecycleState,
+                summary.Count)).ToArray(),
+            report.ExceptionSummaries.Select(summary => new ManagementFiscalExceptionSummaryDto(
+                summary.CategoryId,
+                summary.Availability,
+                summary.Count,
+                summary.AffectedExpectedAmounts.Select(amount => new ManagementFiscalAmountSummaryDto(
+                    amount.CurrencyCode,
+                    amount.Amount)).ToArray(),
+                summary.Definition,
+                summary.Terminal,
+                summary.CanResolveLater,
+                summary.Limitations)).ToArray(),
+            report.CurrencySummaries.Select(summary => new ManagementFiscalCurrencySummaryDto(
+                summary.CurrencyCode,
+                summary.IssuanceExpectationCount,
+                summary.ExpectedIssuanceAmount,
+                summary.IssuedCount,
+                summary.FailedCount)).ToArray(),
+            report.Warnings,
+            report.Limitations,
+            report.UnavailableFacts,
             report.SourceAuthority);
 
     private static ManagementDashboardScopeDto ToContract(ManagementDashboardScope scope) =>

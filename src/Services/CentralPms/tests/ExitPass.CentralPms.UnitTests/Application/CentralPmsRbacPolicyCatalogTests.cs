@@ -25,6 +25,7 @@ public sealed class CentralPmsRbacPolicyCatalogTests
     [InlineData("FiscalVoidActionAuditReview", "fiscal-issuance.void.audit.read")]
     [InlineData("ManagementPlatformIdentityRbacInventoryRead", "management-platform.identity-rbac.inventory.read")]
     [InlineData("ManagementPlatformPaymentReconciliationSummaryRead", "reconciliation.view")]
+    [InlineData("ManagementPlatformFiscalExceptionSummaryRead", "sales-invoice-report.view")]
     [InlineData("OperatorConsoleStatutoryDiscountSessionLookup", "statutory-discounts.session.lookup")]
     [InlineData("OperatorConsoleStatutoryDiscountDraftView", "statutory-discounts.draft.view")]
     [InlineData("OperatorConsoleStatutoryDiscountDraftCreate", "statutory-discounts.draft.create")]
