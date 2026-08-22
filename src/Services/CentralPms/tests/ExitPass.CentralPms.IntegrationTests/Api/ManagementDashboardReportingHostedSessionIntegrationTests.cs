@@ -9,6 +9,8 @@ using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Xunit;
@@ -116,8 +118,14 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
                 ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
                 ["ManagementPlatform:DashboardReporting:Enabled"] = "true",
                 ["ManagementPlatform:DashboardReporting:PaymentReconciliation:Enabled"] = "true",
-                ["ManagementPlatform:DashboardReporting:ProjectionStaleAfterMinutes"] = "15"
-            });
+                ["ManagementPlatform:DashboardReporting:ProjectionStaleAfterMinutes"] = "15",
+                ["CentralPms:VendorPms:Provider"] = "SITE_ADAPTER",
+                ["CentralPms:VendorPms:Environment"] = "INTEGRATION_TEST",
+                ["CentralPms:VendorPms:CentralPmsServiceIdentityId"] = "8063c159-dae6-57af-9f1f-e0a07d519fb2",
+                ["CentralPms:VendorPms:AdapterSecretMountRoot"] = Path.GetTempPath(),
+                ["CentralPms:VendorPms:AllowTaskOwnedHttp"] = "true"
+            })
+            .WithServiceOverrides(services => services.RemoveAll<IHostedService>());
 
     private static HttpClient CreateClient(CustomWebApplicationFactory factory) =>
         factory.CreateClient(new WebApplicationFactoryClientOptions
