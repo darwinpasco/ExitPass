@@ -25,6 +25,18 @@
       "requiredQuery": ["scopeType", "scopeReference"],
       "supportedScopeTypes": ["SITE", "SITE_GROUP"],
       "mutation": false
+    },
+    {
+      "operationId": "GetManagementPaymentReconciliationSummary",
+      "method": "GET",
+      "path": "/v1/management-platform/dashboard/payment-reconciliation-summary",
+      "contractVersion": "management-platform-payment-reconciliation-reporting:v1",
+      "permission": "reconciliation.view",
+      "policy": "ManagementPlatformPaymentReconciliationSummaryRead",
+      "requiredQuery": ["scopeType", "scopeReference", "periodStart", "periodEnd"],
+      "supportedScopeTypes": ["SITE", "SITE_GROUP"],
+      "periodSemantics": "[periodStart, periodEnd), explicit UTC, maximum 31 days",
+      "mutation": false
     }
   ],
   "availabilityClassifications": ["AVAILABLE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
@@ -36,12 +48,45 @@
       "fiscal-exception-summary",
       "management-activity-summary"
     ],
-    "operationalReportIds": ["operational-overview"],
+    "operationalReportIds": ["operational-overview", "payment-reconciliation-summary"],
+    "partialReportIds": ["operational-overview", "payment-reconciliation-summary"],
     "unavailableReportIds": [
-      "payment-reconciliation-summary",
       "fiscal-exception-summary",
       "management-activity-summary"
     ]
+  },
+  "paymentReconciliationSummary": {
+    "contractVersion": "management-platform-payment-reconciliation-reporting:v1",
+    "featureControl": {
+      "configurationSection": "ManagementPlatform:DashboardReporting:PaymentReconciliation",
+      "defaultEnabled": false,
+      "failClosed": true
+    },
+    "requiredMetadata": [
+      "requestedScope",
+      "effectiveScope",
+      "periodStart",
+      "periodEnd",
+      "generatedAt",
+      "dataAsOf",
+      "availability",
+      "freshness",
+      "correlationId",
+      "sourceAuthority",
+      "warnings",
+      "limitations"
+    ],
+    "dimensions": ["currency", "attemptStatus", "confirmationStatus", "canonicalStatus", "channel", "provider"],
+    "reconciliationCategories": [
+      "ATTEMPT_CONFIRMATION_AMOUNT_MISMATCH",
+      "ATTEMPT_CONFIRMATION_CURRENCY_MISMATCH",
+      "DUPLICATE_AUTHORITATIVE_PROVIDER_REFERENCE",
+      "CONFIRMED_OUTCOME_WITHOUT_CONFIRMATION",
+      "CONFIRMATION_ATTEMPT_STATUS_INCONSISTENT"
+    ],
+    "moneyRule": "exact decimal aggregation separated by ISO currency; no mixed-currency grand total",
+    "emptyActivityRule": "explicit NO_PAYMENT_ACTIVITY_IN_PERIOD warning with empty summaries and NOT_APPLICABLE freshness",
+    "authorityLimit": "internal Central PMS consistency only; no provider settlement, payout, bank, custody, fees, refunds, disputes, chargebacks, or fiscal-remittance claim"
   },
   "operationalOverview": {
     "sections": [
@@ -106,7 +151,14 @@
     "INVALID_DASHBOARD_SCOPE_REFERENCE",
     "DASHBOARD_SCOPE_NOT_FOUND_OR_DENIED",
     "DASHBOARD_SOURCE_UNAVAILABLE",
-    "MANAGEMENT_DASHBOARD_UNEXPECTED_FAILURE"
+    "MANAGEMENT_DASHBOARD_UNEXPECTED_FAILURE",
+    "MANAGEMENT_PAYMENT_RECONCILIATION_REPORTING_DISABLED",
+    "INVALID_PAYMENT_RECONCILIATION_PERIOD_START",
+    "INVALID_PAYMENT_RECONCILIATION_PERIOD_END",
+    "INVALID_PAYMENT_RECONCILIATION_PERIOD_RANGE",
+    "PAYMENT_RECONCILIATION_PERIOD_TOO_LONG",
+    "PAYMENT_RECONCILIATION_SOURCE_UNAVAILABLE",
+    "MANAGEMENT_PAYMENT_RECONCILIATION_UNEXPECTED_FAILURE"
   ],
   "forbiddenResponseData": [
     "credentials",

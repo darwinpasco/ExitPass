@@ -42,7 +42,9 @@ public sealed class ManagementDashboardReportingApiIntegrationTests
             report.Availability == ManagementDashboardReportingValues.Partial);
         body.Reports.Should().Contain(report =>
             report.ReportId == ManagementDashboardReportingValues.PaymentReconciliationReportId &&
-            report.Availability == ManagementDashboardReportingValues.Unavailable);
+            report.Availability == ManagementDashboardReportingValues.Partial &&
+            report.RequiredPermission == ManagementPaymentReconciliationReportingValues.Permission &&
+            report.ContractVersion == ManagementPaymentReconciliationReportingValues.ContractVersion);
         service.CatalogActor.Should().Be(new ManagementDashboardActor(UserId, SessionId));
     }
 
@@ -147,7 +149,7 @@ public sealed class ManagementDashboardReportingApiIntegrationTests
     }
 
     [Fact]
-    public void DashboardRouteFamily_ContainsOnlyTwoReadOnlyGetEndpoints()
+    public void DashboardRouteFamily_ContainsOnlyReadOnlyGetEndpoints()
     {
         using var factory = CreateFactory(new FakeService());
         var endpoints = factory.Services.GetRequiredService<IEnumerable<EndpointDataSource>>()
@@ -158,7 +160,11 @@ public sealed class ManagementDashboardReportingApiIntegrationTests
                 StringComparison.OrdinalIgnoreCase) == true)
             .ToArray();
 
-        endpoints.Select(endpoint => endpoint.RoutePattern.RawText).Should().BeEquivalentTo([CatalogPath, OverviewPath]);
+        endpoints.Select(endpoint => endpoint.RoutePattern.RawText).Should().BeEquivalentTo([
+            CatalogPath,
+            OverviewPath,
+            "/v1/management-platform/dashboard/payment-reconciliation-summary"
+        ]);
         endpoints.Select(endpoint => endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.Single())
             .Should().OnlyContain(method => method == "GET");
         endpoints.Select(endpoint => endpoint.Metadata.GetMetadata<ReconciliationPolicyMetadata>())
@@ -258,7 +264,11 @@ public sealed class ManagementDashboardReportingApiIntegrationTests
                 Now,
                 [
                     CatalogEntry(ManagementDashboardReportingValues.OperationalOverviewReportId, ManagementDashboardReportingValues.Partial),
-                    CatalogEntry(ManagementDashboardReportingValues.PaymentReconciliationReportId, ManagementDashboardReportingValues.Unavailable)
+                    CatalogEntry(
+                        ManagementDashboardReportingValues.PaymentReconciliationReportId,
+                        ManagementDashboardReportingValues.Partial,
+                        ManagementPaymentReconciliationReportingValues.ContractVersion,
+                        ManagementPaymentReconciliationReportingValues.Permission)
                 ]);
             return Task.FromResult(ManagementDashboardReportingResult<ManagementDashboardCatalog>.Success(catalog, correlationId));
         }
@@ -298,15 +308,19 @@ public sealed class ManagementDashboardReportingApiIntegrationTests
                 ManagementDashboardReportingResult<ManagementDashboardOperationalOverview>.Success(overview, query.CorrelationId));
         }
 
-        private static ManagementDashboardCatalogEntry CatalogEntry(string id, string availability) =>
+        private static ManagementDashboardCatalogEntry CatalogEntry(
+            string id,
+            string availability,
+            string contractVersion = ManagementDashboardReportingValues.ContractVersion,
+            string permission = ManagementDashboardReportingValues.OverviewPermission) =>
             new(
                 id,
-                ManagementDashboardReportingValues.ContractVersion,
+                contractVersion,
                 id,
                 "Operations",
                 "Synthetic contract entry.",
                 ["SITE", "SITE_GROUP"],
-                "dashboard.view",
+                permission,
                 availability,
                 "CENTRAL_PMS",
                 "INTERNAL_OPERATIONAL_AGGREGATE",

@@ -1,0 +1,105 @@
+{
+  "contractId": "management-platform-payment-reconciliation-reporting:v1",
+  "owner": "Central PMS",
+  "consumer": "ExitPass Management Platform",
+  "route": {
+    "operationId": "GetManagementPaymentReconciliationSummary",
+    "method": "GET",
+    "path": "/v1/management-platform/dashboard/payment-reconciliation-summary",
+    "requiredQuery": ["scopeType", "scopeReference", "periodStart", "periodEnd"],
+    "supportedScopeTypes": ["SITE", "SITE_GROUP"],
+    "permission": "reconciliation.view",
+    "policy": "ManagementPlatformPaymentReconciliationSummaryRead",
+    "mutation": false
+  },
+  "featureControl": {
+    "configurationSection": "ManagementPlatform:DashboardReporting:PaymentReconciliation",
+    "defaultEnabled": false,
+    "failClosed": true
+  },
+  "period": {
+    "timestampStandard": "explicit UTC instant",
+    "interval": "[periodStart, periodEnd)",
+    "maximumDays": 31,
+    "implicitDefault": false
+  },
+  "response": {
+    "required": [
+      "contractVersion",
+      "reportId",
+      "requestedScope",
+      "effectiveScope",
+      "periodStart",
+      "periodEnd",
+      "generatedAt",
+      "dataAsOf",
+      "availability",
+      "freshness",
+      "correlationId",
+      "currencySummaries",
+      "paymentAttemptSummaries",
+      "confirmedPaymentSummaries",
+      "canonicalStatusSummaries",
+      "channelSummaries",
+      "providerSummaries",
+      "internalReconciliationSummaries",
+      "warnings",
+      "limitations",
+      "sourceAuthority"
+    ],
+    "availability": ["AVAILABLE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
+    "freshness": ["CURRENT", "STALE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
+    "sourceAuthority": "CENTRAL_PMS_CANONICAL_PAYMENT_RECORDS",
+    "moneyRepresentation": "exact decimal, grouped by ISO currency, no mixed-currency total"
+  },
+  "canonicalSources": [
+    "core.payment_attempts",
+    "core.payment_confirmations",
+    "payments.provider_outcomes",
+    "payments.payment_rails",
+    "core.parking_sessions",
+    "sites.sites",
+    "sites.site_groups"
+  ],
+  "reconciliationCategories": [
+    "ATTEMPT_CONFIRMATION_AMOUNT_MISMATCH",
+    "ATTEMPT_CONFIRMATION_CURRENCY_MISMATCH",
+    "DUPLICATE_AUTHORITATIVE_PROVIDER_REFERENCE",
+    "CONFIRMED_OUTCOME_WITHOUT_CONFIRMATION",
+    "CONFIRMATION_ATTEMPT_STATUS_INCONSISTENT"
+  ],
+  "errorCodes": [
+    "CENTRAL_PMS_RBAC_UNAUTHENTICATED",
+    "CENTRAL_PMS_RBAC_FORBIDDEN",
+    "DASHBOARD_SESSION_INVALID",
+    "MANAGEMENT_PAYMENT_RECONCILIATION_REPORTING_DISABLED",
+    "INVALID_DASHBOARD_SCOPE_TYPE",
+    "INVALID_DASHBOARD_SCOPE_REFERENCE",
+    "DASHBOARD_SCOPE_NOT_FOUND_OR_DENIED",
+    "INVALID_PAYMENT_RECONCILIATION_PERIOD_START",
+    "INVALID_PAYMENT_RECONCILIATION_PERIOD_END",
+    "INVALID_PAYMENT_RECONCILIATION_PERIOD_RANGE",
+    "PAYMENT_RECONCILIATION_PERIOD_TOO_LONG",
+    "PAYMENT_RECONCILIATION_SOURCE_UNAVAILABLE",
+    "MANAGEMENT_PAYMENT_RECONCILIATION_UNEXPECTED_FAILURE"
+  ],
+  "explicitlyUnavailable": [
+    "provider settlement",
+    "merchant payout",
+    "bank deposit",
+    "cash custody",
+    "MDR or fees",
+    "refunds",
+    "chargebacks or disputes",
+    "fiscal remittance"
+  ],
+  "forbiddenResponseData": [
+    "raw provider payloads",
+    "credentials",
+    "tokens",
+    "payer information",
+    "plates",
+    "ticket details",
+    "transaction-level identifiers"
+  ]
+}

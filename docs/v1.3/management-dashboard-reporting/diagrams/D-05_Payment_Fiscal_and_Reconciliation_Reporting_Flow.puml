@@ -2,22 +2,19 @@
 title D-05 Payment, Fiscal, and Reconciliation Reporting Flow
 
 actor "Finance /\nRevenue Assurance User" as Finance
-participant "Central PMS" as CPMS
-participant "Payment Orchestrator /\nPayments Domain" as Pay
-participant "Site POS Server" as POS
-participant "Reconciliation Workflow" as Recon
 participant "Management Dashboard" as Dash
+participant "Central PMS\nReporting Facade" as CPMS
+database "Central PMS canonical\npayment records" as Store
 
-CPMS -> Dash : TariffSnapshot,\nPaymentAttempt,\nPaymentConfirmation,\nfiscal issuance reference
-Pay -> Dash : ProviderOutcome evidence
-POS -> Dash : Authorized fiscal document\nreference/report summary
-Recon -> Dash : Reconciliation run,\nitem status,\nsettlement comparison
-Finance -> Dash : Review revenue,\nfiscal, and reconciliation views
+Finance -> Dash : Request scoped payment summary
+Dash -> CPMS : GET summary with explicit\nSITE/SITE_GROUP and UTC period
+CPMS -> Store : Read canonical attempts,\nconfirmations, outcomes, and rails
+Store --> CPMS : Scope-bounded aggregates
+CPMS --> Dash : Partial internal-consistency report\nwith source and freshness metadata
 
-note over Dash
-Financial dashboards use canonical payment,
-provider, fiscal, and reconciliation records.
-Projection-only session counts must be excluded
-or clearly labeled as operational estimates.
+note over CPMS, Store
+No provider or POS Server call occurs during report generation.
+The report does not prove settlement, payout, bank deposit,
+cash custody, fees, refunds, disputes, or fiscal remittance.
 end note
 @enduml

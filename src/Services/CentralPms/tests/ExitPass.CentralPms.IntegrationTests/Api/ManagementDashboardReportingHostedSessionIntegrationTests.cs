@@ -38,6 +38,8 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         using var catalog = await client.GetAsync("/v1/management-platform/dashboard/catalog");
         using var overview = await client.GetAsync(
             $"/v1/management-platform/dashboard/operational-overview?scopeType=SITE&scopeReference={seed.SiteId:D}");
+        using var paymentSummary = await client.GetAsync(
+            $"/v1/management-platform/dashboard/payment-reconciliation-summary?scopeType=SITE&scopeReference={seed.SiteId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z");
         using var wrongSite = await client.GetAsync(
             $"/v1/management-platform/dashboard/operational-overview?scopeType=SITE&scopeReference={seed.OtherSiteId:D}");
         using var wrongSiteGroup = await client.GetAsync(
@@ -45,13 +47,38 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
 
         catalog.StatusCode.Should().Be(HttpStatusCode.OK);
         overview.StatusCode.Should().Be(HttpStatusCode.OK);
+        paymentSummary.StatusCode.Should().Be(HttpStatusCode.OK);
         wrongSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
         wrongSiteGroup.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var body = await overview.Content.ReadFromJsonAsync<ManagementDashboardOperationalOverviewResponse>();
         body!.EffectiveScope.ScopeReference.Should().Be(seed.SiteId);
         body.Sections.Should().Contain(section => section.SectionId == "site-operational-status");
+        var paymentBody = await paymentSummary.Content.ReadFromJsonAsync<ManagementPaymentReconciliationSummaryResponse>();
+        paymentBody!.EffectiveScope.ScopeReference.Should().Be(seed.SiteId);
+        paymentBody.Warnings.Should().Contain(ManagementPaymentReconciliationReportingValues.NoActivity);
+        paymentBody.CurrencySummaries.Should().BeEmpty();
         (await CountAuditAsync(seed.UserId, "MANAGEMENT_DASHBOARD_CATALOG_READ")).Should().BeGreaterThan(0);
         (await CountAuditAsync(seed.UserId, "MANAGEMENT_DASHBOARD_OVERVIEW_READ")).Should().BeGreaterThan(0);
+        (await CountAuditAsync(seed.UserId, "MANAGEMENT_PAYMENT_RECONCILIATION_REPORT_READ")).Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task ProductionHost_AuthorizesExplicitSiteGroupScopeFromLiveSessionGrant()
+    {
+        var password = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
+        var seed = await SeedDashboardReaderAsync(password);
+        await ChangeGrantToSiteGroupAsync(seed.UserId, seed.SiteGroupId);
+        using var factory = CreateFactory();
+        using var client = CreateClient(factory);
+        await LoginAsync(client, seed.Username, password);
+
+        using var response = await client.GetAsync(
+            $"/v1/management-platform/dashboard/payment-reconciliation-summary?scopeType=SITE_GROUP&scopeReference={seed.SiteGroupId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ManagementPaymentReconciliationSummaryResponse>();
+        body!.RequestedScope.ScopeType.Should().Be("SITE_GROUP");
+        body.EffectiveScope.ScopeReference.Should().Be(seed.SiteGroupId);
     }
 
     [Fact]
@@ -88,6 +115,7 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
                 ["ConnectionStrings:MainDatabase"] = _database.ConnectionString,
                 ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
                 ["ManagementPlatform:DashboardReporting:Enabled"] = "true",
+                ["ManagementPlatform:DashboardReporting:PaymentReconciliation:Enabled"] = "true",
                 ["ManagementPlatform:DashboardReporting:ProjectionStaleAfterMinutes"] = "15"
             });
 
@@ -112,7 +140,8 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         body!.Authenticated.Should().BeTrue();
         body.Session!.Permissions.Should().Contain([
             ManagementDashboardReportingValues.CatalogPermission,
-            ManagementDashboardReportingValues.OverviewPermission]);
+            ManagementDashboardReportingValues.OverviewPermission,
+            ManagementPaymentReconciliationReportingValues.Permission]);
     }
 
     private async Task<DashboardReaderSeed> SeedDashboardReaderAsync(string password)
@@ -172,7 +201,7 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
             SELECT gen_random_uuid(), @role_id, permission_id, 'ACTIVE', 'DASHBOARD_HOSTED', @user_id,
                    now() - interval '1 minute', @user_id, @user_id
             FROM identity.permissions
-            WHERE permission_code IN ('reports.view', 'dashboard.view');
+            WHERE permission_code IN ('reports.view', 'dashboard.view', 'reconciliation.view');
 
             INSERT INTO identity.user_role_scope_grants (
                 user_role_scope_grant_id, user_role_id, scope_type, site_id, grant_status,
@@ -225,6 +254,24 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("user_id", userId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private async Task ChangeGrantToSiteGroupAsync(Guid userId, Guid siteGroupId)
+    {
+        const string sql = """
+            UPDATE identity.user_role_scope_grants grant_record
+            SET scope_type = 'SITE_GROUP', site_id = NULL, site_group_id = @site_group_id,
+                updated_at = now(), updated_by_user_id = @user_id
+            FROM identity.user_roles assignment
+            WHERE assignment.user_role_id = grant_record.user_role_id
+              AND assignment.user_id = @user_id;
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("site_group_id", siteGroupId);
         await command.ExecuteNonQueryAsync();
     }
 
