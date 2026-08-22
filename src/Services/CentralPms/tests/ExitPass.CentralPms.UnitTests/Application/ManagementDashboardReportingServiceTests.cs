@@ -31,7 +31,11 @@ public sealed class ManagementDashboardReportingServiceTests
             ManagementDashboardReportingValues.ManagementActivityReportId);
         result.Value.Reports.Single(report => report.ReportId == ManagementDashboardReportingValues.OperationalOverviewReportId)
             .Availability.Should().Be(ManagementDashboardReportingValues.Partial);
-        result.Value.Reports.Where(report => report.ReportId != ManagementDashboardReportingValues.OperationalOverviewReportId)
+        result.Value.Reports.Single(report => report.ReportId == ManagementDashboardReportingValues.PaymentReconciliationReportId)
+            .Availability.Should().Be(ManagementDashboardReportingValues.Partial);
+        result.Value.Reports.Where(report =>
+                report.ReportId is ManagementDashboardReportingValues.FiscalExceptionReportId or
+                    ManagementDashboardReportingValues.ManagementActivityReportId)
             .Should().OnlyContain(report => report.Availability == ManagementDashboardReportingValues.Unavailable);
         repository.Audits.Should().ContainSingle(audit => audit.EventType == "MANAGEMENT_DASHBOARD_CATALOG_READ" && audit.Result == "SUCCESS");
     }

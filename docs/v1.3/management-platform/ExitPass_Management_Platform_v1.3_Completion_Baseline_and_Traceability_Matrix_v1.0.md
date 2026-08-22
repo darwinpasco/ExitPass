@@ -244,7 +244,7 @@ Management Platform v1.3 may be declared complete only when all of the following
 
 | Policy Administration | `PARTIAL` | Policy coverage and evidence governance are read-only | Governed write lifecycle is absent |
 
-| Management Dashboard and Reporting | `PARTIAL` | Central PMS phase-1 catalog and scoped operational-overview facade | Frontend, runtime enablement, deferred reports, and end-to-end acceptance remain |
+| Management Dashboard and Reporting | `PARTIAL` | Central PMS phase-1 catalog, scoped operational overview, and partial payment/reconciliation summary facade | Payment-report frontend, approved runtime enablement, deferred reports, and end-to-end acceptance remain |
 
 | Audit and Reconciliation | `PARTIAL` | User activity and limited governance views | Cross-domain audit and reconciliation modules are absent |
 
@@ -486,19 +486,19 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | MP-MDR-004 | MDR-FR-013 to 016 | Degraded-watch, degraded-active, Continuity Terminal, manual release, and fiscal exception visibility | No dashboard | `NOT\_IMPLEMENTED` | Continuity/exception read model and UI |
 
-| MP-MDR-005 | MDR-FR-017 to 021 | Payment attempts, confirmations, provider outcomes, payment-rail performance, and uncertainty | No dashboard | `NOT\_IMPLEMENTED` | Canonical payment reporting API and UI |
+| MP-MDR-005 | MDR-FR-017 to 021 | Payment attempts, confirmations, provider outcomes, payment-rail performance, and uncertainty | `GET /v1/management-platform/dashboard/payment-reconciliation-summary`; contract `management-platform-payment-reconciliation-reporting:v1`; `reconciliation.view` / `ManagementPlatformPaymentReconciliationSummaryRead`; canonical attempts, confirmations, outcomes, and rails; focused unit, hosted API, live-session, and PostgreSQL tests | `PARTIAL` | Add Management Platform UI and end-to-end acceptance; provider-live performance, settlement, payout, bank, custody, fees, refunds, disputes, chargebacks, and fiscal facts remain unavailable |
 
 | MP-MDR-006 | MDR-FR-022 to 024 | Sales Invoice issuance, fiscal status, and authorized report-reference visibility | No dashboard | `NOT\_IMPLEMENTED` | Fiscal summary API and UI |
 
-| MP-MDR-007 | MDR-FR-025 to 027 | Reconciliation run/item and settlement comparison status | No dashboard | `NOT\_IMPLEMENTED` | Reconciliation reporting API and UI |
+| MP-MDR-007 | MDR-FR-025 to 027 | Reconciliation run/item and settlement comparison status | Central PMS reports five internally provable consistency categories across canonical attempts, confirmations, and verified outcomes; no settlement comparison or reconciliation mutation is claimed | `PARTIAL` | Add UI and acceptance; separately approve any reconciliation-run, settlement, payout, or bank comparison model |
 
 | MP-MDR-008 | MDR-FR-028 to 031 | Statutory discount, coupon, evidence access, operator, and supervisor reporting | No dashboard | `NOT\_IMPLEMENTED` | Compliance reporting API and UI |
 
-| MP-MDR-009 | MDR-FR-032 to 037 | Export control, filters, freshness, source labels, access/export audit, privacy | Phase-1 GET APIs require explicit scope and return source/freshness/warnings with privacy-safe access, denial, and source-failure audit; export remains absent | `PARTIAL` | Add frontend filtering/acceptance and separately approve controlled export |
+| MP-MDR-009 | MDR-FR-032 to 037 | Export control, filters, freshness, source labels, access/export audit, privacy | Phase-1 GET APIs require explicit scope; payment reporting additionally requires explicit UTC half-open bounds up to 31 days and returns source/freshness/warnings with privacy-safe success, denial, invalid-query, and source-failure audit; export remains absent | `PARTIAL` | Add frontend period/scope controls and acceptance; separately approve controlled export |
 
-| MP-MDR-010 | MDR-FR-038 to 042 | Preserve non-authority for payment finality, ExitAuthorization, gates, Sales Invoice issuance, and mutations | Phase-1 dashboard contract exposes two GET routes only and marks projection data non-authoritative; no mutation or finality action exists | `IMPLEMENTED\_NOT\_ACCEPTED` | Preserve through frontend and end-to-end acceptance |
+| MP-MDR-010 | MDR-FR-038 to 042 | Preserve non-authority for payment finality, ExitAuthorization, gates, Sales Invoice issuance, and mutations | Dashboard contracts expose GET routes only; the payment summary distinguishes attempts from recorded confirmations, calls no provider or POS Server, and explicitly disclaims settlement, payout, bank, custody, fiscal, gate, and mutation authority | `IMPLEMENTED\_NOT\_ACCEPTED` | Preserve through frontend and end-to-end acceptance |
 
-| MP-MDR-011 | MDR-AC-001 to 020 | Satisfy the approved dashboard acceptance criteria | No implementation | `NOT\_IMPLEMENTED` | Acceptance suite and headed walkthrough |
+| MP-MDR-011 | MDR-AC-001 to 020 | Satisfy the approved dashboard acceptance criteria | Backend contract, authorization, source/freshness, audit, safe-failure, and PostgreSQL automation exists for the operational and payment foundations; no payment-report frontend or end-to-end browser acceptance exists | `PARTIAL` | Add the payment-report UI, approved runtime composition, and headed end-to-end acceptance |
 
 
 

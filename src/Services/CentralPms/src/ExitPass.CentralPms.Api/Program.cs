@@ -808,6 +808,17 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IManagementDashboardReportingRepository>(),
             serviceProvider.GetRequiredService<IOptions<ManagementDashboardReportingOptions>>().Value,
             serviceProvider.GetRequiredService<TimeProvider>()));
+    builder.Services.AddOptions<ManagementPaymentReconciliationReportingOptions>()
+        .Bind(builder.Configuration.GetSection(ManagementPaymentReconciliationReportingOptions.SectionName))
+        .ValidateOnStart();
+    builder.Services.AddScoped<IManagementPaymentReconciliationReportingRepository>(_ =>
+        new PostgresManagementPaymentReconciliationReportingRepository(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IManagementPaymentReconciliationReportingService>(serviceProvider =>
+        new ManagementPaymentReconciliationReportingService(
+            serviceProvider.GetRequiredService<IManagementPaymentReconciliationReportingRepository>(),
+            serviceProvider.GetRequiredService<IOptions<ManagementDashboardReportingOptions>>().Value,
+            serviceProvider.GetRequiredService<IOptions<ManagementPaymentReconciliationReportingOptions>>().Value,
+            serviceProvider.GetRequiredService<TimeProvider>()));
     builder.Services.AddScoped<IManagementPlatformIdentityAdministrationRepository>(_ =>
         new PostgresManagementPlatformIdentityAdministrationRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IHumanAuthenticationAdministrationGateway, HumanAuthenticationAdministrationGateway>();

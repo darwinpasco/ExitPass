@@ -92,6 +92,10 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "dashboard.view"
             ],
+            ["ManagementPlatformPaymentReconciliationSummaryRead"] =
+            [
+                "reconciliation.view"
+            ],
             ["ManagementPlatformStatutoryDiscountPolicyCoverageRead"] =
             [
                 "statutory-discount-policy.view"
