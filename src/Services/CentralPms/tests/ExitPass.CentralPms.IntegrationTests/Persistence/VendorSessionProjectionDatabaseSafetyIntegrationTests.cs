@@ -9,6 +9,9 @@ namespace ExitPass.CentralPms.IntegrationTests.Persistence;
 
 public sealed class VendorSessionProjectionDatabaseSafetyIntegrationTests
 {
+    private static readonly Guid CentralPmsServiceIdentityId =
+        Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2");
+
     [Fact]
     public async Task ProjectionTargetSchema_DefaultsDisabledAndSupportsDeferredHealth()
     {
@@ -74,7 +77,9 @@ public sealed class VendorSessionProjectionDatabaseSafetyIntegrationTests
         parsed.Database.Should().StartWith(
             "exitpass_central_pms_it_",
             "the canonical integration harness restricts the test to its task-owned disposable database");
-        var repository = new PostgresVendorSessionProjectionRepository(connectionString);
+        var repository = new PostgresVendorSessionProjectionRepository(
+            connectionString,
+            CentralPmsServiceIdentityId);
 
         var result = await repository.FindLatestAsync(
             new VendorSessionProjectionLookupQuery(
@@ -88,5 +93,84 @@ public sealed class VendorSessionProjectionDatabaseSafetyIntegrationTests
             CancellationToken.None);
 
         result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ProjectionUpsert_UsesConfiguredCentralPmsServiceIdentity()
+    {
+        var connectionString = CentralPmsIntegrationTestConfiguration.RequireDatabaseConnectionString();
+        var parsed = new NpgsqlConnectionStringBuilder(connectionString);
+        parsed.Database.Should().StartWith(
+            "exitpass_central_pms_it_",
+            "the canonical integration harness restricts the test to its task-owned disposable database");
+
+        var repository = new PostgresVendorSessionProjectionRepository(
+            connectionString,
+            CentralPmsServiceIdentityId);
+        var projectionId = Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+        var projection = new VendorSessionProjection(
+            projectionId,
+            VendorSystemId: null,
+            SiteId: null,
+            SiteGroupId: null,
+            ParkingLotIndexCode: null,
+            ParkingLotName: null,
+            PassagewayIndexCode: null,
+            PassagewayName: null,
+            LaneIndexCode: null,
+            LaneName: null,
+            LaneDirection: null,
+            VendorRecordGuid: null,
+            CardNum: $"IDENTITY-REGRESSION-{projectionId:N}",
+            PlateLicense: null,
+            EnterTime: now,
+            ExitTime: null,
+            AllowType: "TEST",
+            AllowResult: "ALLOWED",
+            ImageUrl: null,
+            SourceApi: "integration-test",
+            SourcePayloadHash: new string('a', 64),
+            SourcePayloadReference: null,
+            SourceEventAt: now,
+            StableIdentityType: "CARD_NUM",
+            StableIdentityKey: $"identity-regression:{projectionId:N}",
+            FirstSeenAt: now,
+            LastSeenAt: now,
+            LastRefreshedAt: now,
+            ProjectionStatus: VendorSessionProjectionStatus.Active,
+            CorrelationId: Guid.NewGuid(),
+            CreatedAt: now,
+            UpdatedAt: now);
+
+        try
+        {
+            await repository.UpsertAsync(projection, CancellationToken.None);
+
+            await using var connection = new NpgsqlConnection(connectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                """
+                SELECT created_by_service_identity_id, updated_by_service_identity_id
+                FROM sessions.vendor_session_projections
+                WHERE vendor_session_projection_id = @projection_id;
+                """,
+                connection);
+            command.Parameters.AddWithValue("projection_id", projectionId);
+            await using var reader = await command.ExecuteReaderAsync();
+            (await reader.ReadAsync()).Should().BeTrue();
+            reader.GetGuid(0).Should().Be(CentralPmsServiceIdentityId);
+            reader.GetGuid(1).Should().Be(CentralPmsServiceIdentityId);
+        }
+        finally
+        {
+            await using var connection = new NpgsqlConnection(connectionString);
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                "DELETE FROM sessions.vendor_session_projections WHERE vendor_session_projection_id = @projection_id;",
+                connection);
+            command.Parameters.AddWithValue("projection_id", projectionId);
+            await command.ExecuteNonQueryAsync();
+        }
     }
 }

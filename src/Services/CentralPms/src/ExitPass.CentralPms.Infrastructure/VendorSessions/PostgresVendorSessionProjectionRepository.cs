@@ -10,19 +10,24 @@ namespace ExitPass.CentralPms.Infrastructure.VendorSessions;
 /// </summary>
 public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionProjectionRepository
 {
-    private static readonly Guid CentralPmsServiceIdentityId =
-        Guid.Parse("12000000-0000-0000-0000-000000000001");
-
     private readonly string _connectionString;
+    private readonly Guid _centralPmsServiceIdentityId;
 
     /// <summary>
     /// Creates a PostgreSQL projection repository.
     /// </summary>
-    public PostgresVendorSessionProjectionRepository(string connectionString)
+    public PostgresVendorSessionProjectionRepository(
+        string connectionString,
+        Guid centralPmsServiceIdentityId)
     {
         _connectionString = !string.IsNullOrWhiteSpace(connectionString)
             ? connectionString
             : throw new ArgumentException("Connection string is required.", nameof(connectionString));
+        _centralPmsServiceIdentityId = centralPmsServiceIdentityId != Guid.Empty
+            ? centralPmsServiceIdentityId
+            : throw new ArgumentException(
+                "Central PMS service identity is required.",
+                nameof(centralPmsServiceIdentityId));
     }
 
     /// <inheritdoc />
@@ -64,7 +69,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         return results;
     }
 
-    private static async Task<VendorSessionProjection> UpsertAsync(
+    private async Task<VendorSessionProjection> UpsertAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction? transaction,
         VendorSessionProjection projection,
@@ -328,7 +333,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         return result;
     }
 
-    private static void AddProjectionParameters(NpgsqlCommand command, VendorSessionProjection projection)
+    private void AddProjectionParameters(NpgsqlCommand command, VendorSessionProjection projection)
     {
         command.Parameters.Add("vendor_session_projection_id", NpgsqlDbType.Uuid).Value = projection.VendorSessionProjectionId;
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = DbValue(projection.VendorSystemId);
@@ -363,7 +368,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         command.Parameters.Add("correlation_id", NpgsqlDbType.Uuid).Value = DbValue(projection.CorrelationId);
         command.Parameters.Add("created_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.CreatedAt);
         command.Parameters.Add("updated_at", NpgsqlDbType.TimestampTz).Value = ToUtc(projection.UpdatedAt);
-        command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = CentralPmsServiceIdentityId;
+        command.Parameters.Add("service_identity_id", NpgsqlDbType.Uuid).Value = _centralPmsServiceIdentityId;
     }
 
     private static VendorSessionProjection MapProjection(NpgsqlDataReader reader)
