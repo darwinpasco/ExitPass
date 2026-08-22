@@ -399,6 +399,10 @@ static void ConfigureApplicationServices(
     WebApplicationBuilder builder,
     string mainDatabaseConnectionString)
 {
+    var projectionServiceIdentityId = builder.Configuration.GetValue<Guid?>(
+            $"{CentralPmsVendorPmsAdapterOptions.SectionName}:CentralPmsServiceIdentityId")
+        ?? new HumanAuthenticationOptions().CentralPmsServiceIdentityId;
+
     builder.Services.AddScoped<ICreateOrReusePaymentAttemptUseCase, CreateOrReusePaymentAttemptHandler>();
     builder.Services.AddScoped<IResolveVendorParkingUseCase, ResolveVendorParkingHandler>();
     builder.Services.AddCentralPmsVendorPmsAdapter(
@@ -414,7 +418,9 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IVendorParkingResolutionPersistence>(_ =>
         new VendorParkingResolutionPersistence(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionRepository>(_ =>
-        new PostgresVendorSessionProjectionRepository(mainDatabaseConnectionString));
+        new PostgresVendorSessionProjectionRepository(
+            mainDatabaseConnectionString,
+            projectionServiceIdentityId));
     builder.Services.AddScoped<IVendorSessionProjectionSyncTargetRepository>(_ =>
         new PostgresVendorSessionProjectionSyncTargetRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IVendorSessionProjectionExecutionLock>(_ =>
