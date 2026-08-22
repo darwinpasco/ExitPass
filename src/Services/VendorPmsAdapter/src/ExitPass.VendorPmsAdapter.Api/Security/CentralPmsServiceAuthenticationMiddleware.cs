@@ -23,7 +23,32 @@ public sealed class CentralPmsServiceAuthenticationMiddleware(RequestDelegate ne
                 message = "Service authentication failed safely.", correlationId = CorrelationId(context) });
             return;
         }
+
+        var requiredOperation = RequiredOperation(context.Request.Path);
+        if (requiredOperation is null || !options.AllowsOperation(requiredOperation))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/problem+json";
+            await context.Response.WriteAsJsonAsync(new
+            {
+                code = "SITE_ADAPTER_PERMISSION_REQUIRED",
+                message = "Service permission is insufficient for this operation.",
+                correlationId = CorrelationId(context)
+            });
+            return;
+        }
         await next(context);
+    }
+
+    private static string? RequiredOperation(PathString path)
+    {
+        if (path.Equals("/v1/vendor/identity")) return SiteAdapterOperations.IdentityRead;
+        if (path.Equals("/v1/vendor/sessions/resolve")) return SiteAdapterOperations.SessionResolution;
+        if (path.Equals("/v1/vendor/tariffs/calculate")) return SiteAdapterOperations.TariffCalculation;
+        if (path.Equals("/v1/vendor/parking-fees/confirm")) return SiteAdapterOperations.PaymentConfirmation;
+        if (path.Equals("/v1/vendor/passageway-records/synchronize"))
+            return SiteAdapterOperations.PassagewaySynchronization;
+        return null;
     }
 
     private static bool FixedTimeEquals(string supplied, string expected) =>

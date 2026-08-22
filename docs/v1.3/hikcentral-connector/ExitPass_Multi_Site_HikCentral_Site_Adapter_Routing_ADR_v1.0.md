@@ -20,6 +20,8 @@ One adapter process binds to exactly one `site_id`, `site_group_id`, `vendor_sys
 
 The adapter authenticates Central PMS independently from HikCentral AK/SK authentication. Secrets are read only from the configured mounted-secret root. Central PMS stores a controlled `file:` reference for its adapter credential, never an AppSecret value.
 
+Each adapter deployment also declares an immutable `AllowedOperations` set. Authentication is evaluated first, then the adapter derives the required operation from the matched provider-neutral route and authorizes it against that server-side set. Missing or unknown operation configuration fails readiness. Caller-supplied identity, Site, adapter, or permission headers cannot grant an operation. Insufficient server-granted permission returns controlled `403 SITE_ADAPTER_PERMISSION_REQUIRED`; payment confirmation requires both its operation grant and the separate confirmation activation control.
+
 ## Registry And Routing
 
 Central PMS resolves `site_id + site_group_id + optional vendor_system_id` through:

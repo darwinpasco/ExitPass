@@ -26,6 +26,7 @@ public sealed class SiteAdapterRuntimeOptions
     public long MaxRequestBodyBytes { get; set; } = 262_144;
     public bool ConfirmPaymentEnabled { get; set; }
     public bool AllowTaskOwnedHttp { get; set; }
+    public string[] AllowedOperations { get; set; } = [];
 
     public IReadOnlyList<string> Validate(string hostEnvironment)
     {
@@ -53,11 +54,19 @@ public sealed class SiteAdapterRuntimeOptions
         if (string.IsNullOrWhiteSpace(HikCentralUserId) || TimeoutSeconds is < 1 or > 120 || MaxRetries != 0 ||
             MaxRequestBodyBytes is < 1024 or > 1_048_576)
             errors.Add("SITE_ADAPTER_RUNTIME_POLICY_INVALID");
+        if (AllowedOperations is null || AllowedOperations.Length == 0 || AllowedOperations.Any(operation =>
+                !SiteAdapterOperations.All.Contains(operation, StringComparer.Ordinal)))
+            errors.Add("SITE_ADAPTER_PERMISSION_CONFIGURATION_INVALID");
+        if (ConfirmPaymentEnabled && !AllowsOperation(SiteAdapterOperations.PaymentConfirmation))
+            errors.Add("SITE_ADAPTER_PERMISSION_CONFIGURATION_INVALID");
         try { _ = TimeZoneInfo.FindSystemTimeZoneById(RequestTimeZoneId); }
         catch (TimeZoneNotFoundException) { errors.Add("SITE_ADAPTER_TIME_ZONE_INVALID"); }
         catch (InvalidTimeZoneException) { errors.Add("SITE_ADAPTER_TIME_ZONE_INVALID"); }
         return errors.Distinct(StringComparer.Ordinal).ToArray();
     }
+
+    public bool AllowsOperation(string operation) =>
+        AllowedOperations?.Contains(operation, StringComparer.Ordinal) == true;
 
     public static string ReadSecret(string path, string secretMountRoot)
     {
@@ -77,4 +86,17 @@ public sealed class SiteAdapterRuntimeOptions
         var candidate = Path.GetFullPath(path);
         return candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
+}
+
+public static class SiteAdapterOperations
+{
+    public const string IdentityRead = "IDENTITY_READ";
+    public const string SessionResolution = "SESSION_RESOLUTION";
+    public const string TariffCalculation = "TARIFF_CALCULATION";
+    public const string PaymentConfirmation = "PAYMENT_CONFIRMATION";
+    public const string PassagewaySynchronization = "PASSAGEWAY_SYNCHRONIZATION";
+    public static readonly string[] All =
+    [
+        IdentityRead, SessionResolution, TariffCalculation, PaymentConfirmation, PassagewaySynchronization
+    ];
 }
