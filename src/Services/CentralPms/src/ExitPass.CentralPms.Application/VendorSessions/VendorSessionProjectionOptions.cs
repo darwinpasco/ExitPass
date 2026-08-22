@@ -207,13 +207,6 @@ public sealed class VendorSessionProjectionOptions
     public int ExpectedEndpointPort { get; set; }
 
     /// <summary>
-    /// Vendor System owned by this managed scheduler process.
-    /// Scheduler-enabled replicas or workers of the one logical Central PMS may
-    /// safely own separate HikCentral instances without becoming separate systems.
-    /// </summary>
-    public Guid? ManagedVendorSystemId { get; set; }
-
-    /// <summary>
     /// Environment name that is explicitly authorized to run this scheduler configuration.
     /// </summary>
     public string? ActivationEnvironment { get; set; }

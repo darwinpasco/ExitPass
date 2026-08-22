@@ -23,6 +23,9 @@ public sealed class PersistVendorParkingResolutionRequest
     /// </summary>
     public Guid? RequestedVendorSystemId { get; init; }
 
+    /// <summary>Immutable Site Adapter identity that supplied the session and tariff evidence.</summary>
+    public Guid? SourceAdapterIdentityId { get; init; }
+
     /// <summary>
     /// Correlation identifier for the vendor-to-payment flow.
     /// </summary>

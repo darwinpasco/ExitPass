@@ -43,23 +43,18 @@ Central PMS validates these values at scheduler startup and before manual projec
 Configure these through environment variables, user secrets, or the approved deployment secret store. Do not commit real values.
 
 ```text
-CentralPms__VendorPms__Provider=HikCentral
-CentralPms__VendorPms__HikCentral__BaseUrl=https://<hikcentral-host-or-host:port>
-CentralPms__VendorPms__HikCentral__AppKey=<secret>
-CentralPms__VendorPms__HikCentral__AppSecret=<secret>
-CentralPms__VendorPms__HikCentral__UserId=exitpass-adapter
-CentralPms__VendorPms__HikCentral__RequestTimeZoneId=<IANA-zone-for-the-HikCentral-instance>
+CentralPms__VendorPms__Provider=SITE_ADAPTER
+CentralPms__VendorPms__Environment=<exact-deployment-environment>
+CentralPms__VendorPms__CentralPmsServiceIdentityId=<central-pms-service-identity-uuid>
+CentralPms__VendorPms__AdapterSecretMountRoot=<mounted-central-to-adapter-secret-root>
+CentralPms__VendorPms__AllowTaskOwnedHttp=false
 
 CentralPms__VendorSessionProjections__SchedulerEnabled=false
 CentralPms__VendorSessionProjections__RequiredForEnvironment=false
 CentralPms__VendorSessionProjections__ActivationMode=MANAGED_DEPLOYMENT
 CentralPms__VendorSessionProjections__ActivationEnvironment=<exact-host-environment-name>
 CentralPms__VendorSessionProjections__ManagedDeploymentApproved=false
-CentralPms__VendorSessionProjections__ManagedVendorSystemId=<vendor-system-uuid-owned-by-this-process>
 CentralPms__VendorSessionProjections__ExpectedDatabaseName=<exact-database-name>
-CentralPms__VendorSessionProjections__ExpectedEndpointScheme=<http-or-https>
-CentralPms__VendorSessionProjections__ExpectedEndpointHost=<exact-host>
-CentralPms__VendorSessionProjections__ExpectedEndpointPort=<exact-port>
 CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase=false
 CentralPms__VendorSessionProjections__AllowProductionEndpoint=false
 CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled=false
@@ -81,16 +76,16 @@ Production may use different numeric values within the accepted bounds. Degraded
 
 The architecture is one scheduler service, many site-scoped jobs.
 
-ExitPass retains one logical Central PMS. Only one scheduler-enabled Central PMS replica or worker should own a given Vendor System/HikCentral credential set. A replica may poll multiple persisted site targets for that Vendor System; additional HikCentral instances use separate Vendor Systems and separately configured replicas or workers of the same logical Central PMS. They are not separate Central PMS deployments. In a scaled runtime:
+ExitPass retains one logical Central PMS. A scheduler-enabled replica or worker processes all due persisted Site targets and resolves each target to its own Site Integration Adapter. It does not own HikCentral credentials. If capacity requires partitioned workers later, they remain replicas or workers of the same Central PMS and require a separately approved deterministic partition design. In the current runtime:
 
 - Set `CentralPms__VendorSessionProjections__SchedulerEnabled=true` on exactly one designated scheduler-capable Central PMS instance.
 - Set `CentralPms__VendorSessionProjections__SchedulerEnabled=false` on all other Central PMS API instances.
-- Set `ManagedVendorSystemId` on every scheduler-enabled replica or worker. Scheduled and manual sync both reject targets owned by another managed Vendor System.
-- Verify enabled sync targets are site scoped and parking-lot scoped before enabling the scheduler instance.
+- Verify every enabled target is Site, Site Group, Vendor System, and parking-lot scoped before enabling the scheduler instance.
+- Verify each target resolves to exactly one active Site Adapter endpoint and active Central PMS credential reference.
 
 Each target run now acquires a deterministic target-scoped PostgreSQL advisory lock. Contention defers that cycle and is reported separately from adapter failure. Continue designating one scheduler instance to reduce avoidable contention; the lock is the cross-instance safety boundary, not a reason to enable every API replica.
 
-Managed startup is non-interactive but not implicit. It requires exact process-scoped provider, endpoint, user, timezone, database, deployment approval, environment, and Vendor System ownership values. Startup refuses an endpoint whose scheme, host, or port differs from the approved identity. New target rows still default disabled, and scheduler enablement never enables them.
+Managed startup is non-interactive but not implicit. It requires exact process-scoped provider, adapter environment, Central PMS service identity, mounted adapter-secret root, database, deployment approval, and environment values. HikCentral endpoint and credential configuration exists only in each Site Adapter. New target rows still default disabled, and scheduler enablement never enables them.
 
 ## Sync Target Operations
 
@@ -374,7 +369,7 @@ Symptoms:
 
 Checks:
 
-- Validate `CentralPms__VendorPms__HikCentral__BaseUrl`.
+- Validate the selected Site Adapter endpoint from the authoritative integration registry and verify that its immutable Site, Site Group, Vendor System, environment, and adapter identity match the projection target.
 - Confirm whether the environment expects `http` or `https`.
 - Confirm port and network firewall rules.
 

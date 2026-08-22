@@ -103,7 +103,11 @@ public sealed record VendorSessionProjection(
     VendorSessionProjectionStatus ProjectionStatus,
     Guid? CorrelationId,
     DateTimeOffset CreatedAt,
-    DateTimeOffset UpdatedAt);
+    DateTimeOffset UpdatedAt)
+{
+    /// <summary>Service identity of the Site Adapter that supplied this projection.</summary>
+    public Guid? SourceAdapterIdentityId { get; init; }
+}
 
 /// <summary>
 /// Site-scoped target that tells the centralized scheduler which HikCentral parking lot to project.

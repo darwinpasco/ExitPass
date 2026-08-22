@@ -1,0 +1,191 @@
+name: ${COMPOSE_PROJECT_NAME}
+
+x-labels: &task-labels
+  com.exitpass.task-owned: "true"
+  com.exitpass.task: multi-site-hikcentral-routing
+  com.exitpass.invocation: ${INVOCATION_ID}
+  org.opencontainers.image.revision: ${SOURCE_REVISION}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+    volumes:
+      - database-data:/var/lib/postgresql/data
+      - ${SOURCE_ROOT}/ExitPass_Full_Database_Creation_DDL_v1.2.sql:/docker-entrypoint-initdb.d/01-baseline.sql:ro
+      - ${SOURCE_ROOT}/infra/db/seed/ExitPass_Reference_Data_v1.2.sql:/docker-entrypoint-initdb.d/02-reference.sql:ro
+      - ${SOURCE_ROOT}/infra/db/patches/ExitPass_HikCentralProjectionSafety_v1.3.sql:/docker-entrypoint-initdb.d/03-projection-safety.sql:ro
+      - ${SOURCE_ROOT}/infra/db/patches/ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql:/docker-entrypoint-initdb.d/04-multi-site-routing.sql:ro
+      - ${SOURCE_ROOT}/infra/db/patches/validation/Validate_MultiSiteVendorAdapterRouting_v1.3.sql:/docker-entrypoint-initdb.d/05-multi-site-routing-validator.sql:ro
+      - ${PROOF_ROOT}/sql/06-two-site-fixture.sql:/docker-entrypoint-initdb.d/06-two-site-fixture.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER} -d ${DATABASE_NAME}"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    labels: *task-labels
+    networks: [proof]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBIT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBIT_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    labels: *task-labels
+    networks: [proof]
+
+  hikcentral-a:
+    image: wiremock/wiremock:3.9.2
+    command: ["--global-response-templating"]
+    volumes:
+      - ${PROOF_ROOT}/mock-a:/home/wiremock:ro
+    ports:
+      - "${MOCK_A_PORT}:8080"
+    labels: *task-labels
+    networks: [proof]
+
+  hikcentral-b:
+    image: wiremock/wiremock:3.9.2
+    command: ["--global-response-templating"]
+    volumes:
+      - ${PROOF_ROOT}/mock-b:/home/wiremock:ro
+    ports:
+      - "${MOCK_B_PORT}:8080"
+    labels: *task-labels
+    networks: [proof]
+
+  adapter-a:
+    image: ${IMAGE_PREFIX}-adapter:${SOURCE_REVISION}
+    build:
+      context: ${SOURCE_ROOT}
+      dockerfile: src/Services/VendorPmsAdapter/src/ExitPass.VendorPmsAdapter.Api/Dockerfile
+      labels: *task-labels
+    environment:
+      ASPNETCORE_ENVIRONMENT: IntegrationTest
+      ASPNETCORE_URLS: http://+:8080
+      SiteAdapter__Activated: "true"
+      SiteAdapter__SiteId: ${SITE_A_ID}
+      SiteAdapter__SiteGroupId: ${SITE_GROUP_ID}
+      SiteAdapter__VendorSystemId: ${VENDOR_A_ID}
+      SiteAdapter__AdapterIdentityId: ${ADAPTER_A_ID}
+      SiteAdapter__AllowedCentralPmsServiceIdentityId: ${CENTRAL_ID}
+      SiteAdapter__AdapterEndpointIdentity: ${COMPOSE_PROJECT_NAME}-adapter-a
+      SiteAdapter__Environment: IST
+      SiteAdapter__ParkingLotIndexCode: A-LOT
+      SiteAdapter__HikCentralBaseUrl: http://hikcentral-a:8080
+      SiteAdapter__SecretMountRoot: /run/secrets/site-adapter
+      SiteAdapter__HikCentralAppKeyFile: /run/secrets/site-adapter/app-key
+      SiteAdapter__HikCentralAppSecretFile: /run/secrets/site-adapter/app-secret
+      SiteAdapter__CentralPmsApiKeyFile: /run/secrets/site-adapter/central-key
+      SiteAdapter__HikCentralUserId: ist-adapter-a
+      SiteAdapter__MaxRetries: "0"
+      SiteAdapter__ConfirmPaymentEnabled: "false"
+      SiteAdapter__AllowTaskOwnedHttp: "true"
+    volumes:
+      - ${PROOF_ROOT}/secrets/adapter-a:/run/secrets/site-adapter:ro
+    ports:
+      - "${ADAPTER_A_PORT}:8080"
+    depends_on:
+      hikcentral-a: {condition: service_started}
+    labels: *task-labels
+    networks: [proof]
+
+  adapter-b:
+    image: ${IMAGE_PREFIX}-adapter:${SOURCE_REVISION}
+    environment:
+      ASPNETCORE_ENVIRONMENT: IntegrationTest
+      ASPNETCORE_URLS: http://+:8080
+      SiteAdapter__Activated: "true"
+      SiteAdapter__SiteId: ${SITE_B_ID}
+      SiteAdapter__SiteGroupId: ${SITE_GROUP_ID}
+      SiteAdapter__VendorSystemId: ${VENDOR_B_ID}
+      SiteAdapter__AdapterIdentityId: ${ADAPTER_B_ID}
+      SiteAdapter__AllowedCentralPmsServiceIdentityId: ${CENTRAL_ID}
+      SiteAdapter__AdapterEndpointIdentity: ${COMPOSE_PROJECT_NAME}-adapter-b
+      SiteAdapter__Environment: IST
+      SiteAdapter__ParkingLotIndexCode: B-LOT
+      SiteAdapter__HikCentralBaseUrl: http://hikcentral-b:8080
+      SiteAdapter__SecretMountRoot: /run/secrets/site-adapter
+      SiteAdapter__HikCentralAppKeyFile: /run/secrets/site-adapter/app-key
+      SiteAdapter__HikCentralAppSecretFile: /run/secrets/site-adapter/app-secret
+      SiteAdapter__CentralPmsApiKeyFile: /run/secrets/site-adapter/central-key
+      SiteAdapter__HikCentralUserId: ist-adapter-b
+      SiteAdapter__MaxRetries: "0"
+      SiteAdapter__ConfirmPaymentEnabled: "false"
+      SiteAdapter__AllowTaskOwnedHttp: "true"
+    volumes:
+      - ${PROOF_ROOT}/secrets/adapter-b:/run/secrets/site-adapter:ro
+    ports:
+      - "${ADAPTER_B_PORT}:8080"
+    depends_on:
+      hikcentral-b: {condition: service_started}
+      adapter-a: {condition: service_started}
+    labels: *task-labels
+    networks: [proof]
+
+  central-pms:
+    image: ${IMAGE_PREFIX}-central:${SOURCE_REVISION}
+    build:
+      context: ${SOURCE_ROOT}
+      dockerfile: src/Services/CentralPms/src/ExitPass.CentralPms.Api/Dockerfile
+      labels: *task-labels
+    environment:
+      ASPNETCORE_ENVIRONMENT: IntegrationTest
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__MainDatabase: Host=postgres;Port=5432;Database=${DATABASE_NAME};Username=${DATABASE_USER};Password=${DATABASE_PASSWORD}
+      HumanAuthentication__TotpProtectionKeyBase64: ${TOTP_KEY}
+      HumanAuthentication__TotpProtectionKeyReference: ${INVOCATION_ID}
+      HumanAuthentication__TotpProtectionKeyVersion: "1"
+      CentralPms__VendorPms__Provider: SITE_ADAPTER
+      CentralPms__VendorPms__Environment: IST
+      CentralPms__VendorPms__CentralPmsServiceIdentityId: ${CENTRAL_ID}
+      CentralPms__VendorPms__AdapterSecretMountRoot: /run/secrets/site-adapters
+      CentralPms__VendorPms__AllowTaskOwnedHttp: "true"
+      CentralPms__VendorSessionProjections__SchedulerEnabled: "true"
+      CentralPms__VendorSessionProjections__RequiredForEnvironment: "true"
+      CentralPms__VendorSessionProjections__ActivationMode: MANAGED_DEPLOYMENT
+      CentralPms__VendorSessionProjections__ActivationEnvironment: IntegrationTest
+      CentralPms__VendorSessionProjections__ManagedDeploymentApproved: "true"
+      CentralPms__VendorSessionProjections__AllowNonLoopbackDatabase: "true"
+      CentralPms__VendorSessionProjections__AllowProductionEndpoint: "false"
+      CentralPms__VendorSessionProjections__ExpectedDatabaseName: ${DATABASE_NAME}
+      CentralPms__VendorSessionProjections__DefaultPollIntervalSeconds: "60"
+      CentralPms__VendorSessionProjections__NormalFreshnessTargetSeconds: "60"
+      CentralPms__VendorSessionProjections__MaxProjectionAgeMinutes: "1"
+      CentralPms__VendorSessionProjections__StartupDelaySeconds: "1"
+      CentralPms__VendorSessionProjections__SchedulerScanIntervalSeconds: "15"
+      CentralPms__VendorSessionProjections__DegradedResolveFallbackEnabled: "false"
+      Messaging__RabbitMq__Host: rabbitmq
+      Messaging__RabbitMq__Port: "5672"
+      Messaging__RabbitMq__Username: ${RABBIT_USER}
+      Messaging__RabbitMq__Password: ${RABBIT_PASSWORD}
+      Messaging__RabbitMq__ReconciliationOutbox__Enabled: "false"
+      VENDOR_PMS_CONFIRM_PAYMENT_ENABLED: "false"
+    volumes:
+      - ${PROOF_ROOT}/secrets/central:/run/secrets/site-adapters:ro
+    ports:
+      - "${CENTRAL_PORT}:8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      adapter-a: {condition: service_started}
+      adapter-b: {condition: service_started}
+    restart: "on-failure:3"
+    labels: *task-labels
+    networks: [proof]
+
+networks:
+  proof:
+    labels: *task-labels
+
+volumes:
+  database-data:
+    labels: *task-labels

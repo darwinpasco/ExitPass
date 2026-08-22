@@ -1,6 +1,7 @@
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
 using Microsoft.Extensions.Logging;
 
 namespace ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
@@ -126,7 +127,10 @@ public sealed class VendorPaymentAcknowledgmentWorkflow : IVendorPaymentAcknowle
                     ImmediatelyLeave: 0,
                     AmountMinor: acknowledgment.RequestFeeMinorUnits,
                     Currency: acknowledgment.RequestCurrencyCode ?? basis.RequestCurrencyCode,
-                    command.CorrelationId),
+                    command.CorrelationId,
+                    new VendorAdapterRequestContext(basis.SiteId, basis.SiteGroupId, basis.VendorSystemId,
+                        basis.SourceAdapterIdentityId),
+                    acknowledgment.IdempotencyKey),
                 cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -7,6 +7,7 @@ using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.Sessions;
 using ExitPass.CentralPms.Domain.Tariffs;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
@@ -91,11 +92,22 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
                 vendorSystemId: null);
         }
 
+        if (!Guid.TryParse(command.SiteId, out var routedSiteId) ||
+            !Guid.TryParse(command.SiteGroupId, out var routedSiteGroupId) ||
+            !Guid.TryParse(command.VendorSystemId, out var routedVendorSystemId))
+        {
+            return CompleteFailure(activity, ResolveVendorParkingOutcome.InvalidRequest,
+                "INVALID_VENDOR_ROUTING_SCOPE", false, command.CorrelationId, command.VendorSystemId);
+        }
+        var routeContext = new VendorAdapterRequestContext(
+            routedSiteId, routedSiteGroupId, routedVendorSystemId, Guid.Empty);
+
         var sessionResponse = await _vendorClient.ResolveSessionAsync(
             new VendorParkingSessionLookupRequest(
                 Normalize(command.PlateNumber),
                 Normalize(command.TicketReference),
-                command.CorrelationId),
+                command.CorrelationId,
+                routeContext),
             cancellationToken);
 
         if (sessionResponse.Status != VendorParkingLookupStatus.Found)
@@ -140,7 +152,8 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
                 new VendorTariffQuoteRequest(
                     Normalize(command.PlateNumber),
                     Normalize(command.TicketReference),
-                    command.CorrelationId),
+                    command.CorrelationId,
+                    routeContext),
                 cancellationToken);
 
             if (tariffResponse.Status != VendorParkingLookupStatus.Found)
@@ -169,6 +182,15 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
         }
 
         var validQuote = quote!;
+        if (sessionResponse.AdapterContext is null ||
+            sessionResponse.AdapterContext.SiteId != routedSiteId ||
+            sessionResponse.AdapterContext.SiteGroupId != routedSiteGroupId ||
+            sessionResponse.AdapterContext.VendorSystemId != routedVendorSystemId ||
+            sessionResponse.AdapterContext.AdapterIdentityId == Guid.Empty)
+        {
+            return CompleteFailure(activity, ResolveVendorParkingOutcome.MalformedVendorResponse,
+                "SITE_ADAPTER_RESPONSE_BINDING_MISMATCH", false, command.CorrelationId, command.VendorSystemId);
+        }
         var parkingSessionId = Guid.NewGuid();
         var tariffSnapshotId = Guid.NewGuid();
         var centralSession = ParkingSession.Rehydrate(
@@ -211,6 +233,7 @@ public sealed class ResolveVendorParkingHandler : IResolveVendorParkingUseCase
                     ParkingSession = centralSession,
                     TariffSnapshot = tariffSnapshot,
                     RequestedVendorSystemId = ParseOptionalGuid(command.VendorSystemId),
+                    SourceAdapterIdentityId = sessionResponse.AdapterContext.AdapterIdentityId,
                     CorrelationId = sessionResponse.CorrelationId
                 },
                 cancellationToken);

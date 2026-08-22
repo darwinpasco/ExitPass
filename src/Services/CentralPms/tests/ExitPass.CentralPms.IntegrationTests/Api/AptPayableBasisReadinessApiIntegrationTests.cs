@@ -333,7 +333,7 @@ public sealed class AptPayableBasisReadinessApiIntegrationTests
             SiteId: CorrelatedGuid("22000000", correlationId),
             SitePosServerId: SitePosServerId.ToString("D"),
             TerminalId: "APT-TERMINAL-001",
-            VendorSystemId: "FAKE-PMS",
+            VendorSystemId: CorrelatedGuid("23000000", correlationId),
             ReferenceType: referenceType,
             TicketReference: ticketReference,
             PlateNumber: plateNumber,

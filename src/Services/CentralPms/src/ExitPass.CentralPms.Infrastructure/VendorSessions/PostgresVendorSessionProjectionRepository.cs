@@ -77,6 +77,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 vendor_system_id,
                 site_id,
                 site_group_id,
+                source_adapter_identity_id,
                 parking_lot_index_code,
                 parking_lot_name,
                 passageway_index_code,
@@ -114,6 +115,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 @vendor_system_id,
                 @site_id,
                 @site_group_id,
+                @source_adapter_identity_id,
                 @parking_lot_index_code,
                 @parking_lot_name,
                 @passageway_index_code,
@@ -151,6 +153,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 vendor_system_id = COALESCE(EXCLUDED.vendor_system_id, sessions.vendor_session_projections.vendor_system_id),
                 site_id = COALESCE(EXCLUDED.site_id, sessions.vendor_session_projections.site_id),
                 site_group_id = COALESCE(EXCLUDED.site_group_id, sessions.vendor_session_projections.site_group_id),
+                source_adapter_identity_id = COALESCE(EXCLUDED.source_adapter_identity_id, sessions.vendor_session_projections.source_adapter_identity_id),
                 parking_lot_index_code = EXCLUDED.parking_lot_index_code,
                 parking_lot_name = EXCLUDED.parking_lot_name,
                 passageway_index_code = EXCLUDED.passageway_index_code,
@@ -183,6 +186,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 vendor_system_id,
                 site_id,
                 site_group_id,
+                source_adapter_identity_id,
                 parking_lot_index_code,
                 parking_lot_name,
                 passageway_index_code,
@@ -238,6 +242,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 projection.vendor_system_id,
                 projection.site_id,
                 projection.site_group_id,
+                projection.source_adapter_identity_id,
                 projection.parking_lot_index_code,
                 projection.parking_lot_name,
                 projection.passageway_index_code,
@@ -268,7 +273,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 projection.updated_at,
                 CASE WHEN target.enabled_flag THEN target.last_success_at ELSE NULL END AS target_last_success_at
             FROM sessions.vendor_session_projections projection
-            LEFT JOIN sessions.vendor_session_projection_sync_targets target
+            JOIN sessions.vendor_session_projection_sync_targets target
               ON target.site_id = projection.site_id
              AND target.site_group_id = projection.site_group_id
              AND target.vendor_system_id = projection.vendor_system_id
@@ -280,7 +285,9 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                     (@card_num IS NOT NULL AND projection.card_num = @card_num)
                  OR (@card_num IS NULL AND @plate_license IS NOT NULL AND projection.plate_license = @plate_license)
               )
-              AND projection.projection_status <> 'INVALIDATED'
+              AND projection.projection_status = 'ACTIVE'
+              AND projection.source_adapter_identity_id IS NOT NULL
+              AND target.enabled_flag
             ORDER BY
                 CASE projection.projection_status
                     WHEN 'ACTIVE' THEN 0
@@ -292,7 +299,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
                 projection.last_refreshed_at DESC,
                 projection.enter_time DESC NULLS LAST,
                 projection.created_at DESC
-            LIMIT 1;
+            LIMIT 2;
             """;
 
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -304,15 +311,21 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         command.Parameters.Add("card_num", NpgsqlDbType.Text).Value = DbValue(query.CardNum);
         command.Parameters.Add("plate_license", NpgsqlDbType.Text).Value = DbValue(query.PlateLicense);
 
-        await using var reader = await command.ExecuteReaderAsync(CommandBehavior.SingleRow, cancellationToken);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken))
         {
             return null;
         }
 
-        return new VendorSessionProjectionReadResult(
+        var result = new VendorSessionProjectionReadResult(
             MapProjection(reader),
             GetNullableTimestamp(reader, "target_last_success_at"));
+        if (await reader.ReadAsync(cancellationToken))
+        {
+            throw new VendorSessionProjectionLookupException("PROJECTION_IDENTIFIER_AMBIGUOUS");
+        }
+
+        return result;
     }
 
     private static void AddProjectionParameters(NpgsqlCommand command, VendorSessionProjection projection)
@@ -321,6 +334,7 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
         command.Parameters.Add("vendor_system_id", NpgsqlDbType.Uuid).Value = DbValue(projection.VendorSystemId);
         command.Parameters.Add("site_id", NpgsqlDbType.Uuid).Value = DbValue(projection.SiteId);
         command.Parameters.Add("site_group_id", NpgsqlDbType.Uuid).Value = DbValue(projection.SiteGroupId);
+        command.Parameters.Add("source_adapter_identity_id", NpgsqlDbType.Uuid).Value = DbValue(projection.SourceAdapterIdentityId);
         command.Parameters.Add("parking_lot_index_code", NpgsqlDbType.Text).Value = DbValue(projection.ParkingLotIndexCode);
         command.Parameters.Add("parking_lot_name", NpgsqlDbType.Text).Value = DbValue(projection.ParkingLotName);
         command.Parameters.Add("passageway_index_code", NpgsqlDbType.Text).Value = DbValue(projection.PassagewayIndexCode);
@@ -386,7 +400,10 @@ public sealed class PostgresVendorSessionProjectionRepository : IVendorSessionPr
             FromDatabaseStatus(reader.GetString(reader.GetOrdinal("projection_status"))),
             GetNullableGuid(reader, "correlation_id"),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("created_at")),
-            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")));
+            reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("updated_at")))
+        {
+            SourceAdapterIdentityId = GetNullableGuid(reader, "source_adapter_identity_id")
+        };
     }
 
     private static string ToDatabaseStatus(VendorSessionProjectionStatus status)

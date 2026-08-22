@@ -58,6 +58,10 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
                 pa.payment_attempt_id,
                 pc.payment_confirmation_id,
                 ps.parking_session_id,
+                ps.site_id,
+                ps.site_group_id,
+                ps.vendor_system_id,
+                ps.source_adapter_identity_id,
                 vs.vendor_code AS vendor_system_code,
                 ps.vendor_session_ref,
                 ps.ticket_number_masked AS ticket_number,
@@ -77,6 +81,7 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
             WHERE pa.payment_attempt_id = @payment_attempt_id
               AND pa.attempt_status = 'CONFIRMED'::core.payment_attempt_status_enum
               AND pa.finalized_at IS NOT NULL
+              AND ps.source_adapter_identity_id IS NOT NULL
             LIMIT 1;
             """;
 
@@ -101,7 +106,13 @@ public sealed class VendorPaymentAcknowledgmentRepository : IVendorPaymentAcknow
             TicketNumber: GetNullableString(reader, "ticket_number"),
             CardNum: GetNullableString(reader, "card_num"),
             RequestFeeMinorUnits: reader.GetInt64(reader.GetOrdinal("request_fee_minor_units")),
-            RequestCurrencyCode: reader.GetString(reader.GetOrdinal("request_currency_code")).Trim());
+            RequestCurrencyCode: reader.GetString(reader.GetOrdinal("request_currency_code")).Trim())
+        {
+            SiteId = reader.GetGuid(reader.GetOrdinal("site_id")),
+            SiteGroupId = reader.GetGuid(reader.GetOrdinal("site_group_id")),
+            VendorSystemId = reader.GetGuid(reader.GetOrdinal("vendor_system_id")),
+            SourceAdapterIdentityId = reader.GetGuid(reader.GetOrdinal("source_adapter_identity_id"))
+        };
     }
 
     /// <inheritdoc />

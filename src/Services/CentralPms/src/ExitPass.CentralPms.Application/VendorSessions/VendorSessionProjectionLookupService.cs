@@ -13,6 +13,11 @@ public sealed class VendorSessionProjectionLookupService(
     {
         ArgumentNullException.ThrowIfNull(query);
 
+        if (query.SiteGroupId is null || query.SiteGroupId == Guid.Empty)
+        {
+            throw new VendorSessionProjectionLookupException("PROJECTION_SITE_GROUP_SCOPE_REQUIRED");
+        }
+
         if (string.IsNullOrWhiteSpace(query.CardNum) && string.IsNullOrWhiteSpace(query.PlateLicense))
         {
             return VendorSessionProjectionLookupResult.NotFound(query.CorrelationId);

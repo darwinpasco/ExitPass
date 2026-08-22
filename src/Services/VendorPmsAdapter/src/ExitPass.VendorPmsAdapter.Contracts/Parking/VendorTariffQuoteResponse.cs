@@ -1,3 +1,5 @@
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
+
 namespace ExitPass.VendorPmsAdapter.Contracts.Parking;
 
 /// <summary>
@@ -13,4 +15,7 @@ public sealed record VendorTariffQuoteResponse(
     VendorTariffQuoteDto? Quote,
     string? ErrorCode,
     bool Retryable,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    public VendorAdapterResponseContext? AdapterContext { get; init; }
+}

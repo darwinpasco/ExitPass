@@ -1,5 +1,7 @@
 # HikCentral Real Sync Target Deployment Handoff
 
+> **v1.3 supersession:** Any direct Central PMS-to-HikCentral steps retained below are historical. Current deployment requires one private, authenticated Site Integration Adapter per Site and a persisted Central PMS route mapping. HikCentral credentials never enter Central PMS configuration or its database.
+
 For the normal managed Central PMS startup, complete local stack commands, restart behavior, and the approved synthetic TEST SITE mapping, use `docs/hikcentral-permanent-session-projection-runbook.md`. This handoff remains the environment-specific target verification checklist; it is not a requirement to use the interactive `HikCentralLocal` profile.
 
 ## Purpose

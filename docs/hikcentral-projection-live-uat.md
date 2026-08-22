@@ -1,5 +1,7 @@
 # HikCentral Projection Scheduler Live UAT
 
+> **v1.3 supersession:** Direct Central PMS-to-HikCentral configuration in older sections of this historical UAT procedure is retired. Central PMS must use `SITE_ADAPTER`; HikCentral URL/signing material belongs only to the separately deployed Site Integration Adapter. Use `docs/v1.3/hikcentral-connector/ExitPass_Multi_Site_HikCentral_Site_Adapter_Routing_ADR_v1.0.md` and `docs/hikcentral-permanent-session-projection-runbook.md` for executable deployment guidance.
+
 This runbook validates the Central PMS vendor session projection scheduler against a live HikCentral environment. It is configuration and UAT only. It must not change payment, tariff, parking-session, or exit-authority behavior.
 
 For production deployment controls, safe scheduler ownership, and reusable sync-target operations, use `docs/hikcentral-projection-production-controls.md`. The UAT values in this file are examples for the TEST SITE UAT parking lot only and are not production defaults.
@@ -59,10 +61,10 @@ These values are required before live UAT can run:
 
 | Value | Configuration key or table column | Secret | Source |
 | --- | --- | --- | --- |
-| HikCentral base URL | `CentralPms__VendorPms__HikCentral__BaseUrl` | No | Vendor/UAT environment |
-| HikCentral AppKey | `CentralPms__VendorPms__HikCentral__AppKey` | Yes | Vendor/secret store |
-| HikCentral AppSecret | `CentralPms__VendorPms__HikCentral__AppSecret` | Yes | Vendor/secret store |
-| Adapter provider | `CentralPms__VendorPms__Provider=HikCentral` | No | UAT runtime config |
+| Site Adapter endpoint | `integration.vendor_systems.base_url_ref` | No | Approved private UAT route |
+| Site Adapter service credential | `integration.integration_credential_references.secret_reference` | Reference only | Central PMS mounted secret store |
+| HikCentral AppKey/AppSecret | Site Adapter mounted secret files | Yes | Site-local adapter secret store; never Central PMS |
+| Adapter provider | `CentralPms__VendorPms__Provider=SITE_ADAPTER` | No | UAT runtime config |
 | Parking lot index code | `parking_lot_index_code = 1` | No | Confirm from HikCentral parking lot list |
 | Parking lot name | `parking_lot_name = TEST SITE` | No | Confirm from HikCentral parking lot list |
 | `site_id` | `c9000000-0000-0000-0000-000000000001` | No | Existing `sites.sites` row |
@@ -81,12 +83,10 @@ Use `docs/hikcentral-projection-live-uat.env.template` as the local template. Ke
 Minimum UAT scheduler configuration:
 
 ```powershell
-$env:CentralPms__VendorPms__Provider = "HikCentral"
-$env:CentralPms__VendorPms__HikCentral__BaseUrl = "https://<hikcentral-host>"
-$env:CentralPms__VendorPms__HikCentral__AppKey = "<secret>"
-$env:CentralPms__VendorPms__HikCentral__AppSecret = "<secret>"
-$env:CentralPms__VendorPms__HikCentral__UserId = "exitpass-adapter"
-$env:CentralPms__VendorPms__HikCentral__RequestTimeZoneId = "Asia/Manila"
+$env:CentralPms__VendorPms__Provider = "SITE_ADAPTER"
+$env:CentralPms__VendorPms__Environment = "UAT"
+$env:CentralPms__VendorPms__CentralPmsServiceIdentityId = "<central-pms-service-identity-uuid>"
+$env:CentralPms__VendorPms__AdapterSecretMountRoot = "/run/secrets/site-adapters"
 
 $env:CentralPms__VendorSessionProjections__SchedulerEnabled = "true"
 $env:CentralPms__VendorSessionProjections__RequiredForEnvironment = "true"

@@ -2,6 +2,10 @@
 
 Status: Draft companion technical profile for v1.3
 
+Routing correction: the deployable topology and identity rules in
+`ExitPass_Multi_Site_HikCentral_Site_Adapter_Routing_ADR_v1.0.md` supersede any reading of
+this profile that would place HikCentral credentials or direct HikCentral HTTP clients in Central PMS.
+
 ## 1. Document Control
 
 ### Version History

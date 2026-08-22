@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.VendorParking;
 using ExitPass.VendorPmsAdapter.Contracts.Parking;
+using ExitPass.VendorPmsAdapter.Contracts.Routing;
 using Microsoft.Extensions.Logging;
 
 namespace ExitPass.CentralPms.Application.Operations;
@@ -50,6 +51,14 @@ public sealed class TicketSessionSummaryService : ITicketSessionSummaryService
                 correlationId);
         }
 
+        if (!command.SiteId.HasValue || !command.SiteGroupId.HasValue)
+        {
+            return TicketSessionSummaryResult.Failed(TicketSessionSummaryOutcome.InvalidRequest,
+                "SITE_ADAPTER_SCOPE_REQUIRED", false, diagnostics, correlationId);
+        }
+        var routeContext = new VendorAdapterRequestContext(command.SiteId.Value, command.SiteGroupId.Value,
+            Guid.Empty, Guid.Empty);
+
         VendorParkingSessionLookupResponse sessionResponse;
         try
         {
@@ -57,7 +66,8 @@ public sealed class TicketSessionSummaryService : ITicketSessionSummaryService
                 new VendorParkingSessionLookupRequest(
                     PlateNumber: null,
                     TicketReference: ticketNumber,
-                    correlationId),
+                    correlationId,
+                    routeContext),
                 cancellationToken);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -115,7 +125,8 @@ public sealed class TicketSessionSummaryService : ITicketSessionSummaryService
                     new VendorTariffQuoteRequest(
                         PlateNumber: null,
                         TicketReference: ticketNumber,
-                        sessionResponse.CorrelationId),
+                        sessionResponse.CorrelationId,
+                        routeContext),
                     cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
