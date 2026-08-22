@@ -37,6 +37,18 @@
       "supportedScopeTypes": ["SITE", "SITE_GROUP"],
       "periodSemantics": "[periodStart, periodEnd), explicit UTC, maximum 31 days",
       "mutation": false
+    },
+    {
+      "operationId": "GetManagementFiscalExceptionSummary",
+      "method": "GET",
+      "path": "/v1/management-platform/dashboard/fiscal-exception-summary",
+      "contractVersion": "management-platform-fiscal-exception-reporting:v1",
+      "permission": "sales-invoice-report.view",
+      "policy": "ManagementPlatformFiscalExceptionSummaryRead",
+      "requiredQuery": ["scopeType", "scopeReference", "periodStart", "periodEnd"],
+      "supportedScopeTypes": ["SITE", "SITE_GROUP"],
+      "periodSemantics": "[periodStart, periodEnd), explicit UTC, maximum 31 days",
+      "mutation": false
     }
   ],
   "availabilityClassifications": ["AVAILABLE", "PARTIAL", "UNAVAILABLE", "NOT_APPLICABLE"],
@@ -48,10 +60,9 @@
       "fiscal-exception-summary",
       "management-activity-summary"
     ],
-    "operationalReportIds": ["operational-overview", "payment-reconciliation-summary"],
-    "partialReportIds": ["operational-overview", "payment-reconciliation-summary"],
+    "operationalReportIds": ["operational-overview", "payment-reconciliation-summary", "fiscal-exception-summary"],
+    "partialReportIds": ["operational-overview", "payment-reconciliation-summary", "fiscal-exception-summary"],
     "unavailableReportIds": [
-      "fiscal-exception-summary",
       "management-activity-summary"
     ]
   },
@@ -87,6 +98,40 @@
     "moneyRule": "exact decimal aggregation separated by ISO currency; no mixed-currency grand total",
     "emptyActivityRule": "explicit NO_PAYMENT_ACTIVITY_IN_PERIOD warning with empty summaries and NOT_APPLICABLE freshness",
     "authorityLimit": "internal Central PMS consistency only; no provider settlement, payout, bank, custody, fees, refunds, disputes, chargebacks, or fiscal-remittance claim"
+  },
+  "fiscalExceptionSummary": {
+    "contractVersion": "management-platform-fiscal-exception-reporting:v1",
+    "featureControl": {
+      "configurationSection": "ManagementPlatform:DashboardReporting:FiscalExceptions",
+      "defaultEnabled": false,
+      "failClosed": true
+    },
+    "timeBasis": "FISCAL_ISSUANCE_REFERENCE_FIRST_RECORDED_AT",
+    "requiredMetadata": [
+      "requestedScope",
+      "effectiveScope",
+      "periodStart",
+      "periodEnd",
+      "timeBasis",
+      "generatedAt",
+      "dataAsOf",
+      "availability",
+      "freshness",
+      "correlationId",
+      "sourceCoverage",
+      "sourceAuthority",
+      "warnings",
+      "limitations",
+      "unavailableFacts"
+    ],
+    "exceptionCategories": [
+      "SALES_INVOICE_ISSUANCE_FAILED",
+      "SALES_INVOICE_REFERENCE_CONFLICT",
+      "SALES_INVOICE_OUTCOME_UNAVAILABLE"
+    ],
+    "moneyRule": "expected issuance values use exact canonical payment-confirmation amounts separated by ISO currency; no issued-document amount or mixed-currency total",
+    "emptyActivityRule": "NO_ACTIVITY availability with NO_SALES_INVOICE_ISSUANCE_ACTIVITY_IN_PERIOD warning and NOT_APPLICABLE freshness",
+    "authorityLimit": "Central PMS coordination and persisted POS Server outcome facts only; no synchronous Site POS Server read, printing claim, or BIR compliance certification"
   },
   "operationalOverview": {
     "sections": [
@@ -158,7 +203,14 @@
     "INVALID_PAYMENT_RECONCILIATION_PERIOD_RANGE",
     "PAYMENT_RECONCILIATION_PERIOD_TOO_LONG",
     "PAYMENT_RECONCILIATION_SOURCE_UNAVAILABLE",
-    "MANAGEMENT_PAYMENT_RECONCILIATION_UNEXPECTED_FAILURE"
+    "MANAGEMENT_PAYMENT_RECONCILIATION_UNEXPECTED_FAILURE",
+    "MANAGEMENT_FISCAL_EXCEPTION_REPORTING_DISABLED",
+    "INVALID_FISCAL_EXCEPTION_PERIOD_START",
+    "INVALID_FISCAL_EXCEPTION_PERIOD_END",
+    "INVALID_FISCAL_EXCEPTION_PERIOD_RANGE",
+    "FISCAL_EXCEPTION_PERIOD_TOO_LONG",
+    "FISCAL_EXCEPTION_SOURCE_UNAVAILABLE",
+    "MANAGEMENT_FISCAL_EXCEPTION_UNEXPECTED_FAILURE"
   ],
   "forbiddenResponseData": [
     "credentials",

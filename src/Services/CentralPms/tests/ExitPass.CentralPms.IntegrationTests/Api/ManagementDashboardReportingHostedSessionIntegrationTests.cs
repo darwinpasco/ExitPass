@@ -42,6 +42,8 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
             $"/v1/management-platform/dashboard/operational-overview?scopeType=SITE&scopeReference={seed.SiteId:D}");
         using var paymentSummary = await client.GetAsync(
             $"/v1/management-platform/dashboard/payment-reconciliation-summary?scopeType=SITE&scopeReference={seed.SiteId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z");
+        using var fiscalSummary = await client.GetAsync(
+            $"/v1/management-platform/dashboard/fiscal-exception-summary?scopeType=SITE&scopeReference={seed.SiteId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z");
         using var wrongSite = await client.GetAsync(
             $"/v1/management-platform/dashboard/operational-overview?scopeType=SITE&scopeReference={seed.OtherSiteId:D}");
         using var wrongSiteGroup = await client.GetAsync(
@@ -50,6 +52,7 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         catalog.StatusCode.Should().Be(HttpStatusCode.OK);
         overview.StatusCode.Should().Be(HttpStatusCode.OK);
         paymentSummary.StatusCode.Should().Be(HttpStatusCode.OK);
+        fiscalSummary.StatusCode.Should().Be(HttpStatusCode.OK);
         wrongSite.StatusCode.Should().Be(HttpStatusCode.NotFound);
         wrongSiteGroup.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var body = await overview.Content.ReadFromJsonAsync<ManagementDashboardOperationalOverviewResponse>();
@@ -59,9 +62,14 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         paymentBody!.EffectiveScope.ScopeReference.Should().Be(seed.SiteId);
         paymentBody.Warnings.Should().Contain(ManagementPaymentReconciliationReportingValues.NoActivity);
         paymentBody.CurrencySummaries.Should().BeEmpty();
+        var fiscalBody = await fiscalSummary.Content.ReadFromJsonAsync<ManagementFiscalExceptionSummaryResponse>();
+        fiscalBody!.EffectiveScope.ScopeReference.Should().Be(seed.SiteId);
+        fiscalBody.Availability.Should().Be(ManagementFiscalExceptionReportingValues.NoActivityAvailability);
+        fiscalBody.CurrencySummaries.Should().BeEmpty();
         (await CountAuditAsync(seed.UserId, "MANAGEMENT_DASHBOARD_CATALOG_READ")).Should().BeGreaterThan(0);
         (await CountAuditAsync(seed.UserId, "MANAGEMENT_DASHBOARD_OVERVIEW_READ")).Should().BeGreaterThan(0);
         (await CountAuditAsync(seed.UserId, "MANAGEMENT_PAYMENT_RECONCILIATION_REPORT_READ")).Should().BeGreaterThan(0);
+        (await CountAuditAsync(seed.UserId, "MANAGEMENT_FISCAL_EXCEPTION_REPORT_READ")).Should().BeGreaterThan(0);
     }
 
     [Fact]
@@ -76,11 +84,17 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
 
         using var response = await client.GetAsync(
             $"/v1/management-platform/dashboard/payment-reconciliation-summary?scopeType=SITE_GROUP&scopeReference={seed.SiteGroupId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z");
+        using var fiscalResponse = await client.GetAsync(
+            $"/v1/management-platform/dashboard/fiscal-exception-summary?scopeType=SITE_GROUP&scopeReference={seed.SiteGroupId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
+        fiscalResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<ManagementPaymentReconciliationSummaryResponse>();
         body!.RequestedScope.ScopeType.Should().Be("SITE_GROUP");
         body.EffectiveScope.ScopeReference.Should().Be(seed.SiteGroupId);
+        var fiscalBody = await fiscalResponse.Content.ReadFromJsonAsync<ManagementFiscalExceptionSummaryResponse>();
+        fiscalBody!.RequestedScope.ScopeType.Should().Be("SITE_GROUP");
+        fiscalBody.EffectiveScope.ScopeReference.Should().Be(seed.SiteGroupId);
     }
 
     [Fact]
@@ -95,7 +109,8 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         await ExecuteAsync(
             "UPDATE identity.users SET authorization_epoch = authorization_epoch + 1 WHERE user_id = @user_id;",
             staleSeed.UserId);
-        (await staleClient.GetAsync("/v1/management-platform/dashboard/catalog")).StatusCode
+        (await staleClient.GetAsync(
+                $"/v1/management-platform/dashboard/fiscal-exception-summary?scopeType=SITE&scopeReference={staleSeed.SiteId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z")).StatusCode
             .Should().Be(HttpStatusCode.Unauthorized);
 
         var disabledPassword = Convert.ToBase64String(RandomNumberGenerator.GetBytes(24));
@@ -105,7 +120,8 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         await ExecuteAsync(
             "UPDATE identity.users SET user_status = 'SUSPENDED' WHERE user_id = @user_id;",
             disabledSeed.UserId);
-        (await disabledClient.GetAsync("/v1/management-platform/dashboard/catalog")).StatusCode
+        (await disabledClient.GetAsync(
+                $"/v1/management-platform/dashboard/fiscal-exception-summary?scopeType=SITE&scopeReference={disabledSeed.SiteId:D}&periodStart=2030-01-01T00%3A00%3A00Z&periodEnd=2030-01-02T00%3A00%3A00Z")).StatusCode
             .Should().Be(HttpStatusCode.Unauthorized);
     }
 
@@ -118,6 +134,7 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
                 ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
                 ["ManagementPlatform:DashboardReporting:Enabled"] = "true",
                 ["ManagementPlatform:DashboardReporting:PaymentReconciliation:Enabled"] = "true",
+                ["ManagementPlatform:DashboardReporting:FiscalExceptions:Enabled"] = "true",
                 ["ManagementPlatform:DashboardReporting:ProjectionStaleAfterMinutes"] = "15",
                 ["CentralPms:VendorPms:Provider"] = "SITE_ADAPTER",
                 ["CentralPms:VendorPms:Environment"] = "INTEGRATION_TEST",
@@ -149,7 +166,8 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
         body.Session!.Permissions.Should().Contain([
             ManagementDashboardReportingValues.CatalogPermission,
             ManagementDashboardReportingValues.OverviewPermission,
-            ManagementPaymentReconciliationReportingValues.Permission]);
+            ManagementPaymentReconciliationReportingValues.Permission,
+            ManagementFiscalExceptionReportingValues.Permission]);
     }
 
     private async Task<DashboardReaderSeed> SeedDashboardReaderAsync(string password)
@@ -209,7 +227,7 @@ public sealed class ManagementDashboardReportingHostedSessionIntegrationTests
             SELECT gen_random_uuid(), @role_id, permission_id, 'ACTIVE', 'DASHBOARD_HOSTED', @user_id,
                    now() - interval '1 minute', @user_id, @user_id
             FROM identity.permissions
-            WHERE permission_code IN ('reports.view', 'dashboard.view', 'reconciliation.view');
+            WHERE permission_code IN ('reports.view', 'dashboard.view', 'reconciliation.view', 'sales-invoice-report.view');
 
             INSERT INTO identity.user_role_scope_grants (
                 user_role_scope_grant_id, user_role_id, scope_type, site_id, grant_status,

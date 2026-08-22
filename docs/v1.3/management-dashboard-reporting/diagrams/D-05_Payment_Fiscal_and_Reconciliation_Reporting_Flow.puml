@@ -5,6 +5,7 @@ actor "Finance /\nRevenue Assurance User" as Finance
 participant "Management Dashboard" as Dash
 participant "Central PMS\nReporting Facade" as CPMS
 database "Central PMS canonical\npayment records" as Store
+database "Central PMS fiscal\ncoordination references" as FiscalStore
 
 Finance -> Dash : Request scoped payment summary
 Dash -> CPMS : GET summary with explicit\nSITE/SITE_GROUP and UTC period
@@ -12,9 +13,17 @@ CPMS -> Store : Read canonical attempts,\nconfirmations, outcomes, and rails
 Store --> CPMS : Scope-bounded aggregates
 CPMS --> Dash : Partial internal-consistency report\nwith source and freshness metadata
 
+Finance -> Dash : Request scoped fiscal exception summary
+Dash -> CPMS : GET fiscal summary with explicit\nSITE/SITE_GROUP and UTC period
+CPMS -> FiscalStore : Read persisted coordination references\nand related confirmation amounts
+FiscalStore --> CPMS : Scope-bounded lifecycle\nand supported exception aggregates
+CPMS --> Dash : Partial fiscal exception summary\nwith source and freshness metadata
+
 note over CPMS, Store
 No provider or POS Server call occurs during report generation.
 The report does not prove settlement, payout, bank deposit,
 cash custody, fees, refunds, disputes, or fiscal remittance.
+Fiscal reporting does not prove printing, delivery, adjustment,
+void, reprint, BIR compliance, or document values.
 end note
 @enduml

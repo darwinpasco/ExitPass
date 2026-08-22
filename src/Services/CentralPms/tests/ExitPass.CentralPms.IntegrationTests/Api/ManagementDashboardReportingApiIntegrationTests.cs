@@ -163,7 +163,8 @@ public sealed class ManagementDashboardReportingApiIntegrationTests
         endpoints.Select(endpoint => endpoint.RoutePattern.RawText).Should().BeEquivalentTo([
             CatalogPath,
             OverviewPath,
-            "/v1/management-platform/dashboard/payment-reconciliation-summary"
+            "/v1/management-platform/dashboard/payment-reconciliation-summary",
+            "/v1/management-platform/dashboard/fiscal-exception-summary"
         ]);
         endpoints.Select(endpoint => endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.Single())
             .Should().OnlyContain(method => method == "GET");

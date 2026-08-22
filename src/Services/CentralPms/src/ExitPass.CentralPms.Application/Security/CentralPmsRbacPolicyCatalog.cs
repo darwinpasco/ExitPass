@@ -96,6 +96,10 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "reconciliation.view"
             ],
+            ["ManagementPlatformFiscalExceptionSummaryRead"] =
+            [
+                "sales-invoice-report.view"
+            ],
             ["ManagementPlatformStatutoryDiscountPolicyCoverageRead"] =
             [
                 "statutory-discount-policy.view"

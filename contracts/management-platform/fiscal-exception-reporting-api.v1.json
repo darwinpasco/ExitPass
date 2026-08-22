@@ -1,0 +1,101 @@
+{
+  "contractId": "management-platform-fiscal-exception-reporting:v1",
+  "owner": "Central PMS",
+  "browserConsumer": "ExitPass Management Platform",
+  "route": {
+    "operationId": "GetManagementFiscalExceptionSummary",
+    "method": "GET",
+    "path": "/v1/management-platform/dashboard/fiscal-exception-summary",
+    "requiredQuery": ["scopeType", "scopeReference", "periodStart", "periodEnd"],
+    "supportedScopeTypes": ["SITE", "SITE_GROUP"],
+    "mutation": false
+  },
+  "authorization": {
+    "permission": "sales-invoice-report.view",
+    "policy": "ManagementPlatformFiscalExceptionSummaryRead",
+    "sessionSource": "authenticated H-006/I-020 server-side human session",
+    "authorizationEpochValidated": true,
+    "accountStateValidated": true,
+    "implicitGlobalScope": false,
+    "clientAuthorityHeadersTrusted": false,
+    "concealedScopeResponse": 404
+  },
+  "featureControl": {
+    "parentSection": "ManagementPlatform:DashboardReporting",
+    "configurationSection": "ManagementPlatform:DashboardReporting:FiscalExceptions",
+    "defaultEnabled": false,
+    "failClosed": true
+  },
+  "period": {
+    "timeBasis": "FISCAL_ISSUANCE_REFERENCE_FIRST_RECORDED_AT",
+    "semantics": "[periodStart, periodEnd)",
+    "utcRequired": true,
+    "maximumDays": 31,
+    "defaultApplied": false
+  },
+  "response": {
+    "required": [
+      "contractVersion", "reportId", "requestedScope", "effectiveScope",
+      "periodStart", "periodEnd", "timeBasis", "generatedAt", "availability",
+      "freshness", "correlationId", "sourceCoverage", "lifecycleSummaries",
+      "exceptionSummaries", "currencySummaries", "warnings", "limitations",
+      "unavailableFacts", "sourceAuthority"
+    ],
+    "nullable": ["dataAsOf"],
+    "availability": ["PARTIAL", "NO_ACTIVITY"],
+    "freshness": ["CURRENT", "NOT_APPLICABLE"],
+    "sourceAuthority": "CENTRAL_PMS_FISCAL_ISSUANCE_REFERENCES"
+  },
+  "lifecycleNormalization": {
+    "PENDING": ["PENDING_FISCAL_ISSUANCE"],
+    "REQUESTED": ["FISCAL_ISSUANCE_REQUESTED"],
+    "ISSUED": ["FISCAL_ISSUANCE_RECORDED", "FISCAL_ISSUANCE_REPLAYED", "FISCAL_ISSUANCE_RECONCILED"],
+    "FAILED": ["FISCAL_ISSUANCE_FAILED_REQUEST", "FISCAL_ISSUANCE_FAILED_CONFIGURATION", "FISCAL_ISSUANCE_FAILED_SERVICE"],
+    "CONFLICT": ["FISCAL_ISSUANCE_CONFLICT"],
+    "OUTCOME_UNAVAILABLE": ["FISCAL_ISSUANCE_UNKNOWN"],
+    "MANUAL_REVIEW": ["FISCAL_ISSUANCE_MANUAL_REVIEW"],
+    "EXCEPTION_RELEASED": ["FISCAL_ISSUANCE_EXCEPTION_RELEASED"],
+    "NOT_REQUIRED": ["NOT_REQUIRED"],
+    "OTHER": ["any unsupported future source state"]
+  },
+  "exceptionCategories": [
+    {
+      "categoryId": "SALES_INVOICE_ISSUANCE_FAILED",
+      "condition": "latest reference state is FISCAL_ISSUANCE_FAILED_REQUEST, FISCAL_ISSUANCE_FAILED_CONFIGURATION, or FISCAL_ISSUANCE_FAILED_SERVICE",
+      "terminal": false,
+      "canResolveLater": true
+    },
+    {
+      "categoryId": "SALES_INVOICE_REFERENCE_CONFLICT",
+      "condition": "latest reference state is FISCAL_ISSUANCE_CONFLICT",
+      "terminal": false,
+      "canResolveLater": true
+    },
+    {
+      "categoryId": "SALES_INVOICE_OUTCOME_UNAVAILABLE",
+      "condition": "latest reference state is FISCAL_ISSUANCE_UNKNOWN or FISCAL_ISSUANCE_MANUAL_REVIEW",
+      "terminal": false,
+      "canResolveLater": true
+    }
+  ],
+  "money": {
+    "source": "linked canonical payment confirmation",
+    "meaning": "expected issuance amount",
+    "representation": "exact JSON decimal grouped by ISO currency",
+    "mixedCurrencyTotal": false,
+    "issuedDocumentAmountAvailable": false
+  },
+  "unavailableFacts": [
+    "Sales Invoice print result",
+    "digital-copy availability",
+    "reprint, adjustment, void, and delivery outcomes",
+    "overdue detection without an approved deadline",
+    "issued-document amount and currency comparison",
+    "BIR compliance certification"
+  ],
+  "prohibitedResponseData": [
+    "payer identity", "plate number", "ticket number", "Sales Invoice number",
+    "provider reference", "raw POS Server response", "raw fiscal document",
+    "Electronic Journal content", "credentials", "tokens", "individual transaction identifiers"
+  ]
+}
