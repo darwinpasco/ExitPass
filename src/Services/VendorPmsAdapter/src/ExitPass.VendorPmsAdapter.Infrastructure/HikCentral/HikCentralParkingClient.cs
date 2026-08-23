@@ -95,6 +95,12 @@ public sealed class HikCentralParkingClient(
             request.CorrelationId,
             cancellationToken);
 
+        if (result.Status == VendorParkingLookupStatus.Found &&
+            !MatchesRequestedIdentifier(result.Session, request.PlateNumber, request.TicketReference))
+        {
+            return HikCentralParkingFeeLookupResult.NotFound().ToSessionResponse(request.CorrelationId);
+        }
+
         return result.ToSessionResponse(request.CorrelationId);
     }
 
@@ -110,7 +116,33 @@ public sealed class HikCentralParkingClient(
             request.CorrelationId,
             cancellationToken);
 
+        if (result.Status == VendorParkingLookupStatus.Found &&
+            !MatchesRequestedIdentifier(result.Session, request.PlateNumber, request.TicketReference))
+        {
+            return HikCentralParkingFeeLookupResult.NotFound().ToTariffResponse(request.CorrelationId);
+        }
+
         return result.ToTariffResponse(request.CorrelationId);
+    }
+
+    private static bool MatchesRequestedIdentifier(
+        VendorParkingSessionDto? session,
+        string? requestedPlateNumber,
+        string? requestedTicketReference)
+    {
+        if (session is null)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(requestedTicketReference))
+        {
+            var prefix = $"{ProviderCode}:{requestedTicketReference.Trim()}:";
+            return session.VendorSessionReference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return !string.IsNullOrWhiteSpace(requestedPlateNumber) &&
+            string.Equals(session.PlateNumber, requestedPlateNumber.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />

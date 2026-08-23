@@ -145,6 +145,35 @@ public sealed class HikCentralParkingClientTests
     }
 
     /// <summary>
+    /// Verifies that HikCentral cannot satisfy a ticket lookup with a different card number.
+    /// </summary>
+    [Fact]
+    public async Task ResolveSession_WhenReturnedCardDoesNotMatchRequestedTicket_ReturnsNotFound()
+    {
+        var client = CreateClient(new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "plateLicense": "ABC123",
+                "cardNum": "CARD-A",
+                "parkingInTime": "2026-06-17T11:19:12+08:00",
+                "parkingDuration": 3539,
+                "fee": "50.00"
+              }
+            }
+            """)));
+
+        var result = await client.ResolveSessionAsync(
+            new VendorParkingSessionLookupRequest(null, "UNKNOWN-CARD", Guid.NewGuid()),
+            CancellationToken.None);
+
+        Assert.Equal(VendorParkingLookupStatus.NotFound, result.Status);
+        Assert.Equal("VENDOR_SESSION_NOT_FOUND", result.ErrorCode);
+        Assert.Null(result.Session);
+    }
+
+    /// <summary>
     /// Verifies that ticket-only calculate can still map when HikCentral omits plateLicense.
     /// </summary>
     [Fact]
@@ -657,7 +686,22 @@ public sealed class HikCentralParkingClientTests
     {
         var correlationId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
         var logger = new CapturingLogger<HikCentralParkingClient>();
-        var handler = new FakeHikCentralHandler(_ => SuccessfulFeeResponse("ABC123", "10.00"));
+        var handler = new FakeHikCentralHandler(_ => JsonResponse("""
+            {
+              "code": "0",
+              "msg": "Success",
+              "data": {
+                "plateLicense": "ABC123",
+                "cardNum": "CARD-9",
+                "parkingInTime": "2026-05-15T09:00:00+08:00",
+                "parkingDuration": 3600,
+                "feeRuleType": 1,
+                "feeRuleIndexCode": "RULE-1",
+                "feeRuleName": "Standard Parking",
+                "fee": "10.00"
+              }
+            }
+            """));
         var client = CreateClient(handler, logger: logger);
 
         var result = await client.ResolveTariffAsync(
