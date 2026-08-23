@@ -17,13 +17,14 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(PosServerFiscalDocumentVoidOutcome.NewlyVoided, "newly_voided"));
 
         var response = await CreateSut(client: client)
             .RunAsync(ApprovedRequest(), CancellationToken.None);
 
-        response.HttpStatusCode.Should().Be(200);
+        response.HttpStatusCode.Should().Be(200, "configuration errors were {0}", string.Join(",", response.Errors));
         response.Status.Should().Be("pos_server_void_recorded");
         response.PosServerResultClassification.Should().Be("newly_voided");
         response.VoidStatus.Should().Be("recorded");
@@ -49,6 +50,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
                 request.CorrelationId == "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df" &&
                 request.SourceSystemRef == "central-pms" &&
                 request.BusinessDayDate == DateOnly.Parse("2026-07-09")),
+            Arg.Any<PosServerRoutingContext>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -59,6 +61,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(
                 PosServerFiscalDocumentVoidOutcome.Conflict,
@@ -91,6 +94,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
                 request.CorrelationId == "b7b4cbea-0c8c-4d06-9f6f-728a0a3fc2df" &&
                 request.SourceSystemRef == FiscalIssuanceControlledUatVoidSmokeService.SourceSystemRef &&
                 request.BusinessDayDate == DateOnly.Parse("2026-07-09")),
+            Arg.Any<PosServerRoutingContext>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -107,6 +111,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(outcome, classification));
 
@@ -134,6 +139,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(outcome, "rejected", succeeded: false, httpStatusCode: httpStatusCode));
 
@@ -155,6 +161,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns<Task<PosServerFiscalDocumentVoidResult>>(_ => throw new HttpRequestException("POS unavailable"));
 
@@ -177,7 +184,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
 
         response.HttpStatusCode.Should().Be(400);
         response.Errors.Should().Contain("pos_server_fiscal_document_id_not_approved");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -195,7 +202,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
 
         response.HttpStatusCode.Should().Be(409);
         response.Errors.Should().Contain("pos_server_fiscal_document_id_mismatch");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -208,7 +215,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
 
         response.HttpStatusCode.Should().Be(400);
         response.Errors.Should().Contain("reason_code_not_approved");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -221,7 +228,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
 
         response.HttpStatusCode.Should().Be(400);
         response.Errors.Should().Contain("controlled_void_scenario_not_approved");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -241,7 +248,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
 
         response.HttpStatusCode.Should().Be(409);
         response.Status.Should().Be("controlled_uat_real_void_unsafe_database_name");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -291,7 +298,10 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
             resolvedGuard,
             client ?? Substitute.For<IPosServerFiscalDocumentClient>(),
             Options.Create(options ?? EnabledOptions()),
-            Options.Create(gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions()),
+            Options.Create(gatingOptions ?? new FiscalIssuanceExitAuthorizationGatingOptions
+            {
+                EnableFiscalBeforeExitAuthorizationEnforcement = false
+            }),
             Substitute.For<ILogger<FiscalIssuanceControlledUatVoidSmokeService>>());
     }
 
@@ -300,7 +310,19 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeServiceTests
         {
             EnableControlledUatDiagnosticPath = true,
             EnablePosServerFiscalIssuanceLiveCall = true,
-            PosServerBaseUrl = "http://localhost:5000",
+            RuntimeEnvironment = "Test",
+            Endpoints =
+            [
+                new SitePosServerEndpointOptions
+                {
+                    SitePosServerId = Guid.Parse("10000000-0000-4000-8000-000000000201"),
+                    SitePosServerRef = "DEV-POS-SERVER-ATC-001",
+                    BaseUrl = "http://localhost:5000",
+                    ApiKeyFile = "test-pos-api-key",
+                    Environment = "Test",
+                    Enabled = true
+                }
+            ],
             EnableLiveFiscalIssuanceFromPaymentFlow = false,
             EnableLiveFiscalIssuanceFromExitFlow = false
         };

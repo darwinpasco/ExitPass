@@ -18,7 +18,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         options.EnableControlledUatDiagnosticPath.Should().BeFalse();
         options.EnableLiveFiscalIssuanceFromPaymentFlow.Should().BeFalse();
         options.EnableLiveFiscalIssuanceFromExitFlow.Should().BeFalse();
-        options.PosServerBaseUrl.Should().BeNull();
+        options.Endpoints.Should().BeEmpty();
         options.TimeoutSeconds.Should().Be(10);
     }
 
@@ -38,10 +38,9 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     [Fact]
     public void EvaluateReadiness_WhenDisabledWithBaseUrl_ReportsDisabledConfigPresent()
     {
-        var readiness = new FiscalIssuancePosServerIntegrationOptions
-        {
-            PosServerBaseUrl = "https://pos-server.local"
-        }.EvaluateReadiness();
+        var readiness = new FiscalIssuancePosServerIntegrationOptions()
+            .AddEndpoint()
+            .EvaluateReadiness();
 
         readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.DisabledConfigPresent);
         readiness.IsEnabled.Should().BeFalse();
@@ -61,7 +60,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledMissingBaseUrl);
         readiness.IsEnabled.Should().BeTrue();
         readiness.IsReady.Should().BeFalse();
-        readiness.Errors.Should().Contain("pos_server_base_url_required");
+        readiness.Errors.Should().Contain("site_pos_server_endpoints_required");
     }
 
     [Fact]
@@ -69,14 +68,13 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     {
         var readiness = new FiscalIssuancePosServerIntegrationOptions
         {
-            EnablePosServerFiscalIssuanceLiveCall = true,
-            PosServerBaseUrl = "not-a-url"
-        }.EvaluateReadiness();
+            EnablePosServerFiscalIssuanceLiveCall = true
+        }.AddEndpoint("not-a-url").EvaluateReadiness();
 
         readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl);
         readiness.IsReady.Should().BeFalse();
         readiness.BaseUrlConfigured.Should().BeTrue();
-        readiness.Errors.Should().Contain("pos_server_base_url_invalid");
+        readiness.Errors.Should().Contain("site_pos_server_endpoint_url_invalid");
     }
 
     [Fact]
@@ -104,10 +102,9 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         var readiness = new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
-            PosServerBaseUrl = "https://pos-server.local",
             EnableLiveFiscalIssuanceFromPaymentFlow = paymentFlowEnabled,
             EnableLiveFiscalIssuanceFromExitFlow = exitFlowEnabled
-        }.EvaluateReadiness();
+        }.AddEndpoint().EvaluateReadiness();
 
         readiness.Status.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledUnsafeFlowWiring);
         readiness.IsReady.Should().BeFalse();
@@ -161,7 +158,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             CancellationToken.None);
 
         result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
-        result.Errors.Should().Contain("pos_server_base_url_required");
+        result.Errors.Should().Contain("site_pos_server_endpoints_required");
         await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
         mapper.DidNotReceiveWithAnyArgs().Map(default!);
     }
@@ -175,9 +172,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
         var sut = CreateSut(
             new FiscalIssuancePosServerIntegrationOptions
             {
-                EnablePosServerFiscalIssuanceLiveCall = true,
-                PosServerBaseUrl = "not-a-url"
-            },
+                EnablePosServerFiscalIssuanceLiveCall = true
+            }.AddEndpoint("not-a-url"),
             mapper,
             client: client,
             orchestration: orchestration);
@@ -189,7 +185,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             CancellationToken.None);
 
         result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.ConfigurationInvalid);
-        result.Errors.Should().Contain("pos_server_base_url_invalid");
+        result.Errors.Should().Contain("site_pos_server_endpoint_url_invalid");
         await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
         mapper.DidNotReceiveWithAnyArgs().Map(default!);
         await orchestration.DidNotReceiveWithAnyArgs().MarkRequestedAsync(default, default!, default);
@@ -205,9 +201,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             new FiscalIssuancePosServerIntegrationOptions
             {
                 EnablePosServerFiscalIssuanceLiveCall = true,
-                PosServerBaseUrl = "https://pos-server.local",
                 EnableLiveFiscalIssuanceFromPaymentFlow = true
-            },
+            }.AddEndpoint(),
             mapper,
             client: client,
             orchestration: orchestration);
@@ -444,7 +439,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
 
         result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.ConfigurationInvalid);
         result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledMissingBaseUrl);
-        result.Errors.Should().Contain("pos_server_base_url_required");
+        result.Errors.Should().Contain("site_pos_server_endpoints_required");
         result.ClientCalled.Should().BeFalse();
         mapper.DidNotReceiveWithAnyArgs().Map(default!);
         await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
@@ -459,9 +454,8 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
             new FiscalIssuancePosServerIntegrationOptions
             {
                 EnablePosServerFiscalIssuanceLiveCall = true,
-                EnableControlledUatDiagnosticPath = true,
-                PosServerBaseUrl = "not-a-url"
-            },
+                EnableControlledUatDiagnosticPath = true
+            }.AddEndpoint("not-a-url"),
             mapper,
             client: client);
 
@@ -473,7 +467,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
 
         result.Status.Should().Be(FiscalIssuancePosServerDiagnosticStatuses.ConfigurationInvalid);
         result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl);
-        result.Errors.Should().Contain("pos_server_base_url_invalid");
+        result.Errors.Should().Contain("site_pos_server_endpoint_url_invalid");
         result.ClientCalled.Should().BeFalse();
         mapper.DidNotReceiveWithAnyArgs().Map(default!);
         await client.DidNotReceiveWithAnyArgs().CreateFiscalDocumentAsync(default!, default);
@@ -714,21 +708,19 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
-        new()
+        new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
-            PosServerBaseUrl = "https://pos-server.local",
             TimeoutSeconds = 10
-        };
+        }.AddEndpoint();
 
     private static FiscalIssuancePosServerIntegrationOptions DiagnosticEnabledOptions() =>
-        new()
+        new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
             EnableControlledUatDiagnosticPath = true,
-            PosServerBaseUrl = "https://pos-server.local",
             TimeoutSeconds = 10
-        };
+        }.AddEndpoint();
 
     public static TheoryData<PosServerFiscalDocumentCreateResult, FiscalIssuanceIntegrationState, string> DiagnosticResultCases() =>
         new()

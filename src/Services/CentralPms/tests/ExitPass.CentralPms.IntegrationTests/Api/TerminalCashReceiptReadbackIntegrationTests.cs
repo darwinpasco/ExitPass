@@ -25,6 +25,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
     private static readonly Guid FiscalIssuanceReferenceId = Guid.Parse("31000000-0000-4000-8000-000000000006");
     private static readonly Guid PosFiscalDocumentId = Guid.Parse("31000000-0000-4000-8000-000000000007");
     private static readonly Guid CorrelationId = Guid.Parse("31000000-0000-4000-8000-000000000008");
+    private static readonly Guid SitePosServerId = Guid.Parse("31000000-0000-4000-8000-000000000009");
 
     [Fact]
     public async Task TerminalCashReceiptReadback_RecordedFiscalDocument_ReturnsAuthoritativePresentation()
@@ -428,7 +429,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
             ParkingSessionId,
             TariffSnapshotId,
             Guid.Parse("31000000-0000-4000-8000-000000000012"),
-            SitePosServerId: null,
+            SitePosServerId,
             SitePosServerRef: "DEV-POS-SERVER-ATC-001",
             PayableBasisRef: TariffSnapshotId.ToString("D"),
             UpstreamFinalityReference: $"terminal-cash-payment-confirmation:{PaymentConfirmationId:D}:sales_invoice",
@@ -575,12 +576,14 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
 
         public Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
             Guid fiscalDocumentId,
+            PosServerRoutingContext routingContext,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException("Receipt readback uses the presentation endpoint.");
 
         public Task<PosServerFiscalDocumentPresentationReadResult> GetFiscalDocumentPresentationAsync(
             Guid fiscalDocumentId,
             Guid? correlationId,
+            PosServerRoutingContext routingContext,
             CancellationToken cancellationToken)
         {
             PresentationReadCount++;
@@ -600,6 +603,7 @@ public sealed class TerminalCashReceiptReadbackIntegrationTests
         public Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
             Guid fiscalDocumentId,
             PosServerFiscalDocumentVoidRequest request,
+            PosServerRoutingContext routingContext,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException("Receipt readback must not void fiscal documents.");
 

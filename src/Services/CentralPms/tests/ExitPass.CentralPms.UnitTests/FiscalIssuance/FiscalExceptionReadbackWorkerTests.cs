@@ -585,6 +585,7 @@ public sealed class FiscalExceptionReadbackWorkerTests
 
         public Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
             Guid fiscalDocumentId,
+            PosServerRoutingContext routingContext,
             CancellationToken cancellationToken)
         {
             CallCount++;

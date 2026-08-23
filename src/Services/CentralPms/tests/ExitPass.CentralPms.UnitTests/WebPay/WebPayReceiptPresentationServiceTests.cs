@@ -24,7 +24,11 @@ public sealed class WebPayReceiptPresentationServiceTests
             .Returns(reference);
         var posClient = Substitute.For<IPosServerFiscalDocumentClient>();
         posClient
-            .GetFiscalDocumentPresentationAsync(PosFiscalDocumentId, CorrelationId, Arg.Any<CancellationToken>())
+            .GetFiscalDocumentPresentationAsync(
+                PosFiscalDocumentId,
+                CorrelationId,
+                Arg.Any<PosServerRoutingContext>(),
+                Arg.Any<CancellationToken>())
             .Returns(new PosServerFiscalDocumentPresentationReadResult(
                 PosServerFiscalDocumentOutcome.Accepted,
                 Succeeded: true,
@@ -92,7 +96,7 @@ public sealed class WebPayReceiptPresentationServiceTests
         exception.Which.Retryable.Should().BeTrue();
         await posClient
             .DidNotReceiveWithAnyArgs()
-            .GetFiscalDocumentPresentationAsync(default, default, default);
+            .GetFiscalDocumentPresentationAsync(default, default, default!, default);
     }
 
     [Fact]
@@ -104,7 +108,11 @@ public sealed class WebPayReceiptPresentationServiceTests
             .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
         var posClient = Substitute.For<IPosServerFiscalDocumentClient>();
         posClient
-            .GetFiscalDocumentPresentationAsync(PosFiscalDocumentId, CorrelationId, Arg.Any<CancellationToken>())
+            .GetFiscalDocumentPresentationAsync(
+                PosFiscalDocumentId,
+                CorrelationId,
+                Arg.Any<PosServerRoutingContext>(),
+                Arg.Any<CancellationToken>())
             .Returns(new PosServerFiscalDocumentPresentationReadResult(
                 PosServerFiscalDocumentOutcome.FailedService,
                 Succeeded: false,

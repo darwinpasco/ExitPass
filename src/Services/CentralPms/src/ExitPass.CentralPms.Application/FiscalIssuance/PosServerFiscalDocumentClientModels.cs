@@ -11,17 +11,40 @@ public interface IPosServerFiscalDocumentClient
 
     Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
         Guid fiscalDocumentId,
+        PosServerRoutingContext routingContext,
         CancellationToken cancellationToken);
 
     Task<PosServerFiscalDocumentPresentationReadResult> GetFiscalDocumentPresentationAsync(
         Guid fiscalDocumentId,
         Guid? correlationId,
+        PosServerRoutingContext routingContext,
         CancellationToken cancellationToken);
 
     Task<PosServerFiscalDocumentVoidResult> VoidFiscalDocumentAsync(
         Guid fiscalDocumentId,
         PosServerFiscalDocumentVoidRequest request,
+        PosServerRoutingContext routingContext,
         CancellationToken cancellationToken);
+}
+
+public sealed record PosServerRoutingContext(
+    Guid SitePosServerId,
+    string SitePosServerRef)
+{
+    public static PosServerRoutingContext Create(Guid? sitePosServerId, string? sitePosServerRef)
+    {
+        if (sitePosServerId is null || sitePosServerId == Guid.Empty)
+        {
+            throw new ArgumentException("Site POS Server id is required.", nameof(sitePosServerId));
+        }
+
+        if (string.IsNullOrWhiteSpace(sitePosServerRef))
+        {
+            throw new ArgumentException("Site POS Server reference is required.", nameof(sitePosServerRef));
+        }
+
+        return new PosServerRoutingContext(sitePosServerId.Value, sitePosServerRef.Trim());
+    }
 }
 
 public sealed record CentralPmsFiscalDocumentMappingContext(

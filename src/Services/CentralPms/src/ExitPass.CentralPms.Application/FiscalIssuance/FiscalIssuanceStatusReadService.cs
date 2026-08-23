@@ -130,6 +130,7 @@ public sealed class FiscalIssuanceStatusReadService : IFiscalIssuanceStatusReadS
         {
             posRead = await _posServerClient.GetFiscalDocumentAsync(
                     reference.PosServerFiscalDocumentId.Value,
+                    PosServerRoutingContext.Create(reference.SitePosServerId, reference.SitePosServerRef),
                     cancellationToken)
                 .ConfigureAwait(false);
         }

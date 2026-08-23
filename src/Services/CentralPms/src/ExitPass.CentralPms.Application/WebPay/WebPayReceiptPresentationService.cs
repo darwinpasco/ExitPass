@@ -77,6 +77,7 @@ public sealed class WebPayReceiptPresentationService : IWebPayReceiptPresentatio
             posPresentation = await _posServerClient.GetFiscalDocumentPresentationAsync(
                     reference.PosServerFiscalDocumentId.Value,
                     correlationId,
+                    PosServerRoutingContext.Create(reference.SitePosServerId, reference.SitePosServerRef),
                     cancellationToken)
                 .ConfigureAwait(false);
         }

@@ -92,6 +92,7 @@ public sealed class FiscalIssuanceVoidCommandService : IFiscalIssuanceVoidComman
                         CorrelationId: ResolveCorrelationId(request, reference, fiscalIssuanceReferenceId),
                         SourceSystemRef: SourceSystemRef,
                         BusinessDayDate: null),
+                    PosServerRoutingContext.Create(reference.SitePosServerId, reference.SitePosServerRef),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -167,6 +168,12 @@ public sealed class FiscalIssuanceVoidCommandService : IFiscalIssuanceVoidComman
         if (reference.PosServerFiscalDocumentId is null || reference.PosServerFiscalDocumentId == Guid.Empty)
         {
             errors.Add("pos_server_fiscal_document_id_required");
+        }
+
+        if (reference.SitePosServerId is null || reference.SitePosServerId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(reference.SitePosServerRef))
+        {
+            errors.Add("site_pos_server_context_required");
         }
 
         return errors;

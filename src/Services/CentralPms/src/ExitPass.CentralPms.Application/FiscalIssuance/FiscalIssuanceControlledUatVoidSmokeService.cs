@@ -146,6 +146,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
                         CorrelationId: request.CorrelationId.Trim(),
                         SourceSystemRef: SourceSystemRef,
                         BusinessDayDate: FiscalIssuanceControlledUatInvocationService.DefaultSmokeProfile.BusinessDayDate),
+                    PosServerRoutingContext.Create(reference.SitePosServerId, reference.SitePosServerRef),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -244,10 +245,7 @@ public sealed class FiscalIssuanceControlledUatVoidSmokeService : IFiscalIssuanc
             errors.Add("pos_server_live_call_flag_disabled");
         }
 
-        if (string.IsNullOrWhiteSpace(_posServerOptions.PosServerBaseUrl))
-        {
-            errors.Add("pos_server_base_url_required");
-        }
+        errors.AddRange(_posServerOptions.ValidateForLiveCall());
 
         if (_posServerOptions.EnableLiveFiscalIssuanceFromPaymentFlow)
         {

@@ -185,7 +185,12 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
 
     public bool EnableControlledUatDiagnosticPath { get; set; }
 
+    [Obsolete("Use site-specific Endpoints. A global POS Server endpoint is not a supported runtime route.")]
     public string? PosServerBaseUrl { get; set; }
+
+    public string? RuntimeEnvironment { get; set; }
+
+    public List<SitePosServerEndpointOptions> Endpoints { get; set; } = [];
 
     public int TimeoutSeconds { get; set; } = 10;
 
@@ -197,7 +202,7 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
 
     public FiscalIssuancePosServerIntegrationReadiness EvaluateReadiness()
     {
-        var baseUrlConfigured = !string.IsNullOrWhiteSpace(PosServerBaseUrl);
+        var baseUrlConfigured = Endpoints.Count > 0;
         var timeoutConfigured = TimeoutSeconds > 0;
         var liveFlowConfigured = EnableLiveFiscalIssuanceFromPaymentFlow || EnableLiveFiscalIssuanceFromExitFlow;
 
@@ -223,19 +228,24 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
         {
             return InvalidReadiness(
                 FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledMissingBaseUrl,
-                "pos_server_base_url_required",
+                "site_pos_server_endpoints_required",
                 baseUrlConfigured,
                 timeoutConfigured);
         }
 
-        if (!Uri.TryCreate(PosServerBaseUrl, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        var endpointErrors = ValidateEndpoints();
+        if (endpointErrors.Count > 0)
         {
-            return InvalidReadiness(
-                FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl,
-                "pos_server_base_url_invalid",
-                baseUrlConfigured,
-                timeoutConfigured);
+            return new FiscalIssuancePosServerIntegrationReadiness(
+                Status: FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl,
+                IsEnabled: true,
+                IsReady: false,
+                Reason: endpointErrors[0],
+                BaseUrlConfigured: true,
+                TimeoutConfigured: timeoutConfigured,
+                LiveCallsAllowedFromPaymentFlow: EnableLiveFiscalIssuanceFromPaymentFlow,
+                LiveCallsAllowedFromExitFlow: EnableLiveFiscalIssuanceFromExitFlow,
+                Errors: endpointErrors);
         }
 
         if (!timeoutConfigured)
@@ -274,6 +284,73 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
         return readiness.IsReady ? Array.Empty<string>() : readiness.Errors;
     }
 
+    private IReadOnlyList<string> ValidateEndpoints()
+    {
+        var errors = new List<string>();
+        if (string.IsNullOrWhiteSpace(RuntimeEnvironment))
+        {
+            errors.Add("pos_server_runtime_environment_required");
+        }
+
+        foreach (var duplicate in Endpoints
+                     .GroupBy(endpoint => endpoint.SitePosServerId)
+                     .Where(group => group.Key == Guid.Empty || group.Count() != 1))
+        {
+            errors.Add(duplicate.Key == Guid.Empty
+                ? "site_pos_server_id_required"
+                : "site_pos_server_endpoint_id_duplicate");
+        }
+
+        foreach (var duplicate in Endpoints
+                     .Where(endpoint => !string.IsNullOrWhiteSpace(endpoint.SitePosServerRef))
+                     .GroupBy(endpoint => endpoint.SitePosServerRef!.Trim(), StringComparer.Ordinal)
+                     .Where(group => group.Count() != 1))
+        {
+            errors.Add("site_pos_server_endpoint_ref_duplicate");
+        }
+
+        foreach (var endpoint in Endpoints)
+        {
+            if (string.IsNullOrWhiteSpace(endpoint.SitePosServerRef))
+            {
+                errors.Add("site_pos_server_ref_required");
+            }
+
+            if (string.IsNullOrWhiteSpace(endpoint.Environment) ||
+                !string.Equals(endpoint.Environment.Trim(), RuntimeEnvironment?.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                errors.Add("site_pos_server_endpoint_environment_mismatch");
+            }
+
+            if (!Uri.TryCreate(endpoint.BaseUrl, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+                !string.IsNullOrEmpty(uri.UserInfo) ||
+                !string.IsNullOrEmpty(uri.Query) ||
+                !string.IsNullOrEmpty(uri.Fragment) ||
+                uri.AbsolutePath != "/")
+            {
+                errors.Add("site_pos_server_endpoint_url_invalid");
+            }
+            else if (uri.Scheme != Uri.UriSchemeHttps && !IsLocalEnvironment(RuntimeEnvironment))
+            {
+                errors.Add("site_pos_server_endpoint_https_required");
+            }
+
+            if (string.IsNullOrWhiteSpace(endpoint.ApiKeyFile))
+            {
+                errors.Add("site_pos_server_api_key_file_required");
+            }
+        }
+
+        return errors.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private static bool IsLocalEnvironment(string? environment) =>
+        string.Equals(environment, "Development", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(environment, "SecureDevelopment", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(environment, "Test", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(environment, "IntegrationTest", StringComparison.OrdinalIgnoreCase);
+
     private FiscalIssuancePosServerIntegrationReadiness InvalidReadiness(
         string status,
         string error,
@@ -289,6 +366,21 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
             LiveCallsAllowedFromPaymentFlow: EnableLiveFiscalIssuanceFromPaymentFlow,
             LiveCallsAllowedFromExitFlow: EnableLiveFiscalIssuanceFromExitFlow,
             Errors: [error]);
+}
+
+public sealed class SitePosServerEndpointOptions
+{
+    public Guid SitePosServerId { get; set; }
+
+    public string? SitePosServerRef { get; set; }
+
+    public string? BaseUrl { get; set; }
+
+    public string? ApiKeyFile { get; set; }
+
+    public string? Environment { get; set; }
+
+    public bool Enabled { get; set; }
 }
 
 public static class FiscalIssuancePosServerIntegrationReadinessStatuses
