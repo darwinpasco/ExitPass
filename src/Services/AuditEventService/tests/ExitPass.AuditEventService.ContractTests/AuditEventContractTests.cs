@@ -66,6 +66,32 @@ public sealed class AuditEventContractTests
     }
 
     [Fact]
+    public async Task IdenticalReplay_WithPostgresTimestampPrecision_IsIdempotent()
+    {
+        await using var factory = new AuditEventApiFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-ExitPass-Service-Identity", AuditEventApiFactory.ServiceIdentityId.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-ExitPass-Audit-Key", AuditEventApiFactory.ApiKey);
+        var occurredAt = DateTimeOffset.UtcNow.AddSeconds(-1);
+        occurredAt = occurredAt.AddTicks((7 - occurredAt.Ticks % 10 + 10) % 10);
+        var request = new AppendAuditEventRequest(
+            Guid.NewGuid(), "IST_REPLAY_SENTINEL", "SYSTEM", "SUCCESS", null,
+            AuditEventApiFactory.SiteId, null, "IST", null, occurredAt,
+            Guid.NewGuid(), null);
+
+        using var first = await client.PostAsJsonAsync("/v1/audit/events", request);
+        using var replay = await client.PostAsJsonAsync("/v1/audit/events", request);
+        using var query = await client.GetAsync(
+            $"/v1/audit/events?correlationId={request.CorrelationId:D}&siteId={request.SiteId:D}");
+
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        var result = await query.Content.ReadFromJsonAsync<AuditEventQueryResponse>();
+        Assert.Single(result!.Items);
+        Assert.Equal(0, result.Items[0].OccurredAt.Ticks % 10);
+    }
+
+    [Fact]
     public async Task AuthenticatedCaller_CannotOverrideConfiguredSiteScope()
     {
         await using var factory = new AuditEventApiFactory();
@@ -168,8 +194,16 @@ public sealed class AuditEventContractTests
             CancellationToken cancellationToken)
         {
             if (records.TryGetValue(record.AuditEventId, out var existing))
+            {
+                if (!SameImmutableContent(existing, record))
+                    throw new AuditEventIdentityConflictException();
                 return Task.FromResult((existing, false));
-            var persisted = record with { RecordedAt = DateTimeOffset.UtcNow };
+            }
+            var persisted = record with
+            {
+                OccurredAt = TruncateToPostgresPrecision(record.OccurredAt),
+                RecordedAt = DateTimeOffset.UtcNow
+            };
             records.Add(persisted.AuditEventId, persisted);
             return Task.FromResult((persisted, true));
         }
@@ -180,5 +214,20 @@ public sealed class AuditEventContractTests
             CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<AuditEventRecord>>(
                 records.Values.Where(record => record.CorrelationId == correlationId &&
                     (siteId is null || record.SiteId == siteId)).ToArray());
+
+        private static DateTimeOffset TruncateToPostgresPrecision(DateTimeOffset value)
+        {
+            var utc = value.ToUniversalTime();
+            return new DateTimeOffset(utc.Ticks - utc.Ticks % 10, TimeSpan.Zero);
+        }
+
+        private static bool SameImmutableContent(AuditEventRecord left, AuditEventRecord right) =>
+            left.AuditEventId == right.AuditEventId && left.EventType == right.EventType &&
+            left.EventCategory == right.EventCategory && left.EventResult == right.EventResult &&
+            left.EventReasonCode == right.EventReasonCode && left.SiteId == right.SiteId &&
+            left.TerminalId == right.TerminalId && left.SourceServiceName == right.SourceServiceName &&
+            left.SourceChannel == right.SourceChannel && left.ActorServiceIdentityId == right.ActorServiceIdentityId &&
+            left.Summary == right.Summary && left.OccurredAt == right.OccurredAt &&
+            left.CorrelationId == right.CorrelationId && left.CausationId == right.CausationId;
     }
 }

@@ -39,7 +39,7 @@ public sealed class AuditEventsController(
             request.AuditEventId, request.EventType.Trim(), request.EventCategory, request.EventResult,
             NullIfWhiteSpace(request.EventReasonCode), request.SiteId, request.TerminalId,
             caller.SourceServiceName, request.SourceChannel.Trim(), caller.ServiceIdentityId,
-            NullIfWhiteSpace(request.Summary), request.OccurredAt.ToUniversalTime(), default,
+            NullIfWhiteSpace(request.Summary), NormalizePostgresTimestamp(request.OccurredAt), default,
             request.CorrelationId, request.CausationId);
         try
         {
@@ -116,6 +116,12 @@ public sealed class AuditEventsController(
 
     private static string? NullIfWhiteSpace(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static DateTimeOffset NormalizePostgresTimestamp(DateTimeOffset value)
+    {
+        var utc = value.ToUniversalTime();
+        return new DateTimeOffset(utc.Ticks - utc.Ticks % 10, TimeSpan.Zero);
+    }
 
     private static AuditEventResponse ToResponse(AuditEventRecord record) => new(
         record.AuditEventId, record.EventType, record.EventCategory, record.EventResult,
