@@ -11,7 +11,6 @@ namespace ExitPass.AuditEventService.Api.Controllers;
 [Route("v1/audit/events")]
 public sealed class AuditEventsController(
     IAuditEventRepository repository,
-    AuditEventServiceOptions options,
     ILogger<AuditEventsController> logger) : ControllerBase
 {
     private static readonly HashSet<string> Categories =
@@ -30,15 +29,16 @@ public sealed class AuditEventsController(
     [HttpPost]
     public async Task<IActionResult> Append(AppendAuditEventRequest request, CancellationToken cancellationToken)
     {
+        var caller = AuthenticatedCaller();
+        if (!caller.Allows(request.SiteId)) return SiteScopeProblem();
         var validationError = Validate(request);
         if (validationError is not null) return Problem(StatusCodes.Status400BadRequest,
             "AUDIT_EVENT_REQUEST_INVALID", validationError);
 
-        var identity = (Guid)HttpContext.Items[AuditServiceAuthenticationMiddleware.AuthenticatedIdentityItem]!;
         var record = new AuditEventRecord(
             request.AuditEventId, request.EventType.Trim(), request.EventCategory, request.EventResult,
             NullIfWhiteSpace(request.EventReasonCode), request.SiteId, request.TerminalId,
-            options.SourceServiceName, request.SourceChannel.Trim(), identity,
+            caller.SourceServiceName, request.SourceChannel.Trim(), caller.ServiceIdentityId,
             NullIfWhiteSpace(request.Summary), request.OccurredAt.ToUniversalTime(), default,
             request.CorrelationId, request.CausationId);
         try
@@ -70,6 +70,10 @@ public sealed class AuditEventsController(
         if (correlationId == Guid.Empty)
             return Problem(StatusCodes.Status400BadRequest, "AUDIT_QUERY_INVALID",
                 "A non-empty correlationId is required.");
+        if (!siteId.HasValue || siteId.Value == Guid.Empty)
+            return Problem(StatusCodes.Status400BadRequest, "AUDIT_QUERY_SITE_SCOPE_REQUIRED",
+                "A non-empty siteId is required.");
+        if (!AuthenticatedCaller().Allows(siteId.Value)) return SiteScopeProblem();
         try
         {
             var records = await repository.QueryAsync(correlationId, siteId, cancellationToken);
@@ -88,6 +92,12 @@ public sealed class AuditEventsController(
         var correlation = Request.Headers["X-Correlation-Id"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
         return StatusCode(status, new AuditProblem(code, message, correlation));
     }
+
+    private AuditEventCallerOptions AuthenticatedCaller() =>
+        (AuditEventCallerOptions)HttpContext.Items[AuditServiceAuthenticationMiddleware.AuthenticatedCallerItem]!;
+
+    private ObjectResult SiteScopeProblem() => Problem(StatusCodes.Status403Forbidden,
+        "AUDIT_SITE_SCOPE_REQUIRED", "The authenticated service is not authorized for the requested Site.");
 
     private static string? Validate(AppendAuditEventRequest request)
     {

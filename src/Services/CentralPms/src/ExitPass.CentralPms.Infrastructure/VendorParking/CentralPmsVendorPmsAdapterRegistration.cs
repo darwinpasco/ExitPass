@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.VendorParking;
+using ExitPass.CentralPms.Application.Auditing;
 using ExitPass.CentralPms.Application.VendorParking.Routing;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Infrastructure.VendorSessions;
@@ -95,7 +96,8 @@ public static class CentralPmsVendorPmsAdapterRegistration
                 serviceProvider.GetRequiredService<ExitPass.CentralPms.Domain.Common.ISystemClock>(),
                 serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SiteVendorAdapterProjectionSyncService>>(),
                 options.CentralPmsServiceIdentityId,
-                options.AllowTaskOwnedHttp));
+                options.AllowTaskOwnedHttp,
+                serviceProvider.GetRequiredService<IAuditEventPublisher>()));
         return services;
     }
 }

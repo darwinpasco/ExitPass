@@ -14,6 +14,7 @@
     <ProjectReference Include="../ExitPass.CentralPms.Application/ExitPass.CentralPms.Application.csproj" />
     <ProjectReference Include="../ExitPass.CentralPms.Domain/ExitPass.CentralPms.Domain.csproj" />
     <ProjectReference Include="../../../VendorPmsAdapter/src/ExitPass.VendorPmsAdapter.Contracts/ExitPass.VendorPmsAdapter.Contracts.csproj" />
+    <ProjectReference Include="../../../AuditEventService/src/ExitPass.AuditEventService.Contracts/ExitPass.AuditEventService.Contracts.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Persistence/ExitPass.BuildingBlocks.Persistence.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Messaging/ExitPass.BuildingBlocks.Messaging.csproj" />

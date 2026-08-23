@@ -12,7 +12,7 @@ public sealed class AuditEventServiceOptionsTests
         var options = CreateOptions(secret);
 
         Assert.Empty(options.Validate());
-        Assert.Equal(TemporarySecret.Value, options.ReadApiKey());
+        Assert.Equal(TemporarySecret.Value, options.ReadApiKey(options.Callers[0]));
     }
 
     [Fact]
@@ -20,7 +20,7 @@ public sealed class AuditEventServiceOptionsTests
     {
         using var secret = new TemporarySecret();
         var options = CreateOptions(secret);
-        options.AllowedOperations = ["AUDIT_EVENT_DELETE"];
+        options.Callers[0].AllowedOperations = ["AUDIT_EVENT_DELETE"];
 
         Assert.Contains("AUDIT_SERVICE_PERMISSION_CONFIGURATION_INVALID", options.Validate());
     }
@@ -37,11 +37,18 @@ public sealed class AuditEventServiceOptionsTests
 
     private static AuditEventServiceOptions CreateOptions(TemporarySecret secret) => new()
     {
-        ServiceIdentityId = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2"),
-        SourceServiceName = "CENTRAL_PMS",
         SecretMountRoot = secret.Root,
-        ApiKeyFile = secret.Path,
-        AllowedOperations = [AuditEventOperations.Append, AuditEventOperations.Read]
+        Callers =
+        [
+            new AuditEventCallerOptions
+            {
+                ServiceIdentityId = Guid.Parse("8063c159-dae6-57af-9f1f-e0a07d519fb2"),
+                SourceServiceName = "CENTRAL_PMS",
+                ApiKeyFile = secret.Path,
+                AllowedOperations = [AuditEventOperations.Append, AuditEventOperations.Read],
+                AllowedSiteIds = [Guid.Parse("10000000-0000-0000-0000-000000000003")]
+            }
+        ]
     };
 
     private sealed class TemporarySecret : IDisposable
