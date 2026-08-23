@@ -4,6 +4,12 @@
 
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using ExitPass.AuditEventService.Api.Configuration;
+using ExitPass.AuditEventService.Api.Health;
+using ExitPass.AuditEventService.Api.Security;
+using ExitPass.AuditEventService.Application.AuditEvents;
+using ExitPass.AuditEventService.Infrastructure.AuditEvents;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,9 +19,22 @@ builder.Services.AddSwaggerGen(options =>
 {
 });
 
+var auditOptions = builder.Configuration.GetSection(AuditEventServiceOptions.SectionName)
+    .Get<AuditEventServiceOptions>() ?? new AuditEventServiceOptions();
+builder.Services.AddSingleton(auditOptions);
+var connectionString = builder.Configuration.GetConnectionString("MainDatabase");
+if (string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("AUDIT_EVENT_DATABASE_CONFIGURATION_REQUIRED");
+builder.Services.AddSingleton(_ => NpgsqlDataSource.Create(connectionString));
+builder.Services.AddScoped<IAuditEventRepository, PostgresAuditEventRepository>();
+
 builder.Services
     .AddHealthChecks()
-    .AddCheck("self", () => HealthCheckResult.Healthy("Audit Event Service is alive."));
+    .AddCheck("self", () => HealthCheckResult.Healthy("Audit Event Service is alive."))
+    .AddCheck("audit_configuration", () => auditOptions.Validate().Count == 0
+        ? HealthCheckResult.Healthy("Audit Event Service configuration is valid.")
+        : HealthCheckResult.Unhealthy("AUDIT_EVENT_CONFIGURATION_INVALID"))
+    .AddCheck<AuditDatabaseHealthCheck>("audit_database");
 
 var app = builder.Build();
 
@@ -30,6 +49,7 @@ if (app.Environment.IsDevelopment() || app.Environment.EnvironmentName == "Secur
 }
 
 app.UseRouting();
+app.UseMiddleware<AuditServiceAuthenticationMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
