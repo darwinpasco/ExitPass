@@ -22,13 +22,15 @@
 
 | Frontend repository | `darwinpasco/ExitPass-ManagementPlatform` |
 
-| Frontend baseline | `develop` at `eed4aeef1b16116e847de701df843b14fb416516` |
+| Frontend baseline | `develop` at `a59db335ad6b5d92a993d5284b3dd3b4dd142b65` |
 
 | Central PMS repository | `darwinpasco/ExitPass` |
 
-| Central PMS baseline | `dev` at `89ddf5db462fab1e1694d2cf8320d37d5f6cbf5d` |
+| Central PMS baseline | `dev` at `526c0799e05e5655b0c528c966230e7e58379850` |
 
 | Overall result | `PARTIAL` |
+
+| Core required scope result | `CORE_REQUIRED_SCOPE_COMPLETE` at acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72`; broader deferred v1.3 scope remains `PARTIAL` |
 
 
 
@@ -332,7 +334,7 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | MP-USR-004 | Update profile and access effectivity with optimistic concurrency and audit. | User/Role/Scope Contract | I-021 | H-007 | Focused tests | `IMPLEMENTED\_AND\_ACCEPTED` | None |
 
-| MP-USR-005 | Activate, suspend, inactivate, retire, lock, and unlock through governed lifecycle transitions. | User/Role/Scope Contract section 8.1 | I-021/I-020 | H-007 | Route and component tests | `IMPLEMENTED\_AND\_ACCEPTED` | Final integrated regression |
+| MP-USR-005 | Activate, suspend, inactivate, retire, lock, and unlock through governed lifecycle transitions. | User/Role/Scope Contract section 8.1 | I-021/I-020 | H-007 | Route, component, and whole-platform runtime acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` | `IMPLEMENTED\_AND\_ACCEPTED` | None for the required core workflow |
 
 | MP-USR-006 | Revoke sessions when lifecycle policy requires it. | User/Role/Scope Contract sections 6 and 7 | I-020/I-021 | H-007 account status | Integration tests | `IMPLEMENTED\_AND\_ACCEPTED` | None |
 
@@ -340,7 +342,7 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | MP-USR-008 | Show privacy-safe MFA status. | User/Role/Scope Contract section 5 | I-021/I-020 | H-007 Security | H-007 tests | `IMPLEMENTED\_AND\_ACCEPTED` | None |
 
-| MP-USR-009 | Reset or remove MFA with elevated permission, reason, freshness, ceiling checks, session handling, and audit. | User/Role/Scope Contract section 5 | I-021/I-020 | H-007 Security | Backend and UI tests | `IMPLEMENTED\_AND\_ACCEPTED` | Final integrated regression |
+| MP-USR-009 | Reset or remove MFA with elevated permission, reason, freshness, ceiling checks, session handling, and audit. | User/Role/Scope Contract section 5 | I-021/I-020 | H-007 Security | Backend, UI, and whole-platform runtime regression `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` | `IMPLEMENTED\_AND\_ACCEPTED` | None for the required core workflow |
 
 | MP-USR-010 | Govern MFA requirement and user-completed enrollment without exposing provisioning material to administrators. | User/Role/Scope Contract section 5 | I-020 boundary | No complete administration flow found | Contract only | `PARTIAL` | Close requirement posture and implement required UI/API behavior |
 
@@ -478,7 +480,7 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | --- | --- | --- | --- | --- | --- |
 
-| MP-MDR-001 | MDR-FR-001 to 004 | Role-based Site, Site Group, cross-site, and portfolio dashboard scope | Runtime-accepted `/management-platform/overview`, `GET /v1/management-platform/dashboard/catalog`, and `GET /v1/management-platform/dashboard/operational-overview`; `reports.view` and `dashboard.view` remain separate; explicit authorized `SITE`/`SITE_GROUP` scope and concealed cross-scope denial passed in acceptance `MDR-DASHBOARD-ACCEPT-20260823T090629Z-1AC8AB9B` at backend `6168b8a58437419ce54a3b6e4076b33328b2e683` and frontend `70c59d3ed375670afea9c0e4a7b866f43ccdb110`; evidence manifest `35ef916fed739244ced0a0f0f0a8981679167ed15d7a8437269912f1622dd6b7` | `IMPLEMENTED\_AND\_ACCEPTED` | Preserve server-owned permission and explicit scope enforcement in later dashboard slices |
+| MP-MDR-001 | MDR-FR-001 to 004 | Role-based Site, Site Group, cross-site, and portfolio dashboard scope | Runtime-accepted `/management-platform/overview`, catalog, and operational overview; separate `reports.view` and `dashboard.view`; explicit `SITE`/`SITE_GROUP` scope and concealed denial in dashboard acceptance `MDR-DASHBOARD-ACCEPT-20260823T090629Z-1AC8AB9B` and whole-platform acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` at backend `526c0799e05e5655b0c528c966230e7e58379850` and frontend `a59db335ad6b5d92a993d5284b3dd3b4dd142b65` | `IMPLEMENTED\_AND\_ACCEPTED` | Preserve server-owned permission and explicit scope enforcement in later dashboard slices |
 
 | MP-MDR-002 | MDR-FR-005 to 008 | Active sessions, active vehicles, occupancy approximation, session age, and long-stay visibility | The scoped active vendor-projection aggregate and its SITE/SITE_GROUP UI presentation are runtime accepted; vehicle identifiers, occupancy approximation, session age, and long-stay views remain absent | `PARTIAL` | Approve and implement the remaining read models without exposing unnecessary vehicle or session data |
 
@@ -486,9 +488,9 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | MP-MDR-004 | MDR-FR-013 to 016 | Degraded-watch, degraded-active, Continuity Terminal, manual release, and fiscal exception visibility | Fiscal exception backend/UI foundation is runtime accepted for aggregate failed, conflict, outcome-unavailable, and lifecycle states from Central PMS coordination references; continuity and deadline-based overdue detection remain absent | `PARTIAL` | Separately approve authoritative continuity and overdue exception sources |
 
-| MP-MDR-005 | MDR-FR-017 to 021 | Payment attempts, confirmations, provider outcomes, payment-rail performance, and uncertainty | Runtime-accepted `GET /v1/management-platform/dashboard/payment-reconciliation-summary` and Management Platform UI; contract `management-platform-payment-reconciliation-reporting:v1`; `reconciliation.view` / `ManagementPlatformPaymentReconciliationSummaryRead`; deterministic SITE/SITE_GROUP, period-boundary, multiple-currency, no-activity, disabled-feature, responsive, and security evidence in acceptance `MDR-PAY-ACCEPT-20260822T061921Z-8BA8B13B` | `PARTIAL` | Provider-live performance, settlement, payout, bank, custody, fees, refunds, disputes, chargebacks, and fiscal facts remain unavailable |
+| MP-MDR-005 | MDR-FR-017 to 021 | Payment attempts, confirmations, provider outcomes, payment-rail performance, and uncertainty | Runtime-accepted summary API and UI; contract `management-platform-payment-reconciliation-reporting:v1`; `reconciliation.view`; SITE/SITE_GROUP, period boundary, PHP/USD, all five implemented internal findings, no activity, disabled feature, responsive, and security evidence in `MDR-PAY-ACCEPT-20260822T061921Z-8BA8B13B` and current whole-platform acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` | `PARTIAL` | Provider-live performance, settlement, payout, bank, custody, fees, refunds, disputes, chargebacks, and fiscal facts remain unavailable |
 
-| MP-MDR-006 | MDR-FR-022 to 024 | Sales Invoice issuance, fiscal status, and authorized report-reference visibility | `GET /v1/management-platform/dashboard/fiscal-exception-summary`; contract `management-platform-fiscal-exception-reporting:v1`; `sales-invoice-report.view` / `ManagementPlatformFiscalExceptionSummaryRead`; typed feature `ManagementPlatform:DashboardReporting:FiscalExceptions:Enabled`; Central PMS `core.fiscal_issuance_references` and linked confirmations; merged Management Platform route `/management-platform/reports/fiscal-exceptions`; acceptance `MDR-FISCAL-ACCEPT-20260823T073441Z-8299A68F` at backend `771eeac3aaab0e4a760a7b80ee2f1a8f108291b4` and frontend `70c59d3ed375670afea9c0e4a7b866f43ccdb110`; evidence manifest `527733eae8d399de6619a4347e85e89ed50d0190b6ebc95084f79485418d4f63`; authenticated SITE/SITE_GROUP, period, lifecycle, exception, currency, availability, responsive, security, and cleanup proofs | `IMPLEMENTED\_AND\_ACCEPTED` | Aggregate foundation accepted with `PARTIAL` source coverage; printing, delivery, overdue, retry-exhaustion, adjustment, void, reprint, BIR report facts, exports, schedules, drill-down, and exception-resolution workflows remain unavailable or deferred |
+| MP-MDR-006 | MDR-FR-022 to 024 | Sales Invoice issuance, fiscal status, and authorized report-reference visibility | Fiscal summary API/UI, contract `management-platform-fiscal-exception-reporting:v1`, `sales-invoice-report.view`, persisted Central PMS issuance references and linked confirmations; acceptance `MDR-FISCAL-ACCEPT-20260823T073441Z-8299A68F` and current whole-platform acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` prove SITE/SITE_GROUP, period, lifecycle, three implemented exceptions, PHP/USD, partial availability, responsive, security, and cleanup behavior | `IMPLEMENTED\_AND\_ACCEPTED` | Aggregate foundation accepted with `PARTIAL` source coverage; printing, delivery, overdue, retry-exhaustion, adjustment, void, reprint, BIR report facts, exports, schedules, drill-down, and exception-resolution workflows remain unavailable or deferred |
 
 | MP-MDR-007 | MDR-FR-025 to 027 | Reconciliation run/item and settlement comparison status | The runtime-accepted UI reports five internally provable consistency categories across canonical attempts, confirmations, and verified outcomes; no settlement comparison or reconciliation mutation is claimed | `PARTIAL` | Separately approve any reconciliation-run, settlement, payout, or bank comparison model |
 
@@ -496,9 +498,9 @@ The `MP-\*` identifiers below are trace identifiers created by this baseline. Th
 
 | MP-MDR-009 | MDR-FR-032 to 037 | Export control, filters, freshness, source labels, access/export audit, privacy | Core dashboard, Payment and Reconciliation, and Fiscal Exception backend/UI foundations are runtime accepted with explicit scope, source/freshness labels, warnings, privacy boundaries, and controlled failure behavior; no export capability is implemented | `PARTIAL` | Separately approve and implement controlled export and its audit/privacy acceptance |
 
-| MP-MDR-010 | MDR-FR-038 to 042 | Preserve non-authority for payment finality, ExitAuthorization, gates, Sales Invoice issuance, and mutations | Runtime acceptance proved GET-only reporting, separate attempts and confirmations, no provider/POS Server call, no browser-owned authority, and explicit settlement, payout, bank, custody, fiscal, gate, and mutation disclaimers | `IMPLEMENTED\_AND\_ACCEPTED` | Preserve boundary in later reporting slices |
+| MP-MDR-010 | MDR-FR-038 to 042 | Preserve non-authority for payment finality, ExitAuthorization, gates, Sales Invoice issuance, and mutations | Whole-platform acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` re-proved GET-only reporting, separate attempts and confirmations, no provider/POS Server/external call, no browser-owned authority, and explicit settlement, payout, bank, custody, fiscal, gate, and mutation boundaries | `IMPLEMENTED\_AND\_ACCEPTED` | Preserve boundary in later reporting slices |
 
-| MP-MDR-011 | MDR-AC-001 to 020 | Satisfy the approved dashboard acceptance criteria | Core operational dashboard acceptance `MDR-DASHBOARD-ACCEPT-20260823T090629Z-1AC8AB9B`, Payment and Reconciliation acceptance `MDR-PAY-ACCEPT-20260822T061921Z-8BA8B13B`, and Fiscal Exception acceptance `MDR-FISCAL-ACCEPT-20260823T073441Z-8299A68F` prove their bounded backend/UI foundations; broader operational metrics, management activity, export, and schedule acceptance remain incomplete | `PARTIAL` | Complete and accept only the remaining approved dashboard/reporting slices |
+| MP-MDR-011 | MDR-AC-001 to 020 | Satisfy the approved dashboard acceptance criteria | The three bounded report acceptances and whole-platform acceptance `MP-CORE-ACCEPT-20260823T103835Z-03E1EF72` close the agreed core dashboard/reporting scope on current commits; broader operational metrics, management activity, export, schedule, delivery, and drill-down acceptance remain incomplete | `PARTIAL` | Complete and accept only separately approved remaining dashboard/reporting slices |
 
 
 
