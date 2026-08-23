@@ -3,6 +3,9 @@
     <RootNamespace>ExitPass.AuditEventService.Infrastructure</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../ExitPass.AuditEventService.Application/ExitPass.AuditEventService.Application.csproj" />
     <ProjectReference Include="../ExitPass.AuditEventService.Domain/ExitPass.AuditEventService.Domain.csproj" />
     <ProjectReference Include="../../../../BuildingBlocks/ExitPass.BuildingBlocks.Infrastructure/ExitPass.BuildingBlocks.Infrastructure.csproj" />
