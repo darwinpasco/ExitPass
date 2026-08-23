@@ -47,6 +47,7 @@ using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Domain.Common;
 using ExitPass.CentralPms.Domain.PaymentAttempts.Policies;
 using ExitPass.CentralPms.Infrastructure.Common;
+using ExitPass.CentralPms.Infrastructure.Auditing;
 using ExitPass.CentralPms.Infrastructure.Eventing;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.Gates;
@@ -98,6 +99,7 @@ ConfigureHealthChecks(builder);
 ConfigureInternalSecurity(builder);
 ConfigureHumanAuthentication(builder, mainDatabaseConnectionString);
 ConfigureApplicationServices(builder, mainDatabaseConnectionString);
+builder.Services.AddCentralPmsAuditEventClient(builder.Configuration);
 ConfigureOperatorConsoleLocalCors(builder);
 
 var app = builder.Build();

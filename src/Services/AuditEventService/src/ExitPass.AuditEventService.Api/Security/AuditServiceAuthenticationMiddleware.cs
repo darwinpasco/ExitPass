@@ -7,7 +7,7 @@ namespace ExitPass.AuditEventService.Api.Security;
 
 public sealed class AuditServiceAuthenticationMiddleware(RequestDelegate next)
 {
-    public const string AuthenticatedIdentityItem = "AuditAuthenticatedServiceIdentity";
+    public const string AuthenticatedCallerItem = "AuditAuthenticatedCaller";
 
     public async Task InvokeAsync(HttpContext context, AuditEventServiceOptions options)
     {
@@ -19,11 +19,13 @@ public sealed class AuditServiceAuthenticationMiddleware(RequestDelegate next)
 
         var identityValue = context.Request.Headers["X-ExitPass-Service-Identity"].ToString();
         var suppliedKey = context.Request.Headers["X-ExitPass-Audit-Key"].ToString();
+        var caller = Guid.TryParse(identityValue, out var identityId)
+            ? options.FindCaller(identityId)
+            : null;
         var expectedKey = string.Empty;
-        try { expectedKey = options.ReadApiKey(); }
+        try { if (caller is not null) expectedKey = options.ReadApiKey(caller); }
         catch (InvalidOperationException) { }
-        var authenticated = Guid.TryParse(identityValue, out var identityId) &&
-            identityId == options.ServiceIdentityId && !string.IsNullOrEmpty(expectedKey) &&
+        var authenticated = caller is not null && !string.IsNullOrEmpty(expectedKey) &&
             FixedTimeEquals(suppliedKey, expectedKey);
         if (!authenticated)
         {
@@ -35,14 +37,14 @@ public sealed class AuditServiceAuthenticationMiddleware(RequestDelegate next)
         var requiredOperation = context.Request.Method == HttpMethods.Post
             ? AuditEventOperations.Append
             : context.Request.Method == HttpMethods.Get ? AuditEventOperations.Read : null;
-        if (requiredOperation is null || !options.Allows(requiredOperation))
+        if (requiredOperation is null || !caller!.Allows(requiredOperation))
         {
             await WriteProblem(context, StatusCodes.Status403Forbidden, "AUDIT_PERMISSION_REQUIRED",
                 "Service permission is insufficient for this operation.");
             return;
         }
 
-        context.Items[AuthenticatedIdentityItem] = identityId;
+        context.Items[AuthenticatedCallerItem] = caller;
         await next(context);
     }
 

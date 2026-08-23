@@ -1,7 +1,9 @@
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.Auditing;
 using ExitPass.CentralPms.Application.VendorParking.Routing;
 using ExitPass.CentralPms.Application.VendorSessions;
 using ExitPass.CentralPms.Domain.Common;
+using ExitPass.CentralPms.Infrastructure.Auditing;
 using ExitPass.VendorPmsAdapter.Contracts.Projection;
 using ExitPass.VendorPmsAdapter.Contracts.Routing;
 using Microsoft.Extensions.Logging;
@@ -17,7 +19,8 @@ public sealed class SiteVendorAdapterProjectionSyncService(
     ISystemClock clock,
     ILogger<SiteVendorAdapterProjectionSyncService> logger,
     Guid centralPmsServiceIdentityId,
-    bool allowTaskOwnedHttp) : IVendorSessionProjectionSyncService
+    bool allowTaskOwnedHttp,
+    IAuditEventPublisher auditEvents) : IVendorSessionProjectionSyncService
 {
     public async Task<SyncVendorSessionProjectionsResult> SyncAsync(
         SyncVendorSessionProjectionsCommand command, CancellationToken cancellationToken)
@@ -66,6 +69,12 @@ public sealed class SiteVendorAdapterProjectionSyncService(
             throw new VendorSessionProjectionException("SITE_ADAPTER_RESPONSE_BINDING_MISMATCH", false);
         var observedAt = clock.UtcNow;
         var projections = response.Records.Select(record => Map(record, route, command.CorrelationId, observedAt)).ToArray();
+        await auditEvents.AppendAsync(new ApplicationAuditEvent(
+            ProjectionAuditIdentity.For(route.SiteId, command.CorrelationId),
+            "VENDOR_SESSION_PROJECTION_BATCH_RECEIVED", "INTEGRATION", "SUCCESS", null,
+            route.SiteId, null, "CENTRAL_PMS_VENDOR_SESSION_PROJECTION",
+            $"Validated provider-neutral projection batch with {projections.Length} usable records.",
+            observedAt, command.CorrelationId, null), cancellationToken);
         try { await repository.UpsertBatchAsync(projections, cancellationToken); }
         catch (OperationCanceledException) { throw; }
         catch (Exception) { throw new VendorSessionProjectionException("PROJECTION_PERSISTENCE_FAILURE", true); }
