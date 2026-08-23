@@ -543,8 +543,14 @@ static void ConfigureApplicationServices(
             serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashControlledBackfillMutationAuditRepository>(),
             serviceProvider.GetRequiredService<IFiscalExceptionSemanticHashBackfillOperatorWorkflowService>()));
     builder.Services.AddScoped<IFiscalSemanticRequestHashParityProofService, FiscalSemanticRequestHashParityProofService>();
-    builder.Services.Configure<FiscalIssuancePosServerIntegrationOptions>(
-        builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName));
+    builder.Services
+        .AddOptions<FiscalIssuancePosServerIntegrationOptions>()
+        .Bind(builder.Configuration.GetSection(FiscalIssuancePosServerIntegrationOptions.SectionName))
+        .PostConfigure(options => options.RuntimeEnvironment = builder.Environment.EnvironmentName)
+        .Validate(
+            options => !options.EnablePosServerFiscalIssuanceLiveCall || options.EvaluateReadiness().IsReady,
+            "Enabled Site POS Server integration configuration is invalid.")
+        .ValidateOnStart();
     builder.Services.AddScoped<IPosServerFiscalDocumentRequestMapper, PosServerFiscalDocumentRequestMapper>();
     builder.Services.AddScoped<IFiscalIssuancePosServerLiveIntegrationService>(serviceProvider =>
         new FiscalIssuancePosServerLiveIntegrationService(
@@ -569,11 +575,6 @@ static void ConfigureApplicationServices(
                 var options = serviceProvider
                     .GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>()
                     .Value;
-
-                if (Uri.TryCreate(options.PosServerBaseUrl, UriKind.Absolute, out var baseUri))
-                {
-                    httpClient.BaseAddress = baseUri;
-                }
 
                 if (options.TimeoutSeconds > 0)
                 {

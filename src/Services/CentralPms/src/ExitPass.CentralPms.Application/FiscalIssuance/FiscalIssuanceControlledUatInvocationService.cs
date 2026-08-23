@@ -536,10 +536,10 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
     }
 
     private static bool IsConflictError(string error) =>
+        error.StartsWith("site_pos_server_", StringComparison.Ordinal) ||
         error is "controlled_diagnostic_flag_disabled"
             or "live_call_seam_disabled"
-            or "pos_server_base_url_missing"
-            or "pos_server_base_url_invalid"
+            or "pos_server_runtime_environment_required"
             or "payment_flow_guard_enabled"
             or "exit_flow_guard_enabled"
             or "fiscal_gating_enforcement_enabled"
@@ -566,15 +566,7 @@ public sealed class FiscalIssuanceControlledUatInvocationService : IFiscalIssuan
             errors.Add("live_call_seam_disabled");
         }
 
-        if (string.IsNullOrWhiteSpace(_posServerOptions.PosServerBaseUrl))
-        {
-            errors.Add("pos_server_base_url_missing");
-        }
-        else if (!Uri.TryCreate(_posServerOptions.PosServerBaseUrl, UriKind.Absolute, out var uri) ||
-                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-        {
-            errors.Add("pos_server_base_url_invalid");
-        }
+        errors.AddRange(_posServerOptions.ValidateForLiveCall());
 
         if (_posServerOptions.EnableLiveFiscalIssuanceFromPaymentFlow)
         {

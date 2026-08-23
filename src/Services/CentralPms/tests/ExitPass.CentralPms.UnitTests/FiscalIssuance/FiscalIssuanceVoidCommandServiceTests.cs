@@ -35,7 +35,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         response.HttpStatusCode.Should().Be(400);
         response.Status.Should().Be("fiscal_void_request_rejected");
         response.Errors.Should().Contain(expectedError);
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -52,7 +52,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         response.HttpStatusCode.Should().Be(404);
         response.Status.Should().Be("fiscal_issuance_reference_not_found");
         response.Errors.Should().Contain("fiscal_issuance_reference_not_found");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         response.HttpStatusCode.Should().Be(409);
         response.Status.Should().Be("fiscal_void_reference_rejected");
         response.Errors.Should().Contain("pos_server_fiscal_document_id_required");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
 
         response.HttpStatusCode.Should().Be(409);
         response.Errors.Should().Contain("fiscal_reference_not_recorded");
-        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default);
+        await client.DidNotReceiveWithAnyArgs().VoidFiscalDocumentAsync(default, default!, default!, default);
     }
 
     [Fact]
@@ -94,6 +94,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(PosServerFiscalDocumentVoidOutcome.NewlyVoided, "newly_voided"));
 
@@ -129,6 +130,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
                 posRequest.CorrelationId == request.CorrelationId &&
                 posRequest.SourceSystemRef == FiscalIssuanceVoidCommandService.SourceSystemRef &&
                 posRequest.BusinessDayDate == null),
+            Arg.Any<PosServerRoutingContext>(),
             Arg.Any<CancellationToken>());
     }
 
@@ -145,6 +147,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(outcome, classification));
 
@@ -165,6 +168,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(
                 PosServerFiscalDocumentVoidOutcome.Conflict,
@@ -197,6 +201,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns(PosVoidResult(outcome, "rejected", succeeded: false, httpStatusCode: httpStatusCode));
 
@@ -217,6 +222,7 @@ public sealed class FiscalIssuanceVoidCommandServiceTests
         client.VoidFiscalDocumentAsync(
                 Arg.Any<Guid>(),
                 Arg.Any<PosServerFiscalDocumentVoidRequest>(),
+                Arg.Any<PosServerRoutingContext>(),
                 Arg.Any<CancellationToken>())
             .Returns<Task<PosServerFiscalDocumentVoidResult>>(_ => throw new HttpRequestException("POS unavailable"));
 

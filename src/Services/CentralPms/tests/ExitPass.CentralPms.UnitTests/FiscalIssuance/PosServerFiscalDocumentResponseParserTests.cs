@@ -5,12 +5,27 @@ using ExitPass.CentralPms.Application.Payments;
 using ExitPass.CentralPms.Domain.FiscalIssuance;
 using ExitPass.CentralPms.Infrastructure.FiscalIssuance;
 using FluentAssertions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace ExitPass.CentralPms.UnitTests.FiscalIssuance;
 
-public sealed class PosServerFiscalDocumentResponseParserTests
+public sealed class PosServerFiscalDocumentResponseParserTests : IDisposable
 {
+    private static readonly Guid SitePosServerId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    private const string SitePosServerRef = "site-pos-server-main";
+    private readonly string _apiKeyFile = Path.GetTempFileName();
+
+    public PosServerFiscalDocumentResponseParserTests()
+    {
+        File.WriteAllText(_apiKeyFile, "unit-test-pos-key");
+    }
+
+    public void Dispose()
+    {
+        File.Delete(_apiKeyFile);
+    }
+
     [Fact]
     public void ParseCreateResponse_WhenNewlyCreatedAccepted_MapsSuccessfulEvidence()
     {
@@ -127,7 +142,7 @@ public sealed class PosServerFiscalDocumentResponseParserTests
         {
             BaseAddress = new Uri("https://pos-server.local")
         };
-        var sut = new HttpPosServerFiscalDocumentClient(client);
+        var sut = CreateClient(client);
 
         var result = await sut.CreateFiscalDocumentAsync(
             new PosServerFiscalDocumentRequestMapper().Map(PosServerFiscalDocumentRequestMapperTests.ValidContext()),
@@ -195,7 +210,7 @@ public sealed class PosServerFiscalDocumentResponseParserTests
         {
             BaseAddress = new Uri("https://pos-server.local")
         };
-        var sut = new HttpPosServerFiscalDocumentClient(client);
+        var sut = CreateClient(client);
         var documentId = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
         var result = await sut.VoidFiscalDocumentAsync(
@@ -209,6 +224,7 @@ public sealed class PosServerFiscalDocumentResponseParserTests
                 "corr-001",
                 "central-pms",
                 DateOnly.Parse("2026-07-09")),
+            new PosServerRoutingContext(SitePosServerId, SitePosServerRef),
             CancellationToken.None);
 
         result.Outcome.Should().Be(PosServerFiscalDocumentVoidOutcome.NewlyVoided);
@@ -220,6 +236,26 @@ public sealed class PosServerFiscalDocumentResponseParserTests
         observedBody.Should().Contain("\"correlationId\":\"corr-001\"");
         observedBody.Should().Contain("\"sourceSystemRef\":\"central-pms\"");
     }
+
+    private HttpPosServerFiscalDocumentClient CreateClient(HttpClient client) =>
+        new(
+            client,
+            Options.Create(new FiscalIssuancePosServerIntegrationOptions
+            {
+                RuntimeEnvironment = "Test",
+                Endpoints =
+                [
+                    new SitePosServerEndpointOptions
+                    {
+                        SitePosServerId = SitePosServerId,
+                        SitePosServerRef = SitePosServerRef,
+                        BaseUrl = "http://pos-server.local",
+                        ApiKeyFile = _apiKeyFile,
+                        Environment = "Test",
+                        Enabled = true
+                    }
+                ]
+            }));
 
     [Fact]
     public void ParseReadResponse_WhenReadbackIncludesIdempotencyAndHashFields_ExposesSafeContractFields()

@@ -290,13 +290,12 @@ public sealed class FiscalIssuanceControlledUatEvidenceExporterTests
     }
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
-        new()
+        new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
             EnableControlledUatDiagnosticPath = true,
-            PosServerBaseUrl = "https://pos-server.local",
             TimeoutSeconds = 10
-        };
+        }.AddEndpoint();
 
     public static TheoryData<string, FiscalIssuanceResultClassification?, FiscalIssuanceIntegrationState?, string> OutcomeCases() =>
         new()

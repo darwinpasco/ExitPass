@@ -18,6 +18,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Npgsql;
 using NpgsqlTypes;
 using Xunit;
@@ -60,6 +61,7 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
     private const string LocalLivePosSmokeEnabledEnvVar = "EXITPASS_RUN_STATUTORY_DISCOUNT_LIVE_POS_SMOKE";
     private const string LocalLivePosSmokeRunIdEnvVar = "EXITPASS_STATUTORY_DISCOUNT_LIVE_POS_SMOKE_RUN_ID";
     private const string LocalLivePosSmokeBaseUrlEnvVar = "EXITPASS_STATUTORY_DISCOUNT_LIVE_POS_BASE_URL";
+    private const string LocalLivePosSmokeApiKeyFileEnvVar = "EXITPASS_STATUTORY_DISCOUNT_LIVE_POS_API_KEY_FILE";
 
     private static readonly Guid JurisdictionId = Guid.Parse("23100000-0000-0000-0000-000000000001");
     private const string E2ELguCode = "PH-INT-E2E-231";
@@ -379,21 +381,14 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             CentralPmsRbacPolicyCatalog.PermissionsHeaderName,
             "fiscal-issuance.status.read");
 
-        using var posHttpClient = new HttpClient { BaseAddress = new Uri(posServerBaseUrl) };
-        var posClient = new HttpPosServerFiscalDocumentClient(posHttpClient);
+        using var posHttpClient = new HttpClient();
+        var posOptions = LivePosOptions(posServerBaseUrl);
+        var posClient = new HttpPosServerFiscalDocumentClient(posHttpClient, Options.Create(posOptions));
         var referenceRepository = new PostgresFiscalIssuanceReferenceRepository(
             CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
         var orchestrationService = new FiscalIssuanceOrchestrationService(referenceRepository);
         var liveIntegration = new FiscalIssuancePosServerLiveIntegrationService(
-            new FiscalIssuancePosServerIntegrationOptions
-            {
-                EnablePosServerFiscalIssuanceLiveCall = true,
-                EnableControlledUatDiagnosticPath = true,
-                PosServerBaseUrl = posServerBaseUrl,
-                TimeoutSeconds = 10,
-                EnableLiveFiscalIssuanceFromPaymentFlow = false,
-                EnableLiveFiscalIssuanceFromExitFlow = false
-            },
+            posOptions,
             new PosServerFiscalDocumentRequestMapper(),
             new FiscalSemanticRequestHashCalculator(),
             posClient,
@@ -448,6 +443,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
         var posRead = await posClient.GetFiscalDocumentAsync(
             firstResult.PosServerResult.FiscalDocumentId!.Value,
+            PosServerRoutingContext.Create(
+                fiscalReference.SitePosServerId!.Value,
+                fiscalReference.SitePosServerRef!),
             CancellationToken.None);
         posRead.Succeeded.Should().BeTrue();
         posRead.FiscalDocumentId.Should().Be(firstResult.PosServerResult.FiscalDocumentId);
@@ -517,6 +515,9 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
         var afterConflictRead = await posClient.GetFiscalDocumentAsync(
             firstResult.PosServerResult.FiscalDocumentId!.Value,
+            PosServerRoutingContext.Create(
+                fiscalReference.SitePosServerId!.Value,
+                fiscalReference.SitePosServerRef!),
             CancellationToken.None);
         afterConflictRead.Succeeded.Should().BeTrue();
         afterConflictRead.FiscalDocumentNumber.Should().Be(firstResult.PosServerResult.FiscalDocumentNumber);
@@ -579,21 +580,14 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
 
         try
         {
-            using var posHttpClient = new HttpClient { BaseAddress = new Uri(posServerBaseUrl) };
-            var posClient = new HttpPosServerFiscalDocumentClient(posHttpClient);
+            using var posHttpClient = new HttpClient();
+            var posOptions = LivePosOptions(posServerBaseUrl);
+            var posClient = new HttpPosServerFiscalDocumentClient(posHttpClient, Options.Create(posOptions));
             var referenceRepository = new PostgresFiscalIssuanceReferenceRepository(
                 CentralPmsIntegrationTestConfiguration.GetDatabaseConnectionString());
             var orchestrationService = new FiscalIssuanceOrchestrationService(referenceRepository);
             var liveIntegration = new FiscalIssuancePosServerLiveIntegrationService(
-                new FiscalIssuancePosServerIntegrationOptions
-                {
-                    EnablePosServerFiscalIssuanceLiveCall = true,
-                    EnableControlledUatDiagnosticPath = true,
-                    PosServerBaseUrl = posServerBaseUrl,
-                    TimeoutSeconds = 10,
-                    EnableLiveFiscalIssuanceFromPaymentFlow = false,
-                    EnableLiveFiscalIssuanceFromExitFlow = false
-                },
+                posOptions,
                 new PosServerFiscalDocumentRequestMapper(),
                 new FiscalSemanticRequestHashCalculator(),
                 posClient,
@@ -903,6 +897,38 @@ public sealed class OperatorConsoleStatutoryDiscountE2EIntegrationTests
             Environment.GetEnvironmentVariable(LocalLivePosSmokeEnabledEnvVar),
             "true",
             StringComparison.OrdinalIgnoreCase);
+
+    private static FiscalIssuancePosServerIntegrationOptions LivePosOptions(string posServerBaseUrl)
+    {
+        var apiKeyFile = Environment.GetEnvironmentVariable(LocalLivePosSmokeApiKeyFileEnvVar);
+        if (string.IsNullOrWhiteSpace(apiKeyFile))
+        {
+            throw new InvalidOperationException(
+                $"The opt-in live POS smoke requires {LocalLivePosSmokeApiKeyFileEnvVar}.");
+        }
+
+        return new FiscalIssuancePosServerIntegrationOptions
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            EnableControlledUatDiagnosticPath = true,
+            RuntimeEnvironment = "IntegrationTest",
+            TimeoutSeconds = 10,
+            EnableLiveFiscalIssuanceFromPaymentFlow = false,
+            EnableLiveFiscalIssuanceFromExitFlow = false,
+            Endpoints =
+            [
+                new SitePosServerEndpointOptions
+                {
+                    SitePosServerId = PosServerSitePosServerId,
+                    SitePosServerRef = "DEV-POS-SERVER-ATC-001",
+                    BaseUrl = posServerBaseUrl,
+                    ApiKeyFile = apiKeyFile,
+                    Environment = "IntegrationTest",
+                    Enabled = true
+                }
+            ]
+        };
+    }
 
     private static async Task EnsurePosServerRuntimeAvailableAsync(string posServerBaseUrl)
     {

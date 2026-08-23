@@ -229,7 +229,10 @@ public sealed class FiscalIssuanceStatusReadServiceTests
             FiscalIssuanceEvidenceStatus = FiscalIssuanceEvidenceStatus.FiscalDocumentNumberAssigned
         };
         var posRead = Substitute.For<IPosServerFiscalDocumentClient>();
-        posRead.GetFiscalDocumentAsync(posDocumentId, Arg.Any<CancellationToken>())
+        posRead.GetFiscalDocumentAsync(
+                posDocumentId,
+                Arg.Any<PosServerRoutingContext>(),
+                Arg.Any<CancellationToken>())
             .Returns(new PosServerFiscalDocumentReadResult(
                 Outcome: PosServerFiscalDocumentOutcome.Accepted,
                 Succeeded: true,

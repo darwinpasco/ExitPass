@@ -18,6 +18,7 @@ public interface IFiscalExceptionReadbackClient
 
     Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
         Guid fiscalDocumentId,
+        PosServerRoutingContext routingContext,
         CancellationToken cancellationToken);
 }
 
@@ -34,8 +35,9 @@ public sealed class PosServerFiscalExceptionReadbackClient : IFiscalExceptionRea
 
     public Task<PosServerFiscalDocumentReadResult> GetFiscalDocumentAsync(
         Guid fiscalDocumentId,
+        PosServerRoutingContext routingContext,
         CancellationToken cancellationToken) =>
-        _client.GetFiscalDocumentAsync(fiscalDocumentId, cancellationToken);
+        _client.GetFiscalDocumentAsync(fiscalDocumentId, routingContext, cancellationToken);
 }
 
 public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWorker
@@ -87,7 +89,9 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         }
 
         var fiscalDocumentId = detail.PosServerFiscalDocumentId;
-        if (fiscalDocumentId is null || fiscalDocumentId == Guid.Empty)
+        if (fiscalDocumentId is null || fiscalDocumentId == Guid.Empty ||
+            detail.Summary.SitePosServerId is null || detail.Summary.SitePosServerId == Guid.Empty ||
+            string.IsNullOrWhiteSpace(detail.Summary.SitePosServerRef))
         {
             _logger.LogInformation(
                 "FEQ readback skipped for {FiscalIssuanceReferenceId}: identifier missing.",
@@ -97,7 +101,9 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
                 detail,
                 FiscalExceptionReadbackClassification.IdentifierMissing,
                 attemptedAt,
-                "pos_server_fiscal_document_id_missing",
+                fiscalDocumentId is null || fiscalDocumentId == Guid.Empty
+                    ? "pos_server_fiscal_document_id_missing"
+                    : "site_pos_server_context_missing",
                 readResult: null,
                 correlationId,
                 serviceIdentityId,
@@ -108,7 +114,9 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
                 detail.Summary.FiscalIssuanceReferenceId,
                 FiscalExceptionReadbackClassification.IdentifierMissing,
                 attemptedAt,
-                "pos_server_fiscal_document_id_missing",
+                fiscalDocumentId is null || fiscalDocumentId == Guid.Empty
+                    ? "pos_server_fiscal_document_id_missing"
+                    : "site_pos_server_context_missing",
                 attempt.ReadbackAttemptId,
                 posServerReadbackCallAttempted: false,
                 updatedCase: ApplyAttemptToDetail(detail, attempt));
@@ -144,7 +152,12 @@ public sealed class FiscalExceptionReadbackWorker : IFiscalExceptionReadbackWork
         PosServerFiscalDocumentReadResult readResult;
         try
         {
-            readResult = await _readbackClient.GetFiscalDocumentAsync(fiscalDocumentId.Value, cancellationToken);
+            readResult = await _readbackClient.GetFiscalDocumentAsync(
+                fiscalDocumentId.Value,
+                PosServerRoutingContext.Create(
+                    detail.Summary.SitePosServerId,
+                    detail.Summary.SitePosServerRef),
+                cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

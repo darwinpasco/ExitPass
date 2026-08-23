@@ -50,16 +50,16 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     }
 
     [Fact]
-    public async Task RunAsync_WhenPosServerBaseUrlMissing_Rejects()
+    public async Task RunAsync_WhenSitePosServerEndpointsMissing_Rejects()
     {
         var options = EnabledOptions();
-        options.PosServerBaseUrl = null;
+        options.Endpoints.Clear();
 
         var response = await CreateSut(options: options)
             .RunAsync(ValidRequest(), CancellationToken.None);
 
         response.HttpStatusCode.Should().Be(409);
-        response.Errors.Should().Contain("pos_server_base_url_missing");
+        response.Errors.Should().Contain("site_pos_server_endpoints_required");
     }
 
     [Fact]
@@ -772,15 +772,14 @@ public sealed class FiscalIssuanceControlledUatInvocationServiceTests
     }
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
-        new()
+        new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
             EnableControlledUatDiagnosticPath = true,
-            PosServerBaseUrl = "http://host.docker.internal:8091",
             TimeoutSeconds = 10,
             EnableLiveFiscalIssuanceFromPaymentFlow = false,
             EnableLiveFiscalIssuanceFromExitFlow = false
-        };
+        }.AddEndpoint("http://host.docker.internal:8091", "Development");
 
     private static ControlledUatFiscalIssuanceInvocationRequest ValidRequest() =>
         new(

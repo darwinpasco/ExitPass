@@ -160,9 +160,8 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
             {
                 EnablePosServerFiscalIssuanceLiveCall = true,
                 EnableControlledUatDiagnosticPath = false,
-                PosServerBaseUrl = "https://pos-server.local",
                 TimeoutSeconds = 10
-            },
+            }.AddEndpoint(),
             service);
 
         var result = await sut.ExecuteAsync(ValidRequest(), CancellationToken.None);
@@ -183,16 +182,15 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
             {
                 EnablePosServerFiscalIssuanceLiveCall = true,
                 EnableControlledUatDiagnosticPath = true,
-                PosServerBaseUrl = "not-a-url",
                 TimeoutSeconds = 10
-            },
+            }.AddEndpoint("not-a-url"),
             service);
 
         var result = await sut.ExecuteAsync(ValidRequest(), CancellationToken.None);
 
         result.Status.Should().Be(FiscalIssuanceControlledUatHarnessStatuses.RejectedConfigNotReady);
         result.ReadinessStatus.Should().Be(FiscalIssuancePosServerIntegrationReadinessStatuses.EnabledInvalidBaseUrl);
-        result.Errors.Should().Contain("pos_server_base_url_invalid");
+        result.Errors.Should().Contain("site_pos_server_endpoint_url_invalid");
         result.DiagnosticInvoked.Should().BeFalse();
         await service.DidNotReceiveWithAnyArgs()
             .RunPosServerFiscalIssuanceDiagnosticAsync(default, default!, default!, default);
@@ -210,11 +208,10 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
             EnableControlledUatDiagnosticPath = true,
-            PosServerBaseUrl = "https://pos-server.local",
             TimeoutSeconds = 10,
             EnableLiveFiscalIssuanceFromPaymentFlow = paymentFlowEnabled,
             EnableLiveFiscalIssuanceFromExitFlow = exitFlowEnabled
-        };
+        }.AddEndpoint();
 
         var result = await CreateSut(options).ExecuteAsync(ValidRequest(), CancellationToken.None);
 
@@ -343,13 +340,12 @@ public sealed class FiscalIssuanceControlledUatHarnessTests
             gatingOptions);
 
     private static FiscalIssuancePosServerIntegrationOptions EnabledOptions() =>
-        new()
+        new FiscalIssuancePosServerIntegrationOptions
         {
             EnablePosServerFiscalIssuanceLiveCall = true,
             EnableControlledUatDiagnosticPath = true,
-            PosServerBaseUrl = "https://pos-server.local",
             TimeoutSeconds = 10
-        };
+        }.AddEndpoint();
 
     private static FiscalIssuanceControlledUatHarnessRequest ValidRequest() =>
         new(
