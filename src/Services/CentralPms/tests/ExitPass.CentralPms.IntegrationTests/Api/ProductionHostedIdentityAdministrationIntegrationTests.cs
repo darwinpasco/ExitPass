@@ -8,6 +8,8 @@ using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using Xunit;
@@ -29,12 +31,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
     {
         var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         var seed = await SeedOrdinaryAdministratorAsync(password);
-        using var factory = new CustomWebApplicationFactory()
-            .WithEnvironment("Production")
-            .WithConfigurationOverrides(new Dictionary<string, string?>
-            {
-                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost"
-            });
+        using var factory = CreateProductionFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://localhost"),
@@ -108,12 +105,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
     {
         var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         var seed = await SeedOrdinaryAdministratorAsync(password);
-        using var factory = new CustomWebApplicationFactory()
-            .WithEnvironment("Production")
-            .WithConfigurationOverrides(new Dictionary<string, string?>
-            {
-                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost"
-            });
+        using var factory = CreateProductionFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://localhost"),
@@ -162,12 +154,7 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
     {
         var password = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24));
         var seed = await SeedOrdinaryAdministratorAsync(password);
-        using var factory = new CustomWebApplicationFactory()
-            .WithEnvironment("Production")
-            .WithConfigurationOverrides(new Dictionary<string, string?>
-            {
-                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost"
-            });
+        using var factory = CreateProductionFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
         {
             BaseAddress = new Uri("https://localhost"),
@@ -199,6 +186,22 @@ public sealed class ProductionHostedIdentityAdministrationIntegrationTests
         error.Retryable.Should().BeFalse();
         (await ReadUserCountByUsernameAsync(username)).Should().Be(0);
     }
+
+    private CustomWebApplicationFactory CreateProductionFactory() =>
+        new CustomWebApplicationFactory()
+            .WithEnvironment("Production")
+            .WithConfigurationOverrides(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:MainDatabase"] = _database.ConnectionString,
+                ["HumanAuthentication:AllowedWebOrigins:0"] = "https://localhost",
+                ["CentralPms:VendorPms:Provider"] = "SITE_ADAPTER",
+                ["CentralPms:VendorPms:Environment"] = "INTEGRATION_TEST",
+                ["CentralPms:VendorPms:CentralPmsServiceIdentityId"] =
+                    "8063c159-dae6-57af-9f1f-e0a07d519fb2",
+                ["CentralPms:VendorPms:AdapterSecretMountRoot"] = Path.GetTempPath(),
+                ["CentralPms:VendorPms:AllowTaskOwnedHttp"] = "true"
+            })
+            .WithServiceOverrides(services => services.RemoveAll<IHostedService>());
 
     private static async Task<HttpResponseMessage> SendMutationAsync<T>(
         HttpClient client,
