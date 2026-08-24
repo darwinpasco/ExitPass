@@ -176,6 +176,7 @@ public sealed class ManagementStatutoryBenefitReviewServiceTests
             ReviewerReasonCode: null,
             SubmittedAt: SubmittedAt,
             ReviewedAt: reviewerDecision is null ? null : SubmittedAt.AddMinutes(5),
+            PayableBasisApplicationStatus: null,
             CorrelationId: CorrelationId);
 
     private sealed class FakeManagementRepository : IManagementStatutoryBenefitReviewRepository
