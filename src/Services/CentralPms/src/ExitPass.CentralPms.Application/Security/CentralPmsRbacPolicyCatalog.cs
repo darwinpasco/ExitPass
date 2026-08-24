@@ -95,6 +95,23 @@ public static class CentralPmsRbacPolicyCatalog
             [
                 "sales-invoice-report.view"
             ],
+            ["ManagementPlatformStatutoryBenefitReviewList"] =
+            [
+                "statutory-discounts.review.queue.read"
+            ],
+            ["ManagementPlatformStatutoryBenefitReviewDetail"] =
+            [
+                "statutory-discounts.review.detail.read"
+            ],
+            ["ManagementPlatformStatutoryBenefitReviewEvidence"] =
+            [
+                "statutory-discounts.evidence.review.view"
+            ],
+            ["ManagementPlatformStatutoryBenefitReviewDecision"] =
+            [
+                "statutory-discounts.decision.approve",
+                "statutory-discounts.decision.reject"
+            ],
             ["ManagementPlatformStatutoryDiscountPolicyCoverageRead"] =
             [
                 "statutory-discount-policy.view"

@@ -1,4 +1,5 @@
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
+using ExitPass.CentralPms.Application.ManagementPlatform;
 
 namespace ExitPass.CentralPms.Application.OperatorConsole;
 
@@ -6,7 +7,8 @@ namespace ExitPass.CentralPms.Application.OperatorConsole;
 /// Access-gated Operator Console review linkage for service-channel statutory-discount decisions.
 /// </summary>
 public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
-    : IOperatorConsoleServiceChannelStatutoryDiscountReviewService
+    : IOperatorConsoleServiceChannelStatutoryDiscountReviewService,
+      IAuthorizedStatutoryBenefitDecisionService
 {
     private const string WorkflowCode = OperatorConsoleActionCodes.StatutoryDiscountValidationWorkflow;
     private const string ReviewActionCode = OperatorConsoleActionCodes.ViewStatutoryDiscountDraft;
@@ -262,6 +264,151 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             ErrorCode: null,
             command.CorrelationId);
     }
+
+    /// <summary>
+    /// Executes the same canonical service-channel decision for a caller that has already
+    /// established live-session permission and Site authority. This entry point does not
+    /// evaluate Operator Console device or shift context.
+    /// </summary>
+    public async Task<AuthorizedStatutoryBenefitDecisionResult> DecideAuthorizedAsync(
+        AuthorizedStatutoryBenefitDecisionCommand command,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ValidateGuid(command.DecisionCommandReference, nameof(command.DecisionCommandReference));
+        ValidateGuid(command.ReviewerUserId, nameof(command.ReviewerUserId));
+        ValidateGuid(command.AuthorizationEvaluationReference, nameof(command.AuthorizationEvaluationReference));
+        ValidateGuid(command.CorrelationId, nameof(command.CorrelationId));
+        if (string.IsNullOrWhiteSpace(command.IdempotencyKey))
+        {
+            throw new ArgumentException("IdempotencyKey is required.", nameof(command.IdempotencyKey));
+        }
+
+        var requestedDecision = NormalizeOptional(command.Decision);
+        if (requestedDecision is not ("APPROVE" or "REJECT") ||
+            (requestedDecision == "REJECT" && string.IsNullOrWhiteSpace(command.Reason)))
+        {
+            throw new ArgumentException("A valid decision and rejection reason are required.", nameof(command.Decision));
+        }
+
+        var detail = await _reviewRepository.GetAsync(command.DecisionCommandReference, command.CorrelationId, cancellationToken)
+            .ConfigureAwait(false);
+        if (detail is null)
+        {
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_REVIEW_NOT_FOUND");
+        }
+
+        var canonical = await _stagedCommandService.GetDecisionAsync(command.DecisionCommandReference, cancellationToken)
+            .ConfigureAwait(false);
+        if (canonical is null)
+        {
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_NOT_FOUND");
+        }
+
+        var targetResult = requestedDecision == "APPROVE"
+            ? StatutoryDiscountDecisionV2ResultStates.Approved
+            : StatutoryDiscountDecisionV2ResultStates.Rejected;
+
+        if (canonical.CommandStatus is StatutoryDiscountDecisionV2CommandStates.Completed)
+        {
+            if (!string.Equals(canonical.DecisionResultStatus, targetResult, StringComparison.Ordinal))
+            {
+                return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED", detail.ReviewStatus, canonical.ReasonCode, detail.ReviewedAt);
+            }
+
+            var terminal = detail;
+            if (detail.ReviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview)
+            {
+                terminal = await _reviewRepository.RecordReviewCompletionAsync(
+                    command.DecisionCommandReference,
+                    command.ReviewerUserId,
+                    null,
+                    null,
+                    command.AuthorizationEvaluationReference,
+                    requestedDecision,
+                    canonical.ReasonCode ?? NormalizeOptional(command.Reason),
+                    command.CorrelationId,
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            return new AuthorizedStatutoryBenefitDecisionResult(
+                true, true, true, terminal.ReviewStatus, requestedDecision,
+                canonical.ReasonCode ?? NormalizeOptional(command.Reason), null, terminal.ReviewedAt);
+        }
+
+        if (canonical.CommandStatus is not StatutoryDiscountDecisionV2CommandStates.AwaitingReview ||
+            canonical.DecisionResultStatus is not StatutoryDiscountDecisionV2ResultStates.NotDecided)
+        {
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_NOT_AWAITING_REVIEW", detail.ReviewStatus);
+        }
+
+        if (requestedDecision == "APPROVE" &&
+            await _parkingEligibilityRepository.GetDecisionPolicyAuthorityAsync(command.DecisionCommandReference, cancellationToken).ConfigureAwait(false) is null)
+        {
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_POLICY_AUTHORITY_REQUIRED", detail.ReviewStatus);
+        }
+
+        var linkage = requestedDecision == "APPROVE"
+            ? await _reviewRepository.EnsureApprovedValidationLinkageAsync(
+                command.DecisionCommandReference,
+                command.ReviewerUserId,
+                NormalizeOptional(command.Reason),
+                command.CorrelationId,
+                cancellationToken).ConfigureAwait(false)
+            : null;
+        if (requestedDecision == "APPROVE" && linkage is null)
+        {
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_PAYABLE_BASIS_FACTS_UNAVAILABLE", detail.ReviewStatus);
+        }
+
+        var completed = requestedDecision == "APPROVE"
+            ? await _stagedCommandService.CompleteDecisionApprovedAsync(
+                command.DecisionCommandReference,
+                linkage!.StatutoryDiscountValidationId,
+                linkage.OriginalTariffSnapshotId,
+                linkage.AppliedPolicyReferenceId,
+                linkage.FallbackPolicyReferenceId,
+                linkage.PolicyResolutionBasis,
+                linkage.LocalOrdinanceApplied,
+                ToTariffFacts(linkage),
+                NormalizeOptional(command.Reason),
+                command.CorrelationId,
+                cancellationToken).ConfigureAwait(false)
+            : await _stagedCommandService.CompleteDecisionRejectedAsync(
+                command.DecisionCommandReference,
+                NormalizeOptional(command.Reason),
+                safeErrorCode: null,
+                command.CorrelationId,
+                cancellationToken).ConfigureAwait(false);
+
+        if (!string.Equals(completed.DecisionResultStatus, targetResult, StringComparison.Ordinal))
+        {
+            return RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED", detail.ReviewStatus, completed.ReasonCode, detail.ReviewedAt);
+        }
+
+        var review = await _reviewRepository.RecordReviewCompletionAsync(
+            command.DecisionCommandReference,
+            command.ReviewerUserId,
+            null,
+            null,
+            command.AuthorizationEvaluationReference,
+            requestedDecision,
+            NormalizeOptional(command.Reason),
+            command.CorrelationId,
+            cancellationToken).ConfigureAwait(false);
+
+        return string.Equals(review.ReviewerDecision, requestedDecision, StringComparison.Ordinal)
+            ? new AuthorizedStatutoryBenefitDecisionResult(true, true, false, review.ReviewStatus, requestedDecision, review.ReviewerReasonCode, null, review.ReviewedAt)
+            : RejectedAuthorized(requestedDecision, "STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED", review.ReviewStatus, review.ReviewerReasonCode, review.ReviewedAt);
+    }
+
+    private static AuthorizedStatutoryBenefitDecisionResult RejectedAuthorized(
+        string decision,
+        string errorCode,
+        string status = "",
+        string? reason = null,
+        DateTimeOffset? decidedAt = null) =>
+        new(false, false, false, status, decision, reason, errorCode, decidedAt);
 
     private async Task<OperatorConsoleAccessEvaluationResult> EvaluateAndPersistAsync(
         OperatorConsoleReviewAccessContext context,
