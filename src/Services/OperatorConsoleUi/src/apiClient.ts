@@ -814,7 +814,7 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
           })
         }
       );
-      return parseResponse<CanonicalStatutoryReviewDecisionResult>(response);
+      return parseCanonicalStatutoryReviewDecisionResponse(response);
     },
 
     async listStatutoryDiscountEvidence(draftId) {
@@ -1411,7 +1411,7 @@ export function createMockOperatorConsoleApiClient(
       return {
         decisionAccepted: true,
         decisionPersisted: true,
-        currentDecisionResultStatus: input.decision === "APPROVE" ? "APPROVED" : "REJECTED",
+        currentValidationStatus: input.decision === "APPROVE" ? "APPROVED" : "REJECTED",
         decision: input.decision,
         alreadyDecided: false,
         decisionChanged: true,
@@ -1819,6 +1819,49 @@ async function parseResponse<T>(response: Response): Promise<T> {
     message: body.message ?? body.errorCode ?? "Operator Console request failed.",
     errorCode: body.errorCode
   } satisfies OperatorConsoleApiError;
+}
+
+async function parseCanonicalStatutoryReviewDecisionResponse(
+  response: Response
+): Promise<CanonicalStatutoryReviewDecisionResult> {
+  const body = await parseResponse<unknown>(response);
+  if (!isRecord(body) ||
+      typeof body.decisionAccepted !== "boolean" ||
+      typeof body.decisionPersisted !== "boolean" ||
+      typeof body.decision !== "string" ||
+      typeof body.alreadyDecided !== "boolean" ||
+      typeof body.decisionChanged !== "boolean" ||
+      typeof body.correlationId !== "string") {
+    throw canonicalDecisionContractError();
+  }
+
+  const currentValidationStatus = body.currentValidationStatus;
+  if (currentValidationStatus !== undefined &&
+      currentValidationStatus !== "APPROVED" &&
+      currentValidationStatus !== "REJECTED") {
+    throw canonicalDecisionContractError();
+  }
+  const result = {
+    decisionPersisted: body.decisionPersisted,
+    decision: body.decision,
+    alreadyDecided: body.alreadyDecided,
+    decisionChanged: body.decisionChanged,
+    errorCode: typeof body.errorCode === "string" ? body.errorCode : undefined,
+    correlationId: body.correlationId
+  };
+  if (body.decisionAccepted) {
+    if (currentValidationStatus === undefined) throw canonicalDecisionContractError();
+    return { ...result, decisionAccepted: true, currentValidationStatus };
+  }
+  return { ...result, decisionAccepted: false, currentValidationStatus };
+}
+
+function canonicalDecisionContractError(): OperatorConsoleApiError {
+  return {
+    status: "error",
+    errorCode: "OPERATOR_CONSOLE_CANONICAL_DECISION_RESPONSE_INVALID",
+    message: "Central PMS returned an invalid decision response. Refresh the request before trying again."
+  };
 }
 
 async function parseCommandResponse<T extends { status?: string }>(response: Response): Promise<T> {

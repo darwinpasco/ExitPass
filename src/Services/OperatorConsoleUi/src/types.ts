@@ -206,16 +206,19 @@ export interface CanonicalStatutoryReviewDecisionInput {
   idempotencyKey: string;
 }
 
-export interface CanonicalStatutoryReviewDecisionResult {
-  decisionAccepted: boolean;
+interface CanonicalStatutoryReviewDecisionResultBase {
   decisionPersisted: boolean;
-  currentDecisionResultStatus: string;
   decision: string;
   alreadyDecided: boolean;
   decisionChanged: boolean;
   errorCode?: string;
   correlationId: string;
 }
+
+export type CanonicalStatutoryReviewDecisionResult = CanonicalStatutoryReviewDecisionResultBase & (
+  | { decisionAccepted: true; currentValidationStatus: "APPROVED" | "REJECTED" }
+  | { decisionAccepted: false; currentValidationStatus?: "APPROVED" | "REJECTED" }
+);
 
 export type LoadState<T> =
   | { status: "idle" | "loading" }

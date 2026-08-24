@@ -50,7 +50,7 @@ test.describe("Operator Console canonical Central PMS statutory review", () => {
         body: JSON.stringify({
           decisionAccepted: true,
           decisionPersisted: true,
-          currentDecisionResultStatus: "APPROVED",
+          currentValidationStatus: "APPROVED",
           decision: "APPROVE",
           alreadyDecided: false,
           decisionChanged: true,

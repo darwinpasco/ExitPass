@@ -226,7 +226,7 @@ export function CanonicalStatutoryReviewDetailPage({ client, decisionId, onBack 
         idempotencyKey: `operator-console-review-${detail.statutoryDiscountDecisionCommandId}-${confirming.toLowerCase()}`
       });
       if (!result.decisionAccepted) setError(result.errorCode ?? "Central PMS did not accept the decision.");
-      else setMessage(result.alreadyDecided ? "This request was already decided. The authoritative state has been refreshed." : `Decision recorded: ${result.currentDecisionResultStatus}.`);
+      else setMessage(result.alreadyDecided ? "This request was already decided. The authoritative state has been refreshed." : `Decision recorded: ${result.currentValidationStatus}.`);
       setConfirming(null);
       setRefreshToken((value) => value + 1);
     } catch (raw) {
