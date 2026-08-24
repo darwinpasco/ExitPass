@@ -19,6 +19,7 @@ public interface IOperatorConsoleServiceChannelStatutoryDiscountReviewService
 
     Task<StatutoryDiscountServiceChannelReviewDecisionResult> DecideAsync(
         StatutoryDiscountServiceChannelReviewDecisionCommand command,
+        OperatorConsoleReviewAccessContext accessContext,
         CancellationToken cancellationToken);
 }
 
@@ -29,4 +30,9 @@ public sealed record OperatorConsoleReviewAccessContext(
     Guid? SiteId,
     Guid? SiteGroupId,
     Guid CorrelationId,
-    string IdempotencyKey);
+    string IdempotencyKey)
+{
+    public IReadOnlyList<Guid> AuthorizedSiteIds { get; init; } = [];
+    public IReadOnlyList<Guid> AuthorizedSiteGroupIds { get; init; } = [];
+    public bool HasGlobalScope { get; init; }
+}

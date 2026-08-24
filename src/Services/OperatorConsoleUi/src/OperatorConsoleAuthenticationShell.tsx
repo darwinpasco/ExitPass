@@ -153,6 +153,7 @@ export function OperatorConsoleAuthenticationShell({
       ? createWorkspaceClient(state.session, requireAuthentication)
       : createOperatorConsoleApiClient({
           permissions: state.session.permissions,
+          csrfToken: () => authClient.getCsrfToken(),
           onAuthenticationRequired: requireAuthentication
         });
   }, [createWorkspaceClient, requireAuthentication, state]);

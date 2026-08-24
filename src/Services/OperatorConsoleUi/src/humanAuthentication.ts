@@ -56,6 +56,7 @@ export interface HumanAuthenticationClient {
   getCurrentSession(): Promise<OperatorConsoleHumanSession>;
   logout(): Promise<void>;
   clearRuntimeState(): void;
+  getCsrfToken(): string | null;
 }
 
 interface AuthenticationResponseDto {
@@ -150,6 +151,10 @@ export function createHumanAuthenticationClient(
 
     clearRuntimeState() {
       csrfToken = null;
+    },
+
+    getCsrfToken() {
+      return csrfToken;
     }
   };
 }

@@ -19,7 +19,7 @@ describe("Operator Console I-017 API client", () => {
     expect(result.items[0].previewPermitted).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0];
-    expect(url).toBe(`/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence`);
+    expect(url).toBe(`https://internal.example.invalid/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence`);
     expect(init).toMatchObject({ method: "GET", cache: "no-store", credentials: "same-origin" });
     const headers = init?.headers as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
@@ -32,7 +32,7 @@ describe("Operator Console I-017 API client", () => {
     expect(headers["X-Site-Group-Id"]).toBeUndefined();
   });
 
-  it("uses the same-origin preview GET route and accepts only JPEG or PNG", async () => {
+  it("uses a CSRF-protected preview POST body, keeps evidence identifiers out of URLs, and accepts only JPEG or PNG", async () => {
     const fetchMock = vi.fn(async () =>
       new Response(new Uint8Array([137, 80, 78, 71]), {
         status: 200,
@@ -41,15 +41,18 @@ describe("Operator Console I-017 API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const preview = await createHttpOperatorConsoleApiClient().getStatutoryEvidencePreview(decisionId, itemReference);
+    const preview = await createHttpOperatorConsoleApiClient({ csrfToken: () => "csrf-token" }).getStatutoryEvidencePreview(decisionId, itemReference);
 
     expect(preview.contentType).toBe("image/png");
     expect(preview.blob.size).toBe(4);
     const [url, init] = (fetchMock.mock.calls as unknown as Array<[string, RequestInit]>)[0];
     expect(url).toBe(
-      `/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence/${itemReference}/preview`
+      `/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence/preview`
     );
-    expect(init).toMatchObject({ method: "GET", cache: "no-store", credentials: "same-origin" });
+    expect(url).not.toContain(itemReference);
+    expect(init).toMatchObject({ method: "POST", cache: "no-store", credentials: "same-origin" });
+    expect(init.headers).toMatchObject({ "X-CSRF-Token": "csrf-token" });
+    expect(JSON.parse(String(init.body))).toEqual({ evidenceItemReference: itemReference });
   });
 
   it("fails safely for malformed metadata and never reflects backend diagnostics", async () => {
@@ -64,7 +67,7 @@ describe("Operator Console I-017 API client", () => {
   });
 
   it("maps authorization, missing evidence, storage outage, and unsupported media without raw errors", async () => {
-    const client = createHttpOperatorConsoleApiClient();
+    const client = createHttpOperatorConsoleApiClient({ csrfToken: () => "csrf-token" });
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ errorCode: "OPERATOR_CONSOLE_STATUTORY_EVIDENCE_PREVIEW_FORBIDDEN", detail: "bucket secret" }, 403)));
     await expect(client.getStatutoryEvidencePreview(decisionId, itemReference)).rejects.toEqual(
       expect.objectContaining({ status: "access-denied", message: "You no longer have access to this evidence." })

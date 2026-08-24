@@ -4,6 +4,7 @@ using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.StatutoryEvidence;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
+using Microsoft.AspNetCore.Antiforgery;
 
 namespace ExitPass.CentralPms.Api.Endpoints;
 
@@ -29,8 +30,9 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
             .WithSummary("Read review-safe statutory evidence metadata")
             .WithDescription("Returns current review-safe evidence lifecycle metadata for an authorized Operator Console reviewer. It never returns evidence bytes, storage locators, checksums, provider authorization material, or mutation authority.");
 
-        group.MapGet("/{statutoryDiscountDecisionCommandId:guid}/evidence/{evidenceItemReference:guid}/preview", PreviewAsync)
+        group.MapPost("/{statutoryDiscountDecisionCommandId:guid}/evidence/preview", PreviewAsync)
             .WithName("PreviewOperatorConsoleStatutoryEvidence")
+            .Accepts<OperatorConsoleStatutoryEvidencePreviewRequest>("application/json")
             .Produces(StatusCodes.Status200OK, contentType: "image/jpeg", additionalContentTypes: ["image/png"])
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
@@ -40,7 +42,7 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
             .Produces<ErrorResponse>(StatusCodes.Status503ServiceUnavailable)
             .WithMetadata(new ReconciliationPolicyMetadata(OperatorConsoleStatutoryEvidenceReviewConstants.Policy))
             .WithSummary("Stream reviewable statutory evidence inline")
-            .WithDescription("Reauthorizes the Operator Console reviewer and streams one current reviewable JPEG or PNG through Central PMS without exposing provider URLs, object keys, checksums, storage credentials, download authority, or browser cache authority.");
+            .WithDescription("Reauthorizes the Operator Console reviewer and streams one current reviewable JPEG or PNG through Central PMS. The evidence selector is carried in a CSRF-protected body and never exposed in the browser URL; provider URLs, object keys, checksums, credentials, and download authority are never returned.");
 
         return app;
     }
@@ -98,10 +100,11 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
 
     private static async Task<IResult> PreviewAsync(
         Guid statutoryDiscountDecisionCommandId,
-        Guid evidenceItemReference,
+        OperatorConsoleStatutoryEvidencePreviewRequest body,
         Guid? correlationId,
         HttpRequest request,
         IOperatorConsoleStatutoryEvidenceReviewService service,
+        IAntiforgery antiforgery,
         ILoggerFactory loggerFactory)
     {
         var effectiveCorrelationId = correlationId.GetValueOrDefault(Guid.NewGuid());
@@ -110,12 +113,16 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
 
         try
         {
+            if (string.Equals(request.HttpContext.User.Identity?.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
+            {
+                await antiforgery.ValidateRequestAsync(request.HttpContext).ConfigureAwait(false);
+            }
             var identity = OperatorConsoleIdentityContext.Resolve(request, fallbackCorrelationId: correlationId);
             effectiveCorrelationId = identity.CorrelationId;
             var result = await service.OpenPreviewAsync(
                     statutoryDiscountDecisionCommandId,
-                    evidenceItemReference,
-                    ToAccessContext(identity, $"operator-console-evidence-preview-{statutoryDiscountDecisionCommandId:N}-{evidenceItemReference:N}-{effectiveCorrelationId:N}"),
+                    body.EvidenceItemReference,
+                    ToAccessContext(identity, $"operator-console-evidence-preview-{statutoryDiscountDecisionCommandId:N}-{effectiveCorrelationId:N}"),
                     request.HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
@@ -127,6 +134,10 @@ public static class OperatorConsoleStatutoryEvidenceReviewEndpoints
 
             activity?.SetStatus(ActivityStatusCode.Error);
             return PreviewError(result);
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.BadRequest(Error("CSRF_VALIDATION_FAILED", "The secure evidence-preview request could not be validated.", effectiveCorrelationId));
         }
         catch (ArgumentException exception)
         {

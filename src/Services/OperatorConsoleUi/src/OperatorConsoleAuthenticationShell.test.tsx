@@ -164,7 +164,8 @@ function authenticationClient(options: {
     logout: vi.fn(async () => {
       if (options.logoutError) throw options.logoutError;
     }),
-    clearRuntimeState: vi.fn()
+    clearRuntimeState: vi.fn(),
+    getCsrfToken: vi.fn(() => "csrf-test-token")
   };
 }
 

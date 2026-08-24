@@ -1,9 +1,12 @@
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ExitPass.CentralPms.Contracts.OperatorConsole;
 
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse(
     IReadOnlyList<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueItem> Items,
+    int TotalCount,
     int Page,
     int PageSize,
     bool HasMore,
@@ -11,12 +14,12 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueRe
 
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewQueueItem(
     Guid StatutoryDiscountDecisionCommandId,
+    Guid RequestReference,
     Guid ParkingSessionId,
     string SourceChannel,
     Guid? SiteId,
     Guid? SiteGroupId,
     string? TicketReference,
-    string? PlateNumber,
     string EntitlementType,
     string CommandStatus,
     string DecisionResultStatus,
@@ -65,7 +68,25 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewDetailR
     string? ReviewerReasonCode,
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
+    string? PayableBasisApplicationStatus,
     Guid CorrelationId);
+
+/// <summary>
+/// Browser-safe Operator Console decision body. Reviewer identity, timestamp, and scope
+/// are deliberately absent and are derived by Central PMS from the authenticated session.
+/// </summary>
+public sealed record OperatorConsoleCanonicalStatutoryReviewDecisionRequest(
+    string Decision,
+    string? DecisionReasonCode,
+    bool ReviewerAttestation,
+    string IdempotencyKey)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalFields { get; init; }
+}
+
+/// <summary>Browser-safe evidence-preview selector carried in the body, never in the URL.</summary>
+public sealed record OperatorConsoleStatutoryEvidencePreviewRequest(Guid EvidenceItemReference);
 
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewPolicyAuthority(
     Guid StatutoryDiscountPolicyVersionId,
@@ -93,6 +114,5 @@ public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewPolicyA
 public sealed record OperatorConsoleServiceChannelStatutoryDiscountReviewEvidenceReference(
     string EvidenceType,
     string CaptureMethod,
-    string? StorageReference,
     string? ReferenceNumberMasked,
     string? VerificationStatus);

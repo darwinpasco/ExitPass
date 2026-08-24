@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Contracts.HumanAuthentication;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
@@ -70,6 +71,19 @@ public sealed class HumanSessionAuthenticationHandler : AuthenticationHandler<Au
         {
             claims.Add(new Claim(InternalHumanSessionIdClaimType, internalHumanSessionId.Value.ToString("D")));
         }
+        foreach (var permission in session.Permissions)
+        {
+            claims.Add(new Claim(CentralPmsRbacPolicyCatalog.PermissionClaimType, permission));
+        }
+        foreach (var siteReference in session.SiteReferences)
+        {
+            claims.Add(new Claim("site_id", siteReference.ToString("D")));
+        }
+        foreach (var siteGroupReference in session.SiteGroupReferences)
+        {
+            claims.Add(new Claim("site_group_id", siteGroupReference.ToString("D")));
+        }
+        claims.Add(new Claim("has_global_scope", session.HasGlobalScope ? "true" : "false"));
         return new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
     }
 

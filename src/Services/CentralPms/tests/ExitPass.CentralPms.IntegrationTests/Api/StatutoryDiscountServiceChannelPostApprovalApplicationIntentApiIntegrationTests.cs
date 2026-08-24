@@ -504,18 +504,11 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
     {
         using var response = await client.PostAsJsonAsync(
             string.Format(ReviewDecisionEndpointTemplate, statutoryDiscountDecisionCommandId),
-            new OperatorConsoleStatutoryDiscountDecisionRequest(
-                context.RequestedByUserId,
-                ReviewerDeviceBindingId,
-                context.SiteId,
-                context.SiteGroupId,
-                ReviewerShiftId,
+            new OperatorConsoleCanonicalStatutoryReviewDecisionRequest(
                 decision,
                 decision == "APPROVE" ? "ELIGIBLE" : "DOCUMENT_INVALID",
-                DecisionNotes: null,
                 ReviewerAttestation: true,
-                $"review-{decision}-{statutoryDiscountDecisionCommandId:N}",
-                Guid.NewGuid()));
+                $"review-{decision}-{statutoryDiscountDecisionCommandId:N}"));
         response.StatusCode.Should().Be(HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
         return (await response.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>())!;
     }

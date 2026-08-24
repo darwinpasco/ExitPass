@@ -29,12 +29,13 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             .Returns(new StatutoryDiscountServiceChannelReviewQueueResult(
                 [QueueItem()],
                 1,
+                1,
                 25,
                 HasMore: false,
                 CorrelationId));
 
         var result = await fixture.Sut.ListAsync(
-            new StatutoryDiscountServiceChannelReviewQueueQuery(null, null, null, null, null, null, null, 1, 25, CorrelationId),
+            new StatutoryDiscountServiceChannelReviewQueueQuery(null, null, null, null, null, null, null, null, null, 1, 25, CorrelationId),
             AccessContext(),
             CancellationToken.None);
 
@@ -44,6 +45,58 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             Arg.Is<OperatorConsoleAccessEvaluationCommand>(command =>
                 command.ControlledActionCode == OperatorConsoleActionCodes.ViewStatutoryDiscountDraft),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListAsync_DefaultsToPendingAndCarriesAuthenticatedScopeAndFilters()
+    {
+        var fixture = CreateFixture();
+        fixture.Repository.ListAsync(Arg.Any<StatutoryDiscountServiceChannelReviewQueueQuery>(), Arg.Any<CancellationToken>())
+            .Returns(new StatutoryDiscountServiceChannelReviewQueueResult([], 0, 2, 10, false, CorrelationId));
+
+        await fixture.Sut.ListAsync(
+            new StatutoryDiscountServiceChannelReviewQueueQuery(
+                SiteId, SiteGroupId, "WEBPAY", "PWD", null, null, "TICKET-001", null, null, 2, 10, CorrelationId),
+            AccessContext(),
+            CancellationToken.None);
+
+        await fixture.Repository.Received(1).ListAsync(
+            Arg.Is<StatutoryDiscountServiceChannelReviewQueueQuery>(query =>
+                query.ReviewStatus == StatutoryDiscountServiceChannelReviewStatuses.PendingReview &&
+                query.Search == "TICKET-001" &&
+                query.AuthorizedSiteIds.SequenceEqual(new[] { SiteId }) &&
+                query.AuthorizedSiteGroupIds.SequenceEqual(new[] { SiteGroupId }) &&
+                query.Page == 2 && query.PageSize == 10),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ListAsync_WhenRequestedSiteIsOutsideAuthenticatedScope_FailsClosed()
+    {
+        var fixture = CreateFixture();
+        var otherSite = Guid.Parse("8a000000-0000-0000-0000-000000000099");
+
+        var action = () => fixture.Sut.ListAsync(
+            new StatutoryDiscountServiceChannelReviewQueueQuery(otherSite, null, null, null, null, null, null, null, null, 1, 25, CorrelationId),
+            AccessContext(),
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<UnauthorizedAccessException>();
+        await fixture.Repository.DidNotReceiveWithAnyArgs().ListAsync(default!, default);
+    }
+
+    [Fact]
+    public async Task GetAsync_WhenRequestIsOutsideAuthenticatedScope_ConcealsIt()
+    {
+        var fixture = CreateFixture();
+        fixture.Repository.GetAsync(CommandId, Arg.Any<Guid>(), Arg.Any<CancellationToken>()).Returns(ReviewDetail());
+        var otherSite = Guid.Parse("8a000000-0000-0000-0000-000000000099");
+        var context = AccessContext() with { AuthorizedSiteIds = [otherSite], AuthorizedSiteGroupIds = [] };
+
+        var result = await fixture.Sut.GetAsync(CommandId, context, CancellationToken.None);
+
+        result.Should().BeNull();
+        await fixture.AccessService.DidNotReceiveWithAnyArgs().EvaluateAsync(default!, default);
     }
 
     [Fact]
@@ -101,7 +154,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 Arg.Any<CancellationToken>())
             .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Approved));
 
-        var result = await fixture.Sut.DecideAsync(DecisionCommand(), CancellationToken.None);
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
 
         result.DecisionAccepted.Should().BeTrue();
         result.CurrentCommandStatus.Should().Be(StatutoryDiscountDecisionV2CommandStates.Completed);
@@ -143,7 +196,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 Arg.Any<CancellationToken>())
             .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Rejected));
 
-        var result = await fixture.Sut.DecideAsync(DecisionCommand(decision: "REJECT", reason: "ID_NOT_VALID"), CancellationToken.None);
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(decision: "REJECT", reason: "ID_NOT_VALID"), AccessContext(), CancellationToken.None);
 
         result.DecisionAccepted.Should().BeTrue();
         result.CurrentDecisionResultStatus.Should().Be(StatutoryDiscountDecisionV2ResultStates.Rejected);
@@ -160,7 +213,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
         fixture.Staged.GetDecisionAsync(CommandId, Arg.Any<CancellationToken>())
             .Returns(CompletedDecision(StatutoryDiscountDecisionV2ResultStates.Rejected));
 
-        var result = await fixture.Sut.DecideAsync(DecisionCommand(), CancellationToken.None);
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
 
         result.DecisionAccepted.Should().BeFalse();
         result.ErrorCode.Should().Be("STATUTORY_DISCOUNT_DECISION_ALREADY_COMPLETED");
@@ -198,7 +251,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
                 Arg.Any<CancellationToken>())
             .Returns(ReviewDetail(reviewStatus: StatutoryDiscountServiceChannelReviewStatuses.Approved));
 
-        var result = await fixture.Sut.DecideAsync(DecisionCommand(), CancellationToken.None);
+        var result = await fixture.Sut.DecideAsync(DecisionCommand(), AccessContext(), CancellationToken.None);
 
         result.DecisionAccepted.Should().BeTrue();
         result.AlreadyDecided.Should().BeTrue();
@@ -238,7 +291,11 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
     }
 
     private static OperatorConsoleReviewAccessContext AccessContext() =>
-        new(UserId, DeviceBindingId, ShiftId, SiteId, SiteGroupId, CorrelationId, "review-access-key");
+        new(UserId, DeviceBindingId, ShiftId, SiteId, SiteGroupId, CorrelationId, "review-access-key")
+        {
+            AuthorizedSiteIds = [SiteId],
+            AuthorizedSiteGroupIds = [SiteGroupId]
+        };
 
     private static StatutoryDiscountServiceChannelReviewDecisionCommand DecisionCommand(
         string decision = "APPROVE",
@@ -286,12 +343,12 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
     private static StatutoryDiscountServiceChannelReviewQueueItem QueueItem() =>
         new(
             CommandId,
+            RequestReference,
             ParkingSessionId,
             StatutoryDiscountSourceChannels.WebPay,
             SiteId,
             SiteGroupId,
             "TICKET-001",
-            "ABC1234",
             "SENIOR_CITIZEN",
             StatutoryDiscountDecisionV2CommandStates.AwaitingReview,
             StatutoryDiscountDecisionV2ResultStates.NotDecided,
@@ -352,6 +409,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewServiceT
             reviewStatus == StatutoryDiscountServiceChannelReviewStatuses.Rejected ? "DOCUMENT_INVALID" : null,
             Now,
             null,
+            PayableBasisApplicationStatus: null,
             CorrelationId);
 
     private static StatutoryDiscountDecisionV2Record AwaitingDecision() =>
