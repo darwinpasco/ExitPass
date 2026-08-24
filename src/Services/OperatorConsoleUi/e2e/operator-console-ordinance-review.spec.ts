@@ -14,7 +14,9 @@ const scenarios = {
   rejected: "/operator-console/statutory-discounts/rejected-request"
 };
 
-test.describe("Operator Console statutory review UX browser smoke", () => {
+// Retired v1.2 draft-workspace assertions. The active canonical Central PMS path is
+// covered by operator-console-central-pms-statutory-review.spec.ts.
+test.describe.skip("Operator Console statutory review UX browser smoke (obsolete draft path)", () => {
   test("Senior Citizen representative transaction is operational and presence optional", async ({ page }) => {
     await page.goto(scenarios.seniorRepresentative);
 

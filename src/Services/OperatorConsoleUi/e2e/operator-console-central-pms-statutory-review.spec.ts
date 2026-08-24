@@ -92,7 +92,7 @@ async function installCanonicalRoutes(
       })
     });
   });
-  await page.route(`**/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}`, async (route) => {
+  await page.route(`**/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}?**`, async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detail()) });
   });
   await page.route(`**/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/evidence`, async (route) => {

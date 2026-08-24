@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { createHttpOperatorConsoleApiClient, createMockOperatorConsoleApiClient } from "./apiClient";
 import type { OperatorConsoleHumanSession } from "./humanAuthentication";
+import type { CanonicalStatutoryReviewFilters } from "./types";
 
 const decisionId = "47000000-0000-0000-0000-000000000008";
 
@@ -35,7 +36,7 @@ describe("canonical Central PMS statutory review", () => {
   });
 
   it("requires attestation and rejection reason, confirms a decision, and submits no browser-authored authority", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       decisionAccepted: true,
       decisionPersisted: true,
       currentDecisionResultStatus: "REJECTED",
@@ -63,11 +64,86 @@ describe("canonical Central PMS statutory review", () => {
     expect(JSON.stringify(body)).not.toMatch(/user|reviewerId|siteId|siteGroup|permission|role|timestamp/i);
   });
 
+  it("serializes bounded submission dates and safe filters through the Central PMS facade", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      items: [], totalCount: 0, page: 1, pageSize: 25, hasMore: false,
+      correlationId: "99000000-0000-0000-0000-000000000001"
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createHttpOperatorConsoleApiClient().listCanonicalStatutoryReviews({
+      status: "PENDING_REVIEW",
+      sourceChannel: "WEBPAY",
+      entitlementType: "PWD",
+      submittedFrom: "2026-08-23T16:00:00.000Z",
+      submittedTo: "2026-08-24T15:59:59.000Z",
+      search: " TICKET-1001 ",
+      page: 2,
+      pageSize: 25
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]), "http://operator-console.local");
+    expect(url.pathname).toBe("/v1/ops/operator-console/statutory-discounts/reviews");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      status: "PENDING_REVIEW",
+      sourceChannel: "WEBPAY",
+      entitlementType: "PWD",
+      submittedFrom: "2026-08-23T16:00:00.000Z",
+      submittedTo: "2026-08-24T15:59:59.000Z",
+      search: "TICKET-1001",
+      page: "2",
+      pageSize: "25"
+    });
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(url.searchParams.get("correlationId")).toBe(headers["X-Correlation-Id"]);
+  });
+
+  it("contains confirmation focus, returns it to the triggering action, and retains a timestamped queue on refresh failure", async () => {
+    const user = userEvent.setup();
+    const client = createMockOperatorConsoleApiClient();
+    const originalList = client.listCanonicalStatutoryReviews;
+    let calls = 0;
+    client.listCanonicalStatutoryReviews = vi.fn(async (input: CanonicalStatutoryReviewFilters, signal?: AbortSignal) => {
+      calls += 1;
+      if (calls > 1) throw new TypeError("synthetic outage");
+      return originalList(input, signal);
+    });
+    render(<App apiClient={client} session={session()} initialPath="/operator-console/statutory-discounts" />);
+
+    expect((await screen.findAllByRole("button", { name: "Review" })).length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText(/Showing retained results from the last successful load\. Loaded /)).toBeInTheDocument();
+
+    await user.click((await screen.findAllByRole("button", { name: "Review" }))[0]);
+    await user.click(await screen.findByRole("checkbox", { name: /reviewed the required evidence/i }));
+    await user.click(await screen.findByRole("button", { name: "Approve" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Confirm approval" });
+    const confirm = screen.getByRole("button", { name: "Confirm decision" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(confirm).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(cancel).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toHaveFocus();
+  });
+
   it("fails PHP-only detail parsing closed for missing and non-PHP currency", async () => {
     for (const currency of [null, "USD"]) {
       vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(detailResponse(currency)), { status: 200, headers: { "Content-Type": "application/json" } })));
       await expect(createHttpOperatorConsoleApiClient().getCanonicalStatutoryReview(decisionId)).rejects.toThrow();
     }
+  });
+
+  it("uses one correlation identity for canonical detail query and header", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(detailResponse("PHP")), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createHttpOperatorConsoleApiClient().getCanonicalStatutoryReview(decisionId);
+    const [input, init] = fetchMock.mock.calls[0] as unknown as [RequestInfo | URL, RequestInit];
+    const url = new URL(String(input), "http://operator-console.local");
+    const headers = init?.headers as Record<string, string>;
+    expect(url.searchParams.get("correlationId")).toBe(headers["X-Correlation-Id"]);
   });
 });
 
