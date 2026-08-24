@@ -2,6 +2,7 @@ using System.Diagnostics;
 using ExitPass.CentralPms.Api.Security;
 using ExitPass.CentralPms.Application.VendorPaymentAcknowledgments;
 using ExitPass.CentralPms.Contracts.Common;
+using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.Operations;
 using OpenTelemetry.Trace;
 
@@ -270,7 +271,10 @@ public static class VendorPaymentAcknowledgmentOpsEndpoints
             VendorCode = record.VendorCode,
             VendorMessage = record.VendorMessage,
             RequestFeeMinorUnits = record.RequestFeeMinorUnits,
-            RequestCurrencyCode = record.RequestCurrencyCode,
+            RequestCurrencyCode = OperatorConsolePhpCurrency.RequireForAmounts(
+                record.RequestCurrencyCode,
+                record.RequestFeeMinorUnits,
+                record.ConfirmedFeeMinorUnits),
             ConfirmedFeeMinorUnits = record.ConfirmedFeeMinorUnits,
             VendorConfirmedAt = record.VendorConfirmedAt,
             AttemptCount = record.AttemptCount,

@@ -53,9 +53,12 @@ public sealed class ManagementPlatformIdentityRbacInventoryServiceTests
                 "statutory-discounts.decision.reject"
             ]);
 
-        inventory.PolicyMappings.Should().Contain(mapping =>
-            mapping.PolicyName == "FiscalIssuanceVoidCommand" &&
-            mapping.RouteOrFeatureArea == "Fiscal / Sales Invoice");
+        inventory.PolicyMappings.Should().NotContain(mapping =>
+            mapping.PolicyName == "FiscalIssuanceVoidCommand");
+        inventory.Permissions.Should().Contain(permission =>
+            permission.PermissionKey == "fiscal-issuance.void.command" &&
+            permission.Status == "target-only" &&
+            permission.MappedPolicies.Count == 0);
     }
 
     [Fact]

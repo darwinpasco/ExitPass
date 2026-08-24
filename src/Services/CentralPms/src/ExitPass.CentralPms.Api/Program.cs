@@ -720,7 +720,6 @@ static void ConfigureApplicationServices(
         new OperatorConsoleSessionLookupReadRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleSessionLookupService, OperatorConsoleSessionLookupService>();
     builder.Services.AddScoped<IOperatorConsoleFiscalIssuanceStatusService, OperatorConsoleFiscalIssuanceStatusService>();
-    builder.Services.AddScoped<IOperatorConsoleFiscalIssuanceVoidService, OperatorConsoleFiscalIssuanceVoidService>();
     builder.Services.AddScoped<IOperatorConsoleFiscalStatusViewAuditReportRepository>(_ =>
         new OperatorConsoleFiscalStatusViewAuditReportRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IOperatorConsoleFiscalStatusViewAuditReportService, OperatorConsoleFiscalStatusViewAuditReportService>();

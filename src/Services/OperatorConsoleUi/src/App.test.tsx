@@ -10,7 +10,6 @@ import {
 } from "./apiClient";
 import type {
   AccessReadinessResponse,
-  FiscalIssuanceVoidResult,
   FiscalVoidActionAuditReportResponse,
   FiscalStatusViewAuditReportResponse,
   FiscalIssuanceStatus,
@@ -55,7 +54,6 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       lookupSessionByTicket: vi.fn(),
       getFiscalIssuanceStatus: vi.fn(),
       lookupFiscalIssuanceStatus: vi.fn(),
-      voidFiscalIssuanceReference: vi.fn(),
       listFiscalVoidActionAuditReport: vi.fn(),
       listFiscalStatusViewAuditReport: vi.fn(),
       listAuditReport: vi.fn(),
@@ -158,8 +156,8 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Lookup" }));
 
     expect(await screen.findByRole("heading", { name: "Start statutory discount review" })).toBeInTheDocument();
-    expect(screen.getByText("Current payable minor units")).toBeInTheDocument();
-    expect(screen.getByText("12500")).toBeInTheDocument();
+    expect(screen.getByText("Current payable amount")).toBeInTheDocument();
+    expect(screen.getByText("₱125.00")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Start statutory discount review" })).toBeInTheDocument();
 
     await userEvent.click(
@@ -548,7 +546,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByRole("heading", { name: "Decision" })).toBeInTheDocument();
     expect(screen.getByText("Parking privilege approved")).toBeInTheDocument();
-    expect(screen.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
+    expect(screen.getByText(/Central PMS will apply the approved privilege when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
     expect(screen.queryByText("Ready for review")).not.toBeInTheDocument();
     expect(within(screen.getByLabelText("Decision")).queryByText("Ready")).not.toBeInTheDocument();
     expect(screen.getAllByText("Approved").length).toBeGreaterThan(0);
@@ -627,7 +625,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
 
     expect(await screen.findByText("Decision approved.")).toBeInTheDocument();
     expect(await screen.findByText("Parking privilege approved")).toBeInTheDocument();
-    expect(screen.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
+    expect(screen.getByText(/Central PMS will apply the approved privilege when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
     expect(screen.queryByText("Original tariff snapshot")).not.toBeInTheDocument();
@@ -653,7 +651,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     expect(await screen.findByText("Parking privilege approved")).toBeInTheDocument();
-    expect(screen.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
+    expect(screen.getByText(/Central PMS will apply the approved privilege when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Amount update" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Update parking amount" })).not.toBeInTheDocument();
     expect(screen.queryByText("Original tariff snapshot")).not.toBeInTheDocument();
@@ -1128,7 +1126,7 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getByText("POS Server Sales Invoice ID")).toBeInTheDocument();
   });
 
-  it("FiscalStatusViewer_UsesOperatorFriendlyLookupCopyAndControlledActionWording", async () => {
+  it("FiscalStatusViewer_UsesOperatorFriendlyLookupCopyAndReadOnlyWording", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient({ fiscalStatuses: [fiscalStatus()] })}
@@ -1136,13 +1134,13 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
       />
     );
 
-    expect(screen.getByRole("heading", { name: "Fiscal issuance status and controlled fiscal actions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Fiscal issuance status" })).toBeInTheDocument();
     expect(screen.getByLabelText(/search by Sales Invoice number or reference ID/i)).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/SI-00000001-UAT or Sales Invoice reference ID/i)).toBeInTheDocument();
     expect(screen.getByText(/Operators can search by Sales Invoice number/i)).toBeInTheDocument();
-    expect(screen.getByText("Controlled actions")).toBeInTheDocument();
+    expect(screen.getByText("Read only")).toBeInTheDocument();
     expect(screen.queryByText("Read-only fiscal issuance status by Central PMS fiscal issuance reference.")).not.toBeInTheDocument();
-    expect(screen.queryByText("Read-only")).not.toBeInTheDocument();
+    expect(screen.getByText(/This view is read-only\./)).toBeInTheDocument();
   });
 
   it("FiscalStatusViewer_SearchesByFiscalDocumentNumberAndDisplaysResolvedReferenceInDetails", async () => {
@@ -1217,41 +1215,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: /retry|reissue|replacement|payment|gate|refund/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /void Sales Invoice/i })).not.toBeInTheDocument();
-    expect(screen.getByText(/already voided or has a recorded void status/i)).toBeInTheDocument();
+    expect(screen.getByText(/observational only/i)).toBeInTheDocument();
   });
 
-  it("FiscalStatusViewer_VoidButtonVisibleOnlyForVoidableDocumentWithPermission", async () => {
-    const { rerender } = render(
-      <App
-        apiClient={createMockOperatorConsoleApiClient({
-          fiscalVoidAuthorized: false,
-          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })]
-        })}
-        initialPath="/operator-console/fiscal-issuance-status"
-      />
-    );
-
-    await lookupFiscalStatus(fiscalReferenceId);
-
-    expect(await screen.findByText("Sales Invoice void permission is required.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /void Sales Invoice/i })).not.toBeInTheDocument();
-
-    rerender(
-      <App
-        apiClient={createMockOperatorConsoleApiClient({
-          fiscalVoidAuthorized: true,
-          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })]
-        })}
-        initialPath="/operator-console/fiscal-issuance-status"
-      />
-    );
-
-    await lookupFiscalStatus(fiscalReferenceId);
-
-    expect(await screen.findByRole("button", { name: /void Sales Invoice/i })).toBeInTheDocument();
-  });
-
-  it("FiscalStatusViewer_VoidConfirmationRequiresReasonAndExactPhrase", async () => {
+  it("FiscalStatusViewer_NeverExposesFiscalMutationControls", async () => {
     render(
       <App
         apiClient={createMockOperatorConsoleApiClient({
@@ -1262,88 +1229,10 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     );
 
     await lookupFiscalStatus(fiscalReferenceId);
-    await userEvent.click(await screen.findByRole("button", { name: /void Sales Invoice/i }));
-
-    const submit = screen.getByRole("button", { name: /submit Sales Invoice void request/i });
-    expect(submit).toBeDisabled();
-    expect(screen.getByText("This does not refund payment.")).toBeInTheDocument();
-    expect(screen.getByText("This does not open gate.")).toBeInTheDocument();
-    expect(screen.getByText("This does not call HikCentral.")).toBeInTheDocument();
-    expect(screen.getByText("This does not create a replacement Sales Invoice.")).toBeInTheDocument();
-    expect(screen.getByText("This does not render final BIR receipt/report.")).toBeInTheDocument();
-    expect(screen.getAllByText("This only requests Sales Invoice void/cancellation in POS Server.").length).toBeGreaterThan(0);
-
-    await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
-    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID");
-
-    expect(submit).toBeDisabled();
-
-    await userEvent.clear(screen.getByLabelText(/confirmation text/i));
-    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
-
-    expect(submit).toBeEnabled();
-  });
-
-  it("FiscalStatusViewer_SuccessfulVoidSubmitDisplaysSuccessAndRefreshesStatus", async () => {
-    const onFiscalVoid = vi.fn();
-    render(
-      <App
-        apiClient={createMockOperatorConsoleApiClient({
-          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })],
-          onFiscalVoid
-        })}
-        initialPath="/operator-console/fiscal-issuance-status"
-      />
-    );
-
-    await lookupFiscalStatus(fiscalReferenceId);
-    await userEvent.click(await screen.findByRole("button", { name: /void Sales Invoice/i }));
-    await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
-    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
-    await userEvent.click(screen.getByRole("button", { name: /submit Sales Invoice void request/i }));
-
-    expect(await screen.findByRole("heading", { name: "Sales Invoice void recorded" })).toBeInTheDocument();
-    await waitFor(() => expect(onFiscalVoid).toHaveBeenCalledTimes(1));
-    expect(onFiscalVoid.mock.calls[0][0]).toEqual(expect.objectContaining({
-      fiscalIssuanceReferenceId: fiscalReferenceId,
-      reasonCode: "operator_error",
-      reasonText: "Incorrect operator entry.",
-      confirmationText: "VOID FISCAL DOCUMENT"
-    }));
-    expect(await screen.findByRole("heading", { name: "Sales Invoice voided" })).toBeInTheDocument();
-    expect(screen.getAllByText("Recorded").length).toBeGreaterThan(0);
-  });
-
-  it("FiscalStatusViewer_ConflictVoidResultDisplaysFailClosedMessageWithoutAutoRetry", async () => {
-    const onFiscalVoid = vi.fn();
-    render(
-      <App
-        apiClient={createMockOperatorConsoleApiClient({
-          fiscalStatuses: [fiscalStatus({ posServerFiscalDocumentReadStatus: "AVAILABLE" })],
-          fiscalVoidResult: fiscalVoidResult({
-            accepted: false,
-            status: "pos_server_void_conflict",
-            httpStatusCode: 409,
-            errors: ["fiscal_document_void_idempotency_conflict"],
-            errorPosture: "DO_NOT_RETRY_WITHOUT_REQUEST_CHANGE",
-            posServerResultClassification: "conflict"
-          }),
-          onFiscalVoid
-        })}
-        initialPath="/operator-console/fiscal-issuance-status"
-      />
-    );
-
-    await lookupFiscalStatus(fiscalReferenceId);
-    await userEvent.click(await screen.findByRole("button", { name: /void Sales Invoice/i }));
-    await userEvent.type(screen.getByLabelText(/reason text/i), "Incorrect operator entry.");
-    await userEvent.type(screen.getByLabelText(/confirmation text/i), "VOID FISCAL DOCUMENT");
-    await userEvent.click(screen.getByRole("button", { name: /submit Sales Invoice void request/i }));
-
-    expect(await screen.findByRole("heading", { name: "Sales Invoice void failed closed" })).toBeInTheDocument();
-    expect(screen.getByText(/do not retry automatically/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
-    expect(onFiscalVoid).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("heading", { name: "Issued" })).toBeInTheDocument();
+    expect(screen.getByText(/This view is read-only\./)).toBeInTheDocument();
+    const fiscalStatusRegion = screen.getByRole("region", { name: "Fiscal issuance status" });
+    expect(within(fiscalStatusRegion).getAllByRole("button").map((button) => button.textContent)).toEqual(["View status"]);
   });
 
   it("FiscalStatusViewer_RecordedWithoutFiscalDocumentNumberDoesNotShowIssued", async () => {
@@ -1698,39 +1587,6 @@ describe("ExitPass Operator Console statutory discount foundation", () => {
     expect(requestOptions?.method).toBeUndefined();
     expect(requestOptions?.body).toBeUndefined();
     expectOperatorContextHeaders(requestOptions?.headers);
-  });
-
-  it("OperatorConsoleApi_VoidsFiscalStatusThroughFacadeWithEncodedReference", async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(fiscalVoidResult()));
-    vi.stubGlobal("fetch", fetchMock);
-    const client = createHttpOperatorConsoleApiClient({ baseUrl: "http://central-pms.test" });
-
-    const result = await client.voidFiscalIssuanceReference({
-      fiscalIssuanceReferenceId: "reference/with space",
-      operatorActionRequestId: "88000000-0000-0000-0000-000000000001",
-      reasonCode: "operator_error",
-      reasonText: "Incorrect operator entry.",
-      confirmationText: "VOID FISCAL DOCUMENT",
-      correlationId: "88000000-0000-0000-0000-000000000099"
-    });
-
-    expect(result.status).toBe("pos_server_void_recorded");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://central-pms.test/v1/ops/operator-console/fiscal-issuance/references/reference%2Fwith%20space/void",
-      expect.objectContaining({ method: "POST" })
-    );
-
-    const requestOptions = fetchMock.mock.calls[0][1];
-    expectOperatorContextHeaders(requestOptions?.headers);
-    expect(requestOptions?.headers).toEqual(expect.objectContaining({ "Content-Type": "application/json" }));
-    expect(JSON.parse(requestOptions?.body as string)).toEqual({
-      operatorActionRequestId: "88000000-0000-0000-0000-000000000001",
-      reasonCode: "operator_error",
-      reasonText: "Incorrect operator entry.",
-      confirmationText: "VOID FISCAL DOCUMENT",
-      correlationId: "88000000-0000-0000-0000-000000000099"
-    });
-    expect(String(fetchMock.mock.calls[0][0])).not.toContain("/internal/");
   });
 
   it("OperatorConsoleApi_LoadsFiscalStatusViewAuditReportWithFiltersAndEncodedReference", async () => {
@@ -2647,7 +2503,7 @@ function sandboxOnlyDraft(): StatutoryDiscountDraftDetail {
     requestedAt: "2026-06-01T09:30:00+08:00",
     requestedBy: "operator.sandbox",
     parkingStartedAt: "2026-06-01T08:30:00+08:00",
-    originalTariffAmount: "PHP 90.00",
+    originalTariffAmount: "₱90.00",
     payableBasisPreview: "Blocked",
     currentPaymentStatus: "Read-only in this module",
     maskedIdReference: "Evidence metadata only",
@@ -2875,42 +2731,6 @@ function fiscalStatus(overrides: Partial<FiscalIssuanceStatus> = {}): FiscalIssu
     firstRecordedAt: "2026-07-08T08:00:00Z",
     lastUpdatedAt: "2026-07-08T08:00:00Z",
     correlationId: "5f000000-0000-0000-0000-000000000008",
-    ...overrides
-  };
-}
-
-function fiscalVoidResult(overrides: Partial<FiscalIssuanceVoidResult> = {}): FiscalIssuanceVoidResult {
-  return {
-    accessAllowed: true,
-    accessDecision: "ALLOWED",
-    accessDenialReasons: [],
-    accessPersisted: true,
-    accepted: true,
-    status: "pos_server_void_recorded",
-    httpStatusCode: 200,
-    errors: [],
-    fiscalIssuanceReferenceId: fiscalReferenceId,
-    posServerFiscalDocumentId: "5f000000-0000-0000-0000-000000000014",
-    fiscalDocumentNumber: "SI-00000001-UAT",
-    fiscalSequenceValue: 1,
-    fiscalDocumentStatusPosture: "voided",
-    voidStatus: "recorded",
-    voidReasonCode: "operator_error",
-    voidedAt: "2026-07-10T00:00:00Z",
-    posServerResultClassification: "newly_voided",
-    correlationId: "5f000000-0000-0000-0000-000000000008",
-    errorPosture: undefined,
-    newFiscalNumberAllocated: false,
-    paymentFinalityChanged: false,
-    exitAuthorizationIssued: false,
-    gateBehaviorTriggered: false,
-    refundOrReversalCreated: false,
-    hikCentralCalled: false,
-    paymentProviderCalled: false,
-    renderingGenerated: false,
-    replacementFiscalDocumentCreated: false,
-    fiscalSequenceChangedByCentralPms: false,
-    idempotentReplay: false,
     ...overrides
   };
 }

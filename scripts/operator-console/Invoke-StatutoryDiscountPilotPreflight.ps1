@@ -34,7 +34,7 @@ $expectedTariffSnapshotId = "23100000-0000-0000-0000-000000000004"
 $expectedAmountMinorUnits = 12500
 $expectedCurrency = "PHP"
 $requesterPermissions = "statutory-discounts.session.lookup,statutory-discounts.draft.view,statutory-discounts.draft.create,statutory-discounts.evidence.view,statutory-discounts.evidence.capture,statutory-discounts.policy.resolve,fiscal-issuance.status.read,ticket.lookup,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
-$reviewerPermissions = "statutory-discounts.draft.view,statutory-discounts.evidence.view,statutory-discounts.review.queue.read,statutory-discounts.review.detail.read,statutory-discounts.decision.review,statutory-discounts.decision.approve,statutory-discounts.decision.reject,statutory-discounts.policy.resolve,fiscal-issuance.status.read,fiscal-issuance.void.command,operator-workflow-audit.view,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
+$reviewerPermissions = "statutory-discounts.draft.view,statutory-discounts.evidence.view,statutory-discounts.review.queue.read,statutory-discounts.review.detail.read,statutory-discounts.decision.review,statutory-discounts.decision.approve,statutory-discounts.decision.reject,statutory-discounts.policy.resolve,fiscal-issuance.status.read,operator-workflow-audit.view,projection-health.view,ops.vendor-session-projection-health.view,operator-console.vendor-projection-health.view,vendor-acknowledgments.view"
 
 $seedSqlPath = Join-Path $PSScriptRoot "Seed-StatutoryDiscountPilotFixture.sql"
 $verifySqlPath = Join-Path $PSScriptRoot "Verify-StatutoryDiscountPilotFixture.sql"

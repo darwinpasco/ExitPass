@@ -20,7 +20,6 @@ namespace ExitPass.CentralPms.IntegrationTests.Api;
 public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
 {
     private const string StatusReadPermission = "fiscal-issuance.status.read";
-    private const string FiscalVoidPermission = "fiscal-issuance.void.command";
     private static readonly Guid ReferenceId = Guid.Parse("5f000000-0000-0000-0000-000000000001");
     private static readonly Guid EvaluationId = Guid.Parse("5f000000-0000-0000-0000-000000000002");
     private static readonly Guid UserId = Guid.Parse("5f000000-0000-0000-0000-000000000003");
@@ -29,10 +28,8 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
     private static readonly Guid SiteGroupId = Guid.Parse("5f000000-0000-0000-0000-000000000006");
     private static readonly Guid ShiftId = Guid.Parse("5f000000-0000-0000-0000-000000000007");
     private static readonly Guid CorrelationId = Guid.Parse("5f000000-0000-0000-0000-000000000008");
-    private static readonly Guid OperatorActionRequestId = Guid.Parse("5f000000-0000-0000-0000-000000000018");
     private static readonly string Endpoint = $"/v1/ops/operator-console/fiscal-issuance/references/{ReferenceId}";
     private const string LookupEndpoint = "/v1/ops/operator-console/fiscal-issuance/lookup";
-    private static readonly string VoidEndpoint = $"/v1/ops/operator-console/fiscal-issuance/references/{ReferenceId}/void";
 
     [Fact]
     public void EndpointRouteExistsWithFiscalIssuanceStatusReadPolicy()
@@ -54,9 +51,9 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
     }
 
     [Fact]
-    public void VoidEndpointRouteExistsWithFiscalIssuanceVoidPolicy()
+    public void VoidEndpointRouteDoesNotExist()
     {
-        using var factory = CreateVoidFactory(VoidResult(VoidCommandResult()));
+        using var factory = CreateFactory(Result(Status()));
 
         var endpoints = factory.Services.GetRequiredService<EndpointDataSource>()
             .Endpoints
@@ -64,12 +61,7 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
             .Where(endpoint => endpoint.RoutePattern.RawText == "/v1/ops/operator-console/fiscal-issuance/references/{fiscalIssuanceReferenceId:guid}/void")
             .ToArray();
 
-        endpoints.Should().ContainSingle();
-        endpoints[0].Metadata.GetMetadata<HttpMethodMetadata>()!
-            .HttpMethods.Should().ContainSingle().Which.Should().Be(HttpMethod.Post.Method);
-        endpoints[0].Metadata.GetMetadata<ReconciliationPolicyMetadata>()?.PolicyName
-            .Should()
-            .Be("FiscalIssuanceVoidCommand");
+        endpoints.Should().BeEmpty();
     }
 
     [Fact]
@@ -298,94 +290,6 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         response.StatusCode.Should().Be(HttpStatusCode.MethodNotAllowed);
     }
 
-    [Fact]
-    public async Task Void_WhenAuthorized_ReturnsSafeVoidResult()
-    {
-        var fake = new FakeFiscalVoidService(VoidResult(VoidCommandResult()));
-        using var factory = CreateVoidFactory(fake);
-        using var client = factory.CreateClient();
-        AddFiscalVoidHeaders(client);
-
-        using var response = await client.PostAsJsonAsync(VoidEndpoint, VoidRequest());
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleFiscalIssuanceVoidResponse>();
-        body.Should().NotBeNull();
-        body!.Status.Should().Be("pos_server_void_recorded");
-        body.Accepted.Should().BeTrue();
-        body.NewFiscalNumberAllocated.Should().BeFalse();
-        body.GateBehaviorTriggered.Should().BeFalse();
-
-        fake.CallCount.Should().Be(1);
-        fake.LastCommand.Should().NotBeNull();
-        fake.LastCommand!.FiscalIssuanceReferenceId.Should().Be(ReferenceId);
-        fake.LastCommand.OperatorActionRequestId.Should().Be(OperatorActionRequestId);
-        fake.LastCommand.UserId.Should().Be(UserId);
-    }
-
-    [Fact]
-    public async Task Void_WhenRbacEnabledAndUnauthenticated_ReturnsUnauthorized()
-    {
-        var fake = new FakeFiscalVoidService(VoidResult(VoidCommandResult()));
-        using var factory = CreateVoidFactory(fake);
-        using var client = factory.CreateClient();
-
-        using var response = await client.PostAsJsonAsync(VoidEndpoint, VoidRequest());
-
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-        fake.CallCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task Void_WhenCallerHasOnlyStatusReadPermission_ReturnsForbidden()
-    {
-        var fake = new FakeFiscalVoidService(VoidResult(VoidCommandResult()));
-        using var factory = CreateVoidFactory(fake);
-        using var client = factory.CreateClient();
-        AddStatusReadHeaders(client);
-
-        using var response = await client.PostAsJsonAsync(VoidEndpoint, VoidRequest());
-
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        fake.CallCount.Should().Be(0);
-    }
-
-    [Fact]
-    public async Task Void_WhenOperatorAccessDenied_ReturnsForbiddenWithoutCallingInternalEndpoint()
-    {
-        using var factory = CreateVoidFactory(VoidResult(voidResult: null, accessAllowed: false));
-        using var client = factory.CreateClient();
-        AddFiscalVoidHeaders(client);
-
-        using var response = await client.PostAsJsonAsync(VoidEndpoint, VoidRequest());
-
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
-        body.Should().NotBeNull();
-        body!.ErrorCode.Should().Be("OPERATOR_CONSOLE_FISCAL_VOID_ACCESS_DENIED");
-    }
-
-    [Fact]
-    public async Task Void_WhenServiceReturnsConflict_ReturnsConflictWithSafeStatus()
-    {
-        using var factory = CreateVoidFactory(VoidResult(VoidCommandResult(
-            accepted: false,
-            status: "pos_server_void_conflict",
-            httpStatusCode: 409,
-            errors: ["fiscal_document_void_idempotency_conflict"],
-            classification: "conflict")));
-        using var client = factory.CreateClient();
-        AddFiscalVoidHeaders(client);
-
-        using var response = await client.PostAsJsonAsync(VoidEndpoint, VoidRequest());
-
-        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
-        var body = await response.Content.ReadFromJsonAsync<OperatorConsoleFiscalIssuanceVoidResponse>();
-        body.Should().NotBeNull();
-        body!.Status.Should().Be("pos_server_void_conflict");
-        body.Errors.Should().Contain("fiscal_document_void_idempotency_conflict");
-    }
-
     private static CustomWebApplicationFactory CreateFactory(OperatorConsoleFiscalIssuanceStatusResult result) =>
         CreateFactory(new FakeFiscalStatusService(result));
 
@@ -404,24 +308,6 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
                 services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository());
             });
 
-    private static CustomWebApplicationFactory CreateVoidFactory(OperatorConsoleFiscalIssuanceVoidResult result) =>
-        CreateVoidFactory(new FakeFiscalVoidService(result));
-
-    private static CustomWebApplicationFactory CreateVoidFactory(FakeFiscalVoidService fake) =>
-        new CustomWebApplicationFactory()
-            .WithConfigurationOverrides(new Dictionary<string, string?>
-            {
-                ["CentralPms:Rbac:Enabled"] = "true",
-                ["CentralPms:Rbac:AllowPermissionHeader"] = "true"
-            })
-            .WithServiceOverrides(services =>
-            {
-                services.RemoveAll<IOperatorConsoleFiscalIssuanceVoidService>();
-                services.AddSingleton<IOperatorConsoleFiscalIssuanceVoidService>(fake);
-                services.RemoveAll<ICentralPmsRbacRepository>();
-                services.AddSingleton<ICentralPmsRbacRepository>(new FakeRbacRepository());
-            });
-
     private static void AddStatusReadHeaders(HttpClient client)
     {
         client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.UserIdHeaderName, UserId.ToString());
@@ -432,13 +318,6 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         client.DefaultRequestHeaders.Add("X-Site-Id", SiteId.ToString());
         client.DefaultRequestHeaders.Add("X-Site-Group-Id", SiteGroupId.ToString());
         client.DefaultRequestHeaders.Add("X-Correlation-Id", CorrelationId.ToString());
-    }
-
-    private static void AddFiscalVoidHeaders(HttpClient client)
-    {
-        AddStatusReadHeaders(client);
-        client.DefaultRequestHeaders.Remove(CentralPmsRbacPolicyCatalog.PermissionsHeaderName);
-        client.DefaultRequestHeaders.Add(CentralPmsRbacPolicyCatalog.PermissionsHeaderName, FiscalVoidPermission);
     }
 
     private static OperatorConsoleFiscalIssuanceStatusResult Result(
@@ -458,61 +337,6 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
             safeErrorCode,
             safeErrorPosture,
             lookupAmbiguous);
-
-    private static OperatorConsoleFiscalIssuanceVoidRequest VoidRequest() =>
-        new(
-            OperatorActionRequestId,
-            ReasonCode: "operator_error",
-            ReasonText: "Operator selected wrong fiscal document.",
-            ConfirmationText: OperatorConsoleFiscalIssuanceVoidService.ConfirmationPhrase,
-            CorrelationId);
-
-    private static OperatorConsoleFiscalIssuanceVoidResult VoidResult(
-        FiscalIssuanceVoidCommandResponse? voidResult,
-        bool accessAllowed = true) =>
-        new(
-            EvaluationId,
-            accessAllowed,
-            accessAllowed ? "ALLOWED" : "DENIED",
-            accessAllowed ? Array.Empty<string>() : ["NO_ACTIVE_SHIFT"],
-            AccessPersisted: true,
-            voidResult,
-            CorrelationId);
-
-    private static FiscalIssuanceVoidCommandResponse VoidCommandResult(
-        bool accepted = true,
-        string status = "pos_server_void_recorded",
-        int httpStatusCode = 200,
-        IReadOnlyList<string>? errors = null,
-        string classification = "newly_voided") =>
-        new(
-            accepted,
-            status,
-            httpStatusCode,
-            errors ?? Array.Empty<string>(),
-            ReferenceId,
-            Guid.Parse("5f000000-0000-0000-0000-000000000014"),
-            "SI-00000001-UAT",
-            1,
-            accepted ? "voided" : null,
-            accepted ? "recorded" : null,
-            accepted ? "operator_error" : null,
-            accepted ? DateTimeOffset.Parse("2026-07-10T00:00:00Z") : null,
-            classification,
-            $"operator-console-fiscal-void:{ReferenceId:D}:{OperatorActionRequestId:D}",
-            CorrelationId.ToString("D"),
-            accepted ? null : "do_not_retry_without_request_change",
-            NewFiscalNumberAllocated: false,
-            PaymentFinalityChanged: false,
-            ExitAuthorizationIssued: false,
-            GateBehaviorTriggered: false,
-            RefundOrReversalCreated: false,
-            HikCentralCalled: false,
-            PaymentProviderCalled: false,
-            RenderingGenerated: false,
-            ReplacementFiscalDocumentCreated: false,
-            FiscalSequenceChangedByCentralPms: false,
-            IdempotentReplay: status == "pos_server_void_idempotent_replay");
 
     private static FiscalIssuanceStatusReadModel Status()
     {
@@ -585,29 +409,6 @@ public sealed class OperatorConsoleFiscalIssuanceStatusApiIntegrationTests
         {
             LookupCallCount++;
             LastLookupQuery = query;
-            return Task.FromResult(_result);
-        }
-    }
-
-    private sealed class FakeFiscalVoidService : IOperatorConsoleFiscalIssuanceVoidService
-    {
-        private readonly OperatorConsoleFiscalIssuanceVoidResult _result;
-
-        public FakeFiscalVoidService(OperatorConsoleFiscalIssuanceVoidResult result)
-        {
-            _result = result;
-        }
-
-        public int CallCount { get; private set; }
-
-        public OperatorConsoleFiscalIssuanceVoidCommand? LastCommand { get; private set; }
-
-        public Task<OperatorConsoleFiscalIssuanceVoidResult> VoidAsync(
-            OperatorConsoleFiscalIssuanceVoidCommand command,
-            CancellationToken cancellationToken)
-        {
-            CallCount++;
-            LastCommand = command;
             return Task.FromResult(_result);
         }
     }

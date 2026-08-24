@@ -132,7 +132,7 @@ test.describe("Operator Console statutory review UX browser smoke", () => {
   test("approved and rejected states stay compact and operational", async ({ page }) => {
     await page.goto(scenarios.approved);
     await expect(page.getByText("Parking privilege approved")).toBeVisible();
-    await expect(page.getByText(/will be applied when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeVisible();
+    await expect(page.getByText(/Central PMS will apply the approved privilege when the customer proceeds with payment through WebPay or the Cashier-Assisted Terminal/i)).toBeVisible();
     await expect(page.locator("body")).not.toContainText("Ready for review");
     await expect(page.getByLabel("Decision")).not.toContainText("Ready");
     await expect(page.getByText("Approved", { exact: true }).first()).toBeVisible();

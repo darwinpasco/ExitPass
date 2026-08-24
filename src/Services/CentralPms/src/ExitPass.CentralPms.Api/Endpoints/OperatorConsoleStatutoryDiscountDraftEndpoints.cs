@@ -549,7 +549,10 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.PolicyName,
                 item.OriginalAmountMinorUnits,
                 item.PayableAmountMinorUnits,
-                item.CurrencyCode,
+                OperatorConsolePhpCurrency.RequireForAmounts(
+                    item.CurrencyCode,
+                    item.OriginalAmountMinorUnits,
+                    item.PayableAmountMinorUnits),
                 item.RequestedAt,
                 item.RequestedByUserId,
                 item.BlockedReason)).ToArray(),
@@ -607,7 +610,14 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.StatutoryDiscountAmountMinorUnits,
             result.PayableAmountMinorUnits,
             result.FinalPayableAmountMinorUnits,
-            result.CurrencyCode,
+            OperatorConsolePhpCurrency.RequireForAmounts(
+                result.CurrencyCode,
+                result.OriginalAmountMinorUnits,
+                result.VatAmountMinorUnits,
+                result.VatExclusiveAmountMinorUnits,
+                result.StatutoryDiscountAmountMinorUnits,
+                result.PayableAmountMinorUnits,
+                result.FinalPayableAmountMinorUnits),
             result.Activity,
             result.StatutoryDiscountDecisionCommandId,
             result.StatutoryDiscountPayableBasisApplicationCommandId);
@@ -634,7 +644,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.OriginalAmountMinorUnits,
                 item.StatutoryDiscountAmountMinorUnits,
                 item.FinalPayableAmountMinorUnits,
-                item.CurrencyCode,
+                OperatorConsolePhpCurrency.RequireForAmounts(
+                    item.CurrencyCode,
+                    item.OriginalAmountMinorUnits,
+                    item.StatutoryDiscountAmountMinorUnits,
+                    item.FinalPayableAmountMinorUnits),
                 item.RequestedByUserId,
                 item.ValidatedByUserId,
                 item.RequestedAt,
@@ -925,7 +939,13 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.VatAmountMinorUnits,
             result.StatutoryDiscountAmountMinorUnits,
             result.FinalPayableAmountMinorUnits,
-            result.Currency,
+            OperatorConsolePhpCurrency.RequireForAmounts(
+                result.Currency,
+                result.OriginalAmountMinorUnits,
+                result.VatExclusiveAmountMinorUnits,
+                result.VatAmountMinorUnits,
+                result.StatutoryDiscountAmountMinorUnits,
+                result.FinalPayableAmountMinorUnits),
             result.GoverningPolicy is null
                 ? null
                 : new OperatorConsoleServiceChannelStatutoryDiscountReviewPolicyAuthority(
