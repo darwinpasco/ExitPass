@@ -875,7 +875,7 @@ const server = createServer(async (request, response) => {
       writeJson(response, 200, {
         decisionAccepted: true,
         decisionPersisted: true,
-        currentDecisionResultStatus: body.decision === "REJECT" ? "REJECTED" : "APPROVED",
+        currentValidationStatus: body.decision === "REJECT" ? "REJECTED" : "APPROVED",
         decision: body.decision,
         alreadyDecided: false,
         decisionChanged: true,

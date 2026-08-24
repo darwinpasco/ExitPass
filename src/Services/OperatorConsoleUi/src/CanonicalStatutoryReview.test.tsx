@@ -39,7 +39,7 @@ describe("canonical Central PMS statutory review", () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       decisionAccepted: true,
       decisionPersisted: true,
-      currentDecisionResultStatus: "REJECTED",
+      currentValidationStatus: "REJECTED",
       decision: "REJECT",
       alreadyDecided: false,
       decisionChanged: true,
