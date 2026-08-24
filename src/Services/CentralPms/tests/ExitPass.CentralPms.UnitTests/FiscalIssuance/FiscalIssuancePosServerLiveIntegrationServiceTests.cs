@@ -108,6 +108,22 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
     }
 
     [Fact]
+    public void EvaluateReadiness_WhenPaymentLiveFlowProfileIsMissing_FailsClosed()
+    {
+        var options = new FiscalIssuancePosServerIntegrationOptions
+        {
+            EnablePosServerFiscalIssuanceLiveCall = true,
+            EnableLiveFiscalIssuanceFromPaymentFlow = true
+        }.AddEndpoint();
+        options.Endpoints[0].FiscalDocumentStatusCodeId = null;
+
+        var readiness = options.EvaluateReadiness();
+
+        readiness.IsReady.Should().BeFalse();
+        readiness.Errors.Should().Contain("site_pos_server_fiscal_profile_required_for_payment_flow");
+    }
+
+    [Fact]
     public void EvaluateReadiness_WhenExitLiveFlowFlagIsEnabled_ReportsUnsafeFlowWiring()
     {
         var readiness = new FiscalIssuancePosServerIntegrationOptions
@@ -261,6 +277,55 @@ public sealed class FiscalIssuancePosServerLiveIntegrationServiceTests
                 request.UpstreamFinalityRef == "upstream-finality-ref" &&
                 request.PayableBasis.UpstreamFinalityRef == "upstream-finality-ref"),
             Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task TryIssueFiscalDocumentViaPosServerAsync_PaymentFlowUsesServerConfiguredLocalFiscalProfile()
+    {
+        var client = Substitute.For<IPosServerFiscalDocumentClient>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServerResult = CompletePosServerCreateResult(FiscalIssuanceResultClassification.NewlyCreated);
+        client.CreateFiscalDocumentAsync(Arg.Any<PosServerFiscalDocumentCreateRequest>(), Arg.Any<CancellationToken>())
+            .Returns(posServerResult);
+        orchestration.MarkRequestedAsync(FiscalIssuanceReferenceId, Arg.Any<FiscalIssuanceTransitionContext>(), Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRequested));
+        orchestration.ApplyPosServerCreateResultAsync(
+                FiscalIssuanceReferenceId,
+                posServerResult,
+                Arg.Any<PosServerCreateResultRecordingContext>(),
+                Arg.Any<CancellationToken>())
+            .Returns(Reference(FiscalIssuanceIntegrationState.FiscalIssuanceRecorded));
+        var options = EnabledOptions();
+        options.EnableLiveFiscalIssuanceFromPaymentFlow = true;
+        var input = PosServerFiscalDocumentRequestMapperTests.ValidContext() with
+        {
+            FiscalDocumentTypeCodeId = null,
+            FiscalDocumentStatusCodeId = null,
+            DocumentLines = PosServerFiscalDocumentRequestMapperTests.ValidContext().DocumentLines
+                .Select(line => line with { LineTypeCodeId = null })
+                .ToArray(),
+            Tenders = PosServerFiscalDocumentRequestMapperTests.ValidContext().Tenders
+                .Select(tender => tender with { TenderTypeCodeId = null })
+                .ToArray(),
+            Totals = PosServerFiscalDocumentRequestMapperTests.ValidContext().Totals
+                .Select(total => total with { TotalTypeCodeId = null })
+                .ToArray()
+        };
+        var sut = CreateSut(options, client: client, orchestration: orchestration);
+
+        var result = await sut.TryIssueFiscalDocumentViaPosServerAsync(
+            FiscalIssuanceReferenceId,
+            input,
+            RecordingContext(),
+            CancellationToken.None);
+
+        result.Status.Should().Be(FiscalIssuancePosServerLiveIntegrationStatus.Applied);
+        result.MappedRequest.Should().NotBeNull();
+        result.MappedRequest!.FiscalDocumentTypeCodeId.Should().Be(SitePosServerTestOptions.FiscalDocumentTypeCodeId);
+        result.MappedRequest.FiscalDocumentStatusCodeId.Should().Be(SitePosServerTestOptions.FiscalDocumentStatusCodeId);
+        result.MappedRequest.DocumentLines.Should().OnlyContain(line => line.LineTypeCodeId == SitePosServerTestOptions.FiscalLineTypeCodeId);
+        result.MappedRequest.Tenders.Should().OnlyContain(tender => tender.TenderTypeCodeId == SitePosServerTestOptions.FiscalTenderTypeCodeId);
+        result.MappedRequest.Totals.Should().OnlyContain(total => total.TotalTypeCodeId == SitePosServerTestOptions.FiscalTotalTypeCodeId);
     }
 
     [Fact]

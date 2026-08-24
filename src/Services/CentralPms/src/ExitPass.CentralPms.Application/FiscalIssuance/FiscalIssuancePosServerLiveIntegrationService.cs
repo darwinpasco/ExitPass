@@ -67,7 +67,7 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
         PosServerFiscalDocumentCreateRequest request;
         try
         {
-            request = _requestMapper.Map(fiscalContext);
+            request = _requestMapper.Map(ApplyConfiguredFiscalProfile(fiscalContext));
         }
         catch (ArgumentException ex)
         {
@@ -174,6 +174,47 @@ public sealed class FiscalIssuancePosServerLiveIntegrationService : IFiscalIssua
             readiness,
             result,
             recordingContext.CorrelationId);
+    }
+
+    private CentralPmsFiscalDocumentMappingContext ApplyConfiguredFiscalProfile(
+        CentralPmsFiscalDocumentMappingContext context)
+    {
+        var endpoint = _options.Endpoints.SingleOrDefault(candidate =>
+            candidate.SitePosServerId == context.SitePosServerId &&
+            string.Equals(candidate.SitePosServerRef?.Trim(), context.SitePosServerRef, StringComparison.Ordinal));
+
+        if (endpoint is null || !endpoint.HasCompleteFiscalProfile())
+        {
+            return context;
+        }
+
+        return context with
+        {
+            FiscalDocumentTypeCodeId = endpoint.FiscalDocumentTypeCodeId,
+            FiscalDocumentStatusCodeId = endpoint.FiscalDocumentStatusCodeId,
+            DocumentLines = context.DocumentLines
+                .Select(line => line with { LineTypeCodeId = endpoint.FiscalLineTypeCodeId })
+                .ToArray(),
+            Tenders = context.Tenders
+                .Select(tender => tender with { TenderTypeCodeId = endpoint.FiscalTenderTypeCodeId })
+                .ToArray(),
+            TaxDetails = context.TaxDetails
+                .Select(tax => tax with
+                {
+                    TaxTypeCodeId = endpoint.FiscalTaxTypeCodeId!.Value,
+                    TaxClassificationCodeId = endpoint.FiscalTaxClassificationCodeId!.Value
+                })
+                .ToArray(),
+            DiscountPrivilegeDetails = context.DiscountPrivilegeDetails
+                .Select(discount => discount with
+                {
+                    DiscountPrivilegeTypeCodeId = endpoint.FiscalDiscountPrivilegeTypeCodeId!.Value
+                })
+                .ToArray(),
+            Totals = context.Totals
+                .Select(total => total with { TotalTypeCodeId = endpoint.FiscalTotalTypeCodeId })
+                .ToArray()
+        };
     }
 }
 
@@ -326,6 +367,11 @@ public sealed class FiscalIssuancePosServerIntegrationOptions
                 errors.Add("site_pos_server_site_id_required_for_payment_flow");
             }
 
+            if (EnableLiveFiscalIssuanceFromPaymentFlow && !endpoint.HasCompleteFiscalProfile())
+            {
+                errors.Add("site_pos_server_fiscal_profile_required_for_payment_flow");
+            }
+
             if (string.IsNullOrWhiteSpace(endpoint.SitePosServerRef))
             {
                 errors.Add("site_pos_server_ref_required");
@@ -398,6 +444,34 @@ public sealed class SitePosServerEndpointOptions
     public string? Environment { get; set; }
 
     public bool Enabled { get; set; }
+
+    public Guid? FiscalDocumentTypeCodeId { get; set; }
+
+    public Guid? FiscalDocumentStatusCodeId { get; set; }
+
+    public Guid? FiscalLineTypeCodeId { get; set; }
+
+    public Guid? FiscalTenderTypeCodeId { get; set; }
+
+    public Guid? FiscalTaxTypeCodeId { get; set; }
+
+    public Guid? FiscalTaxClassificationCodeId { get; set; }
+
+    public Guid? FiscalDiscountPrivilegeTypeCodeId { get; set; }
+
+    public Guid? FiscalTotalTypeCodeId { get; set; }
+
+    public bool HasCompleteFiscalProfile() =>
+        IsConfigured(FiscalDocumentTypeCodeId) &&
+        IsConfigured(FiscalDocumentStatusCodeId) &&
+        IsConfigured(FiscalLineTypeCodeId) &&
+        IsConfigured(FiscalTenderTypeCodeId) &&
+        IsConfigured(FiscalTaxTypeCodeId) &&
+        IsConfigured(FiscalTaxClassificationCodeId) &&
+        IsConfigured(FiscalDiscountPrivilegeTypeCodeId) &&
+        IsConfigured(FiscalTotalTypeCodeId);
+
+    private static bool IsConfigured(Guid? value) => value is not null && value != Guid.Empty;
 }
 
 public static class FiscalIssuancePosServerIntegrationReadinessStatuses
