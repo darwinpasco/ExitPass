@@ -69,7 +69,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             detail.MaskedIdReference.Should().NotContain("123456789");
             detail.EvidenceReferences.Should().ContainSingle();
             detail.EvidenceReferences[0].ReferenceNumberMasked.Should().Be("SC-****-1234");
-            detail.EvidenceReferences[0].StorageReference.Should().Be("evidence-ref-001");
+            detail.EvidenceReferences[0].GetType().GetProperty("StorageReference").Should().BeNull();
 
             var pendingShared = await GetSharedReadbackAsync(client, webPay.Decision.StatutoryDiscountDecisionCommandId);
             pendingShared.SiteId.Should().Be(webPay.Context.SiteId);
@@ -271,6 +271,21 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             AddOperatorHeaders(deniedClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
             (await deniedClient.GetAsync(QueueEndpoint)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
+            using var authorityBodyClient = allowedFactory.CreateClient();
+            AddOperatorHeaders(authorityBodyClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId);
+            using var authorityBodyResponse = await authorityBodyClient.PostAsJsonAsync(
+                DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
+                new
+                {
+                    decision = "APPROVE",
+                    decisionReasonCode = "ELIGIBLE",
+                    reviewerAttestation = true,
+                    idempotencyKey = "client-authority-rejected",
+                    reviewerUserId = seeded.Context.RequestedByUserId,
+                    siteId = seeded.Context.SiteId
+                });
+            authorityBodyResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
             using var wrongSiteFactory = CreateFactory(AllowedResult(OtherSiteId, OtherSiteGroupId));
             using var wrongSiteClient = wrongSiteFactory.CreateClient();
             AddOperatorHeaders(wrongSiteClient, OtherSiteId, OtherSiteGroupId, seeded.Context.RequestedByUserId);
@@ -285,7 +300,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             AddOperatorHeaders(missingShiftClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId, shiftId: Guid.Empty);
             using var missingShiftResponse = await missingShiftClient.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
-                DecisionRequest(seeded.Context, "APPROVE") with { OperatorShiftId = null });
+                DecisionRequest(seeded.Context, "APPROVE"));
             missingShiftResponse.StatusCode.Should().Be(HttpStatusCode.OK);
             var missingShift = await missingShiftResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
             missingShift!.AccessAllowed.Should().BeFalse();
@@ -295,7 +310,7 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
             AddOperatorHeaders(invalidDeviceClient, seeded.Context.SiteId, seeded.Context.SiteGroupId, seeded.Context.RequestedByUserId, deviceBindingId: Guid.Empty);
             using var invalidDeviceResponse = await invalidDeviceClient.PostAsJsonAsync(
                 DecisionEndpoint(seeded.Decision.StatutoryDiscountDecisionCommandId),
-                DecisionRequest(seeded.Context, "APPROVE") with { OperatorDeviceBindingId = null });
+                DecisionRequest(seeded.Context, "APPROVE"));
             invalidDeviceResponse.StatusCode.Should().Be(HttpStatusCode.OK);
             var invalidDevice = await invalidDeviceResponse.Content.ReadFromJsonAsync<OperatorConsoleStatutoryDiscountDecisionResponse>();
             invalidDevice!.AccessAllowed.Should().BeFalse();
@@ -340,22 +355,15 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewApiInteg
     private static string DecisionEndpoint(Guid decisionCommandId) =>
         string.Format(DecisionEndpointTemplate, decisionCommandId);
 
-    private static OperatorConsoleStatutoryDiscountDecisionRequest DecisionRequest(
+    private static OperatorConsoleCanonicalStatutoryReviewDecisionRequest DecisionRequest(
         PaymentTestContext context,
         string decision,
         string idempotencyKey = "service-channel-review-decision-key") =>
         new(
-            context.RequestedByUserId,
-            ReviewerDeviceBindingId,
-            context.SiteId,
-            context.SiteGroupId,
-            ReviewerShiftId,
             decision,
             decision == "APPROVE" ? "ELIGIBLE" : "DOCUMENT_INVALID",
-            DecisionNotes: null,
             ReviewerAttestation: true,
-            idempotencyKey,
-            Guid.NewGuid());
+            idempotencyKey);
 
     private static void AddOperatorHeaders(
         HttpClient client,

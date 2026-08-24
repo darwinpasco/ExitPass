@@ -121,6 +121,100 @@ export interface StatutoryDiscountGoverningPolicy {
   legalApprovabilityReason?: string;
 }
 
+export type CanonicalStatutoryReviewStatus =
+  | "PENDING_REVIEW"
+  | "APPROVED"
+  | "REJECTED"
+  | "REVIEW_FACTS_UNAVAILABLE";
+
+export interface CanonicalStatutoryReviewFilters {
+  status: CanonicalStatutoryReviewStatus | "ALL";
+  siteId?: string;
+  sourceChannel?: "WEBPAY" | "ASSISTED_PAYMENT_TERMINAL";
+  entitlementType?: string;
+  search?: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface CanonicalStatutoryReviewQueueItem {
+  statutoryDiscountDecisionCommandId: string;
+  requestReference: string;
+  parkingSessionId: string;
+  sourceChannel: string;
+  siteId?: string;
+  siteGroupId?: string;
+  ticketReference?: string;
+  entitlementType: string;
+  commandStatus: string;
+  decisionResultStatus: string;
+  reviewStatus: CanonicalStatutoryReviewStatus;
+  evidenceRequired: boolean;
+  evidenceRecorded: boolean;
+  submittedAt: string;
+}
+
+export interface CanonicalStatutoryReviewQueueResult {
+  items: CanonicalStatutoryReviewQueueItem[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  correlationId: string;
+}
+
+export interface CanonicalStatutoryReviewEvidenceReference {
+  evidenceType: string;
+  captureMethod: string;
+  referenceNumberMasked?: string;
+  verificationStatus?: string;
+}
+
+export interface CanonicalStatutoryReviewDetail extends CanonicalStatutoryReviewQueueItem {
+  statutoryDiscountValidationId?: string;
+  plateNumber?: string;
+  idDocumentType?: string;
+  issuingAuthority?: string;
+  expiryDate?: string;
+  maskedIdReference?: string;
+  evidenceReferences: CanonicalStatutoryReviewEvidenceReference[];
+  requesterAttestation: boolean;
+  attestationNotes?: string;
+  reasonCode?: string;
+  originalAmountMinorUnits?: number;
+  vatExclusiveAmountMinorUnits?: number;
+  vatAmountMinorUnits?: number;
+  statutoryDiscountAmountMinorUnits?: number;
+  finalPayableAmountMinorUnits?: number;
+  currency?: string;
+  governingPolicy?: StatutoryDiscountGoverningPolicy;
+  reviewerUserId?: string;
+  reviewerDecision?: string;
+  reviewerReasonCode?: string;
+  reviewedAt?: string;
+  payableBasisApplicationStatus?: string;
+  correlationId: string;
+}
+
+export interface CanonicalStatutoryReviewDecisionInput {
+  statutoryDiscountDecisionCommandId: string;
+  decision: "APPROVE" | "REJECT";
+  reasonCode?: string;
+  reviewerAttestation: boolean;
+  idempotencyKey: string;
+}
+
+export interface CanonicalStatutoryReviewDecisionResult {
+  decisionAccepted: boolean;
+  decisionPersisted: boolean;
+  currentDecisionResultStatus: string;
+  decision: string;
+  alreadyDecided: boolean;
+  decisionChanged: boolean;
+  errorCode?: string;
+  correlationId: string;
+}
+
 export type LoadState<T> =
   | { status: "idle" | "loading" }
   | { status: "loaded"; data: T }

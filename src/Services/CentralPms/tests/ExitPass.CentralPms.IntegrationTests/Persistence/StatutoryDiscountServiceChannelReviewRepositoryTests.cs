@@ -66,11 +66,16 @@ public sealed class StatutoryDiscountServiceChannelReviewRepositoryTests
                     null,
                     null,
                     null,
+                    StatutoryDiscountServiceChannelReviewStatuses.PendingReview,
+                    null,
                     null,
                     null,
                     1,
                     25,
-                    pending.Context.CorrelationId),
+                    pending.Context.CorrelationId)
+                {
+                    HasGlobalScope = true
+                },
                 CancellationToken.None);
 
             list.Items.Should().ContainSingle(item =>

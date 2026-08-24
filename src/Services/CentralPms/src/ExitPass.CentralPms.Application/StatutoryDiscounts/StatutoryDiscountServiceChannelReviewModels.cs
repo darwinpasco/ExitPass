@@ -55,17 +55,25 @@ public sealed record StatutoryDiscountServiceChannelReviewQueueQuery(
     string? SourceChannel,
     string? EntitlementType,
     Guid? ParkingSessionId,
+    string? ReviewStatus,
+    string? Search,
     DateTimeOffset? SubmittedFrom,
     DateTimeOffset? SubmittedTo,
     int Page,
     int PageSize,
-    Guid CorrelationId);
+    Guid CorrelationId)
+{
+    public IReadOnlyList<Guid> AuthorizedSiteIds { get; init; } = [];
+    public IReadOnlyList<Guid> AuthorizedSiteGroupIds { get; init; } = [];
+    public bool HasGlobalScope { get; init; }
+}
 
 /// <summary>
 /// Operator Console service-channel statutory-discount review queue.
 /// </summary>
 public sealed record StatutoryDiscountServiceChannelReviewQueueResult(
     IReadOnlyList<StatutoryDiscountServiceChannelReviewQueueItem> Items,
+    int TotalCount,
     int Page,
     int PageSize,
     bool HasMore,
@@ -76,12 +84,12 @@ public sealed record StatutoryDiscountServiceChannelReviewQueueResult(
 /// </summary>
 public sealed record StatutoryDiscountServiceChannelReviewQueueItem(
     Guid StatutoryDiscountDecisionCommandId,
+    Guid RequestReference,
     Guid ParkingSessionId,
     string SourceChannel,
     Guid? SiteId,
     Guid? SiteGroupId,
     string? TicketReference,
-    string? PlateNumber,
     string EntitlementType,
     string CommandStatus,
     string DecisionResultStatus,
@@ -133,6 +141,7 @@ public sealed record StatutoryDiscountServiceChannelReviewDetail(
     string? ReviewerReasonCode,
     DateTimeOffset SubmittedAt,
     DateTimeOffset? ReviewedAt,
+    string? PayableBasisApplicationStatus,
     Guid CorrelationId);
 
 public sealed record StatutoryDiscountServiceChannelReviewPolicyAuthority(

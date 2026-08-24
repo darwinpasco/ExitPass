@@ -1,0 +1,118 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { App } from "./App";
+import { createHttpOperatorConsoleApiClient, createMockOperatorConsoleApiClient } from "./apiClient";
+import type { OperatorConsoleHumanSession } from "./humanAuthentication";
+
+const decisionId = "47000000-0000-0000-0000-000000000008";
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("canonical Central PMS statutory review", () => {
+  it("renders the canonical pending queue, safe row fields, responsive controls, and returns with in-memory filters", async () => {
+    render(<App apiClient={createMockOperatorConsoleApiClient()} session={session()} initialPath="/operator-console/statutory-discounts" />);
+
+    expect(await screen.findByRole("heading", { name: "Review queue" })).toBeInTheDocument();
+    expect((await screen.findAllByRole("button", { name: "Review" })).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("WebPay").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("Pending Review").length).toBeGreaterThan(0);
+    expect(screen.queryByText("ABC-1234")).not.toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Safe search"), "NO-MATCH");
+    await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await waitFor(() => expect(screen.getByText("No requests match the current filters.")).toBeInTheDocument());
+
+    await userEvent.clear(screen.getByLabelText("Safe search"));
+    await userEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+    await userEvent.click((await screen.findAllByRole("button", { name: "Review" }))[0]);
+    expect(await screen.findByRole("heading", { name: "Request facts" })).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === "Original: ₱180.00")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /void sales invoice|refund|open gate/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Back to filtered queue" }));
+    expect(await screen.findByRole("heading", { name: "Review queue" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Safe search")).toHaveValue("");
+  });
+
+  it("requires attestation and rejection reason, confirms a decision, and submits no browser-authored authority", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      decisionAccepted: true,
+      decisionPersisted: true,
+      currentDecisionResultStatus: "REJECTED",
+      decision: "REJECT",
+      alreadyDecided: false,
+      decisionChanged: true,
+      correlationId: "99000000-0000-0000-0000-000000000001"
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createHttpOperatorConsoleApiClient({ csrfToken: () => "csrf-token" });
+
+    await client.submitCanonicalStatutoryReviewDecision({
+      statutoryDiscountDecisionCommandId: decisionId,
+      decision: "REJECT",
+      reasonCode: "EVIDENCE_INVALID",
+      reviewerAttestation: true,
+      idempotencyKey: "decision-key"
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`/v1/ops/operator-console/statutory-discounts/reviews/${decisionId}/decision`);
+    expect(init.headers).toMatchObject({ "X-CSRF-Token": "csrf-token" });
+    const body = JSON.parse(String(init.body));
+    expect(body).toEqual({ decision: "REJECT", decisionReasonCode: "EVIDENCE_INVALID", reviewerAttestation: true, idempotencyKey: "decision-key" });
+    expect(JSON.stringify(body)).not.toMatch(/user|reviewerId|siteId|siteGroup|permission|role|timestamp/i);
+  });
+
+  it("fails PHP-only detail parsing closed for missing and non-PHP currency", async () => {
+    for (const currency of [null, "USD"]) {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(detailResponse(currency)), { status: 200, headers: { "Content-Type": "application/json" } })));
+      await expect(createHttpOperatorConsoleApiClient().getCanonicalStatutoryReview(decisionId)).rejects.toThrow();
+    }
+  });
+});
+
+function session(): OperatorConsoleHumanSession {
+  return {
+    sessionReference: "11000000-0000-0000-0000-000000000001",
+    userReference: "12000000-0000-0000-0000-000000000001",
+    username: "reviewer",
+    displayName: "Statutory Reviewer",
+    audience: "OPERATOR_CONSOLE",
+    assurance: "PASSWORD",
+    privilegedAccount: false,
+    passwordChangeRequired: false,
+    mfaRequired: false,
+    mfaSatisfied: true,
+    authenticatedAt: "2026-08-24T08:00:00+08:00",
+    lastSeenAt: "2026-08-24T08:00:00+08:00",
+    idleExpiresAt: "2099-08-24T09:00:00+08:00",
+    absoluteExpiresAt: "2099-08-24T16:00:00+08:00",
+    permissions: ["statutory-discounts.review.read", "statutory-discounts.evidence.review.view", "statutory-discounts.decision.approve", "statutory-discounts.decision.reject"],
+    siteReferences: ["77000000-0000-0000-0000-000000000002"],
+    siteGroupReferences: ["88000000-0000-0000-0000-000000000003"],
+    hasGlobalScope: false,
+    correlationId: "99000000-0000-0000-0000-000000000001"
+  };
+}
+
+function detailResponse(currency: string | null) {
+  return {
+    statutoryDiscountDecisionCommandId: decisionId,
+    requestReference: decisionId,
+    parkingSessionId: "55000000-0000-0000-0000-000000000001",
+    sourceChannel: "WEBPAY",
+    entitlementType: "PWD",
+    commandStatus: "AWAITING_REVIEW",
+    decisionResultStatus: "NOT_DECIDED",
+    reviewStatus: "PENDING_REVIEW",
+    evidenceRequired: true,
+    evidenceRecorded: true,
+    submittedAt: "2026-08-24T08:00:00+08:00",
+    evidenceReferences: [],
+    requesterAttestation: true,
+    originalAmountMinorUnits: 10000,
+    finalPayableAmountMinorUnits: 8000,
+    currency,
+    correlationId: "99000000-0000-0000-0000-000000000001"
+  };
+}

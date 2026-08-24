@@ -45,6 +45,12 @@ import type {
   VendorSessionProjectionHealthTargetsResponse
 } from "./types";
 import { StatutoryEvidenceReviewPanel } from "./StatutoryEvidenceReviewPanel";
+import {
+  CanonicalStatutoryReviewDetailPage,
+  CanonicalStatutoryReviewQueuePage,
+  defaultCanonicalStatutoryReviewFilters
+} from "./CanonicalStatutoryReview";
+import type { CanonicalStatutoryReviewFilters } from "./types";
 
 const routes = {
   home: "/operator-console",
@@ -73,6 +79,7 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
   const client = useMemo(() => apiClient ?? createOperatorConsoleApiClient(), [apiClient]);
   const [path, setPath] = useState(initialPath ?? normalizePath(window.location.pathname));
   const [readinessState, setReadinessState] = useState<LoadState<AccessReadinessResponse>>({ status: "idle" });
+  const [statutoryReviewFilters, setStatutoryReviewFilters] = useState<CanonicalStatutoryReviewFilters>(defaultCanonicalStatutoryReviewFilters);
   const operatorContext = useMemo(() => getDefaultOperatorConsoleOperatingContext(), []);
   const devModeContext = useMemo(() => defaultDevModeContext(), []);
   const mountedRef = useRef(true);
@@ -245,19 +252,23 @@ export function App({ apiClient, initialPath, session, logoutPending = false, lo
             />
           )}
           {draftId ? (
-            <StatutoryDiscountDetailPage
+            <CanonicalStatutoryReviewDetailPage
               client={client}
-              draftId={draftId}
-              navigate={navigate}
-              readinessBlockReason={readinessBlockReason}
-              currentOperatorUserId={session?.userReference ?? ""}
+              decisionId={draftId}
+              onBack={() => navigate(routes.queue)}
             />
           ) : path === routes.ticketLookup ? (
             <TicketLookupPage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
           ) : path === routes.fiscalStatus ? (
             <FiscalIssuanceStatusPage client={client} />
           ) : path === routes.queue ? (
-            <StatutoryDiscountQueuePage client={client} navigate={navigate} readinessBlockReason={readinessBlockReason} />
+            <CanonicalStatutoryReviewQueuePage
+              client={client}
+              session={session}
+              filters={statutoryReviewFilters}
+              onFiltersChange={setStatutoryReviewFilters}
+              onOpen={(decisionId) => navigate(`${routes.detail}${decisionId}`)}
+            />
           ) : path === routes.audit ? (
             <AuditReportPage client={client} />
           ) : path === routes.fiscalStatusViewAudit ? (

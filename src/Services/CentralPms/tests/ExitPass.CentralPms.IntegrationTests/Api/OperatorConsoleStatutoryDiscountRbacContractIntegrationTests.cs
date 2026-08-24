@@ -468,18 +468,11 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
             CorrelationId));
 
     private static Task<HttpResponseMessage> SendServiceChannelDecisionAsync(HttpClient client, string decision = "APPROVE") =>
-        client.PostAsJsonAsync($"/v1/ops/operator-console/statutory-discounts/reviews/{DraftId}/decision", new OperatorConsoleStatutoryDiscountDecisionRequest(
-            UserId,
-            DeviceBindingId,
-            SiteId,
-            SiteGroupId,
-            ShiftId,
+        client.PostAsJsonAsync($"/v1/ops/operator-console/statutory-discounts/reviews/{DraftId}/decision", new OperatorConsoleCanonicalStatutoryReviewDecisionRequest(
             decision,
             DecisionReasonCode: string.Equals(decision, "APPROVE", StringComparison.OrdinalIgnoreCase) ? "RBAC_TEST" : "DOCUMENT_INVALID",
-            DecisionNotes: "RBAC contract test.",
             ReviewerAttestation: true,
-            "rbac-service-channel-decision",
-            CorrelationId));
+            "rbac-service-channel-decision"));
 
     private static Task<HttpResponseMessage> SendApplyAsync(HttpClient client) =>
         client.PostAsJsonAsync(string.Format(ApplyEndpoint, DraftId), new
@@ -708,12 +701,12 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 [
                     new StatutoryDiscountServiceChannelReviewQueueItem(
                         DraftId,
+                        DraftId,
                         ParkingSessionId,
                         "WEBPAY",
                         SiteId,
                         SiteGroupId,
                         "RBAC-TICKET-001",
-                        "ABC-1234",
                         "SENIOR_CITIZEN",
                         "PENDING_REVIEW",
                         "PENDING_REVIEW",
@@ -724,6 +717,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                         DateTimeOffset.Parse("2026-07-12T09:00:00+08:00"),
                         query.CorrelationId)
                 ],
+                1,
                 query.Page,
                 query.PageSize,
                 HasMore: false,
@@ -741,6 +735,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
 
         public Task<StatutoryDiscountServiceChannelReviewDecisionResult> DecideAsync(
             StatutoryDiscountServiceChannelReviewDecisionCommand command,
+            OperatorConsoleReviewAccessContext accessContext,
             CancellationToken cancellationToken)
         {
             ServiceChannelReviewDecisionCallCount++;
@@ -1063,6 +1058,7 @@ public sealed class OperatorConsoleStatutoryDiscountRbacContractIntegrationTests
                 ReviewerReasonCode: null,
                 DateTimeOffset.Parse("2026-07-12T09:00:00+08:00"),
                 ReviewedAt: null,
+                PayableBasisApplicationStatus: null,
                 correlationId);
 
         private static StatutoryDiscountServiceChannelReviewPolicyAuthority GoverningPolicy() =>

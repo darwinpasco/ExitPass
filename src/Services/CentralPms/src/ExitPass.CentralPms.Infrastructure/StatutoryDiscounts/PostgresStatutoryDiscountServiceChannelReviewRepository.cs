@@ -108,12 +108,12 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         const string sql = """
             SELECT
                 r.statutory_discount_decision_command_id,
+                r.request_reference,
                 r.parking_session_id,
                 r.source_channel,
                 r.site_id,
                 r.site_group_id,
                 r.ticket_reference,
-                r.plate_number,
                 r.entitlement_type,
                 d.command_status,
                 d.decision_result_status,
@@ -127,14 +127,21 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_decision_commands AS d
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
-            WHERE d.command_status = 'AWAITING_REVIEW'
-              AND d.decision_result_status = 'NOT_DECIDED'
-              AND r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL')
+            WHERE r.source_channel IN ('WEBPAY', 'ASSISTED_PAYMENT_TERMINAL')
+              AND (@has_global_scope OR r.site_id = ANY(@authorized_site_ids) OR r.site_group_id = ANY(@authorized_site_group_ids))
               AND (@site_id IS NULL OR r.site_id = @site_id)
               AND (@site_group_id IS NULL OR r.site_group_id = @site_group_id)
               AND (@source_channel IS NULL OR r.source_channel = @source_channel)
               AND (@entitlement_type IS NULL OR r.entitlement_type = @entitlement_type)
               AND (@parking_session_id IS NULL OR r.parking_session_id = @parking_session_id)
+              AND (@review_status IS NULL OR r.review_status = @review_status)
+              AND (
+                    @search IS NULL
+                 OR r.request_reference::text ILIKE '%' || @search || '%'
+                 OR r.parking_session_id::text ILIKE '%' || @search || '%'
+                 OR r.ticket_reference ILIKE '%' || @search || '%'
+                 OR r.plate_number ILIKE '%' || @search || '%'
+              )
               AND (@submitted_from IS NULL OR r.submitted_at >= @submitted_from)
               AND (@submitted_to IS NULL OR r.submitted_at <= @submitted_to)
             ORDER BY r.submitted_at ASC, r.statutory_discount_decision_command_id ASC
@@ -166,6 +173,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
 
         return new StatutoryDiscountServiceChannelReviewQueueResult(
             items,
+            total,
             page,
             pageSize,
             offset + items.Count < total,
@@ -210,7 +218,8 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 dpa.ordinance_number_available AS governing_ordinance_number_available,
                 dpa.transaction_use_effective_from AS governing_effective_from,
                 dpa.transaction_use_effective_to AS governing_effective_to,
-                COALESCE(evidence.requirements_json, '[]') AS governing_evidence_requirements
+                COALESCE(evidence.requirements_json, '[]') AS governing_evidence_requirements,
+                payable.application_status
             FROM operator_console.statutory_discount_service_channel_reviews AS r
             JOIN discounts.statutory_discount_decision_commands AS d
               ON d.statutory_discount_decision_command_id = r.statutory_discount_decision_command_id
@@ -230,6 +239,13 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
                 WHERE req.statutory_discount_policy_version_id = dpa.statutory_discount_policy_version_id
                   AND req.requirement_status IN ('REQUIRED', 'OPTIONAL')
             ) AS evidence ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT app.application_status::text AS application_status
+                FROM discounts.statutory_discount_payable_basis_applications AS app
+                WHERE app.statutory_discount_validation_id = r.statutory_discount_validation_id
+                ORDER BY app.updated_at DESC, app.statutory_discount_payable_basis_application_id DESC
+                LIMIT 1
+            ) AS payable ON TRUE
             WHERE r.statutory_discount_decision_command_id = @statutory_discount_decision_command_id;
             """;
 
@@ -477,6 +493,11 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
         AddNullable(command, "source_channel", NpgsqlDbType.Varchar, NormalizeOptional(query.SourceChannel));
         AddNullable(command, "entitlement_type", NpgsqlDbType.Varchar, NormalizeOptional(query.EntitlementType));
         AddNullable(command, "parking_session_id", NpgsqlDbType.Uuid, query.ParkingSessionId);
+        AddNullable(command, "review_status", NpgsqlDbType.Varchar, NormalizeOptional(query.ReviewStatus));
+        AddNullable(command, "search", NpgsqlDbType.Varchar, NormalizeOptional(query.Search));
+        command.Parameters.Add("authorized_site_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid).Value = query.AuthorizedSiteIds.ToArray();
+        command.Parameters.Add("authorized_site_group_ids", NpgsqlDbType.Array | NpgsqlDbType.Uuid).Value = query.AuthorizedSiteGroupIds.ToArray();
+        command.Parameters.Add("has_global_scope", NpgsqlDbType.Boolean).Value = query.HasGlobalScope;
         AddNullable(command, "submitted_from", NpgsqlDbType.TimestampTz, query.SubmittedFrom);
         AddNullable(command, "submitted_to", NpgsqlDbType.TimestampTz, query.SubmittedTo);
         command.Parameters.Add("limit", NpgsqlDbType.Integer).Value = limit;
@@ -486,12 +507,12 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
     private static StatutoryDiscountServiceChannelReviewQueueItem ReadQueueItem(NpgsqlDataReader reader) =>
         new(
             reader.GetGuid(reader.GetOrdinal("statutory_discount_decision_command_id")),
+            reader.GetGuid(reader.GetOrdinal("request_reference")),
             reader.GetGuid(reader.GetOrdinal("parking_session_id")),
             reader.GetString(reader.GetOrdinal("source_channel")),
             GetNullableGuid(reader, "site_id"),
             GetNullableGuid(reader, "site_group_id"),
             GetNullableString(reader, "ticket_reference"),
-            GetNullableString(reader, "plate_number"),
             reader.GetString(reader.GetOrdinal("entitlement_type")),
             reader.GetString(reader.GetOrdinal("command_status")),
             reader.GetString(reader.GetOrdinal("decision_result_status")),
@@ -541,6 +562,7 @@ public sealed class PostgresStatutoryDiscountServiceChannelReviewRepository
             GetNullableString(reader, "reviewer_decision_reason_code"),
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("submitted_at")),
             GetNullableDateTimeOffset(reader, "reviewed_at"),
+            GetNullableString(reader, "application_status"),
             correlationId);
 
     private static async Task<ReviewSourceRow?> ReadReviewSourceForUpdateAsync(

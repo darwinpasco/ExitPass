@@ -3,6 +3,11 @@ import type {
   AccessReadinessResponse,
   AuditReportQuery,
   AuditReportResponse,
+  CanonicalStatutoryReviewDecisionInput,
+  CanonicalStatutoryReviewDecisionResult,
+  CanonicalStatutoryReviewDetail,
+  CanonicalStatutoryReviewFilters,
+  CanonicalStatutoryReviewQueueResult,
   DraftStatus,
   EntitlementType,
   FiscalIssuanceStatus,
@@ -60,6 +65,9 @@ export interface OperatorConsoleApiClient {
   listAuditReport(input?: AuditReportQuery): Promise<AuditReportResponse>;
   createStatutoryDiscountDraft(input: StatutoryDiscountDraftCreateInput): Promise<StatutoryDiscountDraftCreateResult>;
   listStatutoryDiscountDrafts(): Promise<StatutoryDiscountQueueItem[]>;
+  listCanonicalStatutoryReviews(input: CanonicalStatutoryReviewFilters, signal?: AbortSignal): Promise<CanonicalStatutoryReviewQueueResult>;
+  getCanonicalStatutoryReview(decisionId: string, signal?: AbortSignal): Promise<CanonicalStatutoryReviewDetail>;
+  submitCanonicalStatutoryReviewDecision(input: CanonicalStatutoryReviewDecisionInput): Promise<CanonicalStatutoryReviewDecisionResult>;
   getStatutoryDiscountDraft(draftId: string): Promise<StatutoryDiscountDraftDetail>;
   listStatutoryDiscountEvidence(draftId: string): Promise<StatutoryDiscountEvidenceList>;
   getStatutoryEvidenceReview(decisionId: string, signal?: AbortSignal): Promise<StatutoryEvidenceReview>;
@@ -549,6 +557,7 @@ export interface OperatorConsoleApiClientOptions {
   baseUrl?: string;
   permissions?: readonly string[];
   onAuthenticationRequired?: () => void;
+  csrfToken?: () => string | null;
 }
 
 export function createOperatorConsoleApiClient(
@@ -774,6 +783,62 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
       return toDraftDetail(await parseResponse<DetailDto>(response));
     },
 
+    async listCanonicalStatutoryReviews(input, signal) {
+      const correlationId = newCorrelationId();
+      const search = new URLSearchParams({
+        status: input.status,
+        page: String(input.page),
+        pageSize: String(input.pageSize)
+      });
+      if (input.siteId) search.set("siteId", input.siteId);
+      if (input.sourceChannel) search.set("sourceChannel", input.sourceChannel);
+      if (input.entitlementType) search.set("entitlementType", input.entitlementType);
+      if (input.search?.trim()) search.set("search", input.search.trim());
+      const response = await fetch(`${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews?${search}`, {
+        method: "GET",
+        headers: operatorConsoleHeaders(correlationId),
+        cache: "no-store",
+        signal
+      });
+      return parseResponse<CanonicalStatutoryReviewQueueResult>(response);
+    },
+
+    async getCanonicalStatutoryReview(decisionId, signal) {
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}`,
+        { method: "GET", headers: operatorConsoleHeaders(newCorrelationId()), cache: "no-store", signal }
+      );
+      const detail = await parseResponse<CanonicalStatutoryReviewDetail>(response);
+      detail.currency = requirePhpCurrencyForAmounts(
+        detail.currency,
+        detail.originalAmountMinorUnits,
+        detail.vatExclusiveAmountMinorUnits,
+        detail.vatAmountMinorUnits,
+        detail.statutoryDiscountAmountMinorUnits,
+        detail.finalPayableAmountMinorUnits
+      );
+      return detail;
+    },
+
+    async submitCanonicalStatutoryReviewDecision(input) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
+      const response = await fetch(
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(input.statutoryDiscountDecisionCommandId)}/decision`,
+        {
+          method: "POST",
+          headers: { ...operatorConsoleHeaders(newCorrelationId(), { json: true }), "X-CSRF-Token": csrfToken },
+          cache: "no-store",
+          body: JSON.stringify({
+            decision: input.decision,
+            decisionReasonCode: input.decision === "REJECT" ? input.reasonCode ?? null : null,
+            reviewerAttestation: input.reviewerAttestation,
+            idempotencyKey: input.idempotencyKey
+          })
+        }
+      );
+      return parseResponse<CanonicalStatutoryReviewDecisionResult>(response);
+    },
+
     async listStatutoryDiscountEvidence(draftId) {
       const correlationId = newCorrelationId();
       const response = await fetch(
@@ -785,7 +850,7 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
 
     async getStatutoryEvidenceReview(decisionId, signal) {
       const response = await fetch(
-        `/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}/evidence`,
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}/evidence`,
         {
           method: "GET",
           headers: operatorConsoleHeaders(newCorrelationId()),
@@ -798,12 +863,14 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
     },
 
     async getStatutoryEvidencePreview(decisionId, evidenceItemReference, signal) {
+      const csrfToken = requireCsrfToken(options.csrfToken);
       const response = await fetch(
-        `/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}/evidence/${encodeURIComponent(evidenceItemReference)}/preview`,
+        `${baseUrl}/v1/ops/operator-console/statutory-discounts/reviews/${encodeURIComponent(decisionId)}/evidence/preview`,
         {
-          method: "GET",
-          headers: operatorConsoleHeaders(newCorrelationId()),
+          method: "POST",
+          headers: { ...operatorConsoleHeaders(newCorrelationId(), { json: true }), "X-CSRF-Token": csrfToken },
           cache: "no-store",
+          body: JSON.stringify({ evidenceItemReference }),
           signal
         }
       );
@@ -1054,6 +1121,18 @@ function operatorConsoleHeaders(correlationId: string, options: { json?: boolean
     ...(options.json ? { "Content-Type": "application/json" } : {}),
     "X-Correlation-Id": correlationId
   };
+}
+
+function requireCsrfToken(provider: (() => string | null) | undefined) {
+  const token = provider?.();
+  if (!token) {
+    throw {
+      status: "error",
+      errorCode: "CSRF_TOKEN_UNAVAILABLE",
+      message: "The secure request could not be prepared. Refresh the session and try again."
+    } satisfies OperatorConsoleApiError;
+  }
+  return token;
 }
 
 function normalizePermissions(value: readonly string[]) {
@@ -1342,6 +1421,52 @@ export function createMockOperatorConsoleApiClient(
       }
 
       return options.empty ? [] : drafts.map(toQueueFromDetail);
+    },
+
+    async listCanonicalStatutoryReviews(input, signal) {
+      await delay();
+      if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+      if (options.listError) throw options.listError;
+      const all = (options.empty ? [] : drafts).map(toMockCanonicalQueueItem);
+      const filtered = all.filter((item) =>
+        (input.status === "ALL" || item.reviewStatus === input.status) &&
+        (!input.siteId || item.siteId === input.siteId) &&
+        (!input.sourceChannel || item.sourceChannel === input.sourceChannel) &&
+        (!input.entitlementType || item.entitlementType === input.entitlementType) &&
+        (!input.search || `${item.requestReference} ${item.parkingSessionId} ${item.ticketReference ?? ""}`.toLowerCase().includes(input.search.toLowerCase()))
+      );
+      const start = (input.page - 1) * input.pageSize;
+      return {
+        items: filtered.slice(start, start + input.pageSize),
+        totalCount: filtered.length,
+        page: input.page,
+        pageSize: input.pageSize,
+        hasMore: start + input.pageSize < filtered.length,
+        correlationId: newCorrelationId()
+      };
+    },
+
+    async getCanonicalStatutoryReview(decisionId, signal) {
+      await delay();
+      if (signal?.aborted) throw new DOMException("The operation was aborted.", "AbortError");
+      if (options.detailError) throw options.detailError;
+      const draft = drafts.find((item) => (item.statutoryDiscountDecisionCommandId ?? item.draftId) === decisionId);
+      if (!draft) throw { status: "not-found", message: "Statutory review was not found." } satisfies OperatorConsoleApiError;
+      return toMockCanonicalDetail(draft);
+    },
+
+    async submitCanonicalStatutoryReviewDecision(input) {
+      await delay();
+      if (options.decisionError) throw options.decisionError;
+      return {
+        decisionAccepted: true,
+        decisionPersisted: true,
+        currentDecisionResultStatus: input.decision === "APPROVE" ? "APPROVED" : "REJECTED",
+        decision: input.decision,
+        alreadyDecided: false,
+        decisionChanged: true,
+        correlationId: newCorrelationId()
+      };
     },
 
     async getStatutoryDiscountDraft(draftId) {
@@ -2846,6 +2971,46 @@ function toQueueFromDetail(draft: StatutoryDiscountDraftDetail): StatutoryDiscou
     originalAmountMinorUnits: draft.originalAmountMinorUnits,
     payableAmountMinorUnits: draft.payableAmountMinorUnits,
     currencyCode: draft.currencyCode
+  };
+}
+
+function toMockCanonicalQueueItem(draft: StatutoryDiscountDraftDetail) {
+  return {
+    statutoryDiscountDecisionCommandId: draft.statutoryDiscountDecisionCommandId ?? draft.draftId,
+    requestReference: draft.draftId,
+    parkingSessionId: draft.parkingSessionId,
+    sourceChannel: "WEBPAY",
+    siteId: draft.siteId,
+    siteGroupId: draft.siteGroupId,
+    ticketReference: draft.ticketReference,
+    entitlementType: draft.entitlementType,
+    commandStatus: draft.status === "Approved" || draft.status === "Rejected" ? "COMPLETED" : "AWAITING_REVIEW",
+    decisionResultStatus: draft.status === "Approved" ? "APPROVED" : draft.status === "Rejected" ? "REJECTED" : "NOT_DECIDED",
+    reviewStatus: draft.status === "Approved" ? "APPROVED" as const : draft.status === "Rejected" ? "REJECTED" as const : "PENDING_REVIEW" as const,
+    evidenceRequired: draft.policyContext.evidenceRequired,
+    evidenceRecorded: draft.evidenceCaptured,
+    submittedAt: draft.requestedAt
+  };
+}
+
+function toMockCanonicalDetail(draft: StatutoryDiscountDraftDetail): CanonicalStatutoryReviewDetail {
+  return {
+    ...toMockCanonicalQueueItem(draft),
+    plateNumber: draft.plateNumber,
+    evidenceReferences: [],
+    requesterAttestation: true,
+    originalAmountMinorUnits: draft.originalAmountMinorUnits,
+    statutoryDiscountAmountMinorUnits: draft.statutoryDiscountAmountMinorUnits,
+    finalPayableAmountMinorUnits: draft.finalPayableAmountMinorUnits ?? draft.payableAmountMinorUnits,
+    currency: requirePhpCurrencyForAmounts(
+      draft.currencyCode,
+      draft.originalAmountMinorUnits,
+      draft.statutoryDiscountAmountMinorUnits,
+      draft.finalPayableAmountMinorUnits ?? draft.payableAmountMinorUnits
+    ),
+    governingPolicy: draft.governingPolicy,
+    payableBasisApplicationStatus: draft.payableBasisApplicationStatus,
+    correlationId: newCorrelationId()
   };
 }
 

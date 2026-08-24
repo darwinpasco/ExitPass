@@ -26,10 +26,10 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
     private static readonly byte[] JpegBytes = [0xff, 0xd8, 0xff, 0xd9];
 
     private static string MetadataPath => $"/v1/ops/operator-console/statutory-discounts/reviews/{DecisionId:D}/evidence";
-    private static string PreviewPath => $"{MetadataPath}/{ItemReference:D}/preview";
+    private static string PreviewPath => $"{MetadataPath}/preview";
 
     [Fact]
-    public void Routes_AreGetOnlyAndUseDedicatedPolicy()
+    public void Routes_KeepMetadataGetAndUseBodySelectedPreviewPostWithDedicatedPolicy()
     {
         using var factory = CreateFactory(new FakeReviewService());
         var endpoints = factory.Services.GetRequiredService<IEnumerable<EndpointDataSource>>()
@@ -40,8 +40,10 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
             .ToArray();
 
         endpoints.Should().HaveCount(2);
-        endpoints.Should().OnlyContain(endpoint =>
-            endpoint.Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.SequenceEqual(new[] { "GET" }));
+        endpoints.Single(endpoint => endpoint.RoutePattern.RawText!.EndsWith("/evidence", StringComparison.Ordinal))
+            .Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.Should().Equal("GET");
+        endpoints.Single(endpoint => endpoint.RoutePattern.RawText!.EndsWith("/evidence/preview", StringComparison.Ordinal))
+            .Metadata.GetMetadata<HttpMethodMetadata>()!.HttpMethods.Should().Equal("POST");
         endpoints.Should().OnlyContain(endpoint =>
             endpoint.Metadata.GetMetadata<ReconciliationPolicyMetadata>()!.PolicyName ==
             OperatorConsoleStatutoryEvidenceReviewConstants.Policy);
@@ -111,7 +113,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
         using var client = factory.CreateClient();
         AddIdentityHeaders(client);
 
-        using var response = await client.GetAsync(PreviewPath);
+        using var response = await PostPreviewAsync(client);
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         response.Content.Headers.ContentType!.MediaType.Should().Be(contentType);
@@ -141,7 +143,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
         using var client = factory.CreateClient();
         AddIdentityHeaders(client);
 
-        using var response = await client.GetAsync(PreviewPath);
+        using var response = await PostPreviewAsync(client);
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
@@ -159,7 +161,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
         using var client = factory.CreateClient();
         AddIdentityHeaders(client);
 
-        using var response = await client.GetAsync(PreviewPath);
+        using var response = await PostPreviewAsync(client);
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
@@ -183,7 +185,7 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
         using var client = factory.CreateClient();
         AddIdentityHeaders(client);
 
-        using var response = await client.GetAsync(PreviewPath);
+        using var response = await PostPreviewAsync(client);
 
         response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>();
@@ -206,6 +208,9 @@ public sealed class OperatorConsoleStatutoryEvidenceReviewApiIntegrationTests
                 services.RemoveAll<IOperatorConsoleStatutoryEvidenceReviewService>();
                 services.AddSingleton<IOperatorConsoleStatutoryEvidenceReviewService>(service);
             });
+
+    private static Task<HttpResponseMessage> PostPreviewAsync(HttpClient client) =>
+        client.PostAsJsonAsync(PreviewPath, new OperatorConsoleStatutoryEvidencePreviewRequest(ItemReference));
 
     private static void AddIdentityHeaders(
         HttpClient client,

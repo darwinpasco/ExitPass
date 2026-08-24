@@ -210,6 +210,10 @@ export function StatutoryEvidenceReviewPanel({
         </button>
       </div>
 
+      <p className="privacyNotice" role="note">
+        Evidence is sensitive personal information. View it only for this review; do not copy, download, or share it. Access is reauthorized and audited by Central PMS, and previews are temporary.
+      </p>
+
       {reviewState.status === "loading" && (
         <p className="notice" role="status" aria-live="polite">Loading review-safe evidence metadata.</p>
       )}

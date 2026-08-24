@@ -40,7 +40,13 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(accessContext);
 
-        var access = await EvaluateAndPersistAsync(accessContext, ReviewActionCode, ParkingSessionId: null, cancellationToken)
+        EnsureRequestedScopeAuthorized(query.SiteId, query.SiteGroupId, accessContext);
+        var targetedAccessContext = accessContext with
+        {
+            SiteId = query.SiteId ?? accessContext.SiteId,
+            SiteGroupId = query.SiteGroupId ?? accessContext.SiteGroupId
+        };
+        var access = await EvaluateAndPersistAsync(targetedAccessContext, ReviewActionCode, ParkingSessionId: null, cancellationToken)
             .ConfigureAwait(false);
         if (!access.Allowed)
         {
@@ -55,6 +61,11 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
             PageSize = query.PageSize <= 0 ? 25 : Math.Min(query.PageSize, 100),
             SourceChannel = NormalizeOptional(query.SourceChannel),
             EntitlementType = NormalizeOptional(query.EntitlementType),
+            ReviewStatus = NormalizeReviewStatus(query.ReviewStatus),
+            Search = NormalizeSearch(query.Search),
+            AuthorizedSiteIds = accessContext.AuthorizedSiteIds,
+            AuthorizedSiteGroupIds = accessContext.AuthorizedSiteGroupIds,
+            HasGlobalScope = accessContext.HasGlobalScope,
             CorrelationId = access.CorrelationId
         }, cancellationToken).ConfigureAwait(false);
     }
@@ -67,16 +78,19 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         ValidateGuid(statutoryDiscountDecisionCommandId, nameof(statutoryDiscountDecisionCommandId));
         ArgumentNullException.ThrowIfNull(accessContext);
 
-        var access = await EvaluateAndPersistAsync(accessContext, ReviewActionCode, ParkingSessionId: null, cancellationToken)
+        var detail = await _reviewRepository.GetAsync(statutoryDiscountDecisionCommandId, accessContext.CorrelationId, cancellationToken)
             .ConfigureAwait(false);
-        if (!access.Allowed)
+        if (detail is null || !SiteAuthorized(detail, accessContext))
         {
-            throw new UnauthorizedAccessException("Operator Console service-channel statutory discount review access was denied.");
+            return null;
         }
 
-        var detail = await _reviewRepository.GetAsync(statutoryDiscountDecisionCommandId, access.CorrelationId, cancellationToken)
-            .ConfigureAwait(false);
-        if (detail is null || !SiteAllowed(detail, access))
+        var access = await EvaluateAndPersistAsync(accessContext with
+        {
+            SiteId = detail.SiteId,
+            SiteGroupId = detail.SiteGroupId
+        }, ReviewActionCode, detail.ParkingSessionId, cancellationToken).ConfigureAwait(false);
+        if (!access.Allowed || !SiteAllowed(detail, access))
         {
             return null;
         }
@@ -86,31 +100,29 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
 
     public async Task<StatutoryDiscountServiceChannelReviewDecisionResult> DecideAsync(
         StatutoryDiscountServiceChannelReviewDecisionCommand command,
+        OperatorConsoleReviewAccessContext accessContext,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(accessContext);
         var requestedDecision = Validate(command);
-
-        var accessContext = new OperatorConsoleReviewAccessContext(
-            command.UserId,
-            command.OperatorDeviceBindingId,
-            command.OperatorShiftId,
-            command.SiteId,
-            command.SiteGroupId,
-            command.CorrelationId,
-            command.IdempotencyKey);
-        var access = await EvaluateAndPersistAsync(accessContext, DecideActionCode, ParkingSessionId: null, cancellationToken)
+        var detail = await _reviewRepository.GetAsync(command.StatutoryDiscountDecisionCommandId, command.CorrelationId, cancellationToken)
             .ConfigureAwait(false);
+        if (detail is null || !SiteAuthorized(detail, accessContext))
+        {
+            var concealedAccess = await EvaluateAndPersistAsync(accessContext, DecideActionCode, ParkingSessionId: null, cancellationToken)
+                .ConfigureAwait(false);
+            return NotAccepted(command, concealedAccess, requestedDecision, "STATUTORY_DISCOUNT_REVIEW_NOT_FOUND");
+        }
+
+        var access = await EvaluateAndPersistAsync(accessContext with
+        {
+            SiteId = detail.SiteId,
+            SiteGroupId = detail.SiteGroupId
+        }, DecideActionCode, detail.ParkingSessionId, cancellationToken).ConfigureAwait(false);
         if (!access.Allowed)
         {
             return Denied(command, access, requestedDecision);
-        }
-
-        var detail = await _reviewRepository.GetAsync(command.StatutoryDiscountDecisionCommandId, access.CorrelationId, cancellationToken)
-            .ConfigureAwait(false);
-        if (detail is null)
-        {
-            return NotAccepted(command, access, requestedDecision, "STATUTORY_DISCOUNT_REVIEW_NOT_FOUND");
         }
 
         if (!SiteAllowed(detail, access))
@@ -304,6 +316,49 @@ public sealed class OperatorConsoleServiceChannelStatutoryDiscountReviewService
         }
 
         return true;
+    }
+
+    private static bool SiteAuthorized(
+        StatutoryDiscountServiceChannelReviewDetail detail,
+        OperatorConsoleReviewAccessContext context) =>
+        context.HasGlobalScope ||
+        (detail.SiteId.HasValue && context.AuthorizedSiteIds.Contains(detail.SiteId.Value)) ||
+        (detail.SiteGroupId.HasValue && context.AuthorizedSiteGroupIds.Contains(detail.SiteGroupId.Value));
+
+    private static void EnsureRequestedScopeAuthorized(
+        Guid? siteId,
+        Guid? siteGroupId,
+        OperatorConsoleReviewAccessContext context)
+    {
+        if (context.HasGlobalScope) return;
+        if (siteId.HasValue && !context.AuthorizedSiteIds.Contains(siteId.Value))
+            throw new UnauthorizedAccessException("Requested Site is outside the authenticated Operator Console scope.");
+        if (siteGroupId.HasValue && !context.AuthorizedSiteGroupIds.Contains(siteGroupId.Value))
+            throw new UnauthorizedAccessException("Requested Site Group is outside the authenticated Operator Console scope.");
+        if (context.AuthorizedSiteIds.Count == 0 && context.AuthorizedSiteGroupIds.Count == 0)
+            throw new UnauthorizedAccessException("Authenticated Operator Console scope is empty.");
+    }
+
+    private static string NormalizeReviewStatus(string? value)
+    {
+        var normalized = NormalizeOptional(value)?.ToUpperInvariant() ?? StatutoryDiscountServiceChannelReviewStatuses.PendingReview;
+        return normalized switch
+        {
+            "ALL" => null!,
+            StatutoryDiscountServiceChannelReviewStatuses.PendingReview => normalized,
+            StatutoryDiscountServiceChannelReviewStatuses.Approved => normalized,
+            StatutoryDiscountServiceChannelReviewStatuses.Rejected => normalized,
+            StatutoryDiscountServiceChannelReviewStatuses.ReviewFactsUnavailable => normalized,
+            _ => throw new ArgumentException("Review status is not supported.", nameof(value))
+        };
+    }
+
+    private static string? NormalizeSearch(string? value)
+    {
+        var normalized = NormalizeOptional(value);
+        if (normalized is null) return null;
+        if (normalized.Length > 100) throw new ArgumentException("Search must not exceed 100 characters.", nameof(value));
+        return normalized;
     }
 
     private static StatutoryDiscountServiceChannelReviewDecisionResult Denied(

@@ -7,6 +7,7 @@ using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.Common;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
+using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
 
@@ -82,15 +83,22 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             .WithSummary("List Operator Console statutory discount audit/reporting rows")
             .WithDescription("Returns a read-only statutory discount/access audit report using safe masked fields only. This endpoint does not return raw evidence, raw ID numbers, payment authority, gate authority, coupon authority, or reconciliation mutation.");
 
-        group.MapGet("/statutory-discounts/reviews/pending", ListServiceChannelReviewsAsync)
+        group.MapGet("/statutory-discounts/reviews", ListServiceChannelReviewsAsync)
             .WithName("ListOperatorConsoleServiceChannelStatutoryDiscountReviews")
             .WithTags("OperatorConsole")
             .Produces<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(ServiceChannelReviewQueueReadPolicy))
-            .WithSummary("List service-channel statutory discount decisions awaiting Operator Console review")
-            .WithDescription("Returns safe service-channel statutory-discount decisions that are awaiting Operator Console review. This endpoint does not approve, reject, apply payable basis, create payments, issue fiscal documents, issue exit authorization, or command gates.");
+            .WithSummary("List canonical Central PMS statutory-review requests")
+            .WithDescription("Returns a scope-filtered, paged Central PMS statutory-review queue. Requests may originate from WebPay or Assisted Payment Terminal, but Operator Console communicates only with Central PMS. This endpoint returns no evidence content or mutation authority.");
+
+        group.MapGet("/statutory-discounts/reviews/pending", ListServiceChannelReviewsAsync)
+            .WithName("ListOperatorConsolePendingServiceChannelStatutoryDiscountReviews")
+            .WithTags("OperatorConsole")
+            .Produces<OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse>(StatusCodes.Status200OK)
+            .WithMetadata(new ReconciliationPolicyMetadata(ServiceChannelReviewQueueReadPolicy))
+            .WithSummary("Compatibility alias for the Central PMS statutory-review queue");
 
         group.MapGet("/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}", GetServiceChannelReviewAsync)
             .WithName("GetOperatorConsoleServiceChannelStatutoryDiscountReview")
@@ -106,14 +114,14 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         group.MapPost("/statutory-discounts/reviews/{statutoryDiscountDecisionCommandId:guid}/decision", DecideServiceChannelReviewAsync)
             .WithName("DecideOperatorConsoleServiceChannelStatutoryDiscountReview")
             .WithTags("OperatorConsole")
-            .Accepts<OperatorConsoleStatutoryDiscountDecisionRequest>("application/json")
+            .Accepts<OperatorConsoleCanonicalStatutoryReviewDecisionRequest>("application/json")
             .Produces<OperatorConsoleStatutoryDiscountDecisionResponse>(StatusCodes.Status200OK)
             .Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
             .Produces<ErrorResponse>(StatusCodes.Status409Conflict)
             .Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
             .WithMetadata(new ReconciliationPolicyMetadata(DecisionMutatePolicy))
             .WithSummary("Approve or reject a service-channel statutory discount decision")
-            .WithDescription("Completes the same canonical decision-v2 created by WebPay or Assisted Payment Terminal pending-review intake. This endpoint does not create application-v1, apply payable basis, mutate payments, issue fiscal documents, issue exit authorization, or command gates.");
+            .WithDescription("Completes the canonical Central PMS decision created for a request originating from WebPay or Assisted Payment Terminal. Reviewer identity, timestamp, and authority are server-owned. Operator Console never calls either originating channel and never applies payable basis itself.");
 
         group.MapPost("/statutory-discounts/draft", DraftAsync)
             .WithName("DraftOperatorConsoleStatutoryDiscount")
@@ -665,11 +673,13 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.CorrelationId);
 
     private static async Task<IResult> ListServiceChannelReviewsAsync(
+        string? status,
         string? sourceChannel,
         string? entitlementType,
         Guid? siteId,
         Guid? siteGroupId,
         Guid? parkingSessionId,
+        string? search,
         DateTimeOffset? submittedFrom,
         DateTimeOffset? submittedTo,
         int? page,
@@ -695,12 +705,14 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                         sourceChannel,
                         entitlementType,
                         parkingSessionId,
+                        status,
+                        search,
                         submittedFrom,
                         submittedTo,
                         page.GetValueOrDefault(1),
                         pageSize.GetValueOrDefault(25),
                         effectiveCorrelationId),
-                    ToReviewAccessContext(identity, $"operator-console-service-channel-review-list-{effectiveCorrelationId:N}"),
+                    ToReviewAccessContext(identity, httpRequest, $"operator-console-service-channel-review-list-{effectiveCorrelationId:N}"),
                     httpRequest.HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
@@ -751,7 +763,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
             var result = await service.GetAsync(
                     statutoryDiscountDecisionCommandId,
-                    ToReviewAccessContext(identity, $"operator-console-service-channel-review-detail-{statutoryDiscountDecisionCommandId:N}"),
+                    ToReviewAccessContext(identity, httpRequest, $"operator-console-service-channel-review-detail-{statutoryDiscountDecisionCommandId:N}"),
                     httpRequest.HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
@@ -788,32 +800,34 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
 
     private static async Task<IResult> DecideServiceChannelReviewAsync(
         Guid statutoryDiscountDecisionCommandId,
-        OperatorConsoleStatutoryDiscountDecisionRequest request,
+        OperatorConsoleCanonicalStatutoryReviewDecisionRequest request,
         HttpRequest httpRequest,
         IOperatorConsoleServiceChannelStatutoryDiscountReviewService service,
+        IAntiforgery antiforgery,
         IOptions<CentralPmsRbacOptions> rbacOptions,
         ICentralPmsRbacRepository rbacRepository,
         ILoggerFactory loggerFactory)
     {
         using var activity = ServiceChannelReviewActivitySource.StartActivity("HTTP DecideOperatorConsoleServiceChannelStatutoryDiscountReview", ActivityKind.Server);
         var logger = loggerFactory.CreateLogger("ExitPass.CentralPms.Api.OperatorConsoleStatutoryDiscountDraftEndpoints");
+        var effectiveCorrelationId = HumanSessionAuthenticationHandler.ResolveCorrelationId(httpRequest);
 
         try
         {
-            var identity = OperatorConsoleIdentityContext.Resolve(
-                httpRequest,
-                request.UserId,
-                request.OperatorDeviceBindingId,
-                request.OperatorShiftId,
-                request.SiteId,
-                request.SiteGroupId,
-                request.CorrelationId);
+            if (request.AdditionalFields is { Count: > 0 })
+            {
+                throw new ArgumentException("Client-authored identity, authority, permission, role, reviewer, timestamp, Site, or Site Group fields are not accepted.");
+            }
+            await ValidateHumanSessionCsrfAsync(httpRequest, antiforgery).ConfigureAwait(false);
+            RejectAuthenticatedAuthorityHeaders(httpRequest);
+            var identity = OperatorConsoleIdentityContext.Resolve(httpRequest, fallbackCorrelationId: effectiveCorrelationId);
+            effectiveCorrelationId = identity.CorrelationId;
 
             var decisionPermission = await VerifyDecisionPermissionAsync(
                     httpRequest,
                     identity.UserId,
                     request.Decision,
-                    request.CorrelationId,
+                    effectiveCorrelationId,
                     rbacOptions.Value,
                     rbacRepository)
                 .ConfigureAwait(false);
@@ -832,10 +846,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                         identity.OperatorShiftId,
                         request.Decision,
                         request.DecisionReasonCode,
-                        request.DecisionNotes,
+                        DecisionNotes: null,
                         request.ReviewerAttestation,
                         request.IdempotencyKey,
                         identity.CorrelationId),
+                    ToReviewAccessContext(identity, httpRequest, request.IdempotencyKey),
                     httpRequest.HttpContext.RequestAborted)
                 .ConfigureAwait(false);
 
@@ -848,7 +863,11 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
         catch (ArgumentException ex)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_DECISION_REQUEST", ex.Message, request.CorrelationId));
+            return Results.BadRequest(BuildError("INVALID_OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_DECISION_REQUEST", ex.Message, effectiveCorrelationId));
+        }
+        catch (AntiforgeryValidationException)
+        {
+            return Results.BadRequest(BuildError("CSRF_VALIDATION_FAILED", "The secure decision request could not be validated.", effectiveCorrelationId));
         }
         catch (Exception ex)
         {
@@ -859,13 +878,14 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 BuildError(
                     "OPERATOR_CONSOLE_SERVICE_CHANNEL_REVIEW_DECISION_FAILED",
                     "The service-channel statutory discount review decision could not be completed.",
-                    request.CorrelationId),
+                    effectiveCorrelationId),
                 statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 
     private static OperatorConsoleReviewAccessContext ToReviewAccessContext(
         OperatorConsoleIdentityContext identity,
+        HttpRequest request,
         string idempotencyKey) =>
         new(
             identity.UserId,
@@ -874,19 +894,52 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             identity.SiteId,
             identity.SiteGroupId,
             identity.CorrelationId,
-            idempotencyKey);
+            idempotencyKey)
+        {
+            AuthorizedSiteIds = ReadGuidClaims(request.HttpContext.User, "site_id", identity.SiteId),
+            AuthorizedSiteGroupIds = ReadGuidClaims(request.HttpContext.User, "site_group_id", identity.SiteGroupId),
+            HasGlobalScope = string.Equals(request.HttpContext.User.FindFirst("has_global_scope")?.Value, "true", StringComparison.OrdinalIgnoreCase)
+        };
+
+    private static Guid[] ReadGuidClaims(ClaimsPrincipal principal, string claimType, Guid? fixtureFallback) =>
+        principal.Claims
+            .Where(claim => string.Equals(claim.Type, claimType, StringComparison.OrdinalIgnoreCase))
+            .Select(claim => Guid.TryParse(claim.Value, out var value) ? value : Guid.Empty)
+            .Where(value => value != Guid.Empty)
+            .Append(fixtureFallback.GetValueOrDefault())
+            .Where(value => value != Guid.Empty)
+            .Distinct()
+            .ToArray();
+
+    private static async Task ValidateHumanSessionCsrfAsync(HttpRequest request, IAntiforgery antiforgery)
+    {
+        if (string.Equals(request.HttpContext.User.Identity?.AuthenticationType, HumanSessionAuthenticationHandler.SchemeName, StringComparison.Ordinal))
+        {
+            await antiforgery.ValidateRequestAsync(request.HttpContext).ConfigureAwait(false);
+        }
+    }
+
+    private static void RejectAuthenticatedAuthorityHeaders(HttpRequest request)
+    {
+        if (request.HttpContext.User.Identity?.IsAuthenticated != true) return;
+        string[] prohibited = ["X-Operator-User-Id", "X-Operator-Device-Binding-Id", "X-Operator-Shift-Id", "X-Site-Id", "X-Site-Group-Id", "X-Permissions", "X-Roles", "X-Reviewer-Id"];
+        if (prohibited.Any(name => request.Headers.ContainsKey(name)))
+        {
+            throw new ArgumentException("Client-authored identity, authority, permission, role, reviewer, Site, or Site Group headers are not accepted.");
+        }
+    }
 
     private static OperatorConsoleServiceChannelStatutoryDiscountReviewQueueResponse ToContract(
         StatutoryDiscountServiceChannelReviewQueueResult result) =>
         new(
             result.Items.Select(item => new OperatorConsoleServiceChannelStatutoryDiscountReviewQueueItem(
                 item.StatutoryDiscountDecisionCommandId,
+                item.RequestReference,
                 item.ParkingSessionId,
                 item.SourceChannel,
                 item.SiteId,
                 item.SiteGroupId,
                 item.TicketReference,
-                item.PlateNumber,
                 item.EntitlementType,
                 item.CommandStatus,
                 item.DecisionResultStatus,
@@ -896,6 +949,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
                 item.OriginalTariffSnapshotId,
                 item.SubmittedAt,
                 item.CorrelationId)).ToArray(),
+            result.TotalCount,
             result.Page,
             result.PageSize,
             result.HasMore,
@@ -924,7 +978,6 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.EvidenceReferences.Select(evidence => new OperatorConsoleServiceChannelStatutoryDiscountReviewEvidenceReference(
                     evidence.EvidenceType,
                     evidence.CaptureMethod,
-                    evidence.StorageReference,
                     evidence.ReferenceNumberMasked,
                     evidence.VerificationStatus))
                 .ToArray(),
@@ -981,6 +1034,7 @@ public static class OperatorConsoleStatutoryDiscountDraftEndpoints
             result.ReviewerReasonCode,
             result.SubmittedAt,
             result.ReviewedAt,
+            result.PayableBasisApplicationStatus,
             result.CorrelationId);
 
     private static OperatorConsoleStatutoryDiscountDecisionResponse ToContract(
