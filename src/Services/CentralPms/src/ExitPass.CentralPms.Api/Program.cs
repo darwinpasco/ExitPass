@@ -472,6 +472,11 @@ static void ConfigureApplicationServices(
             mainDatabaseConnectionString,
             serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>(),
             serviceProvider.GetRequiredService<IStatutoryFiscalLinkageReader>()));
+    builder.Services.AddScoped<IDigitalPaymentFiscalRecoveryContextReader>(serviceProvider =>
+        new PostgresDigitalPaymentFiscalContextReader(
+            mainDatabaseConnectionString,
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>(),
+            serviceProvider.GetRequiredService<IStatutoryFiscalLinkageReader>()));
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceStatusReadService, FiscalIssuanceStatusReadService>();
