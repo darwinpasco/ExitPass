@@ -467,7 +467,8 @@ static void ConfigureApplicationServices(
     builder.Services.AddScoped<IDigitalPaymentFiscalContextReader>(serviceProvider =>
         new PostgresDigitalPaymentFiscalContextReader(
             mainDatabaseConnectionString,
-            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>()));
+            serviceProvider.GetRequiredService<IOptions<FiscalIssuancePosServerIntegrationOptions>>(),
+            serviceProvider.GetRequiredService<IStatutoryFiscalLinkageReader>()));
     builder.Services.AddScoped<IFiscalIssuanceReferenceRepository>(_ =>
         new PostgresFiscalIssuanceReferenceRepository(mainDatabaseConnectionString));
     builder.Services.AddScoped<IFiscalIssuanceStatusReadService, FiscalIssuanceStatusReadService>();
@@ -895,6 +896,8 @@ static void ConfigureApplicationServices(
         new TerminalCashPayableBasisEligibilityReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<IAptPayableBasisReadinessService, AptPayableBasisReadinessService>();
     builder.Services.AddScoped<ITerminalCashStatutoryFiscalLinkageReader>(_ =>
+        new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
+    builder.Services.AddScoped<IStatutoryFiscalLinkageReader>(_ =>
         new PostgresTerminalCashStatutoryFiscalLinkageReader(mainDatabaseConnectionString));
     builder.Services.AddScoped<ITerminalCashFiscalIssuanceService, TerminalCashFiscalIssuanceService>();
     builder.Services.AddScoped<ITerminalCashReceiptPresentationService, TerminalCashReceiptPresentationService>();

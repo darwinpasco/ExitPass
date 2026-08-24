@@ -1,14 +1,18 @@
 using System.Net;
 using System.Net.Http.Json;
+using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Application.StatutoryDiscounts;
 using ExitPass.CentralPms.Contracts.OperatorConsole;
 using ExitPass.CentralPms.Contracts.StatutoryDiscounts;
 using ExitPass.CentralPms.IntegrationTests.Shared;
+using ExitPass.CentralPms.Infrastructure.Payments;
+using ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using Xunit;
 
 namespace ExitPass.CentralPms.IntegrationTests.Api;
@@ -133,6 +137,56 @@ public sealed class StatutoryDiscountServiceChannelPostApprovalApplicationIntent
                 "service-channel-application-intent-test",
                 application.AppliedTariffSnapshotId!.Value);
             paymentAttempt.TariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId!.Value);
+
+            if (sourceChannel == StatutoryDiscountSourceChannels.WebPay)
+            {
+                var paymentConfirmation = await PaymentRoutineTestHelper.RecordPaymentConfirmationAsync(
+                    StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
+                    paymentAttempt.PaymentAttemptId,
+                    $"provider-statutory-webpay-{context.ParkingSessionId:N}",
+                    "statutory-adjusted-digital-issuance-integration-test",
+                    context.CorrelationId);
+                paymentConfirmation.Should().NotBeNull();
+
+                var posServerId = Guid.Parse("9b000000-0000-0000-0000-000000000007");
+                var reader = new PostgresDigitalPaymentFiscalContextReader(
+                    StatutoryDiscountReviewIntegrationTestSupport.ConnectionString,
+                    Options.Create(new FiscalIssuancePosServerIntegrationOptions
+                    {
+                        RuntimeEnvironment = "IntegrationTest",
+                        Endpoints =
+                        [
+                            new SitePosServerEndpointOptions
+                            {
+                                SiteId = context.SiteId,
+                                SitePosServerId = posServerId,
+                                SitePosServerRef = "IST-SITE-POS-WEBPAY",
+                                Environment = "IntegrationTest",
+                                Enabled = true
+                            }
+                        ]
+                    }),
+                    new PostgresTerminalCashStatutoryFiscalLinkageReader(
+                        StatutoryDiscountReviewIntegrationTestSupport.ConnectionString));
+
+                var fiscalContext = await reader.ReadAsync(
+                    paymentAttempt.PaymentAttemptId,
+                    paymentConfirmation!.PaymentConfirmationId,
+                    context.ParkingSessionId,
+                    CancellationToken.None);
+
+                fiscalContext.SiteId.Should().Be(context.SiteId);
+                fiscalContext.SiteGroupId.Should().Be(context.SiteGroupId);
+                fiscalContext.SitePosServerId.Should().Be(posServerId);
+                fiscalContext.TariffSnapshotId.Should().Be(application.AppliedTariffSnapshotId!.Value);
+                fiscalContext.AmountMinorUnits.Should().Be(application.FinalPayableAmountMinorUnits());
+                fiscalContext.AppliedStatutoryFiscalContext.Should().NotBeNull();
+                fiscalContext.AppliedStatutoryFiscalContext!.StatutoryDiscountDecisionCommandId.Should()
+                    .Be(intake.StatutoryDiscountDecisionCommandId);
+                fiscalContext.AppliedStatutoryFiscalContext.StatutoryDiscountPayableBasisApplicationCommandId.Should()
+                    .Be(application.StatutoryDiscountPayableBasisApplicationCommandId!.Value);
+                fiscalContext.AppliedStatutoryFiscalContext.SourceChannel.Should().Be(StatutoryDiscountSourceChannels.WebPay);
+            }
         }
         finally
         {

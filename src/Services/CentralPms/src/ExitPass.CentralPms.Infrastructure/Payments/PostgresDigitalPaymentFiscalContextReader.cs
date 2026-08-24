@@ -1,5 +1,6 @@
 using ExitPass.CentralPms.Application.FiscalIssuance;
 using ExitPass.CentralPms.Application.Payments;
+using ExitPass.CentralPms.Application.TerminalCashPayments;
 using Microsoft.Extensions.Options;
 using Npgsql;
 
@@ -9,13 +10,16 @@ public sealed class PostgresDigitalPaymentFiscalContextReader : IDigitalPaymentF
 {
     private readonly string _connectionString;
     private readonly FiscalIssuancePosServerIntegrationOptions _options;
+    private readonly IStatutoryFiscalLinkageReader _statutoryFiscalLinkageReader;
 
     public PostgresDigitalPaymentFiscalContextReader(
         string connectionString,
-        IOptions<FiscalIssuancePosServerIntegrationOptions> options)
+        IOptions<FiscalIssuancePosServerIntegrationOptions> options,
+        IStatutoryFiscalLinkageReader statutoryFiscalLinkageReader)
     {
         _connectionString = connectionString;
         _options = options.Value;
+        _statutoryFiscalLinkageReader = statutoryFiscalLinkageReader;
     }
 
     public async Task<DigitalPaymentFiscalContext> ReadAsync(
@@ -27,10 +31,11 @@ public sealed class PostgresDigitalPaymentFiscalContextReader : IDigitalPaymentF
         const string sql = """
             SELECT
                 ps.site_id,
+                ps.site_group_id,
                 pa.tariff_snapshot_id,
                 pa.amount,
                 pa.currency_code::text,
-                pc.verified_timestamp,
+                pc.verified_at AS verified_timestamp,
                 ts.statutory_discount_validation_id
             FROM core.payment_attempts pa
             INNER JOIN core.payment_confirmations pc
@@ -44,7 +49,9 @@ public sealed class PostgresDigitalPaymentFiscalContextReader : IDigitalPaymentF
               AND pc.payment_confirmation_id = @payment_confirmation_id
               AND pa.parking_session_id = @parking_session_id
               AND pa.attempt_status = 'CONFIRMED'
-              AND pc.provider_signature_valid = true
+              AND pc.confirmation_status = 'RECORDED'
+              AND pc.confirmed_amount = pa.amount
+              AND pc.currency_code = pa.currency_code
               AND pa.amount = ts.net_amount
               AND pa.currency_code = ts.currency_code;
             """;
@@ -62,12 +69,8 @@ public sealed class PostgresDigitalPaymentFiscalContextReader : IDigitalPaymentF
             throw new InvalidOperationException("digital_payment_fiscal_context_not_found");
         }
 
-        if (!reader.IsDBNull(reader.GetOrdinal("statutory_discount_validation_id")))
-        {
-            throw new InvalidOperationException("digital_payment_statutory_fiscal_context_not_supported");
-        }
-
         var siteId = reader.GetGuid(reader.GetOrdinal("site_id"));
+        var siteGroupId = reader.GetGuid(reader.GetOrdinal("site_group_id"));
         var endpointMatches = _options.Endpoints
             .Where(endpoint => endpoint.SiteId == siteId)
             .ToArray();
@@ -88,14 +91,47 @@ public sealed class PostgresDigitalPaymentFiscalContextReader : IDigitalPaymentF
 
         var amount = reader.GetDecimal(reader.GetOrdinal("amount"));
         var amountMinorUnits = checked((long)decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
+        var currency = reader.GetString(reader.GetOrdinal("currency_code")).Trim().ToUpperInvariant();
+        var tariffSnapshotId = reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id"));
+        var hasStatutoryDiscount = !reader.IsDBNull(reader.GetOrdinal("statutory_discount_validation_id"));
+        TerminalCashStatutoryFiscalLinkageContext? statutoryContext = null;
+        if (hasStatutoryDiscount)
+        {
+            var linkage = await _statutoryFiscalLinkageReader.ReadByAppliedTariffSnapshotAsync(
+                new StatutoryFiscalLinkageSubject(
+                    parkingSessionId,
+                    tariffSnapshotId,
+                    siteId,
+                    siteGroupId,
+                    amountMinorUnits,
+                    currency),
+                cancellationToken);
+            var approvedContext = linkage.Status switch
+            {
+                TerminalCashStatutoryFiscalLinkageStatus.CompleteApprovedContext => linkage.Context
+                    ?? throw new InvalidOperationException("STATUTORY_FISCAL_CONTEXT_INVALID"),
+                TerminalCashStatutoryFiscalLinkageStatus.RetryableUnavailable =>
+                    throw new InvalidOperationException(linkage.SafeErrorCode ?? "STATUTORY_FISCAL_CONTEXT_TEMPORARILY_UNAVAILABLE"),
+                _ => throw new InvalidOperationException(linkage.SafeErrorCode ?? "STATUTORY_FISCAL_CONTEXT_INVALID")
+            };
+
+            if (!string.Equals(approvedContext.SourceChannel, "WEBPAY", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("STATUTORY_FISCAL_SOURCE_CHANNEL_MISMATCH");
+            }
+
+            statutoryContext = approvedContext;
+        }
 
         return new DigitalPaymentFiscalContext(
             siteId,
-            reader.GetGuid(reader.GetOrdinal("tariff_snapshot_id")),
+            siteGroupId,
+            tariffSnapshotId,
             amountMinorUnits,
-            reader.GetString(reader.GetOrdinal("currency_code")).Trim().ToUpperInvariant(),
+            currency,
             reader.GetFieldValue<DateTimeOffset>(reader.GetOrdinal("verified_timestamp")),
             endpoint.SitePosServerId,
-            endpoint.SitePosServerRef!.Trim());
+            endpoint.SitePosServerRef!.Trim(),
+            statutoryContext);
     }
 }

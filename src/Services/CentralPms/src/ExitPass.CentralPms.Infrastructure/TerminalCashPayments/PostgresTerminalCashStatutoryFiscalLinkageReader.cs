@@ -9,7 +9,9 @@ namespace ExitPass.CentralPms.Infrastructure.TerminalCashPayments;
 /// <summary>
 /// Reads canonical applied statutory discount context for terminal-cash fiscal issuance.
 /// </summary>
-public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminalCashStatutoryFiscalLinkageReader
+public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader :
+    ITerminalCashStatutoryFiscalLinkageReader,
+    IStatutoryFiscalLinkageReader
 {
     private readonly string _connectionString;
 
@@ -30,10 +32,29 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
     {
         ArgumentNullException.ThrowIfNull(cashPayment);
 
+        return await ReadByAppliedTariffSnapshotAsync(
+                new StatutoryFiscalLinkageSubject(
+                    cashPayment.ParkingSessionId,
+                    cashPayment.TariffSnapshotId,
+                    cashPayment.SiteId,
+                    cashPayment.SiteGroupId,
+                    cashPayment.AmountDueMinorUnits,
+                    cashPayment.Currency),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<TerminalCashStatutoryFiscalLinkageResult> ReadByAppliedTariffSnapshotAsync(
+        StatutoryFiscalLinkageSubject subject,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(subject);
+
         try
         {
-            var rows = await ReadRowsAsync(cashPayment.TariffSnapshotId, cancellationToken).ConfigureAwait(false);
-            return Evaluate(cashPayment, rows);
+            var rows = await ReadRowsAsync(subject.TariffSnapshotId, cancellationToken).ConfigureAwait(false);
+            return Evaluate(subject, rows);
         }
         catch (NpgsqlException)
         {
@@ -133,7 +154,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
     }
 
     private static TerminalCashStatutoryFiscalLinkageResult Evaluate(
-        TerminalCashPaymentReadback cashPayment,
+        StatutoryFiscalLinkageSubject subject,
         IReadOnlyList<StatutoryFiscalLinkageRow> rows)
     {
         if (rows.Count == 0)
@@ -180,26 +201,26 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
                 : TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_APPLICATION_NOT_APPLIED");
         }
 
-        if (row.AppliedTariffSnapshotId != cashPayment.TariffSnapshotId ||
-            row.ImmutableAppliedTariffSnapshotId != cashPayment.TariffSnapshotId)
+        if (row.AppliedTariffSnapshotId != subject.TariffSnapshotId ||
+            row.ImmutableAppliedTariffSnapshotId != subject.TariffSnapshotId)
         {
             return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_APPLIED_SNAPSHOT_MISMATCH");
         }
 
-        if (row.ApplicationParkingSessionId != cashPayment.ParkingSessionId ||
-            row.DecisionParkingSessionId != cashPayment.ParkingSessionId ||
-            row.SnapshotParkingSessionId != cashPayment.ParkingSessionId)
+        if (row.ApplicationParkingSessionId != subject.ParkingSessionId ||
+            row.DecisionParkingSessionId != subject.ParkingSessionId ||
+            row.SnapshotParkingSessionId != subject.ParkingSessionId)
         {
             return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_PARKING_SESSION_MISMATCH");
         }
 
-        if (row.ApplicationSiteId.HasValue && row.ApplicationSiteId != cashPayment.SiteId ||
-            row.ReviewSiteId.HasValue && row.ReviewSiteId != cashPayment.SiteId)
+        if (row.ApplicationSiteId.HasValue && row.ApplicationSiteId != subject.SiteId ||
+            row.ReviewSiteId.HasValue && row.ReviewSiteId != subject.SiteId)
         {
             return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_SITE_MISMATCH");
         }
 
-        if (row.ReviewSiteGroupId.HasValue && row.ReviewSiteGroupId != cashPayment.SiteGroupId)
+        if (row.ReviewSiteGroupId.HasValue && row.ReviewSiteGroupId != subject.SiteGroupId)
         {
             return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent("STATUTORY_FISCAL_SITE_GROUP_MISMATCH");
         }
@@ -216,8 +237,8 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
         }
 
         var currency = row.Currency.Trim().ToUpperInvariant();
-        if (!string.Equals(currency, cashPayment.Currency.Trim().ToUpperInvariant(), StringComparison.Ordinal) ||
-            row.ApprovedFinalPayableAmountMinorUnits != cashPayment.AmountDueMinorUnits)
+        if (!string.Equals(currency, subject.Currency.Trim().ToUpperInvariant(), StringComparison.Ordinal) ||
+            row.ApprovedFinalPayableAmountMinorUnits != subject.FinalPayableAmountMinorUnits)
         {
             return TerminalCashStatutoryFiscalLinkageResult.TerminallyInconsistent(
                 "STATUTORY_FISCAL_AMOUNT_OR_CURRENCY_MISMATCH");
@@ -229,11 +250,11 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
                 row.StatutoryDiscountPayableBasisApplicationCommandId!.Value,
                 validationId.Value,
                 row.StatutoryDiscountPayableBasisApplicationId,
-                cashPayment.ParkingSessionId,
+                subject.ParkingSessionId,
                 row.ApplicationSiteId ?? row.ReviewSiteId,
                 row.ReviewSiteGroupId,
                 row.OriginalTariffSnapshotId.Value,
-                cashPayment.TariffSnapshotId,
+                subject.TariffSnapshotId,
                 row.AppliedPolicyReferenceId,
                 row.PolicyResolutionBasis,
                 row.EntitlementType.Trim().ToUpperInvariant(),
@@ -250,10 +271,15 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
                 row.MaskedIdReference));
     }
 
-    private static StatutoryFiscalLinkageRow ReadRow(NpgsqlDataReader reader) =>
-        new(
-            GetNullableGuid(reader, "snapshot_validation_id"),
-            reader.GetGuid(reader.GetOrdinal("snapshot_parking_session_id")),
+    private static StatutoryFiscalLinkageRow ReadRow(NpgsqlDataReader reader)
+    {
+        // SequentialAccess requires every consumed column to be read in ordinal order.
+        var snapshotParkingSessionId = reader.GetGuid(reader.GetOrdinal("snapshot_parking_session_id"));
+        var snapshotValidationId = GetNullableGuid(reader, "snapshot_validation_id");
+
+        return new StatutoryFiscalLinkageRow(
+            snapshotValidationId,
+            snapshotParkingSessionId,
             reader.GetDecimal(reader.GetOrdinal("statutory_discount_amount")),
             GetNullableGuid(reader, "statutory_discount_payable_basis_application_command_id"),
             GetNullableGuid(reader, "statutory_discount_decision_command_id"),
@@ -290,6 +316,7 @@ public sealed class PostgresTerminalCashStatutoryFiscalLinkageReader : ITerminal
             GetNullableString(reader, "immutable_application_status"),
             GetNullableGuid(reader, "immutable_applied_tariff_snapshot_id"),
             GetNullableGuid(reader, "approved_validation_id"));
+    }
 
     private static Guid? GetNullableGuid(NpgsqlDataReader reader, string name)
     {

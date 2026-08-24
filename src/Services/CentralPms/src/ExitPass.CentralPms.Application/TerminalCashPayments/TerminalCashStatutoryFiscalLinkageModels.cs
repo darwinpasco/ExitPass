@@ -7,6 +7,21 @@ public interface ITerminalCashStatutoryFiscalLinkageReader
         CancellationToken cancellationToken);
 }
 
+public interface IStatutoryFiscalLinkageReader
+{
+    Task<TerminalCashStatutoryFiscalLinkageResult> ReadByAppliedTariffSnapshotAsync(
+        StatutoryFiscalLinkageSubject subject,
+        CancellationToken cancellationToken);
+}
+
+public sealed record StatutoryFiscalLinkageSubject(
+    Guid ParkingSessionId,
+    Guid TariffSnapshotId,
+    Guid SiteId,
+    Guid SiteGroupId,
+    long FinalPayableAmountMinorUnits,
+    string Currency);
+
 public enum TerminalCashStatutoryFiscalLinkageStatus
 {
     NotApplicable = 1,

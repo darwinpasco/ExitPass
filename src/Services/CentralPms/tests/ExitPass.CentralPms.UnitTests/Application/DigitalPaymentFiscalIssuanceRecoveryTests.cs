@@ -13,6 +13,7 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
     private static readonly Guid SessionId = Guid.Parse("75000000-0000-4000-8000-000000000003");
     private static readonly Guid TariffId = Guid.Parse("75000000-0000-4000-8000-000000000004");
     private static readonly Guid SiteId = Guid.Parse("75000000-0000-4000-8000-000000000005");
+    private static readonly Guid SiteGroupId = Guid.Parse("75000000-0000-4000-8000-000000000009");
     private static readonly Guid PosId = Guid.Parse("75000000-0000-4000-8000-000000000006");
     private static readonly Guid FiscalReferenceId = Guid.Parse("75000000-0000-4000-8000-000000000007");
 
@@ -108,11 +109,65 @@ public sealed class DigitalPaymentFiscalIssuanceRecoveryTests
             default);
     }
 
+    [Fact]
+    public async Task ConcurrentRetryableCalls_RetainTheSameFiscalIdentityAndSitePosRoute()
+    {
+        var contextReader = Substitute.For<IDigitalPaymentFiscalContextReader>();
+        var references = Substitute.For<IFiscalIssuanceReferenceRepository>();
+        var orchestration = Substitute.For<IFiscalIssuanceOrchestrationService>();
+        var posServer = Substitute.For<IFiscalIssuancePosServerLiveIntegrationService>();
+        references.FindByPaymentConfirmationIdAsync(ConfirmationId, Arg.Any<CancellationToken>())
+            .Returns(Reference(
+                FiscalIssuanceIntegrationState.FiscalIssuanceFailedService,
+                FiscalIssuanceErrorPosture.RetryAfterServiceRecovery));
+        contextReader.ReadAsync(AttemptId, ConfirmationId, SessionId, Arg.Any<CancellationToken>())
+            .Returns(Context());
+
+        var mappings = new List<CentralPmsFiscalDocumentMappingContext>();
+        var recordingContexts = new List<PosServerCreateResultRecordingContext>();
+        posServer.TryIssueFiscalDocumentViaPosServerAsync(
+                FiscalReferenceId,
+                Arg.Do<CentralPmsFiscalDocumentMappingContext>(value =>
+                {
+                    lock (mappings)
+                    {
+                        mappings.Add(value);
+                    }
+                }),
+                Arg.Do<PosServerCreateResultRecordingContext>(value =>
+                {
+                    lock (recordingContexts)
+                    {
+                        recordingContexts.Add(value);
+                    }
+                }),
+                Arg.Any<CancellationToken>())
+            .Returns(FiscalIssuancePosServerLiveIntegrationResult.ConfigurationInvalid(["pos_temporarily_unavailable"]));
+        var sut = new DigitalPaymentFiscalIssuanceService(contextReader, references, orchestration, posServer);
+        var command = Command();
+
+        await Task.WhenAll(
+            sut.IssueOrReadAsync(command, CancellationToken.None),
+            sut.IssueOrReadAsync(command, CancellationToken.None));
+
+        Assert.Equal(2, mappings.Count);
+        Assert.All(mappings, mapping =>
+        {
+            Assert.Equal(PosId, mapping.SitePosServerId);
+            Assert.Equal("IST-POS-A", mapping.SitePosServerRef);
+            Assert.Equal(TariffId.ToString("D"), mapping.PayableBasis.PayableBasisRef);
+            Assert.Equal($"PAYMENT_CONFIRMATION:{ConfirmationId:D}", mapping.PaymentFinalityRef);
+        });
+        Assert.Equal(2, recordingContexts.Count);
+        Assert.All(recordingContexts, context => Assert.Equal(PosId, context.SitePosServerId));
+        await orchestration.DidNotReceiveWithAnyArgs().PreparePendingAsync(default!, default);
+    }
+
     private static DigitalPaymentFiscalIssuanceCommand Command() =>
         new(AttemptId, ConfirmationId, SessionId, "IST-PROVIDER-RECOVERY", Guid.NewGuid(), null);
 
     private static DigitalPaymentFiscalContext Context() =>
-        new(SiteId, TariffId, 12500, "PHP", DateTimeOffset.Parse("2026-08-24T01:00:00Z"), PosId, "IST-POS-A");
+        new(SiteId, SiteGroupId, TariffId, 12500, "PHP", DateTimeOffset.Parse("2026-08-24T01:00:00Z"), PosId, "IST-POS-A");
 
     private static FiscalIssuanceReferenceRecord Reference(
         FiscalIssuanceIntegrationState state,
