@@ -543,7 +543,8 @@ public sealed class HumanAuthenticationService : IHumanAuthenticationService, IH
         }
         if (record.UserStatus != "ACTIVE" || record.UserEffectiveFrom > now || (record.UserEffectiveTo is not null && record.UserEffectiveTo <= now) ||
             record.LocalCredentialStatus is not ("ACTIVE" or "CHANGE_REQUIRED") ||
-            record.CredentialVersionSnapshot != record.CurrentCredentialVersion)
+            record.CredentialVersionSnapshot != record.CurrentCredentialVersion ||
+            record.AuthorizationEpochSnapshot != record.CurrentAuthorizationEpoch)
         {
             await _repository.RevokeSessionAsync(record.HumanSessionId, record.UserId, "IDENTITY_OR_CREDENTIAL_CHANGED", now, cancellationToken);
             return (null, null, Failure(401, HumanAuthenticationOutcomes.SessionInvalid, "SESSION_REVOKED", context.CorrelationId));

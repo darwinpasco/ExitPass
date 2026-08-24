@@ -36,11 +36,13 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixtureTests
         options.ApplicationSchemaSources.Select(source => Path.GetFileName(source.PatchPath)).Should().Equal(
             "HikCentralProjectionSchemaPatch.sql",
             "ExitPass_HikCentralProjectionSafety_v1.3.sql",
-            "ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql");
+            "ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql",
+            "ExitPass_OperatorConsoleOperatingContext_v1.3.sql");
         options.ApplicationSchemaSources.Where(source => source.ValidatorPath is not null)
             .Select(source => Path.GetFileName(source.ValidatorPath)).Should().Equal(
             "Validate_HikCentralProjectionSafety_v1.3.sql",
-            "Validate_MultiSiteVendorAdapterRouting_v1.3.sql");
+            "Validate_MultiSiteVendorAdapterRouting_v1.3.sql",
+            "Validate_OperatorConsoleOperatingContext_v1.3.sql");
         options.ApplicationSchemaSources.Should().OnlyContain(source => File.Exists(source.PatchPath));
         options.ApplicationSchemaSources.Where(source => source.ValidatorPath is not null).Should().OnlyContain(source =>
             File.Exists(source.ValidatorPath));

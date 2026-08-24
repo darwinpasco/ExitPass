@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace ExitPass.CentralPms.Contracts.HumanAuthentication;
 
 public sealed record HumanLoginRequest(
@@ -58,7 +60,13 @@ public sealed record HumanSessionDto(
     IReadOnlyList<Guid> SiteGroupReferences,
     bool HasGlobalScope,
     Guid? DeviceServiceIdentityReference,
-    Guid CorrelationId);
+    Guid CorrelationId,
+    [property: JsonIgnore] Guid? OperatorDeviceBindingReference = null,
+    [property: JsonIgnore] Guid? OperatorShiftReference = null,
+    [property: JsonIgnore] Guid? EffectiveSiteReference = null,
+    [property: JsonIgnore] Guid? EffectiveSiteGroupReference = null,
+    [property: JsonIgnore] long? AuthorizationEpoch = null,
+    [property: JsonIgnore] long? CredentialVersion = null);
 
 public sealed record TotpEnrollmentResponse(
     string Outcome,

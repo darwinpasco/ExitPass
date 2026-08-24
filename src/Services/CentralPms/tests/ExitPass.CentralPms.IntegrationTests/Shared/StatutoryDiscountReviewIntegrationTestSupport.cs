@@ -77,6 +77,16 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
             await SeedReviewerUserAsync(context, reviewerUserId.Value);
         }
 
+        return await SeedAwaitingReviewAsync(context, sourceChannel, entitlementType);
+    }
+
+    public static async Task<SeededServiceChannelReview> SeedAwaitingReviewAsync(
+        PaymentTestContext context,
+        string sourceChannel,
+        string entitlementType = "SENIOR_CITIZEN")
+    {
+        await EnsureSchemaAsync();
+
         var staged = CreateStagedService();
         var policy = await SeedSupportedLocalOrdinancePolicyAsync(context, entitlementType);
         var created = await staged.CreateOrResolveDecisionAsync(
@@ -93,6 +103,33 @@ internal static class StatutoryDiscountReviewIntegrationTestSupport
         var detail = await repository.GetAsync(awaiting.StatutoryDiscountDecisionCommandId, context.CorrelationId, CancellationToken.None);
 
         return new SeededServiceChannelReview(context, awaiting, detail!);
+    }
+
+    public static async Task RemoveReviewOnlyAsync(PaymentTestContext context)
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            """
+            DELETE FROM operator_console.statutory_discount_service_channel_reviews
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_payable_basis_application_commands
+            WHERE parking_session_id = @parking_session_id;
+
+            DELETE FROM discounts.statutory_discount_decision_policy_authorities
+            WHERE statutory_discount_decision_command_id IN (
+                SELECT statutory_discount_decision_command_id
+                FROM discounts.statutory_discount_decision_commands
+                WHERE parking_session_id = @parking_session_id
+            );
+
+            DELETE FROM discounts.statutory_discount_decision_commands
+            WHERE parking_session_id = @parking_session_id;
+            """,
+            connection);
+        command.Parameters.AddWithValue("parking_session_id", context.ParkingSessionId);
+        await command.ExecuteNonQueryAsync();
     }
 
     public static async Task<PaymentTestContext> SeedPaymentContextAsync(string scenarioName)

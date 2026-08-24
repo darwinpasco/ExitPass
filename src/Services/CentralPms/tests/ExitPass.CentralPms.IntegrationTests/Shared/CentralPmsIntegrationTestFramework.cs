@@ -137,7 +137,7 @@ internal sealed class CentralPmsIntegrationPostgresResource
             throw new InvalidOperationException("Task-owned PostgreSQL ownership or loopback mapping verification failed.");
         }
 
-        await WaitUntilReadyAsync();
+        await WaitUntilReadyAsync(port);
 
         PublishEnvironment(
             StatutoryDiscountCanonicalDatabaseFixture.AdminConnectionStringEnvVar,
@@ -197,7 +197,7 @@ internal sealed class CentralPmsIntegrationPostgresResource
         }
     }
 
-    private async Task WaitUntilReadyAsync()
+    private async Task WaitUntilReadyAsync(int port)
     {
         for (var attempt = 0; attempt < 120; attempt++)
         {
@@ -208,7 +208,30 @@ internal sealed class CentralPmsIntegrationPostgresResource
                 throwOnFailure: false);
             if (result.ExitCode == 0)
             {
-                return;
+                try
+                {
+                    await using var connection = new NpgsqlConnection(
+                        new NpgsqlConnectionStringBuilder
+                        {
+                            Host = "127.0.0.1",
+                            Port = port,
+                            Database = "postgres",
+                            Username = "exitpass",
+                            Password = _password,
+                            Pooling = false,
+                            Timeout = 2,
+                            CommandTimeout = 2
+                        }.ConnectionString);
+                    await connection.OpenAsync();
+                    await using var command = new NpgsqlCommand("SELECT 1;", connection);
+                    await command.ExecuteScalarAsync();
+                    return;
+                }
+                catch (NpgsqlException)
+                {
+                    // Container-local readiness can precede the loopback-mapped
+                    // authenticated channel by a few hundred milliseconds.
+                }
             }
 
             await Task.Delay(TimeSpan.FromMilliseconds(500));

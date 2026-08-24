@@ -520,7 +520,11 @@ public sealed class StatutoryDiscountCanonicalDatabaseFixture : IAsyncLifetime
                 new ApplicationSchemaSource(
                     "multi-site vendor adapter routing",
                     Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_MultiSiteVendorAdapterRouting_v1.3.sql"),
-                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_MultiSiteVendorAdapterRouting_v1.3.sql"))
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_MultiSiteVendorAdapterRouting_v1.3.sql")),
+                new ApplicationSchemaSource(
+                    "Operator Console server-owned operating context",
+                    Path.Combine(patchRoot, "infra", "db", "patches", "ExitPass_OperatorConsoleOperatingContext_v1.3.sql"),
+                    Path.Combine(patchRoot, "infra", "db", "patches", "validation", "Validate_OperatorConsoleOperatingContext_v1.3.sql"))
             };
 
             var container = RequireEnvironmentValue(DockerContainerEnvVar);

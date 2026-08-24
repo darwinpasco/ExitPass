@@ -522,20 +522,6 @@ interface VendorPaymentAcknowledgmentDiagnosticDto {
   correlationId?: string | null;
 }
 
-export interface OperatorConsoleOperatorContext {
-  operatorDeviceBindingId?: string;
-  operatorShiftId?: string;
-  siteId?: string;
-  siteGroupId?: string;
-}
-
-const defaultOperatorContext: OperatorConsoleOperatorContext = {
-  operatorDeviceBindingId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID),
-  operatorShiftId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID),
-  siteId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID),
-  siteGroupId: configuredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_GROUP_ID)
-};
-
 const mockOperatorUserId = "mock-operator-user";
 const mockSiteId = "mock-site";
 const mockSiteGroupId = "mock-site-group";
@@ -606,10 +592,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          operatorDeviceBindingId: input.operatorDeviceBindingId ?? defaultOperatorContext.operatorDeviceBindingId,
-          operatorShiftId: input.operatorShiftId ?? defaultOperatorContext.operatorShiftId,
-          siteId: input.siteId ?? null,
-          siteGroupId: input.siteGroupId ?? null,
           requestedAction: input.requestedAction,
           targetEntityType: input.targetEntityType ?? null,
           targetEntityId: input.targetEntityId ?? null,
@@ -630,10 +612,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
-          siteId: defaultOperatorContext.siteId,
-          siteGroupId: defaultOperatorContext.siteGroupId,
-          operatorShiftId: defaultOperatorContext.operatorShiftId,
           parkingSessionId: null,
           ticketReference: input.ticketNumber,
           plateNumber: null,
@@ -739,10 +717,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
         method: "POST",
         headers: operatorConsoleHeaders(correlationId, { json: true }),
         body: JSON.stringify({
-          operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
-          siteId: input.siteId ?? defaultOperatorContext.siteId,
-          siteGroupId: input.siteGroupId ?? defaultOperatorContext.siteGroupId,
-          operatorShiftId: defaultOperatorContext.operatorShiftId,
           parkingSessionId: input.parkingSessionId,
           ticketReference: input.ticketReference ?? null,
           plateNumber: input.plateNumber ?? null,
@@ -903,10 +877,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
           method: "POST",
           headers: operatorConsoleHeaders(correlationId, { json: true }),
           body: JSON.stringify({
-            operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
-            siteId: input.siteId ?? null,
-            siteGroupId: input.siteGroupId ?? null,
-            operatorShiftId: defaultOperatorContext.operatorShiftId,
             evidenceType: input.evidenceType,
             captureMethod: input.captureMethod,
             fileName: input.fileName ?? null,
@@ -942,10 +912,6 @@ export function createHttpOperatorConsoleApiClient(options: OperatorConsoleApiCl
           method: "POST",
           headers: operatorConsoleHeaders(correlationId, { json: true }),
           body: JSON.stringify({
-            operatorDeviceBindingId: defaultOperatorContext.operatorDeviceBindingId,
-            siteId: input.siteId ?? null,
-            siteGroupId: input.siteGroupId ?? null,
-            operatorShiftId: defaultOperatorContext.operatorShiftId,
             decision: input.decision,
             decisionReasonCode: input.decision === "REJECT" ? input.reasonCode : null,
             decisionNotes: input.notes ?? null,
@@ -1145,35 +1111,15 @@ function normalizePermissions(value: readonly string[]) {
     .filter((permission) => permission.length > 0);
 }
 
-function configuredValue(value: string | undefined) {
-  return value && value.trim().length > 0 ? value.trim() : undefined;
-}
-
 function blankToNull(value: string | undefined) {
   return value && value.trim().length > 0 ? value.trim() : null;
 }
 
-export function getDefaultOperatorConsoleOperatingContext() {
-  return { ...defaultOperatorContext };
-}
-
 export function defaultDevModeContext() {
   return {
-    usesLocalDevFallbackContext: isUsingLocalFallbackContext(),
+    usesLocalDevFallbackContext: false,
     environmentName: import.meta.env.MODE ?? "Development"
   };
-}
-
-function isUsingLocalFallbackContext() {
-  return (
-    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_DEVICE_BINDING_ID) ||
-    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SHIFT_ID) ||
-    !hasConfiguredValue(import.meta.env.VITE_OPERATOR_CONSOLE_SITE_ID)
-  );
-}
-
-function hasConfiguredValue(value: string | undefined) {
-  return value !== undefined && value.trim().length > 0;
 }
 
 export function createMockOperatorConsoleApiClient(
@@ -2638,18 +2584,18 @@ function mockAccessReadiness(input: AccessReadinessRequest): AccessReadinessResp
       ready: true
     },
     deviceReadiness: {
-      operatorDeviceBindingId: input.operatorDeviceBindingId ?? defaultOperatorContext.operatorDeviceBindingId,
+      operatorDeviceBindingId: undefined,
       status: "READY",
       ready: true
     },
     shiftReadiness: {
-      operatorShiftId: input.operatorShiftId ?? defaultOperatorContext.operatorShiftId,
+      operatorShiftId: undefined,
       status: "READY",
       ready: true
     },
     siteReadiness: {
-      siteId: input.siteId,
-      siteGroupId: input.siteGroupId,
+      siteId: undefined,
+      siteGroupId: undefined,
       status: "READY",
       ready: true
     },

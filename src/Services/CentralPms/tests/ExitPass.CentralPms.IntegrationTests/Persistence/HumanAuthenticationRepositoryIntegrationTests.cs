@@ -1,11 +1,14 @@
 using System.Security.Cryptography;
 using ExitPass.CentralPms.Application.HumanAuthentication;
+using ExitPass.CentralPms.Application.OperatorConsole;
 using ExitPass.CentralPms.Application.Security;
 using ExitPass.CentralPms.Infrastructure.HumanAuthentication;
+using ExitPass.CentralPms.Infrastructure.OperatorConsole;
 using ExitPass.CentralPms.IntegrationTests.Api;
 using ExitPass.CentralPms.IntegrationTests.Shared;
 using FluentAssertions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using OtpNet;
 using Xunit;
@@ -57,6 +60,42 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
             HumanSessionAudiences.OperatorConsole, null, context, false, CancellationToken.None);
         suspended.Response.Authenticated.Should().BeFalse();
         suspended.Response.ErrorCode.Should().Be("SESSION_REVOKED");
+    }
+
+    [Fact]
+    public async Task Operator_console_session_context_uses_canonical_device_shift_and_live_revocation()
+    {
+        var runtime = CreateRuntime(TestOptions());
+        var user = await SeedUserAsync(runtime.Passwords, "I020OperatingContext", "correct horse battery staple");
+        var (siteId, siteGroupId) = await GrantSeededRoleAndScopesAsync(user);
+        var login = await runtime.Service.LoginAsync("i020operatingcontext", "correct horse battery staple",
+            HumanSessionAudiences.OperatorConsole, null, Context(), CancellationToken.None);
+        login.Response.Authenticated.Should().BeTrue();
+
+        const string proof = "canonical-operator-device-proof-with-more-than-32-characters";
+        var repository = new PostgresOperatorConsoleOperatingContextRepository(_database.ConnectionString);
+        var service = new OperatorConsoleOperatingContextService(repository, TimeProvider.System,
+            NullLogger<OperatorConsoleOperatingContextService>.Instance);
+        var (deviceId, shiftId) = await SeedOperatorContextAsync(user, siteId, siteGroupId, service.HashDeviceProof(proof));
+        var issued = await service.EstablishDeviceBindingAsync(proof, Guid.NewGuid(), default);
+        issued.Succeeded.Should().BeTrue();
+        issued.CookieCredential.Should().NotBe(proof);
+
+        var bound = await service.BindSessionAsync(login.InternalHumanSessionId!.Value, user, [siteId], [siteGroupId], false, issued.CookieCredential, Guid.NewGuid(), default);
+        bound.Succeeded.Should().BeTrue();
+        bound.Context!.OperatorDeviceBindingId.Should().Be(deviceId);
+        bound.Context.OperatorShiftId.Should().Be(shiftId);
+
+        var live = await service.ValidateSessionAsync(login.InternalHumanSessionId.Value, issued.CookieCredential, Guid.NewGuid(), default);
+        live.Succeeded.Should().BeTrue();
+
+        await ExecuteAsync("""
+            UPDATE operator_console.operator_device_bindings
+            SET device_status='REVOKED', revoked_at=now(), revocation_reason_code='TEST', row_version=row_version+1
+            WHERE operator_device_binding_id=@device_id;
+            """, user, ("device_id", deviceId));
+        var revoked = await service.ValidateSessionAsync(login.InternalHumanSessionId.Value, issued.CookieCredential, Guid.NewGuid(), default);
+        revoked.ErrorCode.Should().Be(OperatorConsoleOperatingContextFailureCodes.DeviceBindingRevoked);
     }
 
     [Fact]
@@ -232,11 +271,13 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         await ExecuteAsync("UPDATE identity.users SET authorization_epoch=authorization_epoch+1 WHERE user_id=@user_id;", user);
         var liveAuthorization = await runtime.Service.ResolveSessionAsync(login.Credential!.SerializedToken,
             HumanSessionAudiences.OperatorConsole, null, context, false, CancellationToken.None);
-        liveAuthorization.Response.Authenticated.Should().BeTrue();
-        liveAuthorization.Response.Session!.Permissions.Should().NotBeEmpty();
+        liveAuthorization.Response.Authenticated.Should().BeFalse();
+        liveAuthorization.Response.ErrorCode.Should().Be("SESSION_REVOKED");
 
+        var credentialLogin = await runtime.Service.LoginAsync("i020epoch", "correct horse battery staple",
+            HumanSessionAudiences.OperatorConsole, null, context, CancellationToken.None);
         await ExecuteAsync("UPDATE identity.users SET credential_version=credential_version+1 WHERE user_id=@user_id;", user);
-        var invalidated = await runtime.Service.ResolveSessionAsync(login.Credential.SerializedToken,
+        var invalidated = await runtime.Service.ResolveSessionAsync(credentialLogin.Credential!.SerializedToken,
             HumanSessionAudiences.OperatorConsole, null, context, false, CancellationToken.None);
         invalidated.Response.ErrorCode.Should().Be("SESSION_REVOKED");
 
@@ -478,6 +519,58 @@ public sealed class HumanAuthenticationRepositoryIntegrationTests
         command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
         await command.ExecuteNonQueryAsync();
         return (deviceId, siteId);
+    }
+
+    private async Task<(Guid DeviceId, Guid ShiftId)> SeedOperatorContextAsync(Guid userId, Guid siteId, Guid siteGroupId, string proofThumbprint)
+    {
+        var deviceId = Guid.NewGuid();
+        var shiftId = Guid.NewGuid();
+        var mappingId = Guid.NewGuid();
+        const string sql = """
+            INSERT INTO operator_console.hr_identity_mappings (
+                hr_identity_mapping_id,user_id,hr_provider_code,external_person_id_hash,mapping_status,
+                effective_from,correlation_id,created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@mapping_id,@user_id,'TEST',@person_hash,'ACTIVE',now()-interval '1 day',gen_random_uuid(),@service_id,@service_id);
+
+            INSERT INTO operator_console.operator_device_bindings (
+                operator_device_binding_id,device_binding_code,device_name,site_group_id,site_id,
+                browser_key_thumbprint,device_status,trust_level,binding_source,correlation_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@device_id,@device_code,'Integration browser',@site_group_id,@site_id,
+                @proof_thumbprint,'ACTIVE','BROWSER_KEY_ONLY','TEST',gen_random_uuid(),@service_id,@service_id);
+
+            INSERT INTO operator_console.operator_device_assignment_history (
+                operator_device_assignment_history_id,operator_device_binding_id,site_group_id,site_id,
+                assignment_status_code,assignment_source_code,assigned_at,effective_from,correlation_id,
+                assigned_by_service_identity_id,created_by_service_identity_id)
+            VALUES (gen_random_uuid(),@device_id,@site_group_id,@site_id,'ACTIVE','TEST',now(),now()-interval '1 day',
+                gen_random_uuid(),@service_id,@service_id);
+
+            INSERT INTO operator_console.operator_shifts (
+                operator_shift_id,hr_provider_code,external_shift_id_hash,hr_identity_mapping_id,operator_user_id,
+                site_group_id,site_id,scheduled_start_at,scheduled_end_at,source_imported_at,import_status_code,
+                source_system_code,operational_status,active_from,active_to,correlation_id,
+                created_by_service_identity_id,updated_by_service_identity_id)
+            VALUES (@shift_id,'TEST',@shift_hash,@mapping_id,@user_id,@site_group_id,@site_id,
+                now()-interval '1 hour',now()+interval '8 hours',now(),'IMPORTED','TEST','ACTIVE',
+                now()-interval '1 hour',now()+interval '8 hours',gen_random_uuid(),@service_id,@service_id);
+            """;
+        await using var connection = new NpgsqlConnection(_database.ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("mapping_id", mappingId);
+        command.Parameters.AddWithValue("user_id", userId);
+        command.Parameters.AddWithValue("person_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant());
+        command.Parameters.AddWithValue("device_id", deviceId);
+        command.Parameters.AddWithValue("device_code", $"I020_CTX_{deviceId:N}"[..32]);
+        command.Parameters.AddWithValue("site_group_id", siteGroupId);
+        command.Parameters.AddWithValue("site_id", siteId);
+        command.Parameters.AddWithValue("proof_thumbprint", proofThumbprint);
+        command.Parameters.AddWithValue("shift_id", shiftId);
+        command.Parameters.AddWithValue("shift_hash", Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant());
+        command.Parameters.AddWithValue("service_id", CentralPmsServiceIdentityId);
+        await command.ExecuteNonQueryAsync();
+        return (deviceId, shiftId);
     }
 
     private async Task AssertOnlySessionHashPersistedAsync(SessionCredential credential)
